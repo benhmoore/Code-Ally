@@ -133,6 +133,14 @@ export abstract class ModelClient {
   abstract get endpoint(): string;
 
   /**
+   * Update the model name at runtime (optional)
+   *
+   * Allows changing which model to use without recreating the client.
+   * The next request will use the new model.
+   */
+  abstract setModelName?(newModelName: string): void;
+
+  /**
    * Cancel any ongoing requests (optional)
    */
   abstract cancel?(): void;

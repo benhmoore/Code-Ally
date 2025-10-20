@@ -73,6 +73,8 @@ export enum ActivityEventType {
   ERROR = 'error',
   PERMISSION_REQUEST = 'permission_request',
   PERMISSION_RESPONSE = 'permission_response',
+  MODEL_SELECT_REQUEST = 'model_select_request',
+  MODEL_SELECT_RESPONSE = 'model_select_response',
   INTERRUPT_ALL = 'interrupt_all',
 }
 

@@ -15,6 +15,7 @@ import { CommandHistory } from '../../services/CommandHistory.js';
 import { CompletionProvider, Completion } from '../../services/CompletionProvider.js';
 import { CompletionDropdown } from './CompletionDropdown.js';
 import { PermissionRequest } from './PermissionPrompt.js';
+import { ModelOption } from './ModelSelector.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ActivityEventType } from '../../types/index.js';
 import { PermissionChoice } from '../../agent/TrustManager.js';
@@ -37,6 +38,12 @@ interface InputPromptProps {
   permissionSelectedIndex?: number;
   /** Callback when permission selection changes */
   onPermissionNavigate?: (newIndex: number) => void;
+  /** Model selector data (if active) */
+  modelSelectRequest?: { requestId: string; models: ModelOption[]; currentModel?: string };
+  /** Selected model index */
+  modelSelectedIndex?: number;
+  /** Callback when model selection changes */
+  onModelNavigate?: (newIndex: number) => void;
   /** Activity stream for emitting events */
   activityStream?: ActivityStream;
   /** Agent instance for interruption */
@@ -55,6 +62,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   permissionRequest,
   permissionSelectedIndex = 0,
   onPermissionNavigate,
+  modelSelectRequest,
+  modelSelectedIndex = 0,
+  onModelNavigate,
   activityStream,
   agent,
 }) => {
@@ -340,7 +350,68 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
       }
 
-      // ===== Permission Prompt Navigation (highest priority) =====
+      // ===== Model Selector Navigation (second priority after force-quit) =====
+      if (modelSelectRequest && onModelNavigate && activityStream) {
+        const modelsCount = modelSelectRequest.models.length;
+
+        // Up arrow - navigate to previous model
+        if (key.upArrow) {
+          const newIndex = Math.max(0, modelSelectedIndex - 1);
+          onModelNavigate(newIndex);
+          return;
+        }
+
+        // Down arrow - navigate to next model
+        if (key.downArrow) {
+          const newIndex = Math.min(modelsCount - 1, modelSelectedIndex + 1);
+          onModelNavigate(newIndex);
+          return;
+        }
+
+        // Enter - submit selection
+        if (key.return) {
+          const selectedModel = modelSelectRequest.models[modelSelectedIndex];
+          if (selectedModel) {
+            try {
+              activityStream.emit({
+                id: `response_${modelSelectRequest.requestId}`,
+                type: ActivityEventType.MODEL_SELECT_RESPONSE,
+                timestamp: Date.now(),
+                data: {
+                  requestId: modelSelectRequest.requestId,
+                  modelName: selectedModel.name,
+                },
+              });
+            } catch (error) {
+              console.error('[InputPrompt] Failed to emit model selection:', error);
+            }
+          }
+          return;
+        }
+
+        // Escape or Ctrl+C - cancel selection
+        if (key.escape || (key.ctrl && input === 'c')) {
+          try {
+            activityStream.emit({
+              id: `response_${modelSelectRequest.requestId}_cancel`,
+              type: ActivityEventType.MODEL_SELECT_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: modelSelectRequest.requestId,
+                modelName: null, // null = cancelled
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit model cancellation:', error);
+          }
+          return;
+        }
+
+        // Block all other input when model selector is active
+        return;
+      }
+
+      // ===== Permission Prompt Navigation =====
       if (permissionRequest && onPermissionNavigate && activityStream) {
         const optionsCount = permissionRequest.options.length;
 

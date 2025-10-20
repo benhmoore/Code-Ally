@@ -306,30 +306,104 @@ Utility Commands:
   private async handleModel(args: string[]): Promise<CommandResult> {
     const argString = args.join(' ').trim();
 
-    if (!argString) {
-      // Show current model
-      const currentModel = this.configManager.getValue('model');
-      return {
-        handled: true,
-        response: `Current model: ${currentModel || 'not set'}`,
-      };
+    // Direct model name provided - set it immediately
+    if (argString) {
+      const modelName = argString;
+
+      try {
+        await this.configManager.setValue('model', modelName);
+
+        // Update the active ModelClient to use the new model immediately
+        const modelClient = this.serviceRegistry.get<any>('model_client');
+        if (modelClient && typeof modelClient.setModelName === 'function') {
+          modelClient.setModelName(modelName);
+        }
+
+        return {
+          handled: true,
+          response: `Model changed to: ${modelName}`,
+        };
+      } catch (error) {
+        return {
+          handled: true,
+          response: `Error changing model: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
     }
 
-    // Set new model
-    const modelName = argString;
-
+    // No args - show interactive selector
     try {
-      await this.configManager.setValue('model', modelName);
-      return {
-        handled: true,
-        response: `Model changed to: ${modelName}`,
-      };
+      const currentModel = this.configManager.getValue('model');
+      const config = this.configManager.getConfig();
+      const endpoint = config.endpoint || 'http://localhost:11434';
+
+      // Fetch available models from Ollama
+      const response = await fetch(`${endpoint}/api/tags`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) {
+        return {
+          handled: true,
+          response: `Failed to fetch models from Ollama (HTTP ${response.status}). Try /model <name> to set directly.`,
+        };
+      }
+
+      const data = (await response.json()) as { models?: Array<{ name: string; size?: number; modified_at?: string }> };
+      const models = (data.models || []).map(m => ({
+        name: m.name,
+        size: m.size ? this.formatSize(m.size) : undefined,
+        modified: m.modified_at,
+      }));
+
+      if (models.length === 0) {
+        return {
+          handled: true,
+          response: 'No models available in Ollama. Install models with: ollama pull <model>',
+        };
+      }
+
+      // Emit interactive selection request
+      const activityStream = this.serviceRegistry.get('activity_stream');
+      if (activityStream && typeof (activityStream as any).emit === 'function') {
+        const requestId = `model_select_${Date.now()}`;
+
+        (activityStream as any).emit({
+          id: requestId,
+          type: 'model_select_request',
+          timestamp: Date.now(),
+          data: {
+            requestId,
+            models,
+            currentModel,
+          },
+        });
+
+        return { handled: true }; // Selection handled via UI
+      }
+
+      // Fallback: show list
+      let output = `Current model: ${currentModel || 'not set'}\n\nAvailable models:\n`;
+      models.forEach(m => {
+        output += `  - ${m.name}${m.size ? ` (${m.size})` : ''}\n`;
+      });
+      output += '\nUse /model <name> to switch.';
+
+      return { handled: true, response: output };
     } catch (error) {
       return {
         handled: true,
-        response: `Error changing model: ${error instanceof Error ? error.message : String(error)}`,
+        response: `Error fetching models: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
+  }
+
+  private formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
   }
 
   private async handleDebug(args: string[], messages: Message[]): Promise<CommandResult> {

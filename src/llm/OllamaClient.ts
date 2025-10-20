@@ -47,7 +47,7 @@ interface ValidationResult {
 
 export class OllamaClient extends ModelClient {
   private readonly _endpoint: string;
-  private readonly _modelName: string;
+  private _modelName: string; // Not readonly - allows runtime model changes
   private readonly temperature: number;
   private readonly contextSize: number;
   private readonly maxTokens: number;
@@ -90,6 +90,16 @@ export class OllamaClient extends ModelClient {
 
   get endpoint(): string {
     return this._endpoint;
+  }
+
+  /**
+   * Update the model name at runtime
+   *
+   * @param newModelName - New model to use for subsequent requests
+   */
+  setModelName(newModelName: string): void {
+    console.log(`[OLLAMA_CLIENT] Changing model from ${this._modelName} to ${newModelName}`);
+    this._modelName = newModelName;
   }
 
   /**

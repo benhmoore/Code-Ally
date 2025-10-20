@@ -16,6 +16,7 @@ import { ActivityEventType, Config, ToolCallState, Message } from '../types/inde
 import { InputPrompt } from './components/InputPrompt.js';
 import { ConversationView } from './components/ConversationView.js';
 import { PermissionPrompt, PermissionRequest } from './components/PermissionPrompt.js';
+import { ModelSelector, ModelOption } from './components/ModelSelector.js';
 import { TodoDisplay } from './components/TodoDisplay.js';
 import { Agent } from '../agent/Agent.js';
 import { CommandHistory } from '../services/CommandHistory.js';
@@ -59,6 +60,10 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
   // Permission prompt state
   const [permissionRequest, setPermissionRequest] = useState<(PermissionRequest & { requestId: string }) | undefined>(undefined);
   const [permissionSelectedIndex, setPermissionSelectedIndex] = useState(0);
+
+  // Model selector state
+  const [modelSelectRequest, setModelSelectRequest] = useState<{ requestId: string; models: ModelOption[]; currentModel?: string } | undefined>(undefined);
+  const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
 
   // Initialize services on mount
   useEffect(() => {
@@ -222,6 +227,54 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
     // The tool call will start (TOOL_CALL_START) after permission is granted
     setPermissionRequest(undefined);
     setPermissionSelectedIndex(0);
+  });
+
+  // Subscribe to model select request events
+  useActivityEvent(ActivityEventType.MODEL_SELECT_REQUEST, (event) => {
+    const { requestId, models, currentModel } = event.data;
+    setModelSelectRequest({ requestId, models, currentModel });
+    setModelSelectedIndex(0);
+  });
+
+  // Subscribe to model select response events
+  useActivityEvent(ActivityEventType.MODEL_SELECT_RESPONSE, async (event) => {
+    const { modelName } = event.data;
+
+    // Clear selector
+    setModelSelectRequest(undefined);
+
+    // Apply selection if not cancelled
+    if (modelName) {
+      const registry = ServiceRegistry.getInstance();
+      const configManager = registry.get<ConfigManager>('config_manager');
+
+      if (configManager) {
+        try {
+          // Update config
+          await configManager.setValue('model', modelName);
+
+          // Update the active ModelClient to use the new model
+          const modelClient = registry.get<any>('model_client');
+          if (modelClient && typeof modelClient.setModelName === 'function') {
+            modelClient.setModelName(modelName);
+          }
+
+          // Update state config for UI display
+          actions.updateConfig({ model: modelName });
+
+          // Add confirmation message
+          actions.addMessage({
+            role: 'assistant',
+            content: `Model changed to: ${modelName}`,
+          });
+        } catch (error) {
+          actions.addMessage({
+            role: 'assistant',
+            content: `Error changing model: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          });
+        }
+      }
+    }
   });
 
   // Handle user input
@@ -392,8 +445,32 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
         />
       </Box>
 
-      {/* Permission Prompt (replaces input when active) */}
-      {permissionRequest ? (
+      {/* Model Selector (replaces input when active) */}
+      {modelSelectRequest ? (
+        <Box marginTop={1} flexDirection="column">
+          <ModelSelector
+            models={modelSelectRequest.models}
+            selectedIndex={modelSelectedIndex}
+            currentModel={modelSelectRequest.currentModel}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              isActive={true}
+              commandHistory={commandHistory.current || undefined}
+              completionProvider={completionProvider || undefined}
+              modelSelectRequest={modelSelectRequest}
+              modelSelectedIndex={modelSelectedIndex}
+              onModelNavigate={setModelSelectedIndex}
+              activityStream={activityStream}
+              agent={agent}
+            />
+          </Box>
+        </Box>
+      ) : permissionRequest ? (
+        /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
           <PermissionPrompt
             request={permissionRequest}
@@ -423,9 +500,6 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
             isActive={true}
             commandHistory={commandHistory.current || undefined}
             completionProvider={completionProvider || undefined}
-            permissionRequest={undefined}
-            permissionSelectedIndex={0}
-            onPermissionNavigate={setPermissionSelectedIndex}
             activityStream={activityStream}
             agent={agent}
           />
