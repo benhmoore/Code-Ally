@@ -9,3 +9,17 @@ export { ToolManager } from './ToolManager.js';
 export { ToolValidator, ValidationResult } from './ToolValidator.js';
 export { BashTool } from './BashTool.js';
 export { ReadTool } from './ReadTool.js';
+export { GrepTool } from './GrepTool.js';
+export { GlobTool } from './GlobTool.js';
+export { LsTool } from './LsTool.js';
+export { WriteTool } from './WriteTool.js';
+export { EditTool } from './EditTool.js';
+export { LineEditTool } from './LineEditTool.js';
+
+// Advanced tools
+export { AgentTool } from './AgentTool.js';
+export { BatchTool } from './BatchTool.js';
+export { FocusManagerTool } from './FocusManagerTool.js';
+export { TodoAddTool } from './TodoAddTool.js';
+export { TodoCompleteTool } from './TodoCompleteTool.js';
+export { TodoClearTool } from './TodoClearTool.js';

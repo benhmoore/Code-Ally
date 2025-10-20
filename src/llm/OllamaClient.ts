@@ -54,8 +54,8 @@ export class OllamaClient extends ModelClient {
   private readonly keepAlive?: number;
   private readonly apiUrl: string;
 
-  private currentAbortController?: AbortController;
-  private interrupted: boolean = false;
+  // Track active requests for cancellation (keyed by request ID)
+  private activeRequests: Map<string, AbortController> = new Map();
 
   /**
    * Initialize the Ollama client
@@ -93,13 +93,15 @@ export class OllamaClient extends ModelClient {
   }
 
   /**
-   * Cancel any ongoing request
+   * Cancel all ongoing requests
    */
   cancel(): void {
-    if (this.currentAbortController) {
-      this.currentAbortController.abort();
-      this.interrupted = true;
+    console.log('[OLLAMA_CLIENT] Cancelling', this.activeRequests.size, 'active requests');
+    for (const [requestId, controller] of this.activeRequests.entries()) {
+      console.log('[OLLAMA_CLIENT] Aborting request:', requestId);
+      controller.abort();
     }
+    this.activeRequests.clear();
   }
 
   /**
@@ -124,79 +126,95 @@ export class OllamaClient extends ModelClient {
     const { functions, stream = false, maxRetries: _maxRetries = 3 } = options;
     const maxRetries = _maxRetries;
 
+    // Generate unique request ID for this request
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    console.log('[OLLAMA_CLIENT] Starting request:', requestId);
+
     // Prepare payload
     const payload = this.preparePayload(messages, functions, stream);
 
-    // Retry loop with exponential backoff
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // Execute request with cancellation support
-        const result = await this.executeRequestWithCancellation(payload, stream, attempt);
+    try {
+      // Retry loop with exponential backoff
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          // Execute request with cancellation support
+          const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt);
 
-        // Validate and repair tool calls (non-streaming only)
-        if (!stream && result.tool_calls && result.tool_calls.length > 0) {
-          const validationResult = this.normalizeToolCallsInMessage(result);
+          // Validate and repair tool calls (ALL responses, not just non-streaming)
+          if (result.tool_calls && result.tool_calls.length > 0) {
+            const validationResult = this.normalizeToolCallsInMessage(result);
 
-          if (!validationResult.valid) {
-            // Attempt to retry with error feedback
-            const retryResult = await this.handleToolCallValidationRetry(
-              result,
-              messages,
-              functions,
-              maxRetries
-            );
+            // For non-streaming, retry on validation errors
+            if (!stream && !validationResult.valid) {
+              // Attempt to retry with error feedback
+              const retryResult = await this.handleToolCallValidationRetry(
+                result,
+                messages,
+                functions,
+                maxRetries
+              );
 
-            if (retryResult) {
-              return retryResult;
+              if (retryResult) {
+                return retryResult;
+              }
+
+              // Return error response if retries exhausted
+              return {
+                role: 'assistant',
+                content: `I attempted to call tools but encountered validation errors. ${validationResult.errors.join('; ')}`,
+                tool_call_validation_failed: true,
+                validation_errors: validationResult.errors,
+              };
             }
 
-            // Return error response if retries exhausted
+            // For streaming, just log errors (can't retry)
+            if (stream && !validationResult.valid) {
+              console.warn('Tool call validation errors in streaming response:', validationResult.errors);
+            }
+          }
+
+          return result;
+        } catch (error: any) {
+          // Handle abort/interruption
+          if (error.name === 'AbortError') {
+            console.log('[OLLAMA_CLIENT] Request aborted:', requestId);
             return {
               role: 'assistant',
-              content: `I attempted to call tools but encountered validation errors. ${validationResult.errors.join('; ')}`,
-              tool_call_validation_failed: true,
-              validation_errors: validationResult.errors,
+              content: '[Request cancelled by user]',
+              interrupted: true,
             };
           }
-        }
 
-        return result;
-      } catch (error: any) {
-        // Handle abort/interruption
-        if (error.name === 'AbortError' || this.interrupted) {
-          this.interrupted = false;
-          return {
-            role: 'assistant',
-            content: '[Request cancelled by user]',
-            interrupted: true,
-          };
-        }
+          // Retry on network errors
+          if (this.isNetworkError(error) && attempt < maxRetries) {
+            const waitTime = Math.pow(2, attempt);
+            await this.sleep(waitTime * 1000);
+            continue;
+          }
 
-        // Retry on network errors
-        if (this.isNetworkError(error) && attempt < maxRetries) {
-          const waitTime = Math.pow(2, attempt);
-          await this.sleep(waitTime * 1000);
-          continue;
-        }
+          // Retry on JSON errors
+          if (error instanceof SyntaxError && attempt < maxRetries) {
+            const waitTime = (1 + attempt) * 1000;
+            await this.sleep(waitTime);
+            continue;
+          }
 
-        // Retry on JSON errors
-        if (error instanceof SyntaxError && attempt < maxRetries) {
-          const waitTime = (1 + attempt) * 1000;
-          await this.sleep(waitTime);
-          continue;
+          // Return error response
+          return this.handleRequestError(error, attempt + 1);
         }
-
-        // Return error response
-        return this.handleRequestError(error, attempt + 1);
       }
-    }
 
-    // Should never reach here due to loop logic
-    return {
-      role: 'assistant',
-      content: 'Maximum retry attempts exceeded',
-      error: true,
-    };
+      // Should never reach here due to loop logic
+      return {
+        role: 'assistant',
+        content: 'Maximum retry attempts exceeded',
+        error: true,
+      };
+    } finally {
+      // Always clean up request tracking
+      console.log('[OLLAMA_CLIENT] Cleaning up request:', requestId);
+      this.activeRequests.delete(requestId);
+    }
   }
 
   /**
@@ -235,12 +253,14 @@ export class OllamaClient extends ModelClient {
    * Execute HTTP request with cancellation support
    */
   private async executeRequestWithCancellation(
+    requestId: string,
     payload: OllamaPayload,
     stream: boolean,
     attempt: number
   ): Promise<LLMResponse> {
-    // Create abort controller for cancellation
-    this.currentAbortController = new AbortController();
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    this.activeRequests.set(requestId, abortController);
 
     try {
       // Calculate adaptive timeout
@@ -250,7 +270,7 @@ export class OllamaClient extends ModelClient {
       // Create timeout promise
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
-          this.currentAbortController?.abort();
+          abortController.abort();
           reject(new Error('Request timeout'));
         }, timeout);
       });
@@ -262,7 +282,7 @@ export class OllamaClient extends ModelClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
-        signal: this.currentAbortController.signal,
+        signal: abortController.signal,
       });
 
       // Race timeout and fetch
@@ -276,20 +296,25 @@ export class OllamaClient extends ModelClient {
 
       // Process response
       if (stream) {
-        return await this.processStreamingResponse(response);
+        return await this.processStreamingResponse(requestId, response, abortController);
       } else {
         const data = await response.json();
         return this.parseNonStreamingResponse(data);
       }
-    } finally {
-      this.currentAbortController = undefined;
+    } catch (error) {
+      // Re-throw to be handled by send()
+      throw error;
     }
   }
 
   /**
    * Process streaming response from Ollama
    */
-  private async processStreamingResponse(response: Response): Promise<LLMResponse> {
+  private async processStreamingResponse(
+    requestId: string,
+    response: Response,
+    abortController: AbortController
+  ): Promise<LLMResponse> {
     if (!response.body) {
       throw new Error('Response body is null');
     }
@@ -304,8 +329,8 @@ export class OllamaClient extends ModelClient {
 
     try {
       while (true) {
-        // Check for interruption
-        if (this.interrupted) {
+        // Check for interruption via abort signal
+        if (abortController.signal.aborted) {
           throw new Error('Streaming interrupted by user');
         }
 
@@ -352,7 +377,7 @@ export class OllamaClient extends ModelClient {
       }
     } catch (error: any) {
       if (error.message === 'Streaming interrupted by user') {
-        this.interrupted = false;
+        console.log('[OLLAMA_CLIENT] Streaming interrupted for request:', requestId);
         return {
           role: 'assistant',
           content: aggregatedContent || '[Request interrupted by user]',
@@ -536,7 +561,7 @@ export class OllamaClient extends ModelClient {
       type: 'function' as const,
       function: {
         name: tc.function.name,
-        arguments: JSON.stringify(tc.function.arguments),
+        arguments: tc.function.arguments,
       },
     }));
 

@@ -87,6 +87,7 @@ export class ReadTool extends BaseTool {
 
     // Read files
     const results: string[] = [];
+    const errors: string[] = [];
     let filesRead = 0;
 
     for (const filePath of filePaths) {
@@ -95,17 +96,30 @@ export class ReadTool extends BaseTool {
         results.push(content);
         filesRead++;
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        errors.push(`${filePath}: ${errorMsg}`);
         results.push(
-          `=== ${filePath} ===\nError: ${error instanceof Error ? error.message : String(error)}`
+          `=== ${filePath} ===\nError: ${errorMsg}`
         );
       }
     }
 
+    // If ALL files failed, return an error
+    if (filesRead === 0) {
+      return this.formatErrorResponse(
+        `Failed to read ${errors.length} file${errors.length !== 1 ? 's' : ''}: ${errors.join(', ')}`,
+        'file_error'
+      );
+    }
+
     const combinedContent = results.join('\n\n');
 
+    // If some files failed, include warning in content but still succeed
     return this.formatSuccessResponse({
       content: combinedContent,
       files_read: filesRead,
+      files_failed: errors.length,
+      partial_failure: errors.length > 0,
     });
   }
 

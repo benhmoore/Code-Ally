@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { Message } from '../../types/index.js';
+import { MarkdownText } from './MarkdownText.js';
 
 interface MessageDisplayProps {
   /** Message to display */
@@ -36,14 +37,17 @@ export const MessageDisplay: React.FC<MessageDisplayProps> = ({ message }) => {
     );
   }
 
-  // Assistant messages - green with markdown-style formatting
+  // Assistant messages - markdown-formatted with syntax highlighting
   if (role === 'assistant') {
+    // Handle empty or undefined content
+    const safeContent = content || '';
+
     // Check for thinking content (simplified extraction)
-    const thinkingMatch = content.match(/<think>(.*?)<\/think>/s);
+    const thinkingMatch = safeContent.match(/<think>(.*?)<\/think>/s);
     const thinking = thinkingMatch?.[1]?.trim() || null;
     const regularContent = thinking
-      ? content.replace(/<think>.*?<\/think>/s, '').trim()
-      : content;
+      ? safeContent.replace(/<think>.*?<\/think>/s, '').trim()
+      : safeContent;
 
     return (
       <Box flexDirection="column">
@@ -55,8 +59,9 @@ export const MessageDisplay: React.FC<MessageDisplayProps> = ({ message }) => {
           </Box>
         )}
         {regularContent && (
-          <Text color="green">{regularContent}</Text>
+          <MarkdownText content={regularContent} />
         )}
+        {/* Note: Tool calls are now displayed via ToolCallDisplay in ConversationView */}
       </Box>
     );
   }

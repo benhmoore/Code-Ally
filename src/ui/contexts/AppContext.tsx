@@ -27,6 +27,9 @@ export interface AppState {
 
   /** Active tool call states */
   activeToolCalls: ToolCallState[];
+
+  /** Whether the assistant is currently thinking/processing */
+  isThinking: boolean;
 }
 
 /**
@@ -56,6 +59,9 @@ export interface AppActions {
 
   /** Clear all active tool calls */
   clearToolCalls: () => void;
+
+  /** Set thinking state */
+  setIsThinking: (isThinking: boolean) => void;
 }
 
 /**
@@ -100,10 +106,25 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [config, setConfig] = useState<Config>(initialConfig);
   const [contextUsage, setContextUsage] = useState<number>(0);
   const [activeToolCalls, setActiveToolCalls] = useState<ToolCallState[]>([]);
+  const [isThinking, setIsThinking] = useState<boolean>(false);
 
   // Actions
   const addMessage = useCallback((message: Message) => {
-    setMessages((prev) => [...prev, message]);
+    // Add timestamp if not present
+    const messageWithTimestamp = {
+      ...message,
+      timestamp: message.timestamp || Date.now(),
+    };
+    setMessages((prev) => [...prev, messageWithTimestamp]);
+  }, []);
+
+  const setMessagesWithTimestamps = useCallback((newMessages: Message[]) => {
+    // Add timestamps to messages that don't have them
+    const messagesWithTimestamps = newMessages.map((msg, idx) => ({
+      ...msg,
+      timestamp: msg.timestamp || Date.now() + idx, // Add small offset for ordering
+    }));
+    setMessages(messagesWithTimestamps);
   }, []);
 
   const updateConfig = useCallback((updates: Partial<Config>) => {
@@ -111,13 +132,36 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   }, []);
 
   const addToolCall = useCallback((toolCall: ToolCallState) => {
-    setActiveToolCalls((prev) => [...prev, toolCall]);
+    // Enforce structure: tool calls MUST have IDs
+    if (!toolCall.id) {
+      throw new Error(`Cannot add tool call without ID. Tool: ${toolCall.toolName}`);
+    }
+
+    setActiveToolCalls((prev) => {
+      // Check if tool call already exists by ID (prevent duplicates)
+      const exists = prev.some(tc => tc.id === toolCall.id);
+      if (exists) {
+        throw new Error(`Duplicate tool call detected. ID ${toolCall.id} already exists. Tool: ${toolCall.toolName}`);
+      }
+
+      return [...prev, toolCall];
+    });
   }, []);
 
   const updateToolCall = useCallback((id: string, updates: Partial<ToolCallState>) => {
-    setActiveToolCalls((prev) =>
-      prev.map((call) => (call.id === id ? { ...call, ...updates } : call))
-    );
+    // Enforce structure: ID must exist
+    if (!id) {
+      throw new Error(`Cannot update tool call without ID`);
+    }
+
+    setActiveToolCalls((prev) => {
+      const toolCall = prev.find(tc => tc.id === id);
+      if (!toolCall) {
+        throw new Error(`Cannot update non-existent tool call. ID: ${id}`);
+      }
+
+      return prev.map((call) => (call.id === id ? { ...call, ...updates } : call));
+    });
   }, []);
 
   const removeToolCall = useCallback((id: string) => {
@@ -136,16 +180,18 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       contextUsage,
       activeToolCallsCount: activeToolCalls.length,
       activeToolCalls,
+      isThinking,
     },
     actions: {
       addMessage,
-      setMessages,
+      setMessages: setMessagesWithTimestamps,
       updateConfig,
       setContextUsage,
       addToolCall,
       updateToolCall,
       removeToolCall,
       clearToolCalls,
+      setIsThinking,
     },
   };
 

@@ -8,7 +8,6 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn, ChildProcess } from 'child_process';
-import { generateId } from '../utils/id.js';
 
 export class BashTool extends BaseTool {
   readonly name = 'bash';
@@ -144,7 +143,6 @@ export class BashTool extends BaseTool {
     workingDir: string,
     timeout: number
   ): Promise<ToolResult> {
-    const callId = generateId();
     let stdout = '';
     let stderr = '';
     let returnCode: number | null = null;
@@ -172,7 +170,7 @@ export class BashTool extends BaseTool {
         child.stdout.on('data', (data: Buffer) => {
           const chunk = data.toString();
           stdout += chunk;
-          this.emitOutputChunk(callId, chunk);
+          this.emitOutputChunk(chunk);
         });
       }
 
@@ -181,7 +179,7 @@ export class BashTool extends BaseTool {
         child.stderr.on('data', (data: Buffer) => {
           const chunk = data.toString();
           stderr += chunk;
-          this.emitOutputChunk(callId, chunk);
+          this.emitOutputChunk(chunk);
         });
       }
 
@@ -192,8 +190,8 @@ export class BashTool extends BaseTool {
 
         resolve(
           this.formatSuccessResponse({
-            output: stdout,
-            error: stderr,
+            content: stdout, // Human-readable output for LLM (standardized field name)
+            stderr: stderr, // Separate stderr for error checking
             return_code: returnCode ?? -1,
           })
         );

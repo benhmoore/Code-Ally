@@ -7,7 +7,6 @@
 
 import { ToolResult, ActivityEvent, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { generateId } from '../utils/id.js';
 
 export abstract class BaseTool {
   /**
@@ -32,6 +31,13 @@ export abstract class BaseTool {
   readonly suppressExecutionAnimation: boolean = false;
 
   /**
+   * Whether this tool is a transparent wrapper
+   * Set to true for tools that should not appear in the conversation
+   * (only their children should appear)
+   */
+  readonly isTransparentWrapper: boolean = false;
+
+  /**
    * Activity stream for emitting events
    */
   protected activityStream: ActivityStream;
@@ -46,59 +52,34 @@ export abstract class BaseTool {
   }
 
   /**
+   * Current tool call ID (set by ToolOrchestrator for streaming output)
+   */
+  protected currentCallId?: string;
+
+  /**
    * Execute the tool with the given arguments
    *
-   * This method wraps the actual implementation with event emission
-   * and error handling. Subclasses should implement executeImpl instead.
+   * Event emission for START/END/ERROR is handled by ToolOrchestrator.
+   * Tools can emit OUTPUT_CHUNK events for real-time streaming using currentCallId.
    *
    * @param args - Tool-specific parameters
+   * @param callId - Tool call ID from ToolOrchestrator (for streaming output)
    * @returns Tool result dictionary
    */
-  async execute(args: any): Promise<ToolResult> {
-    const callId = generateId();
-
-    this.emitEvent({
-      id: callId,
-      type: ActivityEventType.TOOL_CALL_START,
-      timestamp: Date.now(),
-      data: {
-        toolName: this.name,
-        arguments: args,
-      },
-    });
+  async execute(args: any, callId?: string): Promise<ToolResult> {
+    this.currentCallId = callId;
 
     try {
       const result = await this.executeImpl(args);
-
-      this.emitEvent({
-        id: callId,
-        type: ActivityEventType.TOOL_CALL_END,
-        timestamp: Date.now(),
-        data: {
-          toolName: this.name,
-          result,
-          success: result.success,
-        },
-      });
-
       return result;
     } catch (error) {
       const errorResult = this.formatErrorResponse(
         error instanceof Error ? error.message : String(error),
         'system_error'
       );
-
-      this.emitEvent({
-        id: callId,
-        type: ActivityEventType.ERROR,
-        timestamp: Date.now(),
-        data: {
-          toolName: this.name,
-          error: errorResult.error,
-        },
-      });
-
       return errorResult;
+    } finally {
+      this.currentCallId = undefined;
     }
   }
 
@@ -116,13 +97,18 @@ export abstract class BaseTool {
 
   /**
    * Emit a chunk of output (for streaming tools like bash)
+   * Uses currentCallId set by ToolOrchestrator
    */
-  protected emitOutputChunk(callId: string, chunk: string): void {
+  protected emitOutputChunk(chunk: string): void {
+    if (!this.currentCallId) {
+      console.warn(`[${this.name}] Cannot emit output chunk: no currentCallId set`);
+      return;
+    }
+
     this.emitEvent({
-      id: generateId(),
+      id: this.currentCallId,
       type: ActivityEventType.TOOL_OUTPUT_CHUNK,
       timestamp: Date.now(),
-      parentId: callId,
       data: {
         toolName: this.name,
         chunk,
@@ -169,13 +155,30 @@ export abstract class BaseTool {
     suggestion?: string,
     additionalFields?: Record<string, any>
   ): ToolResult {
-    // Build parameter context for error message
+    // Build parameter context for error message (with truncation for clarity)
     let paramContext = '';
     if (Object.keys(this.currentParams).length > 0) {
       const paramPairs = Object.entries(this.currentParams)
         .map(([key, value]) => {
-          const valueStr =
-            typeof value === 'string' ? `"${value}"` : JSON.stringify(value);
+          let valueStr: string;
+
+          // Truncate long strings
+          if (typeof value === 'string') {
+            valueStr = value.length > 50
+              ? `"${value.substring(0, 47)}..."`
+              : `"${value}"`;
+          }
+          // Summarize long arrays
+          else if (Array.isArray(value)) {
+            valueStr = value.length > 3
+              ? `[${value.length} items]`
+              : JSON.stringify(value);
+          }
+          // Normal JSON for other types
+          else {
+            valueStr = JSON.stringify(value);
+          }
+
           return `${key}=${valueStr}`;
         })
         .join(', ');

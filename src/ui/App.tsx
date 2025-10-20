@@ -6,14 +6,24 @@
  * application structure.
  */
 
-import React, { useEffect, useRef } from 'react';
-import { Box, Text, useApp } from 'ink';
+import React, { useEffect, useRef, useState } from 'react';
+import { Box, Text } from 'ink';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ActivityProvider } from './contexts/ActivityContext.js';
+import { ActivityProvider, useActivityStreamContext } from './contexts/ActivityContext.js';
 import { AppProvider, useAppContext } from './contexts/AppContext.js';
 import { useActivityEvent } from './hooks/useActivityEvent.js';
 import { ActivityEventType, Config, ToolCallState, Message } from '../types/index.js';
 import { InputPrompt } from './components/InputPrompt.js';
+import { ConversationView } from './components/ConversationView.js';
+import { PermissionPrompt, PermissionRequest } from './components/PermissionPrompt.js';
+import { Agent } from '../agent/Agent.js';
+import { CommandHistory } from '../services/CommandHistory.js';
+import { CompletionProvider } from '../services/CompletionProvider.js';
+import { AgentManager } from '../services/AgentManager.js';
+import { CommandHandler } from '../agent/CommandHandler.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { ConfigManager } from '../services/ConfigManager.js';
+import { ToolManager } from '../tools/ToolManager.js';
 
 /**
  * Props for the App component
@@ -24,6 +34,9 @@ export interface AppProps {
 
   /** Activity stream instance */
   activityStream?: ActivityStream;
+
+  /** Agent instance */
+  agent: Agent;
 }
 
 /**
@@ -32,65 +45,289 @@ export interface AppProps {
  * This component is wrapped by providers and has access to all context values.
  * It subscribes to activity events and updates the app state accordingly.
  */
-const AppContent: React.FC = () => {
+const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
   const { state, actions } = useAppContext();
-  const { exit } = useApp();
+  const activityStream = useActivityStreamContext();
+
+  // Initialize command history, completion provider, and command handler
+  const commandHistory = useRef<CommandHistory | null>(null);
+  const [completionProvider, setCompletionProvider] = useState<CompletionProvider | null>(null);
+  const commandHandler = useRef<CommandHandler | null>(null);
+
+
+  // Permission prompt state
+  const [permissionRequest, setPermissionRequest] = useState<(PermissionRequest & { requestId: string }) | undefined>(undefined);
+  const [permissionSelectedIndex, setPermissionSelectedIndex] = useState(0);
+
+  // Initialize services on mount
+  useEffect(() => {
+    const initializeServices = async () => {
+      try {
+        // Create and load command history
+        const history = new CommandHistory();
+        await history.load();
+        commandHistory.current = history;
+
+        // Create completion provider with agent manager
+        const agentManager = new AgentManager();
+        const provider = new CompletionProvider(agentManager);
+        setCompletionProvider(provider);
+
+        // Create command handler with service registry and config manager
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const configManager = serviceRegistry.get<ConfigManager>('config_manager');
+
+        if (configManager) {
+          const handler = new CommandHandler(agent, configManager, serviceRegistry);
+          commandHandler.current = handler;
+        }
+      } catch (error) {
+        console.error('Failed to initialize input services:', error);
+        // Continue without services
+      }
+    };
+
+    initializeServices();
+  }, [agent]);
 
   // Subscribe to tool call start events
   useActivityEvent(ActivityEventType.TOOL_CALL_START, (event) => {
+    console.log('[TOOL_CALL_START]', event.id, event.data?.toolName, 'parentId:', event.parentId);
+
+    // Skip tool group orchestration events (they're not actual tool calls)
+    if (event.data?.groupExecution) {
+      return;
+    }
+
+    // Enforce structure: tool calls MUST have IDs
+    if (!event.id) {
+      throw new Error(`TOOL_CALL_START event missing required 'id' field. Tool: ${event.data?.toolName || 'unknown'}, Timestamp: ${event.timestamp}`);
+    }
+
+    if (!event.data?.toolName) {
+      throw new Error(`TOOL_CALL_START event missing required 'toolName' field. ID: ${event.id}`);
+    }
+
+    if (!event.timestamp) {
+      throw new Error(`TOOL_CALL_START event missing required 'timestamp' field. ID: ${event.id}, Tool: ${event.data.toolName}`);
+    }
+
     const toolCall: ToolCallState = {
       id: event.id,
       status: 'executing',
       toolName: event.data.toolName,
-      arguments: event.data.arguments,
+      arguments: event.data.arguments || {},
       startTime: event.timestamp,
+      parentId: event.parentId, // For nested tool calls (e.g., from subagents)
+      isTransparent: event.data.isTransparent || false, // For wrapper tools
     };
     actions.addToolCall(toolCall);
   });
 
   // Subscribe to tool call end events
   useActivityEvent(ActivityEventType.TOOL_CALL_END, (event) => {
+    // Skip tool group orchestration events (they're not actual tool calls)
+    if (event.data?.groupExecution) {
+      return;
+    }
+
+    // Enforce structure
+    if (!event.id) {
+      throw new Error(`TOOL_CALL_END event missing required 'id' field. Timestamp: ${event.timestamp}`);
+    }
+
+    if (!event.timestamp) {
+      throw new Error(`TOOL_CALL_END event missing required 'timestamp' field. ID: ${event.id}`);
+    }
+
+    if (event.data?.success === undefined) {
+      throw new Error(`TOOL_CALL_END event missing required 'success' field. ID: ${event.id}`);
+    }
+
     actions.updateToolCall(event.id, {
       status: event.data.success ? 'success' : 'error',
       endTime: event.timestamp,
       error: event.data.error,
     });
-
-    // Remove from active list after a short delay (for visual feedback)
-    setTimeout(() => {
-      actions.removeToolCall(event.id);
-    }, 1000);
   });
 
   // Subscribe to tool output chunks
   useActivityEvent(ActivityEventType.TOOL_OUTPUT_CHUNK, (event) => {
+    // Enforce structure
+    if (!event.id) {
+      throw new Error(`TOOL_OUTPUT_CHUNK event missing required 'id' field`);
+    }
+
     actions.updateToolCall(event.id, {
-      output: event.data.chunk,
+      output: event.data?.chunk || '',
     });
   });
 
   // Subscribe to error events
   useActivityEvent(ActivityEventType.ERROR, (event) => {
+    // Skip tool group orchestration events (they're not actual tool calls)
+    if (event.data?.groupExecution) {
+      return;
+    }
+
+    // Enforce structure
+    if (!event.id) {
+      throw new Error(`ERROR event missing required 'id' field`);
+    }
+
+    if (!event.timestamp) {
+      throw new Error(`ERROR event missing required 'timestamp' field. ID: ${event.id}`);
+    }
+
     actions.updateToolCall(event.id, {
       status: 'error',
-      error: event.data.error,
+      error: event.data?.error || 'Unknown error',
       endTime: event.timestamp,
     });
+  });
 
-    // Remove from active list after a short delay
-    setTimeout(() => {
-      actions.removeToolCall(event.id);
-    }, 1000);
+  // Subscribe to permission request events
+  useActivityEvent(ActivityEventType.PERMISSION_REQUEST, (event) => {
+    // Enforce structure
+    if (!event.id) {
+      throw new Error(`PERMISSION_REQUEST event missing required 'id' field`);
+    }
+
+    const { requestId, toolName, path, command, arguments: args, sensitivity, options } = event.data || {};
+
+    if (!requestId) {
+      throw new Error(`PERMISSION_REQUEST event missing required 'requestId' field. ID: ${event.id}`);
+    }
+
+    // Note: Permission requests have their own IDs (perm_xxx) that are separate from tool call IDs
+    // They occur BEFORE tool calls start, so there's no tool call to update yet
+
+    setPermissionRequest({
+      requestId,
+      toolName,
+      path,
+      command,
+      arguments: args,
+      sensitivity,
+      options,
+    });
+    setPermissionSelectedIndex(0); // Reset selection
+  });
+
+  // Subscribe to permission response events (to clear UI state)
+  useActivityEvent(ActivityEventType.PERMISSION_RESPONSE, () => {
+    // Just clear the permission prompt UI
+    // The tool call will start (TOOL_CALL_START) after permission is granted
+    setPermissionRequest(undefined);
+    setPermissionSelectedIndex(0);
   });
 
   // Handle user input
-  const handleInput = (input: string) => {
+  const handleInput = async (input: string) => {
     const trimmed = input.trim();
 
-    // Exit commands
-    if (trimmed === 'exit' || trimmed === 'quit') {
-      exit();
-      return;
+    // Check for bash shortcuts (! prefix)
+    if (trimmed.startsWith('!')) {
+      const bashCommand = trimmed.slice(1).trim();
+
+      if (bashCommand) {
+        try {
+          // Get ToolManager from ServiceRegistry
+          const serviceRegistry = ServiceRegistry.getInstance();
+          const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+          if (!toolManager) {
+            actions.addMessage({
+              role: 'assistant',
+              content: 'Error: Tool manager not available',
+            });
+            return;
+          }
+
+          // Get BashTool
+          const bashTool = toolManager.getTool('bash');
+
+          if (!bashTool) {
+            actions.addMessage({
+              role: 'assistant',
+              content: 'Error: Bash tool not available',
+            });
+            return;
+          }
+
+          // Add user message (with the command, not the ! prefix)
+          actions.addMessage({
+            role: 'user',
+            content: bashCommand,
+          });
+
+          // Execute bash command directly
+          const result = await bashTool.execute({ command: bashCommand });
+
+          // Format response based on result
+          let responseContent = '';
+          if (result.success) {
+            const output = result.output || '';
+            responseContent = output.trim() || '';
+          } else {
+            const error = result.error || 'Unknown error';
+            responseContent = error;
+          }
+
+          // Add assistant response (only if there's content)
+          if (responseContent.trim()) {
+            actions.addMessage({
+              role: 'assistant',
+              content: responseContent,
+            });
+          }
+
+          return;
+        } catch (error) {
+          actions.addMessage({
+            role: 'assistant',
+            content: `Error executing bash command: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          });
+          return;
+        }
+      }
+    }
+
+    // Check for slash commands first
+    if (trimmed.startsWith('/') && commandHandler.current) {
+      try {
+        const result = await commandHandler.current.handleCommand(trimmed, state.messages);
+
+        if (result.handled) {
+          // Add user message
+          actions.addMessage({
+            role: 'user',
+            content: trimmed,
+          });
+
+          // Add command response if provided
+          if (result.response) {
+            actions.addMessage({
+              role: 'assistant',
+              content: result.response,
+            });
+          }
+
+          // Update messages if command modified them (e.g., /compact)
+          if (result.updatedMessages) {
+            actions.setMessages(result.updatedMessages);
+          }
+
+          return;
+        }
+      } catch (error) {
+        // Add error message for failed command
+        actions.addMessage({
+          role: 'assistant',
+          content: `Command error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        });
+        return;
+      }
     }
 
     // Add user message
@@ -100,14 +337,28 @@ const AppContent: React.FC = () => {
         content: trimmed,
       });
 
-      // TODO: Send to agent for processing
-      // For now, just echo back
-      setTimeout(() => {
+      // Set thinking state
+      actions.setIsThinking(true);
+
+      // Send to agent for processing
+      try {
+        const response = await agent.sendMessage(trimmed);
+
+        // Add assistant response
         actions.addMessage({
           role: 'assistant',
-          content: `Echo: ${trimmed}\n\n(Agent integration coming in Phase 6)`,
+          content: response,
         });
-      }, 100);
+      } catch (error) {
+        // Add error message
+        actions.addMessage({
+          role: 'assistant',
+          content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        });
+      } finally {
+        // Clear thinking state
+        actions.setIsThinking(false);
+      }
     }
   };
 
@@ -130,43 +381,59 @@ const AppContent: React.FC = () => {
         </Box>
       )}
 
-      {/* Active Tool Calls */}
-      {state.activeToolCalls.length > 0 && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold>Active Tools:</Text>
-          {state.activeToolCalls.map((toolCall) => (
-            <Box key={toolCall.id} paddingLeft={2}>
-              <Text color="cyan">{toolCall.toolName}</Text>
-              <Text dimColor> - {toolCall.status}</Text>
-            </Box>
-          ))}
+      {/* Conversation View */}
+      <Box flexDirection="column" flexGrow={1} marginBottom={1}>
+        <ConversationView
+          messages={state.messages}
+          isThinking={state.isThinking}
+          activeToolCalls={state.activeToolCalls}
+        />
+      </Box>
+
+      {/* Permission Prompt (replaces input when active) */}
+      {permissionRequest ? (
+        <Box marginTop={1} flexDirection="column">
+          <PermissionPrompt
+            request={permissionRequest}
+            selectedIndex={permissionSelectedIndex}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              isActive={true}
+              commandHistory={commandHistory.current || undefined}
+              completionProvider={completionProvider || undefined}
+              permissionRequest={permissionRequest}
+              permissionSelectedIndex={permissionSelectedIndex}
+              onPermissionNavigate={setPermissionSelectedIndex}
+              activityStream={activityStream}
+              agent={agent}
+            />
+          </Box>
+        </Box>
+      ) : (
+        /* Input Prompt */
+        <Box marginTop={1}>
+          <InputPrompt
+            onSubmit={handleInput}
+            isActive={true}
+            commandHistory={commandHistory.current || undefined}
+            completionProvider={completionProvider || undefined}
+            permissionRequest={undefined}
+            permissionSelectedIndex={0}
+            onPermissionNavigate={setPermissionSelectedIndex}
+            activityStream={activityStream}
+            agent={agent}
+          />
         </Box>
       )}
-
-      {/* Message History */}
-      <Box flexDirection="column" flexGrow={1}>
-        <Text bold dimColor>
-          Messages: {state.messages.length}
-        </Text>
-        {state.messages.slice(-5).map((msg, idx) => (
-          <Box key={idx} paddingLeft={2}>
-            <Text color={msg.role === 'user' ? 'green' : 'blue'}>
-              {msg.role}:
-            </Text>
-            <Text dimColor> {msg.content.substring(0, 50)}...</Text>
-          </Box>
-        ))}
-      </Box>
-
-      {/* Input Prompt */}
-      <Box marginTop={1}>
-        <InputPrompt onSubmit={handleInput} isActive={true} />
-      </Box>
 
       {/* Footer / Help */}
       <Box marginTop={1}>
         <Text dimColor>
-          Type 'exit' or 'quit' to exit | Active tools: {state.activeToolCallsCount} | Model: {state.config.model || 'none'}
+          Ctrl+C to exit | Model: {state.config.model || 'none'}
         </Text>
       </Box>
     </Box>
@@ -188,14 +455,14 @@ const AppContent: React.FC = () => {
  * const { unmount } = render(<App config={config} />);
  * ```
  */
-export const App: React.FC<AppProps> = ({ config, activityStream }) => {
+export const App: React.FC<AppProps> = ({ config, activityStream, agent }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
   return (
     <ActivityProvider activityStream={streamRef.current}>
       <AppProvider initialConfig={config}>
-        <AppContent />
+        <AppContent agent={agent} />
       </AppProvider>
     </ActivityProvider>
   );
@@ -227,6 +494,7 @@ export interface AppWithMessagesProps extends AppProps {
 export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
   config,
   activityStream,
+  agent,
   initialMessages = [],
 }) => {
   const streamRef = useRef(activityStream || new ActivityStream());
@@ -234,7 +502,7 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
   return (
     <ActivityProvider activityStream={streamRef.current}>
       <AppProvider initialConfig={config}>
-        <AppContentWithMessages initialMessages={initialMessages} />
+        <AppContentWithMessages agent={agent} initialMessages={initialMessages} />
       </AppProvider>
     </ActivityProvider>
   );
@@ -243,7 +511,8 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
 /**
  * Inner component that accepts initial messages
  */
-const AppContentWithMessages: React.FC<{ initialMessages: Message[] }> = ({
+const AppContentWithMessages: React.FC<{ agent: Agent; initialMessages: Message[] }> = ({
+  agent,
   initialMessages,
 }) => {
   const { actions } = useAppContext();
@@ -256,7 +525,7 @@ const AppContentWithMessages: React.FC<{ initialMessages: Message[] }> = ({
   }, []); // Only run once on mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
-  return <AppContent />;
+  return <AppContent agent={agent} />;
 };
 
 export default App;

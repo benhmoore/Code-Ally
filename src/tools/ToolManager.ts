@@ -99,12 +99,14 @@ export class ToolManager {
    *
    * @param toolName - Name of the tool to execute
    * @param args - Tool arguments
+   * @param callId - Tool call ID from orchestrator (for streaming output)
    * @param _preApproved - Whether permission has been pre-approved
    * @returns Tool result
    */
   async executeTool(
     toolName: string,
     args: Record<string, any>,
+    callId?: string,
     _preApproved: boolean = false
   ): Promise<ToolResult> {
     // 1. Validate tool existence
@@ -143,9 +145,9 @@ export class ToolManager {
     // 4. Track this call
     this.trackToolCall(toolName, args);
 
-    // 5. Execute tool
+    // 5. Execute tool (pass callId for streaming output)
     try {
-      const result = await tool.execute(args);
+      const result = await tool.execute(args, callId);
 
       // 6. Track file operations
       this.trackFileOperation(toolName, args, result);

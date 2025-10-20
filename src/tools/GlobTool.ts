@@ -1,0 +1,228 @@
+/**
+ * GlobTool - Find files matching glob patterns
+ *
+ * Provides fast file pattern matching with exclusion support,
+ * sorted by modification time.
+ */
+
+import { BaseTool } from './BaseTool.js';
+import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ActivityStream } from '../services/ActivityStream.js';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import fg from 'fast-glob';
+
+interface FileInfo {
+  path: string;
+  relativePath: string;
+  size: number;
+  modified: number;
+}
+
+export class GlobTool extends BaseTool {
+  readonly name = 'glob';
+  readonly description =
+    'Find files matching glob patterns. Use * for wildcards, ** for recursive search. Examples: "*.ts" (TypeScript files), "**/*.test.js" (test files recursively), "src/**/*.{ts,tsx}" (multiple extensions).';
+  readonly requiresConfirmation = false; // Read-only operation
+
+  private static readonly MAX_RESULTS = 100;
+  private static readonly DEFAULT_EXCLUDE = [
+    '**/node_modules/**',
+    '**/.git/**',
+    '**/dist/**',
+    '**/build/**',
+    '**/.next/**',
+    '**/coverage/**',
+  ];
+
+  constructor(activityStream: ActivityStream) {
+    super(activityStream);
+  }
+
+  /**
+   * Provide custom function definition
+   */
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: {
+          type: 'object',
+          properties: {
+            pattern: {
+              type: 'string',
+              description:
+                'Glob pattern to match files (e.g., "*.ts", "**/*.js", "src/**/*test*")',
+            },
+            path: {
+              type: 'string',
+              description: 'Search root directory (default: current directory)',
+            },
+            exclude: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Patterns to exclude (default: node_modules, .git, dist, build)',
+            },
+            max_results: {
+              type: 'integer',
+              description: `Maximum number of results (default: ${GlobTool.MAX_RESULTS})`,
+            },
+          },
+          required: ['pattern'],
+        },
+      },
+    };
+  }
+
+  protected async executeImpl(args: any): Promise<ToolResult> {
+    // Capture parameters
+    this.captureParams(args);
+
+    // Extract and validate parameters
+    const pattern = args.pattern as string;
+    const searchPath = (args.path as string) || '.';
+    const excludePatterns = (args.exclude as string[]) || [];
+    const maxResults = Math.min(
+      Number(args.max_results) || GlobTool.MAX_RESULTS,
+      GlobTool.MAX_RESULTS
+    );
+
+    if (!pattern) {
+      return this.formatErrorResponse(
+        'pattern parameter is required',
+        'validation_error',
+        'Example: glob(pattern="**/*.ts", path="src/")'
+      );
+    }
+
+    // Validate pattern (basic security check)
+    if (pattern.includes('..')) {
+      return this.formatErrorResponse(
+        'Pattern contains invalid path traversal (..)',
+        'security_error',
+        'Use patterns without .. for security'
+      );
+    }
+
+    try {
+      // Resolve search path
+      const absolutePath = path.isAbsolute(searchPath)
+        ? searchPath
+        : path.join(process.cwd(), searchPath);
+
+      // Check if path exists
+      try {
+        await fs.access(absolutePath);
+      } catch {
+        return this.formatErrorResponse(
+          `Path not found: ${searchPath}`,
+          'validation_error'
+        );
+      }
+
+      // Check if it's a directory
+      const stats = await fs.stat(absolutePath);
+      if (!stats.isDirectory()) {
+        return this.formatErrorResponse(
+          `Not a directory: ${searchPath}`,
+          'validation_error',
+          'glob requires a directory path'
+        );
+      }
+
+      // Combine default and user-provided exclude patterns
+      const allExcludePatterns = [...GlobTool.DEFAULT_EXCLUDE, ...excludePatterns];
+
+      // Construct the full glob pattern
+      const globPattern = path.join(absolutePath, pattern);
+
+      // Find matching files
+      const matchedFiles = await fg(globPattern, {
+        dot: false,
+        onlyFiles: true,
+        ignore: allExcludePatterns,
+        absolute: true,
+      });
+
+      // Get file info with stats
+      const fileInfos: FileInfo[] = [];
+      for (const filePath of matchedFiles) {
+        try {
+          const fileStats = await fs.stat(filePath);
+          fileInfos.push({
+            path: filePath,
+            relativePath: path.relative(process.cwd(), filePath),
+            size: fileStats.size,
+            modified: fileStats.mtimeMs,
+          });
+        } catch {
+          // Skip files that can't be stat'd
+          continue;
+        }
+      }
+
+      // Sort by modification time (newest first)
+      fileInfos.sort((a, b) => b.modified - a.modified);
+
+      // Apply limit
+      const totalMatches = fileInfos.length;
+      const limitedResults = totalMatches > maxResults;
+      const results = fileInfos.slice(0, maxResults);
+
+      // Extract just the paths for the main result
+      const filePaths = results.map((info) => info.relativePath);
+
+      // Format as human-readable content
+      const content = filePaths.join('\n');
+
+      return this.formatSuccessResponse({
+        content, // Human-readable output for LLM
+        files: filePaths, // Structured data
+        total_matches: totalMatches,
+        limited_results: limitedResults,
+        file_details: results,
+      });
+    } catch (error) {
+      return this.formatErrorResponse(
+        `Error searching files: ${error instanceof Error ? error.message : String(error)}`,
+        'system_error'
+      );
+    }
+  }
+
+  /**
+   * Custom result preview
+   */
+  getResultPreview(result: ToolResult, maxLines: number = 3): string[] {
+    if (!result.success) {
+      return super.getResultPreview(result, maxLines);
+    }
+
+    const files = result.files as string[] | undefined;
+    const totalMatches = result.total_matches ?? 0;
+
+    if (!files || files.length === 0) {
+      return ['No files found'];
+    }
+
+    const lines: string[] = [];
+    lines.push(`Found ${totalMatches} file(s)`);
+
+    const previewCount = Math.min(files.length, maxLines - 1);
+    for (let i = 0; i < previewCount; i++) {
+      const file = files[i];
+      if (file) {
+        lines.push(file);
+      }
+    }
+
+    if (files.length > previewCount) {
+      lines.push('...');
+    }
+
+    return lines;
+  }
+}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 
 interface StatusLineProps {
@@ -10,7 +10,16 @@ interface StatusLineProps {
   modelName?: string;
   /** Whether to always show the status line */
   alwaysShow?: boolean;
+  /** Current agent name */
+  agent?: string;
+  /** Active sub-agents */
+  subAgents?: string[];
 }
+
+/**
+ * Spinner frames for animation
+ */
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /**
  * StatusLine Component
@@ -21,6 +30,7 @@ interface StatusLineProps {
  * - Context usage: Color-coded percentage (green < 70%, yellow 70-90%, red > 90%)
  * - Active tools: Count of currently executing tools
  * - Model name: Current LLM model (truncated to 5 chars like Python version)
+ * - Agent activity: Shows current agent and sub-agents with animated spinner
  *
  * Layout: Single line, right-aligned, minimal and non-intrusive
  *
@@ -34,7 +44,22 @@ export const StatusLine: React.FC<StatusLineProps> = ({
   activeToolCount,
   modelName,
   alwaysShow = false,
+  agent,
+  subAgents,
 }) => {
+  const [frame, setFrame] = useState(0);
+
+  // Animate spinner when agent or tools are active
+  useEffect(() => {
+    if (agent || activeToolCount > 0) {
+      const interval = setInterval(() => {
+        setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+      }, 80);
+      return () => clearInterval(interval);
+    }
+    return undefined;
+  }, [agent, activeToolCount]);
+
   // Determine context color based on usage
   const getContextColor = (): string => {
     if (contextUsagePercent >= 90) return 'red';
@@ -60,31 +85,48 @@ export const StatusLine: React.FC<StatusLineProps> = ({
   const contextColor = getContextColor();
 
   return (
-    <Box justifyContent="flex-end" paddingBottom={1}>
-      {/* Model name */}
-      {modelName && (
-        <Box marginRight={2}>
-          <Text dimColor color="yellow">
-            {truncatedModel}
-          </Text>
-        </Box>
-      )}
-
-      {/* Context usage */}
-      <Box marginRight={2}>
-        <Text color={contextColor}>
-          ({remainingPercent}% remaining)
-        </Text>
+    <Box justifyContent="space-between" paddingBottom={1}>
+      {/* Left side: Agent activity */}
+      <Box>
+        {agent && (
+          <Box>
+            <Text color="cyan">{SPINNER_FRAMES[frame]} {agent}</Text>
+            {subAgents && subAgents.length > 0 && (
+              <Text dimColor> → {subAgents.join(', ')}</Text>
+            )}
+          </Box>
+        )}
       </Box>
 
-      {/* Active tool count */}
-      {activeToolCount > 0 && (
-        <Box>
-          <Text color="cyan" dimColor>
-            {activeToolCount} tool{activeToolCount !== 1 ? 's' : ''} active
-          </Text>
-        </Box>
-      )}
+      {/* Right side: Context and model info */}
+      <Box>
+        {/* Context usage (only show if significant) */}
+        {contextUsagePercent >= 70 && (
+          <Box marginRight={2}>
+            <Text color={contextColor}>
+              Context: {remainingPercent}%
+            </Text>
+          </Box>
+        )}
+
+        {/* Model name */}
+        {modelName && (
+          <Box marginRight={2}>
+            <Text dimColor color="yellow">
+              {truncatedModel}
+            </Text>
+          </Box>
+        )}
+
+        {/* Active tool count with spinner */}
+        {activeToolCount > 0 && (
+          <Box>
+            <Text color="cyan">
+              {SPINNER_FRAMES[frame]} {activeToolCount} tool{activeToolCount !== 1 ? 's' : ''}
+            </Text>
+          </Box>
+        )}
+      </Box>
     </Box>
   );
 };

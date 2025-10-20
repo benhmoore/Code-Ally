@@ -14,6 +14,7 @@ export interface Message {
   name?: string;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
+  timestamp?: number; // For chronological ordering with tool calls
 }
 
 // ===========================
@@ -25,7 +26,7 @@ export interface ToolCall {
   type: 'function';
   function: {
     name: string;
-    arguments: string; // JSON string
+    arguments: Record<string, any>; // Object (Ollama format)
   };
 }
 
@@ -70,6 +71,9 @@ export enum ActivityEventType {
   AGENT_START = 'agent_start',
   AGENT_END = 'agent_end',
   ERROR = 'error',
+  PERMISSION_REQUEST = 'permission_request',
+  PERMISSION_RESPONSE = 'permission_response',
+  INTERRUPT_ALL = 'interrupt_all',
 }
 
 export interface ActivityEvent {
@@ -104,6 +108,8 @@ export interface ToolCallState {
   error?: string;
   startTime: number;
   endTime?: number;
+  parentId?: string; // For nested tool calls (e.g., subagents)
+  isTransparent?: boolean; // For wrapper tools that should not be displayed
 }
 
 // ===========================
@@ -172,9 +178,24 @@ export interface IService {
 // Session Types
 // ===========================
 
+export interface SessionMetadata {
+  title?: string;
+  tags?: string[];
+  model?: string;
+}
+
 export interface Session {
+  id: string;
   name: string;
   created_at: string;
   updated_at: string;
   messages: Message[];
+  metadata?: SessionMetadata;
+}
+
+export interface SessionInfo {
+  session_id: string;
+  display_name: string;
+  last_modified: string;
+  message_count: number;
 }

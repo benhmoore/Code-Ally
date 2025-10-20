@@ -11,6 +11,10 @@ import { App } from '../App.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ActivityEventType } from '../../types/index.js';
 import type { Config } from '../../types/index.js';
+import { Agent } from '../../agent/Agent.js';
+import { OllamaClient } from '../../llm/OllamaClient.js';
+import { ToolManager } from '../../tools/ToolManager.js';
+import { BashTool } from '../../tools/BashTool.js';
 
 /**
  * Example: Basic App Setup
@@ -52,8 +56,24 @@ async function basicExample() {
   // Create activity stream
   const activityStream = new ActivityStream();
 
+  // Create mock agent for example
+  const modelClient = new OllamaClient({
+    endpoint: config.endpoint,
+    modelName: config.model,
+    temperature: config.temperature,
+    contextSize: config.context_size,
+    maxTokens: config.max_tokens,
+  });
+
+  const tools = [new BashTool(activityStream)];
+  const toolManager = new ToolManager(tools, activityStream);
+
+  const agent = new Agent(modelClient, toolManager, activityStream, { config });
+
   // Render the app
-  const { unmount } = render(<App config={config} activityStream={activityStream} />);
+  const { unmount } = render(
+    <App config={config} activityStream={activityStream} agent={agent} />
+  );
 
   // Simulate some activity after a delay
   setTimeout(() => {
