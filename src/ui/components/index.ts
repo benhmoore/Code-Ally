@@ -25,3 +25,4 @@ export {
   ToolOutputGroup,
   StreamingToolOutput,
 } from './ToolOutputStream.js';
+export { TodoDisplay } from './TodoDisplay.js';

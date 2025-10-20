@@ -21,6 +21,7 @@ export class AgentTool extends BaseTool {
     'Delegate a task to a specialized agent. Each call executes one agent. IMPORTANT: To run N agents concurrently, you MUST make N separate agent() calls in the same response (not an array). Example: For 2 concurrent agents, call agent(task_prompt="task 1") and agent(task_prompt="task 2") in parallel.';
   readonly requiresConfirmation = false; // Non-destructive: task delegation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
+  readonly shouldCollapse = true; // Collapse children when complete to show only summary
 
   private agentManager: AgentManager | null = null;
   private activeDelegations: Map<string, any> = new Map();

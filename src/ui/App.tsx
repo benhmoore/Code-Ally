@@ -16,6 +16,7 @@ import { ActivityEventType, Config, ToolCallState, Message } from '../types/inde
 import { InputPrompt } from './components/InputPrompt.js';
 import { ConversationView } from './components/ConversationView.js';
 import { PermissionPrompt, PermissionRequest } from './components/PermissionPrompt.js';
+import { TodoDisplay } from './components/TodoDisplay.js';
 import { Agent } from '../agent/Agent.js';
 import { CommandHistory } from '../services/CommandHistory.js';
 import { CompletionProvider } from '../services/CompletionProvider.js';
@@ -148,6 +149,7 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       status: event.data.success ? 'success' : 'error',
       endTime: event.timestamp,
       error: event.data.error,
+      collapsed: event.data.collapsed || false,
     });
   });
 
@@ -429,6 +431,9 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
           />
         </Box>
       )}
+
+      {/* Todo Display (appears below input, hidden if no todos) */}
+      <TodoDisplay />
 
       {/* Footer / Help */}
       <Box marginTop={1}>

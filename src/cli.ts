@@ -14,6 +14,7 @@ import { ConfigManager } from './services/ConfigManager.js';
 import { SessionManager } from './services/SessionManager.js';
 import { ActivityStream } from './services/ActivityStream.js';
 import { PathResolver } from './services/PathResolver.js';
+import { TodoManager } from './services/TodoManager.js';
 import { OllamaClient } from './llm/OllamaClient.js';
 import { MessageHistory } from './llm/MessageHistory.js';
 import { ToolManager } from './tools/ToolManager.js';
@@ -421,6 +422,10 @@ async function main() {
     // Create activity stream
     const activityStream = new ActivityStream();
     registry.registerInstance('activity_stream', activityStream);
+
+    // Create todo manager
+    const todoManager = new TodoManager();
+    registry.registerInstance('todo_manager', todoManager);
 
     // Create path resolver
     const pathResolver = new PathResolver();

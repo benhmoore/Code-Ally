@@ -38,6 +38,13 @@ export abstract class BaseTool {
   readonly isTransparentWrapper: boolean = false;
 
   /**
+   * Whether this tool should collapse its children when complete
+   * Set to true for tools that should hide their output/children after completion
+   * (e.g., subagents that should show only their summary line)
+   */
+  readonly shouldCollapse: boolean = false;
+
+  /**
    * Activity stream for emitting events
    */
   protected activityStream: ActivityStream;

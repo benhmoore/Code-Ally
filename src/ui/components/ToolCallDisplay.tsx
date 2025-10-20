@@ -150,8 +150,8 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
         <Text dimColor> [{isRunning ? durationStr : statusIcon}{!isRunning && ` ${durationStr}`}]</Text>
       </Box>
 
-      {/* Error output as threaded child */}
-      {toolCall.error && (
+      {/* Error output as threaded child (hidden if collapsed) */}
+      {!toolCall.collapsed && toolCall.error && (
         <Box flexDirection="column">
           <Box>
             <Text>{indent}    </Text>
@@ -168,8 +168,8 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Output as threaded child */}
-      {toolCall.output && !toolCall.error && (
+      {/* Output as threaded child (hidden if collapsed) */}
+      {!toolCall.collapsed && toolCall.output && !toolCall.error && (
         <Box flexDirection="column">
           <Box>
             <Text>{indent}    </Text>
@@ -186,8 +186,8 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Nested tool calls */}
-      {children}
+      {/* Nested tool calls (hidden if collapsed) */}
+      {!toolCall.collapsed && children}
     </Box>
   );
 };

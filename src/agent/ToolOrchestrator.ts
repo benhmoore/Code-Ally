@@ -320,6 +320,7 @@ export class ToolOrchestrator {
           success: result.success,
           error: result.success ? undefined : result.error, // Include error for failed tools
           isTransparent: tool?.isTransparentWrapper || false, // Mark transparent wrappers
+          collapsed: tool?.shouldCollapse || false, // Mark tools that should collapse
         },
       });
 

@@ -110,6 +110,7 @@ export interface ToolCallState {
   endTime?: number;
   parentId?: string; // For nested tool calls (e.g., subagents)
   isTransparent?: boolean; // For wrapper tools that should not be displayed
+  collapsed?: boolean; // For tools that should hide their children
 }
 
 // ===========================
