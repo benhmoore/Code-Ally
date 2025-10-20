@@ -82,6 +82,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   // Debounce timer for completions
   const [completionTimer, setCompletionTimer] = useState<NodeJS.Timeout | null>(null);
 
+  // Force-quit mechanism (3x Ctrl+C within 2s)
+  const [ctrlCCount, setCtrlCCount] = useState(0);
+  const ctrlCTimerRef = useRef<NodeJS.Timeout | null>(null);
+
 
   /**
    * Update completions based on current input
@@ -319,6 +323,23 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     (input, key) => {
       if (!isActive || !isFocused) return;
 
+      // ===== Force Quit (3x Ctrl+C within 2s) - Highest Priority =====
+      if (key.ctrl && input === 'c') {
+        const newCount = ctrlCCount + 1;
+        setCtrlCCount(newCount);
+
+        // Reset counter after 2 seconds
+        if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
+        ctrlCTimerRef.current = setTimeout(() => setCtrlCCount(0), 2000);
+
+        // Force quit on 3rd press
+        if (newCount >= 3) {
+          console.log('[InputPrompt] Force quit - 3x Ctrl+C');
+          exit();
+          return;
+        }
+      }
+
       // ===== Permission Prompt Navigation (highest priority) =====
       if (permissionRequest && onPermissionNavigate && activityStream) {
         const optionsCount = permissionRequest.options.length;
@@ -341,31 +362,38 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         if (key.return) {
           const selectedChoice = permissionRequest.options[permissionSelectedIndex];
           if (selectedChoice) {
-            // Emit permission response event
-            activityStream.emit({
-              id: `response_${permissionRequest.requestId}`,
-              type: ActivityEventType.PERMISSION_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: permissionRequest.requestId,
-                choice: selectedChoice,
-              },
-            });
+            try {
+              activityStream.emit({
+                id: `response_${permissionRequest.requestId}`,
+                type: ActivityEventType.PERMISSION_RESPONSE,
+                timestamp: Date.now(),
+                data: {
+                  requestId: permissionRequest.requestId,
+                  choice: selectedChoice,
+                },
+              });
+            } catch (error) {
+              console.error('[InputPrompt] Failed to emit permission response:', error);
+            }
           }
           return;
         }
 
-        // Ctrl+C - deny permission and cancel
-        if (key.ctrl && input === 'c') {
-          activityStream.emit({
-            id: `response_${permissionRequest.requestId}_cancel`,
-            type: ActivityEventType.PERMISSION_RESPONSE,
-            timestamp: Date.now(),
-            data: {
-              requestId: permissionRequest.requestId,
-              choice: PermissionChoice.DENY,
-            },
-          });
+        // Escape or Ctrl+C - deny permission and cancel
+        if (key.escape || (key.ctrl && input === 'c')) {
+          try {
+            activityStream.emit({
+              id: `response_${permissionRequest.requestId}_cancel`,
+              type: ActivityEventType.PERMISSION_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: permissionRequest.requestId,
+                choice: PermissionChoice.DENY,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit permission denial:', error);
+          }
           return;
         }
 

@@ -110,6 +110,7 @@ export class TrustManager {
   private pendingPermissions: Map<string, {
     resolve: (choice: PermissionChoice) => void;
     reject: (error: Error) => void;
+    timeout: NodeJS.Timeout;
   }> = new Map();
 
   constructor(autoConfirm: boolean = false, activityStream?: ActivityStream) {
@@ -464,8 +465,29 @@ export class TrustManager {
       // Generate unique ID for this permission request
       const requestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
+      // Set 30-second timeout to prevent infinite waiting
+      const timeout = setTimeout(() => {
+        const pending = this.pendingPermissions.get(requestId);
+        if (pending) {
+          this.pendingPermissions.delete(requestId);
+          reject(new PermissionDeniedError(
+            `Permission request timed out after 30 seconds for ${toolName}`
+          ));
+        }
+      }, 30000);
+
       // Store resolver so we can complete it when response arrives
-      this.pendingPermissions.set(requestId, { resolve, reject });
+      this.pendingPermissions.set(requestId, {
+        resolve: (choice: PermissionChoice) => {
+          clearTimeout(timeout);
+          resolve(choice);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+        timeout,
+      });
 
       // Extract command string for display if this is a bash operation
       let command: string | undefined;
@@ -507,7 +529,8 @@ export class TrustManager {
       return;
     }
 
-    // Remove from pending
+    // Clear timeout and remove from pending
+    clearTimeout(pending.timeout);
     this.pendingPermissions.delete(requestId);
 
     // Resolve with choice

@@ -230,7 +230,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
         {/* Footer */}
         <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
           <Text dimColor>
-            ↑↓ navigate  •  Enter confirm  •  Ctrl+C deny
+            ↑↓ navigate  •  Enter confirm  •  Esc/Ctrl+C deny
           </Text>
         </Box>
       </Box>
