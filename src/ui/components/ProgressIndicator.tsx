@@ -7,6 +7,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
+import { AnimationTicker } from '../../services/AnimationTicker.js';
 
 export type SpinnerType = 'default' | 'dots' | 'line' | 'dots2' | 'arc' | 'bounce';
 
@@ -57,17 +58,21 @@ export const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({
   color = 'cyan',
   dimText = false,
 }) => {
-  const [frame, setFrame] = useState(0);
+  const [, forceUpdate] = useState({});
   const spinner = SPINNERS[type];
-  const frameRate = FRAME_RATES[type];
+  const ticker = AnimationTicker.getInstance();
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setFrame((f) => (f + 1) % spinner.length);
-    }, frameRate);
+    // Subscribe to global animation ticker
+    const unsubscribe = ticker.subscribe(() => {
+      forceUpdate({});
+    });
 
-    return () => clearInterval(interval);
-  }, [spinner.length, frameRate]);
+    return unsubscribe;
+  }, [ticker]);
+
+  // Calculate frame based on global ticker
+  const frame = ticker.getFrame() % spinner.length;
 
   return (
     <Box>

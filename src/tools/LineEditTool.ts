@@ -63,6 +63,68 @@ export class LineEditTool extends BaseTool {
     };
   }
 
+  async previewChanges(args: any, callId?: string): Promise<void> {
+    await super.previewChanges(args, callId);
+
+    const filePath = args.file_path as string;
+    const operation = args.operation as LineOperation;
+    const lineNumber = args.line_number as number;
+    const content = (args.content as string) ?? '';
+    const numLines = (args.num_lines as number) ?? 1;
+
+    if (!filePath || !operation || !lineNumber) {
+      return; // Skip preview if invalid args
+    }
+
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.join(process.cwd(), filePath);
+
+    try {
+      await fs.access(absolutePath);
+      const fileContent = await fs.readFile(absolutePath, 'utf-8');
+
+      // Detect line ending style
+      const hasWindowsLineEndings = fileContent.includes('\r\n');
+      const lineEnding = hasWindowsLineEndings ? '\r\n' : '\n';
+
+      // Split into lines
+      const lines = fileContent.split('\n').map((line, index, arr) => {
+        if (index === arr.length - 1 && !fileContent.endsWith('\n')) {
+          return line;
+        }
+        return line.replace(/\r$/, '');
+      });
+
+      // Perform operation for preview
+      let modifiedLines: string[];
+      switch (operation) {
+        case 'insert':
+          modifiedLines = this.performInsert(lines, lineNumber, content);
+          break;
+        case 'delete':
+          const deleteResult = this.performDelete(lines, lineNumber, numLines, lines.length);
+          if (deleteResult.error) {
+            return; // Skip preview if operation would fail
+          }
+          modifiedLines = deleteResult.lines!;
+          break;
+        case 'replace':
+          modifiedLines = this.performReplace(lines, lineNumber, content);
+          break;
+        default:
+          return;
+      }
+
+      const modifiedContent = modifiedLines.join(lineEnding);
+
+      // Emit diff preview
+      this.emitDiffPreview(fileContent, modifiedContent, absolutePath, 'line_edit');
+    } catch {
+      // Silently fail preview - let actual execute handle errors
+    }
+  }
+
   protected async executeImpl(args: any): Promise<ToolResult> {
     // Capture parameters
     this.captureParams(args);

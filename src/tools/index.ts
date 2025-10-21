@@ -20,6 +20,4 @@ export { LineEditTool } from './LineEditTool.js';
 export { AgentTool } from './AgentTool.js';
 export { BatchTool } from './BatchTool.js';
 export { FocusManagerTool } from './FocusManagerTool.js';
-export { TodoAddTool } from './TodoAddTool.js';
-export { TodoCompleteTool } from './TodoCompleteTool.js';
-export { TodoClearTool } from './TodoClearTool.js';
+export { TodoWriteTool } from './TodoWriteTool.js';

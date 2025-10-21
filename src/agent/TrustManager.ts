@@ -191,14 +191,13 @@ export class TrustManager {
     // Handle user selection
     switch (choice) {
       case PermissionChoice.ALLOW:
-        // One-time permission - mark as pre-approved for this operation
-        this.markOperationAsApproved(toolName, path);
+        // One-time permission - just return true (permission already granted)
+        // Do NOT add to preApprovedOperations (that's only for batch operations)
         return true;
 
       case PermissionChoice.ALWAYS_ALLOW:
         // Session-wide trust - add to trusted tools
         this.trustTool(toolName, TrustScope.GLOBAL);
-        this.markOperationAsApproved(toolName, path);
         return true;
 
       case PermissionChoice.DENY:
@@ -288,9 +287,12 @@ export class TrustManager {
    * @returns True if trusted, false otherwise
    */
   isTrusted(toolName: string, path?: CommandPath): boolean {
-    // Check pre-approved operations first
+    // Check pre-approved operations first (one-time approvals)
     const operationKey = this.getOperationKey(toolName, path);
     if (this.preApprovedOperations.has(operationKey)) {
+      // Consume one-time approval (remove it so it only works once)
+      // Note: "Always Allow" also adds to trustedTools, so it will still work
+      this.preApprovedOperations.delete(operationKey);
       return true;
     }
 

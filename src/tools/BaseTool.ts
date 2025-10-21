@@ -64,6 +64,23 @@ export abstract class BaseTool {
   protected currentCallId?: string;
 
   /**
+   * Preview changes before execution (e.g., show diff for file edits)
+   *
+   * Called by ToolOrchestrator BEFORE permission checks, allowing users
+   * to see what will change before authorizing the operation.
+   *
+   * Override this in tools that modify files to emit diff previews.
+   *
+   * @param args - Tool-specific parameters
+   * @param callId - Tool call ID for event emission
+   */
+  async previewChanges(args: any, callId?: string): Promise<void> {
+    this.currentCallId = callId;
+    // Default: no preview
+    // Override in subclasses that need to show previews
+  }
+
+  /**
    * Execute the tool with the given arguments
    *
    * Event emission for START/END/ERROR is handled by ToolOrchestrator.
@@ -119,6 +136,30 @@ export abstract class BaseTool {
       data: {
         toolName: this.name,
         chunk,
+      },
+    });
+  }
+
+  /**
+   * Emit a diff preview for file changes
+   * Shows user what will change before applying modifications
+   */
+  protected emitDiffPreview(oldContent: string, newContent: string, filePath: string, operationType: 'edit' | 'write' | 'line_edit' = 'edit'): void {
+    if (!this.currentCallId) {
+      console.warn(`[${this.name}] Cannot emit diff preview: no currentCallId set`);
+      return;
+    }
+
+    this.emitEvent({
+      id: this.currentCallId,
+      type: ActivityEventType.DIFF_PREVIEW,
+      timestamp: Date.now(),
+      data: {
+        toolName: this.name,
+        oldContent,
+        newContent,
+        filePath,
+        operationType,
       },
     });
   }

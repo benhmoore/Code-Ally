@@ -2,18 +2,22 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { ToolCallState } from '../../types';
 import { OutputScroller } from './OutputScroller';
+import { AnimationTicker } from '../../services/AnimationTicker.js';
 
 // Simple text-based spinner animation
 const SimpleSpinner: React.FC = () => {
-  const [frame, setFrame] = useState(0);
+  const [, forceUpdate] = useState({});
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const ticker = AnimationTicker.getInstance();
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setFrame((prev) => (prev + 1) % frames.length);
-    }, 80);
-    return () => clearInterval(interval);
-  }, []);
+    const unsubscribe = ticker.subscribe(() => {
+      forceUpdate({});
+    });
+    return unsubscribe;
+  }, [ticker]);
+
+  const frame = ticker.getFrame() % frames.length;
 
   return <Text color="cyan">{frames[frame]}</Text>;
 };

@@ -1,0 +1,1 @@
+console.log('Demo site script loaded');

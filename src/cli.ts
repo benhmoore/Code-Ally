@@ -458,9 +458,7 @@ async function main() {
     const { LsTool } = await import('./tools/LsTool.js');
     const { AgentTool } = await import('./tools/AgentTool.js');
     const { BatchTool } = await import('./tools/BatchTool.js');
-    const { TodoAddTool } = await import('./tools/TodoAddTool.js');
-    const { TodoCompleteTool } = await import('./tools/TodoCompleteTool.js');
-    const { TodoClearTool } = await import('./tools/TodoClearTool.js');
+    const { TodoWriteTool } = await import('./tools/TodoWriteTool.js');
 
     const tools = [
       new BashTool(activityStream),
@@ -473,9 +471,7 @@ async function main() {
       new LsTool(activityStream),
       new AgentTool(activityStream),
       new BatchTool(activityStream),
-      new TodoAddTool(activityStream),
-      new TodoCompleteTool(activityStream),
-      new TodoClearTool(activityStream),
+      new TodoWriteTool(activityStream),
     ];
 
     // Create tool manager

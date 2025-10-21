@@ -11,6 +11,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { ToolCallState } from '../../types/index.js';
+import { DiffDisplay } from './DiffDisplay.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -104,7 +105,7 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
     if (toolCall.status === 'executing' || toolCall.status === 'pending') {
       const interval = setInterval(() => {
         setCurrentTime(Date.now());
-      }, 100); // Update every 100ms for smooth duration display
+      }, 1000); // Update every 1000ms (reduced from 100ms to prevent thrashing)
 
       return () => clearInterval(interval);
     }
@@ -149,6 +150,18 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
         {/* Duration/Status */}
         <Text dimColor> [{isRunning ? durationStr : statusIcon}{!isRunning && ` ${durationStr}`}]</Text>
       </Box>
+
+      {/* Diff preview (hidden if collapsed) */}
+      {!toolCall.collapsed && toolCall.diffPreview && (
+        <Box flexDirection="column" marginTop={1} marginBottom={1} paddingLeft={indent.length + 4}>
+          <DiffDisplay
+            oldContent={toolCall.diffPreview.oldContent}
+            newContent={toolCall.diffPreview.newContent}
+            filePath={toolCall.diffPreview.filePath}
+            maxLines={20}
+          />
+        </Box>
+      )}
 
       {/* Error output as threaded child (hidden if collapsed) */}
       {!toolCall.collapsed && toolCall.error && (

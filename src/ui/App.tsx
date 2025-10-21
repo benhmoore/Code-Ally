@@ -17,7 +17,7 @@ import { InputPrompt } from './components/InputPrompt.js';
 import { ConversationView } from './components/ConversationView.js';
 import { PermissionPrompt, PermissionRequest } from './components/PermissionPrompt.js';
 import { ModelSelector, ModelOption } from './components/ModelSelector.js';
-import { TodoDisplay } from './components/TodoDisplay.js';
+import { StatusIndicator } from './components/StatusIndicator.js';
 import { Agent } from '../agent/Agent.js';
 import { CommandHistory } from '../services/CommandHistory.js';
 import { CompletionProvider } from '../services/CompletionProvider.js';
@@ -167,6 +167,22 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
 
     actions.updateToolCall(event.id, {
       output: event.data?.chunk || '',
+    });
+  });
+
+  // Subscribe to diff preview events
+  useActivityEvent(ActivityEventType.DIFF_PREVIEW, (event) => {
+    if (!event.id) {
+      throw new Error(`DIFF_PREVIEW event missing required 'id' field`);
+    }
+
+    actions.updateToolCall(event.id, {
+      diffPreview: {
+        oldContent: event.data?.oldContent || '',
+        newContent: event.data?.newContent || '',
+        filePath: event.data?.filePath || '',
+        operationType: event.data?.operationType || 'edit',
+      },
     });
   });
 
@@ -445,6 +461,11 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
         />
       </Box>
 
+      {/* Status Indicator - hide when permission prompt is active */}
+      {!permissionRequest && !modelSelectRequest && (
+        <StatusIndicator isProcessing={state.isThinking} />
+      )}
+
       {/* Model Selector (replaces input when active) */}
       {modelSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
@@ -505,9 +526,6 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
           />
         </Box>
       )}
-
-      {/* Todo Display (appears below input, hidden if no todos) */}
-      <TodoDisplay />
 
       {/* Footer / Help */}
       <Box marginTop={1}>

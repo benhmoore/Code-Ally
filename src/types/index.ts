@@ -76,6 +76,7 @@ export enum ActivityEventType {
   MODEL_SELECT_REQUEST = 'model_select_request',
   MODEL_SELECT_RESPONSE = 'model_select_response',
   INTERRUPT_ALL = 'interrupt_all',
+  DIFF_PREVIEW = 'diff_preview',
 }
 
 export interface ActivityEvent {
@@ -113,6 +114,12 @@ export interface ToolCallState {
   parentId?: string; // For nested tool calls (e.g., subagents)
   isTransparent?: boolean; // For wrapper tools that should not be displayed
   collapsed?: boolean; // For tools that should hide their children
+  diffPreview?: {
+    oldContent: string;
+    newContent: string;
+    filePath: string;
+    operationType: string;
+  };
 }
 
 // ===========================

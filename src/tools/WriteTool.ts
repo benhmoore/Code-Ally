@@ -51,6 +51,37 @@ export class WriteTool extends BaseTool {
     };
   }
 
+  async previewChanges(args: any, callId?: string): Promise<void> {
+    await super.previewChanges(args, callId);
+
+    const filePath = args.file_path as string;
+    const content = args.content as string;
+
+    if (!filePath || content === undefined) {
+      return; // Skip preview if invalid args
+    }
+
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.join(process.cwd(), filePath);
+
+    try {
+      // Check if file exists and read existing content
+      let existingContent = '';
+      try {
+        await fs.access(absolutePath);
+        existingContent = await fs.readFile(absolutePath, 'utf-8');
+      } catch {
+        // File doesn't exist - that's ok for write
+      }
+
+      // Emit diff preview
+      this.emitDiffPreview(existingContent, content, absolutePath, 'write');
+    } catch {
+      // Silently fail preview - let actual execute handle errors
+    }
+  }
+
   protected async executeImpl(args: any): Promise<ToolResult> {
     // Capture parameters
     this.captureParams(args);
@@ -82,11 +113,13 @@ export class WriteTool extends BaseTool {
       : path.join(process.cwd(), filePath);
 
     try {
-      // Check if file exists for backup creation
+      // Check if file exists and read existing content
       let fileExists = false;
+      let existingContent = '';
       try {
         await fs.access(absolutePath);
         fileExists = true;
+        existingContent = await fs.readFile(absolutePath, 'utf-8');
       } catch {
         fileExists = false;
       }
@@ -94,8 +127,7 @@ export class WriteTool extends BaseTool {
       // Create backup if requested and file exists
       if (createBackup && fileExists) {
         const backupPath = `${absolutePath}.bak`;
-        const originalContent = await fs.readFile(absolutePath, 'utf-8');
-        await fs.writeFile(backupPath, originalContent, 'utf-8');
+        await fs.writeFile(backupPath, existingContent, 'utf-8');
       }
 
       // Create parent directory if it doesn't exist

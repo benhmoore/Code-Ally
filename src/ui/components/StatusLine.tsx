@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
+import { AnimationTicker } from '../../services/AnimationTicker.js';
 
 interface StatusLineProps {
   /** Context usage as percentage (0-100) */
@@ -47,18 +48,21 @@ export const StatusLine: React.FC<StatusLineProps> = ({
   agent,
   subAgents,
 }) => {
-  const [frame, setFrame] = useState(0);
+  const [, forceUpdate] = useState({});
+  const ticker = AnimationTicker.getInstance();
 
-  // Animate spinner when agent or tools are active
+  // Subscribe to animation ticker when agent or tools are active
   useEffect(() => {
     if (agent || activeToolCount > 0) {
-      const interval = setInterval(() => {
-        setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
-      }, 80);
-      return () => clearInterval(interval);
+      const unsubscribe = ticker.subscribe(() => {
+        forceUpdate({});
+      });
+      return unsubscribe;
     }
     return undefined;
-  }, [agent, activeToolCount]);
+  }, [agent, activeToolCount, ticker]);
+
+  const frame = ticker.getFrame() % SPINNER_FRAMES.length;
 
   // Determine context color based on usage
   const getContextColor = (): string => {

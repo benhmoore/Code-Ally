@@ -20,6 +20,7 @@ import { AgentConfig } from './Agent.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
 import { DirectoryTraversalError, PermissionDeniedError } from '../security/PathSecurity.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
 
 /**
  * Tool call structure from LLM
@@ -246,24 +247,65 @@ export class ToolOrchestrator {
     // Get the tool to check properties
     const tool = this.toolManager.getTool(toolName);
 
-    // Emit start event
     // If we have a parent context from a nested agent, use it; otherwise use the group parentId
     const effectiveParentId = this.parentCallId || parentId;
     console.log('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId);
 
-    this.emitEvent({
-      id,
-      type: ActivityEventType.TOOL_CALL_START,
-      timestamp: Date.now(),
-      parentId: effectiveParentId,
-      data: {
-        toolName,
-        arguments: args,
-        isTransparent: tool?.isTransparentWrapper || false, // Mark transparent wrappers
-      },
-    });
-
     try {
+      // Validate todo prerequisites FIRST (before creating UI elements)
+      if (toolName !== 'todo_write') {
+        const registry = ServiceRegistry.getInstance();
+        const todoManager = registry.get('todo_manager');
+
+        if (todoManager) {
+          const incompleteTodos = todoManager.getIncompleteTodos();
+
+          if (incompleteTodos.length === 0) {
+            const errorResult: ToolResult = {
+              success: false,
+              error: `${toolName}: Cannot execute tools without an active todo list. Use todo_write to create a task plan first.`,
+              error_type: 'validation_error',
+            };
+
+            // Don't emit TOOL_CALL_START - just return error
+            return errorResult;
+          }
+
+          // Auto-promote first pending todo to in_progress
+          const inProgress = todoManager.getInProgressTodo();
+          if (!inProgress) {
+            const nextPending = todoManager.getNextPendingTodo();
+            if (nextPending) {
+              // Find and update the todo
+              const todos = todoManager.getTodos();
+              const updated = todos.map(t =>
+                t.id === nextPending.id ? { ...t, status: 'in_progress' as const } : t
+              );
+              todoManager.setTodos(updated);
+            }
+          }
+        }
+      }
+
+      // Emit start event FIRST (creates tool call in UI state)
+      this.emitEvent({
+        id,
+        type: ActivityEventType.TOOL_CALL_START,
+        timestamp: Date.now(),
+        parentId: effectiveParentId,
+        data: {
+          toolName,
+          arguments: args,
+          isTransparent: tool?.isTransparentWrapper || false,
+        },
+      });
+
+      // Preview changes (e.g., diffs) BEFORE permission check
+      // Tool call now exists in state, so diff can attach to it
+      if (tool) {
+        await tool.previewChanges(args, id);
+      }
+
       // Check permissions if PermissionManager is available
       if (this.permissionManager) {
         // Get the tool to check if it requires confirmation
@@ -285,18 +327,7 @@ export class ToolOrchestrator {
                 error_type: 'permission_denied',
               };
 
-              // Emit error event (with effective parent)
-              this.emitEvent({
-                id,
-                type: ActivityEventType.ERROR,
-                timestamp: Date.now(),
-                parentId: effectiveParentId,
-                data: {
-                  toolName,
-                  error: error.message,
-                },
-              });
-
+              // Tool call already started, permission denied
               return errorResult;
             }
             // Re-throw unexpected errors

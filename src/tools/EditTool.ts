@@ -55,6 +55,41 @@ export class EditTool extends BaseTool {
     };
   }
 
+  async previewChanges(args: any, callId?: string): Promise<void> {
+    await super.previewChanges(args, callId);
+
+    const filePath = args.file_path as string;
+    const oldString = args.old_string as string;
+    const newString = args.new_string as string;
+    const replaceAll = args.replace_all === true;
+
+    if (!filePath || !oldString || newString === undefined) {
+      return; // Skip preview if invalid args
+    }
+
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.join(process.cwd(), filePath);
+
+    try {
+      await fs.access(absolutePath);
+      const content = await fs.readFile(absolutePath, 'utf-8');
+
+      // Generate preview of changes
+      let modifiedContent: string;
+      if (replaceAll) {
+        modifiedContent = content.split(oldString).join(newString);
+      } else {
+        modifiedContent = content.replace(oldString, newString);
+      }
+
+      // Emit diff preview
+      this.emitDiffPreview(content, modifiedContent, absolutePath, 'edit');
+    } catch {
+      // Silently fail preview - let actual execute handle errors
+    }
+  }
+
   protected async executeImpl(args: any): Promise<ToolResult> {
     // Capture parameters
     this.captureParams(args);

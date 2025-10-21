@@ -162,13 +162,6 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
           <Text color="green">{streamingContent}</Text>
         </Box>
       )}
-
-      {/* Show thinking indicator if waiting for response */}
-      {isThinking && !streamingContent && (
-        <Box>
-          <Text dimColor>Thinking...</Text>
-        </Box>
-      )}
     </Box>
   );
 };

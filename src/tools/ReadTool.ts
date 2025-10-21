@@ -78,10 +78,17 @@ export class ReadTool extends BaseTool {
     // Token estimation check
     const estimatedTokens = await this.estimateTokens(filePaths);
     if (estimatedTokens > ReadTool.MAX_ESTIMATED_TOKENS) {
+      const fileList = filePaths.length === 1 ? `"${filePaths[0]}"` : `${filePaths.length} files`;
+      const examples = filePaths.length === 1
+        ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=50, limit=100)`
+        : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
+
       return this.formatErrorResponse(
-        `Estimated ${estimatedTokens} tokens exceeds limit of ${ReadTool.MAX_ESTIMATED_TOKENS}`,
+        `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds limit of ${ReadTool.MAX_ESTIMATED_TOKENS}. ` +
+        `Use grep/glob to search for specific content, or use limit/offset for targeted reading. ` +
+        `Example: ${examples}`,
         'validation_error',
-        'Try reading fewer files or use limit parameter to read partial content'
+        `Use targeted reading with limit parameter or search within files first using grep`
       );
     }
 
