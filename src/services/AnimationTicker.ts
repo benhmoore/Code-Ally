@@ -21,7 +21,7 @@ export class AnimationTicker {
   private frame: number = 0;
   private currentTime: number = Date.now();
   private interval: NodeJS.Timeout | null = null;
-  private readonly frameRate: number = 1000; // 1000ms per frame (1 fps for time updates)
+  private readonly frameRate: number = 83; // ~12 fps (1000/12 ≈ 83ms) - matches Ink render FPS
 
   private constructor() {}
 
@@ -57,12 +57,11 @@ export class AnimationTicker {
 
   /**
    * Get current frame number (for calculating spinner position)
-   * Advances at 12.5 fps equivalent for smooth animations
+   * Advances at ~12 fps for smooth animations synchronized with Ink rendering
    */
   getFrame(): number {
-    // Calculate frame based on elapsed time to maintain smooth 12.5fps animation
-    // even though we only tick at 1fps
-    return Math.floor(this.currentTime / 80);
+    // Frame advances on each tick (12 fps)
+    return this.frame;
   }
 
   /**

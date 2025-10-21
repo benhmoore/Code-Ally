@@ -246,11 +246,11 @@ export class Agent {
     const toolCalls = response.tool_calls || [];
 
     // Log LLM response to trace tool call origins
-    console.log('[AGENT] LLM response - hasContent:', !!response.content, 'toolCallCount:', toolCalls.length);
+    logger.debug('[AGENT] LLM response - hasContent:', !!response.content, 'toolCallCount:', toolCalls.length);
     if (toolCalls.length > 0) {
-      console.log('[AGENT] Tool calls from LLM:');
+      logger.debug('[AGENT] Tool calls from LLM:');
       toolCalls.forEach((tc, idx) => {
-        console.log(`  [${idx}] ${tc.function.name}(${JSON.stringify(tc.function.arguments)}) id:${tc.id}`);
+        logger.debug(`  [${idx}] ${tc.function.name}(${JSON.stringify(tc.function.arguments)}) id:${tc.id}`);
       });
     }
 

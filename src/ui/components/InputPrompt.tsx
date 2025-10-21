@@ -18,6 +18,7 @@ import { PermissionRequest } from './PermissionPrompt.js';
 import { ModelOption } from './ModelSelector.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ActivityEventType } from '../../types/index.js';
+import { logger } from '../../services/Logger.js';
 import { PermissionChoice } from '../../agent/TrustManager.js';
 import { Agent } from '../../agent/Agent.js';
 
@@ -546,7 +547,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       if (key.ctrl && input === 'c') {
         // Priority 1: Interrupt ALL ongoing operations (main agent + subagents + tools)
         if (agent && agent.isProcessing()) {
-          console.log('[INPUT] Ctrl+C - interrupting main agent');
+          logger.debug('[INPUT] Ctrl+C - interrupting main agent');
           agent.interrupt();
 
           // Also interrupt all subagents through AgentTool

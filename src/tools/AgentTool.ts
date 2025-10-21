@@ -13,6 +13,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { AgentManager } from '../services/AgentManager.js';
 import { Agent, AgentConfig } from '../agent/Agent.js';
 import { ModelClient } from '../llm/ModelClient.js';
+import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 
 export class AgentTool extends BaseTool {
@@ -107,7 +108,7 @@ export class AgentTool extends BaseTool {
     taskPrompt: string,
     callId: string
   ): Promise<ToolResult> {
-    console.log('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId);
+    logger.debug('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId);
 
     try {
       const result = await this.executeSingleAgent(agentName, taskPrompt, callId);
@@ -140,22 +141,22 @@ export class AgentTool extends BaseTool {
     taskPrompt: string,
     callId: string
   ): Promise<any> {
-    console.log('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId);
+    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId);
     const startTime = Date.now();
 
     try {
       // Get agent manager
-      console.log('[AGENT_TOOL] Getting agent manager...');
+      logger.debug('[AGENT_TOOL] Getting agent manager...');
       const agentManager = this.getAgentManager();
 
       // Ensure default agent exists
-      console.log('[AGENT_TOOL] Ensuring default agent exists...');
+      logger.debug('[AGENT_TOOL] Ensuring default agent exists...');
       await agentManager.ensureDefaultAgent();
 
       // Load agent data
-      console.log('[AGENT_TOOL] Loading agent:', agentName);
+      logger.debug('[AGENT_TOOL] Loading agent:', agentName);
       const agentData = await agentManager.loadAgent(agentName);
-      console.log('[AGENT_TOOL] Agent data loaded:', agentData ? 'success' : 'null');
+      logger.debug('[AGENT_TOOL] Agent data loaded:', agentData ? 'success' : 'null');
 
       if (!agentData) {
         return {
@@ -177,9 +178,9 @@ export class AgentTool extends BaseTool {
       });
 
       // Execute the agent task
-      console.log('[AGENT_TOOL] Executing agent task...');
+      logger.debug('[AGENT_TOOL] Executing agent task...');
       const result = await this.executeAgentTask(agentData, taskPrompt, callId);
-      console.log('[AGENT_TOOL] Agent task completed. Result length:', result?.length || 0);
+      logger.debug('[AGENT_TOOL] Agent task completed. Result length:', result?.length || 0);
 
       const duration = (Date.now() - startTime) / 1000;
 
@@ -218,11 +219,11 @@ export class AgentTool extends BaseTool {
     taskPrompt: string,
     callId: string
   ): Promise<string> {
-    console.log('[AGENT_TOOL] executeAgentTask START for callId:', callId);
+    logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId);
     const registry = ServiceRegistry.getInstance();
 
     // Get required services - STRICT: no fallbacks
-    console.log('[AGENT_TOOL] Getting services from registry...');
+    logger.debug('[AGENT_TOOL] Getting services from registry...');
     const mainModelClient = registry.get<ModelClient>('model_client');
     const toolManager = registry.get<ToolManager>('tool_manager');
     const configManager = registry.get<any>('config_manager');
@@ -243,19 +244,19 @@ export class AgentTool extends BaseTool {
       throw new Error('ConfigManager.getConfig() returned null/undefined');
     }
 
-    console.log('[AGENT_TOOL] All required services available');
+    logger.debug('[AGENT_TOOL] All required services available');
 
     // Create specialized system prompt
-    console.log('[AGENT_TOOL] Creating specialized prompt...');
+    logger.debug('[AGENT_TOOL] Creating specialized prompt...');
     let specializedPrompt: string;
     try {
       specializedPrompt = await this.createAgentSystemPrompt(
         agentData.system_prompt,
         taskPrompt
       );
-      console.log('[AGENT_TOOL] Specialized prompt created, length:', specializedPrompt?.length || 0);
+      logger.debug('[AGENT_TOOL] Specialized prompt created, length:', specializedPrompt?.length || 0);
     } catch (error) {
-      console.log('[AGENT_TOOL] ERROR creating specialized prompt:', error);
+      logger.debug('[AGENT_TOOL] ERROR creating specialized prompt:', error);
       throw error;
     }
 
@@ -264,7 +265,7 @@ export class AgentTool extends BaseTool {
 
     // Create sub-agent with scoped context and parent relationship
     // IMPORTANT: Use callId parameter, not this.currentCallId (which can be overwritten by concurrent calls)
-    console.log('[AGENT_TOOL] Creating sub-agent with parentCallId:', callId);
+    logger.debug('[AGENT_TOOL] Creating sub-agent with parentCallId:', callId);
     const agentConfig: AgentConfig = {
       isSpecializedAgent: true,
       verbose: false,
@@ -290,17 +291,17 @@ export class AgentTool extends BaseTool {
 
     try {
       // Execute the task
-      console.log('[AGENT_TOOL] Sending message to sub-agent...');
+      logger.debug('[AGENT_TOOL] Sending message to sub-agent...');
       const response = await subAgent.sendMessage(`Execute this task: ${taskPrompt}`);
-      console.log('[AGENT_TOOL] Sub-agent response received, length:', response?.length || 0);
+      logger.debug('[AGENT_TOOL] Sub-agent response received, length:', response?.length || 0);
 
       return response || `Agent '${agentData.name}' completed the task.`;
     } catch (error) {
-      console.log('[AGENT_TOOL] ERROR during sub-agent execution:', error);
+      logger.debug('[AGENT_TOOL] ERROR during sub-agent execution:', error);
       throw error;
     } finally {
       // Clean up delegation tracking
-      console.log('[AGENT_TOOL] Cleaning up sub-agent...');
+      logger.debug('[AGENT_TOOL] Cleaning up sub-agent...');
       this.activeDelegations.delete(callId);
 
       // Clean up sub-agent
@@ -312,15 +313,15 @@ export class AgentTool extends BaseTool {
    * Create specialized system prompt for agent
    */
   private async createAgentSystemPrompt(agentPrompt: string, taskPrompt: string): Promise<string> {
-    console.log('[AGENT_TOOL] Importing systemMessages module...');
+    logger.debug('[AGENT_TOOL] Importing systemMessages module...');
     try {
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-      console.log('[AGENT_TOOL] Calling getAgentSystemPrompt...');
+      logger.debug('[AGENT_TOOL] Calling getAgentSystemPrompt...');
       const result = await getAgentSystemPrompt(agentPrompt, taskPrompt);
-      console.log('[AGENT_TOOL] getAgentSystemPrompt returned, length:', result?.length || 0);
+      logger.debug('[AGENT_TOOL] getAgentSystemPrompt returned, length:', result?.length || 0);
       return result;
     } catch (error) {
-      console.log('[AGENT_TOOL] ERROR in createAgentSystemPrompt:', error);
+      logger.debug('[AGENT_TOOL] ERROR in createAgentSystemPrompt:', error);
       throw error;
     }
   }
@@ -347,11 +348,11 @@ export class AgentTool extends BaseTool {
    * Called when user presses Ctrl+C
    */
   interruptAll(): void {
-    console.log('[AGENT_TOOL] Interrupting', this.activeDelegations.size, 'active sub-agents');
+    logger.debug('[AGENT_TOOL] Interrupting', this.activeDelegations.size, 'active sub-agents');
     for (const [callId, delegation] of this.activeDelegations.entries()) {
       const subAgent = delegation.subAgent;
       if (subAgent && typeof subAgent.interrupt === 'function') {
-        console.log('[AGENT_TOOL] Interrupting sub-agent:', callId);
+        logger.debug('[AGENT_TOOL] Interrupting sub-agent:', callId);
         subAgent.interrupt();
       }
     }

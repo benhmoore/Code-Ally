@@ -9,12 +9,14 @@
  * - Lists (bullet and numbered)
  * - Headers with color coding
  * - Links (dimmed display)
+ * - Tables with bordered formatting
  */
 
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { marked } from 'marked';
 import { SyntaxHighlighter } from '../../services/SyntaxHighlighter.js';
+import path from 'path';
 
 export interface MarkdownTextProps {
   /** Markdown content to render */
@@ -24,12 +26,16 @@ export interface MarkdownTextProps {
 }
 
 interface ParsedNode {
-  type: 'text' | 'code' | 'heading' | 'list' | 'list-item' | 'paragraph' | 'strong' | 'em' | 'codespan' | 'link';
+  type: 'text' | 'code' | 'heading' | 'list' | 'list-item' | 'paragraph' | 'strong' | 'em' | 'codespan' | 'link' | 'table';
   content?: string;
   language?: string;
   depth?: number;
   ordered?: boolean;
   children?: ParsedNode[];
+  // Table-specific fields
+  header?: string[];
+  rows?: string[][];
+  align?: ('left' | 'right' | 'center' | null)[];
 }
 
 /**
@@ -79,6 +85,23 @@ function parseTokens(tokens: any[]): ParsedNode[] {
         type: 'heading',
         content: token.text,
         depth: token.depth,
+      });
+    } else if (token.type === 'table') {
+      // Extract header
+      const header = token.header.map((cell: any) =>
+        stripInlineMarkdown(cell.text || '')
+      );
+
+      // Extract rows
+      const rows = token.rows.map((row: any) =>
+        row.map((cell: any) => stripInlineMarkdown(cell.text || ''))
+      );
+
+      nodes.push({
+        type: 'table',
+        header,
+        rows,
+        align: token.align || [],
       });
     } else if (token.type === 'list') {
       nodes.push({
@@ -164,6 +187,10 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
     );
   }
 
+  if (node.type === 'table') {
+    return <TableRenderer header={node.header || []} rows={node.rows || []} />;
+  }
+
   if (node.type === 'paragraph') {
     const formatted = formatInlineMarkdown(node.content || '');
     return (
@@ -185,6 +212,69 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
 };
 
 /**
+ * Table Renderer Component
+ *
+ * Renders markdown tables with borders and proper column width calculation
+ */
+const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ header, rows }) => {
+  // Calculate column widths based on content
+  const columnWidths = useMemo(() => {
+    const widths = header.map((h) => h.length);
+
+    rows.forEach((row) => {
+      row.forEach((cell, colIdx) => {
+        widths[colIdx] = Math.max(widths[colIdx] || 0, cell.length);
+      });
+    });
+
+    return widths;
+  }, [header, rows]);
+
+  // Pad a cell to the specified width
+  const padCell = (text: string, width: number): string => {
+    return text.padEnd(width, ' ');
+  };
+
+  // Create horizontal separator lines with proper connectors
+  const createTopBorder = (): string => {
+    return '┌─' + columnWidths.map((w) => '─'.repeat(w)).join('─┬─') + '─┐';
+  };
+
+  const createMiddleSeparator = (): string => {
+    return '├─' + columnWidths.map((w) => '─'.repeat(w)).join('─┼─') + '─┤';
+  };
+
+  const createBottomBorder = (): string => {
+    return '└─' + columnWidths.map((w) => '─'.repeat(w)).join('─┴─') + '─┘';
+  };
+
+  return (
+    <Box flexDirection="column" marginY={1}>
+      {/* Top border */}
+      <Text dimColor>{createTopBorder()}</Text>
+
+      {/* Header row */}
+      <Text bold>
+        │ {header.map((h, idx) => padCell(h, columnWidths[idx] || 0)).join(' │ ')} │
+      </Text>
+
+      {/* Header separator */}
+      <Text dimColor>{createMiddleSeparator()}</Text>
+
+      {/* Data rows */}
+      {rows.map((row, rowIdx) => (
+        <Text key={rowIdx}>
+          │ {row.map((cell, colIdx) => padCell(cell, columnWidths[colIdx] || 0)).join(' │ ')} │
+        </Text>
+      ))}
+
+      {/* Bottom border */}
+      <Text dimColor>{createBottomBorder()}</Text>
+    </Box>
+  );
+};
+
+/**
  * Format inline markdown (bold, italic, inline code, links)
  */
 function formatInlineMarkdown(text: string): string {
@@ -201,8 +291,29 @@ function formatInlineMarkdown(text: string): string {
   formatted = formatted.replace(/\*([^*]+)\*/g, '$1');
   formatted = formatted.replace(/_([^_]+)_/g, '$1');
 
-  // Handle links - show just the text
-  formatted = formatted.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  // Handle markdown links - convert file:// links to clickable, show text for others
+  formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, url) => {
+    // If it's a file path, make it clickable
+    if (url.startsWith('file://') || isFilePath(url)) {
+      let absolutePath: string;
+      if (url.startsWith('file://')) {
+        absolutePath = url.slice(7);
+      } else if (url.startsWith('/')) {
+        absolutePath = url;
+      } else if (url.startsWith('~')) {
+        const homedir = process.env.HOME || process.env.USERPROFILE || '';
+        absolutePath = url.replace(/^~/, homedir);
+      } else {
+        absolutePath = path.resolve(process.cwd(), url);
+      }
+      return createTerminalLink(text, `file://${absolutePath}`);
+    }
+    // Otherwise just show the text
+    return text;
+  });
+
+  // Make standalone file paths clickable
+  formatted = makeFilePathsClickable(formatted);
 
   return formatted;
 }
@@ -228,4 +339,61 @@ function stripInlineMarkdown(text: string): string {
   stripped = stripped.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
 
   return stripped;
+}
+
+/**
+ * Create OSC 8 hyperlink for terminal
+ */
+function createTerminalLink(text: string, url: string): string {
+  return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+}
+
+/**
+ * Detect if a string is a file path
+ */
+function isFilePath(text: string): boolean {
+  // Absolute paths
+  if (text.startsWith('/') || text.startsWith('~')) return true;
+
+  // Relative paths
+  if (text.startsWith('./') || text.startsWith('../')) return true;
+
+  // Common file extensions
+  const fileExtensions = /\.(ts|tsx|js|jsx|json|md|txt|py|java|cpp|c|h|css|html|xml|yaml|yml|toml|sh|bash|rs|go|rb|php|swift|kt|gradle|sql)$/i;
+  if (fileExtensions.test(text)) return true;
+
+  return false;
+}
+
+/**
+ * Make file paths clickable with OSC 8 hyperlinks
+ */
+function makeFilePathsClickable(text: string): string {
+  // Pattern to match file paths (both standalone and in common formats)
+  // Matches: /path/to/file, ./path/to/file, ../path/to/file, path/to/file.ext
+  const pathPattern = /(?:^|\s)((?:\.\.?\/|\/|~\/)?[\w\-./]+\.[\w]+)(?=\s|$|[,.:;)])/g;
+
+  return text.replace(pathPattern, (match, filepath) => {
+    const trimmedPath = filepath.trim();
+
+    if (!isFilePath(trimmedPath)) {
+      return match;
+    }
+
+    // Convert to absolute path for file:// URL
+    let absolutePath: string;
+    if (trimmedPath.startsWith('/')) {
+      absolutePath = trimmedPath;
+    } else if (trimmedPath.startsWith('~')) {
+      const homedir = process.env.HOME || process.env.USERPROFILE || '';
+      absolutePath = trimmedPath.replace(/^~/, homedir);
+    } else {
+      absolutePath = path.resolve(process.cwd(), trimmedPath);
+    }
+
+    const fileUrl = `file://${absolutePath}`;
+    const prefix = match.startsWith(' ') ? ' ' : '';
+
+    return prefix + createTerminalLink(trimmedPath, fileUrl);
+  });
 }

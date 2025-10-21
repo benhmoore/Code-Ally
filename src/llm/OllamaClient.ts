@@ -18,6 +18,7 @@ import {
   LLMResponse,
 } from './ModelClient.js';
 import { Message, FunctionDefinition } from '../types/index.js';
+import { logger } from '../services/Logger.js';
 
 /**
  * Ollama API payload structure
@@ -98,7 +99,7 @@ export class OllamaClient extends ModelClient {
    * @param newModelName - New model to use for subsequent requests
    */
   setModelName(newModelName: string): void {
-    console.log(`[OLLAMA_CLIENT] Changing model from ${this._modelName} to ${newModelName}`);
+    logger.debug(`[OLLAMA_CLIENT] Changing model from ${this._modelName} to ${newModelName}`);
     this._modelName = newModelName;
   }
 
@@ -106,9 +107,9 @@ export class OllamaClient extends ModelClient {
    * Cancel all ongoing requests
    */
   cancel(): void {
-    console.log('[OLLAMA_CLIENT] Cancelling', this.activeRequests.size, 'active requests');
+    logger.debug('[OLLAMA_CLIENT] Cancelling', this.activeRequests.size, 'active requests');
     for (const [requestId, controller] of this.activeRequests.entries()) {
-      console.log('[OLLAMA_CLIENT] Aborting request:', requestId);
+      logger.debug('[OLLAMA_CLIENT] Aborting request:', requestId);
       controller.abort();
     }
     this.activeRequests.clear();
@@ -138,7 +139,7 @@ export class OllamaClient extends ModelClient {
 
     // Generate unique request ID for this request
     const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    console.log('[OLLAMA_CLIENT] Starting request:', requestId);
+    logger.debug('[OLLAMA_CLIENT] Starting request:', requestId);
 
     // Prepare payload
     const payload = this.preparePayload(messages, functions, stream);
@@ -187,7 +188,7 @@ export class OllamaClient extends ModelClient {
         } catch (error: any) {
           // Handle abort/interruption
           if (error.name === 'AbortError') {
-            console.log('[OLLAMA_CLIENT] Request aborted:', requestId);
+            logger.debug('[OLLAMA_CLIENT] Request aborted:', requestId);
             return {
               role: 'assistant',
               content: '[Request cancelled by user]',
@@ -222,7 +223,7 @@ export class OllamaClient extends ModelClient {
       };
     } finally {
       // Always clean up request tracking
-      console.log('[OLLAMA_CLIENT] Cleaning up request:', requestId);
+      logger.debug('[OLLAMA_CLIENT] Cleaning up request:', requestId);
       this.activeRequests.delete(requestId);
     }
   }
@@ -387,7 +388,7 @@ export class OllamaClient extends ModelClient {
       }
     } catch (error: any) {
       if (error.message === 'Streaming interrupted by user') {
-        console.log('[OLLAMA_CLIENT] Streaming interrupted for request:', requestId);
+        logger.debug('[OLLAMA_CLIENT] Streaming interrupted for request:', requestId);
         return {
           role: 'assistant',
           content: aggregatedContent || '[Request interrupted by user]',

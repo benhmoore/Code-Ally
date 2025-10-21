@@ -47,7 +47,7 @@ When user uses @agent_name syntax:
 // Additional guidelines that apply to all agents
 const GENERAL_GUIDELINES = `## Code Conventions
 - Check existing patterns/libraries before creating new code
-- Use \`file_path:line_number\` for references
+- Reference files: Use \`src/file.ts:42\` in prose or \`[link text](src/file.ts)\` for clickable links (never in code blocks)
 - Follow surrounding context for framework choices
 
 ## Prohibited

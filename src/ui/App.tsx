@@ -65,6 +65,67 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
   const [modelSelectRequest, setModelSelectRequest] = useState<{ requestId: string; models: ModelOption[]; currentModel?: string } | undefined>(undefined);
   const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
 
+  // Throttle tool call updates to max once every 2 seconds
+  const pendingToolUpdates = useRef<Map<string, Partial<ToolCallState>>>(new Map());
+  const lastUpdateTime = useRef<number>(Date.now());
+  const updateTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Flush pending tool call updates
+  const flushToolUpdates = useRef(() => {
+    if (pendingToolUpdates.current.size === 0) return;
+
+    // Apply all pending updates
+    pendingToolUpdates.current.forEach((update, id) => {
+      if (update.status === 'executing' && update.startTime) {
+        // This is a new tool call
+        actions.addToolCall(update as ToolCallState);
+      } else {
+        // This is an update to existing tool call
+        actions.updateToolCall(id, update);
+      }
+    });
+
+    pendingToolUpdates.current.clear();
+    lastUpdateTime.current = Date.now();
+  });
+
+  // Schedule throttled update (batches updates, applies every 2s max)
+  const scheduleToolUpdate = useRef((id: string, update: Partial<ToolCallState>, immediate: boolean = false) => {
+    // Immediate updates for completion events (to avoid perceived lag)
+    if (immediate) {
+      actions.updateToolCall(id, update);
+      return;
+    }
+
+    // Batch update
+    const existing = pendingToolUpdates.current.get(id);
+    pendingToolUpdates.current.set(id, { ...existing, ...update });
+
+    // Clear existing timer
+    if (updateTimerRef.current) {
+      clearTimeout(updateTimerRef.current);
+    }
+
+    // If last update was > 2s ago, flush immediately
+    const timeSinceLastUpdate = Date.now() - lastUpdateTime.current;
+    if (timeSinceLastUpdate >= 2000) {
+      flushToolUpdates.current();
+    } else {
+      // Otherwise schedule flush in remaining time
+      const delay = 2000 - timeSinceLastUpdate;
+      updateTimerRef.current = setTimeout(flushToolUpdates.current, delay);
+    }
+  });
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (updateTimerRef.current) {
+        clearTimeout(updateTimerRef.current);
+      }
+    };
+  }, []);
+
   // Initialize services on mount
   useEffect(() => {
     const initializeServices = async () => {
@@ -98,8 +159,6 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
 
   // Subscribe to tool call start events
   useActivityEvent(ActivityEventType.TOOL_CALL_START, (event) => {
-    console.log('[TOOL_CALL_START]', event.id, event.data?.toolName, 'parentId:', event.parentId);
-
     // Skip tool group orchestration events (they're not actual tool calls)
     if (event.data?.groupExecution) {
       return;
@@ -127,6 +186,7 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       parentId: event.parentId, // For nested tool calls (e.g., from subagents)
       isTransparent: event.data.isTransparent || false, // For wrapper tools
     };
+    // Tool call creation must be immediate to avoid race conditions with completion events
     actions.addToolCall(toolCall);
   });
 
@@ -150,12 +210,12 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       throw new Error(`TOOL_CALL_END event missing required 'success' field. ID: ${event.id}`);
     }
 
-    actions.updateToolCall(event.id, {
+    scheduleToolUpdate.current(event.id, {
       status: event.data.success ? 'success' : 'error',
       endTime: event.timestamp,
       error: event.data.error,
       collapsed: event.data.collapsed || false,
-    });
+    }, true); // Immediate update for completion
   });
 
   // Subscribe to tool output chunks
@@ -165,9 +225,9 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       throw new Error(`TOOL_OUTPUT_CHUNK event missing required 'id' field`);
     }
 
-    actions.updateToolCall(event.id, {
+    scheduleToolUpdate.current(event.id, {
       output: event.data?.chunk || '',
-    });
+    }, false); // Throttled update
   });
 
   // Subscribe to diff preview events
@@ -176,14 +236,14 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       throw new Error(`DIFF_PREVIEW event missing required 'id' field`);
     }
 
-    actions.updateToolCall(event.id, {
+    scheduleToolUpdate.current(event.id, {
       diffPreview: {
         oldContent: event.data?.oldContent || '',
         newContent: event.data?.newContent || '',
         filePath: event.data?.filePath || '',
         operationType: event.data?.operationType || 'edit',
       },
-    });
+    }, false); // Throttled update
   });
 
   // Subscribe to error events
@@ -202,11 +262,11 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       throw new Error(`ERROR event missing required 'timestamp' field. ID: ${event.id}`);
     }
 
-    actions.updateToolCall(event.id, {
+    scheduleToolUpdate.current(event.id, {
       status: 'error',
       error: event.data?.error || 'Unknown error',
       endTime: event.timestamp,
-    });
+    }, true); // Immediate update for errors
   });
 
   // Subscribe to permission request events
@@ -435,29 +495,13 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
 
   return (
     <Box flexDirection="column" padding={1}>
-      {/* Header */}
-      <Box marginBottom={1}>
-        <Text bold color="cyan">
-          Code Ally
-        </Text>
-        <Text dimColor> - Terminal UI (Ink)</Text>
-      </Box>
-
-      {/* Context Usage Indicator */}
-      {state.contextUsage >= 70 && (
-        <Box marginBottom={1}>
-          <Text color={state.contextUsage >= 90 ? 'red' : 'yellow'}>
-            Context: {state.contextUsage}% used
-          </Text>
-        </Box>
-      )}
-
-      {/* Conversation View */}
-      <Box flexDirection="column" flexGrow={1} marginBottom={1}>
+      {/* Conversation View - contains header + all conversation history in Static */}
+      <Box flexDirection="column" flexGrow={1}>
         <ConversationView
           messages={state.messages}
           isThinking={state.isThinking}
           activeToolCalls={state.activeToolCalls}
+          contextUsage={state.contextUsage}
         />
       </Box>
 

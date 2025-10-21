@@ -525,10 +525,7 @@ async function main() {
       }),
       {
         exitOnCtrlC: false,
-        // Limit render rate to prevent flickering/thrashing when content exceeds viewport
-        // Ink must erase entire screen for content taller than terminal height
-        // Limiting FPS ensures updates are batched, reducing visible flicker
-        patchConsole: false, // Don't intercept console for better performance
+        patchConsole: true, // Intercept console to prevent interference with Ink rendering
       }
     );
 
