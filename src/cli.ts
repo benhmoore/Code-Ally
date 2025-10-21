@@ -29,6 +29,35 @@ import { SetupWizard } from './cli/SetupWizard.js';
 import { logger } from './services/Logger.js';
 
 /**
+ * Comprehensive terminal state reset
+ *
+ * Resets ALL possible escape sequences that could leak and corrupt the terminal.
+ * Call this on exit to ensure clean terminal state.
+ */
+function resetTerminalState(): void {
+  // Close any open hyperlinks (OSC 8)
+  process.stdout.write('\x1b]8;;\x1b\\');
+
+  // Reset all text formatting (SGR 0)
+  process.stdout.write('\x1b[0m');
+
+  // Show cursor (in case it was hidden)
+  process.stdout.write('\x1b[?25h');
+
+  // Reset foreground/background colors
+  process.stdout.write('\x1b[39m\x1b[49m');
+
+  // Exit alternate screen buffer (in case it was entered)
+  process.stdout.write('\x1b[?1049l');
+
+  // Reset bracketed paste mode
+  process.stdout.write('\x1b[?2004l');
+
+  // Ensure we're at the start of a new line
+  process.stdout.write('\n');
+}
+
+/**
  * Configure logging based on verbosity flags
  */
 function configureLogging(verbose?: boolean, debug?: boolean): void {
@@ -532,12 +561,38 @@ async function main() {
     // Wait for the app to exit
     await waitUntilExit();
 
+    // Critical: Comprehensive terminal reset to clean up ANY escape sequence leakage
+    resetTerminalState();
+
     // Cleanup
     await registry.shutdown();
   } catch (error) {
+    // Critical: Reset terminal even on fatal errors
+    resetTerminalState();
     console.error('Fatal error:', error);
     process.exit(1);
   }
 }
+
+// Install global handlers to ensure terminal reset on ANY exit
+process.on('exit', () => {
+  resetTerminalState();
+});
+
+process.on('SIGINT', () => {
+  resetTerminalState();
+  process.exit(130); // Standard exit code for SIGINT
+});
+
+process.on('SIGTERM', () => {
+  resetTerminalState();
+  process.exit(143); // Standard exit code for SIGTERM
+});
+
+process.on('uncaughtException', (error) => {
+  resetTerminalState();
+  console.error('Uncaught exception:', error);
+  process.exit(1);
+});
 
 main();

@@ -92,7 +92,57 @@ type TimelineItem =
   | { type: 'toolCall'; toolCall: ToolCallState & { children?: ToolCallState[] }; timestamp: number };
 
 /**
- * Simple ConversationView - renders everything chronologically
+ * Memoized completed content - never re-renders when active tools update
+ */
+const CompletedContent = React.memo<{ timeline: TimelineItem[] }>(({ timeline }) => (
+  <>
+    {timeline.map((item) => {
+      if (item.type === 'message') {
+        return <MessageDisplay key={`msg-${item.index}`} message={item.message} />;
+      } else {
+        return (
+          <Box key={`tool-${item.toolCall.id}`}>
+            {renderToolCallTree(item.toolCall, 0)}
+          </Box>
+        );
+      }
+    })}
+  </>
+));
+
+/**
+ * Memoized active content - only re-renders when active tools change
+ */
+const ActiveContent = React.memo<{
+  runningToolCalls: (ToolCallState & { children?: ToolCallState[] })[];
+  streamingContent?: string;
+  contextUsage: number;
+}>(({ runningToolCalls, streamingContent, contextUsage }) => (
+  <>
+    {contextUsage >= 70 && (
+      <Box>
+        <Text color={contextUsage >= 90 ? 'red' : 'yellow'}>
+          Context: {contextUsage}% used
+        </Text>
+      </Box>
+    )}
+
+    {runningToolCalls.map((toolCall) => (
+      <Box key={`running-tool-${toolCall.id}`}>
+        {renderToolCallTree(toolCall, 0)}
+      </Box>
+    ))}
+
+    {streamingContent && (
+      <Box>
+        <Text color="green">{streamingContent}</Text>
+      </Box>
+    )}
+  </>
+));
+
+/**
+ * Simple ConversationView - renders completed and active content separately
  */
 export const ConversationView: React.FC<ConversationViewProps> = ({
   messages,
@@ -102,30 +152,43 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
 }) => {
   const toolCallTree = buildToolCallTree(activeToolCalls);
 
-  // Combine messages and tool calls into a chronological timeline
-  const timeline: TimelineItem[] = [];
+  // Separate completed from running tool calls
+  const { completedToolCalls, runningToolCalls } = React.useMemo(() => {
+    const completed = toolCallTree.filter(
+      (tc) => tc.status === 'success' || tc.status === 'error' || tc.status === 'cancelled'
+    );
+    const running = toolCallTree.filter(
+      (tc) => tc.status === 'executing' || tc.status === 'pending' || tc.status === 'validating'
+    );
+    return { completedToolCalls: completed, runningToolCalls: running };
+  }, [toolCallTree]);
 
-  // Add messages with their timestamps
-  messages.forEach((message, index) => {
-    timeline.push({
-      type: 'message',
-      message,
-      index,
-      timestamp: (message as any).timestamp || 0,
+  // Build completed timeline (messages + completed tools) - memoized
+  const completedTimeline = React.useMemo(() => {
+    const timeline: TimelineItem[] = [];
+
+    // Add all messages
+    messages.forEach((message, index) => {
+      timeline.push({
+        type: 'message',
+        message,
+        index,
+        timestamp: (message as any).timestamp || 0,
+      });
     });
-  });
 
-  // Add root-level tool calls with their start times
-  toolCallTree.forEach((toolCall) => {
-    timeline.push({
-      type: 'toolCall',
-      toolCall,
-      timestamp: toolCall.startTime,
+    // Add completed tool calls
+    completedToolCalls.forEach((toolCall) => {
+      timeline.push({
+        type: 'toolCall',
+        toolCall,
+        timestamp: toolCall.startTime,
+      });
     });
-  });
 
-  // Sort by timestamp
-  timeline.sort((a, b) => a.timestamp - b.timestamp);
+    timeline.sort((a, b) => a.timestamp - b.timestamp);
+    return timeline;
+  }, [messages, completedToolCalls]);
 
   return (
     <Box flexDirection="column">
@@ -137,34 +200,15 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
         <Text dimColor> - Terminal UI (Ink)</Text>
       </Box>
 
-      {/* Chronologically ordered messages and tool calls */}
-      {timeline.map((item) => {
-        if (item.type === 'message') {
-          return <MessageDisplay key={`msg-${item.index}`} message={item.message} />;
-        } else {
-          return (
-            <Box key={`tool-${item.toolCall.id}`}>
-              {renderToolCallTree(item.toolCall, 0)}
-            </Box>
-          );
-        }
-      })}
+      {/* Completed content - memoized, doesn't re-render */}
+      <CompletedContent timeline={completedTimeline} />
 
-      {/* Context warning */}
-      {contextUsage >= 70 && (
-        <Box>
-          <Text color={contextUsage >= 90 ? 'red' : 'yellow'}>
-            Context: {contextUsage}% used
-          </Text>
-        </Box>
-      )}
-
-      {/* Streaming content */}
-      {streamingContent && (
-        <Box>
-          <Text color="green">{streamingContent}</Text>
-        </Box>
-      )}
+      {/* Active content - only re-renders when active tools change */}
+      <ActiveContent
+        runningToolCalls={runningToolCalls}
+        streamingContent={streamingContent}
+        contextUsage={contextUsage}
+      />
     </Box>
   );
 };
