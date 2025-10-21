@@ -17,6 +17,7 @@ import { InputPrompt } from './components/InputPrompt.js';
 import { ConversationView } from './components/ConversationView.js';
 import { PermissionPrompt, PermissionRequest } from './components/PermissionPrompt.js';
 import { ModelSelector, ModelOption } from './components/ModelSelector.js';
+import { RewindSelector } from './components/RewindSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
 import { Agent } from '../agent/Agent.js';
 import { CommandHistory } from '../services/CommandHistory.js';
@@ -64,6 +65,10 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
   // Model selector state
   const [modelSelectRequest, setModelSelectRequest] = useState<{ requestId: string; models: ModelOption[]; currentModel?: string } | undefined>(undefined);
   const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
+
+  // Rewind selector state
+  const [rewindRequest, setRewindRequest] = useState<{ requestId: string; userMessagesCount: number; selectedIndex: number } | undefined>(undefined);
+  const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
 
   // Throttle tool call updates to max once every 2 seconds
   const pendingToolUpdates = useRef<Map<string, Partial<ToolCallState>>>(new Map());
@@ -316,8 +321,9 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
   useActivityEvent(ActivityEventType.MODEL_SELECT_RESPONSE, async (event) => {
     const { modelName } = event.data;
 
-    // Clear selector
+    // Clear selector immediately (crucial for unblocking input)
     setModelSelectRequest(undefined);
+    setModelSelectedIndex(0);
 
     // Apply selection if not cancelled
     if (modelName) {
@@ -349,6 +355,72 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
             content: `Error changing model: ${error instanceof Error ? error.message : 'Unknown error'}`,
           });
         }
+      }
+    }
+  });
+
+  // Subscribe to rewind request events
+  useActivityEvent(ActivityEventType.REWIND_REQUEST, (event) => {
+    const { requestId } = event.data;
+
+    // Only allow rewind when agent is not thinking and no active tools
+    if (state.isThinking || state.activeToolCalls.length > 0) {
+      actions.addMessage({
+        role: 'assistant',
+        content: 'Cannot rewind while agent is processing. Please wait for current operation to complete.',
+      });
+      return;
+    }
+
+    // Don't calculate here - state.messages is stale!
+    // Just set a marker request that will be populated in useEffect
+    setRewindRequest({
+      requestId,
+      userMessagesCount: -1, // Marker that this needs initialization
+      selectedIndex: -1 // Marker that this needs initialization
+    });
+  });
+
+  // Update rewind request with current state when it's first set
+  useEffect(() => {
+    if (rewindRequest && rewindRequest.userMessagesCount === -1) {
+      const userMessages = state.messages.filter(m => m.role === 'user');
+      const initialIndex = Math.max(0, userMessages.length - 1);
+
+      setRewindRequest(prev => prev ? {
+        ...prev,
+        userMessagesCount: userMessages.length,
+        selectedIndex: initialIndex
+      } : undefined);
+    }
+  }, [rewindRequest, state.messages]);
+
+  // Subscribe to rewind response events
+  useActivityEvent(ActivityEventType.REWIND_RESPONSE, async (event) => {
+    const { selectedIndex, cancelled } = event.data;
+
+    // Clear selector immediately (crucial for unblocking input)
+    setRewindRequest(undefined);
+
+    // Apply rewind if not cancelled
+    if (!cancelled && selectedIndex !== undefined) {
+      try {
+        const targetMessageContent = await agent.rewindToMessage(selectedIndex);
+
+        // Update UI state - get fresh messages from agent, filter out system messages
+        const newMessages = agent.getMessages().filter(m => m.role !== 'system');
+        actions.setMessages(newMessages);
+
+        // Clear any active tool calls
+        actions.clearToolCalls();
+
+        // Pre-fill the input with the target message for editing
+        setInputPrefillText(targetMessageContent);
+      } catch (error) {
+        actions.addMessage({
+          role: 'assistant',
+          content: `Error rewinding conversation: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        });
       }
     }
   });
@@ -505,8 +577,8 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
         />
       </Box>
 
-      {/* Status Indicator - hide when permission prompt is active */}
-      {!permissionRequest && !modelSelectRequest && (
+      {/* Status Indicator - hide when any modal is active */}
+      {!permissionRequest && !modelSelectRequest && !rewindRequest && (
         <StatusIndicator isProcessing={state.isThinking} />
       )}
 
@@ -531,9 +603,40 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
               onModelNavigate={setModelSelectedIndex}
               activityStream={activityStream}
               agent={agent}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
             />
           </Box>
         </Box>
+      ) : rewindRequest ? (
+        /* Rewind Selector (replaces input when active) */
+        (() => {
+          const userMessages = state.messages.filter(m => m.role === 'user');
+          return (
+            <Box marginTop={1} flexDirection="column">
+              <RewindSelector
+                messages={userMessages}
+                selectedIndex={rewindRequest.selectedIndex}
+                visible={true}
+              />
+              {/* Hidden InputPrompt for keyboard handling only */}
+              <Box height={0} overflow="hidden">
+                <InputPrompt
+                  onSubmit={handleInput}
+                  isActive={true}
+                  commandHistory={commandHistory.current || undefined}
+                  completionProvider={completionProvider || undefined}
+                  rewindRequest={rewindRequest}
+                  onRewindNavigate={(newIndex) => setRewindRequest(prev => prev ? { ...prev, selectedIndex: newIndex } : undefined)}
+                  activityStream={activityStream}
+                  agent={agent}
+                  prefillText={inputPrefillText}
+                  onPrefillConsumed={() => setInputPrefillText(undefined)}
+                />
+              </Box>
+            </Box>
+          );
+        })()
       ) : permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
@@ -554,6 +657,8 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
               onPermissionNavigate={setPermissionSelectedIndex}
               activityStream={activityStream}
               agent={agent}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
             />
           </Box>
         </Box>
@@ -567,6 +672,8 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
             completionProvider={completionProvider || undefined}
             activityStream={activityStream}
             agent={agent}
+            prefillText={inputPrefillText}
+            onPrefillConsumed={() => setInputPrefillText(undefined)}
           />
         </Box>
       )}

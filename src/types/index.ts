@@ -75,6 +75,8 @@ export enum ActivityEventType {
   PERMISSION_RESPONSE = 'permission_response',
   MODEL_SELECT_REQUEST = 'model_select_request',
   MODEL_SELECT_RESPONSE = 'model_select_response',
+  REWIND_REQUEST = 'rewind_request',
+  REWIND_RESPONSE = 'rewind_response',
   INTERRUPT_ALL = 'interrupt_all',
   DIFF_PREVIEW = 'diff_preview',
 }

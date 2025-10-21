@@ -519,6 +519,12 @@ async function main() {
     const permissionManager = new PermissionManager(trustManager);
     registry.registerInstance('permission_manager', permissionManager);
 
+    // Create agent manager for specialized agents
+    const { AgentManager } = await import('./services/AgentManager.js');
+    const agentManager = new AgentManager();
+    await agentManager.ensureDefaultAgent();
+    registry.registerInstance('agent_manager', agentManager);
+
     // Get system prompt from prompts module
     const { getMainSystemPrompt } = await import('./prompts/systemMessages.js');
     const systemPrompt = await getMainSystemPrompt();

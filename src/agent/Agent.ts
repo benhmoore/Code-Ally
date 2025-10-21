@@ -457,6 +457,51 @@ export class Agent {
   }
 
   /**
+   * Rewind conversation to a specific user message
+   *
+   * Truncates the conversation history to just before the selected user message.
+   * The selected message will be available for editing and re-submission.
+   *
+   * @param userMessageIndex - Index of the user message in the filtered user messages array
+   * @returns The content of the target message for pre-filling the input
+   */
+  async rewindToMessage(userMessageIndex: number): Promise<string> {
+    // Filter to user messages only
+    const userMessages = this.messages.filter(m => m.role === 'user');
+
+    if (userMessageIndex < 0 || userMessageIndex >= userMessages.length) {
+      throw new Error(`Invalid message index: ${userMessageIndex}. Must be between 0 and ${userMessages.length - 1}`);
+    }
+
+    // Get the target user message
+    const targetMessage = userMessages[userMessageIndex];
+    if (!targetMessage) {
+      throw new Error(`Target message at index ${userMessageIndex} not found`);
+    }
+
+    // Find its position in the full messages array
+    const cutoffIndex = this.messages.findIndex(
+      m => m.role === 'user' && m.timestamp === targetMessage.timestamp && m.content === targetMessage.content
+    );
+
+    if (cutoffIndex === -1) {
+      throw new Error('Target message not found in conversation history');
+    }
+
+    // Preserve system message and truncate to just before the target message
+    const systemMessage = this.messages[0]?.role === 'system' ? this.messages[0] : null;
+    const truncatedMessages = this.messages.slice(systemMessage ? 1 : 0, cutoffIndex);
+
+    // Update messages array
+    this.messages = systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages;
+
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Rewound to message', userMessageIndex, '- Total messages now:', this.messages.length);
+
+    // Return the target message content for pre-filling the input
+    return targetMessage.content;
+  }
+
+  /**
    * Check if a request is currently in progress
    */
   isRequestInProgress(): boolean {

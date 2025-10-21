@@ -1,15 +1,13 @@
 /**
  * CommandHandler - Comprehensive slash command system
  *
- * Implements all 26 slash commands from the Python version:
- * - Core: help, config, model, debug, compact, exit
+ * Implements all slash commands:
+ * - Core: help, config, model, debug, compact, rewind, exit
  * - Agent: agent create/ls/show/use/delete
  * - Focus: focus, defocus, focus-show
  * - Memory: memory add/ls/rm/clear/show
  * - Project: project init/edit/view/clear
  * - Utility: undo
- *
- * Based on /Users/bhm128/CodeAlly/code_ally/agent/command_handler.py
  */
 
 import { Agent } from './Agent.js';
@@ -73,6 +71,8 @@ export class CommandHandler {
         return await this.handleDebug(args, messages);
       case 'compact':
         return await this.handleCompact(args, messages);
+      case 'rewind':
+        return await this.handleRewind();
       case 'exit':
       case 'quit':
         return await this.handleExit();
@@ -154,6 +154,7 @@ Core Commands:
   /model [name]            - Switch model or show current model
   /debug [system|tokens]   - Show debug information
   /compact                 - Compact conversation history
+  /rewind                  - Rewind conversation to a previous message
   /exit, /quit             - Exit the application
 
 Agent Commands:
@@ -301,6 +302,35 @@ Utility Commands:
         response: `Error resetting configuration: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
+  }
+
+  /**
+   * Handle /rewind command - show interactive conversation rewind UI
+   */
+  private async handleRewind(): Promise<CommandResult> {
+    // Get activity stream from service registry
+    const activityStream = this.serviceRegistry.get('activity_stream');
+
+    if (!activityStream || typeof (activityStream as any).emit !== 'function') {
+      return {
+        handled: true,
+        response: 'Rewind feature not available (activity stream not found).',
+      };
+    }
+
+    // Emit rewind request event
+    const requestId = `rewind_${Date.now()}`;
+
+    (activityStream as any).emit({
+      id: requestId,
+      type: 'rewind_request',
+      timestamp: Date.now(),
+      data: {
+        requestId,
+      },
+    });
+
+    return { handled: true }; // Selection handled via UI
   }
 
   private async handleModel(args: string[]): Promise<CommandResult> {

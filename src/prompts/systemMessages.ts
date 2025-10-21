@@ -103,13 +103,15 @@ ${allyContent}`;
     try {
       const serviceRegistry = ServiceRegistry.getInstance();
 
-      if (serviceRegistry && serviceRegistry.has('agent_manager')) {
-        const agentManager = serviceRegistry.get('agent_manager');
-        const agentsSection = await agentManager.getAgentsForSystemPrompt();
+      if (serviceRegistry && serviceRegistry.hasService('agent_manager')) {
+        const agentManager = serviceRegistry.get<any>('agent_manager');
+        if (agentManager && typeof agentManager.getAgentsForSystemPrompt === 'function') {
+          const agentsSection = await agentManager.getAgentsForSystemPrompt();
 
-        if (agentsSection && !agentsSection.includes('No specialized agents available')) {
-          agentsInfo = `
-- ${agentsSection}`;
+          if (agentsSection && !agentsSection.includes('No specialized agents available')) {
+            agentsInfo = `
+${agentsSection}`;
+          }
         }
       }
     } catch (error) {
@@ -136,12 +138,14 @@ export async function getMainSystemPrompt(): Promise<string> {
   try {
     const serviceRegistry = ServiceRegistry.getInstance();
 
-    if (serviceRegistry && serviceRegistry.has('todo_manager')) {
-      const todoManager = serviceRegistry.get('todo_manager');
-      const todoStatus = todoManager.generateActiveContext();
+    if (serviceRegistry && serviceRegistry.hasService('todo_manager')) {
+      const todoManager = serviceRegistry.get<any>('todo_manager');
+      if (todoManager && typeof todoManager.generateActiveContext === 'function') {
+        const todoStatus = todoManager.generateActiveContext();
 
-      if (todoStatus) {
-        todoContext = `\n${todoStatus}`;
+        if (todoStatus) {
+          todoContext = `\n${todoStatus}`;
+        }
       }
     }
   } catch (error) {

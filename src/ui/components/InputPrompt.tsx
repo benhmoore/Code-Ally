@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text, useInput, useApp, useFocus } from 'ink';
+import { Box, Text, useInput, useApp } from 'ink';
 import { CommandHistory } from '../../services/CommandHistory.js';
 import { CompletionProvider, Completion } from '../../services/CompletionProvider.js';
 import { CompletionDropdown } from './CompletionDropdown.js';
@@ -45,10 +45,18 @@ interface InputPromptProps {
   modelSelectedIndex?: number;
   /** Callback when model selection changes */
   onModelNavigate?: (newIndex: number) => void;
+  /** Rewind selector data (if active) */
+  rewindRequest?: { requestId: string; userMessagesCount: number; selectedIndex: number };
+  /** Callback when rewind selection changes */
+  onRewindNavigate?: (newIndex: number) => void;
   /** Activity stream for emitting events */
   activityStream?: ActivityStream;
   /** Agent instance for interruption */
   agent?: Agent;
+  /** Text to pre-fill the input buffer (e.g., after rewind) */
+  prefillText?: string;
+  /** Callback when prefill is consumed */
+  onPrefillConsumed?: () => void;
 }
 
 /**
@@ -66,13 +74,25 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   modelSelectRequest,
   modelSelectedIndex = 0,
   onModelNavigate,
+  rewindRequest,
+  onRewindNavigate,
   activityStream,
   agent,
+  prefillText,
+  onPrefillConsumed,
 }) => {
   const { exit } = useApp();
-  const { isFocused } = useFocus({ autoFocus: true });
   const [buffer, setBuffer] = useState('');
   const [cursorPosition, setCursorPosition] = useState(0);
+
+  // Handle prefill text
+  useEffect(() => {
+    if (prefillText !== undefined && prefillText !== '') {
+      setBuffer(prefillText);
+      setCursorPosition(prefillText.length);
+      onPrefillConsumed?.();
+    }
+  }, [prefillText, onPrefillConsumed]);
 
   // Use ref to track current buffer for Ctrl+C handler (avoids stale closure)
   const bufferRef = useRef(buffer);
@@ -97,6 +117,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [ctrlCCount, setCtrlCCount] = useState(0);
   const ctrlCTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Double-escape mechanism for rewind (2x Esc within 500ms)
+  const [escCount, setEscCount] = useState(0);
+  const escTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Track last cancelled request IDs to prevent duplicates
+  const lastCancelledIdRef = useRef<string | null>(null);
+
+  // Prevent re-entry during escape key processing
+  const processingEscapeRef = useRef(false);
 
   /**
    * Update completions based on current input
@@ -329,10 +358,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   };
 
   // Handle keyboard input
-  // Use both isActive prop and isFocused from useFocus hook
   useInput(
     (input, key) => {
-      if (!isActive || !isFocused) return;
+      if (!isActive) return;
 
       // ===== Force Quit (3x Ctrl+C within 2s) - Highest Priority =====
       if (key.ctrl && input === 'c') {
@@ -392,6 +420,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
         // Escape or Ctrl+C - cancel selection
         if (key.escape || (key.ctrl && input === 'c')) {
+          // Prevent duplicate cancellations for same request
+          if (lastCancelledIdRef.current === modelSelectRequest.requestId) return;
+          lastCancelledIdRef.current = modelSelectRequest.requestId;
+
           try {
             activityStream.emit({
               id: `response_${modelSelectRequest.requestId}_cancel`,
@@ -409,6 +441,70 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
 
         // Block all other input when model selector is active
+        return;
+      }
+
+      // ===== Rewind Selector Navigation =====
+      if (rewindRequest && onRewindNavigate && activityStream) {
+        const messagesCount = rewindRequest.userMessagesCount;
+        const currentIndex = rewindRequest.selectedIndex;
+
+        // Up arrow - navigate to previous message (older)
+        if (key.upArrow) {
+          const newIndex = Math.max(0, currentIndex - 1);
+          onRewindNavigate(newIndex);
+          return;
+        }
+
+        // Down arrow - navigate to next message (newer)
+        if (key.downArrow) {
+          const newIndex = Math.min(messagesCount - 1, currentIndex + 1);
+          onRewindNavigate(newIndex);
+          return;
+        }
+
+        // Enter - submit selection (rewind to this message)
+        if (key.return) {
+          try {
+            activityStream.emit({
+              id: `response_${rewindRequest.requestId}`,
+              type: ActivityEventType.REWIND_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: rewindRequest.requestId,
+                selectedIndex: currentIndex,
+                cancelled: false,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit rewind response:', error);
+          }
+          return;
+        }
+
+        // Escape or Ctrl+C - cancel rewind
+        if (key.escape || (key.ctrl && input === 'c')) {
+          // Prevent duplicate cancellations for same request
+          if (lastCancelledIdRef.current === rewindRequest.requestId) return;
+          lastCancelledIdRef.current = rewindRequest.requestId;
+
+          try {
+            activityStream.emit({
+              id: `response_${rewindRequest.requestId}_cancel`,
+              type: ActivityEventType.REWIND_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: rewindRequest.requestId,
+                cancelled: true,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit rewind cancellation:', error);
+          }
+          return;
+        }
+
+        // Block all other input when rewind selector is active
         return;
       }
 
@@ -453,6 +549,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
         // Escape or Ctrl+C - deny permission and cancel
         if (key.escape || (key.ctrl && input === 'c')) {
+          // Prevent duplicate cancellations for same request
+          if (lastCancelledIdRef.current === permissionRequest.requestId) return;
+          lastCancelledIdRef.current = permissionRequest.requestId;
+
           try {
             activityStream.emit({
               id: `response_${permissionRequest.requestId}_cancel`,
@@ -518,11 +618,47 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // ===== Escape - Dismiss Completions =====
+      // ===== Escape - Dismiss Completions or Double-Escape for Rewind =====
       if (key.escape) {
+        // Prevent infinite loop from re-entry during state updates
+        if (processingEscapeRef.current) return;
+
+        // First priority: dismiss completions if showing
         if (showCompletions) {
+          processingEscapeRef.current = true;
           setShowCompletions(false);
           setCompletions([]);
+          // Reset after a microtask to allow state updates to complete
+          queueMicrotask(() => {
+            processingEscapeRef.current = false;
+          });
+          return;
+        }
+
+        // Second priority: Double-escape to open rewind (only when no modal active)
+        if (!modelSelectRequest && !rewindRequest && !permissionRequest && activityStream) {
+          const newCount = escCount + 1;
+          setEscCount(newCount);
+
+          // Reset counter after 500ms
+          if (escTimerRef.current) clearTimeout(escTimerRef.current);
+          escTimerRef.current = setTimeout(() => setEscCount(0), 500);
+
+          // Open rewind on 2nd escape
+          if (newCount >= 2) {
+            const requestId = `rewind_${Date.now()}`;
+            try {
+              activityStream.emit({
+                id: requestId,
+                type: ActivityEventType.REWIND_REQUEST,
+                timestamp: Date.now(),
+                data: { requestId },
+              });
+            } catch (error) {
+              console.error('[InputPrompt] Failed to emit rewind request:', error);
+            }
+            setEscCount(0); // Reset counter
+          }
         }
         return;
       }
@@ -666,7 +802,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         setHistoryIndex(-1); // Reset history when typing
       }
     },
-    { isActive: isActive && isFocused }
+    { isActive }
   );
 
   // Split buffer into lines for multiline display
