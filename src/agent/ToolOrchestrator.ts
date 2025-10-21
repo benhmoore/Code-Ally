@@ -252,55 +252,64 @@ export class ToolOrchestrator {
     const effectiveParentId = this.parentCallId || parentId;
     logger.debug('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId);
 
-    try {
-      // Validate todo prerequisites FIRST (before creating UI elements)
-      if (toolName !== 'todo_write') {
-        const registry = ServiceRegistry.getInstance();
-        const todoManager = registry.get('todo_manager');
+    // Validate todo prerequisites FIRST (before creating UI elements)
+    if (toolName !== 'todo_write') {
+      const registry = ServiceRegistry.getInstance();
+      const todoManager = registry.get('todo_manager');
 
-        if (todoManager) {
-          const incompleteTodos = todoManager.getIncompleteTodos();
+      if (todoManager) {
+        const incompleteTodos = todoManager.getIncompleteTodos();
 
-          if (incompleteTodos.length === 0) {
-            const errorResult: ToolResult = {
-              success: false,
-              error: `${toolName}: Cannot execute tools without an active todo list. Use todo_write to create a task plan first.`,
-              error_type: 'validation_error',
-            };
+        if (incompleteTodos.length === 0) {
+          const errorResult: ToolResult = {
+            success: false,
+            error: `${toolName}: Cannot execute tools without an active todo list. Use todo_write to create a task plan first.`,
+            error_type: 'validation_error',
+          };
 
-            // Don't emit TOOL_CALL_START - just return error
-            return errorResult;
-          }
+          // Don't emit TOOL_CALL_START - just return error
+          return errorResult;
+        }
 
-          // Auto-promote first pending todo to in_progress
-          const inProgress = todoManager.getInProgressTodo();
-          if (!inProgress) {
-            const nextPending = todoManager.getNextPendingTodo();
-            if (nextPending) {
-              // Find and update the todo
-              const todos = todoManager.getTodos();
-              const updated = todos.map(t =>
-                t.id === nextPending.id ? { ...t, status: 'in_progress' as const } : t
-              );
-              todoManager.setTodos(updated);
-            }
+        // Auto-promote first pending todo to in_progress
+        const inProgress = todoManager.getInProgressTodo();
+        if (!inProgress) {
+          const nextPending = todoManager.getNextPendingTodo();
+          if (nextPending) {
+            // Find and update the todo
+            const todos = todoManager.getTodos();
+            const updated = todos.map(t =>
+              t.id === nextPending.id ? { ...t, status: 'in_progress' as const } : t
+            );
+            todoManager.setTodos(updated);
           }
         }
       }
+    }
 
-      // Emit start event FIRST (creates tool call in UI state)
-      this.emitEvent({
-        id,
-        type: ActivityEventType.TOOL_CALL_START,
-        timestamp: Date.now(),
-        parentId: effectiveParentId,
-        data: {
-          toolName,
-          arguments: args,
-          isTransparent: tool?.isTransparentWrapper || false,
-        },
-      });
+    // Emit start event FIRST (creates tool call in UI state)
+    this.emitEvent({
+      id,
+      type: ActivityEventType.TOOL_CALL_START,
+      timestamp: Date.now(),
+      parentId: effectiveParentId,
+      data: {
+        toolName,
+        arguments: args,
+        visibleInChat: tool?.visibleInChat ?? true,
+        isTransparent: tool?.isTransparentWrapper || false,
+      },
+    });
 
+    // CRITICAL: After TOOL_CALL_START, we MUST emit TOOL_CALL_END
+    // Use try-finally to guarantee this happens
+    let result: ToolResult = {
+      success: false,
+      error: 'Tool execution failed unexpectedly',
+      error_type: 'system_error',
+    };
+
+    try {
       // Preview changes (e.g., diffs) BEFORE permission check
       // Tool call now exists in state, so diff can attach to it
       if (tool) {
@@ -314,49 +323,14 @@ export class ToolOrchestrator {
 
         // Only check permissions if the tool requires confirmation
         if (tool && tool.requiresConfirmation) {
-          try {
-            await this.permissionManager.checkPermission(toolName, args);
-          } catch (error) {
-            // Handle permission errors
-            if (
-              error instanceof DirectoryTraversalError ||
-              error instanceof PermissionDeniedError
-            ) {
-              const errorResult: ToolResult = {
-                success: false,
-                error: error.message,
-                error_type: 'permission_denied',
-              };
-
-              // Tool call already started, permission denied
-              return errorResult;
-            }
-            // Re-throw unexpected errors
-            throw error;
-          }
+          await this.permissionManager.checkPermission(toolName, args);
         }
       }
 
       // Execute tool via tool manager (pass ID for streaming output)
-      const result = await this.toolManager.executeTool(toolName, args, id);
+      result = await this.toolManager.executeTool(toolName, args, id);
 
-      // Emit end event (with effective parent)
-      this.emitEvent({
-        id,
-        type: ActivityEventType.TOOL_CALL_END,
-        timestamp: Date.now(),
-        parentId: effectiveParentId,
-        data: {
-          toolName,
-          result,
-          success: result.success,
-          error: result.success ? undefined : result.error, // Include error for failed tools
-          isTransparent: tool?.isTransparentWrapper || false, // Mark transparent wrappers
-          collapsed: tool?.shouldCollapse || false, // Mark tools that should collapse
-        },
-      });
-
-      // Emit output chunks if result has content (with effective parent)
+      // Emit output chunks if result has content
       if (result.success && (result as any).content) {
         this.emitEvent({
           id,
@@ -369,30 +343,44 @@ export class ToolOrchestrator {
           },
         });
       }
-
-      return result;
     } catch (error) {
-      // Create error result
-      const errorResult: ToolResult = {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        error_type: 'system_error',
-      };
-
-      // Emit error event (with effective parent)
+      // Handle any errors during execution
+      if (
+        error instanceof DirectoryTraversalError ||
+        error instanceof PermissionDeniedError
+      ) {
+        result = {
+          success: false,
+          error: error.message,
+          error_type: 'permission_denied',
+        };
+      } else {
+        result = {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          error_type: 'system_error',
+        };
+      }
+    } finally {
+      // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START
       this.emitEvent({
         id,
-        type: ActivityEventType.ERROR,
+        type: ActivityEventType.TOOL_CALL_END,
         timestamp: Date.now(),
         parentId: effectiveParentId,
         data: {
           toolName,
-          error: errorResult.error,
+          result,
+          success: result.success,
+          error: result.success ? undefined : result.error,
+          visibleInChat: tool?.visibleInChat ?? true,
+          isTransparent: tool?.isTransparentWrapper || false,
+          collapsed: tool?.shouldCollapse || false,
         },
       });
-
-      return errorResult;
     }
+
+    return result;
   }
 
   /**
@@ -446,12 +434,12 @@ export class ToolOrchestrator {
     if (!content) {
       content = (result as any).output;
       if (content) {
-        console.warn(`[TOOL_ORCHESTRATOR] Tool '${toolName}' uses deprecated 'output' field instead of 'content'`);
+        logger.debug(`[TOOL_ORCHESTRATOR] Tool '${toolName}' uses deprecated 'output' field instead of 'content'`);
       }
     }
 
     if (!content) {
-      console.warn(`[TOOL_ORCHESTRATOR] Tool '${toolName}' returned no content - using generic success message`);
+      logger.debug(`[TOOL_ORCHESTRATOR] Tool '${toolName}' returned no content - using generic success message`);
       return `${toolName} completed successfully`;
     }
 

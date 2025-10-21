@@ -31,6 +31,13 @@ export abstract class BaseTool {
   readonly suppressExecutionAnimation: boolean = false;
 
   /**
+   * Whether this tool should appear in the conversation UI
+   * Set to false for tools that should be hidden from chat
+   * (e.g., batch, todo_write)
+   */
+  readonly visibleInChat: boolean = true;
+
+  /**
    * Whether this tool is a transparent wrapper
    * Set to true for tools that should not appear in the conversation
    * (only their children should appear)

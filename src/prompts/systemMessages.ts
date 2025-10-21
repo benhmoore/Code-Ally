@@ -47,8 +47,15 @@ When user uses @agent_name syntax:
 // Additional guidelines that apply to all agents
 const GENERAL_GUIDELINES = `## Code Conventions
 - Check existing patterns/libraries before creating new code
-- Reference files: Use \`src/file.ts:42\` in prose or \`[link text](src/file.ts)\` for clickable links (never in code blocks)
 - Follow surrounding context for framework choices
+
+## File References
+**ALWAYS use clickable markdown links for file paths in prose:**
+- ✓ Correct: "Created file at [src/example.txt](src/example.txt)"
+- ✓ Correct: "See [src/utils/helper.ts:42](src/utils/helper.ts:42) for details"
+- ✗ Wrong: "Created file at src/example.txt" (not clickable)
+- ✗ Wrong: "Created file at [src/example.txt]" (brackets without link)
+- Never use links inside code blocks (only in prose)
 
 ## Prohibited
 - Committing without explicit request

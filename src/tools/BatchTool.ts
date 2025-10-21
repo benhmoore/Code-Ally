@@ -15,7 +15,8 @@ export class BatchTool extends BaseTool {
   readonly description =
     'Execute multiple tools concurrently in a single call. Use this when you need to run several independent operations in parallel (e.g., reading multiple files, running multiple searches). Each tool in the batch runs simultaneously for better performance.';
   readonly requiresConfirmation = false; // Individual tools will handle their own confirmation
-  readonly isTransparentWrapper = true; // Don't show batch() in conversation, only its children
+  readonly visibleInChat = false; // Don't show batch() in conversation, only its children
+  readonly isTransparentWrapper = true; // Promote children to replace wrapper
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

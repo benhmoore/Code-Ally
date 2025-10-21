@@ -43,6 +43,20 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
     }
   });
 
+  // Filter out invisible tools recursively
+  const filterInvisibleTools = (
+    calls: (ToolCallState & { children?: ToolCallState[] })[]
+  ): (ToolCallState & { children?: ToolCallState[] })[] => {
+    return calls
+      .filter(call => call.visibleInChat !== false)
+      .map(call => {
+        if (call.children?.length) {
+          call.children = filterInvisibleTools(call.children);
+        }
+        return call;
+      });
+  };
+
   // Process transparent wrappers: promote their children
   const processTransparentWrappers = (
     calls: (ToolCallState & { children?: ToolCallState[] })[]
@@ -63,7 +77,9 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
     return result;
   };
 
-  return processTransparentWrappers(rootCalls);
+  // First filter invisible tools, then process transparent wrappers
+  const visibleCalls = filterInvisibleTools(rootCalls);
+  return processTransparentWrappers(visibleCalls);
 }
 
 /**

@@ -189,6 +189,7 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       arguments: event.data.arguments || {},
       startTime: event.timestamp,
       parentId: event.parentId, // For nested tool calls (e.g., from subagents)
+      visibleInChat: event.data.visibleInChat ?? true, // Whether to show in conversation
       isTransparent: event.data.isTransparent || false, // For wrapper tools
     };
     // Tool call creation must be immediate to avoid race conditions with completion events
@@ -220,6 +221,8 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       endTime: event.timestamp,
       error: event.data.error,
       collapsed: event.data.collapsed || false,
+      // Clear diff preview on completion - the preview is no longer relevant
+      diffPreview: undefined,
     }, true); // Immediate update for completion
   });
 
@@ -271,6 +274,8 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       status: 'error',
       error: event.data?.error || 'Unknown error',
       endTime: event.timestamp,
+      // Clear diff preview on error
+      diffPreview: undefined,
     }, true); // Immediate update for errors
   });
 
@@ -458,32 +463,89 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
             return;
           }
 
-          // Add user message (with the command, not the ! prefix)
+          // Generate unique tool call ID
+          const toolCallId = `bash-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+          // Create assistant message that describes the bash execution
+          const assistantMessage = {
+            role: 'assistant' as const,
+            content: '',
+            tool_calls: [{
+              id: toolCallId,
+              type: 'function' as const,
+              function: {
+                name: 'bash',
+                arguments: { command: bashCommand },
+              },
+            }],
+          };
+
+          // Add messages to Agent's conversation history
+          agent.addMessage({ role: 'user', content: bashCommand });
+          agent.addMessage(assistantMessage);
+
+          // Add user message to UI
           actions.addMessage({
             role: 'user',
             content: bashCommand,
           });
 
-          // Execute bash command directly
-          const result = await bashTool.execute({ command: bashCommand });
+          // Emit TOOL_CALL_START event to create UI element
+          activityStream.emit({
+            id: toolCallId,
+            type: ActivityEventType.TOOL_CALL_START,
+            timestamp: Date.now(),
+            data: {
+              toolName: 'bash',
+              arguments: { command: bashCommand },
+              visibleInChat: bashTool.visibleInChat ?? true,
+              isTransparent: bashTool.isTransparentWrapper || false,
+            },
+          });
+
+          // Execute bash command with ID for streaming output
+          const result = await bashTool.execute({ command: bashCommand }, toolCallId);
+
+          // Emit TOOL_CALL_END event to complete the tool call
+          activityStream.emit({
+            id: toolCallId,
+            type: ActivityEventType.TOOL_CALL_END,
+            timestamp: Date.now(),
+            data: {
+              toolName: 'bash',
+              result,
+              success: result.success,
+              error: result.success ? undefined : result.error,
+              visibleInChat: bashTool.visibleInChat ?? true,
+              isTransparent: bashTool.isTransparentWrapper || false,
+              collapsed: bashTool.shouldCollapse || false,
+            },
+          });
+
+          // Format tool result message for Agent
+          const toolResultMessage = {
+            role: 'tool' as const,
+            content: JSON.stringify(result),
+            tool_call_id: toolCallId,
+            name: 'bash',
+          };
+
+          // Add tool result to Agent's conversation history
+          agent.addMessage(toolResultMessage);
 
           // Format response based on result
           let responseContent = '';
           if (result.success) {
-            const output = result.output || '';
-            responseContent = output.trim() || '';
+            responseContent = `Command executed successfully${result.output ? ':\n' + result.output : ''}`;
           } else {
-            const error = result.error || 'Unknown error';
-            responseContent = error;
+            responseContent = `Command failed: ${result.error || 'Unknown error'}`;
           }
 
-          // Add assistant response (only if there's content)
-          if (responseContent.trim()) {
-            actions.addMessage({
-              role: 'assistant',
-              content: responseContent,
-            });
-          }
+          // Add assistant response to UI
+          actions.addMessage({
+            role: 'assistant',
+            content: responseContent,
+          });
 
           return;
         } catch (error) {

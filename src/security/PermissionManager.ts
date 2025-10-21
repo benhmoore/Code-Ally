@@ -65,11 +65,11 @@ export class PermissionManager {
 
     // Check if already trusted
     if (this.trustManager.isTrusted(toolName, permissionPath)) {
-      console.log(`Tool ${toolName} is already trusted`);
+      logger.debug(`Tool ${toolName} is already trusted`);
       return true;
     }
 
-    console.log(`Requesting permission for ${toolName}`);
+    logger.debug(`Requesting permission for ${toolName}`);
 
     // Prompt for permission (this may throw PermissionDeniedError)
     return await this.trustManager.checkPermission(toolName, args, permissionPath);
@@ -101,7 +101,7 @@ export class PermissionManager {
 
         // Check for path traversal patterns
         if (hasPathTraversalPatterns(argValue)) {
-          console.warn(
+          logger.debug(
             `Path traversal pattern detected in ${toolName} argument ${argName}: ${argValue}`
           );
           throw new DirectoryTraversalError(
@@ -116,7 +116,7 @@ export class PermissionManager {
             // Verify it doesn't resolve to a path outside CWD
             const absPath = path.resolve(argValue);
             if (!absPath.startsWith(this.startDirectory)) {
-              console.warn(
+              logger.debug(
                 `Path outside CWD detected in ${toolName} argument ${argName}: ${argValue}`
               );
               throw new DirectoryTraversalError(
@@ -140,7 +140,7 @@ export class PermissionManager {
       else if (Array.isArray(argValue)) {
         for (const item of argValue) {
           if (typeof item === 'string' && hasPathTraversalPatterns(item)) {
-            console.warn(
+            logger.debug(
               `Path traversal pattern detected in ${toolName} list argument ${argName}: ${item}`
             );
             throw new DirectoryTraversalError(

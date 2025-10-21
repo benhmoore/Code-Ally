@@ -9,6 +9,7 @@
 
 import path from 'path';
 import { cwd } from 'process';
+import { logger } from '../services/Logger.js';
 
 /**
  * Check if a path is within the current working directory
@@ -33,7 +34,7 @@ export function isPathWithinCwd(checkPath: string): boolean {
     // This ensures the path is within the current working directory or its subdirectories
     return absPath.startsWith(workingDir);
   } catch (error) {
-    console.warn(`Error checking path traversal: ${error}`);
+    logger.debug(`Error checking path traversal: ${error}`);
     // If there's an error, assume it's not safe
     return false;
   }

@@ -16,7 +16,6 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { marked } from 'marked';
 import { SyntaxHighlighter } from '../../services/SyntaxHighlighter.js';
-import path from 'path';
 
 export interface MarkdownTextProps {
   /** Markdown content to render */
@@ -291,29 +290,13 @@ function formatInlineMarkdown(text: string): string {
   formatted = formatted.replace(/\*([^*]+)\*/g, '$1');
   formatted = formatted.replace(/_([^_]+)_/g, '$1');
 
-  // Handle markdown links - convert file:// links to clickable, show text for others
-  formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, url) => {
-    // If it's a file path, make it clickable
-    if (url.startsWith('file://') || isFilePath(url)) {
-      let absolutePath: string;
-      if (url.startsWith('file://')) {
-        absolutePath = url.slice(7);
-      } else if (url.startsWith('/')) {
-        absolutePath = url;
-      } else if (url.startsWith('~')) {
-        const homedir = process.env.HOME || process.env.USERPROFILE || '';
-        absolutePath = url.replace(/^~/, homedir);
-      } else {
-        absolutePath = path.resolve(process.cwd(), url);
-      }
-      return createTerminalLink(text, `file://${absolutePath}`);
-    }
-    // Otherwise just show the text
+  // Handle markdown links - just show the text (hyperlinks can corrupt Ink rendering)
+  formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, _url) => {
     return text;
   });
 
-  // Make standalone file paths clickable
-  formatted = makeFilePathsClickable(formatted);
+  // Don't make file paths clickable - hyperlinks can corrupt Ink rendering
+  // formatted = makeFilePathsClickable(formatted);
 
   return formatted;
 }
@@ -341,59 +324,36 @@ function stripInlineMarkdown(text: string): string {
   return stripped;
 }
 
-/**
- * Create OSC 8 hyperlink for terminal
- */
-function createTerminalLink(text: string, url: string): string {
-  return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
-}
-
-/**
- * Detect if a string is a file path
- */
-function isFilePath(text: string): boolean {
-  // Absolute paths
-  if (text.startsWith('/') || text.startsWith('~')) return true;
-
-  // Relative paths
-  if (text.startsWith('./') || text.startsWith('../')) return true;
-
-  // Common file extensions
-  const fileExtensions = /\.(ts|tsx|js|jsx|json|md|txt|py|java|cpp|c|h|css|html|xml|yaml|yml|toml|sh|bash|rs|go|rb|php|swift|kt|gradle|sql)$/i;
-  if (fileExtensions.test(text)) return true;
-
-  return false;
-}
-
-/**
- * Make file paths clickable with OSC 8 hyperlinks
- */
-function makeFilePathsClickable(text: string): string {
-  // Pattern to match file paths (both standalone and in common formats)
-  // Matches: /path/to/file, ./path/to/file, ../path/to/file, path/to/file.ext
-  const pathPattern = /(?:^|\s)((?:\.\.?\/|\/|~\/)?[\w\-./]+\.[\w]+)(?=\s|$|[,.:;)])/g;
-
-  return text.replace(pathPattern, (match, filepath) => {
-    const trimmedPath = filepath.trim();
-
-    if (!isFilePath(trimmedPath)) {
-      return match;
-    }
-
-    // Convert to absolute path for file:// URL
-    let absolutePath: string;
-    if (trimmedPath.startsWith('/')) {
-      absolutePath = trimmedPath;
-    } else if (trimmedPath.startsWith('~')) {
-      const homedir = process.env.HOME || process.env.USERPROFILE || '';
-      absolutePath = trimmedPath.replace(/^~/, homedir);
-    } else {
-      absolutePath = path.resolve(process.cwd(), trimmedPath);
-    }
-
-    const fileUrl = `file://${absolutePath}`;
-    const prefix = match.startsWith(' ') ? ' ' : '';
-
-    return prefix + createTerminalLink(trimmedPath, fileUrl);
-  });
-}
+// Terminal hyperlinks (OSC 8) disabled - they corrupt Ink rendering
+// The functions below are kept for reference but not used
+//
+// function createTerminalLink(text: string, url: string): string {
+//   return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+// }
+//
+// function isFilePath(text: string): boolean {
+//   if (text.startsWith('/') || text.startsWith('~')) return true;
+//   if (text.startsWith('./') || text.startsWith('../')) return true;
+//   const fileExtensions = /\.(ts|tsx|js|jsx|json|md|txt|py|java|cpp|c|h|css|html|xml|yaml|yml|toml|sh|bash|rs|go|rb|php|swift|kt|gradle|sql)$/i;
+//   return fileExtensions.test(text);
+// }
+//
+// function makeFilePathsClickable(text: string): string {
+//   const pathPattern = /(?:^|\s)((?:\.\.?\/|\/|~\/)?[\w\-./]+\.[\w]+)(?=\s|$|[,.:;)])/g;
+//   return text.replace(pathPattern, (match, filepath) => {
+//     const trimmedPath = filepath.trim();
+//     if (!isFilePath(trimmedPath)) return match;
+//     let absolutePath: string;
+//     if (trimmedPath.startsWith('/')) {
+//       absolutePath = trimmedPath;
+//     } else if (trimmedPath.startsWith('~')) {
+//       const homedir = process.env.HOME || process.env.USERPROFILE || '';
+//       absolutePath = trimmedPath.replace(/^~/, homedir);
+//     } else {
+//       absolutePath = path.resolve(process.cwd(), trimmedPath);
+//     }
+//     const fileUrl = `file://${absolutePath}`;
+//     const prefix = match.startsWith(' ') ? ' ' : '';
+//     return prefix + createTerminalLink(trimmedPath, fileUrl);
+//   });
+// }

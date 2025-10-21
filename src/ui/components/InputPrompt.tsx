@@ -183,10 +183,22 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
     // Find word boundaries
     let wordStart = cursorPosition;
-    while (wordStart > 0) {
-      const char = buffer[wordStart - 1];
-      if (!char || /\s/.test(char)) break;
-      wordStart--;
+
+    // For file completions, preserve directory prefix by breaking at path separators
+    if (completion.type === 'file') {
+      while (wordStart > 0) {
+        const char = buffer[wordStart - 1];
+        // Break at whitespace OR path separator
+        if (!char || /[\s/]/.test(char)) break;
+        wordStart--;
+      }
+    } else {
+      // For non-file completions, use standard word boundaries (whitespace only)
+      while (wordStart > 0) {
+        const char = buffer[wordStart - 1];
+        if (!char || /\s/.test(char)) break;
+        wordStart--;
+      }
     }
 
     let wordEnd = cursorPosition;

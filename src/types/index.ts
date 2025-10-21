@@ -114,6 +114,7 @@ export interface ToolCallState {
   startTime: number;
   endTime?: number;
   parentId?: string; // For nested tool calls (e.g., subagents)
+  visibleInChat?: boolean; // Whether this tool should appear in conversation
   isTransparent?: boolean; // For wrapper tools that should not be displayed
   collapsed?: boolean; // For tools that should hide their children
   diffPreview?: {

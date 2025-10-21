@@ -22,6 +22,7 @@ export class TodoWriteTool extends BaseTool {
   readonly description =
     'Create or update the todo list. Required before executing any tools. Each todo needs: content (imperative), status (pending/in_progress/completed), activeForm (present continuous for status display).';
   readonly requiresConfirmation = false;
+  readonly visibleInChat = false; // Don't clutter chat with todo updates
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
