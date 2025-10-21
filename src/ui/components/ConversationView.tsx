@@ -160,16 +160,8 @@ const ActiveContent = React.memo<{
   runningToolCalls: (ToolCallState & { children?: ToolCallState[] })[];
   streamingContent?: string;
   contextUsage: number;
-}>(({ runningToolCalls, streamingContent, contextUsage }) => (
+}>(({ runningToolCalls, streamingContent }) => (
   <>
-    {contextUsage >= 70 && (
-      <Box>
-        <Text color={contextUsage >= 90 ? 'red' : 'yellow'}>
-          Context: {contextUsage}% used
-        </Text>
-      </Box>
-    )}
-
     {runningToolCalls.map((toolCall) => (
       <Box key={`running-tool-${toolCall.id}`}>
         {renderToolCallTree(toolCall, 0)}
@@ -213,10 +205,15 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
   const completedTimeline = React.useMemo(() => {
     const timeline: TimelineItem[] = [];
 
-    // Add all messages (except tool role messages - they're shown via ToolCallDisplay)
+    // Add all messages (except tool/system role messages and empty assistant messages)
     messages.forEach((message, index) => {
       // Skip tool role messages - they should only appear via ToolCallDisplay with ToolCallState
       if (message.role === 'tool') {
+        return;
+      }
+
+      // Skip system messages - they're internal prompts
+      if (message.role === 'system') {
         return;
       }
 

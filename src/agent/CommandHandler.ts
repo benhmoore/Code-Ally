@@ -705,10 +705,13 @@ Todo Commands:
         customInstructions
       );
 
+      // Update agent's internal messages (preserves rewindHistory)
+      this.agent.updateMessagesAfterCompaction(compactedMessages);
+
       return {
         handled: true,
         response: 'Conversation compacted successfully.',
-        updatedMessages: compactedMessages,
+        updatedMessages: compactedMessages, // Return for UI update
       };
     } catch (error) {
       return {

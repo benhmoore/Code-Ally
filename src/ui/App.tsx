@@ -383,11 +383,16 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
   useActivityEvent(ActivityEventType.AUTO_COMPACTION_COMPLETE, (event) => {
     const { oldContextUsage, newContextUsage, threshold, compactedMessages } = event.data;
 
-    // Update messages to compacted state
+    // Update UI messages to compacted state (filter out system messages)
+    // NOTE: Agent has already updated its internal messages during compaction
+    // We don't call agent.setMessages() here to preserve rewindHistory
     if (compactedMessages) {
-      actions.setMessages(compactedMessages);
-      agent.setMessages(compactedMessages);
+      const uiMessages = compactedMessages.filter((m: Message) => m.role !== 'system');
+      actions.setMessages(uiMessages);
     }
+
+    // Clear all tool calls - they're part of the compacted history
+    actions.clearToolCalls();
 
     // Add compaction notice
     actions.addCompactionNotice({
@@ -500,8 +505,19 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
         const newMessages = agent.getMessages().filter(m => m.role !== 'system');
         actions.setMessages(newMessages);
 
-        // Clear any active tool calls
+        // Find the timestamp of the rewind target message
+        const allMessages = agent.getMessages();
+        const targetMessage = allMessages[selectedIndex];
+        const rewindTimestamp = (targetMessage as any)?.timestamp || Date.now();
+
+        // Clear only tool calls that occurred AFTER the rewind point
+        // Keep tool calls that happened before to preserve conversation history
+        const currentToolCalls = state.activeToolCalls;
+        const toolCallsToKeep = currentToolCalls.filter(tc => tc.startTime < rewindTimestamp);
+
+        // Remove all, then add back the ones we want to keep
         actions.clearToolCalls();
+        toolCallsToKeep.forEach(tc => actions.addToolCall(tc));
 
         // Pre-fill the input with the target message for editing
         setInputPrefillText(targetMessageContent);
@@ -666,8 +682,8 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
           if (result.updatedMessages) {
             actions.setMessages(result.updatedMessages);
 
-            // Update agent's internal messages
-            agent.setMessages(result.updatedMessages);
+            // NOTE: Agent has already updated its internal messages via updateMessagesAfterCompaction()
+            // We don't call agent.setMessages() here to preserve rewindHistory
 
             // Update TokenManager with new token count after compaction
             const registry = ServiceRegistry.getInstance();
