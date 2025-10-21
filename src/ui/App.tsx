@@ -17,6 +17,8 @@ import { InputPrompt } from './components/InputPrompt.js';
 import { ConversationView } from './components/ConversationView.js';
 import { PermissionPrompt, PermissionRequest } from './components/PermissionPrompt.js';
 import { ModelSelector, ModelOption } from './components/ModelSelector.js';
+import { ConfigViewer } from './components/ConfigViewer.js';
+import { SetupWizardView } from './components/SetupWizardView.js';
 import { RewindSelector } from './components/RewindSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
 import { Agent } from '../agent/Agent.js';
@@ -65,6 +67,12 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
   // Model selector state
   const [modelSelectRequest, setModelSelectRequest] = useState<{ requestId: string; models: ModelOption[]; currentModel?: string } | undefined>(undefined);
   const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
+
+  // Config viewer state (non-modal - stays open while user interacts)
+  const [configViewerOpen, setConfigViewerOpen] = useState(false);
+
+  // Setup wizard state
+  const [setupWizardOpen, setSetupWizardOpen] = useState(false);
 
   // Rewind selector state
   const [rewindRequest, setRewindRequest] = useState<{ requestId: string; userMessagesCount: number; selectedIndex: number } | undefined>(undefined);
@@ -153,6 +161,13 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
           const handler = new CommandHandler(agent, configManager, serviceRegistry);
           commandHandler.current = handler;
         }
+
+        // Initialize context usage from TokenManager
+        const tokenManager = serviceRegistry.get('token_manager');
+        if (tokenManager && typeof (tokenManager as any).getContextUsagePercentage === 'function') {
+          const initialContextUsage = (tokenManager as any).getContextUsagePercentage();
+          actions.setContextUsage(initialContextUsage);
+        }
       } catch (error) {
         console.error('Failed to initialize input services:', error);
         // Continue without services
@@ -160,7 +175,7 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
     };
 
     initializeServices();
-  }, [agent]);
+  }, [agent, actions]);
 
   // Subscribe to tool call start events
   useActivityEvent(ActivityEventType.TOOL_CALL_START, (event) => {
@@ -320,6 +335,75 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
     const { requestId, models, currentModel } = event.data;
     setModelSelectRequest({ requestId, models, currentModel });
     setModelSelectedIndex(0);
+  });
+
+  // Subscribe to config view toggle events
+  useActivityEvent(ActivityEventType.CONFIG_VIEW_REQUEST, () => {
+    // Toggle config viewer open/closed
+    setConfigViewerOpen(prev => !prev);
+  });
+
+  // Subscribe to setup wizard request events
+  useActivityEvent(ActivityEventType.SETUP_WIZARD_REQUEST, () => {
+    setSetupWizardOpen(true);
+  });
+
+  // Subscribe to setup wizard completion events
+  useActivityEvent(ActivityEventType.SETUP_WIZARD_COMPLETE, () => {
+    setSetupWizardOpen(false);
+    actions.addMessage({
+      role: 'assistant',
+      content: 'Setup completed successfully! Code Ally is ready to use.',
+    });
+  });
+
+  // Subscribe to setup wizard skip events
+  useActivityEvent(ActivityEventType.SETUP_WIZARD_SKIP, () => {
+    setSetupWizardOpen(false);
+    actions.addMessage({
+      role: 'assistant',
+      content: 'Setup wizard skipped. You can run /init anytime to configure Code Ally.',
+    });
+  });
+
+  // Subscribe to context usage updates (real-time updates during tool execution)
+  useActivityEvent(ActivityEventType.CONTEXT_USAGE_UPDATE, (event) => {
+    const { contextUsage } = event.data;
+    if (typeof contextUsage === 'number') {
+      actions.setContextUsage(contextUsage);
+    }
+  });
+
+  // Subscribe to auto-compaction start event
+  useActivityEvent(ActivityEventType.AUTO_COMPACTION_START, () => {
+    actions.setIsCompacting(true);
+  });
+
+  // Subscribe to auto-compaction complete event
+  useActivityEvent(ActivityEventType.AUTO_COMPACTION_COMPLETE, (event) => {
+    const { oldContextUsage, newContextUsage, threshold, compactedMessages } = event.data;
+
+    // Update messages to compacted state
+    if (compactedMessages) {
+      actions.setMessages(compactedMessages);
+      agent.setMessages(compactedMessages);
+    }
+
+    // Add compaction notice
+    actions.addCompactionNotice({
+      id: event.id,
+      timestamp: event.timestamp,
+      oldContextUsage,
+      threshold,
+    });
+
+    // Update context usage
+    if (typeof newContextUsage === 'number') {
+      actions.setContextUsage(newContextUsage);
+    }
+
+    // Clear compacting flag
+    actions.setIsCompacting(false);
   });
 
   // Subscribe to model select response events
@@ -581,6 +665,24 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
           // Update messages if command modified them (e.g., /compact)
           if (result.updatedMessages) {
             actions.setMessages(result.updatedMessages);
+
+            // Update agent's internal messages
+            agent.setMessages(result.updatedMessages);
+
+            // Update TokenManager with new token count after compaction
+            const registry = ServiceRegistry.getInstance();
+            const tokenManager = registry.get('token_manager');
+            if (tokenManager) {
+              if (typeof (tokenManager as any).updateTokenCount === 'function') {
+                (tokenManager as any).updateTokenCount(result.updatedMessages);
+              }
+
+              // Update context usage display
+              if (typeof (tokenManager as any).getContextUsagePercentage === 'function') {
+                const contextUsage = (tokenManager as any).getContextUsagePercentage();
+                actions.setContextUsage(contextUsage);
+              }
+            }
           }
 
           return;
@@ -614,6 +716,23 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
           role: 'assistant',
           content: response,
         });
+
+        // Update TokenManager and context usage
+        const registry = ServiceRegistry.getInstance();
+        const tokenManager = registry.get('token_manager');
+        if (tokenManager) {
+          // Recalculate tokens from agent's messages
+          const agentMessages = agent.getMessages();
+          if (typeof (tokenManager as any).updateTokenCount === 'function') {
+            (tokenManager as any).updateTokenCount(agentMessages);
+          }
+
+          // Update context usage display
+          if (typeof (tokenManager as any).getContextUsagePercentage === 'function') {
+            const contextUsage = (tokenManager as any).getContextUsagePercentage();
+            actions.setContextUsage(contextUsage);
+          }
+        }
       } catch (error) {
         // Add error message
         actions.addMessage({
@@ -636,16 +755,50 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
           isThinking={state.isThinking}
           activeToolCalls={state.activeToolCalls}
           contextUsage={state.contextUsage}
+          compactionNotices={state.compactionNotices}
         />
       </Box>
 
       {/* Status Indicator - hide when any modal is active */}
-      {!permissionRequest && !modelSelectRequest && !rewindRequest && (
-        <StatusIndicator isProcessing={state.isThinking} />
+      {!permissionRequest && !modelSelectRequest && !rewindRequest && !setupWizardOpen && (
+        <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} />
       )}
 
-      {/* Model Selector (replaces input when active) */}
-      {modelSelectRequest ? (
+      {/* Config Viewer (non-modal - shown above input) */}
+      {configViewerOpen && !setupWizardOpen && (
+        <Box marginTop={1}>
+          <ConfigViewer visible={true} />
+        </Box>
+      )}
+
+      {/* Setup Wizard (modal - replaces input when active) */}
+      {setupWizardOpen ? (
+        <Box marginTop={1}>
+          <SetupWizardView
+            onComplete={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `setup_wizard_complete_${Date.now()}`,
+                  type: ActivityEventType.SETUP_WIZARD_COMPLETE,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+            onSkip={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `setup_wizard_skip_${Date.now()}`,
+                  type: ActivityEventType.SETUP_WIZARD_SKIP,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+          />
+        </Box>
+      ) : /* Model Selector (replaces input when active) */
+      modelSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
           <ModelSelector
             models={modelSelectRequest.models}
@@ -732,6 +885,7 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
             isActive={true}
             commandHistory={commandHistory.current || undefined}
             completionProvider={completionProvider || undefined}
+            configViewerOpen={configViewerOpen}
             activityStream={activityStream}
             agent={agent}
             prefillText={inputPrefillText}
@@ -743,7 +897,13 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       {/* Footer / Help */}
       <Box marginTop={1}>
         <Text dimColor>
-          Ctrl+C to exit | Model: {state.config.model || 'none'}
+          Ctrl+C to exit | Model: {state.config.model || 'none'} | Context:{' '}
+          <Text color={state.contextUsage >= 90 ? 'red' : state.contextUsage >= 85 ? 'yellow' : state.contextUsage >= 70 ? 'cyan' : undefined}>
+            {state.contextUsage}%
+          </Text>
+          {state.contextUsage >= 95 && <Text color="red"> (Critical - use /compact)</Text>}
+          {state.contextUsage >= 85 && state.contextUsage < 95 && <Text color="yellow"> (High - consider /compact)</Text>}
+          {state.contextUsage >= 70 && state.contextUsage < 85 && <Text color="cyan"> (Elevated)</Text>}
         </Text>
       </Box>
     </Box>

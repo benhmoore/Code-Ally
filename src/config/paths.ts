@@ -10,9 +10,8 @@ import { join } from 'path';
 
 /**
  * Base directory for all Code Ally data
- * Equivalent to Python's ~/.ally/
  */
-export const ALLY_HOME = join(homedir(), '.ally');
+export const ALLY_HOME = join(homedir(), '.code-ally');
 
 /**
  * Directory for conversation session storage

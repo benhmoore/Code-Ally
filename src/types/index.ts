@@ -75,10 +75,18 @@ export enum ActivityEventType {
   PERMISSION_RESPONSE = 'permission_response',
   MODEL_SELECT_REQUEST = 'model_select_request',
   MODEL_SELECT_RESPONSE = 'model_select_response',
+  CONFIG_VIEW_REQUEST = 'config_view_request',
+  CONFIG_VIEW_RESPONSE = 'config_view_response',
   REWIND_REQUEST = 'rewind_request',
   REWIND_RESPONSE = 'rewind_response',
   INTERRUPT_ALL = 'interrupt_all',
   DIFF_PREVIEW = 'diff_preview',
+  SETUP_WIZARD_REQUEST = 'setup_wizard_request',
+  SETUP_WIZARD_COMPLETE = 'setup_wizard_complete',
+  SETUP_WIZARD_SKIP = 'setup_wizard_skip',
+  CONTEXT_USAGE_UPDATE = 'context_usage_update',
+  AUTO_COMPACTION_START = 'auto_compaction_start',
+  AUTO_COMPACTION_COMPLETE = 'auto_compaction_complete',
 }
 
 export interface ActivityEvent {

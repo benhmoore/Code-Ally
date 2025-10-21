@@ -1,8 +1,9 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useStdout } from 'ink';
 import { Message, ToolCallState } from '../../types/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
+import { CompactionNotice } from '../contexts/AppContext.js';
 
 interface ConversationViewProps {
   /** Array of conversation messages to display */
@@ -15,6 +16,8 @@ interface ConversationViewProps {
   activeToolCalls?: ToolCallState[];
   /** Context usage percentage */
   contextUsage: number;
+  /** Compaction notices to display */
+  compactionNotices?: CompactionNotice[];
 }
 
 /**
@@ -101,30 +104,54 @@ function renderToolCallTree(
 }
 
 /**
- * Item that can be rendered chronologically (either a message or tool call)
+ * Item that can be rendered chronologically (either a message, tool call, or compaction notice)
  */
 type TimelineItem =
   | { type: 'message'; message: Message; index: number; timestamp: number }
-  | { type: 'toolCall'; toolCall: ToolCallState & { children?: ToolCallState[] }; timestamp: number };
+  | { type: 'toolCall'; toolCall: ToolCallState & { children?: ToolCallState[] }; timestamp: number }
+  | { type: 'compactionNotice'; notice: CompactionNotice; timestamp: number };
 
 /**
  * Memoized completed content - never re-renders when active tools update
  */
-const CompletedContent = React.memo<{ timeline: TimelineItem[] }>(({ timeline }) => (
-  <>
-    {timeline.map((item) => {
-      if (item.type === 'message') {
-        return <MessageDisplay key={`msg-${item.index}`} message={item.message} />;
-      } else {
-        return (
-          <Box key={`tool-${item.toolCall.id}`}>
-            {renderToolCallTree(item.toolCall, 0)}
-          </Box>
-        );
-      }
-    })}
-  </>
-));
+const CompletedContent = React.memo<{ timeline: TimelineItem[]; terminalWidth: number }>(({ timeline, terminalWidth }) => {
+  const dividerWidth = Math.max(60, terminalWidth - 4); // Account for padding
+  const divider = '─'.repeat(dividerWidth);
+
+  return (
+    <>
+      {timeline.map((item) => {
+        if (item.type === 'message') {
+          return <MessageDisplay key={`msg-${item.index}`} message={item.message} />;
+        } else if (item.type === 'toolCall') {
+          return (
+            <Box key={`tool-${item.toolCall.id}`}>
+              {renderToolCallTree(item.toolCall, 0)}
+            </Box>
+          );
+        } else {
+          // Compaction notice with horizontal divider
+          return (
+            <Box key={`compaction-${item.notice.id}`} flexDirection="column" marginY={1}>
+              <Box>
+                <Text dimColor>{divider}</Text>
+              </Box>
+              <Box>
+                <Text color="cyan" bold>
+                  Context compacted
+                </Text>
+                <Text dimColor> - Previous conversation summarized (was at {item.notice.oldContextUsage}%, threshold {item.notice.threshold}%)</Text>
+              </Box>
+              <Box>
+                <Text dimColor>{divider}</Text>
+              </Box>
+            </Box>
+          );
+        }
+      })}
+    </>
+  );
+});
 
 /**
  * Memoized active content - only re-renders when active tools change
@@ -165,7 +192,10 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
   streamingContent,
   activeToolCalls = [],
   contextUsage,
+  compactionNotices = [],
 }) => {
+  const { stdout } = useStdout();
+  const terminalWidth = stdout?.columns || 80; // Fallback to 80 if unavailable
   const toolCallTree = buildToolCallTree(activeToolCalls);
 
   // Separate completed from running tool calls
@@ -179,12 +209,22 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
     return { completedToolCalls: completed, runningToolCalls: running };
   }, [toolCallTree]);
 
-  // Build completed timeline (messages + completed tools) - memoized
+  // Build completed timeline (messages + completed tools + compaction notices) - memoized
   const completedTimeline = React.useMemo(() => {
     const timeline: TimelineItem[] = [];
 
-    // Add all messages
+    // Add all messages (except tool role messages - they're shown via ToolCallDisplay)
     messages.forEach((message, index) => {
+      // Skip tool role messages - they should only appear via ToolCallDisplay with ToolCallState
+      if (message.role === 'tool') {
+        return;
+      }
+
+      // Skip assistant messages that only have tool_calls and no content
+      if (message.role === 'assistant' && message.tool_calls && !message.content) {
+        return;
+      }
+
       timeline.push({
         type: 'message',
         message,
@@ -202,9 +242,18 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
       });
     });
 
+    // Add compaction notices
+    compactionNotices.forEach((notice) => {
+      timeline.push({
+        type: 'compactionNotice',
+        notice,
+        timestamp: notice.timestamp,
+      });
+    });
+
     timeline.sort((a, b) => a.timestamp - b.timestamp);
     return timeline;
-  }, [messages, completedToolCalls]);
+  }, [messages, completedToolCalls, compactionNotices]);
 
   return (
     <Box flexDirection="column">
@@ -217,7 +266,7 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
       </Box>
 
       {/* Completed content - memoized, doesn't re-render */}
-      <CompletedContent timeline={completedTimeline} />
+      <CompletedContent timeline={completedTimeline} terminalWidth={terminalWidth} />
 
       {/* Active content - only re-renders when active tools change */}
       <ActiveContent

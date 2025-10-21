@@ -45,6 +45,8 @@ interface InputPromptProps {
   modelSelectedIndex?: number;
   /** Callback when model selection changes */
   onModelNavigate?: (newIndex: number) => void;
+  /** Whether config viewer is open */
+  configViewerOpen?: boolean;
   /** Rewind selector data (if active) */
   rewindRequest?: { requestId: string; userMessagesCount: number; selectedIndex: number };
   /** Callback when rewind selection changes */
@@ -74,6 +76,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   modelSelectRequest,
   modelSelectedIndex = 0,
   onModelNavigate,
+  configViewerOpen = false,
   rewindRequest,
   onRewindNavigate,
   activityStream,
@@ -391,7 +394,26 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
       }
 
-      // ===== Model Selector Navigation (second priority after force-quit) =====
+      // ===== Config Viewer (second priority after force-quit) =====
+      if (configViewerOpen && activityStream) {
+        // Escape or Ctrl+C - close config viewer
+        if (key.escape || (key.ctrl && input === 'c')) {
+          try {
+            activityStream.emit({
+              id: `config_view_toggle_${Date.now()}`,
+              type: ActivityEventType.CONFIG_VIEW_REQUEST,
+              timestamp: Date.now(),
+              data: {},
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit config view toggle:', error);
+          }
+          return;
+        }
+        // Don't consume other keys - let user interact normally
+      }
+
+      // ===== Model Selector Navigation (third priority after force-quit and config viewer) =====
       if (modelSelectRequest && onModelNavigate && activityStream) {
         const modelsCount = modelSelectRequest.models.length;
 

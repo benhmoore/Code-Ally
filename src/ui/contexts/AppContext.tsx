@@ -10,6 +10,16 @@ import React, { createContext, useContext, useState, useCallback, useRef, useEff
 import type { Message, Config, ToolCallState } from '../../types/index.js';
 
 /**
+ * Compaction notice for UI display
+ */
+export interface CompactionNotice {
+  id: string;
+  timestamp: number;
+  oldContextUsage: number;
+  threshold: number;
+}
+
+/**
  * Global application state
  */
 export interface AppState {
@@ -30,6 +40,12 @@ export interface AppState {
 
   /** Whether the assistant is currently thinking/processing */
   isThinking: boolean;
+
+  /** Whether the conversation is being compacted */
+  isCompacting: boolean;
+
+  /** Compaction notices to display in conversation */
+  compactionNotices: CompactionNotice[];
 }
 
 /**
@@ -62,6 +78,12 @@ export interface AppActions {
 
   /** Set thinking state */
   setIsThinking: (isThinking: boolean) => void;
+
+  /** Set compacting state */
+  setIsCompacting: (isCompacting: boolean) => void;
+
+  /** Add a compaction notice */
+  addCompactionNotice: (notice: CompactionNotice) => void;
 }
 
 /**
@@ -107,6 +129,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [contextUsage, setContextUsage] = useState<number>(0);
   const [activeToolCalls, setActiveToolCalls] = useState<ToolCallState[]>([]);
   const [isThinking, setIsThinking] = useState<boolean>(false);
+  const [isCompacting, setIsCompacting] = useState<boolean>(false);
+  const [compactionNotices, setCompactionNotices] = useState<CompactionNotice[]>([]);
 
   // Batching mechanism for tool call updates
   const pendingUpdatesRef = useRef<Map<string, Partial<ToolCallState>>>(new Map());
@@ -206,6 +230,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setActiveToolCalls([]);
   }, []);
 
+  const addCompactionNotice = useCallback((notice: CompactionNotice) => {
+    setCompactionNotices((prev) => [...prev, notice]);
+  }, []);
+
   // Build context value
   const value: AppContextValue = {
     state: {
@@ -215,6 +243,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       activeToolCallsCount: activeToolCalls.length,
       activeToolCalls,
       isThinking,
+      isCompacting,
+      compactionNotices,
     },
     actions: {
       addMessage,
@@ -226,6 +256,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       removeToolCall,
       clearToolCalls,
       setIsThinking,
+      setIsCompacting,
+      addCompactionNotice,
     },
   };
 

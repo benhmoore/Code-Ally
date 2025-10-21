@@ -19,6 +19,7 @@ export class TokenManager {
   private contextSize: number;
   private currentTokenCount: number = 0;
   private seenFiles: Map<string, string> = new Map(); // path -> content hash
+  private toolResultHashes: Map<string, string> = new Map(); // tool_call_id -> content hash
   private charsPerToken: number = 3.5; // Simple heuristic for token estimation
 
   /**
@@ -177,12 +178,55 @@ export class TokenManager {
   }
 
   /**
+   * Track tool result content for deduplication
+   *
+   * @param toolCallId The tool call ID
+   * @param content The tool result content
+   * @returns The hash of previously seen identical content, or null if this is unique
+   */
+  trackToolResult(toolCallId: string, content: string): string | null {
+    const hash = this.hashContent(content);
+
+    // Check if we've seen this exact content before
+    for (const [existingId, existingHash] of this.toolResultHashes.entries()) {
+      if (existingHash === hash && existingId !== toolCallId) {
+        // Found a duplicate - return the existing ID
+        this.toolResultHashes.set(toolCallId, hash);
+        return existingId;
+      }
+    }
+
+    // No duplicate found - store this result
+    this.toolResultHashes.set(toolCallId, hash);
+    return null;
+  }
+
+  /**
+   * Check if a tool result is a duplicate of a previous result
+   *
+   * @param content The tool result content to check
+   * @returns true if this exact content has been seen before
+   */
+  isToolResultDuplicate(content: string): boolean {
+    const hash = this.hashContent(content);
+
+    for (const existingHash of this.toolResultHashes.values()) {
+      if (existingHash === hash) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Reset all tracking state
    * Clears token count and file content tracking
    */
   reset(): void {
     this.currentTokenCount = 0;
     this.seenFiles.clear();
+    this.toolResultHashes.clear();
   }
 
   /**
@@ -219,7 +263,7 @@ export class TokenManager {
    * @param content Content to hash
    * @returns MD5 hash as hex string
    */
-  private hashContent(content: string): string {
+  hashContent(content: string): string {
     return createHash('md5').update(content, 'utf8').digest('hex');
   }
 

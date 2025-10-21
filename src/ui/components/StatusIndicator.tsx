@@ -14,6 +14,8 @@ import { TodoManager } from '../../services/TodoManager.js';
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
   isProcessing: boolean;
+  /** Whether the conversation is being compacted */
+  isCompacting?: boolean;
 }
 
 // Static processing indicator
@@ -21,18 +23,18 @@ const ProcessingIcon: React.FC = () => {
   return <Text color="cyan">→</Text>;
 };
 
-export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing }) => {
+export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting }) => {
   const [currentTask, setCurrentTask] = useState<string | null>(null);
   const [nextTask, setNextTask] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<number>(Date.now());
   const [, forceUpdate] = useState({});
 
-  // Reset timer when processing starts
+  // Reset timer when processing or compacting starts
   useEffect(() => {
-    if (isProcessing) {
+    if (isProcessing || isCompacting) {
       setStartTime(Date.now());
     }
-  }, [isProcessing]);
+  }, [isProcessing, isCompacting]);
 
   // Update task status and elapsed time every second (only when processing)
   useEffect(() => {
@@ -73,8 +75,8 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing }
     return () => clearInterval(interval);
   }, [isProcessing, currentTask]);
 
-  // Don't show if not processing
-  if (!isProcessing) {
+  // Don't show if not processing and not compacting
+  if (!isProcessing && !isCompacting) {
     return null;
   }
 
@@ -87,6 +89,18 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing }
     const secs = seconds % 60;
     return `${mins}m ${secs}s`;
   };
+
+  // Show compaction status if compacting (overrides todo display)
+  if (isCompacting) {
+    return (
+      <Box>
+        <ProcessingIcon />
+        <Text> </Text>
+        <Text color="cyan">Compacting conversation...</Text>
+        <Text dimColor> ({formatElapsed(elapsed)})</Text>
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column">

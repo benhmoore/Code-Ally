@@ -16,10 +16,11 @@ import { AgentManager } from '../services/AgentManager.js';
 import { FocusManager } from '../services/FocusManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TokenManager } from './TokenManager.js';
-import { Message } from '../types/index.js';
+import { Message, ActivityEventType } from '../types/index.js';
 import type { MemoryManager } from '../services/MemoryManager.js';
 import type { ProjectManager } from '../services/ProjectManager.js';
 import type { UndoManager } from '../services/UndoManager.js';
+import type { TodoManager } from '../services/TodoManager.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -61,10 +62,6 @@ export class CommandHandler {
         return await this.handleHelp();
       case 'config':
         return await this.handleConfig(args);
-      case 'config-show':
-        return await this.handleConfigShow();
-      case 'config-reset':
-        return await this.handleConfigReset();
       case 'model':
         return await this.handleModel(args);
       case 'debug':
@@ -100,6 +97,14 @@ export class CommandHandler {
       // Utility commands
       case 'undo':
         return await this.handleUndo(args, messages);
+
+      // Todo commands
+      case 'todo':
+        return await this.handleTodo(args);
+
+      // Setup wizard
+      case 'init':
+        return await this.handleInit();
 
       default:
         return {
@@ -148,9 +153,10 @@ Available Commands:
 
 Core Commands:
   /help                    - Show this help message
-  /config [key=value]      - View or modify configuration
-  /config-show             - Display current configuration
-  /config-reset            - Reset configuration to defaults
+  /init                    - Run setup wizard
+  /config                  - Toggle configuration viewer
+  /config set <key>=<val>  - Set a configuration value
+  /config reset            - Reset all settings to defaults
   /model [name]            - Switch model or show current model
   /debug [system|tokens]   - Show debug information
   /compact                 - Compact conversation history
@@ -184,6 +190,13 @@ Project Commands:
 
 Utility Commands:
   /undo [count]            - Undo last file operation(s)
+
+Todo Commands:
+  /todo                    - Show current todo list
+  /todo add <task>         - Add a new todo
+  /todo complete <index>   - Complete a todo by index
+  /todo clear              - Clear completed todos
+  /todo clear-all          - Clear all todos
 `;
 
     return { handled: true, response: helpText };
@@ -192,20 +205,38 @@ Utility Commands:
   private async handleConfig(args: string[]): Promise<CommandResult> {
     const argString = args.join(' ').trim();
 
-    // No args - show current config
-    if (!argString) {
-      return this.handleConfigShow();
-    }
-
     // Parse subcommands
     const parts = argString.split(/\s+/);
     const subcommand = parts[0];
-    if (!subcommand) {
-      return { handled: true, response: 'Invalid config command' };
+
+    // No args or "show" - show interactive config viewer
+    if (!argString || subcommand?.toLowerCase() === 'show') {
+      const activityStream = this.serviceRegistry.get('activity_stream');
+
+      if (!activityStream || typeof (activityStream as any).emit !== 'function') {
+        return {
+          handled: true,
+          response: 'Configuration viewer not available.',
+        };
+      }
+
+      // Emit config view request event
+      const requestId = `config_view_${Date.now()}`;
+
+      (activityStream as any).emit({
+        id: requestId,
+        type: ActivityEventType.CONFIG_VIEW_REQUEST,
+        timestamp: Date.now(),
+        data: {
+          requestId,
+        },
+      });
+
+      return { handled: true }; // Handled via UI
     }
 
-    if (subcommand.toLowerCase() === 'show') {
-      return this.handleConfigShow();
+    if (!subcommand) {
+      return { handled: true, response: 'Invalid config command' };
     }
 
     if (subcommand.toLowerCase() === 'reset') {
@@ -218,27 +249,10 @@ Utility Commands:
       return this.handleConfigSet(kvString);
     }
 
-    // Direct key=value format
-    if (argString.includes('=')) {
-      return this.handleConfigSet(argString);
-    }
-
     return {
       handled: true,
-      response: 'Invalid format. Use /config key=value, /config show, or /config reset',
+      response: 'Invalid format. Use /config, /config set key=value, or /config reset',
     };
-  }
-
-  private async handleConfigShow(): Promise<CommandResult> {
-    const config = this.configManager.getConfig();
-
-    let output = 'Current Configuration:\n\n';
-
-    for (const [key, value] of Object.entries(config).sort()) {
-      output += `  ${key}: ${JSON.stringify(value)}\n`;
-    }
-
-    return { handled: true, response: output };
   }
 
   private async handleConfigSet(kvString: string): Promise<CommandResult> {
@@ -247,12 +261,20 @@ Utility Commands:
     if (parts.length !== 2 || !parts[0] || !parts[1]) {
       return {
         handled: true,
-        response: 'Invalid format. Use /config key=value',
+        response: 'Invalid format. Use /config set key=value',
       };
     }
 
     const key = parts[0].trim();
     const valueString = parts[1].trim();
+
+    // Check if key exists
+    if (!this.configManager.hasKey(key)) {
+      return {
+        handled: true,
+        response: `Unknown configuration key: ${key}. Use /config show to see all options.`,
+      };
+    }
 
     try {
       // Parse value based on type
@@ -434,6 +456,31 @@ Utility Commands:
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+  }
+
+  private async handleInit(): Promise<CommandResult> {
+    const activityStream = this.serviceRegistry.get('activity_stream');
+
+    if (!activityStream || typeof (activityStream as any).emit !== 'function') {
+      return {
+        handled: true,
+        response: 'Setup wizard not available.',
+      };
+    }
+
+    // Emit setup wizard request event
+    const requestId = `setup_wizard_${Date.now()}`;
+
+    (activityStream as any).emit({
+      id: requestId,
+      type: ActivityEventType.SETUP_WIZARD_REQUEST,
+      timestamp: Date.now(),
+      data: {
+        requestId,
+      },
+    });
+
+    return { handled: true }; // Handled via UI
   }
 
   private async handleDebug(args: string[], messages: Message[]): Promise<CommandResult> {
@@ -1260,6 +1307,176 @@ Utility Commands:
     return {
       handled: true,
       response: result.message,
+    };
+  }
+
+  // ===========================
+  // Todo Commands
+  // ===========================
+
+  private async handleTodo(args: string[]): Promise<CommandResult> {
+    const argString = args.join(' ').trim();
+
+    if (!argString) {
+      return await this.handleTodoShow();
+    }
+
+    const parts = argString.split(/\s+/);
+    const subcommand = parts[0];
+    if (!subcommand) {
+      return { handled: true, response: 'Invalid todo command' };
+    }
+
+    const todoManager = this.serviceRegistry.get('todo_manager') as TodoManager;
+
+    if (!todoManager) {
+      return {
+        handled: true,
+        response: 'Todo manager not available.',
+      };
+    }
+
+    switch (subcommand.toLowerCase()) {
+      case 'add':
+        return this.handleTodoAdd(todoManager, parts.slice(1).join(' '));
+      case 'complete':
+      case 'done':
+        return this.handleTodoComplete(todoManager, parts.length > 1 ? parts[1] : undefined);
+      case 'clear':
+        return this.handleTodoClear(todoManager, false);
+      case 'clear-all':
+        return this.handleTodoClear(todoManager, true);
+      default:
+        return {
+          handled: true,
+          response: `Unknown todo subcommand: ${subcommand}. Type /help for usage.`,
+        };
+    }
+  }
+
+  private async handleTodoShow(): Promise<CommandResult> {
+    const todoManager = this.serviceRegistry.get('todo_manager') as TodoManager;
+
+    if (!todoManager) {
+      return {
+        handled: true,
+        response: 'Todo manager not available.',
+      };
+    }
+
+    const todos = todoManager.getTodos();
+
+    if (todos.length === 0) {
+      return {
+        handled: true,
+        response: 'No todos. Use /todo add <task> to add one.',
+      };
+    }
+
+    let output = 'Todo List:\n\n';
+
+    const inProgress = todoManager.getInProgressTodo();
+    const pending = todos.filter(t => t.status === 'pending');
+    const completed = todoManager.getCompletedTodos();
+
+    // Show in-progress task (highlighted)
+    if (inProgress) {
+      output += `  → IN PROGRESS: ${inProgress.task}\n\n`;
+    }
+
+    // Show pending tasks with indices
+    if (pending.length > 0) {
+      output += 'Pending:\n';
+      pending.forEach((todo, index) => {
+        output += `  ${index}. ${todo.task}\n`;
+      });
+      output += '\n';
+    }
+
+    // Show completed tasks
+    if (completed.length > 0) {
+      output += 'Completed:\n';
+      completed.forEach(todo => {
+        output += `  ✓ ${todo.task}\n`;
+      });
+    }
+
+    return { handled: true, response: output };
+  }
+
+  private async handleTodoAdd(
+    todoManager: TodoManager,
+    task: string
+  ): Promise<CommandResult> {
+    if (!task || task.trim() === '') {
+      return {
+        handled: true,
+        response: 'Task description required. Usage: /todo add <task>',
+      };
+    }
+
+    const newTodo = todoManager.createTodoItem(task.trim(), 'pending');
+    const todos = todoManager.getTodos();
+    todos.push(newTodo);
+    todoManager.setTodos(todos);
+
+    return {
+      handled: true,
+      response: `Todo added: ${task.trim()}`,
+    };
+  }
+
+  private async handleTodoComplete(
+    todoManager: TodoManager,
+    indexStr: string | undefined
+  ): Promise<CommandResult> {
+    if (!indexStr) {
+      return {
+        handled: true,
+        response: 'Index required. Usage: /todo complete <index>',
+      };
+    }
+
+    const index = parseInt(indexStr, 10);
+
+    if (isNaN(index) || index < 0) {
+      return {
+        handled: true,
+        response: 'Invalid index. Use /todo to see indices.',
+      };
+    }
+
+    const completedTodo = todoManager.completeTodoByIndex(index);
+
+    if (!completedTodo) {
+      return {
+        handled: true,
+        response: `No pending todo at index ${index}. Use /todo to see current list.`,
+      };
+    }
+
+    return {
+      handled: true,
+      response: `Completed: ${completedTodo.task}`,
+    };
+  }
+
+  private async handleTodoClear(
+    todoManager: TodoManager,
+    clearAll: boolean
+  ): Promise<CommandResult> {
+    const cleared = todoManager.clearTodos(clearAll);
+
+    if (cleared === 0) {
+      return {
+        handled: true,
+        response: clearAll ? 'No todos to clear.' : 'No completed todos to clear.',
+      };
+    }
+
+    return {
+      handled: true,
+      response: `Cleared ${cleared} ${clearAll ? 'todo(s)' : 'completed todo(s)'}.`,
     };
   }
 }

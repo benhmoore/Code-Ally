@@ -412,6 +412,38 @@ async function main() {
       return;
     }
 
+    // First-run detection: Check if setup has been completed
+    const setupCompleted = configManager.getValue('setup_completed');
+    if (!setupCompleted && !options.init && !options.skipOllamaCheck) {
+      console.log('\n👋 Welcome to Code Ally!\n');
+      console.log('It looks like this is your first time running Code Ally.');
+      console.log('Let\'s configure it for your environment.\n');
+
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      const answer = await new Promise<string>(resolve => {
+        rl.question('Would you like to run the setup wizard now? (Y/n): ', resolve);
+      });
+      rl.close();
+
+      const shouldRunSetup = !answer || answer.trim() === '' || answer.toLowerCase().startsWith('y');
+
+      if (shouldRunSetup) {
+        const wizard = new SetupWizard(configManager);
+        const success = await wizard.run();
+
+        if (!success) {
+          console.log('\nYou can run setup later with: ally --init\n');
+        }
+      } else {
+        console.log('\nSetup skipped. You can run it later with: ally --init\n');
+        console.log('⚠️  Note: Code Ally may not work correctly without proper configuration.\n');
+      }
+    }
+
     // Initialize session manager
     const sessionManager = new SessionManager();
     await sessionManager.initialize();
@@ -542,6 +574,10 @@ async function main() {
       permissionManager
     );
     registry.registerInstance('agent', agent);
+
+    // Initialize TokenManager with system messages
+    const initialMessages = agent.getMessages();
+    tokenManager.updateTokenCount(initialMessages);
 
     // Handle --once mode (single message, non-interactive)
     if (options.once) {

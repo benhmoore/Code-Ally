@@ -81,7 +81,7 @@ export abstract class BaseTool {
    * @param args - Tool-specific parameters
    * @param callId - Tool call ID for event emission
    */
-  async previewChanges(args: any, callId?: string): Promise<void> {
+  async previewChanges(_args: any, callId?: string): Promise<void> {
     this.currentCallId = callId;
     // Default: no preview
     // Override in subclasses that need to show previews

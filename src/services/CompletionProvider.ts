@@ -59,6 +59,17 @@ const AGENT_SUBCOMMANDS = [
 ];
 
 /**
+ * Todo subcommands
+ */
+const TODO_SUBCOMMANDS = [
+  { name: 'add', description: 'Add a new todo' },
+  { name: 'complete', description: 'Complete a todo by index' },
+  { name: 'done', description: 'Complete a todo (alias)' },
+  { name: 'clear', description: 'Clear completed todos' },
+  { name: 'clear-all', description: 'Clear all todos' },
+];
+
+/**
  * CompletionProvider service
  */
 export class CompletionProvider {
@@ -196,6 +207,88 @@ export class CompletionProvider {
       return await this.getAgentNameCompletions(context.currentWord);
     }
 
+    // Complete subcommands for /todo (user typed "/todo ")
+    if (command === '/todo' && wordCount === 2) {
+      const prefix = subcommand || '';
+      return TODO_SUBCOMMANDS.filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
+    }
+
+    // Complete subcommands for /config (user typed "/config ")
+    if (command === '/config' && wordCount === 2) {
+      const configSubcommands = [
+        { name: 'set', description: 'Set a config value' },
+        { name: 'reset', description: 'Reset to defaults' },
+      ];
+      const prefix = subcommand || '';
+      return configSubcommands.filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
+    }
+
+    // Complete config keys for /config set (user typed "/config set ")
+    if (command === '/config' && subcommand === 'set' && wordCount === 3) {
+      return await this.getConfigKeyCompletions(context.currentWord);
+    }
+
+    // Complete subcommands for /debug (user typed "/debug ")
+    if (command === '/debug' && wordCount === 2) {
+      const debugSubcommands = [
+        { name: 'system', description: 'Show system prompt and tools' },
+        { name: 'tokens', description: 'Show token usage stats' },
+        { name: 'context', description: 'Show conversation context' },
+      ];
+      const prefix = subcommand || '';
+      return debugSubcommands.filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
+    }
+
+    // Complete subcommands for /memory (user typed "/memory ")
+    if (command === '/memory' && wordCount === 2) {
+      const memorySubcommands = [
+        { name: 'add', description: 'Add a memory fact' },
+        { name: 'ls', description: 'List all memories' },
+        { name: 'rm', description: 'Remove a memory' },
+        { name: 'clear', description: 'Clear all memories' },
+        { name: 'show', description: 'Show memory details' },
+      ];
+      const prefix = subcommand || '';
+      return memorySubcommands.filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
+    }
+
+    // Complete subcommands for /project (user typed "/project ")
+    if (command === '/project' && wordCount === 2) {
+      const projectSubcommands = [
+        { name: 'init', description: 'Initialize project context' },
+        { name: 'edit', description: 'Edit project file' },
+        { name: 'view', description: 'View project file' },
+        { name: 'clear', description: 'Clear project context' },
+      ];
+      const prefix = subcommand || '';
+      return projectSubcommands.filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
+    }
+
     return [];
   }
 
@@ -210,6 +303,65 @@ export class CompletionProvider {
         value: name,
         description: 'Specialized agent',
         type: 'agent' as const,
+      }));
+  }
+
+  /**
+   * Get configuration key completions
+   */
+  private async getConfigKeyCompletions(prefix: string): Promise<Completion[]> {
+    // Import config types dynamically
+    const { DEFAULT_CONFIG, CONFIG_TYPES } = await import('../config/defaults.js');
+
+    const configKeys = Object.keys(DEFAULT_CONFIG) as Array<keyof typeof DEFAULT_CONFIG>;
+
+    // Group keys by category for better descriptions
+    const keyDescriptions: Record<string, string> = {
+      // LLM Model Settings
+      'model': 'LLM model name',
+      'endpoint': 'Ollama API endpoint',
+      'context_size': 'Context window size (tokens)',
+      'temperature': 'Generation temperature (0.0-1.0)',
+      'max_tokens': 'Max tokens per response',
+
+      // Execution Settings
+      'bash_timeout': 'Bash command timeout (seconds)',
+      'auto_confirm': 'Skip permission prompts',
+      'check_context_msg': 'Show context check messages',
+      'parallel_tools': 'Enable parallel tool execution',
+
+      // UI Preferences
+      'theme': 'UI theme name',
+      'compact_threshold': 'Auto-compact threshold (%)',
+      'show_token_usage': 'Display token usage',
+      'show_context_in_prompt': 'Show context % in prompt',
+
+      // Tool Result Preview
+      'tool_result_preview_lines': 'Preview lines count',
+      'tool_result_preview_enabled': 'Enable tool previews',
+
+      // Diff Display
+      'diff_display_enabled': 'Show file diffs',
+      'diff_display_max_file_size': 'Max diff file size (bytes)',
+      'diff_display_context_lines': 'Diff context lines',
+      'diff_display_theme': 'Diff theme',
+      'diff_display_color_removed': 'Removed line color',
+      'diff_display_color_added': 'Added line color',
+      'diff_display_color_modified': 'Modified line color',
+
+      // Tool Result Truncation
+      'tool_result_max_tokens_normal': 'Max tokens (0-70% usage)',
+      'tool_result_max_tokens_moderate': 'Max tokens (70-85% usage)',
+      'tool_result_max_tokens_aggressive': 'Max tokens (85-95% usage)',
+      'tool_result_max_tokens_critical': 'Max tokens (95%+ usage)',
+    };
+
+    return configKeys
+      .filter(key => key.startsWith(prefix) && key !== 'setup_completed') // Hide internal keys
+      .map(key => ({
+        value: key,
+        description: keyDescriptions[key] || `${CONFIG_TYPES[key]} setting`,
+        type: 'option' as const,
       }));
   }
 
@@ -365,5 +517,12 @@ export class CompletionProvider {
    */
   getAgentSubcommands(): Array<{ name: string; description: string }> {
     return [...AGENT_SUBCOMMANDS];
+  }
+
+  /**
+   * Get todo subcommands
+   */
+  getTodoSubcommands(): Array<{ name: string; description: string }> {
+    return [...TODO_SUBCOMMANDS];
   }
 }

@@ -22,6 +22,7 @@ import { PermissionManager } from '../security/PermissionManager.js';
 import { DirectoryTraversalError, PermissionDeniedError } from '../security/PathSecurity.js';
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { TodoManager } from '../services/TodoManager.js';
 
 /**
  * Tool call structure from LLM
@@ -255,7 +256,7 @@ export class ToolOrchestrator {
     // Validate todo prerequisites FIRST (before creating UI elements)
     if (toolName !== 'todo_write') {
       const registry = ServiceRegistry.getInstance();
-      const todoManager = registry.get('todo_manager');
+      const todoManager = registry.get<TodoManager>('todo_manager');
 
       if (todoManager) {
         const incompleteTodos = todoManager.getIncompleteTodos();

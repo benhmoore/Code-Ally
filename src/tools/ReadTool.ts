@@ -78,7 +78,6 @@ export class ReadTool extends BaseTool {
     // Token estimation check
     const estimatedTokens = await this.estimateTokens(filePaths);
     if (estimatedTokens > ReadTool.MAX_ESTIMATED_TOKENS) {
-      const fileList = filePaths.length === 1 ? `"${filePaths[0]}"` : `${filePaths.length} files`;
       const examples = filePaths.length === 1
         ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=50, limit=100)`
         : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;

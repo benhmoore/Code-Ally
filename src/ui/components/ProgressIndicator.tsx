@@ -35,18 +35,6 @@ const SPINNERS: Record<SpinnerType, string[]> = {
 };
 
 /**
- * Frame rates (ms per frame) for different spinner types
- */
-const FRAME_RATES: Record<SpinnerType, number> = {
-  default: 80,
-  dots: 80,
-  line: 100,
-  dots2: 80,
-  arc: 100,
-  bounce: 120,
-};
-
-/**
  * ProgressIndicator Component
  *
  * Animated spinner with customizable appearance.

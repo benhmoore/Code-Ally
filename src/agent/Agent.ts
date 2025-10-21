@@ -15,6 +15,7 @@
 import { ModelClient, LLMResponse } from '../llm/ModelClient.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
@@ -184,6 +185,21 @@ export class Agent {
   private async getLLMResponse(): Promise<LLMResponse> {
     // Get function definitions from tool manager
     const functions = this.toolManager.getFunctionDefinitions();
+
+    // Regenerate system prompt with current context (todos, etc.) before each LLM call
+    // Only for main agent, not specialized agents (they have static prompts)
+    if (!this.config.isSpecializedAgent && this.messages[0]?.role === 'system') {
+      const { getMainSystemPrompt } = await import('../prompts/systemMessages.js');
+      const updatedSystemPrompt = await getMainSystemPrompt();
+      this.messages[0].content = updatedSystemPrompt;
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt regenerated with current context');
+    }
+
+    // Deduplicate tool results to save context
+    this.deduplicateToolResults();
+
+    // Auto-compaction: check if context usage exceeds threshold
+    await this.checkAutoCompaction();
 
     // Log conversation state before sending to LLM
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Sending', this.messages.length, 'messages to LLM');
@@ -440,6 +456,24 @@ export class Agent {
   addMessage(message: Message): void {
     this.messages.push(message);
 
+    // Update TokenManager with new message count
+    const registry = ServiceRegistry.getInstance();
+    const tokenManager = registry.get('token_manager');
+    if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
+      (tokenManager as any).updateTokenCount(this.messages);
+
+      // Emit context usage update event for real-time UI updates
+      if (typeof (tokenManager as any).getContextUsagePercentage === 'function') {
+        const contextUsage = (tokenManager as any).getContextUsagePercentage();
+        this.emitEvent({
+          id: this.generateId(),
+          type: ActivityEventType.CONTEXT_USAGE_UPDATE,
+          timestamp: Date.now(),
+          data: { contextUsage },
+        });
+      }
+    }
+
     // Log message addition for context tracking
     const toolInfo = message.tool_calls ? ` toolCalls:${message.tool_calls.length}` : '';
     const toolCallId = message.tool_call_id ? ` toolCallId:${message.tool_call_id}` : '';
@@ -454,6 +488,15 @@ export class Agent {
    */
   getMessages(): Message[] {
     return [...this.messages];
+  }
+
+  /**
+   * Set messages (used for compaction and rewind)
+   * @param messages - New message array to replace current messages
+   */
+  setMessages(messages: Message[]): void {
+    this.messages = [...messages];
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages set, count:', this.messages.length);
   }
 
   /**
@@ -506,6 +549,200 @@ export class Agent {
    */
   isRequestInProgress(): boolean {
     return this.requestInProgress;
+  }
+
+  /**
+   * Deduplicate tool results to save context
+   *
+   * Replaces duplicate tool results (same content) with a truncated message.
+   * Keeps the most recent occurrence and truncates earlier ones.
+   */
+  private deduplicateToolResults(): void {
+    const registry = ServiceRegistry.getInstance();
+    const tokenManager = registry.get('token_manager');
+    if (!tokenManager || typeof (tokenManager as any).trackToolResult !== 'function') {
+      return; // TokenManager not available, skip deduplication
+    }
+
+    // Track which tool results we've seen
+    const contentHashes = new Map<string, number>(); // hash -> first message index
+
+    // First pass: identify duplicates
+    for (let i = 0; i < this.messages.length; i++) {
+      const msg = this.messages[i];
+
+      // Only process tool messages
+      if (!msg || msg.role !== 'tool' || !msg.tool_call_id) {
+        continue;
+      }
+
+      // Calculate content hash
+      const hash = (tokenManager as any).hashContent(msg.content);
+
+      if (contentHashes.has(hash)) {
+        // This is a duplicate - mark the earlier occurrence for truncation
+        const firstIndex = contentHashes.get(hash)!;
+        const firstMsg = this.messages[firstIndex];
+
+        if (firstMsg) {
+          // Replace earlier occurrence with truncated message
+          this.messages[firstIndex] = {
+            role: firstMsg.role,
+            content: '[Duplicate tool result truncated - content identical to later call]',
+            tool_call_id: firstMsg.tool_call_id,
+            name: firstMsg.name,
+            timestamp: firstMsg.timestamp,
+          };
+
+          logger.debug(
+            '[AGENT_DEDUP]',
+            this.instanceId,
+            `Truncated duplicate tool result at index ${firstIndex}, kept index ${i}`
+          );
+        }
+      } else {
+        // First occurrence of this content
+        contentHashes.set(hash, i);
+      }
+    }
+  }
+
+  /**
+   * Check if auto-compaction should trigger based on context usage
+   */
+  private async checkAutoCompaction(): Promise<void> {
+    // Don't auto-compact for specialized agents
+    if (this.config.isSpecializedAgent) {
+      return;
+    }
+
+    // Get TokenManager
+    const registry = ServiceRegistry.getInstance();
+    const tokenManager = registry.get('token_manager');
+    if (!tokenManager || typeof (tokenManager as any).getContextUsagePercentage !== 'function') {
+      return;
+    }
+
+    // Check current context usage
+    const contextUsage = (tokenManager as any).getContextUsagePercentage();
+    const threshold = this.config.config.compact_threshold || 95;
+
+    // Only compact if we exceed threshold and have enough messages
+    if (contextUsage < threshold || this.messages.length < 5) {
+      return;
+    }
+
+    logger.info('[AGENT_AUTO_COMPACT]', this.instanceId, `Context at ${contextUsage}%, threshold ${threshold}% - triggering auto-compaction`);
+
+    try {
+      // Emit compaction start event
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.AUTO_COMPACTION_START,
+        timestamp: Date.now(),
+        data: {},
+      });
+
+      // Perform compaction
+      const compacted = await this.performCompaction();
+
+      // Update messages
+      this.messages = compacted;
+
+      // Update token count
+      (tokenManager as any).updateTokenCount(this.messages);
+
+      const newContextUsage = (tokenManager as any).getContextUsagePercentage();
+
+      // Emit compaction complete event with notice data and compacted messages
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.AUTO_COMPACTION_COMPLETE,
+        timestamp: Date.now(),
+        data: {
+          oldContextUsage: contextUsage,
+          newContextUsage,
+          threshold,
+          compactedMessages: this.messages,
+        },
+      });
+
+      logger.info('[AGENT_AUTO_COMPACT]', this.instanceId, `Auto-compaction complete - Context now at ${newContextUsage}%`);
+    } catch (error) {
+      logger.error('[AGENT_AUTO_COMPACT]', this.instanceId, 'Auto-compaction failed:', error);
+    }
+  }
+
+  /**
+   * Perform conversation compaction
+   * Similar to CommandHandler's compactConversation but simplified
+   */
+  private async performCompaction(): Promise<Message[]> {
+    // Extract system message and other messages
+    const systemMessage = this.messages[0]?.role === 'system' ? this.messages[0] : null;
+    const otherMessages = systemMessage ? this.messages.slice(1) : this.messages;
+
+    // If we have fewer than 2 messages to summarize, nothing to compact
+    if (otherMessages.length < 2) {
+      return this.messages;
+    }
+
+    // Create summarization request
+    const summarizationRequest: Message[] = [];
+
+    // Add system message for summarization
+    summarizationRequest.push({
+      role: 'system',
+      content:
+        'You are an AI assistant helping to summarize a conversation while preserving critical context for ongoing work. ' +
+        'Focus heavily on:\n' +
+        '• UNRESOLVED ISSUES: Any bugs, errors, or problems currently being investigated or fixed\n' +
+        '• DEBUGGING CONTEXT: Error messages, stack traces, failed attempts, and partial solutions\n' +
+        '• CURRENT INVESTIGATION: What is being analyzed, hypotheses being tested, next steps planned\n' +
+        '• TECHNICAL STATE: File paths, function names, variable values, configuration details relevant to ongoing work\n' +
+        '• ATTEMPTED SOLUTIONS: What has been tried and why it didn\'t work\n' +
+        '• BREAKTHROUGH FINDINGS: Recent discoveries or insights that advance the investigation\n\n' +
+        'Be extremely detailed about ongoing problems but brief about completed/resolved topics. ' +
+        'Use bullet points and preserve specific technical details (file paths, error messages, code snippets).',
+    });
+
+    // Add messages to be summarized
+    summarizationRequest.push(...otherMessages);
+
+    // Add final user request
+    const finalRequest =
+      'Summarize this conversation with special attention to any ongoing debugging, ' +
+      'problem-solving, or issue resolution. Prioritize unresolved problems, current ' +
+      'investigations, and technical context needed to continue work seamlessly. ' +
+      'Include specific error messages, file paths, and attempted solutions.';
+
+    summarizationRequest.push({
+      role: 'user',
+      content: finalRequest,
+    });
+
+    // Generate summary
+    const response = await this.modelClient.send(summarizationRequest, {
+      stream: false,
+    });
+
+    const summary = response.content.trim();
+
+    // Build compacted message list
+    const compacted: Message[] = [];
+    if (systemMessage) {
+      compacted.push(systemMessage);
+    }
+
+    // Add summary as system message if we got one
+    if (summary && summary !== 'Conversation history has been compacted to save context space.') {
+      compacted.push({
+        role: 'system',
+        content: `CONVERSATION SUMMARY (auto-compacted at ${new Date().toLocaleTimeString()}): ${summary}`,
+      });
+    }
+
+    return compacted;
   }
 
   /**
