@@ -6,7 +6,7 @@
  * tree to access and update global application state.
  */
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import type { Message, Config, ToolCallState } from '../../types/index.js';
 
 /**
@@ -108,6 +108,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [activeToolCalls, setActiveToolCalls] = useState<ToolCallState[]>([]);
   const [isThinking, setIsThinking] = useState<boolean>(false);
 
+  // Batching mechanism for tool call updates
+  const pendingUpdatesRef = useRef<Map<string, Partial<ToolCallState>>>(new Map());
+  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // Actions
   const addMessage = useCallback((message: Message) => {
     // Add timestamp if not present
@@ -148,21 +152,51 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     });
   }, []);
 
+  // Flush pending updates
+  const flushPendingUpdates = useCallback(() => {
+    if (pendingUpdatesRef.current.size === 0) return;
+
+    const updates = new Map(pendingUpdatesRef.current);
+    pendingUpdatesRef.current.clear();
+
+    setActiveToolCalls((prev) => {
+      return prev.map((call) => {
+        const update = updates.get(call.id);
+        return update ? { ...call, ...update } : call;
+      });
+    });
+  }, []);
+
   const updateToolCall = useCallback((id: string, updates: Partial<ToolCallState>) => {
     // Enforce structure: ID must exist
     if (!id) {
       throw new Error(`Cannot update tool call without ID`);
     }
 
-    setActiveToolCalls((prev) => {
-      const toolCall = prev.find(tc => tc.id === id);
-      if (!toolCall) {
-        throw new Error(`Cannot update non-existent tool call. ID: ${id}`);
-      }
+    // Merge with any pending updates for this ID
+    const existing = pendingUpdatesRef.current.get(id) || {};
+    pendingUpdatesRef.current.set(id, { ...existing, ...updates });
 
-      return prev.map((call) => (call.id === id ? { ...call, ...updates } : call));
-    });
-  }, []);
+    // Clear existing timeout
+    if (updateTimeoutRef.current) {
+      clearTimeout(updateTimeoutRef.current);
+    }
+
+    // Batch updates - flush after 16ms (one frame at 60fps)
+    updateTimeoutRef.current = setTimeout(() => {
+      flushPendingUpdates();
+    }, 16);
+  }, [flushPendingUpdates]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+        flushPendingUpdates();
+      }
+    };
+  }, [flushPendingUpdates]);
 
   const removeToolCall = useCallback((id: string) => {
     setActiveToolCalls((prev) => prev.filter((call) => call.id !== id));

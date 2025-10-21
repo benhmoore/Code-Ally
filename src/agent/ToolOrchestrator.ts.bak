@@ -20,7 +20,6 @@ import { AgentConfig } from './Agent.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
 import { DirectoryTraversalError, PermissionDeniedError } from '../security/PathSecurity.js';
-import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 
 /**

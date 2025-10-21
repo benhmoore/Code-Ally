@@ -12,6 +12,7 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { ToolCallState } from '../../types/index.js';
 import { DiffDisplay } from './DiffDisplay.js';
+import { AnimationTicker } from '../../services/AnimationTicker.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -90,30 +91,31 @@ function getStatusColor(status: ToolCallState['status']): string {
 }
 
 /**
- * ToolCallDisplay Component
+ * ToolCallDisplay Component (Internal)
  */
-export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
+const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   toolCall,
   level = 0,
   children,
 }) => {
-  // Track current duration for live updates
-  const [currentTime, setCurrentTime] = useState(Date.now());
+  const ticker = AnimationTicker.getInstance();
+  const [, forceUpdate] = useState({});
+  const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
 
-  // Update current time for running tool calls
+  // Subscribe to global ticker ONLY if tool is running
+  // Completed tools NEVER re-render (fundamental performance win)
   useEffect(() => {
-    if (toolCall.status === 'executing' || toolCall.status === 'pending') {
-      const interval = setInterval(() => {
-        setCurrentTime(Date.now());
-      }, 1000); // Update every 1000ms (reduced from 100ms to prevent thrashing)
-
-      return () => clearInterval(interval);
+    if (isRunning) {
+      const unsubscribe = ticker.subscribe(() => {
+        forceUpdate({});
+      });
+      return unsubscribe;
     }
     return undefined;
-  }, [toolCall.status]);
+  }, [isRunning, ticker]);
 
-  // Calculate duration
-  const endTime = toolCall.endTime || currentTime;
+  // Calculate duration using global ticker time (not Date.now())
+  const endTime = toolCall.endTime || ticker.getCurrentTime();
   const duration = endTime - toolCall.startTime;
   const durationStr = formatDuration(duration);
 
@@ -125,7 +127,6 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
 
   // Status indicator
   const statusColor = getStatusColor(toolCall.status);
-  const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
   const statusIcon = isRunning ? '...' : toolCall.status === 'success' ? '✓' : '✗';
 
   return (
@@ -204,3 +205,48 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
     </Box>
   );
 };
+
+/**
+ * Memoized ToolCallDisplay
+ *
+ * Performance Strategy:
+ * - Completed tool calls NEVER re-render (status is final)
+ * - Running tool calls only re-render when subscribed to ticker
+ * - Prevents cascading re-renders through tool call tree
+ */
+export const ToolCallDisplay = React.memo(
+  ToolCallDisplayComponent,
+  (prevProps, nextProps) => {
+    const prev = prevProps.toolCall;
+    const next = nextProps.toolCall;
+
+    // If tool call ID changed, must re-render
+    if (prev.id !== next.id) return false;
+
+    // If status changed, must re-render
+    if (prev.status !== next.status) return false;
+
+    // If collapsed state changed, must re-render
+    if (prev.collapsed !== next.collapsed) return false;
+
+    // If output or error changed, must re-render
+    if (prev.output !== next.output) return false;
+    if (prev.error !== next.error) return false;
+
+    // If diff preview changed, must re-render
+    if (prev.diffPreview !== next.diffPreview) return false;
+
+    // If children changed, must re-render
+    if (prevProps.children !== nextProps.children) return false;
+
+    // For COMPLETED tool calls (success/error), nothing else matters
+    // They will NEVER update again (huge performance win)
+    if (next.status === 'success' || next.status === 'error' || next.status === 'cancelled') {
+      return true;
+    }
+
+    // For RUNNING tool calls, the ticker subscription handles updates
+    // We don't need to check endTime because it's calculated from ticker
+    return true;
+  }
+);

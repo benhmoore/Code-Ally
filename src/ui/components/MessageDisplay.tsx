@@ -19,11 +19,11 @@ interface MessageDisplayProps {
  * - System: Dim gray text
  * - Tool: Cyan text with indentation
  *
- * Note: Full markdown syntax highlighting would require additional
- * libraries. For MVP, we use simple color coding that matches the
- * Python Rich version's visual hierarchy.
+ * Performance:
+ * - Memoized to prevent re-renders (messages never change)
+ * - Critical for smooth performance with long conversations
  */
-export const MessageDisplay: React.FC<MessageDisplayProps> = ({ message }) => {
+const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message }) => {
   const { role, content, name } = message;
 
   // User messages - bold with prompt prefix
@@ -106,3 +106,18 @@ export const MessageDisplay: React.FC<MessageDisplayProps> = ({ message }) => {
     </Box>
   );
 };
+
+/**
+ * Memoized MessageDisplay
+ *
+ * Messages are immutable - they never change once created.
+ * This prevents ALL re-renders for completed messages (huge performance win).
+ */
+export const MessageDisplay = React.memo(
+  MessageDisplayComponent,
+  (prevProps, nextProps) => {
+    // Messages are immutable - if the reference is the same, content is identical
+    // This allows React to skip re-rendering entirely
+    return prevProps.message === nextProps.message;
+  }
+);

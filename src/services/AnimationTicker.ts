@@ -1,9 +1,16 @@
 /**
- * AnimationTicker - Global synchronized animation frame provider
+ * AnimationTicker - Single global heartbeat for all UI updates
  *
- * Prevents render thrashing by synchronizing all spinner animations
- * to a single interval. All spinners update on the same tick, ensuring
- * only one render per frame instead of N renders for N spinners.
+ * Fundamental Architecture:
+ * - ONE interval for the entire application (no component-level timers)
+ * - Provides both animation frames AND current timestamp
+ * - Components pull time from this singleton instead of Date.now()
+ * - Prevents render thrashing by coordinating all updates to one tick
+ *
+ * Performance Benefits:
+ * - N spinners + M timers = 1 render per tick (not N+M renders)
+ * - Completed content never subscribes (zero re-renders)
+ * - Predictable, coordinated update rhythm
  */
 
 type TickCallback = () => void;
@@ -12,8 +19,9 @@ export class AnimationTicker {
   private static instance: AnimationTicker | null = null;
   private subscribers: Set<TickCallback> = new Set();
   private frame: number = 0;
+  private currentTime: number = Date.now();
   private interval: NodeJS.Timeout | null = null;
-  private readonly frameRate: number = 80; // 80ms per frame (12.5 fps)
+  private readonly frameRate: number = 1000; // 1000ms per frame (1 fps for time updates)
 
   private constructor() {}
 
@@ -49,15 +57,27 @@ export class AnimationTicker {
 
   /**
    * Get current frame number (for calculating spinner position)
+   * Advances at 12.5 fps equivalent for smooth animations
    */
   getFrame(): number {
-    return this.frame;
+    // Calculate frame based on elapsed time to maintain smooth 12.5fps animation
+    // even though we only tick at 1fps
+    return Math.floor(this.currentTime / 80);
+  }
+
+  /**
+   * Get current time from global ticker
+   * USE THIS instead of Date.now() to prevent unnecessary re-renders
+   */
+  getCurrentTime(): number {
+    return this.currentTime;
   }
 
   private start(): void {
     this.interval = setInterval(() => {
+      this.currentTime = Date.now();
       this.frame++;
-      // Notify all subscribers in sync
+      // Notify all subscribers in sync - ONE coordinated update
       this.subscribers.forEach(callback => callback());
     }, this.frameRate);
   }

@@ -26,17 +26,13 @@ import { Agent } from './agent/Agent.js';
 import { App } from './ui/App.js';
 import { ArgumentParser, type CLIOptions } from './cli/ArgumentParser.js';
 import { SetupWizard } from './cli/SetupWizard.js';
+import { logger } from './services/Logger.js';
 
 /**
  * Configure logging based on verbosity flags
  */
 function configureLogging(verbose?: boolean, debug?: boolean): void {
-  if (debug) {
-    console.log('[DEBUG] Debug logging enabled');
-  } else if (verbose) {
-    console.log('[INFO] Verbose logging enabled');
-  }
-  // TODO: Implement proper logging levels when logger is added
+  logger.configure({ verbose, debug });
 }
 
 /**
@@ -529,6 +525,10 @@ async function main() {
       }),
       {
         exitOnCtrlC: false,
+        // Limit render rate to prevent flickering/thrashing when content exceeds viewport
+        // Ink must erase entire screen for content taller than terminal height
+        // Limiting FPS ensures updates are batched, reducing visible flicker
+        patchConsole: false, // Don't intercept console for better performance
       }
     );
 

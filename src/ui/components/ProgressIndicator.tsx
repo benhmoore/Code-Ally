@@ -109,17 +109,22 @@ export const StatusSpinner: React.FC<StatusSpinnerProps> = ({
   type = 'dots2',
   color = 'cyan',
 }) => {
-  const [elapsed, setElapsed] = useState(0);
+  const ticker = AnimationTicker.getInstance();
+  const [, forceUpdate] = useState({});
 
   useEffect(() => {
     if (!startTime) return;
 
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
+    // Subscribe to global ticker for time updates
+    const unsubscribe = ticker.subscribe(() => {
+      forceUpdate({});
+    });
 
-    return () => clearInterval(interval);
-  }, [startTime]);
+    return unsubscribe;
+  }, [startTime, ticker]);
+
+  // Calculate elapsed from global ticker
+  const elapsed = startTime ? Math.floor((ticker.getCurrentTime() - startTime) / 1000) : 0;
 
   return (
     <Box>
@@ -157,17 +162,22 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({
   modelName,
   startTime,
 }) => {
-  const [elapsed, setElapsed] = useState(0);
+  const ticker = AnimationTicker.getInstance();
+  const [, forceUpdate] = useState({});
 
   useEffect(() => {
     if (!startTime) return;
 
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
+    // Subscribe to global ticker for time updates
+    const unsubscribe = ticker.subscribe(() => {
+      forceUpdate({});
+    });
 
-    return () => clearInterval(interval);
-  }, [startTime]);
+    return unsubscribe;
+  }, [startTime, ticker]);
+
+  // Calculate elapsed from global ticker
+  const elapsed = startTime ? Math.floor((ticker.getCurrentTime() - startTime) / 1000) : 0;
 
   return (
     <Box>
@@ -211,17 +221,22 @@ export const ToolExecutionIndicator: React.FC<ToolExecutionIndicatorProps> = ({
   description,
   startTime,
 }) => {
-  const [elapsed, setElapsed] = useState(0);
+  const ticker = AnimationTicker.getInstance();
+  const [, forceUpdate] = useState({});
 
   useEffect(() => {
     if (!startTime) return;
 
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
+    // Subscribe to global ticker for time updates
+    const unsubscribe = ticker.subscribe(() => {
+      forceUpdate({});
+    });
 
-    return () => clearInterval(interval);
-  }, [startTime]);
+    return unsubscribe;
+  }, [startTime, ticker]);
+
+  // Calculate elapsed from global ticker
+  const elapsed = startTime ? Math.floor((ticker.getCurrentTime() - startTime) / 1000) : 0;
 
   // Truncate description if too long
   const truncatedDesc =

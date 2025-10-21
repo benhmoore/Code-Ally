@@ -18,6 +18,7 @@ import {
   isPathWithinCwd,
   DirectoryTraversalError,
 } from './PathSecurity.js';
+import { logger } from '../services/Logger.js';
 
 /**
  * PermissionManager class
@@ -33,7 +34,7 @@ export class PermissionManager {
     this.trustManager = trustManager;
     // Store the starting directory at initialization time
     this.startDirectory = path.resolve(cwd());
-    console.log(
+    logger.debug(
       `PermissionManager initialized with starting directory: ${this.startDirectory}`
     );
 

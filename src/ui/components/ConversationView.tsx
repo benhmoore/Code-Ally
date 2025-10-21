@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { Message, ToolCallState } from '../../types/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
@@ -111,39 +111,48 @@ type ConversationItem =
   | { type: 'message'; message: Message; index: number; timestamp: number }
   | { type: 'toolCall'; toolCall: ToolCallState & { children?: ToolCallState[] }; timestamp: number };
 
-export const ConversationView: React.FC<ConversationViewProps> = ({
+/**
+ * Internal ConversationView Component
+ */
+const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   messages,
   isThinking = false,
   streamingContent,
   activeToolCalls = [],
 }) => {
-  // Build tree structure from flat tool call list
-  const toolCallTree = buildToolCallTree(activeToolCalls);
+  // Memoize expensive tree building and sorting
+  // Only recompute when messages or tool calls actually change
+  const conversationItems = useMemo(() => {
+    // Build tree structure from flat tool call list
+    const toolCallTree = buildToolCallTree(activeToolCalls);
 
-  // Merge messages and tool calls chronologically
-  const conversationItems: ConversationItem[] = [];
+    // Merge messages and tool calls chronologically
+    const items: ConversationItem[] = [];
 
-  // Add messages
-  messages.forEach((message, index) => {
-    conversationItems.push({
-      type: 'message',
-      message,
-      index,
-      timestamp: message.timestamp || 0,
+    // Add messages
+    messages.forEach((message, index) => {
+      items.push({
+        type: 'message',
+        message,
+        index,
+        timestamp: message.timestamp || 0,
+      });
     });
-  });
 
-  // Add root tool calls (children will be rendered recursively)
-  toolCallTree.forEach((toolCall) => {
-    conversationItems.push({
-      type: 'toolCall',
-      toolCall,
-      timestamp: toolCall.startTime,
+    // Add root tool calls (children will be rendered recursively)
+    toolCallTree.forEach((toolCall) => {
+      items.push({
+        type: 'toolCall',
+        toolCall,
+        timestamp: toolCall.startTime,
+      });
     });
-  });
 
-  // Sort chronologically
-  conversationItems.sort((a, b) => a.timestamp - b.timestamp);
+    // Sort chronologically
+    items.sort((a, b) => a.timestamp - b.timestamp);
+
+    return items;
+  }, [messages, activeToolCalls]);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -165,3 +174,34 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
     </Box>
   );
 };
+
+/**
+ * Memoized ConversationView
+ *
+ * CRITICAL PERFORMANCE FIX:
+ * Prevents re-rendering the entire conversation history on every keypress in InputPrompt.
+ *
+ * Without this, typing in the input causes:
+ * - InputPrompt state update (buffer changes)
+ * - Parent App re-renders
+ * - ConversationView re-renders with ALL messages
+ * - With content > viewport height = full screen erase/redraw = flickering
+ *
+ * With memoization:
+ * - InputPrompt updates independently
+ * - ConversationView only re-renders when messages/toolCalls actually change
+ * - Result: Smooth typing even with 1000+ messages
+ */
+export const ConversationView = React.memo(
+  ConversationViewComponent,
+  (prevProps, nextProps) => {
+    // Only re-render if conversation data actually changed
+    if (prevProps.messages !== nextProps.messages) return false;
+    if (prevProps.activeToolCalls !== nextProps.activeToolCalls) return false;
+    if (prevProps.isThinking !== nextProps.isThinking) return false;
+    if (prevProps.streamingContent !== nextProps.streamingContent) return false;
+
+    // Props are the same - skip re-render
+    return true;
+  }
+);

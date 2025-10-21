@@ -39,17 +39,18 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing }
   const [currentTask, setCurrentTask] = useState<string | null>(null);
   const [nextTask, setNextTask] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<number>(Date.now());
-  const [elapsed, setElapsed] = useState<number>(0);
+  const ticker = AnimationTicker.getInstance();
+  const [, forceUpdate] = useState({});
 
   // Reset timer when processing starts
   useEffect(() => {
     if (isProcessing) {
-      setStartTime(Date.now());
-      setElapsed(0);
+      setStartTime(ticker.getCurrentTime());
     }
-  }, [isProcessing]);
+  }, [isProcessing, ticker]);
 
-  // Poll for todo updates
+  // Subscribe to global ticker for coordinated updates
+  // This replaces TWO separate intervals with ONE synchronized tick
   useEffect(() => {
     const updateStatus = () => {
       try {
@@ -62,8 +63,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing }
 
           // Reset timer when task changes
           if (inProgress && currentTask !== inProgress.activeForm) {
-            setStartTime(Date.now());
-            setElapsed(0);
+            setStartTime(ticker.getCurrentTime());
           }
 
           setCurrentTask(inProgress?.activeForm || null);
@@ -72,29 +72,30 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing }
       } catch (error) {
         console.error('[StatusIndicator] Error:', error);
       }
+
+      // Trigger re-render for time updates
+      forceUpdate({});
     };
 
+    // Initial update
     updateStatus();
-    const interval = setInterval(updateStatus, 1000);
 
-    return () => clearInterval(interval);
-  }, [currentTask]);
+    // Subscribe to global ticker (only if processing or has task)
+    if (isProcessing || currentTask) {
+      const unsubscribe = ticker.subscribe(updateStatus);
+      return unsubscribe;
+    }
 
-  // Update elapsed time
-  useEffect(() => {
-    if (!isProcessing && !currentTask) return;
-
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [isProcessing, currentTask, startTime]);
+    return undefined;
+  }, [isProcessing, currentTask, ticker]);
 
   // Don't show if not processing and no task
   if (!isProcessing && !currentTask) {
     return null;
   }
+
+  // Calculate elapsed time from global ticker (not Date.now())
+  const elapsed = Math.floor((ticker.getCurrentTime() - startTime) / 1000);
 
   const formatElapsed = (seconds: number): string => {
     if (seconds < 60) return `${seconds}s`;

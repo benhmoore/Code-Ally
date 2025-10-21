@@ -67,7 +67,7 @@ export class Agent {
 
     // Generate unique instance ID for debugging
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
+    console.log('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
 
     // Create tool orchestrator
     this.toolOrchestrator = new ToolOrchestrator(
@@ -85,7 +85,7 @@ export class Agent {
         role: 'system',
         content: config.systemPrompt,
       });
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt added, length:', config.systemPrompt.length);
+      console.log('[AGENT_CONTEXT]', this.instanceId, 'System prompt added, length:', config.systemPrompt.length);
     }
   }
 
@@ -186,15 +186,13 @@ export class Agent {
     const functions = this.toolManager.getFunctionDefinitions();
 
     // Log conversation state before sending to LLM
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Sending', this.messages.length, 'messages to LLM');
-    if (logger.isDebugEnabled()) {
-      this.messages.forEach((msg, idx) => {
-        const preview = msg.content.length > 100 ? msg.content.slice(0, 97) + '...' : msg.content;
-        const toolInfo = msg.tool_calls ? ` toolCalls:${msg.tool_calls.length}` : '';
-        const toolCallId = msg.tool_call_id ? ` toolCallId:${msg.tool_call_id}` : '';
-        console.log(`  [${idx}] ${msg.role}${toolInfo}${toolCallId} - ${preview}`);
-      });
-    }
+    console.log('[AGENT_CONTEXT]', this.instanceId, 'Sending', this.messages.length, 'messages to LLM');
+    this.messages.forEach((msg, idx) => {
+      const preview = msg.content.length > 100 ? msg.content.slice(0, 97) + '...' : msg.content;
+      const toolInfo = msg.tool_calls ? ` toolCalls:${msg.tool_calls.length}` : '';
+      const toolCallId = msg.tool_call_id ? ` toolCallId:${msg.tool_call_id}` : '';
+      console.log(`  [${idx}] ${msg.role}${toolInfo}${toolCallId} - ${preview}`);
+    });
 
     // Emit thinking indicator
     this.emitEvent({
@@ -282,12 +280,12 @@ export class Agent {
       function: { name: string; arguments: Record<string, any> };
     }>
   ): Promise<string> {
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Processing tool response with', toolCalls.length, 'tool calls');
+    console.log('[AGENT_CONTEXT]', this.instanceId, 'Processing tool response with', toolCalls.length, 'tool calls');
 
     // Unwrap batch calls before adding to conversation
     // This ensures the conversation history matches what was actually executed
     const unwrappedToolCalls = this.unwrapBatchToolCalls(toolCalls);
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'After unwrapping:', unwrappedToolCalls.length, 'tool calls');
+    console.log('[AGENT_CONTEXT]', this.instanceId, 'After unwrapping:', unwrappedToolCalls.length, 'tool calls');
 
     // Add assistant message with unwrapped tool calls to history
     const toolCallsForMessage = unwrappedToolCalls.map(tc => ({
@@ -305,18 +303,18 @@ export class Agent {
       tool_calls: toolCallsForMessage,
     });
 
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.messages.length);
+    console.log('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.messages.length);
 
     // Execute tool calls via orchestrator (pass original calls for unwrapping)
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Executing tool calls via orchestrator...');
+    console.log('[AGENT_CONTEXT]', this.instanceId, 'Executing tool calls via orchestrator...');
     await this.toolOrchestrator.executeToolCalls(toolCalls);
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.messages.length);
+    console.log('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.messages.length);
 
     // Clear current turn (for redundancy detection)
     this.toolManager.clearCurrentTurn();
 
     // Get follow-up response from LLM
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Getting follow-up response from LLM...');
+    console.log('[AGENT_CONTEXT]', this.instanceId, 'Getting follow-up response from LLM...');
     const followUpResponse = await this.getLLMResponse();
 
     // Recursively process the follow-up (it might contain more tool calls)
@@ -444,7 +442,7 @@ export class Agent {
     const toolInfo = message.tool_calls ? ` toolCalls:${message.tool_calls.length}` : '';
     const toolCallId = message.tool_call_id ? ` toolCallId:${message.tool_call_id}` : '';
     const toolName = message.name ? ` name:${message.name}` : '';
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Message added:', message.role, toolInfo, toolCallId, toolName, '- Total messages:', this.messages.length);
+    console.log('[AGENT_CONTEXT]', this.instanceId, 'Message added:', message.role, toolInfo, toolCallId, toolName, '- Total messages:', this.messages.length);
   }
 
   /**
