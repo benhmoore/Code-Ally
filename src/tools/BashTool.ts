@@ -226,7 +226,7 @@ export class BashTool extends BaseTool {
     lines.push(`${status} Exit code: ${returnCode}`);
 
     // Show first few lines of output
-    const output = result.output || '';
+    const output = result.content || '';
     if (output) {
       const outputLines = output.split('\n').slice(0, maxLines - 1);
       lines.push(...outputLines);

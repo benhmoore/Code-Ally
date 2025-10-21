@@ -38,7 +38,7 @@ describe('BashTool', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain('Hello World');
+      expect(result.content).toContain('Hello World');
       expect(result.return_code).toBe(0);
     });
 
@@ -66,7 +66,7 @@ describe('BashTool', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain('/tmp');
+      expect(result.content).toContain('/tmp');
     });
 
     it('should respect timeout', async () => {
