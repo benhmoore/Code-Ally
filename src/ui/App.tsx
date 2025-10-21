@@ -20,6 +20,7 @@ import { ModelSelector, ModelOption } from './components/ModelSelector.js';
 import { ConfigViewer } from './components/ConfigViewer.js';
 import { SetupWizardView } from './components/SetupWizardView.js';
 import { RewindSelector } from './components/RewindSelector.js';
+import { SessionSelector } from './components/SessionSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
 import { Agent } from '../agent/Agent.js';
 import { CommandHistory } from '../services/CommandHistory.js';
@@ -28,6 +29,7 @@ import { AgentManager } from '../services/AgentManager.js';
 import { CommandHandler } from '../agent/CommandHandler.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ConfigManager } from '../services/ConfigManager.js';
+import { SessionManager } from '../services/SessionManager.js';
 import { ToolManager } from '../tools/ToolManager.js';
 
 /**
@@ -42,6 +44,9 @@ export interface AppProps {
 
   /** Agent instance */
   agent: Agent;
+
+  /** Session to resume (session ID, 'interactive' for selector, or null) */
+  resumeSession?: string | 'interactive' | null;
 }
 
 /**
@@ -50,7 +55,7 @@ export interface AppProps {
  * This component is wrapped by providers and has access to all context values.
  * It subscribes to activity events and updates the app state accordingly.
  */
-const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
+const AppContent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null }> = ({ agent, resumeSession }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
 
@@ -77,6 +82,12 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
   // Rewind selector state
   const [rewindRequest, setRewindRequest] = useState<{ requestId: string; userMessagesCount: number; selectedIndex: number } | undefined>(undefined);
   const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
+
+  // Session selector state
+  const [sessionSelectRequest, setSessionSelectRequest] = useState<{ requestId: string; sessions: import('../types/index.js').SessionInfo[]; selectedIndex: number } | undefined>(undefined);
+
+  // Track if we've already processed session resume to prevent duplicate runs
+  const sessionResumed = useRef(false);
 
   // Throttle tool call updates to max once every 2 seconds
   const pendingToolUpdates = useRef<Map<string, Partial<ToolCallState>>>(new Map());
@@ -176,6 +187,68 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
 
     initializeServices();
   }, [agent, actions]);
+
+  // Handle session resume on mount
+  useEffect(() => {
+    const handleSessionResume = async () => {
+      // Only run once
+      if (sessionResumed.current) return;
+
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
+      const todoManager = serviceRegistry.get('todo_manager');
+
+      if (!sessionManager) return;
+
+      // If resumeSession is 'interactive', show session selector
+      if (resumeSession === 'interactive') {
+        const sessions = await sessionManager.getSessionsInfo();
+        setSessionSelectRequest({
+          requestId: `session_select_${Date.now()}`,
+          sessions,
+          selectedIndex: 0,
+        });
+        sessionResumed.current = true;
+        return;
+      }
+
+      // If resumeSession is a session ID, load it directly
+      if (resumeSession && typeof resumeSession === 'string') {
+        // CRITICAL: Set current session FIRST before loading messages
+        // This prevents auto-save from creating a new session
+        sessionManager.setCurrentSession(resumeSession);
+
+        const sessionMessages = await sessionManager.getSessionMessages(resumeSession);
+        const sessionTodos = await sessionManager.getTodos(resumeSession);
+
+        // Filter out system messages to avoid duplication
+        const userMessages = sessionMessages.filter(m => m.role !== 'system');
+
+        // Load messages into agent (auto-save will now use the correct session)
+        userMessages.forEach(message => agent.addMessage(message));
+
+        // Load todos into TodoManager
+        if (todoManager && sessionTodos.length > 0) {
+          (todoManager as any).setTodos(sessionTodos);
+        }
+
+        // Update UI state
+        actions.setMessages(userMessages);
+
+        // Update context usage
+        const tokenManager = serviceRegistry.get('token_manager');
+        if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
+          (tokenManager as any).updateTokenCount(agent.getMessages());
+          const contextUsage = (tokenManager as any).getContextUsagePercentage();
+          actions.setContextUsage(contextUsage);
+        }
+
+        sessionResumed.current = true;
+      }
+    };
+
+    handleSessionResume();
+  }, [resumeSession, agent, actions]);
 
   // Subscribe to tool call start events
   useActivityEvent(ActivityEventType.TOOL_CALL_START, (event) => {
@@ -488,6 +561,57 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
   }, [rewindRequest, state.messages]);
 
   // Subscribe to rewind response events
+  // Subscribe to session select response events
+  useActivityEvent(ActivityEventType.SESSION_SELECT_RESPONSE, async (event) => {
+    const { sessionId, cancelled } = event.data;
+
+    // Clear selector immediately (crucial for unblocking input)
+    setSessionSelectRequest(undefined);
+
+    // Apply selection if not cancelled
+    if (!cancelled && sessionId) {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
+      const todoManager = serviceRegistry.get('todo_manager');
+      const tokenManager = serviceRegistry.get('token_manager');
+
+      if (!sessionManager) return;
+
+      try {
+        // CRITICAL: Set current session FIRST before loading messages
+        // This prevents auto-save from creating a new session
+        sessionManager.setCurrentSession(sessionId);
+
+        // Load session data
+        const sessionMessages = await sessionManager.getSessionMessages(sessionId);
+        const sessionTodos = await sessionManager.getTodos(sessionId);
+
+        // Filter out system messages to avoid duplication
+        const userMessages = sessionMessages.filter(m => m.role !== 'system');
+
+        // Load messages into agent (auto-save will now use the correct session)
+        userMessages.forEach(message => agent.addMessage(message));
+
+        // Load todos into TodoManager
+        if (todoManager && sessionTodos.length > 0) {
+          (todoManager as any).setTodos(sessionTodos);
+        }
+
+        // Update UI state
+        actions.setMessages(userMessages);
+
+        // Update context usage
+        if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
+          (tokenManager as any).updateTokenCount(agent.getMessages());
+          const contextUsage = (tokenManager as any).getContextUsagePercentage();
+          actions.setContextUsage(contextUsage);
+        }
+      } catch (error) {
+        console.error('Failed to load session:', error);
+      }
+    }
+  });
+
   useActivityEvent(ActivityEventType.REWIND_RESPONSE, async (event) => {
     const { selectedIndex, cancelled } = event.data;
 
@@ -752,7 +876,7 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       </Box>
 
       {/* Status Indicator - hide when any modal is active */}
-      {!permissionRequest && !modelSelectRequest && !rewindRequest && !setupWizardOpen && (
+      {!permissionRequest && !sessionSelectRequest && !modelSelectRequest && !rewindRequest && !setupWizardOpen && (
         <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} />
       )}
 
@@ -788,6 +912,30 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
               }
             }}
           />
+        </Box>
+      ) : /* Session Selector (replaces input when active) */
+      sessionSelectRequest ? (
+        <Box marginTop={1} flexDirection="column">
+          <SessionSelector
+            sessions={sessionSelectRequest.sessions}
+            selectedIndex={sessionSelectRequest.selectedIndex}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              isActive={true}
+              commandHistory={commandHistory.current || undefined}
+              completionProvider={completionProvider || undefined}
+              sessionSelectRequest={sessionSelectRequest}
+              onSessionNavigate={(newIndex) => setSessionSelectRequest(prev => prev ? { ...prev, selectedIndex: newIndex } : undefined)}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+            />
+          </Box>
         </Box>
       ) : /* Model Selector (replaces input when active) */
       modelSelectRequest ? (
@@ -918,14 +1066,14 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
  * const { unmount } = render(<App config={config} />);
  * ```
  */
-export const App: React.FC<AppProps> = ({ config, activityStream, agent }) => {
+export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
   return (
     <ActivityProvider activityStream={streamRef.current}>
       <AppProvider initialConfig={config}>
-        <AppContent agent={agent} />
+        <AppContent agent={agent} resumeSession={resumeSession} />
       </AppProvider>
     </ActivityProvider>
   );

@@ -16,6 +16,8 @@ import { join } from 'path';
 import { SESSIONS_DIR } from '../config/paths.js';
 import { Session, SessionInfo, Message, IService } from '../types/index.js';
 import { generateShortId } from '../utils/id.js';
+import type { TodoItem } from './TodoManager.js';
+import { SessionTitleGenerator } from './SessionTitleGenerator.js';
 
 /**
  * Configuration for SessionManager
@@ -39,7 +41,9 @@ export class SessionManager implements IService {
   constructor(config: SessionManagerConfig = {}) {
     this.sessionsDir = SESSIONS_DIR;
     this.maxSessions = config.maxSessions ?? 10;
-    this.titleGenerator = config.modelClient ? null : null; // Will be set later if needed
+    this.titleGenerator = config.modelClient
+      ? new SessionTitleGenerator(config.modelClient)
+      : null;
   }
 
   /**
@@ -109,12 +113,28 @@ export class SessionManager implements IService {
 
     try {
       const content = await fs.readFile(sessionPath, 'utf-8');
+
+      // Handle empty or corrupted files
+      if (!content || content.trim().length === 0) {
+        console.warn(`Session ${sessionName} is empty, deleting corrupted file`);
+        await fs.unlink(sessionPath).catch(() => {});
+        return null;
+      }
+
       const session = JSON.parse(content) as Session;
       return session;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return null;
       }
+
+      // If JSON parse fails, the file is corrupted - delete it
+      if (error instanceof SyntaxError) {
+        console.warn(`Session ${sessionName} is corrupted (invalid JSON), deleting file`);
+        await fs.unlink(sessionPath).catch(() => {});
+        return null;
+      }
+
       console.error(`Failed to load session ${sessionName}:`, error);
       return null;
     }
@@ -376,6 +396,124 @@ export class SessionManager implements IService {
       return true;
     } catch (error) {
       console.error(`Failed to update metadata for ${sessionName}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Get todos from a session
+   *
+   * @param sessionName - Name of the session (defaults to current session)
+   * @returns Array of todos or empty array if not found
+   */
+  async getTodos(sessionName?: string): Promise<TodoItem[]> {
+    const name = sessionName ?? this.currentSession;
+    if (!name) return [];
+
+    const session = await this.loadSession(name);
+    return session?.todos ?? [];
+  }
+
+  /**
+   * Save todos to a session
+   *
+   * @param todos - Array of todos to save
+   * @param sessionName - Name of the session (defaults to current session)
+   * @returns True if saved successfully
+   */
+  async setTodos(
+    todos: TodoItem[],
+    sessionName?: string
+  ): Promise<boolean> {
+    const name = sessionName ?? this.currentSession;
+    if (!name) return false;
+
+    try {
+      let session = await this.loadSession(name);
+
+      if (!session) {
+        // Create new session if it doesn't exist
+        session = {
+          id: name,
+          name,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          messages: [],
+          todos: [],
+          metadata: {},
+        };
+      }
+
+      session.todos = todos;
+      session.updated_at = new Date().toISOString();
+
+      await this.saveSessionData(name, session);
+      return true;
+    } catch (error) {
+      console.error(`Failed to save todos for ${name}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Auto-save current session (messages and todos)
+   *
+   * @param messages - Current conversation messages
+   * @param todos - Current todos
+   * @returns True if saved successfully
+   */
+  async autoSave(
+    messages: Message[],
+    todos?: TodoItem[]
+  ): Promise<boolean> {
+    const name = this.currentSession;
+    if (!name) return false;
+
+    // Filter out system messages to avoid duplication on resume
+    const filteredMessages = messages.filter(msg => msg.role !== 'system');
+
+    if (filteredMessages.length === 0 && (!todos || todos.length === 0)) {
+      return false; // Nothing to save
+    }
+
+    try {
+      let session = await this.loadSession(name);
+
+      if (!session) {
+        session = {
+          id: name,
+          name,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          messages: [],
+          todos: [],
+          metadata: {},
+        };
+      }
+
+      session.messages = filteredMessages;
+      if (todos !== undefined) {
+        session.todos = todos;
+      }
+      session.updated_at = new Date().toISOString();
+
+      await this.saveSessionData(name, session);
+
+      // Trigger title generation for new sessions
+      if (filteredMessages.length > 0 && !session.title && !session.metadata?.title) {
+        const firstUserMessage = filteredMessages.find(msg => msg.role === 'user');
+        if (firstUserMessage && this.titleGenerator) {
+          this.titleGenerator.generateTitleBackground(
+            name,
+            firstUserMessage.content,
+            this.sessionsDir
+          );
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`Failed to auto-save session ${name}:`, error);
       return false;
     }
   }

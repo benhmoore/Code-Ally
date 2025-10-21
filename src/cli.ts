@@ -198,7 +198,7 @@ async function handleSessionCommands(
       console.log('\nAvailable sessions:\n');
       for (const session of sessions) {
         console.log(
-          `  ${session.display_name} (${session.message_count} messages, ${session.last_modified})`
+          `  ${session.session_id}: ${session.display_name} (${session.message_count} messages, ${session.last_modified})`
         );
       }
       console.log('');
@@ -221,6 +221,54 @@ async function handleSessionCommands(
   }
 
   return false;
+}
+
+/**
+ * Handle --resume command (with or without session ID)
+ *
+ * @returns Session ID to resume, null if cancelled, or 'interactive' if user needs to select
+ */
+async function handleResumeCommand(
+  options: CLIOptions,
+  sessionManager: SessionManager
+): Promise<string | null | 'interactive'> {
+  // --resume not provided
+  if (options.resume === undefined) {
+    return null;
+  }
+
+  // --resume provided with specific session ID
+  if (typeof options.resume === 'string' && options.resume.length > 0) {
+    const sessionId = options.resume;
+
+    // Check if session exists
+    if (await sessionManager.sessionExists(sessionId)) {
+      return sessionId;
+    } else {
+      console.log(`\n✗ Session "${sessionId}" not found.\n`);
+
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      const answer = await new Promise<string>(resolve => {
+        rl.question('Would you like to create a new session with this name? (y/n): ', resolve);
+      });
+      rl.close();
+
+      if (answer.toLowerCase().startsWith('y')) {
+        await sessionManager.createSession(sessionId);
+        console.log(`\n✓ Created new session: ${sessionId}\n`);
+        return sessionId;
+      }
+
+      return null;
+    }
+  }
+
+  // --resume without session ID - show interactive selector
+  return 'interactive';
 }
 
 /**
@@ -444,12 +492,19 @@ async function main() {
       }
     }
 
-    // Initialize session manager
+    // Initialize session manager (without model client for now, will be set later)
     const sessionManager = new SessionManager();
     await sessionManager.initialize();
 
     // Handle session commands
     if (await handleSessionCommands(options, sessionManager)) {
+      return;
+    }
+
+    // Handle --resume command
+    const resumeSession = await handleResumeCommand(options, sessionManager);
+    if (resumeSession === null && options.resume !== undefined) {
+      // User cancelled or session not found
       return;
     }
 
@@ -593,6 +648,7 @@ async function main() {
         config,
         activityStream,
         agent,
+        resumeSession,
       }),
       {
         exitOnCtrlC: false,
@@ -605,6 +661,15 @@ async function main() {
 
     // Critical: Comprehensive terminal reset to clean up ANY escape sequence leakage
     resetTerminalState();
+
+    // Final session save before exit
+    try {
+      const todos = todoManager.getTodos();
+      await sessionManager.autoSave(agent.getMessages(), todos);
+    } catch (error) {
+      // Don't block exit on save error
+      console.error('Failed to save session on exit:', error);
+    }
 
     // Cleanup
     await registry.shutdown();

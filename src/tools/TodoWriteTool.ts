@@ -107,6 +107,18 @@ export class TodoWriteTool extends BaseTool {
       );
       todoManager.setTodos(newTodos);
 
+      // Auto-save todos to session
+      const sessionManager = registry.get('session_manager');
+      if (sessionManager && typeof (sessionManager as any).autoSave === 'function') {
+        const agent = registry.get('agent');
+        const messages = agent && typeof (agent as any).getMessages === 'function'
+          ? (agent as any).getMessages()
+          : [];
+        (sessionManager as any).autoSave(messages, newTodos).catch((error: Error) => {
+          console.error('[TodoWriteTool] Failed to auto-save session:', error);
+        });
+      }
+
       // Check if all todos completed
       const incompleteTodos = todoManager.getIncompleteTodos();
 

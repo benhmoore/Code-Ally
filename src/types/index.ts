@@ -75,6 +75,8 @@ export enum ActivityEventType {
   PERMISSION_RESPONSE = 'permission_response',
   MODEL_SELECT_REQUEST = 'model_select_request',
   MODEL_SELECT_RESPONSE = 'model_select_response',
+  SESSION_SELECT_REQUEST = 'session_select_request',
+  SESSION_SELECT_RESPONSE = 'session_select_response',
   CONFIG_VIEW_REQUEST = 'config_view_request',
   CONFIG_VIEW_RESPONSE = 'config_view_response',
   REWIND_REQUEST = 'rewind_request',
@@ -208,9 +210,17 @@ export interface SessionMetadata {
 export interface Session {
   id: string;
   name: string;
+  title?: string;
   created_at: string;
   updated_at: string;
   messages: Message[];
+  todos?: Array<{
+    id: string;
+    task: string;
+    status: 'pending' | 'in_progress' | 'completed';
+    activeForm: string;
+    created_at: string;
+  }>;
   metadata?: SessionMetadata;
 }
 

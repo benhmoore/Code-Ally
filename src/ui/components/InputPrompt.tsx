@@ -47,6 +47,10 @@ interface InputPromptProps {
   onModelNavigate?: (newIndex: number) => void;
   /** Whether config viewer is open */
   configViewerOpen?: boolean;
+  /** Session selector data (if active) */
+  sessionSelectRequest?: { requestId: string; sessions: import('../../types/index.js').SessionInfo[]; selectedIndex: number };
+  /** Callback when session selection changes */
+  onSessionNavigate?: (newIndex: number) => void;
   /** Rewind selector data (if active) */
   rewindRequest?: { requestId: string; userMessagesCount: number; selectedIndex: number };
   /** Callback when rewind selection changes */
@@ -76,6 +80,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   modelSelectRequest,
   modelSelectedIndex = 0,
   onModelNavigate,
+  sessionSelectRequest,
+  onSessionNavigate,
   configViewerOpen = false,
   rewindRequest,
   onRewindNavigate,
@@ -478,6 +484,74 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
+      // ===== Session Selector Navigation =====
+      if (sessionSelectRequest && onSessionNavigate && activityStream) {
+        const sessionsCount = sessionSelectRequest.sessions.length;
+        const currentIndex = sessionSelectRequest.selectedIndex;
+
+        // Up arrow - navigate to previous session
+        if (key.upArrow) {
+          const newIndex = Math.max(0, currentIndex - 1);
+          onSessionNavigate(newIndex);
+          return;
+        }
+
+        // Down arrow - navigate to next session
+        if (key.downArrow) {
+          const newIndex = Math.min(sessionsCount - 1, currentIndex + 1);
+          onSessionNavigate(newIndex);
+          return;
+        }
+
+        // Enter - submit selection (load session)
+        if (key.return) {
+          try {
+            const selectedSession = sessionSelectRequest.sessions[currentIndex];
+            if (selectedSession) {
+              activityStream.emit({
+                id: `response_${sessionSelectRequest.requestId}`,
+                type: ActivityEventType.SESSION_SELECT_RESPONSE,
+                timestamp: Date.now(),
+                data: {
+                  requestId: sessionSelectRequest.requestId,
+                  sessionId: selectedSession.session_id,
+                  cancelled: false,
+                },
+              });
+            }
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit session selection:', error);
+          }
+          return;
+        }
+
+        // Escape or Ctrl+C - cancel session selection
+        if (key.escape || (input === 'c' && key.ctrl)) {
+          // Prevent duplicate cancellation
+          if (lastCancelledIdRef.current === sessionSelectRequest.requestId) return;
+          lastCancelledIdRef.current = sessionSelectRequest.requestId;
+
+          try {
+            activityStream.emit({
+              id: `response_${sessionSelectRequest.requestId}_cancel`,
+              type: ActivityEventType.SESSION_SELECT_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: sessionSelectRequest.requestId,
+                sessionId: null,
+                cancelled: true,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit session cancellation:', error);
+          }
+          return;
+        }
+
+        // Block all other input when session selector is active
+        return;
+      }
+
       // ===== Rewind Selector Navigation =====
       if (rewindRequest && onRewindNavigate && activityStream) {
         const messagesCount = rewindRequest.userMessagesCount;
@@ -670,7 +744,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
 
         // Second priority: Double-escape to open rewind (only when no modal active)
-        if (!modelSelectRequest && !rewindRequest && !permissionRequest && activityStream) {
+        if (!modelSelectRequest && !sessionSelectRequest && !rewindRequest && !permissionRequest && activityStream) {
           const newCount = escCount + 1;
           setEscCount(newCount);
 

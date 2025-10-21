@@ -119,6 +119,9 @@ export class Agent {
     };
     this.messages.push(userMessage);
 
+    // Auto-save after user message
+    this.autoSaveSession();
+
     // Emit user message event
     this.emitEvent({
       id: this.generateId(),
@@ -326,6 +329,9 @@ export class Agent {
     };
     this.messages.push(assistantMessage);
 
+    // Auto-save after assistant message with tool calls
+    this.autoSaveSession();
+
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.messages.length);
 
     // Execute tool calls via orchestrator (pass original calls for unwrapping)
@@ -358,6 +364,9 @@ export class Agent {
       timestamp: Date.now(),
     };
     this.messages.push(assistantMessage);
+
+    // Auto-save after text response
+    this.autoSaveSession();
 
     // Emit completion event
     this.emitEvent({
@@ -456,6 +465,46 @@ export class Agent {
   }
 
   /**
+   * Auto-save session to disk (messages and todos)
+   */
+  private async autoSaveSession(): Promise<void> {
+    const registry = ServiceRegistry.getInstance();
+    const sessionManager = registry.get('session_manager');
+    const todoManager = registry.get('todo_manager');
+
+    if (!sessionManager || typeof (sessionManager as any).autoSave !== 'function') {
+      return; // Session manager not available
+    }
+
+    // Get current session
+    const currentSession = (sessionManager as any).getCurrentSession();
+
+    // Create a new session if none exists and we have user messages
+    if (!currentSession) {
+      const hasUserMessages = this.messages.some(m => m.role === 'user');
+      if (hasUserMessages && typeof (sessionManager as any).generateSessionName === 'function') {
+        const sessionName = (sessionManager as any).generateSessionName();
+        await (sessionManager as any).createSession(sessionName);
+        (sessionManager as any).setCurrentSession(sessionName);
+        logger.debug('[AGENT_SESSION]', this.instanceId, 'Created new session:', sessionName);
+      } else {
+        return; // No user messages yet, don't create session
+      }
+    }
+
+    // Get todos if TodoManager is available
+    let todos: any[] | undefined;
+    if (todoManager && typeof (todoManager as any).getTodos === 'function') {
+      todos = (todoManager as any).getTodos();
+    }
+
+    // Auto-save (non-blocking, fire and forget)
+    (sessionManager as any).autoSave(this.messages, todos).catch((error: Error) => {
+      logger.error('[AGENT_SESSION]', this.instanceId, 'Failed to auto-save session:', error);
+    });
+  }
+
+  /**
    * Add a message to conversation history
    *
    * @param message - Message to add
@@ -491,6 +540,9 @@ export class Agent {
     const toolCallId = message.tool_call_id ? ` toolCallId:${message.tool_call_id}` : '';
     const toolName = message.name ? ` name:${message.name}` : '';
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Message added:', message.role, toolInfo, toolCallId, toolName, '- Total messages:', this.messages.length);
+
+    // Auto-save session after adding message
+    this.autoSaveSession();
   }
 
   /**
