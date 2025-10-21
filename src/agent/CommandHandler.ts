@@ -143,6 +143,13 @@ export class CommandHandler {
     return { command, args: argsString ? [argsString] : [] };
   }
 
+  /**
+   * Generate a random ID for events
+   */
+  private generateRandomId(): string {
+    return `evt-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  }
+
   // ===========================
   // Core Commands
   // ===========================
@@ -699,19 +706,61 @@ Todo Commands:
     const customInstructions = args.join(' ').trim() || undefined;
 
     try {
+      // Get activity stream from service registry
+      const activityStream = this.serviceRegistry.get('activity_stream');
+      if (!activityStream || typeof (activityStream as any).emit !== 'function') {
+        throw new Error('Activity stream not available');
+      }
+
+      // Emit compaction start event (same as auto-compaction)
+      (activityStream as any).emit({
+        id: this.generateRandomId(),
+        type: ActivityEventType.AUTO_COMPACTION_START,
+        timestamp: Date.now(),
+        data: {},
+      });
+
+      // Get context usage before compaction
+      const registry = ServiceRegistry.getInstance();
+      const tokenManager = registry.get('token_manager');
+      const oldContextUsage = tokenManager && typeof (tokenManager as any).getContextUsagePercentage === 'function'
+        ? (tokenManager as any).getContextUsagePercentage()
+        : 0;
+
       // Perform compaction
       const compactedMessages = await this.compactConversation(
         messages,
         customInstructions
       );
 
-      // Update agent's internal messages (preserves rewindHistory)
+      // Update agent's internal messages
       this.agent.updateMessagesAfterCompaction(compactedMessages);
+
+      // Update token count
+      if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
+        (tokenManager as any).updateTokenCount(compactedMessages);
+      }
+
+      const newContextUsage = tokenManager && typeof (tokenManager as any).getContextUsagePercentage === 'function'
+        ? (tokenManager as any).getContextUsagePercentage()
+        : 0;
+
+      // Emit compaction complete event (same as auto-compaction)
+      (activityStream as any).emit({
+        id: this.generateRandomId(),
+        type: ActivityEventType.AUTO_COMPACTION_COMPLETE,
+        timestamp: Date.now(),
+        data: {
+          oldContextUsage,
+          newContextUsage,
+          threshold: 95, // Manual compaction doesn't have a threshold, use default
+          compactedMessages,
+        },
+      });
 
       return {
         handled: true,
-        response: 'Conversation compacted successfully.',
-        updatedMessages: compactedMessages, // Return for UI update
+        response: '', // No response needed, UI shows compaction notice
       };
     } catch (error) {
       return {

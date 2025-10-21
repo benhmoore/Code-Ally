@@ -16,7 +16,7 @@ export class ReadTool extends BaseTool {
     'Read contents of one or more files. Returns file contents with line numbers. Use this to examine code, configuration, or any text files.';
   readonly requiresConfirmation = false; // Read-only operation
 
-  private static readonly MAX_ESTIMATED_TOKENS = 1500;
+  private static readonly MAX_ESTIMATED_TOKENS = 2500;
   private static readonly LINE_NUMBER_WIDTH = 6;
 
   constructor(activityStream: ActivityStream) {

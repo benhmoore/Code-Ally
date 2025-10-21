@@ -47,7 +47,6 @@ export class Agent {
 
   // Conversation state
   private messages: Message[] = [];
-  private rewindHistory: Message[] = []; // Preserves all messages for rewind, even after compaction
   private requestInProgress: boolean = false;
   private interrupted: boolean = false;
 
@@ -88,7 +87,6 @@ export class Agent {
         content: config.systemPrompt,
       };
       this.messages.push(systemMessage);
-      this.rewindHistory.push(systemMessage);
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt added, length:', config.systemPrompt.length);
     }
   }
@@ -113,14 +111,13 @@ export class Agent {
    * @returns Promise resolving to the assistant's final response
    */
   async sendMessage(message: string): Promise<string> {
-    // Add user message to both histories
+    // Add user message
     const userMessage: Message = {
       role: 'user',
       content: message,
       timestamp: Date.now(),
     };
     this.messages.push(userMessage);
-    this.rewindHistory.push(userMessage);
 
     // Emit user message event
     this.emitEvent({
@@ -328,7 +325,6 @@ export class Agent {
       timestamp: Date.now(),
     };
     this.messages.push(assistantMessage);
-    this.rewindHistory.push(assistantMessage);
 
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.messages.length);
 
@@ -355,14 +351,13 @@ export class Agent {
    * @returns The text content
    */
   private processTextResponse(response: LLMResponse): string {
-    // Add assistant message to both histories
+    // Add assistant message
     const assistantMessage: Message = {
       role: 'assistant',
       content: response.content,
       timestamp: Date.now(),
     };
     this.messages.push(assistantMessage);
-    this.rewindHistory.push(assistantMessage);
 
     // Emit completion event
     this.emitEvent({
@@ -472,7 +467,6 @@ export class Agent {
       timestamp: message.timestamp || Date.now(),
     };
     this.messages.push(messageWithTimestamp);
-    this.rewindHistory.push(messageWithTimestamp); // Also add to rewind history
 
     // Update TokenManager with new message count
     const registry = ServiceRegistry.getInstance();
@@ -518,13 +512,11 @@ export class Agent {
   }
 
   /**
-   * Update messages after compaction (preserves rewindHistory)
+   * Update messages after compaction
    * Used by manual /compact command
    * @param compactedMessages - Compacted message array
    */
   updateMessagesAfterCompaction(compactedMessages: Message[]): void {
-    // Only update this.messages, NOT rewindHistory
-    // rewindHistory preserves all original messages for rewind functionality
     this.messages = [...compactedMessages];
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages updated after compaction, count:', this.messages.length);
   }
@@ -539,8 +531,8 @@ export class Agent {
    * @returns The content of the target message for pre-filling the input
    */
   async rewindToMessage(userMessageIndex: number): Promise<string> {
-    // Filter to user messages only from rewind history (preserves all messages even after compaction)
-    const userMessages = this.rewindHistory.filter(m => m.role === 'user');
+    // Filter to user messages only
+    const userMessages = this.messages.filter(m => m.role === 'user');
 
     if (userMessageIndex < 0 || userMessageIndex >= userMessages.length) {
       throw new Error(`Invalid message index: ${userMessageIndex}. Must be between 0 and ${userMessages.length - 1}`);
@@ -552,8 +544,8 @@ export class Agent {
       throw new Error(`Target message at index ${userMessageIndex} not found`);
     }
 
-    // Find its position in the full rewind history
-    const cutoffIndex = this.rewindHistory.findIndex(
+    // Find its position in the full messages array
+    const cutoffIndex = this.messages.findIndex(
       m => m.role === 'user' && m.timestamp === targetMessage.timestamp && m.content === targetMessage.content
     );
 
@@ -562,13 +554,11 @@ export class Agent {
     }
 
     // Preserve system message and truncate to just before the target message
-    const systemMessage = this.rewindHistory[0]?.role === 'system' ? this.rewindHistory[0] : null;
-    const truncatedMessages = this.rewindHistory.slice(systemMessage ? 1 : 0, cutoffIndex);
+    const systemMessage = this.messages[0]?.role === 'system' ? this.messages[0] : null;
+    const truncatedMessages = this.messages.slice(systemMessage ? 1 : 0, cutoffIndex);
 
-    // Update both messages and rewind history to the truncated version
-    const newMessages = systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages;
-    this.messages = [...newMessages];
-    this.rewindHistory = [...newMessages];
+    // Update messages to the truncated version
+    this.messages = systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages;
 
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Rewound to message', userMessageIndex, '- Total messages now:', this.messages.length);
 
@@ -678,7 +668,7 @@ export class Agent {
       // Perform compaction
       const compacted = await this.performCompaction();
 
-      // Update messages (NOTE: rewindHistory is NOT updated - it preserves all original messages for rewind)
+      // Update messages
       this.messages = compacted;
 
       // Update token count

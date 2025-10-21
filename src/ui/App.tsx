@@ -384,8 +384,6 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
     const { oldContextUsage, newContextUsage, threshold, compactedMessages } = event.data;
 
     // Update UI messages to compacted state (filter out system messages)
-    // NOTE: Agent has already updated its internal messages during compaction
-    // We don't call agent.setMessages() here to preserve rewindHistory
     if (compactedMessages) {
       const uiMessages = compactedMessages.filter((m: Message) => m.role !== 'system');
       actions.setMessages(uiMessages);
@@ -678,28 +676,6 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
             });
           }
 
-          // Update messages if command modified them (e.g., /compact)
-          if (result.updatedMessages) {
-            actions.setMessages(result.updatedMessages);
-
-            // NOTE: Agent has already updated its internal messages via updateMessagesAfterCompaction()
-            // We don't call agent.setMessages() here to preserve rewindHistory
-
-            // Update TokenManager with new token count after compaction
-            const registry = ServiceRegistry.getInstance();
-            const tokenManager = registry.get('token_manager');
-            if (tokenManager) {
-              if (typeof (tokenManager as any).updateTokenCount === 'function') {
-                (tokenManager as any).updateTokenCount(result.updatedMessages);
-              }
-
-              // Update context usage display
-              if (typeof (tokenManager as any).getContextUsagePercentage === 'function') {
-                const contextUsage = (tokenManager as any).getContextUsagePercentage();
-                actions.setContextUsage(contextUsage);
-              }
-            }
-          }
 
           return;
         }
@@ -913,13 +889,14 @@ const AppContent: React.FC<{ agent: Agent }> = ({ agent }) => {
       {/* Footer / Help */}
       <Box marginTop={1}>
         <Text dimColor>
-          Ctrl+C to exit | Model: {state.config.model || 'none'} | Context:{' '}
-          <Text color={state.contextUsage >= 90 ? 'red' : state.contextUsage >= 85 ? 'yellow' : state.contextUsage >= 70 ? 'cyan' : undefined}>
-            {state.contextUsage}%
-          </Text>
-          {state.contextUsage >= 95 && <Text color="red"> (Critical - use /compact)</Text>}
-          {state.contextUsage >= 85 && state.contextUsage < 95 && <Text color="yellow"> (High - consider /compact)</Text>}
-          {state.contextUsage >= 70 && state.contextUsage < 85 && <Text color="cyan"> (Elevated)</Text>}
+          Ctrl+C to exit | Model: {state.config.model || 'none'} |{' '}
+          {state.contextUsage >= 85 ? (
+            <Text color="red">Context: {state.contextUsage}% - use /compact</Text>
+          ) : state.contextUsage >= 70 ? (
+            <Text color="yellow">Context: {state.contextUsage}% - consider /compact</Text>
+          ) : (
+            <Text>Context: {state.contextUsage}%</Text>
+          )}
         </Text>
       </Box>
     </Box>
