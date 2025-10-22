@@ -18,6 +18,8 @@ interface ConversationViewProps {
   contextUsage: number;
   /** Compaction notices to display */
   compactionNotices?: CompactionNotice[];
+  /** Key to force Static component remount */
+  staticRemountKey: number;
 }
 
 /**
@@ -143,6 +145,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   activeToolCalls = [],
   contextUsage,
   compactionNotices = [],
+  staticRemountKey,
 }) => {
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns || 80; // Fallback to 80 if unavailable
@@ -256,8 +259,8 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   return (
     <Box flexDirection="column">
       {/* Completed content in Static - gemini-cli pattern */}
-      {/* Key forces remount when compaction occurs */}
-      <Static key={`static-${compactionNotices.length}`} items={completedJSXItems}>
+      {/* Key forces remount only when explicitly requested (rewind/compaction) */}
+      <Static key={`static-${staticRemountKey}`} items={completedJSXItems}>
         {(item) => item}
       </Static>
 
@@ -281,6 +284,7 @@ export const ConversationView = React.memo(ConversationViewComponent, (prevProps
   const contextSame = prevProps.contextUsage === nextProps.contextUsage;
   const noticesSame = prevProps.compactionNotices === nextProps.compactionNotices;
   const isThinkingSame = prevProps.isThinking === nextProps.isThinking;
+  const staticKeySame = prevProps.staticRemountKey === nextProps.staticRemountKey;
 
-  return messagesSame && streamingSame && toolCallsSame && contextSame && noticesSame && isThinkingSame;
+  return messagesSame && streamingSame && toolCallsSame && contextSame && noticesSame && isThinkingSame && staticKeySame;
 });

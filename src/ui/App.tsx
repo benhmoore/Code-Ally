@@ -490,6 +490,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       actions.setMessages(uiMessages);
     }
 
+    // Force Static to remount with compacted messages
+    actions.forceStaticRemount();
+
     // Clear all tool calls - they're part of the compacted history
     actions.clearToolCalls();
 
@@ -654,6 +657,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         // Update UI state - get fresh messages from agent, filter out system messages
         const newMessages = agent.getMessages().filter(m => m.role !== 'system');
         actions.setMessages(newMessages);
+
+        // Force Static to remount with new message list
+        actions.forceStaticRemount();
 
         // Find the timestamp of the rewind target message
         const allMessages = agent.getMessages();
@@ -887,6 +893,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           activeToolCalls={state.activeToolCalls}
           contextUsage={state.contextUsage}
           compactionNotices={state.compactionNotices}
+          staticRemountKey={state.staticRemountKey}
         />
       </Box>
 
