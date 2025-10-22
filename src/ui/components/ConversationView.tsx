@@ -18,7 +18,7 @@ interface ConversationViewProps {
   contextUsage: number;
   /** Compaction notices to display */
   compactionNotices?: CompactionNotice[];
-  /** Key to force Static component remount */
+  /** Key to force Static remount for compaction/rewind */
   staticRemountKey: number;
 }
 
@@ -113,6 +113,7 @@ type TimelineItem =
   | { type: 'toolCall'; toolCall: ToolCallState & { children?: ToolCallState[] }; timestamp: number }
   | { type: 'compactionNotice'; notice: CompactionNotice; timestamp: number };
 
+
 /**
  * Memoized active content - only re-renders when active tools change
  */
@@ -137,7 +138,9 @@ const ActiveContent = React.memo<{
 ));
 
 /**
- * Simple ConversationView - renders completed and active content separately
+ * ConversationView - renders completed and active content separately
+ * Uses Static component to prevent thrashing, with header rendered outside Static
+ * to minimize duplication during compaction/rewind
  */
 const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   messages,
@@ -215,20 +218,20 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     return timeline;
   }, [messages, completedToolCalls, compactionNotices]);
 
-  // Pre-render timeline items as JSX for Static component - gemini-cli pattern
+  // Pre-render timeline items as JSX for Static component
   const completedJSXItems = React.useMemo(() => {
     const dividerWidth = Math.max(60, terminalWidth - 4);
     const divider = '─'.repeat(dividerWidth);
+    const items: React.ReactNode[] = [];
 
-    // Add header as first static item
-    const items: React.ReactNode[] = [
+    // Add header as first item in Static
+    items.push(
       <Box key="header" marginBottom={1}>
         <Text bold color="cyan">Code Ally</Text>
         <Text dimColor> - Terminal UI (Ink)</Text>
       </Box>
-    ];
+    );
 
-    // Add timeline items
     completedTimeline.forEach((item) => {
       if (item.type === 'message') {
         items.push(<MessageDisplay key={`msg-${item.index}`} message={item.message} />);
@@ -258,8 +261,9 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
   return (
     <Box flexDirection="column">
-      {/* Completed content in Static - gemini-cli pattern */}
-      {/* Key forces remount only when explicitly requested (rewind/compaction) */}
+      {/* Completed content in Static - prevents thrashing */}
+      {/* Header is included as first item in Static */}
+      {/* Key changes only during compaction/rewind to update content */}
       <Static key={`static-${staticRemountKey}`} items={completedJSXItems}>
         {(item) => item}
       </Static>

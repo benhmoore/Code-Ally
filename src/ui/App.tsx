@@ -885,7 +885,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
   return (
     <Box flexDirection="column" padding={1}>
-      {/* Conversation View - contains header + all conversation history in Static */}
+      {/* Conversation View - contains header + all conversation history */}
       <Box flexDirection="column" flexGrow={1}>
         <ConversationView
           messages={state.messages}
