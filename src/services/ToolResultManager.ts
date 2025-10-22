@@ -13,6 +13,7 @@
 
 import { TokenManager } from '../agent/TokenManager.js';
 import { ConfigManager } from './ConfigManager.js';
+import { ToolManager } from '../tools/ToolManager.js';
 
 /**
  * Truncation level definitions
@@ -64,18 +65,8 @@ export class ToolResultManager {
     critical: 200,
   };
 
-  // Default tool result sizes for estimation (tokens)
-  private static readonly DEFAULT_TOOL_SIZES: { [key: string]: number } = {
-    bash: 400,
-    read: 800,
-    glob: 300,
-    grep: 600,
-    write: 100,
-    edit: 200,
-    default: 400,
-  };
-
   private tokenManager: TokenManager;
+  private toolManager?: ToolManager;
   private maxTokens: MaxTokenLimits;
   private toolUsageStats: Map<string, ToolStats> = new Map();
 
@@ -84,9 +75,11 @@ export class ToolResultManager {
    *
    * @param tokenManager TokenManager instance for context tracking
    * @param configManager Optional ConfigManager for customizable limits
+   * @param toolManager Optional ToolManager for accessing tool metadata
    */
-  constructor(tokenManager: TokenManager, configManager?: ConfigManager) {
+  constructor(tokenManager: TokenManager, configManager?: ConfigManager, toolManager?: ToolManager) {
     this.tokenManager = tokenManager;
+    this.toolManager = toolManager;
 
     // Load configurable token limits from config
     if (configManager) {
@@ -136,25 +129,23 @@ export class ToolResultManager {
       return rawResult;
     }
 
-    // Reserve tokens for truncation notice
-    let notice: string;
-    if (truncationLevel === 'critical') {
-      notice = '\n\n[Result truncated due to critical context usage]';
-    } else if (truncationLevel === 'aggressive') {
-      notice = '\n\n[Result truncated due to high context usage]';
-    } else {
-      notice = '\n\n[Result truncated due to context limits]';
-    }
-
+    // Generate tool-specific truncation notice
+    const notice = this.getTruncationNotice(toolName, truncationLevel);
     const noticeTokens = this.tokenManager.estimateTokens(notice);
     let contentTokens = maxTokens - noticeTokens;
 
     // Ensure we don't go negative
     if (contentTokens < 50) {
       contentTokens = Math.floor(maxTokens / 2);
-      notice = '\n\n[Truncated]';
-      const newNoticeTokens = this.tokenManager.estimateTokens(notice);
-      contentTokens = maxTokens - newNoticeTokens;
+      const minimalNotice = '\n\n[Truncated - output too long]';
+      const minimalTokens = this.tokenManager.estimateTokens(minimalNotice);
+      contentTokens = maxTokens - minimalTokens;
+
+      const truncatedResult = this.tokenManager.truncateContentToTokens(
+        rawResult,
+        contentTokens
+      );
+      return truncatedResult + minimalNotice;
     }
 
     const truncatedResult = this.tokenManager.truncateContentToTokens(
@@ -162,6 +153,47 @@ export class ToolResultManager {
       contentTokens
     );
     return truncatedResult + notice;
+  }
+
+  /**
+   * Get tool-specific truncation notice with guidance
+   *
+   * @param toolName Name of the tool
+   * @param truncationLevel Current truncation level
+   * @returns Formatted truncation notice
+   */
+  private getTruncationNotice(toolName: string, truncationLevel: TruncationLevel): string {
+    const toolGuidance = this.getToolSpecificGuidance(toolName);
+
+    let contextReason = '';
+    if (truncationLevel === 'critical') {
+      contextReason = 'critical context usage';
+    } else if (truncationLevel === 'aggressive') {
+      contextReason = 'high context usage';
+    } else {
+      contextReason = 'length';
+    }
+
+    return `\n\n[Output truncated due to ${contextReason}. ${toolGuidance}]`;
+  }
+
+  /**
+   * Get tool-specific guidance for handling truncated output
+   *
+   * @param toolName Name of the tool
+   * @returns Tool-specific guidance string
+   */
+  private getToolSpecificGuidance(toolName: string): string {
+    // If we have ToolManager, query the tool directly
+    if (this.toolManager) {
+      const tool = this.toolManager.getTool(toolName);
+      if (tool && typeof tool.getTruncationGuidance === 'function') {
+        return tool.getTruncationGuidance();
+      }
+    }
+
+    // Fallback to default guidance
+    return 'Consider narrowing the scope of your query or using filters';
   }
 
   /**
@@ -266,25 +298,37 @@ export class ToolResultManager {
    * @returns Average tool result size in tokens
    */
   private getAverageToolSize(): number {
-    if (this.toolUsageStats.size === 0) {
-      // Use default size if no statistics available
-      return ToolResultManager.DEFAULT_TOOL_SIZES['default'] ?? 400;
+    // If we have actual usage statistics, use those (most accurate)
+    if (this.toolUsageStats.size > 0) {
+      let totalTokens = 0;
+      let totalCalls = 0;
+
+      for (const stats of this.toolUsageStats.values()) {
+        totalTokens += stats.totalTokens;
+        totalCalls += stats.callCount;
+      }
+
+      if (totalCalls > 0) {
+        return Math.floor(totalTokens / totalCalls);
+      }
     }
 
-    // Calculate weighted average from actual usage
-    let totalTokens = 0;
-    let totalCalls = 0;
-
-    for (const stats of this.toolUsageStats.values()) {
-      totalTokens += stats.totalTokens;
-      totalCalls += stats.callCount;
+    // If no stats but we have ToolManager, average tool estimates
+    if (this.toolManager) {
+      const tools = this.toolManager.getAllTools();
+      if (tools.length > 0) {
+        const totalEstimate = tools.reduce((sum, tool) => {
+          const estimate = typeof tool.getEstimatedOutputSize === 'function'
+            ? tool.getEstimatedOutputSize()
+            : 400;
+          return sum + estimate;
+        }, 0);
+        return Math.floor(totalEstimate / tools.length);
+      }
     }
 
-    if (totalCalls === 0) {
-      return ToolResultManager.DEFAULT_TOOL_SIZES['default'] ?? 400;
-    }
-
-    return Math.floor(totalTokens / totalCalls);
+    // Final fallback to default
+    return 400;
   }
 
   /**

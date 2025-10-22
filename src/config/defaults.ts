@@ -80,6 +80,11 @@ export const DEFAULT_CONFIG: Config = {
   tool_result_max_tokens_critical: 200, // 95%+ context usage
 
   // ==========================================
+  // READ TOOL SETTINGS
+  // ==========================================
+  read_max_tokens: 3000, // Maximum tokens for a single read operation
+
+  // ==========================================
   // SETUP TRACKING
   // ==========================================
   setup_completed: false, // Whether initial setup ran
@@ -140,6 +145,9 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   tool_result_max_tokens_moderate: 'number',
   tool_result_max_tokens_aggressive: 'number',
   tool_result_max_tokens_critical: 'number',
+
+  // Read Tool
+  read_max_tokens: 'number',
 
   // Setup
   setup_completed: 'boolean',

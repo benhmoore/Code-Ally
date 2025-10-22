@@ -5,8 +5,9 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { tokenCounter } from '../services/TokenCounter.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -16,11 +17,26 @@ export class ReadTool extends BaseTool {
     'Read contents of one or more files. Returns file contents with line numbers. Use this to examine code, configuration, or any text files.';
   readonly requiresConfirmation = false; // Read-only operation
 
-  private static readonly MAX_ESTIMATED_TOKENS = 2500;
   private static readonly LINE_NUMBER_WIDTH = 6;
+  private config?: Config;
 
-  constructor(activityStream: ActivityStream) {
+  constructor(activityStream: ActivityStream, config?: Config) {
     super(activityStream);
+    this.config = config;
+  }
+
+  /**
+   * Get the maximum allowed tokens for a read operation
+   * Capped by both configured limit and context size
+   */
+  private getMaxTokens(): number {
+    const configuredMax = this.config?.read_max_tokens ?? 3000;
+    const contextSize = this.config?.context_size ?? 16384;
+
+    // Cap at 20% of context size to leave room for conversation
+    const contextBasedMax = Math.floor(contextSize * 0.2);
+
+    return Math.min(configuredMax, contextBasedMax);
   }
 
   /**
@@ -75,15 +91,17 @@ export class ReadTool extends BaseTool {
       );
     }
 
-    // Token estimation check
-    const estimatedTokens = await this.estimateTokens(filePaths);
-    if (estimatedTokens > ReadTool.MAX_ESTIMATED_TOKENS) {
+    // Token estimation check (considering limit)
+    const estimatedTokens = await this.estimateTokens(filePaths, limit);
+    const maxTokens = this.getMaxTokens();
+
+    if (estimatedTokens > maxTokens) {
       const examples = filePaths.length === 1
         ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=50, limit=100)`
         : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
 
       return this.formatErrorResponse(
-        `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds limit of ${ReadTool.MAX_ESTIMATED_TOKENS}. ` +
+        `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds limit of ${maxTokens}. ` +
         `Use grep/glob to search for specific content, or use limit/offset for targeted reading. ` +
         `Example: ${examples}`,
         'validation_error',
@@ -130,19 +148,27 @@ export class ReadTool extends BaseTool {
   }
 
   /**
-   * Estimate total tokens for files
+   * Estimate total tokens for files considering limit
+   * Reads actual content and counts tokens accurately
    */
-  private async estimateTokens(filePaths: string[]): Promise<number> {
+  private async estimateTokens(filePaths: string[], limit: number = 0): Promise<number> {
     let totalEstimate = 0;
 
     for (const filePath of filePaths) {
       try {
-        const stats = await fs.stat(filePath);
-        // Rough estimate: 1 token per 4 characters + line number overhead
-        const tokenEstimate = Math.ceil(stats.size / 4) + stats.size / 80; // Assume ~80 chars per line
-        totalEstimate += tokenEstimate;
+        if (limit > 0) {
+          // Read the actual chunk that will be returned and count its tokens
+          const content = await this.readFile(filePath, limit, 0);
+          totalEstimate += tokenCounter.count(content);
+        } else {
+          // For full file without limit, estimate based on file size
+          // This is just for the pre-check; actual content will be read if it passes
+          const stats = await fs.stat(filePath);
+          const tokenEstimate = Math.ceil(stats.size / 3.5);
+          totalEstimate += tokenEstimate;
+        }
       } catch {
-        // If we can't stat, skip estimation
+        // If we can't read/stat, skip this file
         continue;
       }
     }
@@ -208,6 +234,20 @@ export class ReadTool extends BaseTool {
     // Check for null bytes in first 1KB
     const sample = content.substring(0, 1024);
     return sample.includes('\0');
+  }
+
+  /**
+   * Get truncation guidance for read output
+   */
+  getTruncationGuidance(): string {
+    return 'Use limit and offset parameters for targeted reading of specific line ranges';
+  }
+
+  /**
+   * Get estimated output size for read operations
+   */
+  getEstimatedOutputSize(): number {
+    return 800; // Read operations typically produce larger output (file contents)
   }
 
   /**

@@ -17,7 +17,9 @@ import { ToolManager } from '../tools/ToolManager.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
+import { TokenManager } from './TokenManager.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
+import { ConfigManager } from '../services/ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
 import { Message, ActivityEventType, Config } from '../types/index.js';
 import { logger } from '../services/Logger.js';
@@ -27,8 +29,12 @@ export interface AgentConfig {
   isSpecializedAgent?: boolean;
   /** Enable verbose logging */
   verbose?: boolean;
-  /** System prompt to prepend */
+  /** System prompt to prepend (initial/static version) */
   systemPrompt?: string;
+  /** Base agent prompt for specialized agents (for regeneration) */
+  baseAgentPrompt?: string;
+  /** Task prompt for specialized agents (for regeneration) */
+  taskPrompt?: string;
   /** Application configuration */
   config: Config;
   /** Parent tool call ID (for nested agents) */
@@ -49,6 +55,11 @@ export class Agent {
   private messages: Message[] = [];
   private requestInProgress: boolean = false;
   private interrupted: boolean = false;
+  private wasInterrupted: boolean = false; // Track if last request was interrupted
+
+  // Context tracking (isolated per agent)
+  private tokenManager: TokenManager;
+  private toolResultManager: any; // ToolResultManager instance
 
   // Agent instance ID for debugging
   private readonly instanceId: string;
@@ -58,7 +69,7 @@ export class Agent {
     toolManager: ToolManager,
     activityStream: ActivityStream,
     config: AgentConfig,
-    toolResultManager?: ToolResultManager,
+    configManager?: ConfigManager,
     permissionManager?: PermissionManager
   ) {
     this.modelClient = modelClient;
@@ -70,13 +81,24 @@ export class Agent {
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
 
+    // Create agent's own TokenManager for isolated context tracking
+    this.tokenManager = new TokenManager(config.config.context_size);
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'TokenManager created with context size:', config.config.context_size);
+
+    // Create agent's own ToolResultManager using agent's TokenManager
+    this.toolResultManager = new ToolResultManager(
+      this.tokenManager,
+      configManager, // Optional: uses defaults if not provided
+      toolManager
+    );
+
     // Create tool orchestrator
     this.toolOrchestrator = new ToolOrchestrator(
       toolManager,
       activityStream,
       this,
       config,
-      toolResultManager,
+      this.toolResultManager,
       permissionManager
     );
 
@@ -88,6 +110,11 @@ export class Agent {
       };
       this.messages.push(systemMessage);
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt added, length:', config.systemPrompt.length);
+
+      // Update token count with initial system message
+      this.tokenManager.updateTokenCount(this.messages);
+      const initialUsage = this.tokenManager.getContextUsagePercentage();
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Initial context usage:', initialUsage + '%');
     }
   }
 
@@ -96,6 +123,13 @@ export class Agent {
    */
   getModelClient(): ModelClient {
     return this.modelClient;
+  }
+
+  /**
+   * Get the token manager (used by cli.ts for ServiceRegistry)
+   */
+  getTokenManager(): TokenManager {
+    return this.tokenManager;
   }
 
   /**
@@ -118,6 +152,20 @@ export class Agent {
       timestamp: Date.now(),
     };
     this.messages.push(userMessage);
+
+    // If the previous request was interrupted, add a system reminder
+    if (this.wasInterrupted) {
+      const systemReminder: Message = {
+        role: 'system',
+        content: '<system-reminder>\nUser interrupted. Prioritize answering their new prompt over continuing your todo list. After responding, reassess if the todo list is still relevant. Do not blindly continue with pending todos.\n</system-reminder>',
+        timestamp: Date.now(),
+      };
+      this.messages.push(systemReminder);
+      logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Injected system reminder after interruption');
+
+      // Reset the flag after injecting the reminder
+      this.wasInterrupted = false;
+    }
 
     // Auto-save after user message
     this.autoSaveSession();
@@ -149,6 +197,8 @@ export class Agent {
       return finalResponse;
     } catch (error) {
       if (this.interrupted || (error instanceof Error && error.message.includes('interrupted'))) {
+        // Mark that this request was interrupted
+        this.wasInterrupted = true;
         return '[Request interrupted by user]';
       }
       throw error;
@@ -193,12 +243,28 @@ export class Agent {
     const functions = this.toolManager.getFunctionDefinitions();
 
     // Regenerate system prompt with current context (todos, etc.) before each LLM call
-    // Only for main agent, not specialized agents (they have static prompts)
-    if (!this.config.isSpecializedAgent && this.messages[0]?.role === 'system') {
-      const { getMainSystemPrompt } = await import('../prompts/systemMessages.js');
-      const updatedSystemPrompt = await getMainSystemPrompt();
+    // Works for both main agent and specialized agents
+    if (this.messages[0]?.role === 'system') {
+      let updatedSystemPrompt: string;
+
+      if (this.config.isSpecializedAgent && this.config.baseAgentPrompt && this.config.taskPrompt) {
+        // Regenerate specialized agent prompt with current context
+        const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
+        updatedSystemPrompt = await getAgentSystemPrompt(
+          this.config.baseAgentPrompt,
+          this.config.taskPrompt,
+          this.tokenManager,
+          this.toolResultManager
+        );
+        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent prompt regenerated with current context');
+      } else {
+        // Regenerate main agent prompt with current context
+        const { getMainSystemPrompt } = await import('../prompts/systemMessages.js');
+        updatedSystemPrompt = await getMainSystemPrompt(this.tokenManager, this.toolResultManager);
+        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Main agent prompt regenerated with current context');
+      }
+
       this.messages[0].content = updatedSystemPrompt;
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt regenerated with current context');
     }
 
     // Deduplicate tool results to save context
@@ -227,14 +293,30 @@ export class Agent {
     });
 
     try {
-      // Send to model
+      // Send to model (includes system-reminder if present)
       const response = await this.modelClient.send(this.messages, {
         functions,
         stream: this.config.config.parallel_tools, // Enable streaming if configured
       });
 
+      // Remove system-reminder messages after receiving response
+      // These are temporary context hints that should not persist
+      const originalLength = this.messages.length;
+      this.messages = this.messages.filter(msg =>
+        !(msg.role === 'system' && msg.content.includes('<system-reminder>'))
+      );
+      if (this.messages.length !== originalLength) {
+        logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Removed system reminder after LLM response');
+      }
+
       return response;
     } catch (error) {
+      // Remove system-reminder messages even on error
+      // These should not persist in conversation history
+      this.messages = this.messages.filter(msg =>
+        !(msg.role === 'system' && msg.content.includes('<system-reminder>'))
+      );
+
       // Emit error event
       this.emitEvent({
         id: this.generateId(),
@@ -333,6 +415,34 @@ export class Agent {
     this.autoSaveSession();
 
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.messages.length);
+
+    // Check context usage for specialized agents (subagents)
+    // Enforce stricter 90% limit to ensure room for final summary
+    const contextUsage = this.tokenManager.getContextUsagePercentage();
+    if (this.config.isSpecializedAgent && contextUsage >= 90) {
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent at', contextUsage + '% context - blocking tool execution to preserve space for summary');
+
+      // Remove the assistant message with tool calls we just added
+      this.messages.pop();
+
+      // Add a system reminder instructing the agent to provide final summary
+      const systemReminder: Message = {
+        role: 'system',
+        content: '<system-reminder>\n' +
+          `Context usage at ${contextUsage}% - too high for specialized agent to execute more tools. ` +
+          'You MUST provide your final summary now. Do NOT request any more tool calls. ' +
+          'Summarize your work, findings, and recommendations based on the information you have gathered.\n' +
+          '</system-reminder>',
+        timestamp: Date.now(),
+      };
+      this.messages.push(systemReminder);
+
+      // Get final response from LLM (without executing tools)
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Requesting final summary from specialized agent...');
+      const finalResponse = await this.getLLMResponse();
+
+      return await this.processLLMResponse(finalResponse);
+    }
 
     // Execute tool calls via orchestrator (pass original calls for unwrapping)
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Executing tool calls via orchestrator...');
@@ -518,21 +628,18 @@ export class Agent {
     this.messages.push(messageWithTimestamp);
 
     // Update TokenManager with new message count
-    const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get('token_manager');
-    if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
-      (tokenManager as any).updateTokenCount(this.messages);
+    this.tokenManager.updateTokenCount(this.messages);
 
-      // Emit context usage update event for real-time UI updates
-      if (typeof (tokenManager as any).getContextUsagePercentage === 'function') {
-        const contextUsage = (tokenManager as any).getContextUsagePercentage();
-        this.emitEvent({
-          id: this.generateId(),
-          type: ActivityEventType.CONTEXT_USAGE_UPDATE,
-          timestamp: Date.now(),
-          data: { contextUsage },
-        });
-      }
+    // Emit context usage update event for real-time UI updates
+    // Only emit for main agent, not specialized agents (subagents)
+    if (!this.config.isSpecializedAgent) {
+      const contextUsage = this.tokenManager.getContextUsagePercentage();
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.CONTEXT_USAGE_UPDATE,
+        timestamp: Date.now(),
+        data: { contextUsage },
+      });
     }
 
     // Log message addition for context tracking
@@ -632,10 +739,9 @@ export class Agent {
    * Keeps the most recent occurrence and truncates earlier ones.
    */
   private deduplicateToolResults(): void {
-    const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get('token_manager');
-    if (!tokenManager || typeof (tokenManager as any).trackToolResult !== 'function') {
-      return; // TokenManager not available, skip deduplication
+    // TokenManager is always available (instance variable)
+    if (typeof this.tokenManager.trackToolResult !== 'function') {
+      return; // trackToolResult not available, skip deduplication
     }
 
     // Track which tool results we've seen
@@ -651,7 +757,7 @@ export class Agent {
       }
 
       // Calculate content hash
-      const hash = (tokenManager as any).hashContent(msg.content);
+      const hash = (this.tokenManager as any).hashContent(msg.content);
 
       if (contentHashes.has(hash)) {
         // This is a duplicate - mark the earlier occurrence for truncation
@@ -690,15 +796,13 @@ export class Agent {
       return;
     }
 
-    // Get TokenManager
-    const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get('token_manager');
-    if (!tokenManager || typeof (tokenManager as any).getContextUsagePercentage !== 'function') {
+    // Get TokenManager (instance variable)
+    if (typeof this.tokenManager.getContextUsagePercentage !== 'function') {
       return;
     }
 
     // Check current context usage
-    const contextUsage = (tokenManager as any).getContextUsagePercentage();
+    const contextUsage = this.tokenManager.getContextUsagePercentage();
     const threshold = this.config.config.compact_threshold || 95;
 
     // Only compact if we exceed threshold and have enough messages
@@ -724,9 +828,9 @@ export class Agent {
       this.messages = compacted;
 
       // Update token count
-      (tokenManager as any).updateTokenCount(this.messages);
+      this.tokenManager.updateTokenCount(this.messages);
 
-      const newContextUsage = (tokenManager as any).getContextUsagePercentage();
+      const newContextUsage = this.tokenManager.getContextUsagePercentage();
 
       // Emit compaction complete event with notice data and compacted messages
       this.emitEvent({

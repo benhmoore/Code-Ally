@@ -281,6 +281,20 @@ export class GrepTool extends BaseTool {
   /**
    * Custom result preview
    */
+  /**
+   * Get truncation guidance for grep output
+   */
+  getTruncationGuidance(): string {
+    return 'Refine your search pattern or use the glob parameter to filter files';
+  }
+
+  /**
+   * Get estimated output size for grep operations
+   */
+  getEstimatedOutputSize(): number {
+    return 600; // Grep typically produces moderate to large output (search results)
+  }
+
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {
     if (!result.success) {
       return super.getResultPreview(result, maxLines);

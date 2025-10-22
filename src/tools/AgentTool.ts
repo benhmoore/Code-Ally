@@ -270,6 +270,8 @@ export class AgentTool extends BaseTool {
       isSpecializedAgent: true,
       verbose: false,
       systemPrompt: specializedPrompt,
+      baseAgentPrompt: agentData.system_prompt, // Store for dynamic regeneration
+      taskPrompt: taskPrompt, // Store for dynamic regeneration
       config: config,
       parentCallId: callId, // Link nested tools to this agent call (use parameter, not this.currentCallId!)
     };
@@ -278,7 +280,8 @@ export class AgentTool extends BaseTool {
       mainModelClient,
       toolManager,
       this.activityStream,
-      agentConfig
+      agentConfig,
+      configManager // Pass configManager for token limit configuration
     );
 
     // Track active delegation
@@ -295,7 +298,48 @@ export class AgentTool extends BaseTool {
       const response = await subAgent.sendMessage(`Execute this task: ${taskPrompt}`);
       logger.debug('[AGENT_TOOL] Sub-agent response received, length:', response?.length || 0);
 
-      return response || `Agent '${agentData.name}' completed the task.`;
+      let finalResponse: string;
+
+      // Ensure we have a substantial response
+      if (!response || response.trim().length === 0) {
+        logger.debug('[AGENT_TOOL] Sub-agent returned empty response, attempting to extract summary from conversation');
+        const summary = this.extractSummaryFromConversation(subAgent, agentData.name);
+        if (summary) {
+          finalResponse = summary;
+        } else {
+          // Last resort: try to get a summary by asking explicitly
+          logger.debug('[AGENT_TOOL] Attempting to request explicit summary from sub-agent');
+          try {
+            const explicitSummary = await subAgent.sendMessage(
+              'Please provide a concise summary of what you accomplished, found, or determined while working on this task.'
+            );
+            if (explicitSummary && explicitSummary.trim().length > 0) {
+              finalResponse = explicitSummary;
+            } else {
+              finalResponse = `Agent '${agentData.name}' completed the task but did not provide a summary.`;
+            }
+          } catch (summaryError) {
+            logger.debug('[AGENT_TOOL] Failed to get explicit summary:', summaryError);
+            finalResponse = `Agent '${agentData.name}' completed the task but did not provide a summary.`;
+          }
+        }
+      } else {
+        // Check if response is just an interruption or error message
+        if (response.includes('[Request interrupted') || response.length < 20) {
+          logger.debug('[AGENT_TOOL] Sub-agent response seems incomplete, attempting to extract summary');
+          const summary = this.extractSummaryFromConversation(subAgent, agentData.name);
+          if (summary && summary.length > response.length) {
+            finalResponse = summary;
+          } else {
+            finalResponse = response;
+          }
+        } else {
+          finalResponse = response;
+        }
+      }
+
+      // Append note to all agent responses
+      return finalResponse + '\n\nNote: the user will not see this summary by default. If needed, share relevant information with the user in your own response.';
     } catch (error) {
       logger.debug('[AGENT_TOOL] ERROR during sub-agent execution:', error);
       throw error;
@@ -323,6 +367,47 @@ export class AgentTool extends BaseTool {
     } catch (error) {
       logger.debug('[AGENT_TOOL] ERROR in createAgentSystemPrompt:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Extract a summary from the subagent's conversation history
+   * Used when the subagent doesn't provide a final response
+   */
+  private extractSummaryFromConversation(subAgent: Agent, agentName: string): string | null {
+    try {
+      const messages = subAgent.getMessages();
+
+      // Find all assistant messages (excluding system/user/tool messages)
+      const assistantMessages = messages
+        .filter(msg => msg.role === 'assistant' && msg.content && msg.content.trim().length > 0)
+        .map(msg => msg.content);
+
+      if (assistantMessages.length === 0) {
+        logger.debug('[AGENT_TOOL] No assistant messages found in conversation');
+        return null;
+      }
+
+      // If we have multiple assistant messages, combine the last few
+      if (assistantMessages.length > 1) {
+        // Take the last 3 assistant messages (or all if less than 3)
+        const recentMessages = assistantMessages.slice(-3);
+        const summary = recentMessages.join('\n\n');
+        logger.debug('[AGENT_TOOL] Extracted summary from', recentMessages.length, 'assistant messages, length:', summary.length);
+        return `Agent '${agentName}' work summary:\n\n${summary}`;
+      }
+
+      // Single assistant message
+      const summary = assistantMessages[0];
+      if (summary) {
+        logger.debug('[AGENT_TOOL] Using single assistant message as summary, length:', summary.length);
+        return summary;
+      }
+
+      return null;
+    } catch (error) {
+      logger.debug('[AGENT_TOOL] Error extracting summary from conversation:', error);
+      return null;
     }
   }
 

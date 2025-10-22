@@ -15,7 +15,7 @@ import { DiffDisplay } from './DiffDisplay.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
-  toolCall: ToolCallState;
+  toolCall: ToolCallState & { totalChildCount?: number };
   /** Indentation level (0 = root) */
   level?: number;
   /** Nested tool calls */
@@ -38,7 +38,7 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * Format arguments for preview
+ * Format arguments for preview - shows all parameters with truncated values
  */
 function formatArgsPreview(args: any): string {
   if (!args || typeof args !== 'object') {
@@ -50,23 +50,31 @@ function formatArgsPreview(args: any): string {
     return '';
   }
 
-  // Show first arg value
-  if (keys.length === 1 && keys[0]) {
-    const value = args[keys[0]];
-    const strValue = typeof value === 'string' ? value : JSON.stringify(value);
-    return strValue.length > 50 ? `${strValue.slice(0, 47)}...` : strValue;
-  }
+  // Format each parameter as "key=value", truncating long values
+  const formattedArgs = keys.map(key => {
+    const value = args[key];
+    let strValue: string;
 
-  // Multiple args - show first value with indicator
-  const firstKey = keys[0];
-  if (firstKey) {
-    const firstValue = args[firstKey];
-    const strValue = typeof firstValue === 'string' ? firstValue : JSON.stringify(firstValue);
-    const preview = strValue.length > 30 ? `${strValue.slice(0, 27)}...` : strValue;
-    return keys.length > 1 ? `${preview}, +${keys.length - 1}` : preview;
-  }
+    // Format the value based on type
+    if (typeof value === 'string') {
+      strValue = `"${value}"`;
+    } else if (Array.isArray(value)) {
+      strValue = JSON.stringify(value);
+    } else if (typeof value === 'object' && value !== null) {
+      strValue = JSON.stringify(value);
+    } else {
+      strValue = String(value);
+    }
 
-  return '';
+    // Truncate if too long (max 40 chars per value)
+    if (strValue.length > 40) {
+      strValue = `${strValue.slice(0, 37)}...`;
+    }
+
+    return `${key}=${strValue}`;
+  });
+
+  return formattedArgs.join(', ');
 }
 
 /**
@@ -113,6 +121,10 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Status indicator
   const statusColor = getStatusColor(toolCall.status);
   const statusIcon = isRunning ? '...' : toolCall.status === 'success' ? '✓' : '✗';
+
+  // Check if this is an agent delegation
+  const isAgentDelegation = toolCall.toolName === 'agent';
+  const toolCallCount = toolCall.totalChildCount || 0;
 
   return (
     <Box flexDirection="column">
@@ -182,6 +194,14 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
                 : toolCall.output}
             </Text>
           </Box>
+        </Box>
+      )}
+
+      {/* Truncation indicator for agent delegations with many tool calls */}
+      {!toolCall.collapsed && isAgentDelegation && toolCallCount > 3 && (
+        <Box>
+          <Text>{indent}    </Text>
+          <Text dimColor>... (showing last 3 of {toolCallCount} tool calls)</Text>
         </Box>
       )}
 

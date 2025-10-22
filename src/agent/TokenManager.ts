@@ -11,6 +11,7 @@
 
 import { Message } from '../types/index.js';
 import { createHash } from 'crypto';
+import { tokenCounter } from '../services/TokenCounter.js';
 
 /**
  * TokenManager manages token counting and context tracking
@@ -20,7 +21,6 @@ export class TokenManager {
   private currentTokenCount: number = 0;
   private seenFiles: Map<string, string> = new Map(); // path -> content hash
   private toolResultHashes: Map<string, string> = new Map(); // tool_call_id -> content hash
-  private charsPerToken: number = 3.5; // Simple heuristic for token estimation
 
   /**
    * Create a new TokenManager
@@ -31,17 +31,13 @@ export class TokenManager {
   }
 
   /**
-   * Estimate token count for a string using simple heuristic
-   * Formula: Math.ceil(text.length / 3.5)
+   * Count tokens in text using Anthropic's official tokenizer
    *
-   * @param text Text to estimate tokens for
-   * @returns Estimated token count
+   * @param text Text to count tokens for
+   * @returns Actual token count
    */
   estimateTokens(text: string): number {
-    if (!text || text.length === 0) {
-      return 0;
-    }
-    return Math.ceil(text.length / this.charsPerToken);
+    return tokenCounter.count(text);
   }
 
   /**
@@ -280,28 +276,30 @@ export class TokenManager {
     }
 
     // Quick check if content is already under the limit
-    const estimatedTokens = this.estimateTokens(content);
-    if (estimatedTokens <= maxTokens) {
+    const actualTokens = this.estimateTokens(content);
+    if (actualTokens <= maxTokens) {
       return content;
     }
 
-    // Calculate approximate character limit based on tokens
-    const charLimit = Math.floor(maxTokens * this.charsPerToken);
+    // Binary search for the right truncation point
+    let low = 0;
+    let high = content.length;
+    let bestLength = 0;
 
-    if (content.length <= charLimit) {
-      return content;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const truncated = content.slice(0, mid) + '...';
+      const tokens = this.estimateTokens(truncated);
+
+      if (tokens <= maxTokens) {
+        bestLength = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
     }
 
-    // Truncate and add ellipsis
-    let truncated = content.slice(0, charLimit - 3) + '...';
-
-    // Verify we're under the token limit after truncation
-    while (this.estimateTokens(truncated) > maxTokens && truncated.length > 10) {
-      // Remove more characters if still over limit
-      truncated = truncated.slice(0, -4) + '...';
-    }
-
-    return truncated;
+    return content.slice(0, bestLength) + '...';
   }
 
   /**

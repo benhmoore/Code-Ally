@@ -24,7 +24,7 @@ const BEHAVIORAL_DIRECTIVES = `## Behavior
 - **Plan with todos**: For any task with 2+ steps, use todo_write to create your task list. Update the entire list (marking tasks as in_progress or completed) as you work.
 - **Error handling**: If a tool fails, analyze the error and try again with adjustments
 - **Avoid loops**: If you find yourself repeating the same steps, reassess your approach
-- **Batch operations**: Use \`batch(tools=[...])\` to run multiple independent tools concurrently
+- **⚡ Parallelize aggressively**: For ANY review/analysis/exploration task, use \`batch(tools=[...])\` to run multiple agents concurrently. Non-destructive operations are perfect for batching - default to parallel execution!
 - **Always verify**: Test/lint code after changes, if applicable
 - **Context housekeeping**: Before each response, evaluate recent tool results - clean up any that are no longer relevant`;
 
@@ -34,8 +34,19 @@ const AGENT_DELEGATION_GUIDELINES = `## Agent Delegation (Use First for These Ta
 - **Complex exploration**: Multi-step investigation, architecture understanding, debugging → Use 'general' agent
 - **Domain tasks**: Security, testing, performance → Use specialized agent if available, else 'general'
 
-## Parallel Agent Execution
-Use \`batch\` for concurrent agents: \`batch(tools=[{name: "agent", arguments: {task_prompt: "..."}}, ...])\`
+## ⚡ BATCH PARALLEL AGENTS
+**CRITICAL**: When tasks can run independently, ALWAYS use \`batch\` to run agents concurrently (5-10x faster).
+
+**GOLDEN RULE**: Non-destructive actions (reviews, analysis, exploration) are ALWAYS safe to parallelize.
+
+**Syntax**: \`batch(tools=[{name: "agent", arguments: {agent_name: "general", task_prompt: "..."}}, ...])\`
+
+**Always batch**:
+- Reviews/analysis of different modules, files, or components (e.g., "review the codebase" → split by directories)
+- Repository exploration split by directories/layers
+- Research/investigation of independent topics
+
+**Never batch**: Tasks with dependencies, same-file modifications, or destructive operations that might conflict
 
 ## Agent Tagging (@agent syntax)
 When user uses @agent_name syntax:
@@ -73,13 +84,61 @@ ${AGENT_DELEGATION_GUIDELINES}
 ${GENERAL_GUIDELINES}`;
 
 /**
+ * Get context usage information with warnings
+ */
+function getContextUsageInfo(tokenManager?: any, toolResultManager?: any): string {
+  try {
+    // Use provided instances or fall back to ServiceRegistry
+    let tm = tokenManager;
+    let trm = toolResultManager;
+
+    if (!tm || !trm) {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      if (!serviceRegistry) return '';
+
+      if (!tm) tm = serviceRegistry.get<any>('token_manager');
+      if (!trm) trm = serviceRegistry.get<any>('tool_result_manager');
+    }
+
+    if (!tm || typeof tm.getContextUsagePercentage !== 'function') {
+      return '';
+    }
+
+    const contextPct = tm.getContextUsagePercentage();
+    let remainingCalls = 0;
+
+    if (trm && typeof trm.estimateRemainingToolCalls === 'function') {
+      remainingCalls = trm.estimateRemainingToolCalls();
+    }
+
+    let contextLine = `- Context Usage: ${contextPct}% (~${remainingCalls} tool calls remaining)`;
+
+    // Add graduated warnings based on usage level
+    if (contextPct >= 95) {
+      contextLine += '\n  🚨 CRITICAL: Stop tool use after current operation and summarize work immediately';
+    } else if (contextPct >= 85) {
+      contextLine += '\n  ⚠️ Approaching limit: Complete current task then wrap up';
+    } else if (contextPct >= 70) {
+      contextLine += '\n  💡 Context filling: Prioritize essential operations';
+    }
+
+    return contextLine;
+  } catch (error) {
+    // Silently fail if context usage can't be determined
+    return '';
+  }
+}
+
+/**
  * Get context information for system prompts
  */
 export async function getContextInfo(options: {
   includeAgents?: boolean;
   includeProjectInstructions?: boolean;
+  tokenManager?: any;
+  toolResultManager?: any;
 } = {}): Promise<string> {
-  const { includeAgents = true, includeProjectInstructions = true } = options;
+  const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager } = options;
 
   const currentDate = new Date().toISOString().replace('T', ' ').slice(0, 19);
   const workingDir = process.cwd();
@@ -126,19 +185,23 @@ ${agentsSection}`;
     }
   }
 
+  // Get context usage info with warnings
+  const contextUsage = getContextUsageInfo(tokenManager, toolResultManager);
+  const contextUsageSection = contextUsage ? `\n${contextUsage}` : '';
+
   return `
 - Current Date: ${currentDate}
 - Working Directory: ${workingDir}
 - Operating System: ${osInfo}
-- Node Version: ${nodeVersion}${allyMdContent}${agentsInfo}`;
+- Node Version: ${nodeVersion}${contextUsageSection}${allyMdContent}${agentsInfo}`;
 }
 
 /**
  * Generate the main system prompt dynamically
  */
-export async function getMainSystemPrompt(): Promise<string> {
+export async function getMainSystemPrompt(tokenManager?: any, toolResultManager?: any): Promise<string> {
   // Tool definitions are provided separately by the LLM client as function definitions
-  const context = await getContextInfo({ includeAgents: true });
+  const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager });
 
   // Get todo context
   let todoContext = '';
@@ -169,11 +232,13 @@ ${context}${todoContext}`;
 /**
  * Generate a system prompt for specialized agents
  */
-export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string): Promise<string> {
+export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: any, toolResultManager?: any): Promise<string> {
   // Get context without agent information and project instructions to avoid recursion
   const context = await getContextInfo({
     includeAgents: false,
     includeProjectInstructions: false,
+    tokenManager,
+    toolResultManager,
   });
 
   return `**Primary Identity:**
@@ -189,7 +254,17 @@ ${taskPrompt}
 **Context:**
 ${context}
 
-Execute this task thoroughly using available tools. Provide a comprehensive summary of your work, findings, and any recommendations at the end.`;
+**CRITICAL: Final Response Requirement**
+As a specialized agent, you MUST conclude with a comprehensive final response. Your final message will be returned as the tool result to the parent agent.
+
+Guidelines:
+- Monitor your context usage (shown above)
+- At 90%+ context, you MUST stop using tools and provide your final summary
+- Your final response should summarize: what you did, what you found, and any recommendations
+- Do NOT end your work without providing this final summary
+- If you run low on context, summarize what you've learned so far rather than making more tool calls
+
+Execute this task thoroughly using available tools, then provide your comprehensive final summary.`;
 }
 
 // Dictionary of specific system messages

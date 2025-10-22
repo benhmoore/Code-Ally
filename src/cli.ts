@@ -18,8 +18,6 @@ import { TodoManager } from './services/TodoManager.js';
 import { OllamaClient } from './llm/OllamaClient.js';
 import { MessageHistory } from './llm/MessageHistory.js';
 import { ToolManager } from './tools/ToolManager.js';
-import { TokenManager } from './agent/TokenManager.js';
-import { ToolResultManager } from './services/ToolResultManager.js';
 import { TrustManager } from './agent/TrustManager.js';
 import { PermissionManager } from './security/PermissionManager.js';
 import { Agent } from './agent/Agent.js';
@@ -575,7 +573,7 @@ async function main() {
 
     const tools = [
       new BashTool(activityStream),
-      new ReadTool(activityStream),
+      new ReadTool(activityStream, config),
       new WriteTool(activityStream),
       new AllyWriteTool(activityStream),
       new EditTool(activityStream),
@@ -591,14 +589,6 @@ async function main() {
     // Create tool manager
     const toolManager = new ToolManager(tools, activityStream);
     registry.registerInstance('tool_manager', toolManager);
-
-    // Create token manager for context tracking
-    const tokenManager = new TokenManager(config.context_size);
-    registry.registerInstance('token_manager', tokenManager);
-
-    // Create tool result manager for context-aware truncation
-    const toolResultManager = new ToolResultManager(tokenManager, configManager);
-    registry.registerInstance('tool_result_manager', toolResultManager);
 
     // Create trust manager for permission tracking
     const trustManager = new TrustManager(config.auto_confirm, activityStream);
@@ -618,7 +608,7 @@ async function main() {
     const { getMainSystemPrompt } = await import('./prompts/systemMessages.js');
     const systemPrompt = await getMainSystemPrompt();
 
-    // Create agent
+    // Create agent (creates its own TokenManager and ToolResultManager)
     const agent = new Agent(
       modelClient,
       toolManager,
@@ -627,14 +617,14 @@ async function main() {
         config,
         systemPrompt,
       },
-      toolResultManager,
+      configManager, // For configurable token limits
       permissionManager
     );
     registry.registerInstance('agent', agent);
 
-    // Initialize TokenManager with system messages
-    const initialMessages = agent.getMessages();
-    tokenManager.updateTokenCount(initialMessages);
+    // Register main agent's TokenManager in ServiceRegistry for global access (UI, etc)
+    const tokenManager = agent.getTokenManager();
+    registry.registerInstance('token_manager', tokenManager);
 
     // Handle --once mode (single message, non-interactive)
     if (options.once) {

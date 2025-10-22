@@ -288,6 +288,34 @@ export abstract class BaseTool {
   }
 
   /**
+   * Get truncation guidance for this tool
+   *
+   * Provides tool-specific instructions to the LLM on how to narrow down
+   * output when results are truncated due to length or context limits.
+   *
+   * Override this in subclasses to provide specific guidance.
+   *
+   * @returns Guidance string for handling truncated output
+   */
+  getTruncationGuidance(): string {
+    return 'Consider narrowing the scope of your query or using filters';
+  }
+
+  /**
+   * Get estimated typical output size in tokens
+   *
+   * Provides an estimate of how many tokens this tool typically produces.
+   * Used for context planning and capacity estimation.
+   *
+   * Override this in subclasses to provide accurate estimates.
+   *
+   * @returns Estimated output size in tokens
+   */
+  getEstimatedOutputSize(): number {
+    return 400; // Default estimate
+  }
+
+  /**
    * Get a preview of the tool result for display
    *
    * This method can be overridden by individual tools to provide

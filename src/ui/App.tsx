@@ -1087,11 +1087,11 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         <Text dimColor>
           Ctrl+C to exit | Model: {state.config.model || 'none'} |{' '}
           {state.contextUsage >= 85 ? (
-            <Text color="red">Context: {state.contextUsage}% - use /compact</Text>
+            <Text color="red">Context: {100 - state.contextUsage}% remaining - use /compact</Text>
           ) : state.contextUsage >= 70 ? (
-            <Text color="yellow">Context: {state.contextUsage}% - consider /compact</Text>
+            <Text color="yellow">Context: {100 - state.contextUsage}% remaining - consider /compact</Text>
           ) : (
-            <Text>Context: {state.contextUsage}%</Text>
+            <Text>Context: {100 - state.contextUsage}% remaining</Text>
           )}
         </Text>
       </Box>

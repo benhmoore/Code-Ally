@@ -211,6 +211,20 @@ export class BashTool extends BaseTool {
   }
 
   /**
+   * Get truncation guidance for bash output
+   */
+  getTruncationGuidance(): string {
+    return 'Use grep, head, tail, sed, or awk to filter/narrow the output in your command';
+  }
+
+  /**
+   * Get estimated output size for bash commands
+   */
+  getEstimatedOutputSize(): number {
+    return 400; // Bash commands typically produce moderate output
+  }
+
+  /**
    * Custom result preview for bash tool
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

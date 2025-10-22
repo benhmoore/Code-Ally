@@ -79,6 +79,7 @@ async function exampleConversation() {
       tool_result_max_tokens_moderate: 750,
       tool_result_max_tokens_aggressive: 500,
       tool_result_max_tokens_critical: 200,
+      read_max_tokens: 3000,
       setup_completed: true,
     },
   };

@@ -245,6 +245,20 @@ export class LsTool extends BaseTool {
 
 
   /**
+   * Get truncation guidance for ls output
+   */
+  getTruncationGuidance(): string {
+    return 'Use a more specific path or add filters to the command';
+  }
+
+  /**
+   * Get estimated output size for ls operations
+   */
+  getEstimatedOutputSize(): number {
+    return 300; // Ls typically produces smaller output (directory listings)
+  }
+
+  /**
    * Custom result preview
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

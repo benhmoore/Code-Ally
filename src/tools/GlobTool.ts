@@ -194,6 +194,20 @@ export class GlobTool extends BaseTool {
   }
 
   /**
+   * Get truncation guidance for glob output
+   */
+  getTruncationGuidance(): string {
+    return 'Use more specific glob patterns to narrow down the file list';
+  }
+
+  /**
+   * Get estimated output size for glob operations
+   */
+  getEstimatedOutputSize(): number {
+    return 300; // Glob typically produces smaller output (file paths only)
+  }
+
+  /**
    * Custom result preview
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

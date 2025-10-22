@@ -192,6 +192,9 @@ export interface Config {
   tool_result_max_tokens_aggressive: number;
   tool_result_max_tokens_critical: number;
 
+  // Read Tool Settings
+  read_max_tokens: number;
+
   // Setup
   setup_completed: boolean;
 }

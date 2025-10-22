@@ -25,13 +25,13 @@ interface ConversationViewProps {
 /**
  * Build tree structure from flat tool call list
  */
-function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { children?: ToolCallState[] })[] {
-  const toolCallMap = new Map<string, ToolCallState & { children?: ToolCallState[] }>();
+function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] {
+  const toolCallMap = new Map<string, ToolCallState & { children?: ToolCallState[]; totalChildCount?: number }>();
   toolCalls.forEach((tc) => {
-    toolCallMap.set(tc.id, { ...tc, children: [] });
+    toolCallMap.set(tc.id, { ...tc, children: [], totalChildCount: 0 });
   });
 
-  const rootCalls: (ToolCallState & { children?: ToolCallState[] })[] = [];
+  const rootCalls: (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] = [];
   toolCalls.forEach((tc) => {
     const toolCallWithChildren = toolCallMap.get(tc.id);
     if (!toolCallWithChildren) return;
@@ -40,6 +40,8 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
       const parent = toolCallMap.get(tc.parentId);
       if (parent?.children) {
         parent.children.push(toolCallWithChildren);
+        // Increment total count for parent
+        parent.totalChildCount = (parent.totalChildCount || 0) + 1;
       } else {
         rootCalls.push(toolCallWithChildren);
       }
@@ -48,10 +50,34 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
     }
   });
 
+  // Limit agent delegations to show only last 3 tool calls
+  const limitAgentToolCalls = (
+    calls: (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[]
+  ): (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] => {
+    return calls.map(call => {
+      // Check if this is an agent delegation (has 'agent' in toolName)
+      const isAgentDelegation = call.toolName === 'agent';
+
+      if (isAgentDelegation && call.children && call.children.length > 3) {
+        // Keep total count before limiting
+        call.totalChildCount = call.children.length;
+        // Keep only last 3 children
+        call.children = call.children.slice(-3);
+      }
+
+      // Recursively process children
+      if (call.children?.length) {
+        call.children = limitAgentToolCalls(call.children);
+      }
+
+      return call;
+    });
+  };
+
   // Filter out invisible tools recursively
   const filterInvisibleTools = (
-    calls: (ToolCallState & { children?: ToolCallState[] })[]
-  ): (ToolCallState & { children?: ToolCallState[] })[] => {
+    calls: (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[]
+  ): (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] => {
     return calls
       .filter(call => call.visibleInChat !== false)
       .map(call => {
@@ -82,8 +108,9 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
     return result;
   };
 
-  // First filter invisible tools, then process transparent wrappers
-  const visibleCalls = filterInvisibleTools(rootCalls);
+  // First limit agent tool calls, then filter invisible tools, then process transparent wrappers
+  const limitedCalls = limitAgentToolCalls(rootCalls);
+  const visibleCalls = filterInvisibleTools(limitedCalls);
   return processTransparentWrappers(visibleCalls);
 }
 
