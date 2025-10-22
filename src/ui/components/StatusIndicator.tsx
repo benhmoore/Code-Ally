@@ -8,6 +8,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { Box, Text } from 'ink';
+import Spinner from 'ink-spinner';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { TodoManager } from '../../services/TodoManager.js';
 
@@ -17,11 +18,6 @@ interface StatusIndicatorProps {
   /** Whether the conversation is being compacted */
   isCompacting?: boolean;
 }
-
-// Static processing indicator
-const ProcessingIcon: React.FC = () => {
-  return <Text color="cyan">→</Text>;
-};
 
 export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting }) => {
   const [currentTask, setCurrentTask] = useState<string | null>(null);
@@ -101,7 +97,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   if (isCompacting) {
     return (
       <Box>
-        <ProcessingIcon />
+        <Text color="cyan">
+          <Spinner type="dots" />
+        </Text>
         <Text> </Text>
         <Text color="cyan">Compacting conversation...</Text>
         <Text dimColor> ({formatElapsed(elapsed)})</Text>
@@ -114,7 +112,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       {/* Current task */}
       {(currentTask || isProcessing) && (
         <Box>
-          <ProcessingIcon />
+          <Text color="cyan">
+            <Spinner type="dots" />
+          </Text>
           <Text> </Text>
           <Text>{currentTask || 'Thinking...'}</Text>
           <Text dimColor> ({formatElapsed(elapsed)})</Text>
