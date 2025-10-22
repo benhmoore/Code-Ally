@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Text, useStdout } from 'ink';
+import { Box, Text, Static, useStdout } from 'ink';
 import { Message, ToolCallState } from '../../types/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
@@ -112,48 +112,6 @@ type TimelineItem =
   | { type: 'compactionNotice'; notice: CompactionNotice; timestamp: number };
 
 /**
- * Memoized completed content - never re-renders when active tools update
- */
-const CompletedContent = React.memo<{ timeline: TimelineItem[]; terminalWidth: number }>(({ timeline, terminalWidth }) => {
-  const dividerWidth = Math.max(60, terminalWidth - 4); // Account for padding
-  const divider = '─'.repeat(dividerWidth);
-
-  return (
-    <>
-      {timeline.map((item) => {
-        if (item.type === 'message') {
-          return <MessageDisplay key={`msg-${item.index}`} message={item.message} />;
-        } else if (item.type === 'toolCall') {
-          return (
-            <Box key={`tool-${item.toolCall.id}`}>
-              {renderToolCallTree(item.toolCall, 0)}
-            </Box>
-          );
-        } else {
-          // Compaction notice with horizontal divider
-          return (
-            <Box key={`compaction-${item.notice.id}`} flexDirection="column" marginY={1}>
-              <Box>
-                <Text dimColor>{divider}</Text>
-              </Box>
-              <Box>
-                <Text color="cyan" bold>
-                  Context compacted
-                </Text>
-                <Text dimColor> - Previous conversation summarized (was at {item.notice.oldContextUsage}%, threshold {item.notice.threshold}%)</Text>
-              </Box>
-              <Box>
-                <Text dimColor>{divider}</Text>
-              </Box>
-            </Box>
-          );
-        }
-      })}
-    </>
-  );
-});
-
-/**
  * Memoized active content - only re-renders when active tools change
  */
 const ActiveContent = React.memo<{
@@ -179,7 +137,7 @@ const ActiveContent = React.memo<{
 /**
  * Simple ConversationView - renders completed and active content separately
  */
-export const ConversationView: React.FC<ConversationViewProps> = ({
+const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   messages,
   streamingContent,
   activeToolCalls = [],
@@ -188,7 +146,9 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
 }) => {
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns || 80; // Fallback to 80 if unavailable
-  const toolCallTree = buildToolCallTree(activeToolCalls);
+
+  // Memoize toolCallTree to prevent unnecessary recalculations
+  const toolCallTree = React.useMemo(() => buildToolCallTree(activeToolCalls), [activeToolCalls]);
 
   // Separate completed from running tool calls
   const { completedToolCalls, runningToolCalls } = React.useMemo(() => {
@@ -252,18 +212,54 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
     return timeline;
   }, [messages, completedToolCalls, compactionNotices]);
 
-  return (
-    <Box flexDirection="column">
-      {/* Header */}
-      <Box marginBottom={1}>
-        <Text bold color="cyan">
-          Code Ally
-        </Text>
+  // Pre-render timeline items as JSX for Static component - gemini-cli pattern
+  const completedJSXItems = React.useMemo(() => {
+    const dividerWidth = Math.max(60, terminalWidth - 4);
+    const divider = '─'.repeat(dividerWidth);
+
+    // Add header as first static item
+    const items: React.ReactNode[] = [
+      <Box key="header" marginBottom={1}>
+        <Text bold color="cyan">Code Ally</Text>
         <Text dimColor> - Terminal UI (Ink)</Text>
       </Box>
+    ];
 
-      {/* Completed content - memoized, doesn't re-render */}
-      <CompletedContent timeline={completedTimeline} terminalWidth={terminalWidth} />
+    // Add timeline items
+    completedTimeline.forEach((item) => {
+      if (item.type === 'message') {
+        items.push(<MessageDisplay key={`msg-${item.index}`} message={item.message} />);
+      } else if (item.type === 'toolCall') {
+        items.push(
+          <Box key={`tool-${item.toolCall.id}`}>
+            {renderToolCallTree(item.toolCall, 0)}
+          </Box>
+        );
+      } else {
+        // Compaction notice
+        items.push(
+          <Box key={`compaction-${item.notice.id}`} flexDirection="column" marginY={1}>
+            <Box><Text dimColor>{divider}</Text></Box>
+            <Box>
+              <Text color="cyan" bold>Context compacted</Text>
+              <Text dimColor> - Previous conversation summarized (was at {item.notice.oldContextUsage}%, threshold {item.notice.threshold}%)</Text>
+            </Box>
+            <Box><Text dimColor>{divider}</Text></Box>
+          </Box>
+        );
+      }
+    });
+
+    return items;
+  }, [completedTimeline, terminalWidth]);
+
+  return (
+    <Box flexDirection="column">
+      {/* Completed content in Static - gemini-cli pattern */}
+      {/* Key forces remount when compaction occurs */}
+      <Static key={`static-${compactionNotices.length}`} items={completedJSXItems}>
+        {(item) => item}
+      </Static>
 
       {/* Active content - only re-renders when active tools change */}
       <ActiveContent
@@ -274,3 +270,17 @@ export const ConversationView: React.FC<ConversationViewProps> = ({
     </Box>
   );
 };
+
+/**
+ * Memoized ConversationView - only re-renders when props actually change
+ */
+export const ConversationView = React.memo(ConversationViewComponent, (prevProps, nextProps) => {
+  const messagesSame = prevProps.messages === nextProps.messages;
+  const streamingSame = prevProps.streamingContent === nextProps.streamingContent;
+  const toolCallsSame = prevProps.activeToolCalls === nextProps.activeToolCalls;
+  const contextSame = prevProps.contextUsage === nextProps.contextUsage;
+  const noticesSame = prevProps.compactionNotices === nextProps.compactionNotices;
+  const isThinkingSame = prevProps.isThinking === nextProps.isThinking;
+
+  return messagesSame && streamingSame && toolCallsSame && contextSame && noticesSame && isThinkingSame;
+});

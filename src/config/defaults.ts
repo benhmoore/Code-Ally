@@ -46,6 +46,21 @@ export const DEFAULT_CONFIG: Config = {
   tool_result_preview_enabled: true, // Enable tool result previews
 
   // ==========================================
+  // TOOL CALL RETRY SETTINGS
+  // ==========================================
+  tool_call_retry_enabled: true, // Enable tool call retry on failure
+  tool_call_max_retries: 2, // Maximum retry attempts
+  tool_call_repair_attempts: true, // Attempt to repair malformed tool calls
+  tool_call_verbose_errors: false, // Show verbose error messages
+
+  // ==========================================
+  // DIRECTORY TREE SETTINGS
+  // ==========================================
+  dir_tree_max_depth: 3, // Maximum depth for directory tree
+  dir_tree_max_files: 20, // Maximum files to show in tree
+  dir_tree_enable: false, // Enable directory tree generation
+
+  // ==========================================
   // DIFF DISPLAY SETTINGS
   // ==========================================
   diff_display_enabled: true, // Show file change previews
@@ -99,6 +114,17 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   // Tool Result Preview
   tool_result_preview_lines: 'number',
   tool_result_preview_enabled: 'boolean',
+
+  // Tool Call Retry
+  tool_call_retry_enabled: 'boolean',
+  tool_call_max_retries: 'number',
+  tool_call_repair_attempts: 'boolean',
+  tool_call_verbose_errors: 'boolean',
+
+  // Directory Tree
+  dir_tree_max_depth: 'number',
+  dir_tree_max_files: 'number',
+  dir_tree_enable: 'boolean',
 
   // Diff Display
   diff_display_enabled: 'boolean',

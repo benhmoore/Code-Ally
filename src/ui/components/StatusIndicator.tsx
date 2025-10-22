@@ -6,7 +6,7 @@
  *  → Next: [Next task]
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { TodoManager } from '../../services/TodoManager.js';
@@ -26,13 +26,17 @@ const ProcessingIcon: React.FC = () => {
 export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting }) => {
   const [currentTask, setCurrentTask] = useState<string | null>(null);
   const [nextTask, setNextTask] = useState<string | null>(null);
-  const [startTime, setStartTime] = useState<number>(Date.now());
-  const [, forceUpdate] = useState({});
+  const [_startTime, setStartTime] = useState<number>(Date.now());
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+
+  // Use ref to track previous task for comparison without triggering effect re-runs
+  const previousTaskRef = useRef<string | null>(null);
 
   // Reset timer when processing or compacting starts
   useEffect(() => {
     if (isProcessing || isCompacting) {
       setStartTime(Date.now());
+      setElapsedSeconds(0);
     }
   }, [isProcessing, isCompacting]);
 
@@ -49,21 +53,24 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         if (todoManager) {
           const inProgress = todoManager.getInProgressTodo();
           const nextPending = todoManager.getNextPendingTodo();
+          const newTask = inProgress?.activeForm || null;
 
           // Reset timer when task changes
-          if (inProgress && currentTask !== inProgress.activeForm) {
+          if (newTask && previousTaskRef.current !== newTask) {
             setStartTime(Date.now());
+            setElapsedSeconds(0);
+            previousTaskRef.current = newTask;
           }
 
-          setCurrentTask(inProgress?.activeForm || null);
+          setCurrentTask(newTask);
           setNextTask(nextPending?.task || null);
         }
       } catch (error) {
         // Silently handle errors to avoid interfering with Ink rendering
       }
 
-      // Force re-render for time updates
-      forceUpdate({});
+      // Update elapsed time
+      setElapsedSeconds(prev => prev + 1);
     };
 
     // Initial update
@@ -73,15 +80,15 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     const interval = setInterval(updateTodos, 1000);
 
     return () => clearInterval(interval);
-  }, [isProcessing, currentTask]);
+  }, [isProcessing]);
 
   // Don't show if not processing and not compacting
   if (!isProcessing && !isCompacting) {
     return null;
   }
 
-  // Calculate elapsed time (updates every second via forceUpdate)
-  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  // Use elapsed seconds from state
+  const elapsed = elapsedSeconds;
 
   const formatElapsed = (seconds: number): string => {
     if (seconds < 60) return `${seconds}s`;

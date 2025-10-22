@@ -86,6 +86,9 @@ export enum ActivityEventType {
   SETUP_WIZARD_REQUEST = 'setup_wizard_request',
   SETUP_WIZARD_COMPLETE = 'setup_wizard_complete',
   SETUP_WIZARD_SKIP = 'setup_wizard_skip',
+  PROJECT_WIZARD_REQUEST = 'project_wizard_request',
+  PROJECT_WIZARD_COMPLETE = 'project_wizard_complete',
+  PROJECT_WIZARD_SKIP = 'project_wizard_skip',
   CONTEXT_USAGE_UPDATE = 'context_usage_update',
   AUTO_COMPACTION_START = 'auto_compaction_start',
   AUTO_COMPACTION_COMPLETE = 'auto_compaction_complete',
@@ -162,6 +165,17 @@ export interface Config {
   // Tool Result Settings
   tool_result_preview_lines: number;
   tool_result_preview_enabled: boolean;
+
+  // Tool Call Retry Settings
+  tool_call_retry_enabled: boolean;
+  tool_call_max_retries: number;
+  tool_call_repair_attempts: boolean;
+  tool_call_verbose_errors: boolean;
+
+  // Directory Tree Settings
+  dir_tree_max_depth: number;
+  dir_tree_max_files: number;
+  dir_tree_enable: boolean;
 
   // Diff Display
   diff_display_enabled: boolean;

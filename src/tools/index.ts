@@ -13,6 +13,7 @@ export { GrepTool } from './GrepTool.js';
 export { GlobTool } from './GlobTool.js';
 export { LsTool } from './LsTool.js';
 export { WriteTool } from './WriteTool.js';
+export { AllyWriteTool } from './AllyWriteTool.js';
 export { EditTool } from './EditTool.js';
 export { LineEditTool } from './LineEditTool.js';
 

@@ -563,6 +563,7 @@ async function main() {
     const { BashTool } = await import('./tools/BashTool.js');
     const { ReadTool } = await import('./tools/ReadTool.js');
     const { WriteTool } = await import('./tools/WriteTool.js');
+    const { AllyWriteTool } = await import('./tools/AllyWriteTool.js');
     const { EditTool } = await import('./tools/EditTool.js');
     const { LineEditTool } = await import('./tools/LineEditTool.js');
     const { GlobTool } = await import('./tools/GlobTool.js');
@@ -576,6 +577,7 @@ async function main() {
       new BashTool(activityStream),
       new ReadTool(activityStream),
       new WriteTool(activityStream),
+      new AllyWriteTool(activityStream),
       new EditTool(activityStream),
       new LineEditTool(activityStream),
       new GlobTool(activityStream),

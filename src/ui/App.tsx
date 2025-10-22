@@ -19,6 +19,7 @@ import { PermissionPrompt, PermissionRequest } from './components/PermissionProm
 import { ModelSelector, ModelOption } from './components/ModelSelector.js';
 import { ConfigViewer } from './components/ConfigViewer.js';
 import { SetupWizardView } from './components/SetupWizardView.js';
+import { ProjectWizardView } from './components/ProjectWizardView.js';
 import { RewindSelector } from './components/RewindSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
@@ -54,8 +55,9 @@ export interface AppProps {
  *
  * This component is wrapped by providers and has access to all context values.
  * It subscribes to activity events and updates the app state accordingly.
+ * Memoized to prevent unnecessary re-renders when children update.
  */
-const AppContent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null }> = ({ agent, resumeSession }) => {
+const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null }> = ({ agent, resumeSession }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
 
@@ -78,6 +80,9 @@ const AppContent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive
 
   // Setup wizard state
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
+
+  // Project wizard state
+  const [projectWizardOpen, setProjectWizardOpen] = useState(false);
 
   // Rewind selector state
   const [rewindRequest, setRewindRequest] = useState<{ requestId: string; userMessagesCount: number; selectedIndex: number } | undefined>(undefined);
@@ -439,6 +444,29 @@ const AppContent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive
     });
   });
 
+  // Subscribe to project wizard request events
+  useActivityEvent(ActivityEventType.PROJECT_WIZARD_REQUEST, () => {
+    setProjectWizardOpen(true);
+  });
+
+  // Subscribe to project wizard completion events
+  useActivityEvent(ActivityEventType.PROJECT_WIZARD_COMPLETE, () => {
+    setProjectWizardOpen(false);
+    actions.addMessage({
+      role: 'assistant',
+      content: '✓ ALLY.md has been created successfully!',
+    });
+  });
+
+  // Subscribe to project wizard skip events
+  useActivityEvent(ActivityEventType.PROJECT_WIZARD_SKIP, () => {
+    setProjectWizardOpen(false);
+    actions.addMessage({
+      role: 'assistant',
+      content: 'Project configuration skipped. You can run /project init anytime.',
+    });
+  });
+
   // Subscribe to context usage updates (real-time updates during tool execution)
   useActivityEvent(ActivityEventType.CONTEXT_USAGE_UPDATE, (event) => {
     const { contextUsage } = event.data;
@@ -755,20 +783,7 @@ const AppContent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive
           // Add tool result to Agent's conversation history
           agent.addMessage(toolResultMessage);
 
-          // Format response based on result
-          let responseContent = '';
-          if (result.success) {
-            responseContent = `Command executed successfully${result.output ? ':\n' + result.output : ''}`;
-          } else {
-            responseContent = `Command failed: ${result.error || 'Unknown error'}`;
-          }
-
-          // Add assistant response to UI
-          actions.addMessage({
-            role: 'assistant',
-            content: responseContent,
-          });
-
+          // Tool call display already shows the result, no need for additional message
           return;
         } catch (error) {
           actions.addMessage({
@@ -913,6 +928,32 @@ const AppContent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive
             }}
           />
         </Box>
+      ) : /* Project Wizard (modal - replaces input when active) */
+      projectWizardOpen ? (
+        <Box marginTop={1}>
+          <ProjectWizardView
+            onComplete={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `project_wizard_complete_${Date.now()}`,
+                  type: ActivityEventType.PROJECT_WIZARD_COMPLETE,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+            onSkip={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `project_wizard_skip_${Date.now()}`,
+                  type: ActivityEventType.PROJECT_WIZARD_SKIP,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+          />
+        </Box>
       ) : /* Session Selector (replaces input when active) */
       sessionSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
@@ -1050,6 +1091,15 @@ const AppContent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive
     </Box>
   );
 };
+
+/**
+ * Memoized AppContent - prevents re-renders unless props actually change
+ */
+const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
+  const agentSame = prevProps.agent === nextProps.agent;
+  const resumeSame = prevProps.resumeSession === nextProps.resumeSession;
+  return agentSame && resumeSame;
+});
 
 /**
  * Root App Component

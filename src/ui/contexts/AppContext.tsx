@@ -184,10 +184,17 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     pendingUpdatesRef.current.clear();
 
     setActiveToolCalls((prev) => {
-      return prev.map((call) => {
+      // Only create new array if something actually changed
+      let hasChanges = false;
+      const newArray = prev.map((call) => {
         const update = updates.get(call.id);
-        return update ? { ...call, ...update } : call;
+        if (update) {
+          hasChanges = true;
+          return { ...call, ...update };
+        }
+        return call;
       });
+      return hasChanges ? newArray : prev;
     });
   }, []);
 
@@ -234,32 +241,38 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setCompactionNotices((prev) => [...prev, notice]);
   }, []);
 
-  // Build context value
-  const value: AppContextValue = {
-    state: {
-      messages,
-      config,
-      contextUsage,
-      activeToolCallsCount: activeToolCalls.length,
-      activeToolCalls,
-      isThinking,
-      isCompacting,
-      compactionNotices,
-    },
-    actions: {
-      addMessage,
-      setMessages: setMessagesWithTimestamps,
-      updateConfig,
-      setContextUsage,
-      addToolCall,
-      updateToolCall,
-      removeToolCall,
-      clearToolCalls,
-      setIsThinking,
-      setIsCompacting,
-      addCompactionNotice,
-    },
-  };
+  // Memoize state object to prevent unnecessary context updates
+  const state = React.useMemo(() => ({
+    messages,
+    config,
+    contextUsage,
+    activeToolCallsCount: activeToolCalls.length,
+    activeToolCalls,
+    isThinking,
+    isCompacting,
+    compactionNotices,
+  }), [messages, config, contextUsage, activeToolCalls, isThinking, isCompacting, compactionNotices]);
+
+  // Memoize actions object to prevent unnecessary context updates
+  const actions = React.useMemo(() => ({
+    addMessage,
+    setMessages: setMessagesWithTimestamps,
+    updateConfig,
+    setContextUsage,
+    addToolCall,
+    updateToolCall,
+    removeToolCall,
+    clearToolCalls,
+    setIsThinking,
+    setIsCompacting,
+    addCompactionNotice,
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setIsCompacting, addCompactionNotice]);
+
+  // Memoize context value to prevent unnecessary re-renders of consumers
+  const value: AppContextValue = React.useMemo(() => ({
+    state,
+    actions,
+  }), [state, actions]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };

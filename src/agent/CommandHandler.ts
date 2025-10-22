@@ -1289,11 +1289,28 @@ Todo Commands:
   }
 
   private async handleProjectInit(_projectManager: ProjectManager): Promise<CommandResult> {
-    // TODO: Implement project initialization wizard
-    return {
-      handled: true,
-      response: 'Project initialization not yet implemented',
-    };
+    const activityStream = this.serviceRegistry.get('activity_stream');
+
+    if (!activityStream || typeof (activityStream as any).emit !== 'function') {
+      return {
+        handled: true,
+        response: 'Project wizard not available.',
+      };
+    }
+
+    // Emit project wizard request event
+    const requestId = `project_wizard_${Date.now()}`;
+
+    (activityStream as any).emit({
+      id: requestId,
+      type: ActivityEventType.PROJECT_WIZARD_REQUEST,
+      timestamp: Date.now(),
+      data: {
+        requestId,
+      },
+    });
+
+    return { handled: true }; // Handled via UI
   }
 
   private async handleProjectEdit(_projectManager: ProjectManager): Promise<CommandResult> {
