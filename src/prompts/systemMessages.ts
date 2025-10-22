@@ -10,6 +10,7 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
+import { execSync } from 'child_process';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 
 // --- Core Agent Identity and Directives ---
@@ -130,6 +131,22 @@ function getContextUsageInfo(tokenManager?: any, toolResultManager?: any): strin
 }
 
 /**
+ * Get the current git branch name
+ */
+function getGitBranch(): string | null {
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'ignore']
+    }).trim();
+    return branch || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
  * Get context information for system prompts
  */
 export async function getContextInfo(options: {
@@ -144,6 +161,7 @@ export async function getContextInfo(options: {
   const workingDir = process.cwd();
   const osInfo = `${os.platform()} ${os.release()}`;
   const nodeVersion = process.version;
+  const gitBranch = getGitBranch();
 
   // Check for ALLY.md file and include its contents
   let allyMdContent = '';
@@ -189,9 +207,12 @@ ${agentsSection}`;
   const contextUsage = getContextUsageInfo(tokenManager, toolResultManager);
   const contextUsageSection = contextUsage ? `\n${contextUsage}` : '';
 
+  // Build git info section
+  const gitInfo = gitBranch ? ` (git repository, branch: ${gitBranch})` : '';
+
   return `
 - Current Date: ${currentDate}
-- Working Directory: ${workingDir}
+- Working Directory: ${workingDir}${gitInfo}
 - Operating System: ${osInfo}
 - Node Version: ${nodeVersion}${contextUsageSection}${allyMdContent}${agentsInfo}`;
 }

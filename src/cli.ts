@@ -557,6 +557,13 @@ async function main() {
     });
     registry.registerInstance('message_history', messageHistory);
 
+    // Create idle message generator
+    const { IdleMessageGenerator } = await import('./services/IdleMessageGenerator.js');
+    const idleMessageGenerator = new IdleMessageGenerator(modelClient, {
+      minInterval: 30000, // Generate new message every 30 seconds when idle
+    });
+    registry.registerInstance('idle_message_generator', idleMessageGenerator);
+
     // Import and create tools
     const { BashTool } = await import('./tools/BashTool.js');
     const { ReadTool } = await import('./tools/ReadTool.js');

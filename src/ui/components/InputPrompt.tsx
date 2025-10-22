@@ -939,7 +939,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const isAgentMode = buffer.startsWith('@');
 
   let promptText = '> ';
-  let promptColor = 'white';
+  let promptColor = 'yellow';
 
   if (isCommandMode) {
     promptText = 'Command > ';
@@ -998,7 +998,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                   <Text color={textColor} dimColor={isEmpty && isFirstLine}>
                     {beforeCursor}
                   </Text>
-                  <Text color="black" backgroundColor="white">
+                  <Text color="black" backgroundColor="yellow">
                     {atCursor}
                   </Text>
                   <Text color={textColor} dimColor={isEmpty && isFirstLine}>

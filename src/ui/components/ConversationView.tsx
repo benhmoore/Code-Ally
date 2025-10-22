@@ -1,9 +1,33 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, Static, useStdout } from 'ink';
 import { Message, ToolCallState } from '../../types/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
 import { CompactionNotice } from '../contexts/AppContext.js';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { execSync } from 'child_process';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageJson = JSON.parse(readFileSync(join(__dirname, '../../../package.json'), 'utf-8'));
+
+/**
+ * Get the current git branch name
+ */
+const getGitBranch = (): string | null => {
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'ignore']
+    }).trim();
+    return branch || null;
+  } catch (error) {
+    return null;
+  }
+};
 
 interface ConversationViewProps {
   /** Array of conversation messages to display */
@@ -20,6 +44,8 @@ interface ConversationViewProps {
   compactionNotices?: CompactionNotice[];
   /** Key to force Static remount for compaction/rewind */
   staticRemountKey: number;
+  /** Config for displaying model info */
+  config?: any;
 }
 
 /**
@@ -176,9 +202,17 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   contextUsage,
   compactionNotices = [],
   staticRemountKey,
+  config,
 }) => {
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns || 80; // Fallback to 80 if unavailable
+
+  // Get git branch on mount
+  const [gitBranch, setGitBranch] = useState<string | null>(null);
+  useEffect(() => {
+    const branch = getGitBranch();
+    setGitBranch(branch);
+  }, []);
 
   // Memoize toolCallTree to prevent unnecessary recalculations
   const toolCallTree = React.useMemo(() => buildToolCallTree(activeToolCalls), [activeToolCalls]);
@@ -251,14 +285,6 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     const divider = '─'.repeat(dividerWidth);
     const items: React.ReactNode[] = [];
 
-    // Add header as first item in Static
-    items.push(
-      <Box key="header" marginBottom={1}>
-        <Text bold color="cyan">Code Ally</Text>
-        <Text dimColor> - Terminal UI (Ink)</Text>
-      </Box>
-    );
-
     completedTimeline.forEach((item) => {
       if (item.type === 'message') {
         items.push(<MessageDisplay key={`msg-${item.index}`} message={item.message} />);
@@ -288,9 +314,29 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
   return (
     <Box flexDirection="column">
+      {/* Header - only show when no messages */}
+      {messages.length === 0 && (
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} marginBottom={1}>
+          <Box flexDirection="row">
+            <Box flexDirection="column" marginRight={2}>
+              <Text color="yellow" bold>      __</Text>
+              <Text color="yellow" bold>  ___( o)&gt;</Text>
+              <Text color="yellow" bold>  \ &lt;_. )</Text>
+              <Text color="yellow" bold>   `---&apos;  </Text>
+            </Box>
+            <Box flexDirection="column">
+              <Text>Ally v{packageJson.version}</Text>
+              <Text dimColor>{config?.model || 'No model configured'}</Text>
+              <Text dimColor>{process.cwd()}</Text>
+              {gitBranch && (
+                <Text dimColor color="yellow">branch: {gitBranch}</Text>
+              )}
+            </Box>
+          </Box>
+        </Box>
+      )}
+
       {/* Completed content in Static - prevents thrashing */}
-      {/* Header is included as first item in Static */}
-      {/* Key changes only during compaction/rewind to update content */}
       <Static key={`static-${staticRemountKey}`} items={completedJSXItems}>
         {(item) => item}
       </Static>
@@ -316,6 +362,7 @@ export const ConversationView = React.memo(ConversationViewComponent, (prevProps
   const noticesSame = prevProps.compactionNotices === nextProps.compactionNotices;
   const isThinkingSame = prevProps.isThinking === nextProps.isThinking;
   const staticKeySame = prevProps.staticRemountKey === nextProps.staticRemountKey;
+  const configSame = prevProps.config === nextProps.config;
 
-  return messagesSame && streamingSame && toolCallsSame && contextSame && noticesSame && isThinkingSame && staticKeySame;
+  return messagesSame && streamingSame && toolCallsSame && contextSame && noticesSame && isThinkingSame && staticKeySame && configSame;
 });

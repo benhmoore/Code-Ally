@@ -886,21 +886,15 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   return (
     <Box flexDirection="column" padding={1}>
       {/* Conversation View - contains header + all conversation history */}
-      <Box flexDirection="column" flexGrow={1}>
-        <ConversationView
-          messages={state.messages}
-          isThinking={state.isThinking}
-          activeToolCalls={state.activeToolCalls}
-          contextUsage={state.contextUsage}
-          compactionNotices={state.compactionNotices}
-          staticRemountKey={state.staticRemountKey}
-        />
-      </Box>
-
-      {/* Status Indicator - hide when any modal is active */}
-      {!permissionRequest && !sessionSelectRequest && !modelSelectRequest && !rewindRequest && !setupWizardOpen && (
-        <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} />
-      )}
+      <ConversationView
+        messages={state.messages}
+        isThinking={state.isThinking}
+        activeToolCalls={state.activeToolCalls}
+        contextUsage={state.contextUsage}
+        compactionNotices={state.compactionNotices}
+        staticRemountKey={state.staticRemountKey}
+        config={state.config}
+      />
 
       {/* Config Viewer (non-modal - shown above input) */}
       {configViewerOpen && !setupWizardOpen && (
@@ -964,6 +958,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : /* Session Selector (replaces input when active) */
       sessionSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+
           <SessionSelector
             sessions={sessionSelectRequest.sessions}
             selectedIndex={sessionSelectRequest.selectedIndex}
@@ -988,6 +985,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : /* Model Selector (replaces input when active) */
       modelSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+
           <ModelSelector
             models={modelSelectRequest.models}
             selectedIndex={modelSelectedIndex}
@@ -1017,6 +1017,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           const userMessages = state.messages.filter(m => m.role === 'user');
           return (
             <Box marginTop={1} flexDirection="column">
+              {/* Status Indicator - always visible to show todos */}
+              <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+
               <RewindSelector
                 messages={userMessages}
                 selectedIndex={rewindRequest.selectedIndex}
@@ -1043,6 +1046,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+
           <PermissionPrompt
             request={permissionRequest}
             selectedIndex={permissionSelectedIndex}
@@ -1066,8 +1072,12 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           </Box>
         </Box>
       ) : (
-        /* Input Prompt */
-        <Box marginTop={1}>
+        /* Input Group - Status Indicator + Input Prompt */
+        <Box marginTop={1} flexDirection="column">
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+
+          {/* Input Prompt */}
           <InputPrompt
             onSubmit={handleInput}
             isActive={true}
