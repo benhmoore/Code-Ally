@@ -561,7 +561,7 @@ async function main() {
     // Create idle message generator
     const { IdleMessageGenerator } = await import('./services/IdleMessageGenerator.js');
     const idleMessageGenerator = new IdleMessageGenerator(modelClient, {
-      minInterval: 30000, // Generate new message every 30 seconds when idle
+      minInterval: 10000, // Generate new message every 10 seconds when idle
     });
     registry.registerInstance('idle_message_generator', idleMessageGenerator);
 

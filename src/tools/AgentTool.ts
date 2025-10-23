@@ -4,6 +4,9 @@
  * Creates and manages sub-agents with specialized system prompts.
  * Agents can be loaded from ~/.code_ally/agents/ directory.
  * Sub-agents run in isolated contexts with their own tools and message history.
+ *
+ * IMPORTANT: Sub-agents inherit the same permission screening as the main agent.
+ * All tool calls (writes, edits, bash commands, etc.) will prompt for user permission.
  */
 
 import { BaseTool } from './BaseTool.js';
@@ -227,6 +230,7 @@ export class AgentTool extends BaseTool {
     const mainModelClient = registry.get<ModelClient>('model_client');
     const toolManager = registry.get<ToolManager>('tool_manager');
     const configManager = registry.get<any>('config_manager');
+    const permissionManager = registry.get<any>('permission_manager');
 
     // Enforce strict service availability
     if (!mainModelClient) {
@@ -237,6 +241,9 @@ export class AgentTool extends BaseTool {
     }
     if (!configManager) {
       throw new Error('AgentTool requires config_manager to be registered in ServiceRegistry');
+    }
+    if (!permissionManager) {
+      throw new Error('AgentTool requires permission_manager to be registered in ServiceRegistry');
     }
 
     const config = configManager.getConfig();
@@ -281,7 +288,8 @@ export class AgentTool extends BaseTool {
       toolManager,
       this.activityStream,
       agentConfig,
-      configManager // Pass configManager for token limit configuration
+      configManager, // Pass configManager for token limit configuration
+      permissionManager // Pass permissionManager so subagents go through same permission screening
     );
 
     // Track active delegation

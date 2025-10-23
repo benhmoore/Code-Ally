@@ -9,6 +9,22 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { Message } from '../types/index.js';
 
 /**
+ * Additional context for idle message generation
+ */
+export interface IdleContext {
+  /** Current working directory */
+  cwd?: string;
+  /** Active todo items */
+  todos?: Array<{ task: string; status: string }>;
+  /** Current time for time-aware messages */
+  currentTime?: Date;
+  /** Last user prompt */
+  lastUserMessage?: string;
+  /** Last assistant response */
+  lastAssistantMessage?: string;
+}
+
+/**
  * Configuration for IdleMessageGenerator
  */
 export interface IdleMessageGeneratorConfig {
@@ -35,7 +51,7 @@ export class IdleMessageGenerator {
     config: IdleMessageGeneratorConfig = {}
   ) {
     this.modelClient = modelClient;
-    this.minInterval = config.minInterval || 30000; // Default: 30 seconds between generations
+    this.minInterval = config.minInterval || 10000; // Default: 10 seconds between generations
   }
 
   /**
@@ -49,10 +65,11 @@ export class IdleMessageGenerator {
    * Generate a new idle message based on recent conversation context
    *
    * @param recentMessages - Recent conversation messages for context
+   * @param context - Additional context (cwd, todos)
    * @returns Generated message
    */
-  async generateMessage(recentMessages: Message[] = []): Promise<string> {
-    const messagePrompt = this.buildMessagePrompt(recentMessages);
+  async generateMessage(recentMessages: Message[] = [], context?: IdleContext): Promise<string> {
+    const messagePrompt = this.buildMessagePrompt(recentMessages, context);
 
     try {
       const response = await this.modelClient.send(
@@ -83,8 +100,9 @@ export class IdleMessageGenerator {
    * Useful for periodically updating the idle message without blocking the UI
    *
    * @param recentMessages - Recent conversation messages for context
+   * @param context - Additional context (cwd, todos)
    */
-  generateMessageBackground(recentMessages: Message[] = []): void {
+  generateMessageBackground(recentMessages: Message[] = [], context?: IdleContext): void {
     // Check if enough time has passed since last generation
     const now = Date.now();
     if (now - this.lastGenerationTime < this.minInterval) {
@@ -100,7 +118,7 @@ export class IdleMessageGenerator {
     this.lastGenerationTime = now;
 
     // Run in background
-    this.generateAndStoreMessageAsync(recentMessages)
+    this.generateAndStoreMessageAsync(recentMessages, context)
       .catch(error => {
         console.error('Background idle message generation failed:', error);
       })
@@ -112,32 +130,70 @@ export class IdleMessageGenerator {
   /**
    * Generate and store message asynchronously
    */
-  private async generateAndStoreMessageAsync(recentMessages: Message[]): Promise<void> {
-    const message = await this.generateMessage(recentMessages);
+  private async generateAndStoreMessageAsync(recentMessages: Message[], context?: IdleContext): Promise<void> {
+    const message = await this.generateMessage(recentMessages, context);
     this.currentMessage = message;
   }
 
   /**
    * Build the prompt for idle message generation
    */
-  private buildMessagePrompt(recentMessages: Message[]): string {
-    const contextSummary = recentMessages.length > 0
-      ? `\n\nRecent conversation context:\n${recentMessages.slice(-3).map(m => `${m.role}: ${(m.content || '').slice(0, 100)}`).join('\n')}`
+  private buildMessagePrompt(_recentMessages: Message[], context?: IdleContext): string {
+    // Add last exchange context (most important)
+    let lastExchangeContext = '';
+    if (context?.lastUserMessage && context?.lastAssistantMessage) {
+      lastExchangeContext = `\n\nLast exchange:
+User: ${context.lastUserMessage.slice(0, 150)}
+Assistant: ${context.lastAssistantMessage.slice(0, 150)}`;
+    }
+
+    // Add working directory context
+    const cwdContext = context?.cwd
+      ? `\n\nCurrent working directory: ${context.cwd}`
       : '';
 
-    return `You are Ally, an AI coding assistant represented by a cute chick mascot. Generate a single, very short (max 6 words), casual, and slightly playful idle message to display while waiting for the user's next input.
+    // Add todo list context
+    let todoContext = '';
+    if (context?.todos && context.todos.length > 0) {
+      const pendingTodos = context.todos.filter(t => t.status === 'pending' || t.status === 'in_progress');
+      if (pendingTodos.length > 0) {
+        todoContext = `\n\nActive tasks:\n${pendingTodos.map(t => `- ${t.task}`).join('\n')}`;
+      }
+    }
 
-The message should be friendly and can occasionally reference being a helpful chick assistant (but don't overdo it).
+    // Add time context
+    let timeContext = '';
+    if (context?.currentTime) {
+      const hour = context.currentTime.getHours();
+      const timeOfDay = hour < 6 ? 'very early morning' :
+                        hour < 12 ? 'morning' :
+                        hour < 17 ? 'afternoon' :
+                        hour < 21 ? 'evening' :
+                        'late night';
+      timeContext = `\n\nCurrent time: ${context.currentTime.toLocaleTimeString()} (${timeOfDay})`;
+    }
+
+    return `You are Ally, an AI coding assistant represented by a cute chick mascot. Generate a single, very short (max 6 words), casual, upbeat, and humorous idle message to display while waiting for the user's next input.
+
+Be playful, witty, and use casual language or slang when appropriate. Keep it fun and lighthearted! You can occasionally reference being a helpful chick assistant (but don't overdo it).
+
+You can subtly reference what was just discussed, active tasks, the project context, or make time-appropriate comments.
 
 Examples:
-- "Ready when you are!"
-- "What's next?"
-- "Pecking away at problems..."
-- "Your turn!"
-- "Waiting patiently..."
-- "Chirp if you need help!"
-- "Let's code together!"
-${contextSummary}
+- "Let's goooo!"
+- "Vibing and ready!"
+- "What's cookin'?"
+- "Hit me with it!"
+- "Ready to crush it!"
+- "Let's ship this!"
+- "You're up late!" (if late night)
+- "Early bird gets the bug!" (if early morning)
+- "That was fire!" (after success)
+- "Nailed it!"
+- "Feeling lucky today!"
+- "Bring it on!"
+- "Code time!"
+${lastExchangeContext}${cwdContext}${todoContext}${timeContext}
 
 Reply with ONLY the message, nothing else. No quotes, no punctuation unless natural.`;
   }

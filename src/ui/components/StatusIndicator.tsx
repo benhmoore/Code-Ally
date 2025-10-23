@@ -2,13 +2,12 @@
  * StatusIndicator - Real-time status display while model is working
  *
  * Shows:
- * [Spinner] [Current task description] (elapsed time)
+ * [Mascot] [Current task description] (elapsed time)
  *  → Next: [Next task]
  */
 
 import React, { useEffect, useState, useRef } from 'react';
 import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { TodoManager } from '../../services/TodoManager.js';
 import { IdleMessageGenerator } from '../../services/IdleMessageGenerator.js';
@@ -60,6 +59,51 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   const [allTodos, setAllTodos] = useState<Array<{ task: string; status: string; activeForm: string }>>([]);
 
+  // Generate idle message on startup
+  useEffect(() => {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+      const todoManager = registry.get<TodoManager>('todo_manager');
+
+      if (idleMessageGenerator) {
+        // Extract last user and assistant messages
+        const userMessages = (recentMessages as any[]).filter((m: any) => m.role === 'user');
+        const assistantMessages = (recentMessages as any[]).filter((m: any) => m.role === 'assistant');
+        const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1].content : undefined;
+        const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1].content : undefined;
+
+        // Gather context for idle message generation
+        const context: any = {
+          cwd: process.cwd(),
+          currentTime: new Date(),
+          todos: todoManager ? todoManager.getTodos() : [],
+          lastUserMessage,
+          lastAssistantMessage,
+        };
+
+        // Trigger background generation with context on startup
+        idleMessageGenerator.generateMessageBackground(recentMessages as any, context);
+
+        // Poll for updates every second
+        const pollInterval = setInterval(() => {
+          const message = idleMessageGenerator.getCurrentMessage();
+          // Only update if message is not the default "Idle"
+          if (message !== 'Idle') {
+            setIdleMessage(message);
+          }
+        }, 1000);
+
+        return () => clearInterval(pollInterval);
+      }
+    } catch (error) {
+      // Silently handle errors
+    }
+
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount
+
   // Handle idle message generation when transitioning to idle state
   useEffect(() => {
     const wasProcessing = wasProcessingRef.current;
@@ -75,18 +119,28 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       try {
         const registry = ServiceRegistry.getInstance();
         const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+        const todoManager = registry.get<TodoManager>('todo_manager');
 
         if (idleMessageGenerator) {
-          // Trigger background generation with recent message context
-          idleMessageGenerator.generateMessageBackground(recentMessages as any);
+          // Extract last user and assistant messages
+          const userMessages = (recentMessages as any[]).filter((m: any) => m.role === 'user');
+          const assistantMessages = (recentMessages as any[]).filter((m: any) => m.role === 'assistant');
+          const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1].content : undefined;
+          const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1].content : undefined;
 
-          // Poll for updates every second when idle
-          const pollInterval = setInterval(() => {
-            const message = idleMessageGenerator.getCurrentMessage();
-            setIdleMessage(message);
-          }, 1000);
+          // Gather context for idle message generation
+          const context: any = {
+            cwd: process.cwd(),
+            currentTime: new Date(),
+            todos: todoManager ? todoManager.getTodos() : [],
+            lastUserMessage,
+            lastAssistantMessage,
+          };
 
-          return () => clearInterval(pollInterval);
+          // Trigger background generation with context
+          idleMessageGenerator.generateMessageBackground(recentMessages as any, context);
+
+          // Note: Polling is already set up by the startup effect
         }
       } catch (error) {
         // Silently handle errors
@@ -155,9 +209,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   if (isCompacting) {
     return (
       <Box>
-        <Text color="cyan">
-          <Spinner type="dots" />
-        </Text>
+        <ChickAnimation color="cyan" speed={4000} />
         <Text> </Text>
         <Text color="cyan">Compacting conversation...</Text>
         <Text dimColor> ({formatElapsed(elapsed)})</Text>
@@ -174,24 +226,18 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   return (
     <Box flexDirection="column">
-      {/* Status line - always show */}
+      {/* Status line - always show mascot */}
       <Box>
+        <ChickAnimation color="yellow" speed={4000} />
+        <Text> </Text>
         {isProcessing || isCompacting ? (
           <>
-            <Text color="yellow">
-              <Spinner type="dots" />
-            </Text>
-            <Text> </Text>
             <Text>{allTodos.length === 0 ? 'Thinking...' : currentTask || 'Processing...'}</Text>
             <Text dimColor> (ctrl+c to interrupt) </Text>
             <Text dimColor>[{formatElapsed(elapsed)}]</Text>
           </>
         ) : (
-          <>
-            <ChickAnimation color="yellow" speed={4000} />
-            <Text> </Text>
-            <Text color="yellow">{idleMessage}</Text>
-          </>
+          <Text color="yellow">{idleMessage}</Text>
         )}
       </Box>
 
@@ -203,7 +249,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
               {/* Arrow for in-progress task */}
               {todo.status === 'in_progress' ? (
                 <>
-                  <Text color="yellow">-&gt; </Text>
+                  <Text color="yellow">→ </Text>
                   <Text color="yellow">{getCheckbox(todo.status)}</Text>
                   <Text> </Text>
                   <Text color="yellow">{todo.task}</Text>
