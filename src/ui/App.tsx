@@ -23,6 +23,7 @@ import { ProjectWizardView } from './components/ProjectWizardView.js';
 import { RewindSelector } from './components/RewindSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
+import { ReasoningStream } from './components/ReasoningStream.js';
 import { Agent } from '../agent/Agent.js';
 import { CommandHistory } from '../services/CommandHistory.js';
 import { CompletionProvider } from '../services/CompletionProvider.js';
@@ -958,6 +959,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : /* Session Selector (replaces input when active) */
       sessionSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream />
+
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
 
@@ -985,6 +989,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : /* Model Selector (replaces input when active) */
       modelSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream />
+
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
 
@@ -1017,6 +1024,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           const userMessages = state.messages.filter(m => m.role === 'user');
           return (
             <Box marginTop={1} flexDirection="column">
+              {/* Reasoning Stream - shows thinking tokens */}
+              <ReasoningStream />
+
               {/* Status Indicator - always visible to show todos */}
               <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
 
@@ -1046,6 +1056,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream />
+
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
 
@@ -1074,6 +1087,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : (
         /* Input Group - Status Indicator + Input Prompt */
         <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream />
+
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
 

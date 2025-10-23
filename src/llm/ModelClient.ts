@@ -92,6 +92,8 @@ export interface ModelClientConfig {
   maxTokens: number;
   /** Keep-alive duration in seconds (optional) */
   keepAlive?: number;
+  /** Activity stream for emitting events (optional) */
+  activityStream?: any; // Using 'any' to avoid circular dependency
 }
 
 /**

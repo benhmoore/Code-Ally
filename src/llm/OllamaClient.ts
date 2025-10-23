@@ -17,7 +17,8 @@ import {
   SendOptions,
   LLMResponse,
 } from './ModelClient.js';
-import { Message, FunctionDefinition } from '../types/index.js';
+import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
+import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
 
 /**
@@ -54,6 +55,7 @@ export class OllamaClient extends ModelClient {
   private readonly maxTokens: number;
   private readonly keepAlive?: number;
   private readonly apiUrl: string;
+  private readonly activityStream?: ActivityStream;
 
   // Track active requests for cancellation (keyed by request ID)
   private activeRequests: Map<string, AbortController> = new Map();
@@ -82,6 +84,7 @@ export class OllamaClient extends ModelClient {
     this.contextSize = config.contextSize;
     this.maxTokens = config.maxTokens;
     this.keepAlive = config.keepAlive;
+    this.activityStream = config.activityStream;
     this.apiUrl = `${this._endpoint}/api/chat`;
   }
 
@@ -369,6 +372,16 @@ export class OllamaClient extends ModelClient {
             if (thinkingChunk) {
               aggregatedThinking += thinkingChunk;
               aggregatedMessage.thinking = aggregatedThinking;
+
+              // Emit thinking chunk event for UI streaming
+              if (this.activityStream) {
+                this.activityStream.emit({
+                  id: `thinking-${requestId}-${Date.now()}`,
+                  type: ActivityEventType.THOUGHT_CHUNK,
+                  timestamp: Date.now(),
+                  data: { chunk: thinkingChunk },
+                });
+              }
             }
 
             // Handle tool calls (replace, not accumulate)

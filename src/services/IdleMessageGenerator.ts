@@ -122,7 +122,7 @@ export class IdleMessageGenerator {
    */
   private buildMessagePrompt(recentMessages: Message[]): string {
     const contextSummary = recentMessages.length > 0
-      ? `\n\nRecent conversation context:\n${recentMessages.slice(-3).map(m => `${m.role}: ${m.content.slice(0, 100)}`).join('\n')}`
+      ? `\n\nRecent conversation context:\n${recentMessages.slice(-3).map(m => `${m.role}: ${(m.content || '').slice(0, 100)}`).join('\n')}`
       : '';
 
     return `You are Ally, an AI coding assistant represented by a cute chick mascot. Generate a single, very short (max 6 words), casual, and slightly playful idle message to display while waiting for the user's next input.

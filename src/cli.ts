@@ -548,6 +548,7 @@ async function main() {
       temperature: config.temperature,
       contextSize: config.context_size,
       maxTokens: config.max_tokens,
+      activityStream,
     });
     registry.registerInstance('model_client', modelClient);
 
