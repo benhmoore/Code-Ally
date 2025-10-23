@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { BaseTool } from './BaseTool.js';
@@ -19,7 +20,7 @@ interface FormatResult {
   changes_made: boolean;
   error?: string;
   suggestion?: string;
-  check_result?: {
+  file_check?: {
     checker: string;
     passed: boolean;
     errors: Array<{
@@ -190,7 +191,7 @@ export class FormatTool extends BaseTool {
           // Re-check file after formatting
           const checkResult = await this.checkFileAfterModification(absPath);
           if (checkResult) {
-            fileResult.check_result = checkResult;
+            fileResult.file_check = checkResult;
           }
 
           filesFormatted++;
@@ -371,7 +372,7 @@ export class FormatTool extends BaseTool {
    */
   private async checkFileAfterModification(
     filePath: string
-  ): Promise<FormatResult['check_result'] | null> {
+  ): Promise<FormatResult['file_check'] | null> {
     try {
       await ensureRegistryInitialized();
       const content = await fs.readFile(filePath, 'utf-8');
@@ -456,7 +457,6 @@ export class FormatTool extends BaseTool {
     return new Promise((resolve, reject) => {
       const proc = spawn(command, args, {
         cwd: options.cwd,
-        shell: true,
       });
 
       let stdout = '';
@@ -505,7 +505,6 @@ export class FormatTool extends BaseTool {
   private validateFilePath(filePath: string): string | null {
     try {
       const absPath = path.resolve(filePath);
-      const fsSync = require('fs');
 
       if (!fsSync.existsSync(absPath)) {
         return null;

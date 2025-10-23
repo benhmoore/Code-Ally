@@ -10,6 +10,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
+import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import * as fs from 'fs/promises';
 
 export class EditTool extends BaseTool {
@@ -186,11 +187,20 @@ export class EditTool extends BaseTool {
 
       const successMessage = `Made ${replaceAll ? count : 1} replacement(s) in ${absolutePath}`;
 
-      return this.formatSuccessResponse({
+      const response = this.formatSuccessResponse({
         content: successMessage, // Human-readable output for LLM
         file_path: absolutePath,
         replacements_made: replaceAll ? count : 1,
       });
+
+      // Check file for syntax/parse errors after modification
+      // Matches Python CodeAlly pattern exactly
+      const checkResult = await checkFileAfterModification(absolutePath);
+      if (checkResult) {
+        response.file_check = checkResult;
+      }
+
+      return response;
     } catch (error) {
       return this.formatErrorResponse(
         `Failed to edit file: ${formatError(error)}`,

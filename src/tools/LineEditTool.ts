@@ -10,6 +10,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { resolvePath } from '../utils/pathUtils.js';
+import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import * as fs from 'fs/promises';
 
 type LineOperation = 'insert' | 'delete' | 'replace';
@@ -277,13 +278,22 @@ export class LineEditTool extends BaseTool {
       // Write the modified content
       await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
 
-      return this.formatSuccessResponse({
+      const response = this.formatSuccessResponse({
         content: operationDescription, // Human-readable output for LLM
         file_path: absolutePath,
         operation: operationDescription,
         lines_before: totalLines,
         lines_after: modifiedLines.length,
       });
+
+      // Check file for syntax/parse errors after modification
+      // Matches Python CodeAlly pattern exactly
+      const checkResult = await checkFileAfterModification(absolutePath);
+      if (checkResult) {
+        response.file_check = checkResult;
+      }
+
+      return response;
     } catch (error) {
       return this.formatErrorResponse(
         `Failed to edit file: ${formatError(error)}`,

@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
@@ -97,14 +98,15 @@ export class LintTool extends BaseTool {
       }
 
       // Validate file path
-      const absPath = this.validateFilePath(filePath);
-      if (absPath === null) {
+      const validation = this.validateFilePath(filePath);
+      if (!validation.valid) {
         return this.formatErrorResponse(
-          `Invalid file path '${filePath}': file not found or not accessible`,
+          `Invalid file path '${filePath}': ${validation.error}`,
           'validation_error',
-          'Check the file path and ensure the file exists'
+          validation.suggestion || 'Check the file path and ensure the file exists'
         );
       }
+      const absPath = validation.path!;
 
       validatedPaths.push(absPath);
     }
@@ -195,27 +197,43 @@ export class LintTool extends BaseTool {
    * Validate a file path and return absolute path
    *
    * @param filePath - File path to validate
-   * @returns Absolute path if valid, null otherwise
+   * @returns Validation result with path or error
    */
-  private validateFilePath(filePath: string): string | null {
+  private validateFilePath(filePath: string): {
+    valid: boolean;
+    path?: string;
+    error?: string;
+    suggestion?: string;
+  } {
     try {
       const absPath = path.resolve(filePath);
 
-      // Check if file exists synchronously (for simplicity)
-      const fs = require('fs');
-      if (!fs.existsSync(absPath)) {
-        return null;
+      // Check if file exists synchronously
+      if (!fsSync.existsSync(absPath)) {
+        return {
+          valid: false,
+          error: `file not found at resolved path: ${absPath}`,
+          suggestion: `Current working directory: ${process.cwd()}. Ensure the file path is correct relative to this directory.`,
+        };
       }
 
       // Check if it's a file (not a directory)
-      const stats = fs.statSync(absPath);
+      const stats = fsSync.statSync(absPath);
       if (!stats.isFile()) {
-        return null;
+        return {
+          valid: false,
+          error: `path exists but is not a file (it's a ${stats.isDirectory() ? 'directory' : 'other'})`,
+          suggestion: 'Provide a path to a file, not a directory',
+        };
       }
 
-      return absPath;
-    } catch {
-      return null;
+      return { valid: true, path: absPath };
+    } catch (error: any) {
+      return {
+        valid: false,
+        error: `error accessing path: ${error.message}`,
+        suggestion: 'Check file permissions and path syntax',
+      };
     }
   }
 

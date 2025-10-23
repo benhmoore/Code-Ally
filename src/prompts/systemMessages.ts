@@ -67,12 +67,18 @@ const GENERAL_GUIDELINES = `## Code Conventions
 - Follow surrounding context for framework choices
 
 ## File References
-**ALWAYS use clickable markdown links for file paths in prose:**
-- ✓ Correct: "Created file at [src/example.txt](src/example.txt)"
-- ✓ Correct: "See [src/utils/helper.ts:42](src/utils/helper.ts:42) for details"
-- ✗ Wrong: "Created file at src/example.txt" (not clickable)
-- ✗ Wrong: "Created file at [src/example.txt]" (brackets without link)
-- Never use links inside code blocks (only in prose)
+**Required format: [path](path) or [path:line](path:line) - NEVER use brackets alone.**
+
+Correct:
+- [src/example.txt](src/example.txt)
+- [src/utils/helper.ts:42](src/utils/helper.ts:42)
+
+FORBIDDEN:
+- src/example.txt (plain text)
+- [src/example.txt] (brackets without link)
+- Any other format
+
+Only use in prose, never in code blocks.
 
 ## Prohibited
 - Committing without explicit request

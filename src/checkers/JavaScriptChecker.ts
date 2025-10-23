@@ -6,6 +6,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as os from 'os';
 import { spawn } from 'child_process';
 import { FileChecker, CheckResult, CheckIssue } from './types.js';
 
@@ -40,7 +41,7 @@ export class JavaScriptChecker implements FileChecker {
     }
 
     // Write content to temporary file
-    const tmpDir = await fs.mkdtemp(path.join(require('os').tmpdir(), 'node-check-'));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'node-check-'));
     const ext = path.extname(filePath);
     const tmpPath = path.join(tmpDir, `check${ext}`);
 
@@ -132,7 +133,6 @@ export class JavaScriptChecker implements FileChecker {
     return new Promise((resolve, reject) => {
       const proc = spawn(command, args, {
         cwd: options.cwd,
-        shell: true,
       });
 
       let stdout = '';

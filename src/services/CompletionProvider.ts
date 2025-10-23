@@ -10,6 +10,7 @@
 
 import { promises as fs } from 'fs';
 import { dirname, basename } from 'path';
+import * as os from 'os';
 import { AgentManager } from './AgentManager.js';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -403,7 +404,7 @@ export class CompletionProvider {
         searchPattern = basename(path);
       } else if (path.startsWith('~')) {
         // Home directory
-        const homedir = require('os').homedir();
+        const homedir = os.homedir();
         const expandedPath = path.replace('~', homedir);
         baseDir = dirname(expandedPath);
         searchPattern = basename(expandedPath);

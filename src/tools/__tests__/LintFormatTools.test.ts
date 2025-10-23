@@ -281,11 +281,11 @@ describe('FormatTool', () => {
 
       expect(result.success).toBe(true);
 
-      // If changes were made, check_result should be present
+      // If changes were made, file_check should be present
       if (result.files[0].changes_made) {
-        expect(result.files[0].check_result).toBeDefined();
-        expect(result.files[0].check_result?.checker).toBe('json');
-        expect(result.files[0].check_result?.passed).toBe(true);
+        expect(result.files[0].file_check).toBeDefined();
+        expect(result.files[0].file_check?.checker).toBe('json');
+        expect(result.files[0].file_check?.passed).toBe(true);
       }
     });
 

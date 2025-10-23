@@ -1,1 +1,0 @@
-The file is too large to read in one go. Let's read it in chunks of 200 lines.
