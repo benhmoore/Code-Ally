@@ -101,6 +101,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Track active background agents (subagents, todo generator, etc.)
   const [activeAgentsCount, setActiveAgentsCount] = useState(0);
 
+  // Track cancellation state for immediate visual feedback
+  const [isCancelling, setIsCancelling] = useState(false);
+
   // Throttle tool call updates to max once every 2 seconds
   const pendingToolUpdates = useRef<Map<string, Partial<ToolCallState>>>(new Map());
   const lastUpdateTime = useRef<number>(Date.now());
@@ -387,6 +390,14 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       streamingContentRef.current = '';
       actions.setStreamingContent(undefined);
     }
+
+    // Clear cancelling state when agent finishes
+    setIsCancelling(false);
+  });
+
+  // Track user-initiated interrupts for immediate visual feedback
+  useActivityEvent(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
+    setIsCancelling(true);
   });
 
   // Subscribe to diff preview events
@@ -1021,7 +1032,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
 
           <SessionSelector
             sessions={sessionSelectRequest.sessions}
@@ -1051,7 +1062,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
 
           <ModelSelector
             models={modelSelectRequest.models}
@@ -1118,7 +1129,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
 
           <PermissionPrompt
             request={permissionRequest}
@@ -1149,7 +1160,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
 
           {/* Input Prompt */}
           <InputPrompt

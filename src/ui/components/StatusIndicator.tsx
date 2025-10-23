@@ -22,6 +22,8 @@ interface StatusIndicatorProps {
   isProcessing: boolean;
   /** Whether the conversation is being compacted */
   isCompacting?: boolean;
+  /** Whether a user interrupt is in progress */
+  isCancelling?: boolean;
   /** Recent messages for context-aware idle messages */
   recentMessages?: Array<{ role: string; content: string }>;
 }
@@ -37,7 +39,7 @@ const GREETING_MESSAGES = [
   "Hi! How can I help?",
 ];
 
-export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting, recentMessages = [] }) => {
+export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting, isCancelling = false, recentMessages = [] }) => {
   const [currentTask, setCurrentTask] = useState<string | null>(null);
   const [_startTime, setStartTime] = useState<number>(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -305,6 +307,17 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   // Use elapsed seconds from state
   const elapsed = elapsedSeconds;
+
+  // Show cancelling status if cancelling (highest priority)
+  if (isCancelling) {
+    return (
+      <Box>
+        <ChickAnimation color="red" speed={2000} />
+        <Text> </Text>
+        <Text color="red">Cancelling...</Text>
+      </Box>
+    );
+  }
 
   // Show compaction status if compacting (overrides todo display)
   if (isCompacting) {

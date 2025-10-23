@@ -804,6 +804,18 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         // Priority 2: Interrupt ALL ongoing operations (main agent + subagents + tools)
         if (agent && agent.isProcessing()) {
           logger.debug('[INPUT] Ctrl+C - interrupting main agent');
+
+          // Emit immediate visual feedback before interrupting
+          if (activityStream) {
+            activityStream.emit({
+              id: `user-interrupt-${Date.now()}`,
+              type: ActivityEventType.USER_INTERRUPT_INITIATED,
+              timestamp: Date.now(),
+              data: {},
+            });
+          }
+
+          // Interrupt the agent (will cancel LLM request immediately)
           agent.interrupt();
 
           // Also interrupt all subagents through AgentTool

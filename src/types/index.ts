@@ -82,6 +82,7 @@ export enum ActivityEventType {
   CONFIG_VIEW_RESPONSE = 'config_view_response',
   REWIND_REQUEST = 'rewind_request',
   REWIND_RESPONSE = 'rewind_response',
+  USER_INTERRUPT_INITIATED = 'user_interrupt_initiated',
   INTERRUPT_ALL = 'interrupt_all',
   DIFF_PREVIEW = 'diff_preview',
   SETUP_WIZARD_REQUEST = 'setup_wizard_request',
