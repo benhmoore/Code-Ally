@@ -158,6 +158,9 @@ export class GrepTool extends BaseTool {
       // Search files
       const matches: GrepMatch[] = [];
       let filesSearched = 0;
+      let filesSkippedLarge = 0;
+      let filesSkippedBinary = 0;
+      let filesSkippedError = 0;
 
       for (const filePath of filesToSearch) {
         if (matches.length >= maxResults) {
@@ -168,7 +171,8 @@ export class GrepTool extends BaseTool {
           // Check file size
           const fileStats = await fs.stat(filePath);
           if (fileStats.size > GrepTool.MAX_FILE_SIZE) {
-            continue; // Skip large files
+            filesSkippedLarge++;
+            continue;
           }
 
           // Read file
@@ -176,6 +180,7 @@ export class GrepTool extends BaseTool {
 
           // Check for binary content
           if (isBinaryContent(content)) {
+            filesSkippedBinary++;
             continue;
           }
 
@@ -194,6 +199,7 @@ export class GrepTool extends BaseTool {
           matches.push(...fileMatches);
         } catch {
           // Skip files that can't be read
+          filesSkippedError++;
           continue;
         }
       }
@@ -220,11 +226,17 @@ export class GrepTool extends BaseTool {
 
       const content = contentLines.join('\n');
 
+      const totalSkipped = filesSkippedLarge + filesSkippedBinary + filesSkippedError;
+
       return this.formatSuccessResponse({
         content, // Human-readable output for LLM
         matches: matchesToReturn, // Structured data
         total_matches: matches.length,
         files_searched: filesSearched,
+        files_skipped: totalSkipped,
+        files_skipped_large: filesSkippedLarge,
+        files_skipped_binary: filesSkippedBinary,
+        files_skipped_error: filesSkippedError,
         limited_results: limitedResults,
       });
     } catch (error) {
@@ -298,12 +310,30 @@ export class GrepTool extends BaseTool {
     const matches = result.matches as GrepMatch[] | undefined;
     const totalMatches = result.total_matches ?? 0;
     const filesSearched = result.files_searched ?? 0;
+    const filesSkipped = result.files_skipped ?? 0;
 
     const lines: string[] = [];
-    lines.push(`Found ${totalMatches} match(es) in ${filesSearched} file(s)`);
+
+    // Main summary line
+    let summary = `Found ${totalMatches} match(es) in ${filesSearched} file(s)`;
+    if (filesSkipped > 0) {
+      summary += `, ${filesSkipped} skipped`;
+    }
+    lines.push(summary);
+
+    // Show breakdown of skipped files if any
+    if (filesSkipped > 0) {
+      const skippedDetails: string[] = [];
+      if (result.files_skipped_large) skippedDetails.push(`${result.files_skipped_large} too large`);
+      if (result.files_skipped_binary) skippedDetails.push(`${result.files_skipped_binary} binary`);
+      if (result.files_skipped_error) skippedDetails.push(`${result.files_skipped_error} unreadable`);
+      if (skippedDetails.length > 0) {
+        lines.push(`  Skipped: ${skippedDetails.join(', ')}`);
+      }
+    }
 
     if (matches && matches.length > 0) {
-      const previewCount = Math.min(matches.length, maxLines - 1);
+      const previewCount = Math.min(matches.length, maxLines - lines.length);
       for (let i = 0; i < previewCount; i++) {
         const match = matches[i];
         if (match) {

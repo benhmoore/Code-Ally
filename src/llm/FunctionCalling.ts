@@ -111,6 +111,7 @@ export function parseToolCallArguments(args: string | Record<string, any>): Reco
       return JSON.parse(args);
     } catch (error) {
       console.warn('Failed to parse tool call arguments:', error);
+      console.warn('Invalid JSON string:', args.substring(0, 100) + (args.length > 100 ? '...' : ''));
       return {};
     }
   }

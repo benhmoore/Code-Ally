@@ -10,6 +10,8 @@ import { readFile, writeFile, readdir, unlink, access } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { constants } from 'fs';
+import { logger } from './Logger.js';
+import { formatError } from '../utils/errorUtils.js';
 
 export interface AgentData {
   name: string;
@@ -72,6 +74,7 @@ export class AgentManager {
       const content = await readFile(filePath, 'utf-8');
       return this.parseAgentFile(content, agentName);
     } catch (error) {
+      logger.debug(`Failed to load agent '${agentName}':`, formatError(error));
       return null;
     }
   }

@@ -9,6 +9,7 @@
 import { resolve, relative, isAbsolute, sep } from 'path';
 import { realpath, access, stat } from 'fs/promises';
 import { constants } from 'fs';
+import { formatError } from '../utils/errorUtils.js';
 
 export interface FocusResult {
   success: boolean;
@@ -89,7 +90,7 @@ export class FocusManager {
     } catch (error) {
       return {
         success: false,
-        message: `Error setting focus: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Error setting focus: ${formatError(error)}`,
       };
     }
   }
@@ -222,7 +223,7 @@ export class FocusManager {
     } catch (error) {
       return {
         success: false,
-        message: `Error validating focus constraint: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Error validating focus constraint: ${formatError(error)}`,
       };
     }
   }

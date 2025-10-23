@@ -158,6 +158,7 @@ export interface Config {
   auto_confirm: boolean;
   check_context_msg: boolean;
   parallel_tools: boolean;
+  tool_call_activity_timeout: number; // Timeout in seconds for agents without tool call activity
 
   // UI Preferences
   theme: string;

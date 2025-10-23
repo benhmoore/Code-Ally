@@ -9,6 +9,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn, ChildProcess } from 'child_process';
 import { TIMEOUT_LIMITS } from '../config/toolDefaults.js';
+import { formatError } from '../utils/errorUtils.js';
 
 export class BashTool extends BaseTool {
   readonly name = 'bash';
@@ -89,7 +90,7 @@ export class BashTool extends BaseTool {
       return result;
     } catch (error) {
       return this.formatErrorResponse(
-        error instanceof Error ? error.message : String(error),
+        formatError(error),
         'system_error'
       );
     }
@@ -186,13 +187,29 @@ export class BashTool extends BaseTool {
         clearTimeout(timeoutHandle);
         returnCode = code;
 
-        resolve(
-          this.formatSuccessResponse({
-            content: stdout, // Human-readable output for LLM (standardized field name)
-            stderr: stderr, // Separate stderr for error checking
-            return_code: returnCode ?? -1,
-          })
-        );
+        // Non-zero exit code = failure (except for special cases)
+        if (returnCode !== 0 && returnCode !== null) {
+          // Use stderr if available, otherwise stdout, otherwise generic message
+          const errorMsg = stderr.trim() || stdout.trim() || 'Command failed with no output';
+
+          resolve(
+            this.formatErrorResponse(
+              errorMsg,
+              'command_failed',
+              `Command exited with code ${returnCode}`
+            )
+          );
+        } else {
+          // Success - include both stdout and stderr
+          // (stderr may contain warnings even on success)
+          resolve(
+            this.formatSuccessResponse({
+              content: stdout, // Human-readable output for LLM (standardized field name)
+              stderr: stderr, // Warnings/info that appeared on stderr
+              return_code: returnCode ?? 0,
+            })
+          );
+        }
       });
 
       // Handle process error
@@ -237,7 +254,7 @@ export class BashTool extends BaseTool {
     const status = returnCode === 0 ? '✓' : '✗';
     lines.push(`${status} Exit code: ${returnCode}`);
 
-    // Show first few lines of output
+    // Show first few lines of stdout
     const output = result.content || '';
     if (output) {
       const outputLines = output.split('\n').slice(0, maxLines - 1);
@@ -248,12 +265,12 @@ export class BashTool extends BaseTool {
       }
     }
 
-    // Show stderr if present and no stdout
-    if (!output && result.error) {
-      const errorLines = result.error.split('\n').slice(0, maxLines - 1);
-      lines.push(...errorLines);
+    // Show stderr if present and no stdout (warnings/info on success)
+    if (!output && result.stderr) {
+      const stderrLines = result.stderr.split('\n').slice(0, maxLines - 1);
+      lines.push(...stderrLines);
 
-      if (result.error.split('\n').length > maxLines - 1) {
+      if (result.stderr.split('\n').length > maxLines - 1) {
         lines.push('...');
       }
     }

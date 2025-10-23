@@ -33,6 +33,7 @@ async function basicExample() {
     auto_confirm: false,
     check_context_msg: true,
     parallel_tools: true,
+    tool_call_activity_timeout: 120,
     theme: 'dark',
     compact_threshold: 50,
     show_token_usage: true,

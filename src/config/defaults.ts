@@ -6,6 +6,7 @@
  */
 
 import type { Config } from '../types/index.js';
+import { formatError } from '../utils/errorUtils.js';
 
 /**
  * Default configuration object
@@ -30,6 +31,7 @@ export const DEFAULT_CONFIG: Config = {
   auto_confirm: false, // Skip permission prompts (dangerous)
   check_context_msg: true, // Encourage LLM context checks
   parallel_tools: true, // Enable parallel tool execution
+  tool_call_activity_timeout: 120, // Timeout for agents without tool call activity (seconds)
 
   // ==========================================
   // UI PREFERENCES
@@ -109,6 +111,7 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   auto_confirm: 'boolean',
   check_context_msg: 'boolean',
   parallel_tools: 'boolean',
+  tool_call_activity_timeout: 'number',
 
   // UI Preferences
   theme: 'string',
@@ -216,7 +219,7 @@ export function validateConfigValue(
   } catch (error) {
     return {
       valid: false,
-      error: `Validation error: ${error instanceof Error ? error.message : String(error)}`,
+      error: `Validation error: ${formatError(error)}`,
     };
   }
 }

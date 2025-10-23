@@ -10,22 +10,22 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
-import { execSync } from 'child_process';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError } from '../utils/errorUtils.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { logger } from '../services/Logger.js';
+import { getGitBranch } from '../utils/gitUtils.js';
 
 // --- Core Agent Identity and Directives ---
 
 // Core identity for main Ally assistant
-const ALLY_IDENTITY = `You are Ally, an AI pair programming assistant. Use tools directly to complete tasks efficiently. For all multi-step tasks, pause, plan out your path, then use the todo tool to stay on track. Apply creative problem solving and leverage tool combinations to find elegant solutions.`;
+const ALLY_IDENTITY = `You are Ally, an AI pair programming assistant. Use tools directly to complete tasks efficiently. For complex multi-step tasks, pause, plan out your path, then use the todo tool to stay on track. Apply creative problem solving and leverage tool combinations to find elegant solutions.`;
 
 // Behavioral directives that apply to all agents
 const BEHAVIORAL_DIRECTIVES = `## Behavior
 - **Direct execution**: Use tools yourself, never ask users to run commands
 - **Concise responses**: Answer in 1-3 sentences unless detail requested. No emoji in responses.
-- **Work with todos**: For all multi-step tasks, use todo_write to create a task breakdown BEFORE executing tools. Mark tasks as in_progress or completed as you work. Tools accept an optional todo_id parameter to auto-complete todos on success.
+- **Work with todos**: For complex multi-step tasks (3+ distinct steps) or non-trivial operations, use todo_write to create a task breakdown and track progress. Mark exactly ONE task as in_progress while working on it, and mark it completed immediately after finishing. Update the list as you discover new work.
 - **Error handling**: If a tool fails, analyze the error and try again with adjustments
 - **Avoid loops**: If you find yourself repeating the same steps, reassess your approach
 - **⚡ Parallelize aggressively**: For ANY review/analysis/exploration task, use \`batch(tools=[...])\` to run multiple agents concurrently. Non-destructive operations are perfect for batching - default to parallel execution!
@@ -132,22 +132,6 @@ function getContextUsageInfo(tokenManager?: any, toolResultManager?: any): strin
     // Context usage determination failed - continue without warning
     logger.warn('Failed to determine context usage:', formatError(error));
     return '';
-  }
-}
-
-/**
- * Get the current git branch name
- */
-function getGitBranch(): string | null {
-  try {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf-8',
-      cwd: process.cwd(),
-      stdio: ['pipe', 'pipe', 'ignore']
-    }).trim();
-    return branch || null;
-  } catch (error) {
-    return null;
   }
 }
 

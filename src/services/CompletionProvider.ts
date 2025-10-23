@@ -11,6 +11,8 @@
 import { promises as fs } from 'fs';
 import { dirname, basename } from 'path';
 import { AgentManager } from './AgentManager.js';
+import { logger } from './Logger.js';
+import { formatError } from '../utils/errorUtils.js';
 
 export type CompletionType = 'command' | 'file' | 'agent' | 'option';
 
@@ -443,7 +445,8 @@ export class CompletionProvider {
 
       return completions.slice(0, 20); // Limit to 20 results
     } catch (error) {
-      // Directory doesn't exist or can't be read
+      // Directory doesn't exist or can't be read - this is expected for new installations
+      logger.debug(`Unable to read command directory: ${formatError(error)}`);
       return [];
     }
   }
@@ -474,7 +477,8 @@ export class CompletionProvider {
 
       return this.agentNamesCache;
     } catch (error) {
-      // Directory doesn't exist or can't be read
+      // Directory doesn't exist or can't be read - this is expected for new installations
+      logger.debug(`Unable to read command directory: ${formatError(error)}`);
       return [];
     }
   }

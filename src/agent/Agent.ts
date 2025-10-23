@@ -23,6 +23,7 @@ import { ConfigManager } from '../services/ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
 import { Message, ActivityEventType, Config } from '../types/index.js';
 import { logger } from '../services/Logger.js';
+import { formatError } from '../utils/errorUtils.js';
 
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
@@ -56,8 +57,14 @@ export class Agent {
   // Conversation state
   private messages: Message[] = [];
   private requestInProgress: boolean = false;
+
+  // Interruption state - consolidated for clarity
   private interrupted: boolean = false;
-  private wasInterrupted: boolean = false; // Track if last request was interrupted
+  private wasInterrupted: boolean = false;
+  private interruptionContext: {
+    reason: string;
+    isTimeout: boolean;
+  } = { reason: '', isTimeout: false };
 
   // Context tracking (isolated per agent)
   private tokenManager: TokenManager;
@@ -65,6 +72,12 @@ export class Agent {
 
   // Agent instance ID for debugging
   private readonly instanceId: string;
+
+  // Activity watchdog - detects agents stuck generating tokens without tool calls
+  private lastToolCallTime: number = Date.now();
+  private activityWatchdogInterval: NodeJS.Timeout | null = null;
+  private readonly activityTimeoutMs: number;
+  private static readonly WATCHDOG_CHECK_INTERVAL_MS = 10000;
 
   constructor(
     modelClient: ModelClient,
@@ -82,6 +95,13 @@ export class Agent {
     // Generate unique instance ID for debugging
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
+
+    // Set activity timeout (convert seconds to milliseconds)
+    // Only enable for specialized agents (subagents) to detect infinite loops
+    this.activityTimeoutMs = config.config.tool_call_activity_timeout * 1000;
+    if (config.isSpecializedAgent && this.activityTimeoutMs > 0) {
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Activity timeout enabled:', this.activityTimeoutMs, 'ms');
+    }
 
     // Create agent's own TokenManager for isolated context tracking
     this.tokenManager = new TokenManager(config.config.context_size);
@@ -135,6 +155,75 @@ export class Agent {
   }
 
   /**
+   * Reset the tool call activity timer
+   * Called by ToolOrchestrator when a tool call is executed
+   */
+  resetToolCallActivity(): void {
+    this.lastToolCallTime = Date.now();
+    logger.debug('[AGENT_ACTIVITY]', this.instanceId, 'Tool call activity reset');
+  }
+
+  /**
+   * Start watchdog timer for tool call activity
+   *
+   * Monitors specialized agents (subagents) for token generation without tool calls.
+   * If no tool calls occur within the timeout period, the agent is interrupted.
+   */
+  private startActivityWatchdog(): void {
+    // Only enable for specialized agents (subagents)
+    if (!this.config.isSpecializedAgent || this.activityTimeoutMs <= 0) {
+      return;
+    }
+
+    // Reset activity timer at start
+    this.lastToolCallTime = Date.now();
+
+    this.activityWatchdogInterval = setInterval(() => {
+      const elapsedMs = Date.now() - this.lastToolCallTime;
+
+      if (elapsedMs > this.activityTimeoutMs) {
+        this.handleActivityTimeout(elapsedMs);
+      }
+    }, Agent.WATCHDOG_CHECK_INTERVAL_MS);
+
+    logger.debug('[AGENT_ACTIVITY]', this.instanceId, 'Activity watchdog started');
+  }
+
+  /**
+   * Handle activity timeout by interrupting the agent
+   */
+  private handleActivityTimeout(elapsedMs: number): void {
+    const elapsedSeconds = Math.round(elapsedMs / 1000);
+    const timeoutSeconds = this.activityTimeoutMs / 1000;
+
+    logger.warn(
+      '[AGENT_ACTIVITY]', this.instanceId,
+      `Activity timeout: ${elapsedSeconds}s since last tool call (limit: ${timeoutSeconds}s)`
+    );
+
+    // Set interruption context
+    this.interruptionContext = {
+      reason: `Agent stuck: no tool calls for ${elapsedSeconds} seconds (timeout: ${timeoutSeconds}s)`,
+      isTimeout: true,
+    };
+
+    // Interrupt and stop watchdog
+    this.interrupt();
+    this.stopActivityWatchdog();
+  }
+
+  /**
+   * Stop the activity watchdog timer
+   */
+  private stopActivityWatchdog(): void {
+    if (this.activityWatchdogInterval) {
+      clearInterval(this.activityWatchdogInterval);
+      this.activityWatchdogInterval = null;
+      logger.debug('[AGENT_ACTIVITY]', this.instanceId, 'Activity watchdog stopped');
+    }
+  }
+
+  /**
    * Send a user message and get a response
    *
    * Main entry point for conversation turns. Handles:
@@ -147,6 +236,9 @@ export class Agent {
    * @returns Promise resolving to the assistant's final response
    */
   async sendMessage(message: string): Promise<string> {
+    // Start activity watchdog for specialized agents
+    this.startActivityWatchdog();
+
     // Add user message
     const userMessage: Message = {
       role: 'user',
@@ -183,14 +275,14 @@ export class Agent {
         let reminderContent = '<system-reminder>\n';
 
         if (todos.length === 0) {
-          reminderContent += 'No todos exist yet. For multi-step tasks, consider creating a todo list using todo_write BEFORE executing other tools. This helps track progress and ensures nothing is missed.\n';
+          reminderContent += 'The todo list is currently empty. For complex multi-step tasks (3+ steps) or non-trivial operations, consider creating a todo list using todo_write. This helps track progress and ensures nothing is missed.\n';
         } else {
           reminderContent += 'Current todos:\n';
           todos.forEach((todo: any, idx: number) => {
             const status = todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '→' : '○';
             reminderContent += `${idx + 1}. [${status}] ${todo.task}\n`;
           });
-          reminderContent += '\nBefore proceeding with tool calls, consider if this list needs updates based on the user\'s new request. Update using todo_write if needed.\n';
+          reminderContent += '\nConsider if this list needs updates based on the user\'s new request. Remember: exactly ONE task must be in_progress when working. Update using todo_write if needed.\n';
         }
 
         reminderContent += '</system-reminder>';
@@ -235,26 +327,64 @@ export class Agent {
       return finalResponse;
     } catch (error) {
       if (this.interrupted || (error instanceof Error && error.message.includes('interrupted'))) {
-        // Mark that this request was interrupted
-        this.wasInterrupted = true;
-        return '[Request interrupted by user]';
+        return this.handleInterruption();
       }
       throw error;
     } finally {
-      this.requestInProgress = false;
-      this.interrupted = false;
+      this.cleanupRequestState();
     }
+  }
+
+  /**
+   * Handle request interruption
+   *
+   * For timeouts on specialized agents, throws an error (tool failure).
+   * For user interruptions or main agent, returns a message.
+   */
+  private handleInterruption(): string {
+    this.wasInterrupted = true;
+
+    const message = this.interruptionContext.reason || '[Request interrupted by user]';
+    const wasTimeout = this.interruptionContext.isTimeout;
+
+    // Clear interruption state
+    this.interruptionContext = { reason: '', isTimeout: false };
+
+    // Timeouts on subagents should fail as tool errors
+    if (wasTimeout && this.config.isSpecializedAgent) {
+      throw new Error(message);
+    }
+
+    // User interruptions return message gracefully
+    return message;
+  }
+
+  /**
+   * Clean up request state after completion or error
+   */
+  private cleanupRequestState(): void {
+    this.requestInProgress = false;
+    this.interrupted = false;
+    this.interruptionContext = { reason: '', isTimeout: false };
+    this.stopActivityWatchdog();
   }
 
   /**
    * Interrupt the current request
    *
    * Called when user presses Ctrl+C during an ongoing request.
-   * Sets a flag that will cause the request to abort gracefully.
+   * Immediately cancels the LLM request and sets interrupt flag for graceful cleanup.
    */
   interrupt(): void {
     if (this.requestInProgress) {
       this.interrupted = true;
+
+      // Cancel ongoing LLM request immediately
+      this.cancel();
+
+      // Stop activity watchdog
+      this.stopActivityWatchdog();
+
       this.emitEvent({
         id: this.generateId(),
         type: ActivityEventType.AGENT_END,
@@ -367,7 +497,7 @@ export class Agent {
         id: this.generateId(),
         type: ActivityEventType.ERROR,
         timestamp: Date.now(),
-        data: { error: error instanceof Error ? error.message : String(error) },
+        data: { error: formatError(error) },
       });
 
       throw error;
@@ -1021,10 +1151,17 @@ export class Agent {
    * NOT close it. Only the main agent should close the shared client.
    */
   async cleanup(): Promise<void> {
+    logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Cleanup started');
+
+    // Stop activity watchdog
+    this.stopActivityWatchdog();
+
     // Only close the model client if this is NOT a specialized subagent
     // Subagents share the client and shouldn't close it
     if (!this.config.isSpecializedAgent && this.modelClient.close) {
       await this.modelClient.close();
     }
+
+    logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Cleanup completed');
   }
 }

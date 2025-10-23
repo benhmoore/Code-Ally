@@ -8,8 +8,9 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { formatError } from '../utils/errorUtils.js';
+import { resolvePath } from '../utils/pathUtils.js';
 import * as fs from 'fs/promises';
-import * as path from 'path';
 
 type LineOperation = 'insert' | 'delete' | 'replace';
 
@@ -76,53 +77,51 @@ export class LineEditTool extends BaseTool {
       return; // Skip preview if invalid args
     }
 
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(process.cwd(), filePath);
+    const absolutePath = resolvePath(filePath);
 
-    try {
-      await fs.access(absolutePath);
-      const fileContent = await fs.readFile(absolutePath, 'utf-8');
+    await this.safelyEmitDiffPreview(
+      absolutePath,
+      async () => {
+        await fs.access(absolutePath);
+        const fileContent = await fs.readFile(absolutePath, 'utf-8');
 
-      // Detect line ending style
-      const hasWindowsLineEndings = fileContent.includes('\r\n');
-      const lineEnding = hasWindowsLineEndings ? '\r\n' : '\n';
+        // Detect line ending style
+        const hasWindowsLineEndings = fileContent.includes('\r\n');
+        const lineEnding = hasWindowsLineEndings ? '\r\n' : '\n';
 
-      // Split into lines
-      const lines = fileContent.split('\n').map((line, index, arr) => {
-        if (index === arr.length - 1 && !fileContent.endsWith('\n')) {
-          return line;
-        }
-        return line.replace(/\r$/, '');
-      });
-
-      // Perform operation for preview
-      let modifiedLines: string[];
-      switch (operation) {
-        case 'insert':
-          modifiedLines = this.performInsert(lines, lineNumber, content);
-          break;
-        case 'delete':
-          const deleteResult = this.performDelete(lines, lineNumber, numLines, lines.length);
-          if (deleteResult.error) {
-            return; // Skip preview if operation would fail
+        // Split into lines
+        const lines = fileContent.split('\n').map((line, index, arr) => {
+          if (index === arr.length - 1 && !fileContent.endsWith('\n')) {
+            return line;
           }
-          modifiedLines = deleteResult.lines!;
-          break;
-        case 'replace':
-          modifiedLines = this.performReplace(lines, lineNumber, content);
-          break;
-        default:
-          return;
-      }
+          return line.replace(/\r$/, '');
+        });
 
-      const modifiedContent = modifiedLines.join(lineEnding);
+        // Perform operation for preview
+        let modifiedLines: string[];
+        switch (operation) {
+          case 'insert':
+            modifiedLines = this.performInsert(lines, lineNumber, content);
+            break;
+          case 'delete':
+            const deleteResult = this.performDelete(lines, lineNumber, numLines, lines.length);
+            if (deleteResult.error) {
+              throw new Error('Delete operation would fail'); // Skip preview
+            }
+            modifiedLines = deleteResult.lines!;
+            break;
+          case 'replace':
+            modifiedLines = this.performReplace(lines, lineNumber, content);
+            break;
+          default:
+            throw new Error('Invalid operation');
+        }
 
-      // Emit diff preview
-      this.emitDiffPreview(fileContent, modifiedContent, absolutePath, 'line_edit');
-    } catch {
-      // Silently fail preview - let actual execute handle errors
-    }
+        const modifiedContent = modifiedLines.join(lineEnding);
+        return { oldContent: fileContent, newContent: modifiedContent };
+      },
+      'line_edit'
+    );
   }
 
   protected async executeImpl(args: any): Promise<ToolResult> {
@@ -188,9 +187,7 @@ export class LineEditTool extends BaseTool {
     }
 
     // Resolve absolute path
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(process.cwd(), filePath);
+    const absolutePath = resolvePath(filePath);
 
     try {
       // Check if file exists
@@ -289,7 +286,7 @@ export class LineEditTool extends BaseTool {
       });
     } catch (error) {
       return this.formatErrorResponse(
-        `Failed to edit file: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to edit file: ${formatError(error)}`,
         'system_error'
       );
     }

@@ -9,6 +9,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolValidator } from './ToolValidator.js';
 import { FunctionDefinition, ToolResult } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { formatError } from '../utils/errorUtils.js';
 
 export class ToolManager {
   private tools: Map<string, BaseTool>;
@@ -178,7 +179,7 @@ export class ToolManager {
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: formatError(error),
         error_type: 'system_error',
       };
     }

@@ -55,6 +55,7 @@ async function exampleConversation() {
       auto_confirm: false,
       check_context_msg: true,
       parallel_tools: true,
+      tool_call_activity_timeout: 120,
       theme: 'auto',
       compact_threshold: 0.85,
       show_token_usage: true,

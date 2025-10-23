@@ -9,6 +9,7 @@ import { ToolResult, ActivityEvent, ActivityEventType } from '../types/index.js'
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
+import { formatError } from '../utils/errorUtils.js';
 
 export abstract class BaseTool {
   /**
@@ -118,7 +119,7 @@ export abstract class BaseTool {
       return result;
     } catch (error) {
       const errorResult = this.formatErrorResponse(
-        error instanceof Error ? error.message : String(error),
+        formatError(error),
         'system_error'
       );
       return errorResult;
@@ -207,6 +208,27 @@ export abstract class BaseTool {
         operationType,
       },
     });
+  }
+
+  /**
+   * Helper for safely generating and emitting a diff preview
+   * Catches errors silently to avoid disrupting the preview flow
+   *
+   * @param filePath - Path to the file being modified
+   * @param generatePreview - Async function that reads file and generates preview content
+   * @param operationType - Type of operation being performed
+   */
+  protected async safelyEmitDiffPreview(
+    filePath: string,
+    generatePreview: () => Promise<{ oldContent: string; newContent: string }>,
+    operationType: 'edit' | 'write' | 'line_edit' = 'edit'
+  ): Promise<void> {
+    try {
+      const { oldContent, newContent } = await generatePreview();
+      this.emitDiffPreview(oldContent, newContent, filePath, operationType);
+    } catch {
+      // Silently fail preview - let actual execute handle errors
+    }
   }
 
   /**

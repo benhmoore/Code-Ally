@@ -18,6 +18,7 @@ import { Agent, AgentConfig } from '../agent/Agent.js';
 import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
+import { formatError } from '../utils/errorUtils.js';
 
 export class AgentTool extends BaseTool {
   readonly name = 'agent';
@@ -131,7 +132,7 @@ export class AgentTool extends BaseTool {
       }
     } catch (error) {
       return this.formatErrorResponse(
-        `Agent execution failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Agent execution failed: ${formatError(error)}`,
         'execution_error'
       );
     }
@@ -209,7 +210,7 @@ export class AgentTool extends BaseTool {
     } catch (error) {
       return {
         success: false,
-        error: `Error executing agent task: ${error instanceof Error ? error.message : String(error)}`,
+        error: `Error executing agent task: ${formatError(error)}`,
         agent_used: agentName,
       };
     }

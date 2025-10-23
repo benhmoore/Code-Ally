@@ -10,6 +10,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { FocusManager } from '../services/FocusManager.js';
+import { formatError } from '../utils/errorUtils.js';
 
 export class FocusManagerTool extends BaseTool {
   readonly name = 'focus';
@@ -103,7 +104,7 @@ export class FocusManagerTool extends BaseTool {
       }
     } catch (error) {
       return this.formatErrorResponse(
-        `Error executing focus action: ${error instanceof Error ? error.message : String(error)}`,
+        `Error executing focus action: ${formatError(error)}`,
         'system_error'
       );
     }

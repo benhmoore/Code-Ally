@@ -71,23 +71,21 @@ export class EditTool extends BaseTool {
 
     const absolutePath = resolvePath(filePath);
 
-    try {
-      await fs.access(absolutePath);
-      const content = await fs.readFile(absolutePath, 'utf-8');
+    await this.safelyEmitDiffPreview(
+      absolutePath,
+      async () => {
+        await fs.access(absolutePath);
+        const content = await fs.readFile(absolutePath, 'utf-8');
 
-      // Generate preview of changes
-      let modifiedContent: string;
-      if (replaceAll) {
-        modifiedContent = content.split(oldString).join(newString);
-      } else {
-        modifiedContent = content.replace(oldString, newString);
-      }
+        // Generate preview of changes
+        const modifiedContent = replaceAll
+          ? content.split(oldString).join(newString)
+          : content.replace(oldString, newString);
 
-      // Emit diff preview
-      this.emitDiffPreview(content, modifiedContent, absolutePath, 'edit');
-    } catch {
-      // Silently fail preview - let actual execute handle errors
-    }
+        return { oldContent: content, newContent: modifiedContent };
+      },
+      'edit'
+    );
   }
 
   protected async executeImpl(args: any): Promise<ToolResult> {

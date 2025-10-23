@@ -137,7 +137,7 @@ export class OllamaClient extends ModelClient {
    * @returns Promise resolving to the LLM's response
    */
   async send(messages: Message[], options: SendOptions = {}): Promise<LLMResponse> {
-    const { functions, stream = false, maxRetries: _maxRetries = 3 } = options;
+    const { functions, stream = false, maxRetries: _maxRetries = 3, temperature } = options;
     const maxRetries = _maxRetries;
 
     // Generate unique request ID for this request
@@ -145,7 +145,7 @@ export class OllamaClient extends ModelClient {
     logger.debug('[OLLAMA_CLIENT] Starting request:', requestId);
 
     // Prepare payload
-    const payload = this.preparePayload(messages, functions, stream);
+    const payload = this.preparePayload(messages, functions, stream, temperature);
 
     try {
       // Retry loop with exponential backoff
@@ -237,14 +237,15 @@ export class OllamaClient extends ModelClient {
   private preparePayload(
     messages: Message[],
     functions?: FunctionDefinition[],
-    stream: boolean = false
+    stream: boolean = false,
+    temperature?: number
   ): OllamaPayload {
     const payload: OllamaPayload = {
       model: this._modelName,
       messages,
       stream,
       options: {
-        temperature: this.temperature,
+        temperature: temperature !== undefined ? temperature : this.temperature,
         num_ctx: this.contextSize,
         num_predict: this.maxTokens,
       },

@@ -11,6 +11,7 @@ import { tokenCounter } from '../services/TokenCounter.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
 import { isBinaryContent } from '../utils/fileUtils.js';
+import { formatError } from '../utils/errorUtils.js';
 import * as fs from 'fs/promises';
 
 export class ReadTool extends BaseTool {
@@ -122,7 +123,7 @@ export class ReadTool extends BaseTool {
         results.push(content);
         filesRead++;
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = formatError(error);
         errors.push(`${filePath}: ${errorMsg}`);
         results.push(
           `=== ${filePath} ===\nError: ${errorMsg}`
@@ -244,13 +245,20 @@ export class ReadTool extends BaseTool {
     }
 
     const lines: string[] = [];
-    lines.push(`Read ${result.files_read} file(s)`);
+
+    // Show warning for partial failures
+    if (result.partial_failure) {
+      const failedCount = result.files_failed ?? 0;
+      lines.push(`⚠️  Read ${result.files_read} file(s), ${failedCount} failed`);
+    } else {
+      lines.push(`Read ${result.files_read} file(s)`);
+    }
 
     if (result.content) {
-      const contentLines = result.content.split('\n').slice(0, maxLines - 1);
+      const contentLines = result.content.split('\n').slice(0, maxLines - lines.length);
       lines.push(...contentLines);
 
-      if (result.content.split('\n').length > maxLines - 1) {
+      if (result.content.split('\n').length > contentLines.length) {
         lines.push('...');
       }
     }

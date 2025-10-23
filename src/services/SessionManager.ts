@@ -39,6 +39,9 @@ export class SessionManager implements IService {
   private maxSessions: number;
   private titleGenerator: any | null = null;
 
+  // Write queue to serialize file operations and prevent race conditions
+  private writeQueue: Map<string, Promise<void>> = new Map();
+
   constructor(config: SessionManagerConfig = {}) {
     this.sessionsDir = SESSIONS_DIR;
     this.maxSessions = config.maxSessions ?? 10;
@@ -53,6 +56,36 @@ export class SessionManager implements IService {
   async initialize(): Promise<void> {
     await fs.mkdir(this.sessionsDir, { recursive: true });
     await fs.mkdir(join(this.sessionsDir, '.quarantine'), { recursive: true });
+
+    // Clean up any stale temporary files from previous crashes
+    await this.cleanupTempFiles();
+  }
+
+  /**
+   * Clean up stale temporary files left over from crashes
+   */
+  private async cleanupTempFiles(): Promise<void> {
+    try {
+      const files = await fs.readdir(this.sessionsDir);
+      const tempFiles = files.filter(file => file.includes('.tmp.'));
+
+      for (const tempFile of tempFiles) {
+        try {
+          const tempPath = join(this.sessionsDir, tempFile);
+          await fs.unlink(tempPath);
+          logger.debug(`[SESSION] Cleaned up stale temp file: ${tempFile}`);
+        } catch (error) {
+          // Ignore errors cleaning up temp files
+        }
+      }
+
+      if (tempFiles.length > 0) {
+        logger.info(`[SESSION] Cleaned up ${tempFiles.length} stale temporary file(s)`);
+      }
+    } catch (error) {
+      // Ignore errors during cleanup
+      logger.debug('[SESSION] Error during temp file cleanup:', error);
+    }
   }
 
   /**
@@ -93,7 +126,12 @@ export class SessionManager implements IService {
     } catch (error) {
       logger.error(`Failed to quarantine session ${sessionName}:`, error);
       // Only delete if quarantine fails
-      await fs.unlink(sessionPath).catch(() => {});
+      try {
+        await fs.unlink(sessionPath);
+        logger.warn(`Deleted corrupted session file after quarantine failure: ${sessionName}`);
+      } catch (deleteError) {
+        logger.error(`Failed to delete session ${sessionName} after quarantine failure:`, deleteError);
+      }
     }
   }
 
@@ -158,14 +196,59 @@ export class SessionManager implements IService {
   }
 
   /**
-   * Save session data to disk
+   * Save session data to disk atomically with write serialization
+   *
+   * Uses atomic write (temp file + rename) and queues writes per session
+   * to prevent race conditions and file corruption.
    *
    * @param sessionName - Name of the session
    * @param session - Complete session object
    */
   private async saveSessionData(sessionName: string, session: Session): Promise<void> {
-    const sessionPath = this.getSessionPath(sessionName);
-    await fs.writeFile(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
+    // Serialize writes per session to prevent concurrent writes to same file
+    const existingWrite = this.writeQueue.get(sessionName);
+
+    const writePromise = (async () => {
+      // Wait for any existing write to this session to complete
+      if (existingWrite) {
+        await existingWrite.catch(() => {
+          // Ignore errors from previous writes, we'll try again
+        });
+      }
+
+      const sessionPath = this.getSessionPath(sessionName);
+      const tempPath = `${sessionPath}.tmp.${Date.now()}.${Math.random().toString(36).substring(7)}`;
+
+      try {
+        // Write to temporary file first
+        await fs.writeFile(tempPath, JSON.stringify(session, null, 2), 'utf-8');
+
+        // Atomic rename - this is the critical operation
+        // On POSIX systems, rename() is atomic and will replace the target file
+        await fs.rename(tempPath, sessionPath);
+
+        logger.debug(`[SESSION] Saved session ${sessionName} atomically`);
+      } catch (error) {
+        // Clean up temp file if it exists
+        try {
+          await fs.unlink(tempPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+        throw error;
+      }
+    })();
+
+    // Track this write
+    this.writeQueue.set(sessionName, writePromise);
+
+    // Wait for write to complete
+    await writePromise;
+
+    // Clean up completed write from queue
+    if (this.writeQueue.get(sessionName) === writePromise) {
+      this.writeQueue.delete(sessionName);
+    }
   }
 
   /**

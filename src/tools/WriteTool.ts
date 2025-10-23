@@ -65,21 +65,21 @@ export class WriteTool extends BaseTool {
 
     const absolutePath = resolvePath(filePath);
 
-    try {
-      // Check if file exists and read existing content
-      let existingContent = '';
-      try {
-        await fs.access(absolutePath);
-        existingContent = await fs.readFile(absolutePath, 'utf-8');
-      } catch {
-        // File doesn't exist - that's ok for write
-      }
-
-      // Emit diff preview
-      this.emitDiffPreview(existingContent, content, absolutePath, 'write');
-    } catch {
-      // Silently fail preview - let actual execute handle errors
-    }
+    await this.safelyEmitDiffPreview(
+      absolutePath,
+      async () => {
+        // Check if file exists and read existing content
+        let existingContent = '';
+        try {
+          await fs.access(absolutePath);
+          existingContent = await fs.readFile(absolutePath, 'utf-8');
+        } catch {
+          // File doesn't exist - that's ok for write
+        }
+        return { oldContent: existingContent, newContent: content };
+      },
+      'write'
+    );
   }
 
   protected async executeImpl(args: any): Promise<ToolResult> {

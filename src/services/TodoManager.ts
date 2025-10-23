@@ -69,9 +69,20 @@ export class TodoManager {
   }
 
   /**
-   * Mark a task as complete by index (0-based, counting only incomplete tasks)
+   * Mark a task as complete by index
    *
-   * @param index - Index of incomplete task to complete
+   * IMPORTANT: Index refers to INCOMPLETE tasks only, not absolute array position.
+   * This means index 0 refers to the first pending/in_progress task, regardless of
+   * how many completed tasks appear before it in the array.
+   *
+   * Example:
+   *   todos = [
+   *     {task: "A", status: "completed"},
+   *     {task: "B", status: "pending"},     // ← index 0 for completion
+   *     {task: "C", status: "in_progress"}  // ← index 1 for completion
+   *   ]
+   *
+   * @param index - Index of incomplete task to complete (0-based)
    * @returns Completed todo item or null if index out of bounds
    */
   completeTodoByIndex(index: number): TodoItem | null {

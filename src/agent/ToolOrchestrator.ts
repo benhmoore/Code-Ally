@@ -23,6 +23,7 @@ import { DirectoryTraversalError, PermissionDeniedError } from '../security/Path
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
+import { formatError } from '../utils/errorUtils.js';
 
 /**
  * Tool call structure from LLM
@@ -212,7 +213,7 @@ export class ToolOrchestrator {
         parentId: this.parentCallId, // Use orchestrator's parent context
         data: {
           groupExecution: true,
-          error: error instanceof Error ? error.message : String(error),
+          error: formatError(error),
         },
       });
 
@@ -252,6 +253,9 @@ export class ToolOrchestrator {
     // If we have a parent context from a nested agent, use it; otherwise use the group parentId
     const effectiveParentId = this.parentCallId || parentId;
     logger.debug('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId);
+
+    // Reset tool call activity timer to prevent timeout
+    this.agent.resetToolCallActivity();
 
     // Auto-promote first pending todo to in_progress
     // This helps the agent track progress through the todo list
@@ -352,7 +356,7 @@ export class ToolOrchestrator {
       } else {
         result = {
           success: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: formatError(error),
           error_type: 'system_error',
         };
       }

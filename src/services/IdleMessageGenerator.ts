@@ -22,6 +22,18 @@ export interface IdleContext {
   lastUserMessage?: string;
   /** Last assistant response */
   lastAssistantMessage?: string;
+  /** Number of messages in the conversation */
+  messageCount?: number;
+  /** Session duration in seconds */
+  sessionDuration?: number;
+  /** Current git branch name */
+  gitBranch?: string;
+  /** User's home directory name */
+  homeDirectory?: string;
+  /** Total number of previous sessions */
+  sessionCount?: number;
+  /** Number of sessions created today */
+  sessionsToday?: number;
 }
 
 /**
@@ -76,6 +88,7 @@ export class IdleMessageGenerator {
         [{ role: 'user', content: messagePrompt }],
         {
           stream: false,
+          temperature: 1.2, // Higher temperature for more creative/surprising messages
         }
       );
 
@@ -163,6 +176,7 @@ Assistant: ${context.lastAssistantMessage.slice(0, 150)}`;
 
     // Add time context
     let timeContext = '';
+    let dayOfWeek = '';
     if (context?.currentTime) {
       const hour = context.currentTime.getHours();
       const timeOfDay = hour < 6 ? 'very early morning' :
@@ -170,14 +184,85 @@ Assistant: ${context.lastAssistantMessage.slice(0, 150)}`;
                         hour < 17 ? 'afternoon' :
                         hour < 21 ? 'evening' :
                         'late night';
-      timeContext = `\n\nCurrent time: ${context.currentTime.toLocaleTimeString()} (${timeOfDay})`;
+
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      dayOfWeek = days[context.currentTime.getDay()] || 'Unknown';
+
+      timeContext = `\n\nCurrent time: ${context.currentTime.toLocaleTimeString()} (${timeOfDay}, ${dayOfWeek})`;
     }
 
-    return `You are Ally, an AI coding assistant represented by a cute chick mascot. Generate a single, very short (max 6 words), casual, upbeat, and humorous idle message to display while waiting for the user's next input.
+    // Add message count context
+    let messageCountContext = '';
+    if (context?.messageCount !== undefined) {
+      messageCountContext = `\n\nConversation length: ${context.messageCount} messages`;
+      if (context.messageCount > 30) {
+        messageCountContext += ' (long conversation - occasionally make explicit jokes about this, like "42 message marathon!" or "Haven\'t talked this much all day!")';
+      }
+    }
 
-Be playful, witty, and use casual language or slang when appropriate. Keep it fun and lighthearted! You can occasionally reference being a helpful chick assistant (but don't overdo it).
+    // Add session duration context
+    let sessionDurationContext = '';
+    if (context?.sessionDuration !== undefined) {
+      const minutes = Math.floor(context.sessionDuration / 60);
+      const hours = Math.floor(minutes / 60);
+      const displayMins = minutes % 60;
 
-You can subtly reference what was just discussed, active tasks, the project context, or make time-appropriate comments.
+      if (hours > 0) {
+        sessionDurationContext = `\n\nSession duration: ${hours}h ${displayMins}m`;
+      } else if (minutes > 0) {
+        sessionDurationContext = `\n\nSession duration: ${minutes} minutes`;
+      }
+
+      if (minutes > 60) {
+        sessionDurationContext += ' (long session - can joke about this!)';
+      }
+    }
+
+    // Add git branch context
+    let gitBranchContext = '';
+    if (context?.gitBranch) {
+      gitBranchContext = `\n\nGit branch: ${context.gitBranch}`;
+      if (context.gitBranch.includes('fix') || context.gitBranch.includes('hotfix')) {
+        gitBranchContext += ' (fixing bugs - can joke about this!)';
+      } else if (context.gitBranch.includes('feature') || context.gitBranch.includes('feat')) {
+        gitBranchContext += ' (building features!)';
+      }
+    }
+
+    // Add home directory context
+    let homeDirContext = '';
+    if (context?.homeDirectory) {
+      homeDirContext = `\n\nUser's home directory name: ${context.homeDirectory} (you can occasionally make playful jokes about their username!)`;
+    }
+
+    // Add session count context
+    let sessionCountContext = '';
+    if (context?.sessionCount !== undefined) {
+      sessionCountContext = `\n\nTotal previous sessions: ${context.sessionCount}`;
+      if (context.sessionCount >= 5) {
+        sessionCountContext += ' (lots of history! Can make humorous promises like "We won\'t make those mistakes again!" or reference their experience)';
+      }
+    }
+
+    // Add sessions today context
+    let sessionsTodayContext = '';
+    if (context?.sessionsToday !== undefined && context.sessionsToday > 0) {
+      sessionsTodayContext = `\n\nSessions created today: ${context.sessionsToday}`;
+      if (context.sessionsToday >= 3) {
+        sessionsTodayContext += ' (busy day! Can joke about how much they\'re chatting with you today)';
+      }
+    }
+
+    return `You are Ally, a cheeky chick mascot with ADHD energy. Generate ONE surprising, unexpected idle message (max 6 words).
+
+CRITICAL RULES:
+- BE BOLD and SURPRISING - safe greetings are BORING
+- USE the context provided - reference real details when possible
+- NO generic "ready to code" or "let's go" phrases
+- VARIETY is key - be creative and unpredictable
+- Mix humor styles: fake facts, empty promises, playful observations, self-aware jokes
+
+Think: What would make someone laugh or smile unexpectedly?
 
 Examples:
 - "Let's goooo!"
@@ -193,7 +278,35 @@ Examples:
 - "Feeling lucky today!"
 - "Bring it on!"
 - "Code time!"
-${lastExchangeContext}${cwdContext}${todoContext}${timeContext}
+- "We're on a roll!" (if long conversation)
+- "Still going strong!" (if long conversation)
+- "27 message marathon session!" (if long conversation - be explicit!)
+- "Haven't talked this much all day!" (if long conversation)
+- "My beak's getting tired!" (if very long conversation)
+- "Is this a record?!" (if very long conversation)
+- "Happy Monday!" (day of week)
+- "TGIF vibes!" (if Friday)
+- "Sunday Funday coding!" (if Sunday)
+- "Hump day grind!" (if Wednesday)
+- "2 hour session! Legend!" (if long session)
+- "We've been at this 90 minutes!" (session duration)
+- "Working on 'fix-the-fix' branch?" (referencing branch name)
+- "Feature branch energy!" (if on feature branch)
+- "Is your name really 'bhm128'?" (playful username joke)
+- "Nice username, bhm128!" (home directory reference)
+- "Nothing will go wrong today!" (humorous empty promise)
+- "This time it'll work, promise!" (humorous promise)
+- "No mistakes this time, right?" (if lots of sessions)
+- "We're getting good at this!" (if lots of sessions)
+- "Experts say code yourself!" (fake expert advice)
+- "Studies show: more bugs = more fun!" (fake expert advice)
+- "Research suggests coffee helps!" (fake expert wisdom)
+- "Pros recommend: just ship it!" (fake expert advice)
+- "You're really chatting me up today!" (if multiple sessions today)
+- "Third session today? I'm flattered!" (if busy day)
+- "We're best friends now, right?" (if lots of sessions today)
+- "Someone's productive today!" (if multiple sessions)
+${lastExchangeContext}${cwdContext}${todoContext}${timeContext}${messageCountContext}${sessionDurationContext}${gitBranchContext}${homeDirContext}${sessionCountContext}${sessionsTodayContext}
 
 Reply with ONLY the message, nothing else. No quotes, no punctuation unless natural.`;
   }

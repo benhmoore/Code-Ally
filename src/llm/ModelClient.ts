@@ -23,6 +23,8 @@ export interface SendOptions {
   stream?: boolean;
   /** Maximum number of retry attempts */
   maxRetries?: number;
+  /** Temperature for response generation (0.0 to 2.0, higher = more creative) */
+  temperature?: number;
 }
 
 /**

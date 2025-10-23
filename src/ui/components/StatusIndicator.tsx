@@ -13,6 +13,9 @@ import { TodoManager } from '../../services/TodoManager.js';
 import { IdleMessageGenerator } from '../../services/IdleMessageGenerator.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { formatElapsed } from '../utils/timeUtils.js';
+import { getGitBranch } from '../../utils/gitUtils.js';
+import * as os from 'os';
+import * as path from 'path';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -49,6 +52,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   const previousTaskRef = useRef<string | null>(null);
   const wasProcessingRef = useRef<boolean>(isProcessing);
   const hasStartedRef = useRef<boolean>(false);
+  const sessionStartTimeRef = useRef<number>(Date.now());
 
   // Reset timer when processing or compacting starts
   useEffect(() => {
@@ -62,61 +66,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   // Generate idle message on startup
   useEffect(() => {
-    try {
-      const registry = ServiceRegistry.getInstance();
-      const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
-      const todoManager = registry.get<TodoManager>('todo_manager');
-
-      if (idleMessageGenerator) {
-        // Extract last user and assistant messages
-        const userMessages = (recentMessages as any[]).filter((m: any) => m.role === 'user');
-        const assistantMessages = (recentMessages as any[]).filter((m: any) => m.role === 'assistant');
-        const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1].content : undefined;
-        const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1].content : undefined;
-
-        // Gather context for idle message generation
-        const context: any = {
-          cwd: process.cwd(),
-          currentTime: new Date(),
-          todos: todoManager ? todoManager.getTodos() : [],
-          lastUserMessage,
-          lastAssistantMessage,
-        };
-
-        // Trigger background generation with context on startup
-        idleMessageGenerator.generateMessageBackground(recentMessages as any, context);
-
-        // Poll for updates every second
-        const pollInterval = setInterval(() => {
-          const message = idleMessageGenerator.getCurrentMessage();
-          // Only update if message is not the default "Idle"
-          if (message !== 'Idle') {
-            setIdleMessage(message);
-          }
-        }, 1000);
-
-        return () => clearInterval(pollInterval);
-      }
-    } catch (error) {
-      // Silently handle errors
-    }
-
-    return undefined;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run once on mount
-
-  // Handle idle message generation when transitioning to idle state
-  useEffect(() => {
-    const wasProcessing = wasProcessingRef.current;
-    wasProcessingRef.current = isProcessing;
-
-    // Mark that processing has started at least once
-    if (isProcessing) {
-      hasStartedRef.current = true;
-    }
-
-    // When transitioning from processing to idle, trigger idle message generation
-    if (wasProcessing && !isProcessing && !isCompacting && hasStartedRef.current) {
+    const initIdleMessages = async () => {
       try {
         const registry = ServiceRegistry.getInstance();
         const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
@@ -129,6 +79,40 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1].content : undefined;
           const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1].content : undefined;
 
+          // Get git branch if available
+          const gitBranch = getGitBranch() || undefined;
+
+          // Get home directory name
+          const homeDir = os.homedir();
+          const homeDirectory = path.basename(homeDir);
+
+          // Calculate session duration
+          const sessionDuration = Math.floor((Date.now() - sessionStartTimeRef.current) / 1000);
+
+          // Get session count and sessions created today
+          const sessionManager = registry.get<any>('session_manager');
+          let sessionCount = 0;
+          let sessionsToday = 0;
+          if (sessionManager && typeof sessionManager.getSessionsInfo === 'function') {
+            try {
+              const sessions = await sessionManager.getSessionsInfo();
+              sessionCount = sessions.length;
+
+              // Count sessions created today
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const todayTimestamp = today.getTime();
+
+              sessionsToday = sessions.filter((s: any) => {
+                const sessionDate = new Date(s.last_modified);
+                sessionDate.setHours(0, 0, 0, 0);
+                return sessionDate.getTime() === todayTimestamp;
+              }).length;
+            } catch {
+              // Silently handle errors
+            }
+          }
+
           // Gather context for idle message generation
           const context: any = {
             cwd: process.cwd(),
@@ -136,21 +120,144 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
             todos: todoManager ? todoManager.getTodos() : [],
             lastUserMessage,
             lastAssistantMessage,
+            messageCount: recentMessages.length,
+            sessionDuration,
+            gitBranch,
+            homeDirectory,
+            sessionCount,
+            sessionsToday,
           };
 
-          // Trigger background generation with context
+          // Trigger background generation with context on startup
           idleMessageGenerator.generateMessageBackground(recentMessages as any, context);
-
-          // Note: Polling is already set up by the startup effect
         }
       } catch (error) {
         // Silently handle errors
       }
+    };
+
+    // Start async initialization
+    initIdleMessages();
+
+    // Poll for updates every second
+    const pollInterval = setInterval(() => {
+      try {
+        const registry = ServiceRegistry.getInstance();
+        const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+        if (idleMessageGenerator) {
+          const message = idleMessageGenerator.getCurrentMessage();
+          // Only update if message is not the default "Idle"
+          if (message !== 'Idle') {
+            setIdleMessage(message);
+          }
+        }
+      } catch {
+        // Silently handle errors
+      }
+    }, 1000);
+
+    return () => clearInterval(pollInterval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount
+
+  // Continuous idle message generation - generate new message every minute when idle
+  useEffect(() => {
+    // Only run when completely idle (not processing, not compacting, and has started at least once)
+    if (isProcessing || isCompacting || !hasStartedRef.current) {
+      return;
     }
 
-    // Return empty cleanup if no interval was created
-    return undefined;
+    // Helper function to generate idle message with fresh context
+    const generateIdleMessage = async () => {
+      try {
+        const registry = ServiceRegistry.getInstance();
+        const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+        const todoManager = registry.get<TodoManager>('todo_manager');
+        const sessionManager = registry.get<any>('session_manager');
+
+        if (idleMessageGenerator) {
+          // Extract last user and assistant messages
+          const userMessages = (recentMessages as any[]).filter((m: any) => m.role === 'user');
+          const assistantMessages = (recentMessages as any[]).filter((m: any) => m.role === 'assistant');
+          const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1].content : undefined;
+          const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1].content : undefined;
+
+          // Get git branch if available
+          const gitBranch = getGitBranch() || undefined;
+
+          // Get home directory name
+          const homeDir = os.homedir();
+          const homeDirectory = path.basename(homeDir);
+
+          // Calculate session duration
+          const sessionDuration = Math.floor((Date.now() - sessionStartTimeRef.current) / 1000);
+
+          // Get session count and sessions created today
+          let sessionCount = 0;
+          let sessionsToday = 0;
+          if (sessionManager && typeof sessionManager.getSessionsInfo === 'function') {
+            try {
+              const sessions = await sessionManager.getSessionsInfo();
+              sessionCount = sessions.length;
+
+              // Count sessions created today
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const todayTimestamp = today.getTime();
+
+              sessionsToday = sessions.filter((s: any) => {
+                const sessionDate = new Date(s.last_modified);
+                sessionDate.setHours(0, 0, 0, 0);
+                return sessionDate.getTime() === todayTimestamp;
+              }).length;
+            } catch {
+              // Silently handle errors
+            }
+          }
+
+          // Gather context for idle message generation
+          const context: any = {
+            cwd: process.cwd(),
+            currentTime: new Date(),
+            todos: todoManager ? todoManager.getTodos() : [],
+            lastUserMessage,
+            lastAssistantMessage,
+            messageCount: recentMessages.length,
+            sessionDuration,
+            gitBranch,
+            homeDirectory,
+            sessionCount,
+            sessionsToday,
+          };
+
+          // Trigger background generation with context
+          idleMessageGenerator.generateMessageBackground(recentMessages as any, context);
+        }
+      } catch (error) {
+        // Silently handle errors
+      }
+    };
+
+    // Generate immediately when becoming idle
+    generateIdleMessage();
+
+    // Then generate every 60 seconds while idle
+    const continuousInterval = setInterval(() => {
+      generateIdleMessage();
+    }, 60000); // 60 seconds
+
+    return () => clearInterval(continuousInterval);
   }, [isProcessing, isCompacting, recentMessages]);
+
+  // Track processing state changes to mark when processing has started
+  useEffect(() => {
+    wasProcessingRef.current = isProcessing;
+
+    // Mark that processing has started at least once
+    if (isProcessing) {
+      hasStartedRef.current = true;
+    }
+  }, [isProcessing]);
 
   // Update task status and elapsed time every second
   useEffect(() => {

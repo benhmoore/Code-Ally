@@ -20,6 +20,7 @@ import { TokenManager } from './TokenManager.js';
 import { Message, ActivityEventType } from '../types/index.js';
 import type { ProjectManager } from '../services/ProjectManager.js';
 import type { TodoManager } from '../services/TodoManager.js';
+import { formatError } from '../utils/errorUtils.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -285,7 +286,7 @@ Todo Commands:
     } catch (error) {
       return {
         handled: true,
-        response: `Error updating configuration: ${error instanceof Error ? error.message : String(error)}`,
+        response: `Error updating configuration: ${formatError(error)}`,
       };
     }
   }
@@ -309,7 +310,7 @@ Todo Commands:
     } catch (error) {
       return {
         handled: true,
-        response: `Error resetting configuration: ${error instanceof Error ? error.message : String(error)}`,
+        response: `Error resetting configuration: ${formatError(error)}`,
       };
     }
   }
@@ -366,7 +367,7 @@ Todo Commands:
       } catch (error) {
         return {
           handled: true,
-          response: `Error changing model: ${error instanceof Error ? error.message : String(error)}`,
+          response: `Error changing model: ${formatError(error)}`,
         };
       }
     }
@@ -434,7 +435,7 @@ Todo Commands:
     } catch (error) {
       return {
         handled: true,
-        response: `Error fetching models: ${error instanceof Error ? error.message : String(error)}`,
+        response: `Error fetching models: ${formatError(error)}`,
       };
     }
   }

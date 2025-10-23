@@ -63,6 +63,10 @@ export class GlobTool extends BaseTool {
               type: 'integer',
               description: `Maximum number of results (default: ${TOOL_LIMITS.MAX_SEARCH_RESULTS})`,
             },
+            sort_by: {
+              type: 'string',
+              description: 'Sort order: "modified" for newest first (default), "name" for alphabetical',
+            },
           },
           required: ['pattern'],
         },
@@ -82,6 +86,7 @@ export class GlobTool extends BaseTool {
       Number(args.max_results) || TOOL_LIMITS.MAX_SEARCH_RESULTS,
       TOOL_LIMITS.MAX_SEARCH_RESULTS
     );
+    const sortBy = (args.sort_by as string) || 'modified'; // Default: newest first
 
     if (!pattern) {
       return this.formatErrorResponse(
@@ -155,8 +160,14 @@ export class GlobTool extends BaseTool {
         }
       }
 
-      // Sort by modification time (newest first)
-      fileInfos.sort((a, b) => b.modified - a.modified);
+      // Sort based on sort_by parameter
+      if (sortBy === 'name') {
+        // Alphabetical sort
+        fileInfos.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+      } else {
+        // Default: modification time (newest first)
+        fileInfos.sort((a, b) => b.modified - a.modified);
+      }
 
       // Apply limit
       const totalMatches = fileInfos.length;

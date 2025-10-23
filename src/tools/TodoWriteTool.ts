@@ -10,6 +10,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager, TodoStatus } from '../services/TodoManager.js';
+import { formatError } from '../utils/errorUtils.js';
 
 interface TodoInput {
   content: string;
@@ -20,7 +21,7 @@ interface TodoInput {
 export class TodoWriteTool extends BaseTool {
   readonly name = 'todo_write';
   readonly description =
-    'Create or update the todo list. Required before executing any tools. Each todo needs: content (imperative), status (pending/in_progress/completed), activeForm (present continuous for status display).';
+    'Create or update the todo list for tracking multi-step tasks. Use for complex tasks requiring 3+ distinct steps or non-trivial operations requiring careful planning. Each todo needs: content (imperative form, e.g., "Run tests"), status (pending/in_progress/completed), activeForm (present continuous form, e.g., "Running tests"). Exactly ONE task must be in_progress when incomplete tasks exist.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = false; // Don't clutter chat with todo updates
 
@@ -93,6 +94,35 @@ export class TodoWriteTool extends BaseTool {
       }
     }
 
+    // CRITICAL: Validate exactly ONE in_progress task when incomplete tasks exist (C-1.1)
+    const inProgressCount = todos.filter(t => t.status === 'in_progress').length;
+    const incompleteCount = todos.filter(t => t.status !== 'completed').length;
+
+    if (incompleteCount > 0) {
+      if (inProgressCount === 0) {
+        return this.formatErrorResponse(
+          'At least one incomplete task must be marked as "in_progress". ' +
+          'Mark the task you are currently working on as in_progress.',
+          'validation_error'
+        );
+      }
+      if (inProgressCount > 1) {
+        return this.formatErrorResponse(
+          `Only ONE task can be "in_progress" at a time. Found ${inProgressCount} in_progress tasks. ` +
+          'Mark only your current task as in_progress, others should be pending.',
+          'validation_error'
+        );
+      }
+    }
+
+    if (incompleteCount === 0 && inProgressCount > 0) {
+      return this.formatErrorResponse(
+        'Cannot have in_progress tasks when all other tasks are completed. ' +
+        'Mark the final task as completed.',
+        'validation_error'
+      );
+    }
+
     try {
       const registry = ServiceRegistry.getInstance();
       const todoManager = registry.get<TodoManager>('todo_manager');
@@ -135,7 +165,7 @@ export class TodoWriteTool extends BaseTool {
       });
     } catch (error) {
       return this.formatErrorResponse(
-        `Error updating todos: ${error instanceof Error ? error.message : String(error)}`,
+        `Error updating todos: ${formatError(error)}`,
         'system_error'
       );
     }
