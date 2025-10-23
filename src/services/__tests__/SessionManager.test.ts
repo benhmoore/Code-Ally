@@ -277,7 +277,7 @@ describe('SessionManager', () => {
       expect(infos.length).toBe(2);
       expect(infos[0].session_id).toBeDefined();
       expect(infos[0].display_name).toBeDefined();
-      expect(infos[0].last_modified).toBeDefined();
+      expect(infos[0].last_modified_timestamp).toBeDefined();
       expect(infos[0].message_count).toBeGreaterThanOrEqual(0);
     });
 
@@ -419,6 +419,51 @@ describe('SessionManager', () => {
       expect(sessions.length).toBe(2);
       expect(sessions).toContain('keep-1');
       expect(sessions).toContain('keep-2');
+    });
+  });
+
+  describe('working directory tracking', () => {
+    it('should store working directory when creating session', async () => {
+      const sessionName = await sessionManager.createSession('dir-test');
+      const session = await sessionManager.loadSession(sessionName);
+
+      expect(session).not.toBeNull();
+      expect(session?.working_dir).toBeDefined();
+      expect(session?.working_dir).toBe(process.cwd());
+    });
+
+    it('should include working_dir in session info', async () => {
+      await sessionManager.createSession('dir-info-test');
+      const infos = await sessionManager.getSessionsInfo();
+      const info = infos.find(i => i.session_id === 'dir-info-test');
+
+      expect(info).toBeDefined();
+      expect(info?.working_dir).toBe(process.cwd());
+    });
+
+    it('should filter sessions by working directory', async () => {
+      // Create sessions
+      await sessionManager.createSession('session-1');
+      await sessionManager.createSession('session-2');
+      await sessionManager.createSession('session-3');
+
+      // Get sessions for current directory
+      const currentDirSessions = await sessionManager.getSessionsInfoByDirectory();
+
+      // All sessions should be from current directory
+      expect(currentDirSessions.length).toBe(3);
+      currentDirSessions.forEach(session => {
+        expect(session.working_dir).toBe(process.cwd());
+      });
+    });
+
+    it('should return empty array when no sessions match directory', async () => {
+      await sessionManager.createSession('test-session');
+
+      // Query with a different directory
+      const otherDirSessions = await sessionManager.getSessionsInfoByDirectory('/some/other/directory');
+
+      expect(otherDirSessions.length).toBe(0);
     });
   });
 });

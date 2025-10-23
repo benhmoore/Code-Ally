@@ -235,6 +235,7 @@ export interface Session {
   title?: string;
   created_at: string;
   updated_at: string;
+  working_dir: string;
   messages: Message[];
   todos?: Array<{
     id: string;
@@ -249,6 +250,7 @@ export interface Session {
 export interface SessionInfo {
   session_id: string;
   display_name: string;
-  last_modified: string;
+  last_modified_timestamp: number;
   message_count: number;
+  working_dir: string;
 }

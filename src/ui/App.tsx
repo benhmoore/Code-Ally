@@ -217,7 +217,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
       // If resumeSession is 'interactive', show session selector
       if (resumeSession === 'interactive') {
-        const sessions = await sessionManager.getSessionsInfo();
+        const sessions = await sessionManager.getSessionsInfoByDirectory();
         setSessionSelectRequest({
           requestId: `session_select_${Date.now()}`,
           sessions,

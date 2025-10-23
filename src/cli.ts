@@ -25,6 +25,7 @@ import { App } from './ui/App.js';
 import { ArgumentParser, type CLIOptions } from './cli/ArgumentParser.js';
 import { SetupWizard } from './cli/SetupWizard.js';
 import { logger } from './services/Logger.js';
+import { formatRelativeTime } from './ui/utils/timeUtils.js';
 
 /**
  * Comprehensive terminal state reset
@@ -196,7 +197,7 @@ async function handleSessionCommands(
       console.log('\nAvailable sessions:\n');
       for (const session of sessions) {
         console.log(
-          `  ${session.session_id}: ${session.display_name} (${session.message_count} messages, ${session.last_modified})`
+          `  ${session.session_id}: ${session.display_name} (${session.message_count} messages, ${formatRelativeTime(session.last_modified_timestamp)})`
         );
       }
       console.log('');
@@ -578,6 +579,8 @@ async function main() {
     const { AgentTool } = await import('./tools/AgentTool.js');
     const { BatchTool } = await import('./tools/BatchTool.js');
     const { TodoWriteTool } = await import('./tools/TodoWriteTool.js');
+    const { SessionLookupTool } = await import('./tools/SessionLookupTool.js');
+    const { SessionReadTool } = await import('./tools/SessionReadTool.js');
 
     const tools = [
       new BashTool(activityStream),
@@ -592,6 +595,8 @@ async function main() {
       new AgentTool(activityStream),
       new BatchTool(activityStream),
       new TodoWriteTool(activityStream),
+      new SessionLookupTool(activityStream),
+      new SessionReadTool(activityStream),
     ];
 
     // Create tool manager

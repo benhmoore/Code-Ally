@@ -7,6 +7,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { SessionInfo } from '../../types/index.js';
+import { formatRelativeTime } from '../utils/timeUtils.js';
 
 export interface SessionSelectorProps {
   /** Available sessions */
@@ -25,6 +26,19 @@ export interface SessionSelectorProps {
 function truncateDisplayName(name: string, maxLength: number = 50): string {
   if (name.length <= maxLength) return name;
   return name.slice(0, maxLength - 3) + '...';
+}
+
+/**
+ * Shorten directory path for display
+ */
+function shortenPath(path: string): string {
+  // Replace home directory with ~
+  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  if (homeDir && path.startsWith(homeDir)) {
+    return '~' + path.slice(homeDir.length);
+  }
+
+  return path;
 }
 
 /**
@@ -119,18 +133,27 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
           const actualIndex = startIdx + idx;
           const isSelected = actualIndex === selectedIndex;
           const displayName = truncateDisplayName(session.display_name);
+          const workingDir = shortenPath(session.working_dir);
+          const relativeTime = formatRelativeTime(session.last_modified_timestamp);
 
           return (
-            <Box key={session.session_id}>
-              <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                {isSelected ? '> ' : '  '}
-              </Text>
-              <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                {displayName}
-              </Text>
-              <Text color={isSelected ? 'green' : 'gray'} dimColor={!isSelected}>
-                {' '}({session.message_count} msgs, {session.last_modified})
-              </Text>
+            <Box key={session.session_id} flexDirection="column">
+              <Box>
+                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
+                  {isSelected ? '> ' : '  '}
+                </Text>
+                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
+                  {displayName}
+                </Text>
+                <Text color={isSelected ? 'green' : 'gray'} dimColor={!isSelected}>
+                  {' '}({session.message_count} msgs, {relativeTime})
+                </Text>
+              </Box>
+              <Box marginLeft={2}>
+                <Text color={isSelected ? 'cyan' : 'gray'} dimColor={!isSelected}>
+                  {workingDir}
+                </Text>
+              </Box>
             </Box>
           );
         })}

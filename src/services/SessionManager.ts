@@ -44,7 +44,7 @@ export class SessionManager implements IService {
 
   constructor(config: SessionManagerConfig = {}) {
     this.sessionsDir = SESSIONS_DIR;
-    this.maxSessions = config.maxSessions ?? 10;
+    this.maxSessions = config.maxSessions ?? 100;
     this.titleGenerator = config.modelClient
       ? new SessionTitleGenerator(config.modelClient)
       : null;
@@ -149,6 +149,7 @@ export class SessionManager implements IService {
       name,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
+      working_dir: process.cwd(),
       messages: [],
       metadata: {},
     };
@@ -269,6 +270,7 @@ export class SessionManager implements IService {
           name: sessionName,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          working_dir: process.cwd(),
           messages: [],
           metadata: {},
         };
@@ -404,22 +406,14 @@ export class SessionManager implements IService {
         }
       }
 
-      // Format date
       const updatedAt = new Date(session.updated_at);
-      const formattedDate = updatedAt.toLocaleString('en-US', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      });
 
       infos.push({
         session_id: session.id,
         display_name: displayName,
-        last_modified: formattedDate,
+        last_modified_timestamp: updatedAt.getTime(),
         message_count: session.messages.length,
+        working_dir: session.working_dir,
         timestamp: updatedAt.getTime(),
       });
     }
@@ -427,8 +421,20 @@ export class SessionManager implements IService {
     // Sort by actual timestamp (newest first)
     infos.sort((a, b) => b.timestamp - a.timestamp);
 
-    // Remove timestamp from final result
+    // Remove internal sorting timestamp from final result
     return infos.map(({ timestamp, ...info }) => info);
+  }
+
+  /**
+   * Get information about sessions filtered by working directory
+   *
+   * @param workingDir - The working directory to filter by (defaults to current directory)
+   * @returns Array of SessionInfo objects for sessions in the specified directory, sorted by modification time (newest first)
+   */
+  async getSessionsInfoByDirectory(workingDir?: string): Promise<SessionInfo[]> {
+    const targetDir = workingDir ?? process.cwd();
+    const allSessions = await this.getSessionsInfo();
+    return allSessions.filter(session => session.working_dir === targetDir);
   }
 
   /**
@@ -538,6 +544,7 @@ export class SessionManager implements IService {
           name,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          working_dir: process.cwd(),
           messages: [],
           todos: [],
           metadata: {},
@@ -585,6 +592,7 @@ export class SessionManager implements IService {
           name,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          working_dir: process.cwd(),
           messages: [],
           todos: [],
           metadata: {},
