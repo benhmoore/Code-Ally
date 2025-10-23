@@ -27,6 +27,8 @@ import { logger } from '../services/Logger.js';
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
   isSpecializedAgent?: boolean;
+  /** Whether this agent can manage the global todo list (default: false for specialized agents) */
+  allowTodoManagement?: boolean;
   /** Enable verbose logging */
   verbose?: boolean;
   /** System prompt to prepend (initial/static version) */
@@ -170,12 +172,48 @@ export class Agent {
     // Auto-save after user message
     this.autoSaveSession();
 
+    // Inject system reminder about todos (main agent only)
+    // This nudges the model to consider updating the todo list without blocking
+    if (!this.config.isSpecializedAgent) {
+      const registry = ServiceRegistry.getInstance();
+      const todoManager = registry.get<any>('todo_manager');
+
+      if (todoManager) {
+        const todos = todoManager.getTodos();
+        let reminderContent = '<system-reminder>\n';
+
+        if (todos.length === 0) {
+          reminderContent += 'No todos exist yet. For multi-step tasks, consider creating a todo list using todo_write BEFORE executing other tools. This helps track progress and ensures nothing is missed.\n';
+        } else {
+          reminderContent += 'Current todos:\n';
+          todos.forEach((todo: any, idx: number) => {
+            const status = todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '→' : '○';
+            reminderContent += `${idx + 1}. [${status}] ${todo.task}\n`;
+          });
+          reminderContent += '\nBefore proceeding with tool calls, consider if this list needs updates based on the user\'s new request. Update using todo_write if needed.\n';
+        }
+
+        reminderContent += '</system-reminder>';
+
+        const systemReminder: Message = {
+          role: 'system',
+          content: reminderContent,
+          timestamp: Date.now(),
+        };
+        this.messages.push(systemReminder);
+        logger.debug('[AGENT_TODO_REMINDER]', this.instanceId, 'Injected todo reminder system message');
+      }
+    }
+
     // Emit user message event
     this.emitEvent({
       id: this.generateId(),
       type: ActivityEventType.AGENT_START,
       timestamp: Date.now(),
-      data: { message },
+      data: {
+        message,
+        isSpecializedAgent: this.config.isSpecializedAgent || false,
+      },
     });
 
     try {
@@ -221,7 +259,10 @@ export class Agent {
         id: this.generateId(),
         type: ActivityEventType.AGENT_END,
         timestamp: Date.now(),
-        data: { interrupted: true },
+        data: {
+          interrupted: true,
+          isSpecializedAgent: this.config.isSpecializedAgent || false,
+        },
       });
     }
   }
@@ -240,7 +281,10 @@ export class Agent {
    */
   private async getLLMResponse(): Promise<LLMResponse> {
     // Get function definitions from tool manager
-    const functions = this.toolManager.getFunctionDefinitions();
+    // Exclude todo_write from specialized agents (only main agent can manage todos)
+    const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
+    const excludeTools = allowTodoManagement ? undefined : ['todo_write'];
+    const functions = this.toolManager.getFunctionDefinitions(excludeTools);
 
     // Regenerate system prompt with current context (todos, etc.) before each LLM call
     // Works for both main agent and specialized agents
@@ -296,7 +340,8 @@ export class Agent {
       // Send to model (includes system-reminder if present)
       const response = await this.modelClient.send(this.messages, {
         functions,
-        stream: this.config.config.parallel_tools, // Enable streaming if configured
+        // Disable streaming for subagents - only main agent should stream responses
+        stream: !this.config.isSpecializedAgent && this.config.config.parallel_tools,
       });
 
       // Remove system-reminder messages after receiving response
@@ -483,7 +528,10 @@ export class Agent {
       id: this.generateId(),
       type: ActivityEventType.AGENT_END,
       timestamp: Date.now(),
-      data: { content: response.content },
+      data: {
+        content: response.content,
+        isSpecializedAgent: this.config.isSpecializedAgent || false,
+      },
     });
 
     return response.content;
@@ -497,7 +545,10 @@ export class Agent {
    * @returns System prompt string
    */
   generateSystemPrompt(): string {
-    const functions = this.toolManager.getFunctionDefinitions();
+    // Exclude todo_write from specialized agents (only main agent can manage todos)
+    const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
+    const excludeTools = allowTodoManagement ? undefined : ['todo_write'];
+    const functions = this.toolManager.getFunctionDefinitions(excludeTools);
 
     let prompt = this.config.systemPrompt || 'You are a helpful AI assistant.';
     prompt += '\n\nYou have access to the following tools:\n\n';

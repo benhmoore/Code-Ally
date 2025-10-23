@@ -98,6 +98,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Track if we've already processed session resume to prevent duplicate runs
   const sessionResumed = useRef(false);
 
+  // Track active background agents (subagents, todo generator, etc.)
+  const [activeAgentsCount, setActiveAgentsCount] = useState(0);
+
   // Throttle tool call updates to max once every 2 seconds
   const pendingToolUpdates = useRef<Map<string, Partial<ToolCallState>>>(new Map());
   const lastUpdateTime = useRef<number>(Date.now());
@@ -288,7 +291,11 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       parentId: event.parentId, // For nested tool calls (e.g., from subagents)
       visibleInChat: event.data.visibleInChat ?? true, // Whether to show in conversation
       isTransparent: event.data.isTransparent || false, // For wrapper tools
+      collapsed: event.data.collapsed || false, // Collapse output for subagent tools
+      shouldCollapse: event.data.shouldCollapse || false, // Collapse after completion
+      hideOutput: event.data.hideOutput || false, // Never show output
     };
+
     // Tool call creation must be immediate to avoid race conditions with completion events
     actions.addToolCall(toolCall);
   });
@@ -313,14 +320,23 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       throw new Error(`TOOL_CALL_END event missing required 'success' field. ID: ${event.id}`);
     }
 
-    scheduleToolUpdate.current(event.id, {
+    const updates: Partial<ToolCallState> = {
       status: event.data.success ? 'success' : 'error',
       endTime: event.timestamp,
       error: event.data.error,
-      collapsed: event.data.collapsed || false,
       // Clear diff preview on completion - the preview is no longer relevant
       diffPreview: undefined,
-    }, true); // Immediate update for completion
+    };
+
+    // If tool has shouldCollapse, collapse it on completion (takes priority)
+    if (event.data.shouldCollapse) {
+      updates.collapsed = true;
+    } else if (event.data.collapsed !== undefined) {
+      // Only use explicit collapsed state if shouldCollapse is not set
+      updates.collapsed = event.data.collapsed;
+    }
+
+    scheduleToolUpdate.current(event.id, updates, true); // Immediate update for completion
   });
 
   // Subscribe to tool output chunks
@@ -345,16 +361,32 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     }
   });
 
-  // Clear streaming content when agent starts processing
-  useActivityEvent(ActivityEventType.AGENT_START, () => {
-    streamingContentRef.current = '';
-    actions.setStreamingContent(undefined);
+  // Track agent start (both main and specialized agents)
+  useActivityEvent(ActivityEventType.AGENT_START, (event) => {
+    const isSpecialized = event.data?.isSpecializedAgent || false;
+
+    // Increment count for specialized agents (subagents, todo generator, etc.)
+    if (isSpecialized) {
+      setActiveAgentsCount((prev) => prev + 1);
+    } else {
+      // Clear streaming content when main agent starts processing
+      streamingContentRef.current = '';
+      actions.setStreamingContent(undefined);
+    }
   });
 
-  // Clear streaming content when agent finishes (content moved to message)
-  useActivityEvent(ActivityEventType.AGENT_END, () => {
-    streamingContentRef.current = '';
-    actions.setStreamingContent(undefined);
+  // Track agent end (both main and specialized agents)
+  useActivityEvent(ActivityEventType.AGENT_END, (event) => {
+    const isSpecialized = event.data?.isSpecializedAgent || false;
+
+    // Decrement count for specialized agents
+    if (isSpecialized) {
+      setActiveAgentsCount((prev) => Math.max(0, prev - 1));
+    } else {
+      // Clear streaming content when main agent finishes
+      streamingContentRef.current = '';
+      actions.setStreamingContent(undefined);
+    }
   });
 
   // Subscribe to diff preview events
@@ -1137,7 +1169,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       {/* Footer / Help */}
       <Box marginTop={1}>
         <Text dimColor>
-          Ctrl+C to exit | Model: {state.config.model || 'none'} |{' '}
+          Ctrl+C to exit{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'} |{' '}
           {state.contextUsage >= 85 ? (
             <Text color="red">Context: {100 - state.contextUsage}% remaining - use /compact</Text>
           ) : state.contextUsage >= 70 ? (

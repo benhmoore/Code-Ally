@@ -39,8 +39,11 @@ function formatDuration(ms: number): string {
 
 /**
  * Format arguments for preview - shows all parameters with truncated values
+ *
+ * @param args Tool arguments
+ * @param toolName Tool name (used to filter agent_name from agent tool)
  */
-function formatArgsPreview(args: any): string {
+function formatArgsPreview(args: any, toolName?: string): string {
   if (!args || typeof args !== 'object') {
     return String(args);
   }
@@ -50,8 +53,17 @@ function formatArgsPreview(args: any): string {
     return '';
   }
 
+  // For agent tool, filter out agent_name since it's shown as the tool name
+  const filteredKeys = toolName === 'agent'
+    ? keys.filter(k => k !== 'agent_name')
+    : keys;
+
+  if (filteredKeys.length === 0) {
+    return '';
+  }
+
   // Format each parameter as "key=value", truncating long values
-  const formattedArgs = keys.map(key => {
+  const formattedArgs = filteredKeys.map(key => {
     const value = args[key];
     let strValue: string;
 
@@ -112,8 +124,16 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const duration = endTime - toolCall.startTime;
   const durationStr = formatDuration(duration);
 
-  // Format arguments
-  const argsPreview = formatArgsPreview(toolCall.arguments);
+  // Check if this is an agent delegation
+  const isAgentDelegation = toolCall.toolName === 'agent';
+
+  // For agent tool, show agent_name as the tool name
+  const displayName = isAgentDelegation && toolCall.arguments?.agent_name
+    ? toolCall.arguments.agent_name
+    : toolCall.toolName;
+
+  // Format arguments (filter out agent_name for agent tool)
+  const argsPreview = formatArgsPreview(toolCall.arguments, toolCall.toolName);
 
   // Indent based on level
   const indent = '    '.repeat(level);
@@ -122,8 +142,6 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const statusColor = getStatusColor(toolCall.status);
   const statusIcon = isRunning ? '...' : toolCall.status === 'success' ? '✓' : '✗';
 
-  // Check if this is an agent delegation
-  const isAgentDelegation = toolCall.toolName === 'agent';
   const toolCallCount = toolCall.totalChildCount || 0;
 
   return (
@@ -135,9 +153,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         {/* Arrow prefix */}
         <Text color={statusColor}>→ </Text>
 
-        {/* Tool name */}
+        {/* Tool name (or agent name for agent tool) */}
         <Text color={statusColor} bold={level === 0}>
-          {toolCall.toolName}
+          {displayName}
         </Text>
 
         {/* Arguments preview */}
@@ -149,8 +167,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         <Text dimColor> [{isRunning ? durationStr : statusIcon}{!isRunning && ` ${durationStr}`}]</Text>
       </Box>
 
-      {/* Diff preview (hidden if collapsed) */}
-      {!toolCall.collapsed && toolCall.diffPreview && (
+      {/* Diff preview (hidden if collapsed or hideOutput) */}
+      {!toolCall.collapsed && !toolCall.hideOutput && toolCall.diffPreview && (
         <Box flexDirection="column" marginTop={1} marginBottom={1} paddingLeft={indent.length + 4}>
           <DiffDisplay
             oldContent={toolCall.diffPreview.oldContent}
@@ -161,7 +179,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Error output as threaded child (hidden if collapsed) */}
+      {/* Error output as threaded child (hidden if collapsed, but always show errors even with hideOutput) */}
       {!toolCall.collapsed && toolCall.error && (
         <Box flexDirection="column">
           <Box>
@@ -179,8 +197,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Output as threaded child (hidden if collapsed) */}
-      {!toolCall.collapsed && toolCall.output && !toolCall.error && (
+      {/* Output as threaded child (hidden if collapsed or hideOutput) */}
+      {!toolCall.collapsed && !toolCall.hideOutput && toolCall.output && !toolCall.error && (
         <Box flexDirection="column">
           <Box>
             <Text>{indent}    </Text>
@@ -197,8 +215,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Truncation indicator for agent delegations with many tool calls */}
-      {!toolCall.collapsed && isAgentDelegation && toolCallCount > 3 && (
+      {/* Truncation indicator for agent delegations with many tool calls (hidden if collapsed or hideOutput) */}
+      {!toolCall.collapsed && !toolCall.hideOutput && isAgentDelegation && toolCallCount > 3 && (
         <Box>
           <Text>{indent}    </Text>
           <Text dimColor>... (showing last 3 of {toolCallCount} tool calls)</Text>

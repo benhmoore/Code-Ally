@@ -49,12 +49,19 @@ export class ToolManager {
   /**
    * Generate function definitions for all tools
    *
+   * @param excludeTools - Optional list of tool names to exclude
    * @returns List of function definitions for LLM function calling
    */
-  getFunctionDefinitions(): FunctionDefinition[] {
+  getFunctionDefinitions(excludeTools?: string[]): FunctionDefinition[] {
     const functionDefs: FunctionDefinition[] = [];
+    const excludeSet = new Set(excludeTools || []);
 
     for (const tool of this.tools.values()) {
+      // Skip excluded tools
+      if (excludeSet.has(tool.name)) {
+        continue;
+      }
+
       const functionDef = this.generateFunctionDefinition(tool);
       functionDefs.push(functionDef);
     }

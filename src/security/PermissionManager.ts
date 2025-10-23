@@ -91,11 +91,20 @@ export class PermissionManager {
       return;
     }
 
+    // Arguments that represent file content, not paths
+    // These should NOT be checked for path traversal patterns
+    const contentArguments = new Set(['content', 'old_string', 'new_string', 'message']);
+
     // Check all string arguments for path traversal patterns
     for (const [argName, argValue] of Object.entries(args)) {
       if (typeof argValue === 'string') {
         // Skip empty strings
         if (!argValue || argValue.trim() === '') {
+          continue;
+        }
+
+        // Skip content arguments - they can contain any text including ".."
+        if (contentArguments.has(argName)) {
           continue;
         }
 

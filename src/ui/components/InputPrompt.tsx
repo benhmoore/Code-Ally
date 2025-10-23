@@ -786,10 +786,22 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Clear Buffer / Quit / Interrupt (Ctrl+C) =====
-      // Matches Python behavior: interrupt -> clear -> quit
+      // Priority order: clear buffer -> interrupt -> quit
       // Use ref to avoid stale closure issues
       if (key.ctrl && input === 'c') {
-        // Priority 1: Interrupt ALL ongoing operations (main agent + subagents + tools)
+        const currentBuffer = bufferRef.current;
+        const hasContent = currentBuffer.trim().length > 0;
+
+        // Priority 1: Clear buffer if it has content
+        if (hasContent) {
+          setBuffer('');
+          setCursorPosition(0);
+          setHistoryIndex(-1);
+          setShowCompletions(false);
+          return;
+        }
+
+        // Priority 2: Interrupt ALL ongoing operations (main agent + subagents + tools)
         if (agent && agent.isProcessing()) {
           logger.debug('[INPUT] Ctrl+C - interrupting main agent');
           agent.interrupt();
@@ -806,19 +818,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        const currentBuffer = bufferRef.current;
-        const hasContent = currentBuffer.trim().length > 0;
-
-        // Priority 2: Clear buffer if it has content
-        if (hasContent) {
-          setBuffer('');
-          setCursorPosition(0);
-          setHistoryIndex(-1);
-          setShowCompletions(false);
-          return;
-        }
-
-        // Priority 3: Buffer is empty - quit immediately
+        // Priority 3: Buffer is empty and no agent processing - quit immediately
         exit();
         return;
       }

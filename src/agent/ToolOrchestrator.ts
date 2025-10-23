@@ -253,26 +253,13 @@ export class ToolOrchestrator {
     const effectiveParentId = this.parentCallId || parentId;
     logger.debug('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId);
 
-    // Validate todo prerequisites FIRST (before creating UI elements)
+    // Auto-promote first pending todo to in_progress
+    // This helps the agent track progress through the todo list
     if (toolName !== 'todo_write') {
       const registry = ServiceRegistry.getInstance();
       const todoManager = registry.get<TodoManager>('todo_manager');
 
       if (todoManager) {
-        const incompleteTodos = todoManager.getIncompleteTodos();
-
-        if (incompleteTodos.length === 0) {
-          const errorResult: ToolResult = {
-            success: false,
-            error: `${toolName}: Cannot execute tools without an active todo list. Use todo_write to create a task plan first.`,
-            error_type: 'validation_error',
-          };
-
-          // Don't emit TOOL_CALL_START - just return error
-          return errorResult;
-        }
-
-        // Auto-promote first pending todo to in_progress
         const inProgress = todoManager.getInProgressTodo();
         if (!inProgress) {
           const nextPending = todoManager.getNextPendingTodo();
@@ -289,6 +276,10 @@ export class ToolOrchestrator {
     }
 
     // Emit start event FIRST (creates tool call in UI state)
+    const isCollapsed = this.config.isSpecializedAgent === true;
+    const shouldCollapse = (tool as any)?.shouldCollapse || false;
+    const hideOutput = (tool as any)?.hideOutput || false;
+
     this.emitEvent({
       id,
       type: ActivityEventType.TOOL_CALL_START,
@@ -299,6 +290,9 @@ export class ToolOrchestrator {
         arguments: args,
         visibleInChat: tool?.visibleInChat ?? true,
         isTransparent: tool?.isTransparentWrapper || false,
+        collapsed: isCollapsed, // Collapse tools from subagents immediately
+        shouldCollapse, // Collapse after completion (for AgentTool)
+        hideOutput, // Never show output (for AgentTool)
       },
     });
 
@@ -376,7 +370,9 @@ export class ToolOrchestrator {
           error: result.success ? undefined : result.error,
           visibleInChat: tool?.visibleInChat ?? true,
           isTransparent: tool?.isTransparentWrapper || false,
-          collapsed: tool?.shouldCollapse || false,
+          collapsed: isCollapsed, // Use same collapsed state as TOOL_CALL_START
+          shouldCollapse, // Pass through for completion-triggered collapse
+          hideOutput, // Pass through for output visibility control
         },
       });
     }
