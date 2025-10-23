@@ -68,6 +68,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   const commandHandler = useRef<CommandHandler | null>(null);
 
 
+  // Streaming content accumulator (use ref to avoid stale closure in event handlers)
+  const streamingContentRef = useRef<string>('');
+
   // Permission prompt state
   const [permissionRequest, setPermissionRequest] = useState<(PermissionRequest & { requestId: string }) | undefined>(undefined);
   const [permissionSelectedIndex, setPermissionSelectedIndex] = useState(0);
@@ -330,6 +333,28 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     scheduleToolUpdate.current(event.id, {
       output: event.data?.chunk || '',
     }, false); // Throttled update
+  });
+
+  // Subscribe to assistant content chunks (streaming final response)
+  useActivityEvent(ActivityEventType.ASSISTANT_CHUNK, (event) => {
+    const chunk = event.data?.chunk || '';
+    if (chunk) {
+      // Accumulate in ref to avoid stale closure issues
+      streamingContentRef.current += chunk;
+      actions.setStreamingContent(streamingContentRef.current);
+    }
+  });
+
+  // Clear streaming content when agent starts processing
+  useActivityEvent(ActivityEventType.AGENT_START, () => {
+    streamingContentRef.current = '';
+    actions.setStreamingContent(undefined);
+  });
+
+  // Clear streaming content when agent finishes (content moved to message)
+  useActivityEvent(ActivityEventType.AGENT_END, () => {
+    streamingContentRef.current = '';
+    actions.setStreamingContent(undefined);
   });
 
   // Subscribe to diff preview events
@@ -890,6 +915,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       <ConversationView
         messages={state.messages}
         isThinking={state.isThinking}
+        streamingContent={state.streamingContent}
         activeToolCalls={state.activeToolCalls}
         contextUsage={state.contextUsage}
         compactionNotices={state.compactionNotices}

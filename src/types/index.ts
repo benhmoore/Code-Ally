@@ -68,6 +68,7 @@ export enum ActivityEventType {
   TOOL_CALL_END = 'tool_call_end',
   TOOL_OUTPUT_CHUNK = 'tool_output_chunk',
   THOUGHT_CHUNK = 'thought_chunk',
+  ASSISTANT_CHUNK = 'assistant_chunk',
   AGENT_START = 'agent_start',
   AGENT_END = 'agent_end',
   ERROR = 'error',

@@ -41,6 +41,9 @@ export interface AppState {
   /** Whether the assistant is currently thinking/processing */
   isThinking: boolean;
 
+  /** Current streaming assistant content (if any) */
+  streamingContent?: string;
+
   /** Whether the conversation is being compacted */
   isCompacting: boolean;
 
@@ -81,6 +84,9 @@ export interface AppActions {
 
   /** Set thinking state */
   setIsThinking: (isThinking: boolean) => void;
+
+  /** Set streaming content */
+  setStreamingContent: (content?: string) => void;
 
   /** Set compacting state */
   setIsCompacting: (isCompacting: boolean) => void;
@@ -135,6 +141,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [contextUsage, setContextUsage] = useState<number>(0);
   const [activeToolCalls, setActiveToolCalls] = useState<ToolCallState[]>([]);
   const [isThinking, setIsThinking] = useState<boolean>(false);
+  const [streamingContent, setStreamingContent] = useState<string | undefined>(undefined);
   const [isCompacting, setIsCompacting] = useState<boolean>(false);
   const [compactionNotices, setCompactionNotices] = useState<CompactionNotice[]>([]);
   const [staticRemountKey, setStaticRemountKey] = useState<number>(0);
@@ -260,10 +267,11 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     activeToolCallsCount: activeToolCalls.length,
     activeToolCalls,
     isThinking,
+    streamingContent,
     isCompacting,
     compactionNotices,
     staticRemountKey,
-  }), [messages, config, contextUsage, activeToolCalls, isThinking, isCompacting, compactionNotices, staticRemountKey]);
+  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, staticRemountKey]);
 
   // Memoize actions object to prevent unnecessary context updates
   const actions = React.useMemo(() => ({
@@ -276,10 +284,11 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     removeToolCall,
     clearToolCalls,
     setIsThinking,
+    setStreamingContent,
     setIsCompacting,
     addCompactionNotice,
     forceStaticRemount,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setIsCompacting, addCompactionNotice, forceStaticRemount]);
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, forceStaticRemount]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

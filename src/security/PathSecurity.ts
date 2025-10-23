@@ -51,26 +51,14 @@ export function hasPathTraversalPatterns(inputStr: string): boolean {
     return false;
   }
 
-  const traversalPatterns = [
+  // Patterns that indicate traversal (can appear anywhere)
+  const anywherePatterns = [
     '..',
-    '/../',
-    '/./',
     '~/',
     '$HOME',
     '${HOME}',
     '$(pwd)',
     '`pwd`',
-    '/etc/',
-    '/var/',
-    '/usr/',
-    '/bin/',
-    '/tmp/',
-    '/root/',
-    '/proc/',
-    '/sys/',
-    '/dev/',
-    '/*',
-    '~/*',
   ];
 
   // Check for absolute paths - but allow if they're within the current working directory
@@ -99,14 +87,26 @@ export function hasPathTraversalPatterns(inputStr: string): boolean {
     }
   }
 
-  // Check for common path traversal patterns, but exclude safe glob patterns
-  for (const pattern of traversalPatterns) {
-    if (inputStr.includes(pattern)) {
-      // Special case: allow /*/ within CWD glob patterns
-      if (pattern === '/*' && inputStr.startsWith('/') && inputStr.includes('*')) {
-        // Already handled above in glob pattern logic
-        continue;
+  // For relative paths, check if they resolve to within CWD
+  // This catches cases like "../../etc/passwd" before pattern checking
+  if (!inputStr.startsWith('/') && !inputStr.startsWith('~')) {
+    try {
+      // If it resolves to within CWD, it's safe regardless of patterns
+      if (isPathWithinCwd(inputStr)) {
+        // Still check for command injection patterns even if within CWD
+        if (inputStr.includes('$(') || inputStr.includes('`') || inputStr.includes('${')) {
+          return true;
+        }
+        return false;
       }
+    } catch (error) {
+      // If resolution fails, continue with pattern checks
+    }
+  }
+
+  // Check for traversal patterns that can appear anywhere
+  for (const pattern of anywherePatterns) {
+    if (inputStr.includes(pattern)) {
       return true;
     }
   }

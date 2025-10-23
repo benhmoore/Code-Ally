@@ -365,6 +365,16 @@ export class OllamaClient extends ModelClient {
               aggregatedContent += contentChunk;
               aggregatedMessage.content = aggregatedContent;
               contentWasStreamed = true;
+
+              // Emit assistant content chunk event for UI streaming
+              if (this.activityStream) {
+                this.activityStream.emit({
+                  id: `assistant-${requestId}-${Date.now()}`,
+                  type: ActivityEventType.ASSISTANT_CHUNK,
+                  timestamp: Date.now(),
+                  data: { chunk: contentChunk },
+                });
+              }
             }
 
             // Accumulate thinking
