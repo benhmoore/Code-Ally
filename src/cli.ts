@@ -581,6 +581,8 @@ async function main() {
     const { TodoWriteTool } = await import('./tools/TodoWriteTool.js');
     const { SessionLookupTool } = await import('./tools/SessionLookupTool.js');
     const { SessionReadTool } = await import('./tools/SessionReadTool.js');
+    const { LintTool } = await import('./tools/LintTool.js');
+    const { FormatTool } = await import('./tools/FormatTool.js');
 
     const tools = [
       new BashTool(activityStream),
@@ -597,6 +599,8 @@ async function main() {
       new TodoWriteTool(activityStream),
       new SessionLookupTool(activityStream),
       new SessionReadTool(activityStream),
+      new LintTool(activityStream),
+      new FormatTool(activityStream),
     ];
 
     // Create tool manager
