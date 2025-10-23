@@ -7,6 +7,8 @@
 
 import { ToolResult, ActivityEvent, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { TodoManager } from '../services/TodoManager.js';
 
 export abstract class BaseTool {
   /**
@@ -100,8 +102,19 @@ export abstract class BaseTool {
   async execute(args: any, callId?: string): Promise<ToolResult> {
     this.currentCallId = callId;
 
+    // Extract and remove todo_id from args (it's not a tool-specific parameter)
+    const todoId = args.todo_id;
+    const cleanArgs = { ...args };
+    delete cleanArgs.todo_id;
+
     try {
-      const result = await this.executeImpl(args);
+      const result = await this.executeImpl(cleanArgs);
+
+      // If execution was successful and todo_id was provided, mark todo as complete
+      if (result.success && todoId) {
+        this.markTodoComplete(todoId);
+      }
+
       return result;
     } catch (error) {
       const errorResult = this.formatErrorResponse(
@@ -118,6 +131,31 @@ export abstract class BaseTool {
    * Abstract implementation method - subclasses must implement this
    */
   protected abstract executeImpl(args: any): Promise<ToolResult>;
+
+  /**
+   * Mark a todo as complete by ID
+   * Called automatically when a tool execution succeeds and todo_id is provided
+   *
+   * @param todoId - ID of the todo to mark as complete
+   */
+  private markTodoComplete(todoId: string): void {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const todoManager = registry.get<TodoManager>('todo_manager');
+
+      if (todoManager) {
+        const completedTodo = todoManager.completeTodoById(todoId);
+        if (!completedTodo) {
+          // Todo not found - silently ignore (may have been already completed or removed)
+          return;
+        }
+      }
+    } catch (error) {
+      // Silently handle errors to avoid disrupting tool execution
+      // Todo completion is a convenience feature and should never break the tool
+      console.error(`[BaseTool] Failed to complete todo ${todoId}:`, error);
+    }
+  }
 
   /**
    * Emit an event to the activity stream

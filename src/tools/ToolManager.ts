@@ -66,25 +66,40 @@ export class ToolManager {
    * Generate function definition for a single tool
    */
   private generateFunctionDefinition(tool: BaseTool): FunctionDefinition {
+    let functionDef: FunctionDefinition;
+
     // Check if tool provides custom definition
     if ('getFunctionDefinition' in tool && typeof (tool as any).getFunctionDefinition === 'function') {
-      return (tool as any).getFunctionDefinition();
+      functionDef = (tool as any).getFunctionDefinition();
+    } else {
+      // Generate default definition by introspecting the tool
+      functionDef = {
+        type: 'function',
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: [],
+          },
+        },
+      };
     }
 
-    // Generate default definition by introspecting the tool
-    // For now, return a basic definition - tools can override this
-    return {
-      type: 'function',
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: {
-          type: 'object',
-          properties: {},
-          required: [],
-        },
-      },
-    };
+    // Add todo_id parameter to all tools (unless it's TodoWriteTool itself)
+    if (tool.name !== 'todo_write') {
+      if (!functionDef.function.parameters.properties) {
+        functionDef.function.parameters.properties = {};
+      }
+
+      functionDef.function.parameters.properties.todo_id = {
+        type: 'string',
+        description: 'Optional: ID of todo to mark as complete upon successful execution',
+      };
+    }
+
+    return functionDef;
   }
 
   /**

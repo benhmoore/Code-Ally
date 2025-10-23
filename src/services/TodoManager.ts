@@ -98,6 +98,22 @@ export class TodoManager {
   }
 
   /**
+   * Mark a task as complete by ID
+   *
+   * @param id - ID of todo to complete
+   * @returns Completed todo item or null if not found
+   */
+  completeTodoById(id: string): TodoItem | null {
+    const todo = this.todos.find(t => t.id === id);
+    if (!todo) {
+      return null;
+    }
+
+    todo.status = 'completed';
+    return todo;
+  }
+
+  /**
    * Clear completed or all tasks
    *
    * @param clearAll - If true, clear all tasks; if false, only clear completed
