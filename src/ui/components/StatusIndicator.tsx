@@ -12,6 +12,7 @@ import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { TodoManager } from '../../services/TodoManager.js';
 import { IdleMessageGenerator } from '../../services/IdleMessageGenerator.js';
 import { ChickAnimation } from './ChickAnimation.js';
+import { formatElapsed } from '../utils/timeUtils.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -197,13 +198,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   // Use elapsed seconds from state
   const elapsed = elapsedSeconds;
-
-  const formatElapsed = (seconds: number): string => {
-    if (seconds < 60) return `${seconds}s`;
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
-  };
 
   // Show compaction status if compacting (overrides todo display)
   if (isCompacting) {

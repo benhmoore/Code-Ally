@@ -18,6 +18,7 @@ import { Session, SessionInfo, Message, IService } from '../types/index.js';
 import { generateShortId } from '../utils/id.js';
 import type { TodoItem } from './TodoManager.js';
 import { SessionTitleGenerator } from './SessionTitleGenerator.js';
+import { logger } from './Logger.js';
 
 /**
  * Configuration for SessionManager
@@ -51,6 +52,7 @@ export class SessionManager implements IService {
    */
   async initialize(): Promise<void> {
     await fs.mkdir(this.sessionsDir, { recursive: true });
+    await fs.mkdir(join(this.sessionsDir, '.quarantine'), { recursive: true });
   }
 
   /**
@@ -76,6 +78,23 @@ export class SessionManager implements IService {
    */
   private getSessionPath(sessionName: string): string {
     return join(this.sessionsDir, `${sessionName}.json`);
+  }
+
+  /**
+   * Quarantine a corrupted session file instead of deleting it
+   */
+  private async quarantineSession(sessionName: string, reason: string): Promise<void> {
+    const sessionPath = this.getSessionPath(sessionName);
+    const quarantinePath = join(this.sessionsDir, '.quarantine', `${sessionName}_${Date.now()}.json`);
+
+    try {
+      await fs.rename(sessionPath, quarantinePath);
+      logger.warn(`Session ${sessionName} quarantined (${reason}): ${quarantinePath}`);
+    } catch (error) {
+      logger.error(`Failed to quarantine session ${sessionName}:`, error);
+      // Only delete if quarantine fails
+      await fs.unlink(sessionPath).catch(() => {});
+    }
   }
 
   /**
@@ -116,8 +135,7 @@ export class SessionManager implements IService {
 
       // Handle empty or corrupted files
       if (!content || content.trim().length === 0) {
-        console.warn(`Session ${sessionName} is empty, deleting corrupted file`);
-        await fs.unlink(sessionPath).catch(() => {});
+        await this.quarantineSession(sessionName, 'empty file');
         return null;
       }
 
@@ -128,10 +146,9 @@ export class SessionManager implements IService {
         return null;
       }
 
-      // If JSON parse fails, the file is corrupted - delete it
+      // If JSON parse fails, the file is corrupted - quarantine it
       if (error instanceof SyntaxError) {
-        console.warn(`Session ${sessionName} is corrupted (invalid JSON), deleting file`);
-        await fs.unlink(sessionPath).catch(() => {});
+        await this.quarantineSession(sessionName, 'invalid JSON');
         return null;
       }
 

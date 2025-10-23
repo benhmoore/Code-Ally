@@ -8,6 +8,11 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { resolvePath } from '../utils/pathUtils.js';
+import { validateExists } from '../utils/pathValidator.js';
+import { isBinaryContent } from '../utils/fileUtils.js';
+import { formatError } from '../utils/errorUtils.js';
+import { TOOL_LIMITS } from '../config/toolDefaults.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import fg from 'fast-glob';
@@ -26,9 +31,9 @@ export class GrepTool extends BaseTool {
     'Search for patterns in files using regex. Supports file type filtering, context lines, and case-insensitive search. Use for finding code patterns, text search across files, or regex matching.';
   readonly requiresConfirmation = false; // Read-only operation
 
-  private static readonly MAX_RESULTS = 100;
-  private static readonly MAX_FILE_SIZE = 1024 * 1024; // 1MB
-  private static readonly MAX_CONTEXT_LINES = 10;
+  private static readonly MAX_RESULTS = TOOL_LIMITS.MAX_SEARCH_RESULTS;
+  private static readonly MAX_FILE_SIZE = TOOL_LIMITS.MAX_FILE_SIZE;
+  private static readonly MAX_CONTEXT_LINES = TOOL_LIMITS.MAX_CONTEXT_LINES;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -110,7 +115,7 @@ export class GrepTool extends BaseTool {
       regex = new RegExp(pattern, flags);
     } catch (error) {
       return this.formatErrorResponse(
-        `Invalid regex pattern: ${error instanceof Error ? error.message : String(error)}`,
+        `Invalid regex pattern: ${formatError(error)}`,
         'validation_error',
         'Use simpler patterns or escape special characters'
       );
@@ -118,16 +123,13 @@ export class GrepTool extends BaseTool {
 
     try {
       // Resolve search path
-      const absolutePath = path.isAbsolute(searchPath)
-        ? searchPath
-        : path.join(process.cwd(), searchPath);
+      const absolutePath = resolvePath(searchPath);
 
       // Check if path exists
-      try {
-        await fs.access(absolutePath);
-      } catch {
+      const validation = await validateExists(absolutePath);
+      if (!validation.valid) {
         return this.formatErrorResponse(
-          `Path not found: ${searchPath}`,
+          validation.error!,
           'validation_error'
         );
       }
@@ -173,7 +175,7 @@ export class GrepTool extends BaseTool {
           const content = await fs.readFile(filePath, { encoding: 'utf-8' });
 
           // Check for binary content
-          if (this.isBinary(content)) {
+          if (isBinaryContent(content)) {
             continue;
           }
 
@@ -227,7 +229,7 @@ export class GrepTool extends BaseTool {
       });
     } catch (error) {
       return this.formatErrorResponse(
-        `Error searching files: ${error instanceof Error ? error.message : String(error)}`,
+        `Error searching files: ${formatError(error)}`,
         'system_error'
       );
     }
@@ -270,13 +272,6 @@ export class GrepTool extends BaseTool {
     return matches;
   }
 
-  /**
-   * Check if content appears to be binary
-   */
-  private isBinary(content: string): boolean {
-    const sample = content.substring(0, 1024);
-    return sample.includes('\0');
-  }
 
   /**
    * Custom result preview

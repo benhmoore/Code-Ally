@@ -7,8 +7,10 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { resolvePath } from '../utils/pathUtils.js';
+import { validateIsFile } from '../utils/pathValidator.js';
+import { formatError } from '../utils/errorUtils.js';
 import * as fs from 'fs/promises';
-import * as path from 'path';
 
 export class EditTool extends BaseTool {
   readonly name = 'edit';
@@ -67,9 +69,7 @@ export class EditTool extends BaseTool {
       return; // Skip preview if invalid args
     }
 
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(process.cwd(), filePath);
+    const absolutePath = resolvePath(filePath);
 
     try {
       await fs.access(absolutePath);
@@ -130,28 +130,16 @@ export class EditTool extends BaseTool {
     }
 
     // Resolve absolute path
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(process.cwd(), filePath);
+    const absolutePath = resolvePath(filePath);
 
     try {
-      // Check if file exists
-      try {
-        await fs.access(absolutePath);
-      } catch {
+      // Validate that the path is a file
+      const validation = await validateIsFile(absolutePath);
+      if (!validation.valid) {
         return this.formatErrorResponse(
-          `File not found: ${filePath}`,
+          validation.error!,
           'user_error',
           'Check that the file path is correct'
-        );
-      }
-
-      // Check if it's a file (not a directory)
-      const stats = await fs.stat(absolutePath);
-      if (!stats.isFile()) {
-        return this.formatErrorResponse(
-          `Not a file: ${filePath}`,
-          'validation_error'
         );
       }
 
@@ -207,7 +195,7 @@ export class EditTool extends BaseTool {
       });
     } catch (error) {
       return this.formatErrorResponse(
-        `Failed to edit file: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to edit file: ${formatError(error)}`,
         'system_error'
       );
     }

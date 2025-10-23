@@ -8,6 +8,10 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { resolvePath } from '../utils/pathUtils.js';
+import { validateIsDirectory } from '../utils/pathValidator.js';
+import { TOOL_LIMITS } from '../config/toolDefaults.js';
+import { formatError } from '../utils/errorUtils.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -26,8 +30,6 @@ export class LsTool extends BaseTool {
   readonly description =
     'List directory contents with file details. Shows file types (directory, symlink), sizes, and modification times. Use for exploring directory structure.';
   readonly requiresConfirmation = false; // Read-only operation
-
-  private static readonly MAX_ENTRIES = 1000;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -88,25 +90,13 @@ export class LsTool extends BaseTool {
 
     try {
       // Resolve path
-      const absolutePath = path.isAbsolute(dirPath)
-        ? dirPath
-        : path.join(process.cwd(), dirPath);
+      const absolutePath = resolvePath(dirPath);
 
-      // Check if path exists
-      try {
-        await fs.access(absolutePath);
-      } catch {
+      // Validate that it's a directory
+      const validation = await validateIsDirectory(absolutePath);
+      if (!validation.valid) {
         return this.formatErrorResponse(
-          `Path not found: ${dirPath}`,
-          'validation_error'
-        );
-      }
-
-      // Check if it's a directory
-      const stats = await fs.stat(absolutePath);
-      if (!stats.isDirectory()) {
-        return this.formatErrorResponse(
-          `Not a directory: ${dirPath}`,
+          validation.error!,
           'validation_error',
           'ls requires a directory path'
         );
@@ -170,8 +160,8 @@ export class LsTool extends BaseTool {
 
       // Apply limit
       const totalCount = fileEntries.length;
-      const truncated = totalCount > LsTool.MAX_ENTRIES;
-      const results = fileEntries.slice(0, LsTool.MAX_ENTRIES);
+      const truncated = totalCount > TOOL_LIMITS.MAX_DIRECTORY_ENTRIES;
+      const results = fileEntries.slice(0, TOOL_LIMITS.MAX_DIRECTORY_ENTRIES);
 
       // Format as human-readable content
       const contentLines: string[] = [];
@@ -199,7 +189,7 @@ export class LsTool extends BaseTool {
       });
     } catch (error) {
       return this.formatErrorResponse(
-        `Error listing directory: ${error instanceof Error ? error.message : String(error)}`,
+        `Error listing directory: ${formatError(error)}`,
         'system_error'
       );
     }

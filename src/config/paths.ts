@@ -24,11 +24,6 @@ export const SESSIONS_DIR = join(ALLY_HOME, 'sessions');
 export const AGENTS_DIR = join(ALLY_HOME, 'agents');
 
 /**
- * Directory for undo system patches
- */
-export const PATCHES_DIR = join(ALLY_HOME, 'patches');
-
-/**
  * Base cache directory
  */
 export const CACHE_DIR = join(ALLY_HOME, 'cache');
@@ -55,7 +50,6 @@ export const STANDARD_DIRECTORIES = [
   ALLY_HOME,
   SESSIONS_DIR,
   AGENTS_DIR,
-  PATCHES_DIR,
   CACHE_DIR,
   COMPLETION_CACHE_DIR,
 ];

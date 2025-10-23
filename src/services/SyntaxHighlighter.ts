@@ -6,6 +6,8 @@
  */
 
 import { highlight, supportsLanguage } from 'cli-highlight';
+import { formatError } from '../utils/errorUtils.js';
+import { logger } from './Logger.js';
 
 export interface HighlightOptions {
   language?: string;
@@ -37,7 +39,7 @@ export class SyntaxHighlighter {
       }
       return code;
     } catch (error) {
-      // Fallback to unhighlighted code if highlighting fails
+      logger.warn(`Syntax highlighting failed for language '${language}':`, formatError(error));
       return code;
     }
   }

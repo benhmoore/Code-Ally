@@ -8,8 +8,10 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { tokenCounter } from '../services/TokenCounter.js';
+import { resolvePath } from '../utils/pathUtils.js';
+import { validateIsFile } from '../utils/pathValidator.js';
+import { isBinaryContent } from '../utils/fileUtils.js';
 import * as fs from 'fs/promises';
-import * as path from 'path';
 
 export class ReadTool extends BaseTool {
   readonly name = 'read';
@@ -185,28 +187,19 @@ export class ReadTool extends BaseTool {
     offset: number
   ): Promise<string> {
     // Resolve absolute path
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(process.cwd(), filePath);
+    const absolutePath = resolvePath(filePath);
 
-    // Check if file exists
-    try {
-      await fs.access(absolutePath);
-    } catch {
-      throw new Error(`File not found: ${filePath}`);
-    }
-
-    // Check if it's a file (not a directory)
-    const stats = await fs.stat(absolutePath);
-    if (!stats.isFile()) {
-      throw new Error(`Not a file: ${filePath}`);
+    // Validate file exists and is a file
+    const validation = await validateIsFile(absolutePath);
+    if (!validation.valid) {
+      throw new Error(validation.error);
     }
 
     // Read file content
     const content = await fs.readFile(absolutePath, 'utf-8');
 
     // Check for binary content
-    if (this.isBinary(content)) {
+    if (isBinaryContent(content)) {
       return `=== ${absolutePath} ===\n[Binary file - content not displayed]`;
     }
 
@@ -227,14 +220,6 @@ export class ReadTool extends BaseTool {
     return `=== ${absolutePath} ===\n${formattedLines.join('\n')}`;
   }
 
-  /**
-   * Check if content appears to be binary
-   */
-  private isBinary(content: string): boolean {
-    // Check for null bytes in first 1KB
-    const sample = content.substring(0, 1024);
-    return sample.includes('\0');
-  }
 
   /**
    * Get truncation guidance for read output

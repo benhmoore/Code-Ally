@@ -12,6 +12,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { formatError } from '../utils/errorUtils.js';
+import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
+import { logger } from '../services/Logger.js';
 
 // --- Core Agent Identity and Directives ---
 
@@ -116,17 +119,18 @@ function getContextUsageInfo(tokenManager?: any, toolResultManager?: any): strin
     let contextLine = `- Context Usage: ${contextPct}% (~${remainingCalls} tool calls remaining)`;
 
     // Add graduated warnings based on usage level
-    if (contextPct >= 95) {
-      contextLine += '\n  🚨 CRITICAL: Stop tool use after current operation and summarize work immediately';
-    } else if (contextPct >= 85) {
-      contextLine += '\n  ⚠️ Approaching limit: Complete current task then wrap up';
-    } else if (contextPct >= 70) {
-      contextLine += '\n  💡 Context filling: Prioritize essential operations';
+    if (contextPct >= CONTEXT_THRESHOLDS.CRITICAL) {
+      contextLine += `\n  🚨 CRITICAL: ${CONTEXT_THRESHOLDS.WARNINGS[95]}`;
+    } else if (contextPct >= CONTEXT_THRESHOLDS.WARNING) {
+      contextLine += `\n  ⚠️ ${CONTEXT_THRESHOLDS.WARNINGS[85]}`;
+    } else if (contextPct >= CONTEXT_THRESHOLDS.NORMAL) {
+      contextLine += `\n  💡 ${CONTEXT_THRESHOLDS.WARNINGS[70]}`;
     }
 
     return contextLine;
   } catch (error) {
-    // Silently fail if context usage can't be determined
+    // Context usage determination failed - continue without warning
+    logger.warn('Failed to determine context usage:', formatError(error));
     return '';
   }
 }
@@ -178,7 +182,7 @@ ${allyContent}`;
         }
       }
     } catch (error) {
-      // Silently fail if ALLY.md can't be read
+      logger.warn('Failed to read ALLY.md:', formatError(error));
     }
   }
 
@@ -200,7 +204,7 @@ ${agentsSection}`;
         }
       }
     } catch (error) {
-      // Silently fail if agents can't be loaded
+      logger.warn('Failed to load agents for system prompt:', formatError(error));
     }
   }
 
@@ -241,7 +245,7 @@ export async function getMainSystemPrompt(tokenManager?: any, toolResultManager?
       }
     }
   } catch (error) {
-    // Silently fail if todos can't be loaded
+    logger.warn('Failed to load todos for system prompt:', formatError(error));
   }
 
   // Combine core directives with context

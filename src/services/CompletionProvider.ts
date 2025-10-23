@@ -46,7 +46,6 @@ const SLASH_COMMANDS = [
   { name: '/memory', description: 'Manage memory facts' },
   { name: '/project', description: 'Manage project configuration' },
   { name: '/todo', description: 'Manage todo list' },
-  { name: '/undo', description: 'Undo recent changes' },
   { name: '/context', description: 'Show context usage' },
 ];
 

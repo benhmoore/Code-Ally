@@ -8,15 +8,13 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn, ChildProcess } from 'child_process';
+import { TIMEOUT_LIMITS } from '../config/toolDefaults.js';
 
 export class BashTool extends BaseTool {
   readonly name = 'bash';
   readonly description =
     'Execute shell commands. Use this for running bash commands, installing packages, running tests, etc. Output is streamed in real-time.';
   readonly requiresConfirmation = true; // Destructive operations require confirmation
-
-  private static readonly DEFAULT_TIMEOUT = 5000; // 5 seconds
-  private static readonly MAX_TIMEOUT = 60000; // 60 seconds
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -102,15 +100,15 @@ export class BashTool extends BaseTool {
    */
   private validateTimeout(timeout: any): number {
     if (timeout === undefined || timeout === null) {
-      return BashTool.DEFAULT_TIMEOUT;
+      return TIMEOUT_LIMITS.DEFAULT;
     }
 
     const timeoutMs = Number(timeout) * 1000;
     if (isNaN(timeoutMs) || timeoutMs <= 0) {
-      return BashTool.DEFAULT_TIMEOUT;
+      return TIMEOUT_LIMITS.DEFAULT;
     }
 
-    return Math.min(timeoutMs, BashTool.MAX_TIMEOUT);
+    return Math.min(timeoutMs, TIMEOUT_LIMITS.MAX);
   }
 
   /**
@@ -162,7 +160,7 @@ export class BashTool extends BaseTool {
           if (child.exitCode === null) {
             child.kill('SIGKILL');
           }
-        }, 1000);
+        }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
       }, timeout);
 
       // Handle stdout

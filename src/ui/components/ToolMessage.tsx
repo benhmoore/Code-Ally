@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { ToolCallState } from '../../types';
 import { OutputScroller } from './OutputScroller';
 import { AnimationTicker } from '../../services/AnimationTicker.js';
+import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 
 // Simple text-based spinner animation
 const SimpleSpinner: React.FC = () => {
@@ -67,41 +68,19 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
     return undefined;
   }, [toolCall.status, toolCall.endTime]);
 
-  // Status icon state machine
+  // Status icon state machine - use spinner for executing, otherwise use utility
   const statusIcon = useMemo(() => {
-    switch (toolCall.status) {
-      case 'pending':
-        return <Text color="gray">○</Text>;
-      case 'validating':
-        return <Text color="yellow">●</Text>;
-      case 'scheduled':
-        return <Text color="blue">◐</Text>;
-      case 'executing':
-        return <SimpleSpinner />;
-      case 'success':
-        return <Text color="green">✓</Text>;
-      case 'error':
-        return <Text color="red">✕</Text>;
-      case 'cancelled':
-        return <Text color="gray">⊘</Text>;
-      default:
-        return <Text color="gray">?</Text>;
+    if (toolCall.status === 'executing') {
+      return <SimpleSpinner />;
     }
+    const icon = getStatusIcon(toolCall.status);
+    const color = getStatusColor(toolCall.status);
+    return <Text color={color}>{icon}</Text>;
   }, [toolCall.status]);
 
   // Tool name color based on status
   const toolNameColor = useMemo(() => {
-    switch (toolCall.status) {
-      case 'error':
-        return 'red';
-      case 'success':
-        return 'green';
-      case 'executing':
-      case 'validating':
-        return 'cyan';
-      default:
-        return 'gray';
-    }
+    return getStatusColor(toolCall.status);
   }, [toolCall.status]);
 
   // Calculate available lines for output (maxHeight - 1 for header line)

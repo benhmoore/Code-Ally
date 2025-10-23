@@ -8,6 +8,9 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { resolvePath } from '../utils/pathUtils.js';
+import { FILE_EXCLUSIONS, TOOL_LIMITS } from '../config/toolDefaults.js';
+import { formatError } from '../utils/errorUtils.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import fg from 'fast-glob';
@@ -24,16 +27,6 @@ export class GlobTool extends BaseTool {
   readonly description =
     'Find files matching glob patterns. Use * for wildcards, ** for recursive search. Examples: "*.ts" (TypeScript files), "**/*.test.js" (test files recursively), "src/**/*.{ts,tsx}" (multiple extensions).';
   readonly requiresConfirmation = false; // Read-only operation
-
-  private static readonly MAX_RESULTS = 100;
-  private static readonly DEFAULT_EXCLUDE = [
-    '**/node_modules/**',
-    '**/.git/**',
-    '**/dist/**',
-    '**/build/**',
-    '**/.next/**',
-    '**/coverage/**',
-  ];
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -68,7 +61,7 @@ export class GlobTool extends BaseTool {
             },
             max_results: {
               type: 'integer',
-              description: `Maximum number of results (default: ${GlobTool.MAX_RESULTS})`,
+              description: `Maximum number of results (default: ${TOOL_LIMITS.MAX_SEARCH_RESULTS})`,
             },
           },
           required: ['pattern'],
@@ -86,8 +79,8 @@ export class GlobTool extends BaseTool {
     const searchPath = (args.path as string) || '.';
     const excludePatterns = (args.exclude as string[]) || [];
     const maxResults = Math.min(
-      Number(args.max_results) || GlobTool.MAX_RESULTS,
-      GlobTool.MAX_RESULTS
+      Number(args.max_results) || TOOL_LIMITS.MAX_SEARCH_RESULTS,
+      TOOL_LIMITS.MAX_SEARCH_RESULTS
     );
 
     if (!pattern) {
@@ -109,9 +102,7 @@ export class GlobTool extends BaseTool {
 
     try {
       // Resolve search path
-      const absolutePath = path.isAbsolute(searchPath)
-        ? searchPath
-        : path.join(process.cwd(), searchPath);
+      const absolutePath = resolvePath(searchPath);
 
       // Check if path exists
       try {
@@ -134,7 +125,7 @@ export class GlobTool extends BaseTool {
       }
 
       // Combine default and user-provided exclude patterns
-      const allExcludePatterns = [...GlobTool.DEFAULT_EXCLUDE, ...excludePatterns];
+      const allExcludePatterns = [...FILE_EXCLUSIONS.DEFAULT, ...excludePatterns];
 
       // Construct the full glob pattern
       const globPattern = path.join(absolutePath, pattern);
@@ -187,7 +178,7 @@ export class GlobTool extends BaseTool {
       });
     } catch (error) {
       return this.formatErrorResponse(
-        `Error searching files: ${error instanceof Error ? error.message : String(error)}`,
+        `Error searching files: ${formatError(error)}`,
         'system_error'
       );
     }

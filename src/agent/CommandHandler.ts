@@ -5,9 +5,10 @@
  * - Core: help, config, model, debug, compact, rewind, exit
  * - Agent: agent create/ls/show/use/delete
  * - Focus: focus, defocus, focus-show
- * - Memory: memory add/ls/rm/clear/show
  * - Project: project init/edit/view/clear
  * - Utility: undo
+ *
+ * Note: Memory commands have been removed. Use session metadata for persistent facts.
  */
 
 import { Agent } from './Agent.js';
@@ -17,9 +18,7 @@ import { FocusManager } from '../services/FocusManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TokenManager } from './TokenManager.js';
 import { Message, ActivityEventType } from '../types/index.js';
-import type { MemoryManager } from '../services/MemoryManager.js';
 import type { ProjectManager } from '../services/ProjectManager.js';
-import type { UndoManager } from '../services/UndoManager.js';
 import type { TodoManager } from '../services/TodoManager.js';
 
 export interface CommandResult {
@@ -86,17 +85,9 @@ export class CommandHandler {
       case 'focus-show':
         return await this.handleFocusShow();
 
-      // Memory commands
-      case 'memory':
-        return await this.handleMemory(args, messages);
-
       // Project commands
       case 'project':
         return await this.handleProject(args, messages);
-
-      // Utility commands
-      case 'undo':
-        return await this.handleUndo(args, messages);
 
       // Todo commands
       case 'todo':
@@ -182,21 +173,11 @@ Focus Commands:
   /defocus                 - Clear focus
   /focus-show              - Show current focus
 
-Memory Commands:
-  /memory add <fact>       - Add a memory fact
-  /memory ls               - List all memories
-  /memory rm <id>          - Remove a memory
-  /memory clear            - Clear all memories
-  /memory show <id>        - Show memory details
-
 Project Commands:
   /project init            - Initialize project context
   /project edit            - Edit project file
   /project view            - View project file
   /project clear           - Clear project context
-
-Utility Commands:
-  /undo [count]            - Undo last file operation(s)
 
 Todo Commands:
   /todo                    - Show current todo list
@@ -1087,159 +1068,11 @@ Todo Commands:
   }
 
   // ===========================
-  // Memory Commands
+  // Memory Commands - REMOVED
   // ===========================
-
-  private async handleMemory(args: string[], _messages: Message[]): Promise<CommandResult> {
-    const argString = args.join(' ').trim();
-
-    if (!argString) {
-      return {
-        handled: true,
-        response: `Memory Commands:
-  /memory add <fact>    - Add a memory fact
-  /memory ls            - List all memories
-  /memory rm <id>       - Remove memory by ID
-  /memory clear         - Clear all memories
-  /memory show <id>     - Show memory details
-`,
-      };
-    }
-
-    const parts = argString.split(/\s+/);
-    const subcommand = parts[0];
-    if (!subcommand) {
-      return { handled: true, response: 'Invalid memory command' };
-    }
-
-    const memoryManager = this.serviceRegistry.get('memoryManager') as MemoryManager;
-
-    switch (subcommand.toLowerCase()) {
-      case 'add':
-        return this.handleMemoryAdd(memoryManager, parts.slice(1).join(' '));
-      case 'ls':
-      case 'list':
-        return this.handleMemoryList(memoryManager);
-      case 'rm':
-      case 'remove':
-        return this.handleMemoryRemove(memoryManager, parts.length > 1 ? parts[1] : undefined);
-      case 'clear':
-        return this.handleMemoryClear(memoryManager);
-      case 'show':
-        return this.handleMemoryShow(memoryManager, parts.length > 1 ? parts[1] : undefined);
-      default:
-        return {
-          handled: true,
-          response: `Unknown memory subcommand: ${subcommand}`,
-        };
-    }
-  }
-
-  private async handleMemoryAdd(
-    memoryManager: MemoryManager,
-    content: string
-  ): Promise<CommandResult> {
-    if (!content) {
-      return {
-        handled: true,
-        response: 'Content required. Usage: /memory add <fact>',
-      };
-    }
-
-    const memory = await memoryManager.addMemory(content);
-
-    return {
-      handled: true,
-      response: `Memory added: ${memory.id}`,
-    };
-  }
-
-  private async handleMemoryList(memoryManager: MemoryManager): Promise<CommandResult> {
-    const memories = await memoryManager.listMemories();
-
-    if (memories.length === 0) {
-      return {
-        handled: true,
-        response: 'No memories found. Use /memory add to create one.',
-      };
-    }
-
-    let output = 'Memories:\n\n';
-
-    for (const memory of memories) {
-      const date = new Date(memory.created).toLocaleDateString();
-      output += `  [${memory.id}] ${memory.content} (${date})\n`;
-    }
-
-    return { handled: true, response: output };
-  }
-
-  private async handleMemoryRemove(
-    memoryManager: MemoryManager,
-    id: string | undefined
-  ): Promise<CommandResult> {
-    if (!id) {
-      return {
-        handled: true,
-        response: 'Memory ID required. Usage: /memory rm <id>',
-      };
-    }
-
-    const removed = await memoryManager.removeMemory(id);
-
-    if (removed) {
-      return {
-        handled: true,
-        response: `Memory ${id} removed.`,
-      };
-    } else {
-      return {
-        handled: true,
-        response: `Memory ${id} not found.`,
-      };
-    }
-  }
-
-  private async handleMemoryClear(memoryManager: MemoryManager): Promise<CommandResult> {
-    await memoryManager.clearMemories();
-
-    return {
-      handled: true,
-      response: 'All memories cleared.',
-    };
-  }
-
-  private async handleMemoryShow(
-    memoryManager: MemoryManager,
-    id: string | undefined
-  ): Promise<CommandResult> {
-    if (!id) {
-      return {
-        handled: true,
-        response: 'Memory ID required. Usage: /memory show <id>',
-      };
-    }
-
-    const memory = await memoryManager.getMemory(id);
-
-    if (!memory) {
-      return {
-        handled: true,
-        response: `Memory ${id} not found.`,
-      };
-    }
-
-    const date = new Date(memory.created).toLocaleString();
-    let output = `Memory: ${memory.id}\n\n`;
-    output += `Content: ${memory.content}\n`;
-    output += `Created: ${date}\n`;
-
-    if (memory.tags && memory.tags.length > 0) {
-      output += `Tags: ${memory.tags.join(', ')}\n`;
-    }
-
-    return { handled: true, response: output };
-  }
+  // Memory commands have been removed. Use session metadata for persistent facts instead.
+  // Session metadata can be accessed through the SessionManager service and persists
+  // across sessions without requiring a separate storage mechanism.
 
   // ===========================
   // Project Commands
@@ -1350,34 +1183,13 @@ Todo Commands:
   }
 
   // ===========================
-  // Utility Commands
+  // NOTE: Undo functionality removed
   // ===========================
-
-  private async handleUndo(args: string[], _messages: Message[]): Promise<CommandResult> {
-    const argString = args.join(' ').trim();
-    let count = 1;
-
-    if (argString) {
-      const parsed = parseInt(argString, 10);
-
-      if (isNaN(parsed) || parsed <= 0) {
-        return {
-          handled: true,
-          response: 'Invalid count. Usage: /undo [count]',
-        };
-      }
-
-      count = parsed;
-    }
-
-    const undoManager = this.serviceRegistry.get('undoManager') as UndoManager;
-    const result = await undoManager.undo(count);
-
-    return {
-      handled: true,
-      response: result.message,
-    };
-  }
+  // Users should use git for undoing file operations:
+  // - git status        (see what changed)
+  // - git diff          (view changes)
+  // - git restore <file> (restore specific file)
+  // - git reset --hard  (reset all changes)
 
   // ===========================
   // Todo Commands

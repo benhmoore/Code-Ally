@@ -7,6 +7,7 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
+import { getStatusColor, type ToolStatus } from '../utils/statusUtils.js';
 
 export interface ToolOutputStreamProps {
   /** Name of the tool being executed */
@@ -14,7 +15,7 @@ export interface ToolOutputStreamProps {
   /** Tool output (can be partial/streaming) */
   output: string;
   /** Status of the tool */
-  status?: 'executing' | 'success' | 'error';
+  status?: ToolStatus;
   /** Optional error message */
   error?: string;
   /** Maximum lines to display (0 = all) */
@@ -42,18 +43,7 @@ export const ToolOutputStream: React.FC<ToolOutputStreamProps> = ({
   const displayLines = maxLines > 0 ? lines.slice(-maxLines) : lines;
   const hasMore = maxLines > 0 && lines.length > maxLines;
 
-  const getStatusColor = (): string => {
-    switch (status) {
-      case 'success':
-        return 'green';
-      case 'error':
-        return 'red';
-      default:
-        return 'cyan';
-    }
-  };
-
-  const statusColor = getStatusColor();
+  const statusColor = getStatusColor(status);
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
@@ -108,7 +98,7 @@ export interface ToolOutputGroupProps {
     id: string;
     toolName: string;
     output: string;
-    status?: 'executing' | 'success' | 'error';
+    status?: ToolStatus;
     error?: string;
   }>;
   /** Maximum lines per tool */

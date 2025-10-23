@@ -8,9 +8,7 @@ import { ConfigManager } from '../../services/ConfigManager.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { AgentManager } from '../../services/AgentManager.js';
 import { FocusManager } from '../../services/FocusManager.js';
-import { MemoryManager } from '../../services/MemoryManager.js';
 import { ProjectManager } from '../../services/ProjectManager.js';
-import { UndoManager } from '../../services/UndoManager.js';
 import type { Message } from '../../types/index.js';
 
 describe('CommandHandler', () => {
@@ -32,22 +30,14 @@ describe('CommandHandler', () => {
 
     const focusManager = new FocusManager();
 
-    const memoryManager = new MemoryManager();
-    await memoryManager.initialize();
-
     const projectManager = new ProjectManager();
     await projectManager.initialize();
-
-    const undoManager = new UndoManager();
-    await undoManager.initialize();
 
     // Register services
     serviceRegistry.registerInstance('configManager', configManager);
     serviceRegistry.registerInstance('agentManager', agentManager);
     serviceRegistry.registerInstance('focusManager', focusManager);
-    serviceRegistry.registerInstance('memoryManager', memoryManager);
     serviceRegistry.registerInstance('projectManager', projectManager);
-    serviceRegistry.registerInstance('undoManager', undoManager);
 
     // Mock agent
     mockAgent = {
@@ -83,7 +73,6 @@ describe('CommandHandler', () => {
       expect(result.handled).toBe(true);
       expect(result.response).toContain('Core Commands');
       expect(result.response).toContain('Agent Commands');
-      expect(result.response).toContain('Memory Commands');
     });
 
     it('should handle /config-show', async () => {
@@ -168,27 +157,6 @@ describe('CommandHandler', () => {
     });
   });
 
-  describe('Memory Commands', () => {
-    it('should handle /memory add', async () => {
-      const result = await commandHandler.handleCommand('/memory add Test memory fact', []);
-      expect(result.handled).toBe(true);
-      expect(result.response).toContain('Memory added');
-    });
-
-    it('should handle /memory ls', async () => {
-      await commandHandler.handleCommand('/memory add Test memory', []);
-      const result = await commandHandler.handleCommand('/memory ls', []);
-      expect(result.handled).toBe(true);
-    });
-
-    it('should handle /memory clear', async () => {
-      await commandHandler.handleCommand('/memory add Test', []);
-      const result = await commandHandler.handleCommand('/memory clear', []);
-      expect(result.handled).toBe(true);
-      expect(result.response).toContain('cleared');
-    });
-  });
-
   describe('Project Commands', () => {
     it('should handle /project view', async () => {
       const result = await commandHandler.handleCommand('/project view', []);
@@ -202,17 +170,6 @@ describe('CommandHandler', () => {
     });
   });
 
-  describe('Utility Commands', () => {
-    it('should handle /undo', async () => {
-      const result = await commandHandler.handleCommand('/undo', []);
-      expect(result.handled).toBe(true);
-    });
-
-    it('should handle /undo with count', async () => {
-      const result = await commandHandler.handleCommand('/undo 3', []);
-      expect(result.handled).toBe(true);
-    });
-  });
 
   describe('Error Handling', () => {
     it('should handle unknown commands', async () => {

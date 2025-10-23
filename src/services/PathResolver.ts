@@ -8,6 +8,8 @@
 import { resolve, isAbsolute } from 'path';
 import { homedir } from 'os';
 import { ServiceRegistry } from './ServiceRegistry.js';
+import { formatError, isFileNotFoundError } from '../utils/errorUtils.js';
+import { logger } from './Logger.js';
 
 /**
  * Interface for FocusManager service
@@ -34,7 +36,10 @@ export class PathResolver {
           this._focusManager = registry.get<IFocusManager>('focus_manager')!;
         }
       } catch (error) {
-        // Focus manager not available - continue with standard resolution
+        // Focus manager not available - expected if not initialized
+        if (!isFileNotFoundError(error)) {
+          logger.warn('Unexpected error accessing focus_manager:', formatError(error));
+        }
       }
       this._focusManagerChecked = true;
     }
@@ -67,7 +72,7 @@ export class PathResolver {
       // Standard resolution
       return this.standardResolve(filePath);
     } catch (error) {
-      console.warn(`Path resolution failed: ${error}. Using fallback.`);
+      logger.warn('Path resolution failed, using fallback:', formatError(error));
       // Fallback to standard resolution
       return this.standardResolve(filePath);
     }

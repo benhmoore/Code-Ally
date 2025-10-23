@@ -7,6 +7,8 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { resolvePath } from '../utils/pathUtils.js';
+import { formatError } from '../utils/errorUtils.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -61,9 +63,7 @@ export class WriteTool extends BaseTool {
       return; // Skip preview if invalid args
     }
 
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(process.cwd(), filePath);
+    const absolutePath = resolvePath(filePath);
 
     try {
       // Check if file exists and read existing content
@@ -108,9 +108,7 @@ export class WriteTool extends BaseTool {
     }
 
     // Resolve absolute path
-    const absolutePath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(process.cwd(), filePath);
+    const absolutePath = resolvePath(filePath);
 
     try {
       // Check if file exists and read existing content
@@ -149,7 +147,7 @@ export class WriteTool extends BaseTool {
       });
     } catch (error) {
       return this.formatErrorResponse(
-        `Failed to write file: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to write file: ${formatError(error)}`,
         'system_error'
       );
     }

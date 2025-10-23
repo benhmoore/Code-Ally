@@ -12,6 +12,8 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { ToolCallState } from '../../types/index.js';
 import { DiffDisplay } from './DiffDisplay.js';
+import { formatDuration } from '../utils/timeUtils.js';
+import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -20,21 +22,6 @@ interface ToolCallDisplayProps {
   level?: number;
   /** Nested tool calls */
   children?: React.ReactNode;
-}
-
-/**
- * Format duration in a human-readable way (no sub-second precision)
- */
-function formatDuration(ms: number): string {
-  if (ms < 1000) {
-    return `${Math.round(ms)}ms`;
-  } else if (ms < 60000) {
-    return `${Math.round(ms / 1000)}s`;
-  } else {
-    const minutes = Math.floor(ms / 60000);
-    const seconds = Math.round((ms % 60000) / 1000);
-    return `${minutes}m ${seconds}s`;
-  }
 }
 
 /**
@@ -90,26 +77,6 @@ function formatArgsPreview(args: any, toolName?: string): string {
 }
 
 /**
- * Get status color
- */
-function getStatusColor(status: ToolCallState['status']): string {
-  switch (status) {
-    case 'executing':
-    case 'pending':
-    case 'validating':
-    case 'scheduled':
-      return 'cyan';
-    case 'success':
-      return 'green';
-    case 'error':
-    case 'cancelled':
-      return 'red';
-    default:
-      return 'white';
-  }
-}
-
-/**
  * ToolCallDisplay Component (Internal)
  */
 const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
@@ -140,7 +107,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
   // Status indicator
   const statusColor = getStatusColor(toolCall.status);
-  const statusIcon = isRunning ? '...' : toolCall.status === 'success' ? '✓' : '✗';
+  const statusIcon = isRunning ? '...' : getStatusIcon(toolCall.status);
 
   const toolCallCount = toolCall.totalChildCount || 0;
 

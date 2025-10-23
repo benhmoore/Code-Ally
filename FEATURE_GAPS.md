@@ -316,21 +316,15 @@ Python has a full checker registry system:
 
 ---
 
-## 9. Undo System Gaps (MEDIUM PRIORITY)
+## 9. Undo System - REMOVED
 
-### ❌ Missing Components
+**Note**: The UndoManager service has been removed from the TypeScript codebase. Users should use git for undo operations:
+- `git status` - see what changed
+- `git diff` - view changes
+- `git restore <file>` - restore specific file
+- `git reset --hard` - reset all changes
 
-**9.1 PatchManager** (Python: undo/patch_manager.py)
-- Captures file modification patches
-- Stores undo history
-- Applies reverse patches
-- **TypeScript**: Has UndoManager service but integration unclear
-
-**9.2 FileActivityTracker** (Python: services/file_activity_tracker.py)
-- Tracks all file modifications
-- Maintains recent files list
-- Provides context to tools
-- **TypeScript**: Missing entirely
+**Python Equivalent**: Python has PatchManager and FileActivityTracker, but these are unnecessary when users have git available.
 
 ---
 
