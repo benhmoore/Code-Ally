@@ -17,6 +17,7 @@ export interface CLIOptions {
   temperature?: number;
   contextSize?: number;
   maxTokens?: number;
+  reasoningEffort?: string;
 
   // Configuration management
   init?: boolean;
@@ -111,6 +112,10 @@ Use '/help' for complete interactive command reference.
         '--max-tokens <int>',
         'Maximum tokens to generate',
         (val) => parseInt(val, 10)
+      )
+      .option(
+        '--reasoning-effort <level>',
+        'Reasoning effort for gpt-oss models (low, medium, high)'
       );
 
     // Configuration Management
@@ -195,6 +200,7 @@ Use '/help' for complete interactive command reference.
       temperature: opts.temperature,
       contextSize: opts.contextSize,
       maxTokens: opts.maxTokens,
+      reasoningEffort: opts.reasoningEffort,
 
       // Configuration
       init: opts.init,

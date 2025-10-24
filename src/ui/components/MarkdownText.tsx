@@ -214,20 +214,91 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
  * Table Renderer Component
  *
  * Renders markdown tables with borders and proper column width calculation
+ * Automatically adjusts column widths to fit terminal width
  */
 const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ header, rows }) => {
-  // Calculate column widths based on content
+  // Calculate optimal column widths with terminal width constraints
   const columnWidths = useMemo(() => {
-    const widths = header.map((h) => h.length);
+    // Get terminal width (with fallback)
+    const terminalWidth = process.stdout.columns || 120;
 
+    // Calculate natural widths (what content actually needs)
+    const naturalWidths = header.map((h) => h.length);
     rows.forEach((row) => {
       row.forEach((cell, colIdx) => {
-        widths[colIdx] = Math.max(widths[colIdx] || 0, cell.length);
+        naturalWidths[colIdx] = Math.max(naturalWidths[colIdx] || 0, cell.length);
       });
     });
 
-    return widths;
+    // Calculate table overhead: borders and padding
+    // Format: │ col1 │ col2 │ col3 │
+    // Overhead = 2 (outer borders) + (numCols - 1) * 3 (separators) + numCols * 2 (padding)
+    const numCols = header.length;
+    const borderOverhead = 2 + (numCols - 1) * 3 + numCols * 2;
+    const availableWidth = terminalWidth - borderOverhead - 4; // Extra margin for safety
+
+    // Sum of natural widths
+    const totalNaturalWidth = naturalWidths.reduce((sum, w) => sum + w, 0);
+
+    // If table fits naturally, use natural widths
+    if (totalNaturalWidth <= availableWidth) {
+      return naturalWidths;
+    }
+
+    // Table is too wide - need to distribute space proportionally
+    // Set minimum width per column (at least 10 chars or header length)
+    const minWidths = header.map((h) => Math.max(10, h.length));
+    const totalMinWidth = minWidths.reduce((sum, w) => sum + w, 0);
+
+    // If even minimum widths don't fit, use equal distribution
+    if (totalMinWidth > availableWidth) {
+      const equalWidth = Math.floor(availableWidth / numCols);
+      return header.map(() => Math.max(8, equalWidth));
+    }
+
+    // Distribute remaining space proportionally based on natural widths
+    const remainingSpace = availableWidth - totalMinWidth;
+    const excessWidths = naturalWidths.map((w, i) => Math.max(0, w - (minWidths[i] ?? 0)));
+    const totalExcess = excessWidths.reduce((sum, w) => sum + w, 0);
+
+    return minWidths.map((minWidth, i) => {
+      if (totalExcess === 0) return minWidth;
+      const excess = excessWidths[i] ?? 0;
+      const proportionalBonus = Math.floor((excess / totalExcess) * remainingSpace);
+      return minWidth + proportionalBonus;
+    });
   }, [header, rows]);
+
+  // Wrap text to fit within specified width
+  const wrapText = (text: string, width: number): string[] => {
+    if (text.length <= width) {
+      return [text];
+    }
+
+    const lines: string[] = [];
+    let remaining = text;
+
+    while (remaining.length > 0) {
+      if (remaining.length <= width) {
+        lines.push(remaining);
+        break;
+      }
+
+      // Try to break at a space
+      let breakPoint = width;
+      const lastSpace = remaining.lastIndexOf(' ', width);
+
+      if (lastSpace > width * 0.6) {
+        // Good break point found (not too early)
+        breakPoint = lastSpace;
+      }
+
+      lines.push(remaining.substring(0, breakPoint));
+      remaining = remaining.substring(breakPoint).trimStart();
+    }
+
+    return lines;
+  };
 
   // Pad a cell to the specified width
   const padCell = (text: string, width: number): string => {
@@ -253,19 +324,54 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
       <Text dimColor>{createTopBorder()}</Text>
 
       {/* Header row */}
-      <Text bold>
-        │ {header.map((h, idx) => padCell(h, columnWidths[idx] || 0)).join(' │ ')} │
-      </Text>
+      {(() => {
+        const headerLines = header.map((h, idx) => wrapText(h, columnWidths[idx] || 0));
+        const maxHeaderLines = Math.max(...headerLines.map(lines => lines.length));
+
+        return (
+          <>
+            {Array.from({ length: maxHeaderLines }).map((_, lineIdx) => (
+              <Box key={lineIdx}>
+                <Text dimColor>│ </Text>
+                {headerLines.map((lines, colIdx) => (
+                  <React.Fragment key={colIdx}>
+                    <Text bold>{padCell(lines[lineIdx] || '', columnWidths[colIdx] || 0)}</Text>
+                    <Text dimColor> │ </Text>
+                  </React.Fragment>
+                ))}
+              </Box>
+            ))}
+          </>
+        );
+      })()}
 
       {/* Header separator */}
       <Text dimColor>{createMiddleSeparator()}</Text>
 
       {/* Data rows */}
-      {rows.map((row, rowIdx) => (
-        <Text key={rowIdx}>
-          │ {row.map((cell, colIdx) => padCell(cell, columnWidths[colIdx] || 0)).join(' │ ')} │
-        </Text>
-      ))}
+      {rows.map((row, rowIdx) => {
+        // Wrap each cell in the row
+        const wrappedCells = row.map((cell, colIdx) =>
+          wrapText(cell, columnWidths[colIdx] || 0)
+        );
+        const maxLines = Math.max(...wrappedCells.map(lines => lines.length));
+
+        return (
+          <React.Fragment key={rowIdx}>
+            {Array.from({ length: maxLines }).map((_, lineIdx) => (
+              <Box key={lineIdx}>
+                <Text dimColor>│ </Text>
+                {wrappedCells.map((lines, colIdx) => (
+                  <React.Fragment key={colIdx}>
+                    <Text>{padCell(lines[lineIdx] || '', columnWidths[colIdx] || 0)}</Text>
+                    <Text dimColor> │ </Text>
+                  </React.Fragment>
+                ))}
+              </Box>
+            ))}
+          </React.Fragment>
+        );
+      })}
 
       {/* Bottom border */}
       <Text dimColor>{createBottomBorder()}</Text>

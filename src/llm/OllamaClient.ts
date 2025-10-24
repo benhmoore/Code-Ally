@@ -36,6 +36,7 @@ interface OllamaPayload {
   };
   tools?: FunctionDefinition[];
   tool_choice?: string;
+  reasoning_effort?: string; // For gpt-oss and reasoning models
 }
 
 /**
@@ -54,6 +55,7 @@ export class OllamaClient extends ModelClient {
   private readonly contextSize: number;
   private readonly maxTokens: number;
   private readonly keepAlive?: number;
+  private readonly reasoningEffort?: string;
   private readonly apiUrl: string;
   private readonly activityStream?: ActivityStream;
 
@@ -84,6 +86,7 @@ export class OllamaClient extends ModelClient {
     this.contextSize = config.contextSize;
     this.maxTokens = config.maxTokens;
     this.keepAlive = config.keepAlive;
+    this.reasoningEffort = config.reasoningEffort;
     this.activityStream = config.activityStream;
     this.apiUrl = `${this._endpoint}/api/chat`;
   }
@@ -253,6 +256,11 @@ export class OllamaClient extends ModelClient {
 
     if (this.keepAlive !== undefined) {
       payload.options.keep_alive = this.keepAlive;
+    }
+
+    // Add reasoning_effort if configured (for gpt-oss and reasoning models)
+    if (this.reasoningEffort) {
+      payload.reasoning_effort = this.reasoningEffort;
     }
 
     // Add function definitions if provided

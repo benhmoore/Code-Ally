@@ -275,7 +275,7 @@ export class Agent {
         let reminderContent = '<system-reminder>\n';
 
         if (todos.length === 0) {
-          reminderContent += 'The todo list is currently empty. For complex multi-step tasks (3+ steps) or non-trivial operations, consider creating a todo list using todo_write. This helps track progress and ensures nothing is missed.\n';
+          reminderContent += 'IMPORTANT: The todo list is currently empty. Create a todo list using todo_write for any task requiring multiple steps, even if the user\'s request doesn\'t explicitly request it. Breaking work into tracked tasks dramatically improves your effectiveness - it helps you maintain focus, avoid getting sidetracked, and ensure nothing is missed. Use todo_write early and often.\n';
         } else {
           reminderContent += 'Current todos:\n';
           todos.forEach((todo: any, idx: number) => {

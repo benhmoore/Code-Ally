@@ -23,6 +23,7 @@ export const DEFAULT_CONFIG: Config = {
   context_size: 16384, // Context window size in tokens
   temperature: 0.3, // Generation temperature (0.0-1.0)
   max_tokens: 7000, // Max tokens to generate per response
+  reasoning_effort: 'low', // Reasoning level for gpt-oss and reasoning models: "low", "medium", "high"
 
   // ==========================================
   // EXECUTION SETTINGS
@@ -103,6 +104,7 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   context_size: 'number',
   temperature: 'number',
   max_tokens: 'number',
+  reasoning_effort: 'string',
 
   // Execution Settings
   bash_timeout: 'number',
@@ -171,6 +173,20 @@ export function validateConfigValue(
   // Handle null model
   if (key === 'model' && value === null) {
     return { valid: true, coercedValue: null };
+  }
+
+  // Handle undefined reasoning_effort
+  if (key === 'reasoning_effort' && (value === undefined || value === null)) {
+    return { valid: true, coercedValue: undefined };
+  }
+
+  // Validate reasoning_effort values
+  if (key === 'reasoning_effort' && typeof value === 'string') {
+    const validValues = ['low', 'medium', 'high'];
+    if (validValues.includes(value.toLowerCase())) {
+      return { valid: true, coercedValue: value.toLowerCase() };
+    }
+    return { valid: false, error: `reasoning_effort must be one of: ${validValues.join(', ')}` };
   }
 
   try {

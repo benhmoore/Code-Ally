@@ -279,6 +279,8 @@ function applyConfigOverrides(
     overrides.context_size = options.contextSize;
   if (options.maxTokens !== undefined)
     overrides.max_tokens = options.maxTokens;
+  if (options.reasoningEffort !== undefined)
+    overrides.reasoning_effort = options.reasoningEffort;
   if (options.bashTimeout !== undefined)
     overrides.bash_timeout = options.bashTimeout;
   if (options.yesToAll !== undefined || options.autoConfirm !== undefined) {
@@ -547,6 +549,7 @@ async function main() {
       temperature: config.temperature,
       contextSize: config.context_size,
       maxTokens: config.max_tokens,
+      reasoningEffort: config.reasoning_effort,
       activityStream,
     });
     registry.registerInstance('model_client', modelClient);
