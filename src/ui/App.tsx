@@ -203,6 +203,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     initializeServices();
   }, [agent, actions]);
 
+  // Track session loading state
+  const [sessionLoaded, setSessionLoaded] = useState(!resumeSession);
+
   // Handle session resume on mount
   useEffect(() => {
     const handleSessionResume = async () => {
@@ -213,7 +216,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
       const todoManager = serviceRegistry.get('todo_manager');
 
-      if (!sessionManager) return;
+      if (!sessionManager) {
+        setSessionLoaded(true);
+        return;
+      }
 
       // If resumeSession is 'interactive', show session selector
       if (resumeSession === 'interactive') {
@@ -224,6 +230,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           selectedIndex: 0,
         });
         sessionResumed.current = true;
+        setSessionLoaded(true);
         return;
       }
 
@@ -240,19 +247,29 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         // Filter out system messages to avoid duplication
         const userMessages = sessionMessages.filter(m => m.role !== 'system');
 
-        // Load messages into agent (auto-save will now use the correct session)
-        userMessages.forEach(message => agent.addMessage(message));
+        // Load idle messages into IdleMessageGenerator
+        const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
+        if (idleMessageGenerator && sessionIdleMessages.length > 0) {
+          (idleMessageGenerator as any).setQueue(sessionIdleMessages);
+        }
 
         // Load todos into TodoManager
         if (todoManager && sessionTodos.length > 0) {
           (todoManager as any).setTodos(sessionTodos);
         }
 
-        // Load idle messages into IdleMessageGenerator
-        const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
-        if (idleMessageGenerator && sessionIdleMessages.length > 0) {
-          (idleMessageGenerator as any).setQueue(sessionIdleMessages);
+        // Bulk load messages (setMessages doesn't trigger auto-save)
+        agent.setMessages(userMessages);
+
+        // Load project context into ProjectContextDetector
+        const projectContextDetector = serviceRegistry.get('project_context_detector');
+        const sessionProjectContext = await sessionManager.getProjectContext(resumeSession);
+        if (projectContextDetector && sessionProjectContext) {
+          (projectContextDetector as any).setCached(sessionProjectContext);
         }
+
+        // Mark session as loaded
+        setSessionLoaded(true);
 
         // Update UI state
         actions.setMessages(userMessages);
@@ -1039,7 +1056,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <SessionSelector
             sessions={sessionSelectRequest.sessions}
@@ -1069,7 +1086,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <ModelSelector
             models={modelSelectRequest.models}
@@ -1104,7 +1121,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               <ReasoningStream />
 
               {/* Status Indicator - always visible to show todos */}
-              <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+              <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
               <RewindSelector
                 messages={userMessages}
@@ -1136,7 +1153,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <PermissionPrompt
             request={permissionRequest}
@@ -1167,7 +1184,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           {/* Input Prompt */}
           <InputPrompt

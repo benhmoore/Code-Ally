@@ -244,6 +244,18 @@ export interface Session {
     created_at: string;
   }>;
   idle_messages?: string[]; // Queue of generated idle messages
+  project_context?: {
+    languages: string[];
+    frameworks: string[];
+    projectName?: string;
+    projectType?: string;
+    hasGit: boolean;
+    packageManager?: string;
+    scale: 'small' | 'medium' | 'large';
+    hasDocker?: boolean;
+    cicd?: string[];
+    detectedAt: string;
+  };
   metadata?: SessionMetadata;
 }
 

@@ -567,6 +567,12 @@ async function main() {
     });
     registry.registerInstance('idle_message_generator', idleMessageGenerator);
 
+    // Create project context detector
+    const { ProjectContextDetector } = await import('./services/ProjectContextDetector.js');
+    const projectContextDetector = new ProjectContextDetector(process.cwd());
+    await projectContextDetector.initialize();
+    registry.registerInstance('project_context_detector', projectContextDetector);
+
     // Import and create tools
     const { BashTool } = await import('./tools/BashTool.js');
     const { ReadTool } = await import('./tools/ReadTool.js');
@@ -644,6 +650,23 @@ async function main() {
     const tokenManager = agent.getTokenManager();
     registry.registerInstance('token_manager', tokenManager);
 
+    // Set up callback to save session when idle messages are generated
+    // (Must be after agent is registered)
+    idleMessageGenerator.setOnQueueUpdated(() => {
+      // Trigger auto-save to persist newly generated idle messages
+      const todoManager = registry.get<any>('todo_manager');
+
+      if (agent && sessionManager) {
+        const todos = todoManager?.getTodos();
+        const idleMessages = idleMessageGenerator.getQueue();
+        const projectContext = projectContextDetector?.getCached() ?? undefined;
+
+        sessionManager.autoSave(agent.getMessages(), todos, idleMessages, projectContext).catch((error: Error) => {
+          logger.debug('[IDLE_MSG] Failed to auto-save after queue update:', error);
+        });
+      }
+    });
+
     // Handle --once mode (single message, non-interactive)
     if (options.once) {
       await handleOnceMode(options.once, options, agent, sessionManager);
@@ -673,14 +696,8 @@ async function main() {
     // Critical: Comprehensive terminal reset to clean up ANY escape sequence leakage
     resetTerminalState();
 
-    // Final session save before exit
-    try {
-      const todos = todoManager.getTodos();
-      await sessionManager.autoSave(agent.getMessages(), todos);
-    } catch (error) {
-      // Don't block exit on save error
-      console.error('Failed to save session on exit:', error);
-    }
+    // No final save needed - auto-save happens after every user message and model response
+    // A final save here would just overwrite good data with potentially stale data
 
     // Cleanup
     await registry.shutdown();

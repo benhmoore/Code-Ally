@@ -201,11 +201,38 @@ ${agentsSection}`;
   // Build git info section
   const gitInfo = gitBranch ? ` (git repository, branch: ${gitBranch})` : '';
 
+  // Get project context
+  let projectInfo = '';
+  try {
+    const serviceRegistry = ServiceRegistry.getInstance();
+    if (serviceRegistry && serviceRegistry.hasService('project_context_detector')) {
+      const detector = serviceRegistry.get<any>('project_context_detector');
+      const context = detector?.getCached();
+
+      if (context) {
+        const parts: string[] = [];
+
+        if (context.projectType) parts.push(context.projectType);
+        if (context.languages?.length) parts.push(context.languages.join(', '));
+        if (context.frameworks?.length) parts.push(context.frameworks.join(', '));
+        if (context.packageManager) parts.push(context.packageManager);
+        if (context.hasDocker) parts.push('Docker');
+        if (context.cicd?.length) parts.push(context.cicd.join(', '));
+
+        if (parts.length > 0) {
+          projectInfo = `\n- Project: ${parts.join(' • ')}`;
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn('Failed to load project context for system prompt:', formatError(error));
+  }
+
   return `
 - Current Date: ${currentDate}
 - Working Directory: ${workingDir}${gitInfo}
 - Operating System: ${osInfo}
-- Node Version: ${nodeVersion}${contextUsageSection}${allyMdContent}${agentsInfo}`;
+- Node Version: ${nodeVersion}${projectInfo}${contextUsageSection}${allyMdContent}${agentsInfo}`;
 }
 
 /**

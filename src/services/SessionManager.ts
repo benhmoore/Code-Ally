@@ -531,7 +531,23 @@ export class SessionManager implements IService {
     if (!name) return [];
 
     const session = await this.loadSession(name);
-    return session?.idle_messages ?? [];
+    const messages = session?.idle_messages ?? [];
+    logger.debug(`[SESSION] getIdleMessages for ${name}: ${messages.length} messages - ${JSON.stringify(messages.slice(0, 3))}...`);
+    return messages;
+  }
+
+  /**
+   * Get project context from a session
+   *
+   * @param sessionName - Name of the session (defaults to current session)
+   * @returns Project context or null if not found
+   */
+  async getProjectContext(sessionName?: string): Promise<Session['project_context'] | null> {
+    const name = sessionName ?? this.currentSession;
+    if (!name) return null;
+
+    const session = await this.loadSession(name);
+    return session?.project_context ?? null;
   }
 
   /**
@@ -581,12 +597,15 @@ export class SessionManager implements IService {
    *
    * @param messages - Current conversation messages
    * @param todos - Current todos
+   * @param idleMessages - Idle message queue
+   * @param projectContext - Project context
    * @returns True if saved successfully
    */
   async autoSave(
     messages: Message[],
     todos?: TodoItem[],
-    idleMessages?: string[]
+    idleMessages?: string[],
+    projectContext?: Session['project_context']
   ): Promise<boolean> {
     const name = this.currentSession;
     if (!name) return false;
@@ -619,7 +638,11 @@ export class SessionManager implements IService {
         session.todos = todos;
       }
       if (idleMessages !== undefined && idleMessages.length > 0) {
+        logger.debug(`[SESSION] Saving ${idleMessages.length} idle messages: ${JSON.stringify(idleMessages.slice(0, 3))}...`);
         session.idle_messages = idleMessages;
+      }
+      if (projectContext !== undefined) {
+        session.project_context = projectContext;
       }
       session.updated_at = new Date().toISOString();
 

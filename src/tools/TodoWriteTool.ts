@@ -144,7 +144,15 @@ export class TodoWriteTool extends BaseTool {
         const messages = agent && typeof (agent as any).getMessages === 'function'
           ? (agent as any).getMessages()
           : [];
-        (sessionManager as any).autoSave(messages, newTodos).catch((error: Error) => {
+        const idleMessageGenerator = registry.get('idle_message_generator');
+        const idleMessages = idleMessageGenerator && typeof (idleMessageGenerator as any).getQueue === 'function'
+          ? (idleMessageGenerator as any).getQueue()
+          : undefined;
+        const projectContextDetector = registry.get('project_context_detector');
+        const projectContext = projectContextDetector && typeof (projectContextDetector as any).getCached === 'function'
+          ? (projectContextDetector as any).getCached()
+          : undefined;
+        (sessionManager as any).autoSave(messages, newTodos, idleMessages, projectContext).catch((error: Error) => {
           console.error('[TodoWriteTool] Failed to auto-save session:', error);
         });
       }

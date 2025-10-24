@@ -806,8 +806,15 @@ export class Agent {
       idleMessages = (idleMessageGenerator as any).getQueue();
     }
 
+    // Get project context if ProjectContextDetector is available
+    let projectContext: any | undefined;
+    const projectContextDetector = registry.get('project_context_detector');
+    if (projectContextDetector && typeof (projectContextDetector as any).getCached === 'function') {
+      projectContext = (projectContextDetector as any).getCached();
+    }
+
     // Auto-save (non-blocking, fire and forget)
-    (sessionManager as any).autoSave(this.messages, todos, idleMessages).catch((error: Error) => {
+    (sessionManager as any).autoSave(this.messages, todos, idleMessages, projectContext).catch((error: Error) => {
       logger.error('[AGENT_SESSION]', this.instanceId, 'Failed to auto-save session:', error);
     });
   }
@@ -860,7 +867,7 @@ export class Agent {
   }
 
   /**
-   * Set messages (used for compaction and rewind)
+   * Set messages (used for compaction, rewind, and session loading)
    * @param messages - New message array to replace current messages
    */
   setMessages(messages: Message[]): void {
