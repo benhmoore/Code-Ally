@@ -799,8 +799,15 @@ export class Agent {
       todos = (todoManager as any).getTodos();
     }
 
+    // Get idle messages if IdleMessageGenerator is available
+    let idleMessages: string[] | undefined;
+    const idleMessageGenerator = registry.get('idle_message_generator');
+    if (idleMessageGenerator && typeof (idleMessageGenerator as any).getQueue === 'function') {
+      idleMessages = (idleMessageGenerator as any).getQueue();
+    }
+
     // Auto-save (non-blocking, fire and forget)
-    (sessionManager as any).autoSave(this.messages, todos).catch((error: Error) => {
+    (sessionManager as any).autoSave(this.messages, todos, idleMessages).catch((error: Error) => {
       logger.error('[AGENT_SESSION]', this.instanceId, 'Failed to auto-save session:', error);
     });
   }

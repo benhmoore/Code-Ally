@@ -235,6 +235,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
         const sessionMessages = await sessionManager.getSessionMessages(resumeSession);
         const sessionTodos = await sessionManager.getTodos(resumeSession);
+        const sessionIdleMessages = await sessionManager.getIdleMessages(resumeSession);
 
         // Filter out system messages to avoid duplication
         const userMessages = sessionMessages.filter(m => m.role !== 'system');
@@ -245,6 +246,12 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         // Load todos into TodoManager
         if (todoManager && sessionTodos.length > 0) {
           (todoManager as any).setTodos(sessionTodos);
+        }
+
+        // Load idle messages into IdleMessageGenerator
+        const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
+        if (idleMessageGenerator && sessionIdleMessages.length > 0) {
+          (idleMessageGenerator as any).setQueue(sessionIdleMessages);
         }
 
         // Update UI state

@@ -53,10 +53,13 @@ export interface IdleMessageGeneratorConfig {
  */
 export class IdleMessageGenerator {
   private modelClient: ModelClient;
-  private currentMessage: string = 'Idle';
+  private messageQueue: string[] = [];
+  private currentMessageIndex: number = 0;
   private isGenerating: boolean = false;
   private lastGenerationTime: number = 0;
   private minInterval: number;
+  private readonly batchSize: number = 10;
+  private readonly refillThreshold: number = 5;
 
   constructor(
     modelClient: ModelClient,
@@ -64,24 +67,66 @@ export class IdleMessageGenerator {
   ) {
     this.modelClient = modelClient;
     this.minInterval = config.minInterval || 10000; // Default: 10 seconds between generations
+    // Initialize with default message
+    this.messageQueue.push('Idle');
   }
 
   /**
    * Get the current idle message
    */
   getCurrentMessage(): string {
-    return this.currentMessage;
+    // If queue is empty, return fallback
+    if (this.messageQueue.length === 0) {
+      return 'Idle';
+    }
+
+    // Return current message (cycling through the queue)
+    const message = this.messageQueue[this.currentMessageIndex % this.messageQueue.length];
+    return message || 'Idle';
   }
 
   /**
-   * Generate a new idle message based on recent conversation context
+   * Move to the next message in the queue
+   */
+  nextMessage(): void {
+    if (this.messageQueue.length > 0) {
+      this.currentMessageIndex = (this.currentMessageIndex + 1) % this.messageQueue.length;
+    }
+  }
+
+  /**
+   * Get number of messages remaining in queue
+   */
+  getQueueSize(): number {
+    return this.messageQueue.length;
+  }
+
+  /**
+   * Get the entire message queue (for persistence)
+   */
+  getQueue(): string[] {
+    return [...this.messageQueue];
+  }
+
+  /**
+   * Set the message queue (for restoration from session)
+   */
+  setQueue(messages: string[]): void {
+    if (messages && messages.length > 0) {
+      this.messageQueue = [...messages];
+      this.currentMessageIndex = 0;
+    }
+  }
+
+  /**
+   * Generate a batch of idle messages based on recent conversation context
    *
    * @param recentMessages - Recent conversation messages for context
    * @param context - Additional context (cwd, todos)
-   * @returns Generated message
+   * @returns Array of generated messages
    */
-  async generateMessage(recentMessages: Message[] = [], context?: IdleContext): Promise<string> {
-    const messagePrompt = this.buildMessagePrompt(recentMessages, context);
+  async generateMessageBatch(recentMessages: Message[] = [], context?: IdleContext): Promise<string[]> {
+    const messagePrompt = this.buildBatchMessagePrompt(recentMessages, context);
 
     try {
       const response = await this.modelClient.send(
@@ -92,33 +137,50 @@ export class IdleMessageGenerator {
         }
       );
 
-      const message = response.content.trim();
+      const content = response.content.trim();
 
-      // Clean up message - remove quotes, ensure reasonable length
-      let cleanMessage = message.replace(/^["']|["']$/g, '').trim();
-      if (cleanMessage.length > 60) {
-        cleanMessage = cleanMessage.slice(0, 57) + '...';
+      // Parse the response - expecting numbered list or line-separated messages
+      const messages = content
+        .split('\n')
+        .map(line => {
+          // Remove numbering (1. 2. etc.) and quotes
+          return line.replace(/^\d+\.\s*/, '').replace(/^["']|["']$/g, '').trim();
+        })
+        .filter(msg => msg.length > 0 && msg.length <= 60) // Filter valid messages
+        .slice(0, this.batchSize); // Take up to batchSize messages
+
+      // If we got valid messages, return them
+      if (messages.length > 0) {
+        return messages;
       }
 
-      return cleanMessage || 'Idle';
+      // Fallback: return default messages
+      return ['Idle'];
     } catch (error) {
-      console.error('Failed to generate idle message:', error);
-      return 'Idle';
+      console.error('Failed to generate idle message batch:', error);
+      return ['Idle'];
     }
   }
 
   /**
-   * Generate an idle message in the background (non-blocking)
+   * Generate idle messages in the background (non-blocking)
    *
-   * Useful for periodically updating the idle message without blocking the UI
+   * Generates a batch of messages and refills the queue.
+   * Only triggers if queue has less than 5 messages remaining.
    *
    * @param recentMessages - Recent conversation messages for context
    * @param context - Additional context (cwd, todos)
+   * @param force - Force generation even if time interval hasn't passed (for initial startup)
    */
-  generateMessageBackground(recentMessages: Message[] = [], context?: IdleContext): void {
-    // Check if enough time has passed since last generation
+  generateMessageBackground(recentMessages: Message[] = [], context?: IdleContext, force: boolean = false): void {
+    // Only generate if queue is running low (less than 5 messages)
+    if (this.messageQueue.length >= this.refillThreshold) {
+      return;
+    }
+
+    // Check if enough time has passed since last generation (unless forced)
     const now = Date.now();
-    if (now - this.lastGenerationTime < this.minInterval) {
+    if (!force && now - this.lastGenerationTime < this.minInterval) {
       return;
     }
 
@@ -131,7 +193,7 @@ export class IdleMessageGenerator {
     this.lastGenerationTime = now;
 
     // Run in background
-    this.generateAndStoreMessageAsync(recentMessages, context)
+    this.generateAndRefillQueueAsync(recentMessages, context)
       .catch(error => {
         console.error('Background idle message generation failed:', error);
       })
@@ -141,17 +203,20 @@ export class IdleMessageGenerator {
   }
 
   /**
-   * Generate and store message asynchronously
+   * Generate batch of messages and refill queue asynchronously
    */
-  private async generateAndStoreMessageAsync(recentMessages: Message[], context?: IdleContext): Promise<void> {
-    const message = await this.generateMessage(recentMessages, context);
-    this.currentMessage = message;
+  private async generateAndRefillQueueAsync(recentMessages: Message[], context?: IdleContext): Promise<void> {
+    const messages = await this.generateMessageBatch(recentMessages, context);
+
+    // Replace the queue with new messages
+    this.messageQueue = messages;
+    this.currentMessageIndex = 0;
   }
 
   /**
-   * Build the prompt for idle message generation
+   * Build the prompt for batch idle message generation
    */
-  private buildMessagePrompt(_recentMessages: Message[], context?: IdleContext): string {
+  private buildBatchMessagePrompt(_recentMessages: Message[], context?: IdleContext): string {
     // Add last exchange context (most important)
     let lastExchangeContext = '';
     if (context?.lastUserMessage && context?.lastAssistantMessage) {
@@ -253,7 +318,13 @@ Assistant: ${context.lastAssistantMessage.slice(0, 150)}`;
       }
     }
 
-    return `You are Ally, a cheeky chick mascot with ADHD energy. Generate ONE surprising, unexpected idle message (max 6 words).
+    return `You are Ally, a cheeky chick mascot with ADHD energy. Generate EXACTLY 10 surprising, unexpected idle messages (max 6 words each).
+
+FORMAT: Return as a numbered list, one message per line:
+1. First message
+2. Second message
+...
+10. Tenth message
 
 CRITICAL RULES:
 - BE BOLD and SURPRISING - safe greetings are BORING
@@ -315,14 +386,15 @@ Examples:
 - "Someone's productive today!" (if multiple sessions)
 ${lastExchangeContext}${cwdContext}${todoContext}${timeContext}${messageCountContext}${sessionDurationContext}${gitBranchContext}${homeDirContext}${sessionCountContext}${sessionsTodayContext}
 
-Reply with ONLY the message, nothing else. No quotes, no punctuation unless natural.`;
+Reply with ONLY the numbered list, nothing else. No quotes around messages, no punctuation unless natural.`;
   }
 
   /**
    * Reset to default idle message
    */
   reset(): void {
-    this.currentMessage = 'Idle';
+    this.messageQueue = ['Idle'];
+    this.currentMessageIndex = 0;
   }
 
   /**

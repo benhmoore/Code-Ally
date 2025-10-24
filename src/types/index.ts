@@ -243,6 +243,7 @@ export interface Session {
     activeForm: string;
     created_at: string;
   }>;
+  idle_messages?: string[]; // Queue of generated idle messages
   metadata?: SessionMetadata;
 }
 

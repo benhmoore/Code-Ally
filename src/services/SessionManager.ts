@@ -521,6 +521,20 @@ export class SessionManager implements IService {
   }
 
   /**
+   * Get idle messages from a session
+   *
+   * @param sessionName - Name of the session (defaults to current session)
+   * @returns Array of idle messages
+   */
+  async getIdleMessages(sessionName?: string): Promise<string[]> {
+    const name = sessionName ?? this.currentSession;
+    if (!name) return [];
+
+    const session = await this.loadSession(name);
+    return session?.idle_messages ?? [];
+  }
+
+  /**
    * Save todos to a session
    *
    * @param todos - Array of todos to save
@@ -571,7 +585,8 @@ export class SessionManager implements IService {
    */
   async autoSave(
     messages: Message[],
-    todos?: TodoItem[]
+    todos?: TodoItem[],
+    idleMessages?: string[]
   ): Promise<boolean> {
     const name = this.currentSession;
     if (!name) return false;
@@ -602,6 +617,9 @@ export class SessionManager implements IService {
       session.messages = filteredMessages;
       if (todos !== undefined) {
         session.todos = todos;
+      }
+      if (idleMessages !== undefined && idleMessages.length > 0) {
+        session.idle_messages = idleMessages;
       }
       session.updated_at = new Date().toISOString();
 

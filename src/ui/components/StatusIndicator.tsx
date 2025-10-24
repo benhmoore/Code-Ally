@@ -14,6 +14,7 @@ import { IdleMessageGenerator } from '../../services/IdleMessageGenerator.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { formatElapsed } from '../utils/timeUtils.js';
 import { getGitBranch } from '../../utils/gitUtils.js';
+import { logger } from '../../services/Logger.js';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -44,11 +45,33 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   const [_startTime, setStartTime] = useState<number>(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
 
-  // Pick a random greeting on mount
-  const [initialGreeting] = useState<string>(() => {
-    return GREETING_MESSAGES[Math.floor(Math.random() * GREETING_MESSAGES.length)] || "Ready to help!";
+  // Initialize idle message from queue or fallback to generic greeting
+  const [idleMessage, setIdleMessage] = useState<string>(() => {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+      if (idleMessageGenerator) {
+        const queueSize = idleMessageGenerator.getQueueSize();
+        // If queue has more than just the default 'Idle' message, use it
+        if (queueSize > 0) {
+          const message = idleMessageGenerator.getCurrentMessage();
+          if (message !== 'Idle') {
+            const queue = idleMessageGenerator.getQueue();
+            const queuePreview = queue.slice(0, 10).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
+            logger.debug(`[MASCOT] Loaded message from queue on startup (${queueSize} messages available): "${message}"\n  Queue:\n  ${queuePreview}`);
+            return message;
+          }
+        }
+      }
+    } catch {
+      // Fall through to generic greeting
+    }
+
+    // Fallback to random generic greeting
+    const greeting = GREETING_MESSAGES[Math.floor(Math.random() * GREETING_MESSAGES.length)] || "Ready to help!";
+    logger.debug(`[MASCOT] Using generic greeting (queue empty): "${greeting}"`);
+    return greeting;
   });
-  const [idleMessage, setIdleMessage] = useState<string>(initialGreeting);
 
   // Use ref to track previous task for comparison without triggering effect re-runs
   const previousTaskRef = useRef<string | null>(null);
@@ -68,6 +91,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   // Generate idle message on startup
   useEffect(() => {
+    let fastPollInterval: NodeJS.Timeout | null = null;
+    let normalPollInterval: NodeJS.Timeout | null = null;
+
     const initIdleMessages = async () => {
       try {
         const registry = ServiceRegistry.getInstance();
@@ -130,8 +156,40 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
             sessionsToday,
           };
 
+          // Check if we need immediate generation
+          const needsImmediate = idleMessageGenerator.getQueueSize() <= 1;
+
           // Trigger background generation with context on startup
-          idleMessageGenerator.generateMessageBackground(recentMessages as any, context);
+          idleMessageGenerator.generateMessageBackground(recentMessages as any, context, needsImmediate);
+
+          // If we triggered immediate generation, poll frequently until first message arrives
+          if (needsImmediate) {
+            fastPollInterval = setInterval(() => {
+              try {
+                const registry = ServiceRegistry.getInstance();
+                const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+                if (idleMessageGenerator) {
+                  const message = idleMessageGenerator.getCurrentMessage();
+                  const queueSize = idleMessageGenerator.getQueueSize();
+
+                  // Update immediately when first non-default message is available
+                  if (message !== 'Idle') {
+                    const queue = idleMessageGenerator.getQueue();
+                    const queuePreview = queue.slice(0, 10).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
+                    logger.debug(`[MASCOT] Displaying message from queue (${queueSize} messages available): "${message}"\n  Queue:\n  ${queuePreview}`);
+                    setIdleMessage(message);
+                    // Stop fast polling once we have a real message
+                    if (fastPollInterval) {
+                      clearInterval(fastPollInterval);
+                      fastPollInterval = null;
+                    }
+                  }
+                }
+              } catch {
+                // Silently handle errors
+              }
+            }, 1000); // Poll every second until first message arrives
+          }
         }
       } catch (error) {
         // Silently handle errors
@@ -141,24 +199,35 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     // Start async initialization
     initIdleMessages();
 
-    // Poll for updates every second
-    const pollInterval = setInterval(() => {
+    // Normal polling - cycle through queue every minute
+    normalPollInterval = setInterval(() => {
       try {
         const registry = ServiceRegistry.getInstance();
         const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
         if (idleMessageGenerator) {
+          // Move to next message in queue
+          idleMessageGenerator.nextMessage();
+
           const message = idleMessageGenerator.getCurrentMessage();
+          const queueSize = idleMessageGenerator.getQueueSize();
+
           // Only update if message is not the default "Idle"
           if (message !== 'Idle') {
+            const queue = idleMessageGenerator.getQueue();
+            const queuePreview = queue.slice(0, 10).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
+            logger.debug(`[MASCOT] Cycling to next message (${queueSize} messages in queue): "${message}"\n  Queue:\n  ${queuePreview}`);
             setIdleMessage(message);
           }
         }
       } catch {
         // Silently handle errors
       }
-    }, 1000);
+    }, 60000); // Cycle every 60 seconds
 
-    return () => clearInterval(pollInterval);
+    return () => {
+      if (fastPollInterval) clearInterval(fastPollInterval);
+      if (normalPollInterval) clearInterval(normalPollInterval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run once on mount
 
