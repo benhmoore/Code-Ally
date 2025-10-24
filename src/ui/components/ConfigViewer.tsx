@@ -44,8 +44,8 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
     // Group configurations by category
     const categoryDefs = {
       'LLM Model Settings': ['model', 'endpoint', 'context_size', 'temperature', 'max_tokens'],
-      'Execution Settings': ['bash_timeout', 'auto_confirm', 'check_context_msg', 'parallel_tools'],
-      'UI Preferences': ['theme', 'compact_threshold', 'show_token_usage', 'show_context_in_prompt'],
+      'Execution Settings': ['bash_timeout', 'auto_confirm', 'parallel_tools'],
+      'UI Preferences': ['theme', 'compact_threshold', 'show_context_in_prompt'],
       'Tool Result Preview': ['tool_result_preview_lines', 'tool_result_preview_enabled'],
       'Diff Display': ['diff_display_enabled', 'diff_display_max_file_size', 'diff_display_context_lines', 'diff_display_theme', 'diff_display_color_removed', 'diff_display_color_added', 'diff_display_color_modified'],
       'Tool Result Truncation': ['tool_result_max_tokens_normal', 'tool_result_max_tokens_moderate', 'tool_result_max_tokens_aggressive', 'tool_result_max_tokens_critical'],

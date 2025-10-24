@@ -33,6 +33,7 @@ export class SessionLookupTool extends BaseTool {
   readonly description =
     'Search through past conversation sessions. Use this when the user asks about previous work (e.g., "what was our last conversation?", "how did we fix X before?"). Provide keywords array to search (supports multiple keywords with "any" or "all" mode), or omit keywords to get most recent sessions by time. Returns matching sessions with optional message snippets.';
   readonly requiresConfirmation = false;
+  readonly visibleInChat = false; // Don't clutter chat with session lookups
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

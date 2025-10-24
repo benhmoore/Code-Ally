@@ -10,24 +10,19 @@ import { ToolValidator } from './ToolValidator.js';
 import { FunctionDefinition, ToolResult } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
+import { DuplicateDetector } from '../services/DuplicateDetector.js';
 
 export class ToolManager {
   private tools: Map<string, BaseTool>;
   private validator: ToolValidator;
-
-  // Track recent tool calls to avoid redundancy
-  private recentToolCalls: Array<[string, string]> = [];
-  private currentTurnToolCalls: Array<[string, string]> = [];
-  private maxRecentCalls: number = 5;
-
-  // Track files that have been read in this session
-  private readFiles: Map<string, number> = new Map(); // file_path -> timestamp
+  private duplicateDetector: DuplicateDetector;
+  private readFiles: Map<string, number> = new Map();
 
   constructor(tools: BaseTool[], _activityStream: ActivityStream) {
     this.tools = new Map();
     this.validator = new ToolValidator();
+    this.duplicateDetector = new DuplicateDetector();
 
-    // Register all tools
     for (const tool of tools) {
       this.tools.set(tool.name, tool);
     }
@@ -113,13 +108,6 @@ export class ToolManager {
   /**
    * Execute a tool with the given arguments
    *
-   * Pipeline:
-   * 1. Validate tool existence
-   * 2. Check for redundant calls
-   * 3. Validate arguments
-   * 4. Execute tool
-   * 5. Track operations
-   *
    * @param toolName - Name of the tool to execute
    * @param args - Tool arguments
    * @param callId - Tool call ID from orchestrator (for streaming output)
@@ -132,7 +120,6 @@ export class ToolManager {
     callId?: string,
     _preApproved: boolean = false
   ): Promise<ToolResult> {
-    // 1. Validate tool existence
     const tool = this.tools.get(toolName);
     if (!tool) {
       return {
@@ -143,17 +130,19 @@ export class ToolManager {
       };
     }
 
-    // 2. Check for redundant calls
-    if (this.isRedundantCall(toolName, args)) {
+    const argsWithoutTodoId = { ...args };
+    delete argsWithoutTodoId.todo_id;
+
+    const duplicateCheck = this.duplicateDetector.check(toolName, argsWithoutTodoId);
+    if (duplicateCheck.shouldBlock) {
       return {
         success: false,
-        error: `Redundant tool call detected: ${toolName} was already called with the same arguments in this turn`,
+        error: duplicateCheck.message!,
         error_type: 'validation_error',
         suggestion: 'Avoid calling the same tool with identical arguments multiple times',
       };
     }
 
-    // 3. Validate arguments
     const functionDef = this.generateFunctionDefinition(tool);
     const validation = this.validator.validateArguments(tool, functionDef, args);
     if (!validation.valid) {
@@ -165,15 +154,18 @@ export class ToolManager {
       };
     }
 
-    // 4. Track this call
-    this.trackToolCall(toolName, args);
-
-    // 5. Execute tool (pass callId for streaming output)
     try {
       const result = await tool.execute(args, callId);
 
-      // 6. Track file operations
       this.trackFileOperation(toolName, args, result);
+
+      if (result.success) {
+        this.duplicateDetector.recordCall(toolName, argsWithoutTodoId);
+
+        if (duplicateCheck.isDuplicate && duplicateCheck.message) {
+          result.warning = duplicateCheck.message;
+        }
+      }
 
       return result;
     } catch (error) {
@@ -186,52 +178,10 @@ export class ToolManager {
   }
 
   /**
-   * Check if a tool call is redundant
-   *
-   * Only considers calls made in the current conversation turn as redundant.
-   */
-  private isRedundantCall(toolName: string, args: Record<string, any>): boolean {
-    const callSignature = this.createCallSignature(toolName, args);
-
-    return this.currentTurnToolCalls.some(
-      ([existingToolName, existingSignature]) =>
-        existingToolName === toolName && existingSignature === callSignature
-    );
-  }
-
-  /**
-   * Track a tool call
-   */
-  private trackToolCall(toolName: string, args: Record<string, any>): void {
-    const callSignature = this.createCallSignature(toolName, args);
-
-    // Add to current turn
-    this.currentTurnToolCalls.push([toolName, callSignature]);
-
-    // Add to recent calls
-    this.recentToolCalls.push([toolName, callSignature]);
-    if (this.recentToolCalls.length > this.maxRecentCalls) {
-      this.recentToolCalls.shift();
-    }
-  }
-
-  /**
-   * Create a signature for a tool call
-   */
-  private createCallSignature(_toolName: string, args: Record<string, any>): string {
-    // Sort keys for consistent signature
-    const sortedArgs = Object.keys(args)
-      .sort()
-      .map((key) => `${key}=${JSON.stringify(args[key])}`)
-      .join(',');
-    return sortedArgs;
-  }
-
-  /**
-   * Clear current turn tool calls (call this at the start of each turn)
+   * Clear current turn state
    */
   clearCurrentTurn(): void {
-    this.currentTurnToolCalls = [];
+    this.duplicateDetector.nextTurn();
   }
 
   /**
@@ -246,7 +196,6 @@ export class ToolManager {
       return;
     }
 
-    // Track read operations
     if (toolName === 'read' && args.file_paths) {
       const filePaths = Array.isArray(args.file_paths)
         ? args.file_paths
@@ -258,7 +207,6 @@ export class ToolManager {
       }
     }
 
-    // Track write/edit operations (model now has current version)
     if (['write', 'edit', 'line_edit'].includes(toolName) && args.file_path) {
       this.readFiles.set(args.file_path, Date.now());
     }
@@ -279,11 +227,10 @@ export class ToolManager {
   }
 
   /**
-   * Clear all tracked state (useful for new conversations)
+   * Clear all tracked state
    */
   clearState(): void {
-    this.recentToolCalls = [];
-    this.currentTurnToolCalls = [];
     this.readFiles.clear();
+    this.duplicateDetector.clear();
   }
 }

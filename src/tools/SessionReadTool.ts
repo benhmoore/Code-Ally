@@ -17,6 +17,7 @@ export class SessionReadTool extends BaseTool {
   readonly description =
     'Read detailed messages from a specific session found via session_lookup. Use this to get more context when session_lookup snippets are insufficient. Can load specific message ranges or full sessions.';
   readonly requiresConfirmation = false;
+  readonly visibleInChat = false; // Don't clutter chat with session reads
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

@@ -8,7 +8,6 @@ import { BaseTool } from '../../tools/BaseTool.js';
 import { ToolResult } from '../../types/index.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 
-// Mock tool implementation
 class TestTool extends BaseTool {
   readonly name = 'test_tool';
   readonly description = 'A test tool';
@@ -30,15 +29,44 @@ class TestTool extends BaseTool {
   }
 }
 
+class ReadTool extends BaseTool {
+  readonly name = 'read';
+  readonly description = 'Read files';
+  readonly requiresConfirmation = false;
+
+  protected async executeImpl(args: any): Promise<ToolResult> {
+    return this.formatSuccessResponse({
+      content: 'file content',
+      files_read: args.file_paths?.length || 0,
+    });
+  }
+}
+
+class WriteTool extends BaseTool {
+  readonly name = 'write';
+  readonly description = 'Write files';
+  readonly requiresConfirmation = false;
+
+  protected async executeImpl(args: any): Promise<ToolResult> {
+    return this.formatSuccessResponse({
+      file_path: args.file_path,
+    });
+  }
+}
+
 describe('ToolManager', () => {
   let activityStream: ActivityStream;
   let tool: TestTool;
+  let readTool: ReadTool;
+  let writeTool: WriteTool;
   let toolManager: ToolManager;
 
   beforeEach(() => {
     activityStream = new ActivityStream();
     tool = new TestTool(activityStream);
-    toolManager = new ToolManager([tool], activityStream);
+    readTool = new ReadTool(activityStream);
+    writeTool = new WriteTool(activityStream);
+    toolManager = new ToolManager([tool, readTool, writeTool], activityStream);
   });
 
   describe('getTool', () => {
@@ -56,15 +84,17 @@ describe('ToolManager', () => {
   describe('getAllTools', () => {
     it('should return all registered tools', () => {
       const tools = toolManager.getAllTools();
-      expect(tools).toHaveLength(1);
-      expect(tools[0]).toBe(tool);
+      expect(tools).toHaveLength(3);
+      expect(tools).toContain(tool);
+      expect(tools).toContain(readTool);
+      expect(tools).toContain(writeTool);
     });
   });
 
   describe('getFunctionDefinitions', () => {
     it('should generate function definitions for all tools', () => {
       const defs = toolManager.getFunctionDefinitions();
-      expect(defs).toHaveLength(1);
+      expect(defs).toHaveLength(3);
       expect(defs[0].type).toBe('function');
       expect(defs[0].function.name).toBe('test_tool');
       expect(defs[0].function.description).toBe('A test tool');
@@ -90,31 +120,56 @@ describe('ToolManager', () => {
     });
 
     it('should detect redundant calls in same turn', async () => {
-      // First call
-      await toolManager.executeTool('test_tool', { required_param: 'test' });
+      await toolManager.executeTool('read', { file_paths: ['test.txt'] });
 
-      // Second identical call in same turn
-      const result = await toolManager.executeTool('test_tool', {
-        required_param: 'test',
+      const result = await toolManager.executeTool('read', {
+        file_paths: ['test.txt'],
       });
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Redundant tool call');
     });
 
-    it('should allow same call after clearing turn', async () => {
-      // First call
-      await toolManager.executeTool('test_tool', { required_param: 'test' });
+    it('should ignore todo_id when detecting duplicates', async () => {
+      await toolManager.executeTool('read', {
+        file_paths: ['test.txt'],
+        todo_id: 'task1'
+      });
 
-      // Clear turn
+      const result = await toolManager.executeTool('read', {
+        file_paths: ['test.txt'],
+        todo_id: 'task2'
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Redundant tool call');
+    });
+
+    it('should allow same call after clearing turn with warning', async () => {
+      await toolManager.executeTool('read', { file_paths: ['test.txt'] });
+
       toolManager.clearCurrentTurn();
 
-      // Second identical call after clearing
-      const result = await toolManager.executeTool('test_tool', {
-        required_param: 'test',
+      const result = await toolManager.executeTool('read', {
+        file_paths: ['test.txt'],
       });
 
       expect(result.success).toBe(true);
+      expect(result.warning).toContain('previously made');
+    });
+
+    it('should include turn information in cross-turn warnings', async () => {
+      await toolManager.executeTool('read', { file_paths: ['data.json'] });
+
+      toolManager.clearCurrentTurn();
+
+      const result = await toolManager.executeTool('read', {
+        file_paths: ['data.json'],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.warning).toContain('turn 0');
+      expect(result.warning).toContain('1 turn ago');
     });
   });
 

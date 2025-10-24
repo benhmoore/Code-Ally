@@ -30,3 +30,5 @@ npm test
 ## Notes for Code Ally
 
 - Please follow the development commands and coding standards specified above when working with this project.
+
+- Listing all TypeScript files in the repository. The list is too long to display fully, but key directories include src/agent, src/checkers, src/cli, src/config, src/llm, src/prompts, src/security, src/services, src/tools, and tests. The full list is available in the output of the glob command.

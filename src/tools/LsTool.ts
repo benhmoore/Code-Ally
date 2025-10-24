@@ -28,7 +28,7 @@ interface FileEntry {
 export class LsTool extends BaseTool {
   readonly name = 'ls';
   readonly description =
-    'List directory contents with file details. Shows file types (directory, symlink), sizes, and modification times. Use for exploring directory structure.';
+    'List files and directories with sizes, types, and modification times';
   readonly requiresConfirmation = false; // Read-only operation
 
   constructor(activityStream: ActivityStream) {
@@ -50,6 +50,15 @@ export class LsTool extends BaseTool {
             path: {
               type: 'string',
               description: 'Directory path to list (default: current directory)',
+            },
+            type: {
+              type: 'string',
+              description: 'Filter by type: "files", "dirs", "all" (default: all)',
+            },
+            extensions: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Filter by file extensions (e.g., ["ts", "tsx", "js"])',
             },
             all: {
               type: 'boolean',
@@ -75,9 +84,20 @@ export class LsTool extends BaseTool {
 
     // Extract and validate parameters
     const dirPath = (args.path as string) || '.';
+    const typeFilter = (args.type as string) || 'all';
+    const extensions = (args.extensions as string[]) || [];
     const showAll = Boolean(args.all);
     const longFormat = Boolean(args.long);
     const sortBy = (args.sort_by as string) || 'name';
+
+    // Validate type parameter
+    if (!['files', 'dirs', 'all'].includes(typeFilter)) {
+      return this.formatErrorResponse(
+        `Invalid type value: ${typeFilter}`,
+        'validation_error',
+        'Valid values are: "files", "dirs", "all"'
+      );
+    }
 
     // Validate sort_by parameter
     if (!['name', 'size', 'time'].includes(sortBy)) {
@@ -155,13 +175,30 @@ export class LsTool extends BaseTool {
         }
       }
 
+      // Apply type filter
+      let filteredEntries = fileEntries;
+      if (typeFilter === 'files') {
+        filteredEntries = fileEntries.filter(e => e.type === 'file');
+      } else if (typeFilter === 'dirs') {
+        filteredEntries = fileEntries.filter(e => e.type === 'directory');
+      }
+
+      // Apply extensions filter
+      if (extensions.length > 0) {
+        filteredEntries = filteredEntries.filter(entry => {
+          if (entry.type !== 'file') return false;
+          const ext = path.extname(entry.name).slice(1); // Remove leading dot
+          return extensions.includes(ext);
+        });
+      }
+
       // Sort entries
-      this.sortEntries(fileEntries, sortBy);
+      this.sortEntries(filteredEntries, sortBy);
 
       // Apply limit
-      const totalCount = fileEntries.length;
+      const totalCount = filteredEntries.length;
       const truncated = totalCount > TOOL_LIMITS.MAX_DIRECTORY_ENTRIES;
-      const results = fileEntries.slice(0, TOOL_LIMITS.MAX_DIRECTORY_ENTRIES);
+      const results = filteredEntries.slice(0, TOOL_LIMITS.MAX_DIRECTORY_ENTRIES);
 
       // Format as human-readable content
       const contentLines: string[] = [];

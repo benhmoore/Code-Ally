@@ -17,7 +17,7 @@ import * as fs from 'fs/promises';
 export class ReadTool extends BaseTool {
   readonly name = 'read';
   readonly description =
-    'Read contents of one or more files. Returns file contents with line numbers. Use this to examine code, configuration, or any text files.';
+    'Read multiple file contents at once. Use for reading related files together, checking code before editing';
   readonly requiresConfirmation = false; // Read-only operation
 
   private static readonly LINE_NUMBER_WIDTH = 6;
@@ -77,15 +77,12 @@ export class ReadTool extends BaseTool {
   }
 
   protected async executeImpl(args: any): Promise<ToolResult> {
-    // Capture parameters
     this.captureParams(args);
 
-    // Extract parameters
     const filePaths = args.file_paths;
     const limit = args.limit !== undefined ? Number(args.limit) : 0;
     const offset = args.offset !== undefined ? Number(args.offset) : 0;
 
-    // Validate file_paths
     if (!Array.isArray(filePaths) || filePaths.length === 0) {
       return this.formatErrorResponse(
         'file_paths must be a non-empty array',
@@ -94,8 +91,7 @@ export class ReadTool extends BaseTool {
       );
     }
 
-    // Token estimation check (considering limit)
-    const estimatedTokens = await this.estimateTokens(filePaths, limit);
+    const estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
     const maxTokens = this.getMaxTokens();
 
     if (estimatedTokens > maxTokens) {
@@ -151,27 +147,26 @@ export class ReadTool extends BaseTool {
   }
 
   /**
-   * Estimate total tokens for files considering limit
-   * Reads actual content and counts tokens accurately
+   * Estimate total tokens for files considering limit and offset
    */
-  private async estimateTokens(filePaths: string[], limit: number = 0): Promise<number> {
+  private async estimateTokens(
+    filePaths: string[],
+    limit: number = 0,
+    offset: number = 0
+  ): Promise<number> {
     let totalEstimate = 0;
 
     for (const filePath of filePaths) {
       try {
         if (limit > 0) {
-          // Read the actual chunk that will be returned and count its tokens
-          const content = await this.readFile(filePath, limit, 0);
+          const content = await this.readFile(filePath, limit, offset);
           totalEstimate += tokenCounter.count(content);
         } else {
-          // For full file without limit, estimate based on file size
-          // This is just for the pre-check; actual content will be read if it passes
           const stats = await fs.stat(filePath);
           const tokenEstimate = Math.ceil(stats.size / 3.5);
           totalEstimate += tokenEstimate;
         }
       } catch {
-        // If we can't read/stat, skip this file
         continue;
       }
     }

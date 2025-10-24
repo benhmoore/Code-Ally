@@ -333,13 +333,11 @@ export class CompletionProvider {
       // Execution Settings
       'bash_timeout': 'Bash command timeout (seconds)',
       'auto_confirm': 'Skip permission prompts',
-      'check_context_msg': 'Show context check messages',
       'parallel_tools': 'Enable parallel tool execution',
 
       // UI Preferences
       'theme': 'UI theme name',
       'compact_threshold': 'Auto-compact threshold (%)',
-      'show_token_usage': 'Display token usage',
       'show_context_in_prompt': 'Show context % in prompt',
 
       // Tool Result Preview

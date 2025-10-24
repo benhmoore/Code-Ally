@@ -15,8 +15,7 @@ import * as path from 'path';
 
 export class WriteTool extends BaseTool {
   readonly name = 'write';
-  readonly description =
-    'Write content to a file. Creates new files or overwrites existing ones. Use this to create or modify files.';
+  readonly description = 'Create or overwrite files on local filesystem';
   readonly requiresConfirmation = true; // Destructive operation
 
   constructor(activityStream: ActivityStream) {

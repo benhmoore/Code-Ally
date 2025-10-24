@@ -14,7 +14,7 @@ import { formatError } from '../utils/errorUtils.js';
 export class BashTool extends BaseTool {
   readonly name = 'bash';
   readonly description =
-    'Execute shell commands. Use this for running bash commands, installing packages, running tests, etc. Output is streamed in real-time.';
+    'Execute shell commands. Use for running scripts, system operations, building/testing code';
   readonly requiresConfirmation = true; // Destructive operations require confirmation
 
   constructor(activityStream: ActivityStream) {
@@ -46,6 +46,10 @@ export class BashTool extends BaseTool {
               type: 'integer',
               description: `Timeout in seconds (default: 5, max: 60)`,
             },
+            output_mode: {
+              type: 'string',
+              description: 'Output mode: "full" (default), "last_line", "exit_code_only"',
+            },
             working_dir: {
               type: 'string',
               description: 'Working directory for command execution (default: current directory)',
@@ -64,7 +68,17 @@ export class BashTool extends BaseTool {
     // Extract and validate parameters
     const command = args.command as string;
     const timeout = this.validateTimeout(args.timeout);
+    const outputMode = (args.output_mode as string) || 'full';
     const workingDir = (args.working_dir as string) || process.cwd();
+
+    // Validate output_mode parameter
+    if (!['full', 'last_line', 'exit_code_only'].includes(outputMode)) {
+      return this.formatErrorResponse(
+        `Invalid output_mode: ${outputMode}`,
+        'validation_error',
+        'Valid values are: "full", "last_line", "exit_code_only"'
+      );
+    }
 
     if (!command) {
       return this.formatErrorResponse(
@@ -86,7 +100,7 @@ export class BashTool extends BaseTool {
 
     // Execute command
     try {
-      const result = await this.executeCommand(command, workingDir, timeout);
+      const result = await this.executeCommand(command, workingDir, timeout, outputMode);
       return result;
     } catch (error) {
       return this.formatErrorResponse(
@@ -140,11 +154,13 @@ export class BashTool extends BaseTool {
   private async executeCommand(
     command: string,
     workingDir: string,
-    timeout: number
+    timeout: number,
+    outputMode: string = 'full'
   ): Promise<ToolResult> {
     let stdout = '';
     let stderr = '';
     let returnCode: number | null = null;
+    let timedOut = false;
 
     return new Promise((resolve) => {
       // Spawn process
@@ -156,6 +172,7 @@ export class BashTool extends BaseTool {
 
       // Set up timeout
       const timeoutHandle = setTimeout(() => {
+        timedOut = true;
         child.kill('SIGTERM');
         setTimeout(() => {
           if (child.exitCode === null) {
@@ -187,6 +204,19 @@ export class BashTool extends BaseTool {
         clearTimeout(timeoutHandle);
         returnCode = code;
 
+        // Check if command timed out
+        if (timedOut) {
+          const timeoutSecs = timeout / 1000;
+          resolve(
+            this.formatErrorResponse(
+              `Command timed out after ${timeoutSecs} seconds`,
+              'timeout_error',
+              'Try increasing the timeout parameter'
+            )
+          );
+          return;
+        }
+
         // Non-zero exit code = failure (except for special cases)
         if (returnCode !== 0 && returnCode !== null) {
           // Use stderr if available, otherwise stdout, otherwise generic message
@@ -200,11 +230,20 @@ export class BashTool extends BaseTool {
             )
           );
         } else {
-          // Success - include both stdout and stderr
+          // Success - format output based on mode
+          let content = stdout;
+          if (outputMode === 'last_line') {
+            const lines = stdout.trim().split('\n');
+            content = lines[lines.length - 1] || '';
+          } else if (outputMode === 'exit_code_only') {
+            content = `Exit code: ${returnCode ?? 0}`;
+          }
+
+          // Include both stdout and stderr
           // (stderr may contain warnings even on success)
           resolve(
             this.formatSuccessResponse({
-              content: stdout, // Human-readable output for LLM (standardized field name)
+              content, // Human-readable output for LLM (formatted based on mode)
               stderr: stderr, // Warnings/info that appeared on stderr
               return_code: returnCode ?? 0,
             })

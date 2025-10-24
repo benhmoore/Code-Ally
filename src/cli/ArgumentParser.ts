@@ -138,11 +138,6 @@ Use '/help' for complete interactive command reference.
       .option(
         '--skip-ollama-check',
         'Skip the check for Ollama availability'
-      )
-      .option(
-        '--check-context-msg',
-        'Encourage LLM to check its context when redundant tool calls are detected',
-        true
       );
 
     // Session Management
@@ -213,7 +208,6 @@ Use '/help' for complete interactive command reference.
       verbose: opts.verbose,
       debug: opts.debug,
       skipOllamaCheck: opts.skipOllamaCheck,
-      checkContextMsg: opts.checkContextMsg,
 
       // Session
       session: opts.session,

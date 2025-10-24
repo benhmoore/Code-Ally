@@ -28,7 +28,7 @@ interface GrepMatch {
 export class GrepTool extends BaseTool {
   readonly name = 'grep';
   readonly description =
-    'Search for patterns in files using regex. Supports file type filtering, context lines, and case-insensitive search. Use for finding code patterns, text search across files, or regex matching.';
+    'Search files for text patterns. Use for finding code patterns, text search across files, regex matching';
   readonly requiresConfirmation = false; // Read-only operation
 
   private static readonly MAX_RESULTS = TOOL_LIMITS.MAX_SEARCH_RESULTS;
@@ -59,9 +59,13 @@ export class GrepTool extends BaseTool {
               type: 'string',
               description: 'File or directory path to search (default: current directory)',
             },
-            file_pattern: {
+            glob: {
               type: 'string',
               description: 'Glob pattern to filter files (e.g., "*.ts", "**/*.js")',
+            },
+            file_type: {
+              type: 'string',
+              description: 'File type shortcut: "ts", "js", "py", "all_code" (overrides glob if provided)',
             },
             case_insensitive: {
               type: 'boolean',
@@ -89,7 +93,20 @@ export class GrepTool extends BaseTool {
     // Extract and validate parameters
     const pattern = args.pattern as string;
     const searchPath = (args.path as string) || '.';
-    const filePattern = (args.file_pattern as string) || '*';
+    const fileType = args.file_type as string | undefined;
+    let filePattern = (args.glob as string) || '*';
+
+    // Apply file_type shortcuts (overrides glob if provided)
+    if (fileType) {
+      const typeMap: Record<string, string> = {
+        ts: '**/*.{ts,tsx}',
+        js: '**/*.{js,jsx}',
+        py: '**/*.py',
+        all_code: '**/*.{ts,tsx,js,jsx,py,go,java,c,cpp,rs,rb}',
+      };
+      filePattern = typeMap[fileType] || filePattern;
+    }
+
     const caseInsensitive = Boolean(args.case_insensitive);
     const contextLines = Math.min(
       Math.max(0, Number(args.context_lines) || 0),
@@ -228,9 +245,16 @@ export class GrepTool extends BaseTool {
 
       const totalSkipped = filesSkippedLarge + filesSkippedBinary + filesSkippedError;
 
+      // Group matches by file for easier LLM navigation
+      const matchesByFile: Record<string, number> = {};
+      for (const match of matches) {
+        matchesByFile[match.file] = (matchesByFile[match.file] || 0) + 1;
+      }
+
       return this.formatSuccessResponse({
         content, // Human-readable output for LLM
         matches: matchesToReturn, // Structured data
+        matches_by_file: matchesByFile, // File -> count mapping
         total_matches: matches.length,
         files_searched: filesSearched,
         files_skipped: totalSkipped,

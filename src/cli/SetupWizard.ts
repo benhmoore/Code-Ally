@@ -49,10 +49,6 @@ export class SetupWizard {
 
       // Step 4: Behavior preferences
       const bashTimeout = await this.promptBashTimeout();
-      const checkContextMsg = await this.promptCheckContextMsg();
-
-      // Step 5: UI preferences
-      const showTokenUsage = await this.promptShowTokenUsage();
 
       // Save configuration
       await this.configManager.setValues({
@@ -62,13 +58,24 @@ export class SetupWizard {
         context_size: contextSize,
         max_tokens: maxTokens,
         bash_timeout: bashTimeout,
-        check_context_msg: checkContextMsg,
-        show_token_usage: showTokenUsage,
         setup_completed: true,
       });
 
-      console.log('\n✓ Configuration saved successfully!\n');
-      console.log('You can now run "ally" to start the assistant.\n');
+      // Display completion summary
+      console.log('\n' + '='.repeat(60));
+      console.log('✓ Setup Complete!');
+      console.log('='.repeat(60));
+      console.log('\nConfiguration Summary:');
+      console.log(`  Model:         ${model}`);
+      console.log(`  Context Size:  ${contextSize.toLocaleString()} tokens`);
+      console.log(`  Temperature:   ${temperature}`);
+      console.log(`  Max Tokens:    ${maxTokens.toLocaleString()}`);
+      console.log(`  Endpoint:      ${endpoint}`);
+      console.log('\nNext Steps:');
+      console.log('  1. Run "ally" to start a new conversation');
+      console.log('  2. Use "ally --help" to see all available options');
+      console.log('  3. Use "ally --init" to reconfigure settings anytime');
+      console.log('\n' + '='.repeat(60) + '\n');
 
       return true;
     } catch (error) {
@@ -328,40 +335,4 @@ export class SetupWizard {
     return answers.bashTimeout;
   }
 
-  /**
-   * Prompt for check context message setting
-   */
-  private async promptCheckContextMsg(): Promise<boolean> {
-    const current = this.configManager.getValue('check_context_msg');
-
-    const answers = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'checkContextMsg',
-        message:
-          'Encourage LLM to check context when redundant tool calls detected?',
-        default: current !== undefined ? current : true,
-      },
-    ]);
-
-    return answers.checkContextMsg;
-  }
-
-  /**
-   * Prompt for show token usage setting
-   */
-  private async promptShowTokenUsage(): Promise<boolean> {
-    const current = this.configManager.getValue('show_token_usage');
-
-    const answers = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'showTokenUsage',
-        message: 'Show token usage in UI?',
-        default: current !== undefined ? current : true,
-      },
-    ]);
-
-    return answers.showTokenUsage;
-  }
 }

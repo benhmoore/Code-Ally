@@ -262,7 +262,14 @@ CRITICAL RULES:
 - VARIETY is key - be creative and unpredictable
 - Mix humor styles: fake facts, empty promises, playful observations, self-aware jokes
 
-Think: What would make someone laugh or smile unexpectedly?
+STRICT SAFETY RULES - NEVER BREAK THESE:
+- NO messages that sound like errors or failures
+- NO messages referencing user actions as if they failed or had issues
+- NO technical status messages (avoid "Switched to X", "Built Y", "Installed Z", etc.)
+- Keep jokes CLEARLY recognizable as jokes, not system messages
+- When referencing technical context (git branch, etc.), be playful not status-like
+
+Think: What would make someone laugh or smile unexpectedly WITHOUT confusing them?
 
 Examples:
 - "Let's goooo!"
@@ -290,8 +297,8 @@ Examples:
 - "Hump day grind!" (if Wednesday)
 - "2 hour session! Legend!" (if long session)
 - "We've been at this 90 minutes!" (session duration)
-- "Working on 'fix-the-fix' branch?" (referencing branch name)
-- "Feature branch energy!" (if on feature branch)
+- "I see you're on feature-branch!" (referencing branch name - playful, not status-like)
+- "Feature branch vibes!" (if on feature branch)
 - "Is your name really 'bhm128'?" (playful username joke)
 - "Nice username, bhm128!" (home directory reference)
 - "Nothing will go wrong today!" (humorous empty promise)

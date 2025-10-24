@@ -130,13 +130,7 @@ async function handleConfigCommands(
   // Run interactive setup wizard
   if (options.init) {
     const wizard = new SetupWizard(configManager);
-    const success = await wizard.run();
-
-    if (success) {
-      await configManager.setValue('setup_completed', true);
-      console.log('\n✓ Setup completed successfully!\n');
-    }
-
+    await wizard.run();
     return true;
   }
 
@@ -169,8 +163,6 @@ async function handleConfigCommands(
       newConfig.bash_timeout = options.bashTimeout;
     if (options.yesToAll !== undefined)
       newConfig.auto_confirm = options.yesToAll;
-    if (options.checkContextMsg !== undefined)
-      newConfig.check_context_msg = options.checkContextMsg;
 
     await configManager.setValues(newConfig);
     console.log('✓ Configuration saved successfully\n');
@@ -292,8 +284,6 @@ function applyConfigOverrides(
   if (options.yesToAll !== undefined || options.autoConfirm !== undefined) {
     overrides.auto_confirm = options.yesToAll || options.autoConfirm;
   }
-  if (options.checkContextMsg !== undefined)
-    overrides.check_context_msg = options.checkContextMsg;
 
   return overrides;
 }
@@ -442,6 +432,11 @@ async function setupOllamaValidation(
 }
 
 /**
+ * Track whether the Ink UI was started (requires terminal reset on exit)
+ */
+let inkUIStarted = false;
+
+/**
  * Main entry point
  */
 async function main() {
@@ -489,6 +484,9 @@ async function main() {
         console.log('\nSetup skipped. You can run it later with: ally --init\n');
         console.log('⚠️  Note: Code Ally may not work correctly without proper configuration.\n');
       }
+
+      // Exit after setup to allow user to see completion message
+      return;
     }
 
     // Initialize session manager (without model client for now, will be set later)
@@ -652,6 +650,7 @@ async function main() {
 
     // Interactive mode - Render the Ink UI
     // IMPORTANT: exitOnCtrlC must be false to allow custom Ctrl+C handling in InputPrompt
+    inkUIStarted = true;
     const { waitUntilExit } = render(
       React.createElement(App, {
         config,
@@ -683,30 +682,41 @@ async function main() {
     // Cleanup
     await registry.shutdown();
   } catch (error) {
-    // Critical: Reset terminal even on fatal errors
-    resetTerminalState();
+    // Critical: Reset terminal even on fatal errors (only if UI was started)
+    if (inkUIStarted) {
+      resetTerminalState();
+    }
     console.error('Fatal error:', error);
     process.exit(1);
   }
 }
 
 // Install global handlers to ensure terminal reset on ANY exit
+// Only reset if Ink UI was started (to avoid clearing setup messages)
 process.on('exit', () => {
-  resetTerminalState();
+  if (inkUIStarted) {
+    resetTerminalState();
+  }
 });
 
 process.on('SIGINT', () => {
-  resetTerminalState();
+  if (inkUIStarted) {
+    resetTerminalState();
+  }
   process.exit(130); // Standard exit code for SIGINT
 });
 
 process.on('SIGTERM', () => {
-  resetTerminalState();
+  if (inkUIStarted) {
+    resetTerminalState();
+  }
   process.exit(143); // Standard exit code for SIGTERM
 });
 
 process.on('uncaughtException', (error) => {
-  resetTerminalState();
+  if (inkUIStarted) {
+    resetTerminalState();
+  }
   console.error('Uncaught exception:', error);
   process.exit(1);
 });

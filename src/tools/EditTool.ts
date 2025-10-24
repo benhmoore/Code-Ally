@@ -15,8 +15,7 @@ import * as fs from 'fs/promises';
 
 export class EditTool extends BaseTool {
   readonly name = 'edit';
-  readonly description =
-    'Find and replace text in a file. Performs exact string matching. Use this for precise text replacements.';
+  readonly description = 'Make edits to a single file using find-and-replace';
   readonly requiresConfirmation = true; // Destructive operation
 
   constructor(activityStream: ActivityStream) {

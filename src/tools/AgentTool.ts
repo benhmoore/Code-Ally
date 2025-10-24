@@ -23,7 +23,7 @@ import { formatError } from '../utils/errorUtils.js';
 export class AgentTool extends BaseTool {
   readonly name = 'agent';
   readonly description =
-    'Delegate a task to a specialized agent. Each call executes one agent. IMPORTANT: To run N agents concurrently, you MUST make N separate agent() calls in the same response (not an array). Example: For 2 concurrent agents, call agent(task_prompt="task 1") and agent(task_prompt="task 2") in parallel.';
+    'Delegate task to specialized agent. Each call runs ONE agent. For concurrent execution, make multiple agent() calls in same response';
   readonly requiresConfirmation = false; // Non-destructive: task delegation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion - hide output and nested tools

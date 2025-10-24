@@ -29,7 +29,6 @@ export const DEFAULT_CONFIG: Config = {
   // ==========================================
   bash_timeout: 30, // Bash command timeout in seconds
   auto_confirm: false, // Skip permission prompts (dangerous)
-  check_context_msg: true, // Encourage LLM context checks
   parallel_tools: true, // Enable parallel tool execution
   tool_call_activity_timeout: 120, // Timeout for agents without tool call activity (seconds)
 
@@ -38,7 +37,6 @@ export const DEFAULT_CONFIG: Config = {
   // ==========================================
   theme: 'default', // UI theme name
   compact_threshold: 95, // Context % threshold for auto-compact
-  show_token_usage: true, // Display token usage in UI
   show_context_in_prompt: false, // Show context % in input prompt
 
   // ==========================================
@@ -109,14 +107,12 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   // Execution Settings
   bash_timeout: 'number',
   auto_confirm: 'boolean',
-  check_context_msg: 'boolean',
   parallel_tools: 'boolean',
   tool_call_activity_timeout: 'number',
 
   // UI Preferences
   theme: 'string',
   compact_threshold: 'number',
-  show_token_usage: 'boolean',
   show_context_in_prompt: 'boolean',
 
   // Tool Result Preview

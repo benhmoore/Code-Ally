@@ -329,6 +329,15 @@ export class ToolOrchestrator {
       // Execute tool via tool manager (pass ID for streaming output)
       result = await this.toolManager.executeTool(toolName, args, id);
 
+      // Record successful tool call for in-progress todo tracking (main agent only)
+      if (result.success && !this.config.isSpecializedAgent && toolName !== 'todo_write') {
+        const registry = ServiceRegistry.getInstance();
+        const todoManager = registry.get<TodoManager>('todo_manager');
+        if (todoManager) {
+          todoManager.recordToolCall(toolName, args);
+        }
+      }
+
       // Emit output chunks if result has content
       if (result.success && (result as any).content) {
         this.emitEvent({
@@ -362,6 +371,9 @@ export class ToolOrchestrator {
       }
     } finally {
       // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START
+      // Show silent tools in chat if they error (for debugging)
+      const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
+
       this.emitEvent({
         id,
         type: ActivityEventType.TOOL_CALL_END,
@@ -372,7 +384,7 @@ export class ToolOrchestrator {
           result,
           success: result.success,
           error: result.success ? undefined : result.error,
-          visibleInChat: tool?.visibleInChat ?? true,
+          visibleInChat: shouldShowInChat,
           isTransparent: tool?.isTransparentWrapper || false,
           collapsed: isCollapsed, // Use same collapsed state as TOOL_CALL_START
           shouldCollapse, // Pass through for completion-triggered collapse
@@ -426,14 +438,19 @@ export class ToolOrchestrator {
       return (result as any).result || 'Internal operation completed';
     }
 
-    // Serialize entire result object to JSON (includes all metadata like file_check)
+    // Extract warning before serialization to ensure it's not lost during truncation
+    const warning = result.warning;
+    const resultWithoutWarning = { ...result };
+    delete resultWithoutWarning.warning;
+
+    // Serialize result object to JSON (includes all metadata like file_check)
     // This matches Python CodeAlly's behavior in response_processor.py
     let resultStr: string;
     try {
-      resultStr = JSON.stringify(result);
+      resultStr = JSON.stringify(resultWithoutWarning);
     } catch (error) {
       // Fallback for non-serializable objects
-      resultStr = String(result);
+      resultStr = String(resultWithoutWarning);
     }
 
     // Apply context-aware truncation if ToolResultManager is available
@@ -441,7 +458,77 @@ export class ToolOrchestrator {
       resultStr = this.toolResultManager.processToolResult(toolName, resultStr);
     }
 
+    // Append warning after truncation to ensure it's always visible
+    if (warning) {
+      resultStr += `\n\n⚠️  ${warning}`;
+    }
+
+    // Inject focus reminder in every tool result if there's an active todo (main agent only)
+    if (!this.config.isSpecializedAgent) {
+      const focusReminder = this.generateFocusReminder();
+      if (focusReminder) {
+        resultStr += `\n\n<system-reminder>${focusReminder}</system-reminder>`;
+      }
+    }
+
     return resultStr;
+  }
+
+  /**
+   * Generate a focus reminder based on current in_progress todo
+   *
+   * @returns Focus reminder string or null if no reminder needed
+   */
+  private generateFocusReminder(): string | null {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const todoManager = registry.get<TodoManager>('todo_manager');
+
+      if (!todoManager) {
+        return null;
+      }
+
+      const todos = todoManager.getTodos();
+      const inProgressTodo = todos.find((t: any) => t.status === 'in_progress');
+
+      if (!inProgressTodo) {
+        return null;
+      }
+
+      // Build reminder with tool call summary
+      let reminder = `Stay focused. You're working on: ${inProgressTodo.task}.`;
+
+      // Add tool call summary if any calls have been made
+      const toolCalls = inProgressTodo.toolCalls || [];
+      if (toolCalls.length > 0) {
+        reminder += ` You've made ${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''} for this task:`;
+
+        // Group tool calls by tool name and show brief summary
+        const callsByTool = new Map<string, string[]>();
+        toolCalls.forEach((call: any) => {
+          if (!callsByTool.has(call.toolName)) {
+            callsByTool.set(call.toolName, []);
+          }
+          if (call.args) {
+            callsByTool.get(call.toolName)!.push(call.args);
+          }
+        });
+
+        // Format as brief list
+        for (const [toolName, argsList] of callsByTool) {
+          const uniqueArgs = [...new Set(argsList)]; // Deduplicate
+          const argStr = uniqueArgs.slice(0, 3).join(', ') + (uniqueArgs.length > 3 ? '...' : '');
+          reminder += `\n- ${toolName}(${argStr})`;
+        }
+      }
+
+      reminder += `\n\nStay on task. Use todo_write to mark complete when finished.`;
+
+      return reminder;
+    } catch (error) {
+      logger.warn('[TOOL_ORCHESTRATOR] Failed to generate focus reminder:', formatError(error));
+      return null;
+    }
   }
 
   /**

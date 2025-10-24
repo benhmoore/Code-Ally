@@ -43,7 +43,7 @@ interface FormatterInfo {
 export class FormatTool extends BaseTool {
   readonly name = 'format';
   readonly description =
-    'Format and auto-fix multiple code files in batch. Supports TypeScript/JavaScript (prettier, eslint --fix if available), JSON, and YAML. Shows diff preview for all files before applying changes.';
+    'Format and auto-fix code files in batch. Supports TypeScript/JavaScript (prettier, eslint --fix), JSON, and YAML. Shows diff preview before changes';
   readonly requiresConfirmation = true; // SENSITIVE: Modifies files
 
   constructor(activityStream: ActivityStream) {

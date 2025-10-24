@@ -282,6 +282,12 @@ export class Agent {
             const status = todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '→' : '○';
             reminderContent += `${idx + 1}. [${status}] ${todo.task}\n`;
           });
+
+          const inProgressTodo = todos.find((t: any) => t.status === 'in_progress');
+          if (inProgressTodo) {
+            reminderContent += `\nYou are currently working on: "${inProgressTodo.task}". Stay focused on completing this task - don't get distracted by tangential findings in tool results unless they directly block your progress.\n`;
+          }
+
           reminderContent += '\nConsider if this list needs updates based on the user\'s new request. Remember: exactly ONE task must be in_progress when working. Update using todo_write if needed.\n';
         }
 
@@ -440,9 +446,6 @@ export class Agent {
 
       this.messages[0].content = updatedSystemPrompt;
     }
-
-    // Deduplicate tool results to save context
-    this.deduplicateToolResults();
 
     // Auto-compaction: check if context usage exceeds threshold
     await this.checkAutoCompaction();
@@ -642,10 +645,17 @@ export class Agent {
    * @returns The text content
    */
   private processTextResponse(response: LLMResponse): string {
+    // Validate that we have actual content
+    const content = response.content || '';
+
+    if (!content.trim()) {
+      logger.warn('[AGENT_RESPONSE]', this.instanceId, 'Model returned empty content - this may indicate the model did not provide a proper response after tool execution');
+    }
+
     // Add assistant message
     const assistantMessage: Message = {
       role: 'assistant',
-      content: response.content,
+      content: content,
       timestamp: Date.now(),
     };
     this.messages.push(assistantMessage);
@@ -659,12 +669,12 @@ export class Agent {
       type: ActivityEventType.AGENT_END,
       timestamp: Date.now(),
       data: {
-        content: response.content,
+        content: content,
         isSpecializedAgent: this.config.isSpecializedAgent || false,
       },
     });
 
-    return response.content;
+    return content;
   }
 
   /**
@@ -911,61 +921,6 @@ export class Agent {
    */
   isRequestInProgress(): boolean {
     return this.requestInProgress;
-  }
-
-  /**
-   * Deduplicate tool results to save context
-   *
-   * Replaces duplicate tool results (same content) with a truncated message.
-   * Keeps the most recent occurrence and truncates earlier ones.
-   */
-  private deduplicateToolResults(): void {
-    // TokenManager is always available (instance variable)
-    if (typeof this.tokenManager.trackToolResult !== 'function') {
-      return; // trackToolResult not available, skip deduplication
-    }
-
-    // Track which tool results we've seen
-    const contentHashes = new Map<string, number>(); // hash -> first message index
-
-    // First pass: identify duplicates
-    for (let i = 0; i < this.messages.length; i++) {
-      const msg = this.messages[i];
-
-      // Only process tool messages
-      if (!msg || msg.role !== 'tool' || !msg.tool_call_id) {
-        continue;
-      }
-
-      // Calculate content hash
-      const hash = (this.tokenManager as any).hashContent(msg.content);
-
-      if (contentHashes.has(hash)) {
-        // This is a duplicate - mark the earlier occurrence for truncation
-        const firstIndex = contentHashes.get(hash)!;
-        const firstMsg = this.messages[firstIndex];
-
-        if (firstMsg) {
-          // Replace earlier occurrence with truncated message
-          this.messages[firstIndex] = {
-            role: firstMsg.role,
-            content: '[Duplicate tool result truncated - content identical to later call]',
-            tool_call_id: firstMsg.tool_call_id,
-            name: firstMsg.name,
-            timestamp: firstMsg.timestamp,
-          };
-
-          logger.debug(
-            '[AGENT_DEDUP]',
-            this.instanceId,
-            `Truncated duplicate tool result at index ${firstIndex}, kept index ${i}`
-          );
-        }
-      } else {
-        // First occurrence of this content
-        contentHashes.set(hash, i);
-      }
-    }
   }
 
   /**

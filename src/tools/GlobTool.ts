@@ -25,7 +25,7 @@ interface FileInfo {
 export class GlobTool extends BaseTool {
   readonly name = 'glob';
   readonly description =
-    'Find files matching glob patterns. Use * for wildcards, ** for recursive search. Examples: "*.ts" (TypeScript files), "**/*.test.js" (test files recursively), "src/**/*.{ts,tsx}" (multiple extensions).';
+    'Find files using glob patterns. Examples: \'*.ts\' (TypeScript files), \'**/*.test.js\' (test files recursively). Use * for wildcards, ** for recursive';
   readonly requiresConfirmation = false; // Read-only operation
 
   constructor(activityStream: ActivityStream) {
@@ -48,6 +48,11 @@ export class GlobTool extends BaseTool {
               type: 'string',
               description:
                 'Glob pattern to match files (e.g., "*.ts", "**/*.js", "src/**/*test*")',
+            },
+            preset: {
+              type: 'string',
+              description:
+                'Pattern preset: "tests", "configs", "all_ts", "all_js", "components" (overrides pattern if provided)',
             },
             path: {
               type: 'string',
@@ -79,7 +84,21 @@ export class GlobTool extends BaseTool {
     this.captureParams(args);
 
     // Extract and validate parameters
-    const pattern = args.pattern as string;
+    const preset = args.preset as string | undefined;
+    let pattern = args.pattern as string;
+
+    // Apply preset patterns (overrides pattern if provided)
+    if (preset) {
+      const presetMap: Record<string, string> = {
+        tests: '**/*{.test,.spec}.{ts,tsx,js,jsx,py}',
+        configs: '**/*.{json,yaml,yml,toml,ini,config.js,config.ts}',
+        all_ts: '**/*.{ts,tsx}',
+        all_js: '**/*.{js,jsx}',
+        components: '**/{components,component}/**/*.{ts,tsx,js,jsx}',
+      };
+      pattern = presetMap[preset] || pattern;
+    }
+
     const searchPath = (args.path as string) || '.';
     const excludePatterns = (args.exclude as string[]) || [];
     const maxResults = Math.min(
@@ -88,11 +107,11 @@ export class GlobTool extends BaseTool {
     );
     const sortBy = (args.sort_by as string) || 'modified'; // Default: newest first
 
-    if (!pattern) {
+    if (!pattern && !preset) {
       return this.formatErrorResponse(
-        'pattern parameter is required',
+        'pattern or preset parameter is required',
         'validation_error',
-        'Example: glob(pattern="**/*.ts", path="src/")'
+        'Example: glob(pattern="**/*.ts") or glob(preset="tests")'
       );
     }
 
