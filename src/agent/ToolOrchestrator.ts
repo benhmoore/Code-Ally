@@ -413,52 +413,35 @@ export class ToolOrchestrator {
   /**
    * Format tool result as natural language
    *
+   * Serializes the entire result object to JSON (matching Python implementation)
+   * to ensure all metadata (like file_check) is included in LLM context.
+   *
    * @param toolName - Name of the tool
    * @param result - Tool execution result
    * @returns Formatted result string
    */
   private formatToolResult(toolName: string, result: ToolResult): string {
-    if (!result.success) {
-      let message = `Error executing ${toolName}: ${result.error}`;
-
-      if (result.suggestion) {
-        message += `\n\nSuggestion: ${result.suggestion}`;
-      }
-
-      return message;
+    // Handle internal-only tool results (for special tools like delegate_task)
+    if ((result as any)._internal_only) {
+      return (result as any).result || 'Internal operation completed';
     }
 
-    // Extract content from result (standardized field)
-    let content = (result as any).content;
-
-    // Fallback to 'output' for backward compatibility
-    if (!content) {
-      content = (result as any).output;
-      if (content) {
-        logger.debug(`[TOOL_ORCHESTRATOR] Tool '${toolName}' uses deprecated 'output' field instead of 'content'`);
-      }
-    }
-
-    if (!content) {
-      logger.debug(`[TOOL_ORCHESTRATOR] Tool '${toolName}' returned no content - using generic success message`);
-      return `${toolName} completed successfully`;
+    // Serialize entire result object to JSON (includes all metadata like file_check)
+    // This matches Python CodeAlly's behavior in response_processor.py
+    let resultStr: string;
+    try {
+      resultStr = JSON.stringify(result);
+    } catch (error) {
+      // Fallback for non-serializable objects
+      resultStr = String(result);
     }
 
     // Apply context-aware truncation if ToolResultManager is available
-    let processedContent = content;
     if (this.toolResultManager) {
-      processedContent = this.toolResultManager.processToolResult(
-        toolName,
-        content
-      );
+      resultStr = this.toolResultManager.processToolResult(toolName, resultStr);
     }
 
-    // For verbose results, include tool name header
-    if (processedContent.length > 500 || processedContent.includes('\n')) {
-      return `[${toolName} output]\n${processedContent}`;
-    }
-
-    return processedContent;
+    return resultStr;
   }
 
   /**
