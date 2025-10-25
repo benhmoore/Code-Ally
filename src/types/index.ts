@@ -149,6 +149,7 @@ export interface ToolCallState {
 export interface Config {
   // LLM Settings
   model: string | null;
+  service_model?: string | null; // Model for background services (titles, idle messages). Defaults to main model.
   endpoint: string;
   context_size: number;
   temperature: number;

@@ -937,6 +937,24 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       // Set thinking state
       actions.setIsThinking(true);
 
+      // Cancel any ongoing background LLM tasks (idle messages, title generation)
+      // This must be done BEFORE calling agent.sendMessage() to avoid resource competition
+      //
+      // Retry behavior:
+      // - IdleMessageGenerator: Will naturally retry every 60s when idle (StatusIndicator)
+      // - SessionTitleGenerator: Will retry when next new session is created (low priority)
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const services = [
+        serviceRegistry.get('idle_message_generator'),
+        (serviceRegistry.get('session_manager') as any)?.titleGenerator,
+      ].filter(Boolean);
+
+      for (const service of services) {
+        if (typeof (service as any).cancel === 'function') {
+          (service as any).cancel();
+        }
+      }
+
       // Send to agent for processing
       try {
         const response = await agent.sendMessage(trimmed);

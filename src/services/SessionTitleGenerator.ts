@@ -7,8 +7,10 @@
 
 import { ModelClient } from '../llm/ModelClient.js';
 import { Message } from '../types/index.js';
+import { CancellableService } from '../types/CancellableService.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
+import { logger } from './Logger.js';
 
 /**
  * Configuration for SessionTitleGenerator
@@ -23,9 +25,10 @@ export interface SessionTitleGeneratorConfig {
 /**
  * SessionTitleGenerator auto-generates session titles using LLM
  */
-export class SessionTitleGenerator {
+export class SessionTitleGenerator implements CancellableService {
   private modelClient: ModelClient;
   private pendingGenerations = new Set<string>();
+  private isGenerating: boolean = false;
 
   constructor(
     modelClient: ModelClient,
@@ -34,6 +37,27 @@ export class SessionTitleGenerator {
     this.modelClient = modelClient;
     // Note: maxTokens and temperature are available in _config but not used directly
     // They could be passed to modelClient.send() if needed in the future
+  }
+
+  /**
+   * Cancel any ongoing title generation
+   *
+   * Called before main agent starts processing to avoid resource competition.
+   * The service will naturally retry later when a new session is created.
+   */
+  cancel(): void {
+    if (this.isGenerating) {
+      logger.debug('[TITLE_GEN] 🛑 Cancelling ongoing generation (user interaction started)');
+
+      // Cancel all active requests on the model client
+      if (typeof this.modelClient.cancel === 'function') {
+        this.modelClient.cancel();
+      }
+
+      // Reset flag and clear pending
+      this.isGenerating = false;
+      this.pendingGenerations.clear();
+    }
   }
 
   /**
@@ -63,6 +87,12 @@ export class SessionTitleGenerator {
         }
       );
 
+      // Check if response was interrupted or had an error - don't process it
+      if ((response as any).interrupted || (response as any).error) {
+        logger.debug('[TITLE_GEN] ⚠️  Response was interrupted/error, skipping title generation');
+        throw new Error('Generation interrupted or failed');
+      }
+
       const title = response.content.trim();
 
       // Clean up title - remove quotes, limit length
@@ -73,7 +103,7 @@ export class SessionTitleGenerator {
 
       return cleanTitle || 'New Session';
     } catch (error) {
-      console.error('Failed to generate session title:', error);
+      logger.error('[TITLE_GEN] ❌ Failed to generate session title:', error);
       // Fallback: use first 40 chars of first message
       const content = firstUserMessage.content.trim();
       const cleanContent = content.replace(/\s+/g, ' ');
@@ -99,18 +129,28 @@ export class SessionTitleGenerator {
   ): void {
     // Prevent duplicate generations
     if (this.pendingGenerations.has(sessionName)) {
+      logger.debug(`[TITLE_GEN] ⏭️  Skipping - already generating title for ${sessionName}`);
       return;
     }
 
+    logger.debug(`[TITLE_GEN] 🚀 Starting background title generation for session ${sessionName}`);
     this.pendingGenerations.add(sessionName);
+    this.isGenerating = true;
 
     // Run in background
     this.generateAndSaveTitleAsync(sessionName, firstUserMessage, sessionsDir)
       .catch(error => {
-        console.error(`Background title generation failed for ${sessionName}:`, error);
+        // Ignore abort/interrupt errors (expected when cancelled)
+        if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
+          logger.debug(`[TITLE_GEN] ⚠️  Generation cancelled for ${sessionName}`);
+        } else {
+          logger.error(`[TITLE_GEN] ❌ Generation failed for ${sessionName}:`, error);
+        }
       })
       .finally(() => {
         this.pendingGenerations.delete(sessionName);
+        this.isGenerating = false;
+        logger.debug(`[TITLE_GEN] ✅ Generation completed for ${sessionName}`);
       });
   }
 
@@ -128,6 +168,7 @@ export class SessionTitleGenerator {
     const title = await this.generateTitle([
       { role: 'user', content: firstUserMessage },
     ]);
+    logger.debug(`[TITLE_GEN] 📝 Generated title: "${title}"`);
 
     // Load session and update title
     try {
@@ -141,9 +182,13 @@ export class SessionTitleGenerator {
         session.updated_at = new Date().toISOString();
 
         await fs.writeFile(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
+        logger.debug(`[TITLE_GEN] 💾 Saved title to session ${sessionName}`);
+      } else {
+        logger.debug(`[TITLE_GEN] ⏭️  Session ${sessionName} already has title, skipping save`);
       }
     } catch (error) {
-      console.error(`Failed to save generated title for ${sessionName}:`, error);
+      logger.error(`[TITLE_GEN] ❌ Failed to save title for ${sessionName}:`, error);
+      throw error;
     }
   }
 

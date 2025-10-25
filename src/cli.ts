@@ -542,7 +542,7 @@ async function main() {
     const pathResolver = new PathResolver();
     registry.registerInstance('path_resolver', pathResolver);
 
-    // Create LLM client
+    // Create LLM client (main agent model)
     const modelClient = new OllamaClient({
       endpoint: config.endpoint,
       modelName: config.model,
@@ -554,6 +554,23 @@ async function main() {
     });
     registry.registerInstance('model_client', modelClient);
 
+    // Create service model client (for background services like titles, idle messages)
+    // Defaults to main model if service_model not specified
+    const serviceModelName = config.service_model ?? config.model;
+    const serviceModelClient = new OllamaClient({
+      endpoint: config.endpoint,
+      modelName: serviceModelName,
+      temperature: config.temperature,
+      contextSize: config.context_size,
+      maxTokens: config.max_tokens,
+      reasoningEffort: config.reasoning_effort,
+      activityStream,
+    });
+    registry.registerInstance('service_model_client', serviceModelClient);
+
+    // Configure session manager with service model client for title generation
+    sessionManager.setModelClient(serviceModelClient);
+
     // Create message history
     const messageHistory = new MessageHistory({
       maxTokens: config.context_size,
@@ -562,7 +579,7 @@ async function main() {
 
     // Create idle message generator
     const { IdleMessageGenerator } = await import('./services/IdleMessageGenerator.js');
-    const idleMessageGenerator = new IdleMessageGenerator(modelClient, {
+    const idleMessageGenerator = new IdleMessageGenerator(serviceModelClient, {
       minInterval: 10000, // Generate new message every 10 seconds when idle
     });
     registry.registerInstance('idle_message_generator', idleMessageGenerator);

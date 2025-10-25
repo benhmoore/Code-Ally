@@ -33,7 +33,7 @@ export class SetupWizard {
    * @returns Promise<boolean> - true if setup completed successfully
    */
   async run(): Promise<boolean> {
-    console.log('\n=== Welcome to Code Ally Setup! ===\n');
+    console.log('\n( o)> Code Ally Setup\n');
 
     try {
       // Step 1: Ollama endpoint
@@ -63,28 +63,28 @@ export class SetupWizard {
 
       // Display completion summary
       console.log('\n' + '='.repeat(60));
-      console.log('✓ Setup Complete!');
+      console.log('( o)> Setup Complete');
       console.log('='.repeat(60));
-      console.log('\nConfiguration Summary:');
+      console.log('\nConfiguration:');
       console.log(`  Model:         ${model}`);
       console.log(`  Context Size:  ${contextSize.toLocaleString()} tokens`);
       console.log(`  Temperature:   ${temperature}`);
       console.log(`  Max Tokens:    ${maxTokens.toLocaleString()}`);
       console.log(`  Endpoint:      ${endpoint}`);
-      console.log('\nNext Steps:');
-      console.log('  1. Run "ally" to start a new conversation');
-      console.log('  2. Use "ally --help" to see all available options');
-      console.log('  3. Use "ally --init" to reconfigure settings anytime');
+      console.log('\nReady to go:');
+      console.log('  - Run "ally" to start');
+      console.log('  - Use "ally --help" for options');
+      console.log('  - Use "ally --init" to reconfigure');
       console.log('\n' + '='.repeat(60) + '\n');
 
       return true;
     } catch (error) {
       if (error instanceof Error && error.message === 'User cancelled setup') {
-        console.log('\n✗ Setup cancelled.\n');
+        console.log('\nSetup cancelled.\n');
         return false;
       }
 
-      console.error('\n✗ Setup failed:', error);
+      console.error('\nSetup failed:', error);
       return false;
     }
   }
@@ -146,7 +146,7 @@ export class SetupWizard {
 
       if (models.length === 0) {
         console.log(
-          '\n⚠️  No models found. Please install a model with: ollama pull <model-name>\n'
+          '\nNo models found. Please install a model with: ollama pull <model-name>\n'
         );
 
         const answers = await inquirer.prompt([
@@ -180,7 +180,7 @@ export class SetupWizard {
       return answers.model;
     } catch (error) {
       console.log(
-        `\n⚠️  Could not connect to Ollama at ${endpoint}\n`
+        `\nCould not connect to Ollama at ${endpoint}\n`
       );
       console.log('Please ensure:');
       console.log('  1. Ollama is installed');

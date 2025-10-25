@@ -214,27 +214,30 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         {/* Welcome Step */}
         {step === SetupStep.WELCOME && (
           <>
-            <Box marginBottom={1}>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text color="yellow" bold>
+                {'( o)>'}
+              </Text>
               <Text color="cyan" bold>
-                Welcome to Code Ally! 🤖
+                Code Ally Setup
               </Text>
             </Box>
             <Box marginBottom={1}>
               <Text>
-                This wizard will help you configure Code Ally for first use.
+                Quick configuration wizard for first-time setup.
               </Text>
             </Box>
             <Box marginBottom={1}>
               <Text dimColor>
-                You'll be asked to configure:
+                Configuration options:
               </Text>
             </Box>
             <Box paddingLeft={2} marginBottom={1} flexDirection="column">
-              <Text dimColor>• Ollama endpoint (where your LLM runs)</Text>
-              <Text dimColor>• Model selection (which LLM to use)</Text>
-              <Text dimColor>• Context size (memory capacity)</Text>
-              <Text dimColor>• Temperature (creativity level)</Text>
-              <Text dimColor>• Auto-confirm (tool execution behavior)</Text>
+              <Text dimColor>• Ollama endpoint</Text>
+              <Text dimColor>• Model selection</Text>
+              <Text dimColor>• Context size</Text>
+              <Text dimColor>• Temperature</Text>
+              <Text dimColor>• Auto-confirm preference</Text>
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
               <Text>
@@ -259,7 +262,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             {error && (
               <Box marginBottom={1}>
-                <Text color="red">⚠ {error}</Text>
+                <Text color="red">{error}</Text>
               </Box>
             )}
             <Box marginBottom={1}>
@@ -362,7 +365,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             {error && (
               <Box marginBottom={1}>
-                <Text color="red">⚠ {error}</Text>
+                <Text color="red">{error}</Text>
               </Box>
             )}
             <Box marginBottom={1}>
@@ -420,14 +423,17 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         {/* Completion */}
         {step === SetupStep.COMPLETED && (
           <>
-            <Box marginBottom={1}>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text color="yellow" bold>
+                {'( o)>'}
+              </Text>
               <Text color="green" bold>
-                Setup Complete! ✓
+                Setup Complete
               </Text>
             </Box>
             <Box marginBottom={1}>
               <Text>
-                Code Ally is now configured and ready to use.
+                Configuration saved. Ready to go.
               </Text>
             </Box>
             <Box marginBottom={1} flexDirection="column">
@@ -444,7 +450,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
               <Text>
-                Press <Text color="green">Enter</Text> to start using Code Ally
+                Press <Text color="green">Enter</Text> to start
               </Text>
             </Box>
           </>

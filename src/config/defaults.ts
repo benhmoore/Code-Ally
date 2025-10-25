@@ -19,6 +19,7 @@ export const DEFAULT_CONFIG: Config = {
   // LLM MODEL SETTINGS
   // ==========================================
   model: null, // Auto-selected from available models
+  service_model: null, // Model for background services (defaults to main model)
   endpoint: 'http://localhost:11434', // Ollama API endpoint
   context_size: 16384, // Context window size in tokens
   temperature: 0.3, // Generation temperature (0.0-1.0)
@@ -100,6 +101,7 @@ export const DEFAULT_CONFIG: Config = {
 export const CONFIG_TYPES: Record<keyof Config, string> = {
   // LLM Settings
   model: 'string',
+  service_model: 'string',
   endpoint: 'string',
   context_size: 'number',
   temperature: 'number',
@@ -173,6 +175,11 @@ export function validateConfigValue(
   // Handle null model
   if (key === 'model' && value === null) {
     return { valid: true, coercedValue: null };
+  }
+
+  // Handle null/undefined service_model (defaults to main model)
+  if (key === 'service_model' && (value === null || value === undefined)) {
+    return { valid: true, coercedValue: value };
   }
 
   // Handle undefined reasoning_effort

@@ -89,6 +89,14 @@ export class SessionManager implements IService {
   }
 
   /**
+   * Set the model client for title generation
+   * Call this after service model client is created
+   */
+  setModelClient(modelClient: any): void {
+    this.titleGenerator = new SessionTitleGenerator(modelClient);
+  }
+
+  /**
    * Cleanup resources
    */
   async cleanup(): Promise<void> {

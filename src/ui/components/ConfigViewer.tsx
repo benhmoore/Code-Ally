@@ -43,7 +43,7 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
 
     // Group configurations by category
     const categoryDefs = {
-      'LLM Model Settings': ['model', 'endpoint', 'context_size', 'temperature', 'max_tokens', 'reasoning_effort'],
+      'LLM Model Settings': ['model', 'service_model', 'endpoint', 'context_size', 'temperature', 'max_tokens', 'reasoning_effort'],
       'Execution Settings': ['bash_timeout', 'auto_confirm', 'parallel_tools'],
       'UI Preferences': ['theme', 'compact_threshold', 'show_context_in_prompt'],
       'Tool Result Preview': ['tool_result_preview_lines', 'tool_result_preview_enabled'],

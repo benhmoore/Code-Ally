@@ -7,6 +7,7 @@
 
 import { ModelClient } from '../llm/ModelClient.js';
 import { Message } from '../types/index.js';
+import { CancellableService } from '../types/CancellableService.js';
 import { logger } from './Logger.js';
 
 /**
@@ -50,7 +51,7 @@ export interface IdleMessageGeneratorConfig {
 /**
  * IdleMessageGenerator auto-generates idle messages using LLM
  */
-export class IdleMessageGenerator {
+export class IdleMessageGenerator implements CancellableService {
   private modelClient: ModelClient;
   private messageQueue: string[] = [];
   private currentMessageIndex: number = 0;
@@ -76,6 +77,27 @@ export class IdleMessageGenerator {
    */
   setOnQueueUpdated(callback: () => void): void {
     this.onQueueUpdated = callback;
+  }
+
+  /**
+   * Cancel any ongoing idle message generation
+   *
+   * Called before main agent starts processing to avoid resource competition.
+   * The service will naturally retry later when idle conditions are met.
+   */
+  cancel(): void {
+    if (this.isGenerating) {
+      logger.debug('[IDLE_MSG] 🛑 Cancelling ongoing generation (user interaction started)');
+
+      // Cancel all active requests on the model client
+      // This is safe because we call this BEFORE the agent starts its request
+      if (typeof this.modelClient.cancel === 'function') {
+        this.modelClient.cancel();
+      }
+
+      // Reset flag - the background promise will handle cleanup in finally block
+      this.isGenerating = false;
+    }
   }
 
   /**
@@ -148,8 +170,14 @@ export class IdleMessageGenerator {
           temperature: 1.2, // Higher temperature for more creative/surprising messages
         }
       );
-      logger.debug(`[IDLE_MSG] Got response from model, length: ${response.content.length}`);
 
+      // Check if response was interrupted or had an error - don't process it
+      if ((response as any).interrupted || (response as any).error) {
+        logger.debug('[IDLE_MSG] ⚠️  Response was interrupted/error, keeping existing queue');
+        throw new Error('Generation interrupted or failed');
+      }
+
+      logger.debug(`[IDLE_MSG] Got response from model, length: ${response.content.length}`);
       const content = response.content.trim();
 
       // Parse the response - expecting numbered list or line-separated messages
@@ -171,6 +199,10 @@ export class IdleMessageGenerator {
       logger.warn('[IDLE_MSG] No valid messages parsed, returning fallback');
       return ['Idle'];
     } catch (error) {
+      // Don't log interrupted/cancelled errors - they're expected
+      if (error instanceof Error && error.message.includes('interrupt')) {
+        throw error; // Re-throw to be handled by caller
+      }
       logger.error('[IDLE_MSG] Failed to generate idle message batch:', error);
       return ['Idle'];
     }
@@ -189,30 +221,41 @@ export class IdleMessageGenerator {
   generateMessageBackground(recentMessages: Message[] = [], context?: IdleContext, force: boolean = false): void {
     // Only generate if queue is running low (less than 5 messages)
     if (this.messageQueue.length >= this.refillThreshold) {
+      logger.debug(`[IDLE_MSG] ⏭️  Skipping generation - queue has ${this.messageQueue.length} messages (threshold: ${this.refillThreshold})`);
       return;
     }
 
     // Check if enough time has passed since last generation (unless forced)
     const now = Date.now();
     if (!force && now - this.lastGenerationTime < this.minInterval) {
+      const timeLeft = Math.round((this.minInterval - (now - this.lastGenerationTime)) / 1000);
+      logger.debug(`[IDLE_MSG] ⏭️  Skipping generation - ${timeLeft}s until next allowed generation`);
       return;
     }
 
     // Prevent concurrent generations
     if (this.isGenerating) {
+      logger.debug('[IDLE_MSG] ⏭️  Skipping generation - already generating');
       return;
     }
 
+    logger.debug('[IDLE_MSG] 🚀 Starting background idle message generation');
     this.isGenerating = true;
     this.lastGenerationTime = now;
 
     // Run in background
     this.generateAndRefillQueueAsync(recentMessages, context)
       .catch(error => {
-        console.error('Background idle message generation failed:', error);
+        // Ignore abort/interrupt errors (expected when cancelled)
+        if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
+          logger.debug('[IDLE_MSG] ⚠️  Generation cancelled (aborted by user interaction)');
+        } else {
+          logger.error('[IDLE_MSG] ❌ Generation failed:', error);
+        }
       })
       .finally(() => {
         this.isGenerating = false;
+        logger.debug('[IDLE_MSG] ✅ Generation completed, isGenerating reset to false');
       });
   }
 
@@ -220,21 +263,19 @@ export class IdleMessageGenerator {
    * Generate batch of messages and refill queue asynchronously
    */
   private async generateAndRefillQueueAsync(recentMessages: Message[], context?: IdleContext): Promise<void> {
-    logger.debug('[IDLE_MSG] Starting generation...');
     const messages = await this.generateMessageBatch(recentMessages, context);
-    logger.debug(`[IDLE_MSG] Generation complete, got ${messages.length} messages`);
+    logger.debug(`[IDLE_MSG] 💬 Generated ${messages.length} new messages - first: "${messages[0]}"`);
 
     // Replace the queue with new messages
     this.messageQueue = messages;
     this.currentMessageIndex = 0;
-    logger.debug(`[IDLE_MSG] Queue updated, first message: "${messages[0]}"`);
 
     // Notify that queue has been updated (e.g., to trigger session save)
     if (this.onQueueUpdated) {
       try {
         this.onQueueUpdated();
       } catch (error) {
-        logger.warn('[IDLE_MSG] onQueueUpdated callback failed:', error);
+        logger.warn('[IDLE_MSG] ⚠️  onQueueUpdated callback failed:', error);
       }
     }
   }
