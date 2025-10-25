@@ -20,6 +20,7 @@ import {
 import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
+import { API_TIMEOUTS } from '../config/constants.js';
 
 /**
  * Ollama API payload structure
@@ -51,9 +52,9 @@ interface ValidationResult {
 export class OllamaClient extends ModelClient {
   private readonly _endpoint: string;
   private _modelName: string; // Not readonly - allows runtime model changes
-  private readonly temperature: number;
-  private readonly contextSize: number;
-  private readonly maxTokens: number;
+  private _temperature: number; // Not readonly - allows runtime changes
+  private _contextSize: number; // Not readonly - allows runtime changes
+  private _maxTokens: number; // Not readonly - allows runtime changes
   private readonly keepAlive?: number;
   private readonly reasoningEffort?: string;
   private readonly apiUrl: string;
@@ -82,9 +83,9 @@ export class OllamaClient extends ModelClient {
     super();
     this._endpoint = config.endpoint;
     this._modelName = config.modelName || 'qwen2.5-coder:32b';
-    this.temperature = config.temperature;
-    this.contextSize = config.contextSize;
-    this.maxTokens = config.maxTokens;
+    this._temperature = config.temperature;
+    this._contextSize = config.contextSize;
+    this._maxTokens = config.maxTokens;
     this.keepAlive = config.keepAlive;
     this.reasoningEffort = config.reasoningEffort;
     this.activityStream = config.activityStream;
@@ -107,6 +108,36 @@ export class OllamaClient extends ModelClient {
   setModelName(newModelName: string): void {
     logger.debug(`[OLLAMA_CLIENT] Changing model from ${this._modelName} to ${newModelName}`);
     this._modelName = newModelName;
+  }
+
+  /**
+   * Update the temperature at runtime
+   *
+   * @param newTemperature - New temperature value (0.0-2.0)
+   */
+  setTemperature(newTemperature: number): void {
+    logger.debug(`[OLLAMA_CLIENT] Changing temperature from ${this._temperature} to ${newTemperature}`);
+    this._temperature = newTemperature;
+  }
+
+  /**
+   * Update the context size at runtime
+   *
+   * @param newContextSize - New context window size in tokens
+   */
+  setContextSize(newContextSize: number): void {
+    logger.debug(`[OLLAMA_CLIENT] Changing context size from ${this._contextSize} to ${newContextSize}`);
+    this._contextSize = newContextSize;
+  }
+
+  /**
+   * Update the max tokens at runtime
+   *
+   * @param newMaxTokens - New maximum tokens to generate
+   */
+  setMaxTokens(newMaxTokens: number): void {
+    logger.debug(`[OLLAMA_CLIENT] Changing max tokens from ${this._maxTokens} to ${newMaxTokens}`);
+    this._maxTokens = newMaxTokens;
   }
 
   /**
@@ -248,9 +279,9 @@ export class OllamaClient extends ModelClient {
       messages,
       stream,
       options: {
-        temperature: temperature !== undefined ? temperature : this.temperature,
-        num_ctx: this.contextSize,
-        num_predict: this.maxTokens,
+        temperature: temperature !== undefined ? temperature : this._temperature,
+        num_ctx: this._contextSize,
+        num_predict: this._maxTokens,
       },
     };
 
@@ -287,8 +318,7 @@ export class OllamaClient extends ModelClient {
 
     try {
       // Calculate adaptive timeout
-      const baseTimeout = 240000; // 4 minutes
-      const timeout = baseTimeout + attempt * 60000; // Add 1 minute per retry
+      const timeout = API_TIMEOUTS.LLM_REQUEST_BASE + attempt * API_TIMEOUTS.LLM_REQUEST_RETRY_INCREMENT;
 
       // Create timeout promise
       const timeoutPromise = new Promise<never>((_, reject) => {

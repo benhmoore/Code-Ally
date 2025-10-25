@@ -17,6 +17,7 @@ import { getGitBranch } from '../../utils/gitUtils.js';
 import { logger } from '../../services/Logger.js';
 import * as os from 'os';
 import * as path from 'path';
+import { ANIMATION_TIMING, POLLING_INTERVALS } from '../../config/constants.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -89,7 +90,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       const interval = setInterval(() => {
         setThinkingDots(prev => (prev % 3) + 1);
         setIdleMessage('.'.repeat((thinkingDots % 3) + 1));
-      }, 500);
+      }, ANIMATION_TIMING.THINKING_SPEED);
 
       return () => clearInterval(interval);
     }
@@ -214,7 +215,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
               } catch (err) {
                 logger.debug(`[MASCOT] Fast polling error: ${err}`);
               }
-            }, 1000); // Poll every second until first message arrives
+            }, POLLING_INTERVALS.STATUS_FAST);
           }
         }
       } catch (error) {
@@ -248,7 +249,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       } catch {
         // Silently handle errors
       }
-    }, 60000); // Cycle every 60 seconds
+    }, POLLING_INTERVALS.STATUS_NORMAL);
 
     return () => {
       if (fastPollInterval) clearInterval(fastPollInterval);
@@ -303,10 +304,10 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     // Generate immediately when becoming idle
     generateIdleMessage();
 
-    // Then generate every 60 seconds while idle
+    // Then generate continuously while idle
     const continuousInterval = setInterval(() => {
       generateIdleMessage();
-    }, 60000); // 60 seconds
+    }, POLLING_INTERVALS.STATUS_CONTINUOUS);
 
     return () => clearInterval(continuousInterval);
   }, [isProcessing, isCompacting, recentMessages]);
@@ -359,8 +360,8 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     // Initial update
     updateTodos();
 
-    // Update every second
-    const interval = setInterval(updateTodos, 1000);
+    // Update regularly
+    const interval = setInterval(updateTodos, ANIMATION_TIMING.TODO_UPDATE);
 
     return () => clearInterval(interval);
   }, [isProcessing]);

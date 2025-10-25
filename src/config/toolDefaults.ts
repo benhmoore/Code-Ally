@@ -40,7 +40,7 @@ export const FILE_EXCLUSIONS = {
  * Timeout limits for command execution
  */
 export const TIMEOUT_LIMITS = {
-  /** Default timeout for bash commands (5 seconds) */
+  /** Fallback default timeout if config is not available (5 seconds) - BashTool uses config.bash_timeout as primary default */
   DEFAULT: 5000,
 
   /** Maximum timeout for bash commands (60 seconds) */
@@ -48,26 +48,6 @@ export const TIMEOUT_LIMITS = {
 
   /** Graceful shutdown delay between SIGTERM and SIGKILL (1 second) */
   GRACEFUL_SHUTDOWN_DELAY: 1000,
-} as const;
-
-/**
- * Debounce and timing constants
- */
-export const TIMING_CONSTANTS = {
-  /** Debounce delay for command history saves (100ms) */
-  SAVE_DEBOUNCE_MS: 100,
-
-  /** Minimum interval between idle messages (10 seconds) */
-  IDLE_MESSAGE_MIN_INTERVAL_MS: 10000,
-
-  /** Idle message variation interval (5 seconds) */
-  IDLE_MESSAGE_VARIATION_MS: 5000,
-
-  /** API request timeout (5 seconds) */
-  API_TIMEOUT_MS: 5000,
-
-  /** Animation frame duration ~12fps to match Ink (83ms) */
-  ANIMATION_FRAME_MS: 83,
 } as const;
 
 /**

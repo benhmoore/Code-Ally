@@ -12,6 +12,7 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { ALLY_HOME } from '../config/paths.js';
+import { UI_DELAYS } from '../config/constants.js';
 
 export interface CommandHistoryEntry {
   command: string;
@@ -98,7 +99,7 @@ export class CommandHistory {
         } catch (error) {
           reject(error);
         }
-      }, 100);
+      }, UI_DELAYS.SAVE_DEBOUNCE);
     });
   }
 

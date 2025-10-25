@@ -20,6 +20,8 @@ export interface ModelSelectorProps {
   selectedIndex: number;
   /** Current model name */
   currentModel?: string;
+  /** Display name for model type (e.g., "ally model", "service model") */
+  typeName?: string;
   /** Whether the prompt is visible */
   visible?: boolean;
 }
@@ -31,6 +33,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   models,
   selectedIndex,
   currentModel,
+  typeName,
   visible = true,
 }) => {
   if (!visible) {
@@ -49,7 +52,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       >
         <Box marginBottom={1}>
           <Text color="cyan" bold>
-            Select Model
+            Select {typeName || 'Model'}
           </Text>
         </Box>
 

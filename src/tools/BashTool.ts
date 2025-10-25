@@ -5,7 +5,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn, ChildProcess } from 'child_process';
 import { TIMEOUT_LIMITS } from '../config/toolDefaults.js';
@@ -17,8 +17,11 @@ export class BashTool extends BaseTool {
     'Execute shell commands. Use for running scripts, system operations, building/testing code';
   readonly requiresConfirmation = true; // Destructive operations require confirmation
 
-  constructor(activityStream: ActivityStream) {
+  private config?: Config;
+
+  constructor(activityStream: ActivityStream, config?: Config) {
     super(activityStream);
+    this.config = config;
   }
 
   /**
@@ -44,7 +47,7 @@ export class BashTool extends BaseTool {
             },
             timeout: {
               type: 'integer',
-              description: `Timeout in seconds (default: 5, max: 60)`,
+              description: `Timeout in seconds (default: 30, max: 60)`,
             },
             output_mode: {
               type: 'string',
@@ -115,12 +118,16 @@ export class BashTool extends BaseTool {
    */
   private validateTimeout(timeout: any): number {
     if (timeout === undefined || timeout === null) {
-      return TIMEOUT_LIMITS.DEFAULT;
+      // Use config bash_timeout (in seconds), convert to milliseconds
+      const configTimeoutSec = this.config?.bash_timeout ?? 30;
+      return configTimeoutSec * 1000;
     }
 
     const timeoutMs = Number(timeout) * 1000;
     if (isNaN(timeoutMs) || timeoutMs <= 0) {
-      return TIMEOUT_LIMITS.DEFAULT;
+      // Use config bash_timeout (in seconds), convert to milliseconds
+      const configTimeoutSec = this.config?.bash_timeout ?? 30;
+      return configTimeoutSec * 1000;
     }
 
     return Math.min(timeoutMs, TIMEOUT_LIMITS.MAX);

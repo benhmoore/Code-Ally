@@ -8,6 +8,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import type { Message, Config, ToolCallState } from '../../types/index.js';
+import { UI_DELAYS } from '../../config/constants.js';
 
 /**
  * Compaction notice for UI display
@@ -227,10 +228,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       clearTimeout(updateTimeoutRef.current);
     }
 
-    // Batch updates - flush after 16ms (one frame at 60fps)
+    // Batch updates - flush after one frame
     updateTimeoutRef.current = setTimeout(() => {
       flushPendingUpdates();
-    }, 16);
+    }, UI_DELAYS.TOOL_CALL_BATCH_FLUSH);
   }, [flushPendingUpdates]);
 
   // Cleanup timeout on unmount

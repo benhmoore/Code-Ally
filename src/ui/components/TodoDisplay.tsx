@@ -9,6 +9,7 @@ import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { TodoManager, TodoItem } from '../../services/TodoManager.js';
+import { POLLING_INTERVALS, BUFFER_SIZES } from '../../config/constants.js';
 
 /**
  * TodoDisplay Component
@@ -41,8 +42,8 @@ export const TodoDisplay: React.FC = () => {
     // Initial update
     updateTodos();
 
-    // Poll every 500ms for updates
-    const interval = setInterval(updateTodos, 500);
+    // Poll for updates
+    const interval = setInterval(updateTodos, POLLING_INTERVALS.TODO_DISPLAY);
 
     return () => clearInterval(interval);
   }, []);
@@ -52,8 +53,8 @@ export const TodoDisplay: React.FC = () => {
     return null;
   }
 
-  // Take only the first 3 incomplete todos
-  const displayTodos = incompleteTodos.slice(0, 3);
+  // Take only the first N incomplete todos
+  const displayTodos = incompleteTodos.slice(0, BUFFER_SIZES.MAX_TODO_DISPLAY_ITEMS);
 
   return (
     <Box flexDirection="row" marginTop={1}>

@@ -11,7 +11,7 @@ import { join } from 'path';
 /**
  * Base directory for all Code Ally data
  */
-export const ALLY_HOME = join(homedir(), '.code-ally');
+export const ALLY_HOME = join(homedir(), '.ally');
 
 /**
  * Directory for conversation session storage

@@ -17,12 +17,17 @@ import { SetupWizard, SetupConfig } from '../../services/SetupWizard.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { ConfigManager } from '../../services/ConfigManager.js';
 import { logger } from '../../services/Logger.js';
+import { ChickAnimation } from './ChickAnimation.js';
+import { API_TIMEOUTS } from '../../config/constants.js';
 
 enum SetupStep {
   WELCOME,
   ENDPOINT,
   VALIDATING_ENDPOINT,
   MODEL,
+  VALIDATING_MODEL,
+  SERVICE_MODEL_CHOICE,
+  SERVICE_MODEL,
   CONTEXT_SIZE,
   TEMPERATURE,
   AUTO_CONFIRM,
@@ -41,6 +46,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const [endpointInput, setEndpointInput] = useState('http://localhost:11434');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
+  const [useSeparateServiceModel, setUseSeparateServiceModel] = useState(false);
+  const [selectedServiceModelIndex, setSelectedServiceModelIndex] = useState(0);
   const [selectedContextSizeIndex, setSelectedContextSizeIndex] = useState(1); // Default to 32K
   const [temperature, setTemperature] = useState('0.3');
   const [temperatureInput, setTemperatureInput] = useState('0.3');
@@ -56,6 +63,16 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
 
   // Handle keyboard input for selection screens
   useInput((input, key) => {
+    // ESC or Ctrl+C - exit the application (except during APPLYING, COMPLETED, and validation steps)
+    if ((key.escape || (key.ctrl && input === 'c')) &&
+        step !== SetupStep.APPLYING &&
+        step !== SetupStep.COMPLETED &&
+        step !== SetupStep.VALIDATING_ENDPOINT &&
+        step !== SetupStep.VALIDATING_MODEL) {
+      process.exit(0);
+      return;
+    }
+
     if (step === SetupStep.WELCOME) {
       if (key.return) {
         setStep(SetupStep.ENDPOINT);
@@ -86,6 +103,23 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       } else if (key.downArrow) {
         setSelectedModelIndex((prev) => Math.min(availableModels.length - 1, prev + 1));
       } else if (key.return) {
+        setStep(SetupStep.VALIDATING_MODEL);
+      }
+    } else if (step === SetupStep.SERVICE_MODEL_CHOICE) {
+      if (input === 'y' || input === 'Y') {
+        setUseSeparateServiceModel(true);
+        setSelectedServiceModelIndex(0); // Reset to first model
+        setStep(SetupStep.SERVICE_MODEL);
+      } else if (input === 'n' || input === 'N') {
+        setUseSeparateServiceModel(false);
+        setStep(SetupStep.CONTEXT_SIZE);
+      }
+    } else if (step === SetupStep.SERVICE_MODEL) {
+      if (key.upArrow) {
+        setSelectedServiceModelIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setSelectedServiceModelIndex((prev) => Math.min(availableModels.length - 1, prev + 1));
+      } else if (key.return) {
         setStep(SetupStep.CONTEXT_SIZE);
       }
     } else if (step === SetupStep.CONTEXT_SIZE) {
@@ -115,6 +149,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   useEffect(() => {
     if (step === SetupStep.VALIDATING_ENDPOINT) {
       validateEndpointAndFetchModels();
+    } else if (step === SetupStep.VALIDATING_MODEL) {
+      validateModelToolSupport();
     }
   }, [step]);
 
@@ -138,6 +174,72 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     setAvailableModels(models);
     setSelectedModelIndex(0);
     setStep(SetupStep.MODEL);
+  };
+
+  const validateModelToolSupport = async () => {
+    setError(null);
+
+    const selectedModel = availableModels[selectedModelIndex];
+    if (!selectedModel) {
+      setError('No model selected');
+      setStep(SetupStep.MODEL);
+      return;
+    }
+
+    try {
+      // Test the model with a simple tool call to verify tool support
+      const testPayload = {
+        model: selectedModel,
+        messages: [{ role: 'user', content: 'Hi there' }],
+        stream: false,
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'test_tool',
+              description: 'A test tool',
+              parameters: {
+                type: 'object',
+                properties: {},
+              },
+            },
+          },
+        ],
+      };
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_MODEL_VALIDATION);
+
+      const response = await fetch(`${endpoint}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testPayload),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
+
+        // Check for the specific "does not support tools" error
+        if (errorData.error && errorData.error.includes('does not support tools')) {
+          setError(`Model '${selectedModel}' does not support tools. Please select a different model.`);
+          setStep(SetupStep.MODEL);
+          return;
+        }
+
+        // Other errors - might be transient, allow user to continue
+        logger.warn('[SetupWizardView] Model validation warning:', errorData.error);
+      }
+
+      // Model supports tools (or test was inconclusive), continue
+      setStep(SetupStep.SERVICE_MODEL_CHOICE);
+    } catch (error) {
+      // Network errors or timeouts - allow user to continue
+      logger.warn('[SetupWizardView] Model validation error:', error);
+      setStep(SetupStep.SERVICE_MODEL_CHOICE);
+    }
   };
 
   const handleEndpointSubmit = () => {
@@ -184,9 +286,15 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       return;
     }
 
+    // Determine service model
+    const serviceModel = useSeparateServiceModel
+      ? (availableModels[selectedServiceModelIndex] ?? null)
+      : null;
+
     const config: SetupConfig = {
       endpoint,
       model: selectedModel,
+      service_model: serviceModel,
       context_size: selectedContextSize.value,
       temperature: parseFloat(temperature),
       auto_confirm: autoConfirmValue,
@@ -210,13 +318,15 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         paddingX={2}
         paddingY={1}
         flexDirection="column"
+        minHeight={20}
+        width={80}
       >
         {/* Welcome Step */}
         {step === SetupStep.WELCOME && (
           <>
             <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text color="yellow" bold>
-                {'( o)>'}
+              <Text bold>
+                <ChickAnimation />
               </Text>
               <Text color="cyan" bold>
                 Code Ally Setup
@@ -250,7 +360,10 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         {/* Endpoint Configuration */}
         {step === SetupStep.ENDPOINT && (
           <>
-            <Box marginBottom={1}>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
               <Text color="cyan" bold>
                 Step 1: Ollama Endpoint
               </Text>
@@ -279,7 +392,10 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         {/* Validating Endpoint */}
         {step === SetupStep.VALIDATING_ENDPOINT && (
           <>
-            <Box marginBottom={1}>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
               <Text color="cyan" bold>
                 Validating Endpoint...
               </Text>
@@ -295,7 +411,10 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         {/* Model Selection */}
         {step === SetupStep.MODEL && (
           <>
-            <Box marginBottom={1}>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
               <Text color="cyan" bold>
                 Step 2: Model Selection
               </Text>
@@ -305,6 +424,11 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 Select a model to use (found {availableModels.length} models)
               </Text>
             </Box>
+            {error && (
+              <Box marginBottom={1}>
+                <Text color="red">{error}</Text>
+              </Box>
+            )}
             <Box flexDirection="column" marginBottom={1}>
               {availableModels.map((model, idx) => (
                 <Box key={idx}>
@@ -321,10 +445,96 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
           </>
         )}
 
+        {/* Validating Model */}
+        {step === SetupStep.VALIDATING_MODEL && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
+              <Text color="cyan" bold>
+                Validating Model...
+              </Text>
+            </Box>
+            <Box>
+              <Text>
+                Testing {availableModels[selectedModelIndex]} for tool support
+              </Text>
+            </Box>
+          </>
+        )}
+
+        {/* Service Model Choice */}
+        {step === SetupStep.SERVICE_MODEL_CHOICE && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
+              <Text color="cyan" bold>
+                Step 2b: Service Model
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>
+                Background services (session titles, idle messages) can use a separate model.
+              </Text>
+            </Box>
+            <Box marginBottom={1} flexDirection="column">
+              <Text dimColor>
+                • Separate model: You can use a faster/cheaper model for background tasks
+              </Text>
+              <Text dimColor>
+                • Same model: Use {availableModels[selectedModelIndex] || 'selected model'} for everything
+              </Text>
+            </Box>
+            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+              <Text>
+                Use a separate service model? Press <Text color="green">Y</Text> for Yes or <Text color="yellow">N</Text> for No
+              </Text>
+            </Box>
+          </>
+        )}
+
+        {/* Service Model Selection */}
+        {step === SetupStep.SERVICE_MODEL && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
+              <Text color="cyan" bold>
+                Step 2c: Select Service Model
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>
+                Select a model for background services
+              </Text>
+            </Box>
+            <Box flexDirection="column" marginBottom={1}>
+              {availableModels.map((model, idx) => (
+                <Box key={idx}>
+                  <Text color={idx === selectedServiceModelIndex ? 'green' : undefined}>
+                    {idx === selectedServiceModelIndex ? '▶ ' : '  '}
+                    {model}
+                  </Text>
+                </Box>
+              ))}
+            </Box>
+            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+              <Text dimColor>Use ↑↓ to select, Enter to confirm</Text>
+            </Box>
+          </>
+        )}
+
         {/* Context Size Selection */}
         {step === SetupStep.CONTEXT_SIZE && (
           <>
-            <Box marginBottom={1}>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
               <Text color="cyan" bold>
                 Step 3: Context Size
               </Text>
@@ -353,7 +563,10 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         {/* Temperature Configuration */}
         {step === SetupStep.TEMPERATURE && (
           <>
-            <Box marginBottom={1}>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
               <Text color="cyan" bold>
                 Step 4: Temperature
               </Text>
@@ -382,7 +595,10 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         {/* Auto-confirm Preference */}
         {step === SetupStep.AUTO_CONFIRM && (
           <>
-            <Box marginBottom={1}>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
               <Text color="cyan" bold>
                 Step 5: Auto-confirm Tools
               </Text>
@@ -407,7 +623,10 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         {/* Applying Configuration */}
         {step === SetupStep.APPLYING && (
           <>
-            <Box marginBottom={1}>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
               <Text color="cyan" bold>
                 Applying Configuration...
               </Text>
@@ -424,8 +643,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         {step === SetupStep.COMPLETED && (
           <>
             <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text color="yellow" bold>
-                {'( o)>'}
+              <Text bold>
+                <ChickAnimation />
               </Text>
               <Text color="green" bold>
                 Setup Complete
@@ -441,6 +660,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text dimColor>• Endpoint: {endpoint}</Text>
               {availableModels[selectedModelIndex] && (
                 <Text dimColor>• Model: {availableModels[selectedModelIndex]}</Text>
+              )}
+              {useSeparateServiceModel && availableModels[selectedServiceModelIndex] && (
+                <Text dimColor>• Service Model: {availableModels[selectedServiceModelIndex]}</Text>
               )}
               {contextSizeOptions[selectedContextSizeIndex] && (
                 <Text dimColor>• Context: {contextSizeOptions[selectedContextSizeIndex].label}</Text>

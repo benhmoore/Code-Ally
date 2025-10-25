@@ -13,6 +13,8 @@
  * - Predictable, coordinated update rhythm
  */
 
+import { ANIMATION_TIMING } from '../config/constants.js';
+
 type TickCallback = () => void;
 
 export class AnimationTicker {
@@ -21,7 +23,7 @@ export class AnimationTicker {
   private frame: number = 0;
   private currentTime: number = Date.now();
   private interval: NodeJS.Timeout | null = null;
-  private readonly frameRate: number = 83; // ~12 fps (1000/12 ≈ 83ms) - matches Ink render FPS
+  private readonly frameRate: number = ANIMATION_TIMING.FRAME_RATE;
 
   private constructor() {}
 

@@ -238,7 +238,7 @@ ${agentsSection}`;
 /**
  * Generate the main system prompt dynamically
  */
-export async function getMainSystemPrompt(tokenManager?: any, toolResultManager?: any): Promise<string> {
+export async function getMainSystemPrompt(tokenManager?: any, toolResultManager?: any, isOnceMode: boolean = false): Promise<string> {
   // Tool definitions are provided separately by the LLM client as function definitions
   const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager });
 
@@ -261,8 +261,16 @@ export async function getMainSystemPrompt(tokenManager?: any, toolResultManager?
     logger.warn('Failed to load todos for system prompt:', formatError(error));
   }
 
+  // Add once-mode specific instructions
+  const onceModeInstructions = isOnceMode
+    ? `
+
+**IMPORTANT - Single Response Mode:**
+This is a non-interactive, single-turn conversation. Your response will be final and the conversation will end immediately after you respond. There is no opportunity for follow-up questions or clarification. Make your response complete, clear, and self-contained.`
+    : '';
+
   // Combine core directives with context
-  return `${CORE_DIRECTIVES}
+  return `${CORE_DIRECTIVES}${onceModeInstructions}
 
 **Context:**
 ${context}${todoContext}`;

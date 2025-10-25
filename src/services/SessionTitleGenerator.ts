@@ -11,6 +11,7 @@ import { CancellableService } from '../types/CancellableService.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { logger } from './Logger.js';
+import { POLLING_INTERVALS, TEXT_LIMITS } from '../config/constants.js';
 
 /**
  * Configuration for SessionTitleGenerator
@@ -97,8 +98,8 @@ export class SessionTitleGenerator implements CancellableService {
 
       // Clean up title - remove quotes, limit length
       let cleanTitle = title.replace(/^["']|["']$/g, '').trim();
-      if (cleanTitle.length > 60) {
-        cleanTitle = cleanTitle.slice(0, 57) + '...';
+      if (cleanTitle.length > TEXT_LIMITS.SESSION_TITLE_MAX) {
+        cleanTitle = cleanTitle.slice(0, TEXT_LIMITS.SESSION_TITLE_TRUNCATE) + '...';
       }
 
       return cleanTitle || 'New Session';
@@ -212,7 +213,7 @@ Reply with ONLY the title, nothing else. No quotes, no punctuation at the end.`;
     const startTime = Date.now();
 
     while (this.pendingGenerations.size > 0 && Date.now() - startTime < maxWait) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, POLLING_INTERVALS.CLEANUP));
     }
   }
 }

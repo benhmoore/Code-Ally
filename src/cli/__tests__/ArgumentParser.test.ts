@@ -166,56 +166,9 @@ describe('ArgumentParser', () => {
   });
 
   describe('Advanced Settings', () => {
-    it('should parse --bash-timeout flag', () => {
-      const options = parser.parse(['node', 'ally', '--bash-timeout', '60']);
-      expect(options.bashTimeout).toBe(60);
-    });
-
     it('should parse --auto-confirm flag', () => {
       const options = parser.parse(['node', 'ally', '--auto-confirm']);
       expect(options.autoConfirm).toBe(true);
-    });
-
-    it('should parse --compact flag', () => {
-      const options = parser.parse(['node', 'ally', '--compact']);
-      expect(options.compact).toBe(true);
-    });
-  });
-
-  describe('Debug Options', () => {
-    it('should parse --debug-tool-calls flag', () => {
-      const options = parser.parse(['node', 'ally', '--debug-tool-calls']);
-      expect(options.debugToolCalls).toBe(true);
-    });
-
-    it('should parse --debug-info system', () => {
-      const options = parser.parse([
-        'node',
-        'ally',
-        '--debug-info',
-        'system',
-      ]);
-      expect(options.debugInfo).toBe('system');
-    });
-
-    it('should parse --debug-info tokens', () => {
-      const options = parser.parse([
-        'node',
-        'ally',
-        '--debug-info',
-        'tokens',
-      ]);
-      expect(options.debugInfo).toBe('tokens');
-    });
-
-    it('should parse --debug-info context', () => {
-      const options = parser.parse([
-        'node',
-        'ally',
-        '--debug-info',
-        'context',
-      ]);
-      expect(options.debugInfo).toBe('context');
     });
   });
 
@@ -253,10 +206,7 @@ describe('ArgumentParser', () => {
         '16384',
         '--max-tokens',
         '7000',
-        '--bash-timeout',
-        '30',
         '--verbose',
-        '--skip-ollama-check',
       ]);
 
       expect(options.model).toBe('llama2');
@@ -264,9 +214,7 @@ describe('ArgumentParser', () => {
       expect(options.temperature).toBe(0.3);
       expect(options.contextSize).toBe(16384);
       expect(options.maxTokens).toBe(7000);
-      expect(options.bashTimeout).toBe(30);
       expect(options.verbose).toBe(true);
-      expect(options.skipOllamaCheck).toBe(true);
     });
   });
 

@@ -9,6 +9,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { Message } from '../types/index.js';
 import { CancellableService } from '../types/CancellableService.js';
 import { logger } from './Logger.js';
+import { POLLING_INTERVALS, BUFFER_SIZES } from '../config/constants.js';
 
 /**
  * Additional context for idle message generation
@@ -58,8 +59,8 @@ export class IdleMessageGenerator implements CancellableService {
   private isGenerating: boolean = false;
   private lastGenerationTime: number = 0;
   private minInterval: number;
-  private readonly batchSize: number = 10;
-  private readonly refillThreshold: number = 5;
+  private readonly batchSize: number = BUFFER_SIZES.IDLE_MESSAGE_BATCH_SIZE;
+  private readonly refillThreshold: number = BUFFER_SIZES.IDLE_MESSAGE_REFILL_THRESHOLD;
   private onQueueUpdated?: () => void;
 
   constructor(
@@ -67,7 +68,7 @@ export class IdleMessageGenerator implements CancellableService {
     config: IdleMessageGeneratorConfig = {}
   ) {
     this.modelClient = modelClient;
-    this.minInterval = config.minInterval || 10000; // Default: 10 seconds between generations
+    this.minInterval = config.minInterval || POLLING_INTERVALS.IDLE_MESSAGE_MIN;
     // Initialize with default message
     this.messageQueue.push('Idle');
   }
@@ -398,7 +399,7 @@ Reply with ONLY the numbered list, nothing else. No quotes around messages, no p
     const startTime = Date.now();
 
     while (this.isGenerating && Date.now() - startTime < maxWait) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, POLLING_INTERVALS.CLEANUP));
     }
   }
 }

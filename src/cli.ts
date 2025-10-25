@@ -23,7 +23,6 @@ import { PermissionManager } from './security/PermissionManager.js';
 import { Agent } from './agent/Agent.js';
 import { App } from './ui/App.js';
 import { ArgumentParser, type CLIOptions } from './cli/ArgumentParser.js';
-import { SetupWizard } from './cli/SetupWizard.js';
 import { logger } from './services/Logger.js';
 import { formatRelativeTime } from './ui/utils/timeUtils.js';
 
@@ -63,62 +62,6 @@ function configureLogging(verbose?: boolean, debug?: boolean): void {
   logger.configure({ verbose, debug });
 }
 
-/**
- * Check Ollama availability and model access
- */
-async function checkOllamaAvailability(
-  endpoint: string,
-  _model: string | null
-): Promise<{ available: boolean; models: string[]; error?: string }> {
-  try {
-    const response = await fetch(`${endpoint}/api/tags`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!response.ok) {
-      return {
-        available: false,
-        models: [],
-        error: `HTTP ${response.status}`,
-      };
-    }
-
-    const data = (await response.json()) as { models?: Array<{ name: string }> };
-    const models = (data.models || []).map((m: { name: string }) => m.name);
-
-    return { available: true, models };
-  } catch (error) {
-    return {
-      available: false,
-      models: [],
-      error: error instanceof Error ? error.message : 'Connection failed',
-    };
-  }
-}
-
-/**
- * Print Ollama setup instructions
- */
-function printOllamaInstructions(endpoint: string, error?: string): void {
-  console.log('\n⚠️  Ollama Configuration Required\n');
-  console.log('1. Make sure Ollama is installed:');
-  console.log('   - Download from: https://ollama.ai');
-  console.log('   - Follow the installation instructions for your platform\n');
-  console.log('2. Start the Ollama server:');
-  console.log('   - Run the Ollama application');
-  console.log('   - Or start it from the command line: `ollama serve`\n');
-  console.log('3. Pull a compatible model:');
-  console.log(
-    '   - Run: `ollama pull <model-name>` (choose a model that supports function calling)\n'
-  );
-  console.log('4. Verify Ollama is running:');
-  console.log(`   - Run: curl ${endpoint}/api/tags`);
-  console.log('   - You should see a JSON response with available models\n');
-  if (error) {
-    console.log(`Current error: ${error}\n`);
-  }
-}
 
 /**
  * Handle configuration commands (--init, --config-show, etc.)
@@ -127,11 +70,14 @@ async function handleConfigCommands(
   options: CLIOptions,
   configManager: ConfigManager
 ): Promise<boolean> {
-  // Run interactive setup wizard
+  // --init flag is now handled by the UI (via /init command)
+  // This section is kept for backwards compatibility warning
   if (options.init) {
-    const wizard = new SetupWizard(configManager);
-    await wizard.run();
-    return true;
+    console.log('\n✓ Starting Code Ally with setup wizard...\n');
+    console.log('The setup wizard will appear in the UI.');
+    console.log('You can also run setup anytime using the /init command.\n');
+    // Don't exit - let the app start and show the wizard
+    return false;
   }
 
   // Show current configuration
@@ -159,10 +105,8 @@ async function handleConfigCommands(
       newConfig.context_size = options.contextSize;
     if (options.maxTokens !== undefined)
       newConfig.max_tokens = options.maxTokens;
-    if (options.bashTimeout !== undefined)
-      newConfig.bash_timeout = options.bashTimeout;
-    if (options.yesToAll !== undefined)
-      newConfig.auto_confirm = options.yesToAll;
+    if (options.autoConfirm !== undefined)
+      newConfig.auto_confirm = options.autoConfirm;
 
     await configManager.setValues(newConfig);
     console.log('✓ Configuration saved successfully\n');
@@ -281,10 +225,8 @@ function applyConfigOverrides(
     overrides.max_tokens = options.maxTokens;
   if (options.reasoningEffort !== undefined)
     overrides.reasoning_effort = options.reasoningEffort;
-  if (options.bashTimeout !== undefined)
-    overrides.bash_timeout = options.bashTimeout;
-  if (options.yesToAll !== undefined || options.autoConfirm !== undefined) {
-    overrides.auto_confirm = options.yesToAll || options.autoConfirm;
+  if (options.autoConfirm !== undefined) {
+    overrides.auto_confirm = options.autoConfirm;
   }
 
   return overrides;
@@ -296,43 +238,34 @@ function applyConfigOverrides(
 async function handleOnceMode(
   message: string,
   options: CLIOptions,
-  _agent: Agent,
+  agent: Agent,
   sessionManager: SessionManager
 ): Promise<void> {
-  // Create or load session
+  // Once mode never creates sessions (single message, non-interactive)
+  // If user explicitly wants a session with --once, they can use --session
   let sessionName: string | null = null;
 
-  if (!options.noSession) {
-    if (options.session) {
-      sessionName = options.session;
-    } else {
-      sessionName = sessionManager.generateSessionName();
-    }
-
+  // Only use sessions if explicitly requested via --session
+  if (options.session && !options.noSession) {
+    sessionName = options.session;
     sessionManager.setCurrentSession(sessionName);
 
     // Load existing session if it exists
     if (await sessionManager.sessionExists(sessionName)) {
       const messages = await sessionManager.getSessionMessages(sessionName);
-      console.log(
-        `\nResuming session: ${sessionName} (${messages.length} messages)\n`
-      );
-      // TODO: Add messages to agent context
+      agent.setMessages(messages);
     }
   }
 
-  // Send the message
-  console.log(`> ${message}\n`);
-
+  // Send the message (don't echo it - user already typed it)
   try {
-    // TODO: Implement agent.sendMessage() for single message mode
-    console.log('Agent response would go here...\n');
+    const response = await agent.sendMessage(message);
+    console.log(response);
 
-    // Save session if enabled
+    // Save session only if explicitly requested
     if (sessionName) {
-      // TODO: Get messages from agent and save
-      // await sessionManager.saveSession(sessionName, agent.messages);
-      console.log(`[Session: ${sessionName}]\n`);
+      await sessionManager.saveSession(sessionName, agent.getMessages());
+      console.log(`\n[Session: ${sessionName}]`);
     }
   } catch (error) {
     console.error('Error:', error);
@@ -340,98 +273,6 @@ async function handleOnceMode(
   }
 }
 
-/**
- * Setup and validate Ollama
- */
-async function setupOllamaValidation(
-  options: CLIOptions,
-  config: any
-): Promise<string | null> {
-  if (options.skipOllamaCheck) {
-    return config.model;
-  }
-
-  if (options.verbose || options.debug) {
-    console.log('Checking Ollama availability...');
-  }
-
-  const result = await checkOllamaAvailability(config.endpoint, config.model);
-
-  if (!result.available) {
-    console.error(`\n✗ Error: ${result.error || 'Unknown error'}\n`);
-    printOllamaInstructions(config.endpoint, result.error);
-
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    const answer = await new Promise<string>(resolve => {
-      rl.question('Do you want to continue anyway? (y/n): ', resolve);
-    });
-    rl.close();
-
-    if (!answer.toLowerCase().startsWith('y')) {
-      console.log('\nExiting. Please configure Ollama and try again.\n');
-      process.exit(0);
-    }
-
-    console.log('\nContinuing without validated Ollama setup...\n');
-    return config.model;
-  }
-
-  // Ollama is running, check model availability
-  if (result.models.length === 0) {
-    console.log('\n⚠️  Warning: No models are available in Ollama');
-    console.log(
-      'Please install a model with: ollama pull <model-name>\n'
-    );
-    return config.model;
-  }
-
-  // Auto-select model if not specified
-  if (!config.model) {
-    const selectedModel = result.models[0];
-    if (selectedModel) {
-      console.log(
-        `\nℹ️  No model configured, automatically selecting: ${selectedModel}\n`
-      );
-      return selectedModel;
-    }
-    return null;
-  }
-
-  // Check if configured model is available
-  if (!result.models.includes(config.model)) {
-    console.log(`\n⚠️  Warning: Model '${config.model}' is not available`);
-    console.log(`Available models: ${result.models.join(', ')}\n`);
-
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    const answer = await new Promise<string>(resolve => {
-      rl.question(
-        `Auto-select '${result.models[0] || 'first available model'}'? (y/n): `,
-        resolve
-      );
-    });
-    rl.close();
-
-    if (answer.toLowerCase().startsWith('y')) {
-      return result.models[0] || null;
-    }
-  }
-
-  if (options.verbose || options.debug) {
-    console.log(
-      `✓ Ollama is running and model '${config.model}' is available\n`
-    );
-  }
-
-  return config.model;
-}
 
 /**
  * Track whether the Ink UI was started (requires terminal reset on exit)
@@ -453,41 +294,6 @@ async function main() {
 
     // Handle configuration commands
     if (await handleConfigCommands(options, configManager)) {
-      return;
-    }
-
-    // First-run detection: Check if setup has been completed
-    const setupCompleted = configManager.getValue('setup_completed');
-    if (!setupCompleted && !options.init && !options.skipOllamaCheck) {
-      console.log('\n👋 Welcome to Code Ally!\n');
-      console.log('It looks like this is your first time running Code Ally.');
-      console.log('Let\'s configure it for your environment.\n');
-
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-
-      const answer = await new Promise<string>(resolve => {
-        rl.question('Would you like to run the setup wizard now? (Y/n): ', resolve);
-      });
-      rl.close();
-
-      const shouldRunSetup = !answer || answer.trim() === '' || answer.toLowerCase().startsWith('y');
-
-      if (shouldRunSetup) {
-        const wizard = new SetupWizard(configManager);
-        const success = await wizard.run();
-
-        if (!success) {
-          console.log('\nYou can run setup later with: ally --init\n');
-        }
-      } else {
-        console.log('\nSetup skipped. You can run it later with: ally --init\n');
-        console.log('⚠️  Note: Code Ally may not work correctly without proper configuration.\n');
-      }
-
-      // Exit after setup to allow user to see completion message
       return;
     }
 
@@ -515,12 +321,6 @@ async function main() {
 
     // Configure logging
     configureLogging(options.verbose, options.debug);
-
-    // Setup and validate Ollama (unless skipped)
-    const selectedModel = await setupOllamaValidation(options, configOverrides);
-    if (selectedModel) {
-      configOverrides.model = selectedModel;
-    }
 
     // Use full config type
     const config = configOverrides as import('./types/index.js').Config;
@@ -609,7 +409,7 @@ async function main() {
     const { FormatTool } = await import('./tools/FormatTool.js');
 
     const tools = [
-      new BashTool(activityStream),
+      new BashTool(activityStream, config),
       new ReadTool(activityStream, config),
       new WriteTool(activityStream),
       new AllyWriteTool(activityStream),
@@ -647,7 +447,8 @@ async function main() {
 
     // Get system prompt from prompts module
     const { getMainSystemPrompt } = await import('./prompts/systemMessages.js');
-    const systemPrompt = await getMainSystemPrompt();
+    const isOnceMode = !!options.once;
+    const systemPrompt = await getMainSystemPrompt(undefined, undefined, isOnceMode);
 
     // Create agent (creates its own TokenManager and ToolResultManager)
     const agent = new Agent(
@@ -688,7 +489,7 @@ async function main() {
     if (options.once) {
       await handleOnceMode(options.once, options, agent, sessionManager);
       await registry.shutdown();
-      return;
+      process.exit(0);
     }
 
     // Interactive mode - Render the Ink UI
@@ -700,6 +501,7 @@ async function main() {
         activityStream,
         agent,
         resumeSession,
+        showSetupWizard: options.init, // Show setup wizard if --init flag was passed
       }),
       {
         exitOnCtrlC: false,

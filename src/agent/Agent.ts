@@ -24,6 +24,7 @@ import { PermissionManager } from '../security/PermissionManager.js';
 import { Message, ActivityEventType, Config } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
+import { POLLING_INTERVALS } from '../config/constants.js';
 
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
@@ -77,7 +78,6 @@ export class Agent {
   private lastToolCallTime: number = Date.now();
   private activityWatchdogInterval: NodeJS.Timeout | null = null;
   private readonly activityTimeoutMs: number;
-  private static readonly WATCHDOG_CHECK_INTERVAL_MS = 10000;
 
   constructor(
     modelClient: ModelClient,
@@ -184,7 +184,7 @@ export class Agent {
       if (elapsedMs > this.activityTimeoutMs) {
         this.handleActivityTimeout(elapsedMs);
       }
-    }, Agent.WATCHDOG_CHECK_INTERVAL_MS);
+    }, POLLING_INTERVALS.AGENT_WATCHDOG);
 
     logger.debug('[AGENT_ACTIVITY]', this.instanceId, 'Activity watchdog started');
   }

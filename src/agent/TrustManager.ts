@@ -17,6 +17,7 @@
 
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ActivityEvent } from '../types/index.js';
+import { API_TIMEOUTS } from '../config/constants.js';
 
 /**
  * Trust scope levels for permission management
@@ -473,10 +474,10 @@ export class TrustManager {
         if (pending) {
           this.pendingPermissions.delete(requestId);
           reject(new PermissionDeniedError(
-            `Permission request timed out after 30 seconds for ${toolName}`
+            `Permission request timed out after ${API_TIMEOUTS.PERMISSION_REQUEST / 1000} seconds for ${toolName}`
           ));
         }
-      }, 30000);
+      }, API_TIMEOUTS.PERMISSION_REQUEST);
 
       // Store resolver so we can complete it when response arrives
       this.pendingPermissions.set(requestId, {

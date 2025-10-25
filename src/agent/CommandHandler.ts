@@ -156,7 +156,7 @@ Core Commands:
   /config                  - Toggle configuration viewer
   /config set <key>=<val>  - Set a configuration value
   /config reset            - Reset all settings to defaults
-  /model [name]            - Switch model or show current model
+  /model [ally|service] [name] - Switch model or show current model
   /debug [system|tokens]   - Show debug information
   /compact                 - Compact conversation history
   /rewind                  - Rewind conversation to a previous message
@@ -347,22 +347,44 @@ Todo Commands:
   private async handleModel(args: string[]): Promise<CommandResult> {
     const argString = args.join(' ').trim();
 
-    // Direct model name provided - set it immediately
-    if (argString) {
-      const modelName = argString;
+    // Parse model type (ally/main/service) and model name
+    let modelType: 'ally' | 'service' = 'ally'; // default to ally model
+    let modelName = '';
 
+    if (argString) {
+      const parts = argString.split(/\s+/);
+      const firstArg = parts[0]?.toLowerCase() || '';
+
+      // Check if first arg is a type specifier
+      if (firstArg === 'service') {
+        modelType = 'service';
+        modelName = parts.slice(1).join(' ').trim();
+      } else if (firstArg === 'ally' || firstArg === 'main') {
+        modelType = 'ally';
+        modelName = parts.slice(1).join(' ').trim();
+      } else {
+        // No type specifier, treat entire arg as model name for ally model
+        modelName = argString;
+      }
+    }
+
+    // Direct model name provided - set it immediately
+    if (modelName) {
       try {
-        await this.configManager.setValue('model', modelName);
+        const configKey = modelType === 'service' ? 'service_model' : 'model';
+        await this.configManager.setValue(configKey, modelName);
 
         // Update the active ModelClient to use the new model immediately
-        const modelClient = this.serviceRegistry.get<any>('model_client');
+        const clientKey = modelType === 'service' ? 'service_model_client' : 'model_client';
+        const modelClient = this.serviceRegistry.get<any>(clientKey);
         if (modelClient && typeof modelClient.setModelName === 'function') {
           modelClient.setModelName(modelName);
         }
 
+        const typeName = modelType === 'service' ? 'Service model' : 'Model';
         return {
           handled: true,
-          response: `Model changed to: ${modelName}`,
+          response: `${typeName} changed to: ${modelName}`,
         };
       } catch (error) {
         return {
@@ -372,9 +394,10 @@ Todo Commands:
       }
     }
 
-    // No args - show interactive selector
+    // No model name - show interactive selector
     try {
-      const currentModel = this.configManager.getValue('model');
+      const configKey = modelType === 'service' ? 'service_model' : 'model';
+      const currentModel = this.configManager.getValue(configKey);
       const config = this.configManager.getConfig();
       const endpoint = config.endpoint || 'http://localhost:11434';
 
@@ -409,6 +432,7 @@ Todo Commands:
       const activityStream = this.serviceRegistry.get('activity_stream');
       if (activityStream && typeof (activityStream as any).emit === 'function') {
         const requestId = `model_select_${Date.now()}`;
+        const typeName = modelType === 'service' ? 'service model' : 'ally model';
 
         (activityStream as any).emit({
           id: requestId,
@@ -418,6 +442,8 @@ Todo Commands:
             requestId,
             models,
             currentModel,
+            modelType, // Pass model type so UI knows which config to update
+            typeName, // Display name for UI
           },
         });
 
@@ -425,11 +451,12 @@ Todo Commands:
       }
 
       // Fallback: show list
-      let output = `Current model: ${currentModel || 'not set'}\n\nAvailable models:\n`;
+      const typeName = modelType === 'service' ? 'service model' : 'model';
+      let output = `Current ${typeName}: ${currentModel || 'not set'}\n\nAvailable models:\n`;
       models.forEach(m => {
         output += `  - ${m.name}${m.size ? ` (${m.size})` : ''}\n`;
       });
-      output += '\nUse /model <name> to switch.';
+      output += `\nUse /model ${modelType === 'service' ? 'service ' : ''}<name> to switch.`;
 
       return { handled: true, response: output };
     } catch (error) {
