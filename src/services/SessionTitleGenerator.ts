@@ -11,7 +11,7 @@ import { CancellableService } from '../types/CancellableService.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { logger } from './Logger.js';
-import { POLLING_INTERVALS, TEXT_LIMITS } from '../config/constants.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, API_TIMEOUTS } from '../config/constants.js';
 
 /**
  * Configuration for SessionTitleGenerator
@@ -99,7 +99,7 @@ export class SessionTitleGenerator implements CancellableService {
       // Clean up title - remove quotes, limit length
       let cleanTitle = title.replace(/^["']|["']$/g, '').trim();
       if (cleanTitle.length > TEXT_LIMITS.SESSION_TITLE_MAX) {
-        cleanTitle = cleanTitle.slice(0, TEXT_LIMITS.SESSION_TITLE_TRUNCATE) + '...';
+        cleanTitle = cleanTitle.slice(0, TEXT_LIMITS.SESSION_TITLE_MAX - 3) + '...';
       }
 
       return cleanTitle || 'New Session';
@@ -108,8 +108,8 @@ export class SessionTitleGenerator implements CancellableService {
       // Fallback: use first 40 chars of first message
       const content = firstUserMessage.content.trim();
       const cleanContent = content.replace(/\s+/g, ' ');
-      return cleanContent.length > 40
-        ? cleanContent.slice(0, 40) + '...'
+      return cleanContent.length > TEXT_LIMITS.COMMAND_DISPLAY_MAX
+        ? cleanContent.slice(0, TEXT_LIMITS.COMMAND_DISPLAY_MAX) + '...'
         : cleanContent;
     }
   }
@@ -199,7 +199,7 @@ export class SessionTitleGenerator implements CancellableService {
   private buildTitlePrompt(firstMessage: string): string {
     return `Generate a very concise, descriptive title (max 8 words) for a conversation that starts with:
 
-"${firstMessage.slice(0, 200)}"
+"${firstMessage.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX)}"
 
 Reply with ONLY the title, nothing else. No quotes, no punctuation at the end.`;
   }
@@ -209,10 +209,9 @@ Reply with ONLY the title, nothing else. No quotes, no punctuation at the end.`;
    */
   async cleanup(): Promise<void> {
     // Wait for pending generations to complete
-    const maxWait = 5000; // 5 seconds
     const startTime = Date.now();
 
-    while (this.pendingGenerations.size > 0 && Date.now() - startTime < maxWait) {
+    while (this.pendingGenerations.size > 0 && Date.now() - startTime < API_TIMEOUTS.CLEANUP_MAX_WAIT) {
       await new Promise(resolve => setTimeout(resolve, POLLING_INTERVALS.CLEANUP));
     }
   }

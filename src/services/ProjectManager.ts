@@ -9,6 +9,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { IService } from '../types/index.js';
+import { BUFFER_SIZES } from '../config/constants.js';
 
 export interface ProjectContext {
   name: string;
@@ -232,12 +233,12 @@ export class ProjectManager implements IService {
 
     if (this.context.files.length > 0) {
       output += `\nKey Files (${this.context.files.length}):\n`;
-      for (const file of this.context.files.slice(0, 10)) {
+      for (const file of this.context.files.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW)) {
         output += `- ${file}\n`;
       }
 
-      if (this.context.files.length > 10) {
-        output += `... and ${this.context.files.length - 10} more\n`;
+      if (this.context.files.length > BUFFER_SIZES.DEFAULT_LIST_PREVIEW) {
+        output += `... and ${this.context.files.length - BUFFER_SIZES.DEFAULT_LIST_PREVIEW} more\n`;
       }
     }
 

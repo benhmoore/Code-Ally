@@ -11,6 +11,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { SessionManager } from '../services/SessionManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { formatRelativeTime } from '../ui/utils/timeUtils.js';
+import { BUFFER_SIZES } from '../config/constants.js';
 
 export class SessionReadTool extends BaseTool {
   readonly name = 'session_read';
@@ -129,8 +130,8 @@ export class SessionReadTool extends BaseTool {
         rangeDescription = `messages ${start}-${Math.min(end - 1, messages.length - 1)}`;
       } else {
         // Default: return first 10 messages
-        selectedMessages = messages.slice(0, 10);
-        rangeDescription = `first ${Math.min(10, messages.length)} messages`;
+        selectedMessages = messages.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW);
+        rangeDescription = `first ${Math.min(BUFFER_SIZES.DEFAULT_LIST_PREVIEW, messages.length)} messages`;
       }
 
       const relativeTime = formatRelativeTime(session.updated_at);

@@ -9,6 +9,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn } from 'child_process';
 import { FileChecker, CheckResult, CheckIssue } from './types.js';
+import { API_TIMEOUTS } from '../config/constants.js';
 
 export class JavaScriptChecker implements FileChecker {
   readonly name = 'javascript';
@@ -49,7 +50,7 @@ export class JavaScriptChecker implements FileChecker {
       await fs.writeFile(tmpPath, content, 'utf-8');
 
       const { stderr } = await this.runCommand('node', ['--check', tmpPath], {
-        timeout: 5000,
+        timeout: API_TIMEOUTS.NODE_SYNTAX_CHECK_TIMEOUT,
       });
 
       // Parse node --check output (errors go to stderr)
@@ -86,7 +87,7 @@ export class JavaScriptChecker implements FileChecker {
     }
 
     try {
-      await this.runCommand('node', ['--version'], { timeout: 2000 });
+      await this.runCommand('node', ['--version'], { timeout: API_TIMEOUTS.VERSION_CHECK });
       this.nodeAvailable = true;
     } catch {
       this.nodeAvailable = false;

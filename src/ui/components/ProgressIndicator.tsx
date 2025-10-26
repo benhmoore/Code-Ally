@@ -8,6 +8,7 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
 import { AnimationTicker } from '../../services/AnimationTicker.js';
+import { TEXT_LIMITS } from '../../config/constants.js';
 
 export type SpinnerType = 'default' | 'dots' | 'line' | 'dots2' | 'arc' | 'bounce';
 
@@ -173,7 +174,7 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({
       {modelName && (
         <Text dimColor color="yellow">
           {' '}
-          {modelName.slice(0, 5)}
+          {modelName.slice(0, TEXT_LIMITS.MODEL_NAME_DISPLAY_MAX)}
         </Text>
       )}
       <Text color="cyan"> {context.charAt(0).toUpperCase() + context.slice(1)}</Text>
@@ -228,7 +229,7 @@ export const ToolExecutionIndicator: React.FC<ToolExecutionIndicatorProps> = ({
 
   // Truncate description if too long
   const truncatedDesc =
-    description && description.length > 50 ? description.slice(0, 47) + '...' : description;
+    description && description.length > TEXT_LIMITS.DESCRIPTION_MAX ? description.slice(0, TEXT_LIMITS.DESCRIPTION_MAX - 3) + '...' : description;
 
   return (
     <Box>

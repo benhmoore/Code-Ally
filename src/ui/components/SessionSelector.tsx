@@ -8,6 +8,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { SessionInfo } from '../../types/index.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
+import { TEXT_LIMITS } from '../../config/constants.js';
 
 export interface SessionSelectorProps {
   /** Available sessions */
@@ -23,7 +24,7 @@ export interface SessionSelectorProps {
 /**
  * Truncate display name for table
  */
-function truncateDisplayName(name: string, maxLength: number = 50): string {
+function truncateDisplayName(name: string, maxLength: number = TEXT_LIMITS.DESCRIPTION_MAX): string {
   if (name.length <= maxLength) return name;
   return name.slice(0, maxLength - 3) + '...';
 }

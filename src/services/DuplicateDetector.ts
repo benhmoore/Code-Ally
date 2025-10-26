@@ -7,6 +7,7 @@
  */
 
 import { createParameterSignature } from '../utils/parameterHasher.js';
+import { BUFFER_SIZES } from '../config/constants.js';
 
 interface ToolCallRecord {
   signature: string;
@@ -42,7 +43,7 @@ export class DuplicateDetector {
 
   constructor(config: DuplicateDetectorConfig = {}) {
     this.trackedTools = new Set(config.trackedTools || ['read', 'ls', 'glob', 'grep']);
-    this.maxRecords = config.maxRecords || 200;
+    this.maxRecords = config.maxRecords || BUFFER_SIZES.DUPLICATE_DETECTOR_MAX_RECORDS;
   }
 
   /**

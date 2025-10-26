@@ -9,7 +9,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { resolvePath } from '../utils/pathUtils.js';
-import { FILE_EXCLUSIONS, TOOL_LIMITS } from '../config/toolDefaults.js';
+import { FILE_EXCLUSIONS, TOOL_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { formatError } from '../utils/errorUtils.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -225,7 +225,7 @@ export class GlobTool extends BaseTool {
    * Get estimated output size for glob operations
    */
   getEstimatedOutputSize(): number {
-    return 300; // Glob typically produces smaller output (file paths only)
+    return TOOL_OUTPUT_ESTIMATES.GLOB;
   }
 
   /**

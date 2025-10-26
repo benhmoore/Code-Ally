@@ -20,7 +20,7 @@ import {
 import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
-import { API_TIMEOUTS } from '../config/constants.js';
+import { API_TIMEOUTS, TIME_UNITS } from '../config/constants.js';
 
 /**
  * Ollama API payload structure
@@ -175,6 +175,7 @@ export class OllamaClient extends ModelClient {
     const maxRetries = _maxRetries;
 
     // Generate unique request ID for this request
+    // Generate request ID: req-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     logger.debug('[OLLAMA_CLIENT] Starting request:', requestId);
 
@@ -233,16 +234,16 @@ export class OllamaClient extends ModelClient {
             };
           }
 
-          // Retry on network errors
+          // Retry on network errors with exponential backoff (2^attempt seconds)
           if (this.isNetworkError(error) && attempt < maxRetries) {
             const waitTime = Math.pow(2, attempt);
-            await this.sleep(waitTime * 1000);
+            await this.sleep(waitTime * TIME_UNITS.MS_PER_SECOND);
             continue;
           }
 
-          // Retry on JSON errors
+          // Retry on JSON errors with linear backoff ((1 + attempt) seconds)
           if (error instanceof SyntaxError && attempt < maxRetries) {
-            const waitTime = (1 + attempt) * 1000;
+            const waitTime = (1 + attempt) * TIME_UNITS.MS_PER_SECOND;
             await this.sleep(waitTime);
             continue;
           }

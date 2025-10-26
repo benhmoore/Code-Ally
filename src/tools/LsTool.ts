@@ -10,7 +10,8 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsDirectory } from '../utils/pathValidator.js';
-import { TOOL_LIMITS } from '../config/toolDefaults.js';
+import { TOOL_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
+import { FORMATTING } from '../config/constants.js';
 import { formatError } from '../utils/errorUtils.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -206,8 +207,11 @@ export class LsTool extends BaseTool {
         const typeIndicator =
           entry.type === 'directory' ? '/' : entry.type === 'symlink' ? '@' : '';
         if (longFormat) {
-          const size = entry.size !== undefined ? `${entry.size}B`.padStart(10) : ''.padStart(10);
-          const perms = entry.permissions || ''.padStart(10);
+          const size =
+            entry.size !== undefined
+              ? `${entry.size}B`.padStart(FORMATTING.LS_COLUMN_WIDTH)
+              : ''.padStart(FORMATTING.LS_COLUMN_WIDTH);
+          const perms = entry.permissions || ''.padStart(FORMATTING.LS_COLUMN_WIDTH);
           contentLines.push(`${perms} ${size} ${entry.name}${typeIndicator}`);
         } else {
           contentLines.push(`${entry.name}${typeIndicator}`);
@@ -258,7 +262,10 @@ export class LsTool extends BaseTool {
    * Format Unix permissions as a string
    */
   private formatPermissions(mode: number): string {
-    const octal = (mode & 0o777).toString(8).padStart(3, '0');
+    // Extract permission bits (rwxrwxrwx) using 0o777 mask
+    const octal = (mode & 0o777)
+      .toString(8)
+      .padStart(FORMATTING.OCTAL_PERMISSION_WIDTH, '0');
     return octal;
   }
 
@@ -282,7 +289,7 @@ export class LsTool extends BaseTool {
    * Get estimated output size for ls operations
    */
   getEstimatedOutputSize(): number {
-    return 300; // Ls typically produces smaller output (directory listings)
+    return TOOL_OUTPUT_ESTIMATES.LS;
   }
 
   /**

@@ -14,6 +14,7 @@ import { ToolCallState } from '../../types/index.js';
 import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
+import { TEXT_LIMITS } from '../../config/constants.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -65,9 +66,9 @@ function formatArgsPreview(args: any, toolName?: string): string {
       strValue = String(value);
     }
 
-    // Truncate if too long (max 40 chars per value)
-    if (strValue.length > 40) {
-      strValue = `${strValue.slice(0, 37)}...`;
+    // Truncate if too long
+    if (strValue.length > TEXT_LIMITS.TOOL_PARAM_VALUE_MAX) {
+      strValue = `${strValue.slice(0, TEXT_LIMITS.TOOL_PARAM_VALUE_MAX - TEXT_LIMITS.ELLIPSIS_LENGTH)}...`;
     }
 
     return `${key}=${strValue}`;
@@ -156,8 +157,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           </Box>
           <Box paddingLeft={indent.length + 8}>
             <Text color="red" dimColor>
-              {toolCall.error.length > 200
-                ? `${toolCall.error.slice(0, 197)}...`
+              {toolCall.error.length > TEXT_LIMITS.CONTENT_PREVIEW_MAX
+                ? `${toolCall.error.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`
                 : toolCall.error}
             </Text>
           </Box>
@@ -174,8 +175,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           </Box>
           <Box paddingLeft={indent.length + 8}>
             <Text dimColor>
-              {toolCall.output.length > 200
-                ? `${toolCall.output.slice(0, 197)}...`
+              {toolCall.output.length > TEXT_LIMITS.CONTENT_PREVIEW_MAX
+                ? `${toolCall.output.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`
                 : toolCall.output}
             </Text>
           </Box>

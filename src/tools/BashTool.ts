@@ -8,7 +8,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn, ChildProcess } from 'child_process';
-import { TIMEOUT_LIMITS } from '../config/toolDefaults.js';
+import { TIMEOUT_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { formatError } from '../utils/errorUtils.js';
 
 export class BashTool extends BaseTool {
@@ -282,7 +282,7 @@ export class BashTool extends BaseTool {
    * Get estimated output size for bash commands
    */
   getEstimatedOutputSize(): number {
-    return 400; // Bash commands typically produce moderate output
+    return TOOL_OUTPUT_ESTIMATES.BASH;
   }
 
   /**

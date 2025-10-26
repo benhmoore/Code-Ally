@@ -11,6 +11,7 @@
  */
 
 import { Message } from '../types/index.js';
+import { TOKEN_MANAGEMENT } from '../config/constants.js';
 
 /**
  * Options for message history management
@@ -136,11 +137,11 @@ export class MessageHistory {
       }
 
       // Add overhead for role and structure (~20 chars)
-      totalChars += 20;
+      totalChars += TOKEN_MANAGEMENT.MESSAGE_OVERHEAD_CHARS;
     }
 
     // Estimate: ~4 chars per token
-    return Math.ceil(totalChars / 4);
+    return Math.ceil(totalChars / TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE);
   }
 
   /**
@@ -159,7 +160,7 @@ export class MessageHistory {
    * @param threshold - Percentage threshold (default: 80)
    * @returns True if usage is above threshold
    */
-  isNearCapacity(threshold: number = 80): boolean {
+  isNearCapacity(threshold: number = TOKEN_MANAGEMENT.NEAR_CAPACITY_THRESHOLD): boolean {
     return this.getContextUsagePercent() >= threshold;
   }
 
@@ -236,10 +237,10 @@ export class MessageHistory {
       if (message.tool_calls) {
         totalChars += JSON.stringify(message.tool_calls).length;
       }
-      totalChars += 20; // Overhead
+      totalChars += TOKEN_MANAGEMENT.MESSAGE_OVERHEAD_CHARS; // Overhead
     }
 
-    return Math.ceil(totalChars / 4);
+    return Math.ceil(totalChars / TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE);
   }
 
   /**

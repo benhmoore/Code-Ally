@@ -14,6 +14,9 @@
 import { TokenManager } from '../agent/TokenManager.js';
 import { ConfigManager } from './ConfigManager.js';
 import { ToolManager } from '../tools/ToolManager.js';
+import { CONTEXT_THRESHOLDS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
+import { BUFFER_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
+import { DEFAULT_CONFIG } from '../config/defaults.js';
 
 /**
  * Truncation level definitions
@@ -51,18 +54,18 @@ interface ToolStats {
 export class ToolResultManager {
   // Progressive truncation based on context usage percentage
   private static readonly TRUNCATION_LEVELS: TruncationLevels = {
-    normal: { min: 0, max: 70 }, // Full results up to 70% context
-    moderate: { min: 70, max: 85 }, // Moderate truncation 70-85%
-    aggressive: { min: 85, max: 95 }, // Heavy truncation 85-95%
-    critical: { min: 95, max: 100 }, // Minimal results 95%+
+    normal: { min: 0, max: CONTEXT_THRESHOLDS.NORMAL },
+    moderate: { min: CONTEXT_THRESHOLDS.NORMAL, max: CONTEXT_THRESHOLDS.WARNING },
+    aggressive: { min: CONTEXT_THRESHOLDS.WARNING, max: CONTEXT_THRESHOLDS.CRITICAL },
+    critical: { min: CONTEXT_THRESHOLDS.CRITICAL, max: CONTEXT_THRESHOLDS.MAX_PERCENT },
   };
 
   // Default maximum tokens for tool results at each level
   private static readonly DEFAULT_MAX_TOKENS: MaxTokenLimits = {
-    normal: 1000,
-    moderate: 750,
-    aggressive: 500,
-    critical: 200,
+    normal: DEFAULT_CONFIG.tool_result_max_tokens_normal,
+    moderate: DEFAULT_CONFIG.tool_result_max_tokens_moderate,
+    aggressive: DEFAULT_CONFIG.tool_result_max_tokens_aggressive,
+    critical: DEFAULT_CONFIG.tool_result_max_tokens_critical,
   };
 
   private tokenManager: TokenManager;
@@ -135,7 +138,7 @@ export class ToolResultManager {
     let contentTokens = maxTokens - noticeTokens;
 
     // Ensure we don't go negative
-    if (contentTokens < 50) {
+    if (contentTokens < BUFFER_SIZES.MIN_CONTENT_TOKENS) {
       contentTokens = Math.floor(maxTokens / 2);
       const minimalNotice = '\n\n[Truncated - output too long]';
       const minimalTokens = this.tokenManager.estimateTokens(minimalNotice);
@@ -217,7 +220,7 @@ export class ToolResultManager {
       0,
       Math.floor(remainingTokens / avgToolSize)
     );
-    return Math.min(estimatedCalls, 50); // Cap at 50 for reasonable display
+    return Math.min(estimatedCalls, BUFFER_SIZES.MAX_ESTIMATED_TOOL_CALLS);
   }
 
   /**
@@ -287,7 +290,7 @@ export class ToolResultManager {
   private getRemainingContextBudget(): number {
     const totalContext = this.tokenManager.getContextSize();
     const usedTokens = this.tokenManager.getCurrentTokenCount();
-    const bufferTokens = Math.floor(totalContext * 0.1); // 10% buffer for safety
+    const bufferTokens = Math.floor(totalContext * TOKEN_MANAGEMENT.SAFETY_BUFFER_PERCENT); // 10% buffer for safety
 
     return Math.max(0, totalContext - usedTokens - bufferTokens);
   }
@@ -320,7 +323,7 @@ export class ToolResultManager {
         const totalEstimate = tools.reduce((sum, tool) => {
           const estimate = typeof tool.getEstimatedOutputSize === 'function'
             ? tool.getEstimatedOutputSize()
-            : 400;
+            : TOOL_OUTPUT_ESTIMATES.DEFAULT;
           return sum + estimate;
         }, 0);
         return Math.floor(totalEstimate / tools.length);
@@ -328,7 +331,7 @@ export class ToolResultManager {
     }
 
     // Final fallback to default
-    return 400;
+    return TOOL_OUTPUT_ESTIMATES.DEFAULT;
   }
 
   /**
@@ -350,11 +353,12 @@ export class ToolResultManager {
     stats.totalTokens += resultTokens;
 
     // Keep statistics reasonable (prevent overflow in long sessions)
-    if (stats.callCount > 100) {
+    if (stats.callCount > BUFFER_SIZES.STATS_RESET_THRESHOLD) {
       // Reset with current averages to maintain recent behavior
       const avgSize = Math.floor(stats.totalTokens / stats.callCount);
-      stats.callCount = 10;
-      stats.totalTokens = avgSize * 10;
+      const resetValue = BUFFER_SIZES.STATS_RESET_THRESHOLD / 10; // Reset to 1/10th of threshold for averaging
+      stats.callCount = resetValue;
+      stats.totalTokens = avgSize * resetValue;
     }
   }
 

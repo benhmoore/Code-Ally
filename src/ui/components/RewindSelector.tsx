@@ -7,6 +7,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { Message } from '../../types/index.js';
+import { TEXT_LIMITS } from '../../config/constants.js';
 
 export interface RewindSelectorProps {
   /** User messages only (pre-filtered) */
@@ -33,7 +34,7 @@ function formatTime(timestamp?: number): string {
 /**
  * Truncate message content for display
  */
-function truncateContent(content: string, maxLength: number = 50): string {
+function truncateContent(content: string, maxLength: number = TEXT_LIMITS.DESCRIPTION_MAX): string {
   const firstLine = content.split('\n')[0] || '';
   if (firstLine.length <= maxLength) return firstLine;
   return firstLine.slice(0, maxLength - 3) + '...';

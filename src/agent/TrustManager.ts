@@ -17,7 +17,7 @@
 
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ActivityEvent } from '../types/index.js';
-import { API_TIMEOUTS } from '../config/constants.js';
+import { API_TIMEOUTS, TEXT_LIMITS } from '../config/constants.js';
 
 /**
  * Trust scope levels for permission management
@@ -465,7 +465,7 @@ export class TrustManager {
     options: PermissionChoice[]
   ): Promise<PermissionChoice> {
     return new Promise((resolve, reject) => {
-      // Generate unique ID for this permission request
+      // Generate unique ID for permission request: perm_{timestamp}_{7-char-random} (base-36, skip '0.' prefix)
       const requestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
       // Set 30-second timeout to prevent infinite waiting
@@ -551,7 +551,7 @@ export class TrustManager {
     // Bash tool: truncate command to 50 chars for key
     if (toolName === 'bash' && path && typeof path === 'object') {
       const command = path.command || '';
-      return `bash:${command.substring(0, 50)}`;
+      return `bash:${command.substring(0, TEXT_LIMITS.DESCRIPTION_MAX)}`;
     }
 
     // File operations: use absolute path (TODO: normalize path)

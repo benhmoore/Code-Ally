@@ -2,6 +2,8 @@
  * String manipulation utilities
  */
 
+import { TEXT_LIMITS } from '../config/constants.js';
+
 /**
  * Predefined truncation lengths for consistency
  */
@@ -43,7 +45,7 @@ export function truncateAtWord(str: string, maxLength: number, ellipsis: string 
   const truncated = str.substring(0, maxLength - ellipsis.length);
   const lastSpace = truncated.lastIndexOf(' ');
 
-  if (lastSpace > maxLength * 0.6) {
+  if (lastSpace > maxLength * TEXT_LIMITS.WORD_BOUNDARY_THRESHOLD) {
     return truncated.substring(0, lastSpace) + ellipsis;
   }
 

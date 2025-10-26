@@ -342,6 +342,11 @@ async function main() {
     const pathResolver = new PathResolver();
     registry.registerInstance('path_resolver', pathResolver);
 
+    // Create focus manager
+    const { FocusManager } = await import('./services/FocusManager.js');
+    const focusManager = new FocusManager();
+    registry.registerInstance('focus_manager', focusManager);
+
     // Create LLM client (main agent model)
     const modelClient = new OllamaClient({
       endpoint: config.endpoint,
@@ -407,6 +412,7 @@ async function main() {
     const { SessionReadTool } = await import('./tools/SessionReadTool.js');
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
+    const { FocusManagerTool } = await import('./tools/FocusManagerTool.js');
 
     const tools = [
       new BashTool(activityStream, config),
@@ -425,6 +431,7 @@ async function main() {
       new SessionReadTool(activityStream),
       new LintTool(activityStream),
       new FormatTool(activityStream),
+      new FocusManagerTool(activityStream),
     ];
 
     // Create tool manager

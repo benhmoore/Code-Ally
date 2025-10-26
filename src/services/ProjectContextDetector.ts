@@ -9,6 +9,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { IService } from '../types/index.js';
 import { logger } from './Logger.js';
+import { CACHE_TIMEOUTS, BUFFER_SIZES, PROJECT_DETECTION } from '../config/constants.js';
 
 export interface ProjectContext {
   languages: string[];
@@ -39,7 +40,7 @@ const LANGUAGE_PATTERNS: Record<string, string[]> = {
 export class ProjectContextDetector implements IService {
   private cachedContext: ProjectContext | null = null;
   private workingDir: string;
-  private readonly staleThreshold = 30 * 60 * 1000; // 30 minutes
+  private readonly staleThreshold = CACHE_TIMEOUTS.PROJECT_CONTEXT_STALE;
 
   constructor(workingDir: string = process.cwd()) {
     this.workingDir = workingDir;
@@ -124,7 +125,7 @@ export class ProjectContextDetector implements IService {
    */
   private async detectLanguages(): Promise<string[]> {
     try {
-      const files = await this.scanFiles(500); // Limit to 500 files
+      const files = await this.scanFiles(PROJECT_DETECTION.LANGUAGE_DETECTION_LIMIT);
       const languageCounts: Map<string, number> = new Map();
 
       for (const file of files) {
@@ -141,7 +142,7 @@ export class ProjectContextDetector implements IService {
         .sort((a, b) => b[1] - a[1])
         .map(([lang]) => lang);
 
-      return languages.slice(0, 3); // Top 3 languages
+      return languages.slice(0, BUFFER_SIZES.TOP_ITEMS_PREVIEW); // Top 3 languages
     } catch {
       return [];
     }
@@ -424,9 +425,9 @@ export class ProjectContextDetector implements IService {
    */
   private async detectScale(): Promise<'small' | 'medium' | 'large'> {
     try {
-      const files = await this.scanFiles(1000);
-      if (files.length < 50) return 'small';
-      if (files.length < 200) return 'medium';
+      const files = await this.scanFiles(PROJECT_DETECTION.SCALE_DETECTION_LIMIT);
+      if (files.length < PROJECT_DETECTION.SMALL_PROJECT_THRESHOLD) return 'small';
+      if (files.length < PROJECT_DETECTION.MEDIUM_PROJECT_THRESHOLD) return 'medium';
       return 'large';
     } catch {
       return 'small';
@@ -441,7 +442,7 @@ export class ProjectContextDetector implements IService {
     const ignore = new Set(['node_modules', '.git', 'dist', 'build', 'target', '__pycache__', '.venv']);
 
     const scan = async (dir: string, depth: number = 0): Promise<void> => {
-      if (depth > 3 || files.length >= limit) return;
+      if (depth > PROJECT_DETECTION.MAX_SCAN_DEPTH || files.length >= limit) return;
 
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -497,7 +498,7 @@ export class ProjectContextDetector implements IService {
    */
   private async hasPythonFiles(): Promise<boolean> {
     try {
-      const files = await this.scanFiles(50); // Quick check
+      const files = await this.scanFiles(PROJECT_DETECTION.QUICK_SCAN_LIMIT);
       return files.some(f => f.endsWith('.py'));
     } catch {
       return false;

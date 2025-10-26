@@ -1,5 +1,13 @@
 /**
- * Shared constants and defaults for tool implementations
+ * Tool-specific constants and defaults
+ *
+ * This file contains constants for:
+ * - Tool operation limits (max results, max file sizes, max depths)
+ * - Tool behavior defaults (exclusion patterns, timeouts)
+ * - Tool output estimation (for context budgeting)
+ * - Context usage thresholds (for progressive truncation)
+ *
+ * For application-wide constants (timeouts, UI, animations, etc.), see constants.ts
  */
 
 /**
@@ -51,6 +59,31 @@ export const TIMEOUT_LIMITS = {
 } as const;
 
 /**
+ * Token count estimates for tool outputs
+ *
+ * These are used for context budgeting when results haven't been generated yet.
+ */
+export const TOOL_OUTPUT_ESTIMATES = {
+  /** Default tool output estimate (400 tokens) */
+  DEFAULT: 400,
+
+  /** Read tool output estimate (800 tokens) */
+  READ: 800,
+
+  /** Grep tool output estimate (600 tokens) */
+  GREP: 600,
+
+  /** Bash tool output estimate (400 tokens) */
+  BASH: 400,
+
+  /** Glob tool output estimate (300 tokens) */
+  GLOB: 300,
+
+  /** Ls tool output estimate (300 tokens) */
+  LS: 300,
+} as const;
+
+/**
  * Context usage thresholds for progressive truncation
  *
  * Thresholds based on empirical testing:
@@ -59,9 +92,11 @@ export const TIMEOUT_LIMITS = {
  * - 95%: Emergency mode - minimal results only
  */
 export const CONTEXT_THRESHOLDS = {
+  VISIBILITY: 50,
   NORMAL: 70,
   WARNING: 85,
   CRITICAL: 95,
+  MAX_PERCENT: 100,
 
   WARNINGS: {
     70: 'Context filling: Prioritize essential operations',

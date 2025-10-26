@@ -9,6 +9,7 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { BYTE_CONVERSIONS, FORMATTING } from '../config/constants.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -159,7 +160,10 @@ export class AllyWriteTool extends BaseTool {
     const size = result.size || 0;
 
     // Format file size
-    const sizeStr = size < 1024 ? `${size} bytes` : `${(size / 1024).toFixed(1)} KB`;
+    const sizeStr =
+      size < BYTE_CONVERSIONS.BYTES_PER_KB
+        ? `${size} bytes`
+        : `${(size / BYTE_CONVERSIONS.BYTES_PER_KB).toFixed(FORMATTING.FILE_SIZE_DECIMAL_PLACES)} KB`;
 
     return `📝 Added to ALLY.md (${lines} lines, ${sizeStr})`;
   }

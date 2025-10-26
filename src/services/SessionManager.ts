@@ -19,6 +19,7 @@ import { generateShortId } from '../utils/id.js';
 import type { TodoItem } from './TodoManager.js';
 import { SessionTitleGenerator } from './SessionTitleGenerator.js';
 import { logger } from './Logger.js';
+import { TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
 
 /**
  * Configuration for SessionManager
@@ -44,7 +45,7 @@ export class SessionManager implements IService {
 
   constructor(config: SessionManagerConfig = {}) {
     this.sessionsDir = SESSIONS_DIR;
-    this.maxSessions = config.maxSessions ?? 100;
+    this.maxSessions = config.maxSessions ?? BUFFER_SIZES.MAX_SESSIONS_DEFAULT;
     this.titleGenerator = config.modelClient
       ? new SessionTitleGenerator(config.modelClient)
       : null;
@@ -226,6 +227,7 @@ export class SessionManager implements IService {
       }
 
       const sessionPath = this.getSessionPath(sessionName);
+      // Generate temp file with timestamp and random suffix (base-36 string starting at index 7)
       const tempPath = `${sessionPath}.tmp.${Date.now()}.${Math.random().toString(36).substring(7)}`;
 
       try {
@@ -406,8 +408,8 @@ export class SessionManager implements IService {
         if (firstUserMessage) {
           const content = firstUserMessage.content.trim();
           const cleanContent = content.replace(/\s+/g, ' ');
-          displayName = cleanContent.length > 40
-            ? cleanContent.slice(0, 40) + '...'
+          displayName = cleanContent.length > TEXT_LIMITS.COMMAND_DISPLAY_MAX
+            ? cleanContent.slice(0, TEXT_LIMITS.COMMAND_DISPLAY_MAX) + '...'
             : cleanContent;
         } else {
           displayName = '(no messages)';

@@ -12,7 +12,7 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { ALLY_HOME } from '../config/paths.js';
-import { UI_DELAYS } from '../config/constants.js';
+import { BUFFER_SIZES, UI_DELAYS } from '../config/constants.js';
 
 export interface CommandHistoryEntry {
   command: string;
@@ -35,7 +35,7 @@ export class CommandHistory {
   private loaded: boolean = false;
 
   constructor(options: CommandHistoryOptions = {}) {
-    this.maxSize = options.maxSize || 1000;
+    this.maxSize = options.maxSize || BUFFER_SIZES.COMMAND_HISTORY_MAX;
     this.storagePath = options.storagePath || join(ALLY_HOME, 'history.json');
   }
 
@@ -230,7 +230,7 @@ export class CommandHistory {
    * @param limit - Maximum results to return
    * @returns Matching commands (most recent first)
    */
-  search(query: string, limit: number = 10): string[] {
+  search(query: string, limit: number = BUFFER_SIZES.DEFAULT_LIST_PREVIEW): string[] {
     const lowerQuery = query.toLowerCase();
     const matches: string[] = [];
 

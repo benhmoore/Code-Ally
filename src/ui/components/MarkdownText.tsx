@@ -16,6 +16,19 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { marked } from 'marked';
 import { SyntaxHighlighter } from '../../services/SyntaxHighlighter.js';
+import { TEXT_LIMITS, FORMATTING } from '../../config/constants.js';
+
+// Table rendering constants (specific to markdown table formatting)
+const TABLE_FORMATTING = {
+  /** Table outer border width (2 chars for '| |') */
+  BORDER_WIDTH: 2,
+  /** Table column separator width (3 chars for ' | ') */
+  SEPARATOR_WIDTH: 3,
+  /** Table padding per column (2 chars for left/right padding) */
+  PADDING_PER_COL: 2,
+  /** Table safety margin for rendering */
+  SAFETY_MARGIN: 4,
+};
 
 export interface MarkdownTextProps {
   /** Markdown content to render */
@@ -220,7 +233,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
   // Calculate optimal column widths with terminal width constraints
   const columnWidths = useMemo(() => {
     // Get terminal width (with fallback)
-    const terminalWidth = process.stdout.columns || 120;
+    const terminalWidth = process.stdout.columns || TEXT_LIMITS.TERMINAL_WIDTH_MARKDOWN_FALLBACK;
 
     // Calculate natural widths (what content actually needs)
     const naturalWidths = header.map((h) => h.length);
@@ -234,8 +247,11 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
     // Format: │ col1 │ col2 │ col3 │
     // Overhead = 2 (outer borders) + (numCols - 1) * 3 (separators) + numCols * 2 (padding)
     const numCols = header.length;
-    const borderOverhead = 2 + (numCols - 1) * 3 + numCols * 2;
-    const availableWidth = terminalWidth - borderOverhead - 4; // Extra margin for safety
+    const borderOverhead =
+      TABLE_FORMATTING.BORDER_WIDTH +
+      (numCols - 1) * TABLE_FORMATTING.SEPARATOR_WIDTH +
+      numCols * TABLE_FORMATTING.PADDING_PER_COL;
+    const availableWidth = terminalWidth - borderOverhead - TABLE_FORMATTING.SAFETY_MARGIN;
 
     // Sum of natural widths
     const totalNaturalWidth = naturalWidths.reduce((sum, w) => sum + w, 0);
@@ -247,7 +263,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
 
     // Table is too wide - need to distribute space proportionally
     // Set minimum width per column (at least 10 chars or header length)
-    const minWidths = header.map((h) => Math.max(10, h.length));
+    const minWidths = header.map((h) => Math.max(FORMATTING.TABLE_COLUMN_MIN_WIDTH, h.length));
     const totalMinWidth = minWidths.reduce((sum, w) => sum + w, 0);
 
     // If even minimum widths don't fit, use equal distribution
@@ -288,7 +304,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
       let breakPoint = width;
       const lastSpace = remaining.lastIndexOf(' ', width);
 
-      if (lastSpace > width * 0.6) {
+      if (lastSpace > width * TEXT_LIMITS.WORD_BOUNDARY_THRESHOLD) {
         // Good break point found (not too early)
         breakPoint = lastSpace;
       }

@@ -24,6 +24,7 @@ import { RewindSelector } from './components/RewindSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
 import { UI_DELAYS } from '../config/constants.js';
+import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { ReasoningStream } from './components/ReasoningStream.js';
 import { Agent } from '../agent/Agent.js';
 import { CommandHistory } from '../services/CommandHistory.js';
@@ -919,7 +920,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             return;
           }
 
-          // Generate unique tool call ID
+          // Generate unique tool call ID: bash-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
           const toolCallId = `bash-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
           // Create assistant message that describes the bash execution
@@ -1331,12 +1332,12 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       <Box marginTop={1}>
         <Text dimColor>
           Ctrl+C to exit{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'} |{' '}
-          {state.contextUsage >= 85 ? (
-            <Text color="red">Context: {100 - state.contextUsage}% remaining - use /compact</Text>
-          ) : state.contextUsage >= 70 ? (
-            <Text color="yellow">Context: {100 - state.contextUsage}% remaining - consider /compact</Text>
+          {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
+            <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
+          ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
+            <Text color="yellow">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - consider /compact</Text>
           ) : (
-            <Text>Context: {100 - state.contextUsage}% remaining</Text>
+            <Text>Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining</Text>
           )}
         </Text>
       </Box>

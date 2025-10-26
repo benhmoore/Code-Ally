@@ -15,6 +15,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { logger } from '../services/Logger.js';
 import { getGitBranch } from '../utils/gitUtils.js';
+import { TEXT_LIMITS } from '../config/constants.js';
 
 // --- Core Agent Identity and Directives ---
 
@@ -148,7 +149,7 @@ export async function getContextInfo(options: {
 } = {}): Promise<string> {
   const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager } = options;
 
-  const currentDate = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const currentDate = new Date().toISOString().replace('T', ' ').slice(0, TEXT_LIMITS.ISO_DATETIME_LENGTH);
   const workingDir = process.cwd();
   const osInfo = `${os.platform()} ${os.release()}`;
   const nodeVersion = process.version;

@@ -12,7 +12,7 @@ import { resolvePath } from '../utils/pathUtils.js';
 import { validateExists } from '../utils/pathValidator.js';
 import { isBinaryContent } from '../utils/fileUtils.js';
 import { formatError } from '../utils/errorUtils.js';
-import { TOOL_LIMITS } from '../config/toolDefaults.js';
+import { TOOL_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import fg from 'fast-glob';
@@ -323,7 +323,7 @@ export class GrepTool extends BaseTool {
    * Get estimated output size for grep operations
    */
   getEstimatedOutputSize(): number {
-    return 600; // Grep typically produces moderate to large output (search results)
+    return TOOL_OUTPUT_ESTIMATES.GREP;
   }
 
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

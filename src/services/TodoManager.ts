@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { TEXT_LIMITS, BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed';
 
@@ -37,7 +38,7 @@ export class TodoManager {
    */
   createTodoItem(task: string, status: TodoStatus = 'pending', activeForm?: string): TodoItem {
     return {
-      id: randomUUID().substring(0, 8),
+      id: randomUUID().substring(0, ID_GENERATION.TODO_ID_LENGTH),
       task: task.trim(),
       status,
       activeForm: activeForm || task.trim(), // Default to task if not provided
@@ -246,13 +247,13 @@ export class TodoManager {
     // Extract key parameters based on tool type
     if (toolName === 'read' && args.file_paths) {
       const paths = Array.isArray(args.file_paths) ? args.file_paths : [args.file_paths];
-      return paths.slice(0, 2).join(', ') + (paths.length > 2 ? '...' : '');
+      return paths.slice(0, BUFFER_SIZES.TODO_FILE_PATHS_DISPLAY).join(', ') + (paths.length > BUFFER_SIZES.TODO_FILE_PATHS_DISPLAY ? '...' : '');
     } else if (toolName === 'write' && args.file_path) {
       return args.file_path;
     } else if (toolName === 'edit' && args.file_path) {
       return args.file_path;
     } else if (toolName === 'bash' && args.command) {
-      return args.command.substring(0, 40) + (args.command.length > 40 ? '...' : '');
+      return args.command.substring(0, TEXT_LIMITS.COMMAND_DISPLAY_MAX) + (args.command.length > TEXT_LIMITS.COMMAND_DISPLAY_MAX ? '...' : '');
     } else if (toolName === 'grep' && args.pattern) {
       return `"${args.pattern}"`;
     } else if (toolName === 'glob' && args.pattern) {
@@ -266,7 +267,7 @@ export class TodoManager {
     if (keys.length > 0 && keys[0]) {
       const firstKey = keys[0];
       const value = String(args[firstKey]);
-      return value.substring(0, 30) + (value.length > 30 ? '...' : '');
+      return value.substring(0, TEXT_LIMITS.VALUE_DISPLAY_MAX) + (value.length > TEXT_LIMITS.VALUE_DISPLAY_MAX ? '...' : '');
     }
 
     return '';

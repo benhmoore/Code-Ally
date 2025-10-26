@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { AnimationTicker } from '../../services/AnimationTicker.js';
+import { TEXT_LIMITS } from '../../config/constants.js';
+import { CONTEXT_THRESHOLDS } from '../../config/toolDefaults.js';
 
 interface StatusLineProps {
   /** Context usage as percentage (0-100) */
@@ -66,21 +68,21 @@ export const StatusLine: React.FC<StatusLineProps> = ({
 
   // Determine context color based on usage
   const getContextColor = (): string => {
-    if (contextUsagePercent >= 90) return 'red';
-    if (contextUsagePercent >= 70) return 'yellow';
+    if (contextUsagePercent >= CONTEXT_THRESHOLDS.CRITICAL) return 'red';
+    if (contextUsagePercent >= CONTEXT_THRESHOLDS.NORMAL) return 'yellow';
     return 'green';
   };
 
   // Truncate model name to 5 chars (matching Python behavior)
   const truncatedModel = modelName
-    ? modelName.slice(0, 5)
+    ? modelName.slice(0, TEXT_LIMITS.MODEL_NAME_DISPLAY_MAX)
     : 'model';
 
   // Calculate remaining percentage (user-facing)
   const remainingPercent = 100 - contextUsagePercent;
 
   // Only show status if context is significant or alwaysShow is true
-  const shouldShow = alwaysShow || contextUsagePercent >= 50;
+  const shouldShow = alwaysShow || contextUsagePercent >= CONTEXT_THRESHOLDS.VISIBILITY;
 
   if (!shouldShow) {
     return null;
@@ -105,7 +107,7 @@ export const StatusLine: React.FC<StatusLineProps> = ({
       {/* Right side: Context and model info */}
       <Box>
         {/* Context usage (only show if significant) */}
-        {contextUsagePercent >= 70 && (
+        {contextUsagePercent >= CONTEXT_THRESHOLDS.NORMAL && (
           <Box marginRight={2}>
             <Text color={contextColor}>
               Context: {remainingPercent}%

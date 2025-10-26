@@ -11,6 +11,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
+import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import * as fs from 'fs/promises';
 
 type LineOperation = 'insert' | 'delete' | 'replace';
@@ -233,7 +234,7 @@ export class LineEditTool extends BaseTool {
       // Validate line number exists (for insert, allow totalLines+1 to append)
       const maxLineNumber = operation === 'insert' ? totalLines + 1 : totalLines;
       if (lineNumber > maxLineNumber) {
-        const context = this.getLineContext(lines, totalLines, Math.max(1, totalLines - 4));
+        const context = this.getLineContext(lines, totalLines, Math.max(1, totalLines - TEXT_LIMITS.LINE_EDIT_CONTEXT_LINES));
         return this.formatErrorResponse(
           `line_number ${lineNumber} does not exist (file has ${totalLines} line${totalLines !== 1 ? 's' : ''})`,
           'validation_error',
@@ -360,8 +361,8 @@ export class LineEditTool extends BaseTool {
       const lineContent = lines[i - 1];
       if (lineContent === undefined) continue; // Skip undefined lines
       const truncated =
-        lineContent.length > 80 ? lineContent.substring(0, 77) + '...' : lineContent;
-      contextLines.push(`  ${String(i).padStart(4)}: ${truncated}`);
+        lineContent.length > TEXT_LIMITS.LINE_CONTENT_DISPLAY_MAX ? lineContent.substring(0, TEXT_LIMITS.LINE_CONTENT_DISPLAY_MAX - 3) + '...' : lineContent;
+      contextLines.push(`  ${String(i).padStart(FORMATTING.LINE_NUMBER_WIDTH)}: ${truncated}`);
     }
 
     return contextLines.join('\n');

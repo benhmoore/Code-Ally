@@ -8,6 +8,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { createTwoFilesPatch } from 'diff';
+import { FORMATTING } from '../../config/constants.js';
 
 export interface DiffLine {
   type: 'add' | 'remove' | 'context' | 'header';
@@ -103,7 +104,7 @@ const DiffLine: React.FC<{ line: DiffLine }> = ({ line }) => {
 
   const showLineNumber = line.type !== 'header';
   const lineNum = line.type === 'add' ? line.newLineNumber : line.lineNumber;
-  const lineNumStr = showLineNumber && lineNum ? `${lineNum.toString().padStart(4, ' ')} │ ` : '';
+  const lineNumStr = showLineNumber && lineNum ? `${lineNum.toString().padStart(FORMATTING.LINE_NUMBER_WIDTH, ' ')} │ ` : '';
 
   return (
     <Box>

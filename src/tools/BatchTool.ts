@@ -9,12 +9,12 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { MAX_BATCH_SIZE } from '../constants.js';
+import { BUFFER_SIZES } from '../config/constants.js';
 
 export class BatchTool extends BaseTool {
   readonly name = 'batch';
   readonly description =
-    `Execute multiple tools concurrently in a single call. Use this when you need to run several independent operations in parallel (e.g., reading multiple files, running multiple searches). Each tool in the batch runs simultaneously for better performance. IMPORTANT: Maximum ${MAX_BATCH_SIZE} tools per batch.`;
+    `Execute multiple tools concurrently in a single call. Use this when you need to run several independent operations in parallel (e.g., reading multiple files, running multiple searches). Each tool in the batch runs simultaneously for better performance. IMPORTANT: Maximum ${BUFFER_SIZES.MAX_BATCH_SIZE} tools per batch.`;
   readonly requiresConfirmation = false; // Individual tools will handle their own confirmation
   readonly visibleInChat = false; // Don't show batch() in conversation, only its children
   readonly isTransparentWrapper = true; // Promote children to replace wrapper
@@ -37,7 +37,7 @@ export class BatchTool extends BaseTool {
           properties: {
             tools: {
               type: 'array',
-              description: `Array of tool specifications to execute concurrently (max ${MAX_BATCH_SIZE}). Each spec must have "name" and "arguments" fields.`,
+              description: `Array of tool specifications to execute concurrently (max ${BUFFER_SIZES.MAX_BATCH_SIZE}). Each spec must have "name" and "arguments" fields.`,
               items: {
                 type: 'object',
                 properties: {
@@ -75,9 +75,9 @@ export class BatchTool extends BaseTool {
     }
 
     // Enforce maximum batch size
-    if (toolSpecs.length > MAX_BATCH_SIZE) {
+    if (toolSpecs.length > BUFFER_SIZES.MAX_BATCH_SIZE) {
       return this.formatErrorResponse(
-        `Too many tools in batch: ${toolSpecs.length} requested, maximum is ${MAX_BATCH_SIZE}. Split your request into smaller batches.`,
+        `Too many tools in batch: ${toolSpecs.length} requested, maximum is ${BUFFER_SIZES.MAX_BATCH_SIZE}. Split your request into smaller batches.`,
         'validation_error',
         'Break your batch into smaller groups with 5 or fewer tool calls each.'
       );

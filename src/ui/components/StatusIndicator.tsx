@@ -17,7 +17,7 @@ import { getGitBranch } from '../../utils/gitUtils.js';
 import { logger } from '../../services/Logger.js';
 import * as os from 'os';
 import * as path from 'path';
-import { ANIMATION_TIMING, POLLING_INTERVALS } from '../../config/constants.js';
+import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '../../config/constants.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -51,7 +51,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           const message = idleMessageGenerator.getCurrentMessage();
           if (message !== 'Idle') {
             const queue = idleMessageGenerator.getQueue();
-            const queuePreview = queue.slice(0, 10).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
+            const queuePreview = queue.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
             logger.debug(`[MASCOT] Loaded message from queue on startup (${queueSize} messages available): "${message}"\n  Queue:\n  ${queuePreview}`);
             return message;
           }
@@ -202,7 +202,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
                   // Update immediately when first non-default message is available
                   if (message !== 'Idle' && message !== '.' && message !== '..' && message !== '...') {
                     const queue = idleMessageGenerator.getQueue();
-                    const queuePreview = queue.slice(0, 10).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
+                    const queuePreview = queue.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
                     logger.debug(`[MASCOT] Displaying message from queue (${queueSize} messages available): "${message}"\n  Queue:\n  ${queuePreview}`);
                     setIdleMessage(message);
                     // Stop fast polling once we have a real message
@@ -241,7 +241,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           // Only update if message is not the default "Idle"
           if (message !== 'Idle') {
             const queue = idleMessageGenerator.getQueue();
-            const queuePreview = queue.slice(0, 10).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
+            const queuePreview = queue.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
             logger.debug(`[MASCOT] Cycling to next message (${queueSize} messages in queue): "${message}"\n  Queue:\n  ${queuePreview}`);
             setIdleMessage(message);
           }
@@ -249,7 +249,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       } catch {
         // Silently handle errors
       }
-    }, POLLING_INTERVALS.STATUS_NORMAL);
+    }, POLLING_INTERVALS.STATUS_POLLING);
 
     return () => {
       if (fastPollInterval) clearInterval(fastPollInterval);
@@ -307,7 +307,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     // Then generate continuously while idle
     const continuousInterval = setInterval(() => {
       generateIdleMessage();
-    }, POLLING_INTERVALS.STATUS_CONTINUOUS);
+    }, POLLING_INTERVALS.STATUS_POLLING);
 
     return () => clearInterval(continuousInterval);
   }, [isProcessing, isCompacting, recentMessages]);

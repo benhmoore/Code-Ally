@@ -9,7 +9,13 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { Message } from '../types/index.js';
 import { CancellableService } from '../types/CancellableService.js';
 import { logger } from './Logger.js';
-import { POLLING_INTERVALS, BUFFER_SIZES } from '../config/constants.js';
+import {
+  POLLING_INTERVALS,
+  BUFFER_SIZES,
+  API_TIMEOUTS,
+  TEXT_LIMITS,
+  IDLE_MESSAGE_GENERATION,
+} from '../config/constants.js';
 
 /**
  * Additional context for idle message generation
@@ -188,7 +194,7 @@ export class IdleMessageGenerator implements CancellableService {
           // Remove numbering (1. 2. etc.) and quotes
           return line.replace(/^\d+\.\s*/, '').replace(/^["']|["']$/g, '').trim();
         })
-        .filter(msg => msg.length > 0 && msg.length <= 60) // Filter valid messages
+        .filter(msg => msg.length > 0 && msg.length <= TEXT_LIMITS.IDLE_MESSAGE_MAX) // Filter valid messages
         .slice(0, this.batchSize); // Take up to batchSize messages
 
       // If we got valid messages, return them
@@ -344,7 +350,7 @@ export class IdleMessageGenerator implements CancellableService {
       projectContext += `\n\n(Feel free to make playful references to the tech stack, Docker, and CI/CD!)`;
     }
 
-    return `You are Ally, a cheeky chick mascot with ADHD energy. Generate EXACTLY 10 surprising, unexpected idle messages (max 6 words each).
+    return `You are Ally, a cheeky chick mascot with ADHD energy. Generate EXACTLY ${IDLE_MESSAGE_GENERATION.GENERATION_COUNT} surprising, unexpected idle messages (max ${IDLE_MESSAGE_GENERATION.MAX_WORDS} words each).
 
 FORMAT: Return as a numbered list, one message per line:
 1. First message
@@ -395,10 +401,9 @@ Reply with ONLY the numbered list, nothing else. No quotes around messages, no p
    */
   async cleanup(): Promise<void> {
     // Wait for pending generation to complete
-    const maxWait = 5000; // 5 seconds
     const startTime = Date.now();
 
-    while (this.isGenerating && Date.now() - startTime < maxWait) {
+    while (this.isGenerating && Date.now() - startTime < API_TIMEOUTS.CLEANUP_MAX_WAIT) {
       await new Promise(resolve => setTimeout(resolve, POLLING_INTERVALS.CLEANUP));
     }
   }

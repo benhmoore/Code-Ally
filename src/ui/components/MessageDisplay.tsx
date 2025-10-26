@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { Message } from '../../types/index.js';
 import { MarkdownText } from './MarkdownText.js';
+import { TEXT_LIMITS } from '../../config/constants.js';
 
 interface MessageDisplayProps {
   /** Message to display */
@@ -83,8 +84,8 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message }) => 
     const toolName = name ? `[${name}]` : '[Tool]';
 
     // Truncate long content for display
-    const displayContent = content.length > 200
-      ? `${content.slice(0, 197)}...`
+    const displayContent = content.length > TEXT_LIMITS.CONTENT_PREVIEW_MAX
+      ? `${content.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`
       : content;
 
     return (

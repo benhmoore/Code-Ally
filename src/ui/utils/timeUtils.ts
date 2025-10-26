@@ -2,6 +2,8 @@
  * Time formatting utilities for UI display
  */
 
+import { TIME_UNITS } from '../../config/constants.js';
+
 /**
  * Format a duration in milliseconds to a human-readable string
  *
@@ -23,11 +25,11 @@ export function formatDuration(ms: number): string {
  * @returns Formatted time string (e.g., "1m 23s", "5s")
  */
 export function formatElapsed(seconds: number): string {
-  if (seconds < 60) {
+  if (seconds < TIME_UNITS.SECONDS_PER_MINUTE) {
     return `${seconds}s`;
   }
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
+  const mins = Math.floor(seconds / TIME_UNITS.SECONDS_PER_MINUTE);
+  const secs = seconds % TIME_UNITS.SECONDS_PER_MINUTE;
   return `${mins}m ${secs}s`;
 }
 
@@ -45,32 +47,32 @@ export function formatRelativeTime(timestamp: Date | string | number): string {
     : timestamp;
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
-  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffSeconds = Math.floor(diffMs / TIME_UNITS.MS_PER_SECOND);
 
-  if (diffSeconds < 60) {
+  if (diffSeconds < TIME_UNITS.SECONDS_PER_MINUTE) {
     return 'just now';
   }
 
-  const diffMinutes = Math.floor(diffSeconds / 60);
-  if (diffMinutes < 60) {
+  const diffMinutes = Math.floor(diffSeconds / TIME_UNITS.SECONDS_PER_MINUTE);
+  if (diffMinutes < TIME_UNITS.MINUTES_PER_HOUR) {
     return `${diffMinutes}m ago`;
   }
 
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) {
+  const diffHours = Math.floor(diffMinutes / TIME_UNITS.MINUTES_PER_HOUR);
+  if (diffHours < TIME_UNITS.HOURS_PER_DAY) {
     return `${diffHours}h ago`;
   }
 
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 30) {
+  const diffDays = Math.floor(diffHours / TIME_UNITS.HOURS_PER_DAY);
+  if (diffDays < TIME_UNITS.DAYS_PER_MONTH) {
     return `${diffDays}d ago`;
   }
 
-  const diffMonths = Math.floor(diffDays / 30);
-  if (diffMonths < 12) {
+  const diffMonths = Math.floor(diffDays / TIME_UNITS.DAYS_PER_MONTH);
+  if (diffMonths < TIME_UNITS.MONTHS_PER_YEAR) {
     return `${diffMonths}mo ago`;
   }
 
-  const diffYears = Math.floor(diffMonths / 12);
+  const diffYears = Math.floor(diffMonths / TIME_UNITS.MONTHS_PER_YEAR);
   return `${diffYears}y ago`;
 }

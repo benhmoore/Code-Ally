@@ -24,7 +24,8 @@ import { PermissionManager } from '../security/PermissionManager.js';
 import { Message, ActivityEventType, Config } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { POLLING_INTERVALS } from '../config/constants.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
+import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
@@ -92,7 +93,7 @@ export class Agent {
     this.activityStream = activityStream;
     this.config = config;
 
-    // Generate unique instance ID for debugging
+    // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
 
@@ -454,7 +455,7 @@ export class Agent {
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Sending', this.messages.length, 'messages to LLM');
     if (logger.isDebugEnabled()) {
       this.messages.forEach((msg, idx) => {
-        const preview = msg.content.length > 100 ? msg.content.slice(0, 97) + '...' : msg.content;
+        const preview = msg.content.length > TEXT_LIMITS.MESSAGE_PREVIEW_MAX ? msg.content.slice(0, TEXT_LIMITS.MESSAGE_PREVIEW_MAX - 3) + '...' : msg.content;
         const toolInfo = msg.tool_calls ? ` toolCalls:${msg.tool_calls.length}` : '';
         const toolCallId = msg.tool_call_id ? ` toolCallId:${msg.tool_call_id}` : '';
         console.log(`  [${idx}] ${msg.role}${toolInfo}${toolCallId} - ${preview}`);
@@ -595,9 +596,9 @@ export class Agent {
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.messages.length);
 
     // Check context usage for specialized agents (subagents)
-    // Enforce stricter 90% limit to ensure room for final summary
+    // Enforce stricter limit (WARNING threshold) to ensure room for final summary
     const contextUsage = this.tokenManager.getContextUsagePercentage();
-    if (this.config.isSpecializedAgent && contextUsage >= 90) {
+    if (this.config.isSpecializedAgent && contextUsage >= CONTEXT_THRESHOLDS.WARNING) {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent at', contextUsage + '% context - blocking tool execution to preserve space for summary');
 
       // Remove the assistant message with tool calls we just added
@@ -953,10 +954,10 @@ export class Agent {
 
     // Check current context usage
     const contextUsage = this.tokenManager.getContextUsagePercentage();
-    const threshold = this.config.config.compact_threshold || 95;
+    const threshold = this.config.config.compact_threshold || CONTEXT_THRESHOLDS.CRITICAL;
 
     // Only compact if we exceed threshold and have enough messages
-    if (contextUsage < threshold || this.messages.length < 5) {
+    if (contextUsage < threshold || this.messages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_COMPACTION) {
       return;
     }
 
@@ -1011,7 +1012,7 @@ export class Agent {
     const otherMessages = systemMessage ? this.messages.slice(1) : this.messages;
 
     // If we have fewer than 2 messages to summarize, nothing to compact
-    if (otherMessages.length < 2) {
+    if (otherMessages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_HISTORY) {
       return this.messages;
     }
 
@@ -1101,6 +1102,7 @@ export class Agent {
    * Generate a unique ID for events
    */
   private generateId(): string {
+    // Generate agent ID: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     return `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   }
 

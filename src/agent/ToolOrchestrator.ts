@@ -24,6 +24,7 @@ import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
+import { BUFFER_SIZES } from '../config/constants.js';
 
 /**
  * Tool call structure from LLM
@@ -517,7 +518,7 @@ export class ToolOrchestrator {
         // Format as brief list
         for (const [toolName, argsList] of callsByTool) {
           const uniqueArgs = [...new Set(argsList)]; // Deduplicate
-          const argStr = uniqueArgs.slice(0, 3).join(', ') + (uniqueArgs.length > 3 ? '...' : '');
+          const argStr = uniqueArgs.slice(0, BUFFER_SIZES.TOP_ITEMS_PREVIEW).join(', ') + (uniqueArgs.length > BUFFER_SIZES.TOP_ITEMS_PREVIEW ? '...' : '');
           reminder += `\n- ${toolName}(${argStr})`;
         }
       }
@@ -542,6 +543,7 @@ export class ToolOrchestrator {
    * Generate a unique ID
    */
   private generateId(prefix: string = 'tool'): string {
+    // Generate ID: {prefix}-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   }
 }

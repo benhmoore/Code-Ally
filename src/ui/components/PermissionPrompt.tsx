@@ -12,6 +12,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { PermissionChoice, SensitivityTier } from '../../agent/TrustManager.js';
+import { BUFFER_SIZES, TEXT_LIMITS } from '../../config/constants.js';
 
 export interface PermissionRequest {
   /** Tool or command requesting permission */
@@ -93,15 +94,15 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
         {args && Object.keys(args).length > 0 && (
           <Box marginBottom={1} flexDirection="column">
             <Text dimColor>Arguments:</Text>
-            {Object.entries(args).slice(0, 3).map(([key, value]) => (
+            {Object.entries(args).slice(0, BUFFER_SIZES.TOP_ITEMS_PREVIEW).map(([key, value]) => (
               <Box key={key} marginLeft={2}>
                 <Text dimColor>{key}: </Text>
-                <Text>{String(value).slice(0, 45)}</Text>
+                <Text>{String(value).slice(0, TEXT_LIMITS.TOOL_PARAM_VALUE_MAX)}</Text>
               </Box>
             ))}
-            {Object.keys(args).length > 3 && (
+            {Object.keys(args).length > BUFFER_SIZES.TOP_ITEMS_PREVIEW && (
               <Box marginLeft={2}>
-                <Text dimColor>...+{Object.keys(args).length - 3} more</Text>
+                <Text dimColor>...+{Object.keys(args).length - BUFFER_SIZES.TOP_ITEMS_PREVIEW} more</Text>
               </Box>
             )}
           </Box>

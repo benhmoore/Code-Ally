@@ -19,6 +19,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
+import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 
 export class AgentTool extends BaseTool {
   readonly name = 'agent';
@@ -205,7 +206,7 @@ export class AgentTool extends BaseTool {
         success: true,
         result,
         agent_used: agentName,
-        duration_seconds: Math.round(duration * 10) / 10,
+        duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
       };
     } catch (error) {
       return {
@@ -335,7 +336,7 @@ export class AgentTool extends BaseTool {
         }
       } else {
         // Check if response is just an interruption or error message
-        if (response.includes('[Request interrupted') || response.length < 20) {
+        if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
           logger.debug('[AGENT_TOOL] Sub-agent response seems incomplete, attempting to extract summary');
           const summary = this.extractSummaryFromConversation(subAgent, agentData.name);
           if (summary && summary.length > response.length) {
@@ -401,7 +402,7 @@ export class AgentTool extends BaseTool {
       // If we have multiple assistant messages, combine the last few
       if (assistantMessages.length > 1) {
         // Take the last 3 assistant messages (or all if less than 3)
-        const recentMessages = assistantMessages.slice(-3);
+        const recentMessages = assistantMessages.slice(-BUFFER_SIZES.AGENT_RECENT_MESSAGES);
         const summary = recentMessages.join('\n\n');
         logger.debug('[AGENT_TOOL] Extracted summary from', recentMessages.length, 'assistant messages, length:', summary.length);
         return `Agent '${agentName}' work summary:\n\n${summary}`;
@@ -476,8 +477,8 @@ export class AgentTool extends BaseTool {
     // Show content preview
     if (result.content) {
       const contentPreview =
-        result.content.length > 100
-          ? result.content.substring(0, 97) + '...'
+        result.content.length > TEXT_LIMITS.AGENT_RESULT_PREVIEW_MAX
+          ? result.content.substring(0, TEXT_LIMITS.AGENT_RESULT_PREVIEW_MAX - 3) + '...'
           : result.content;
       lines.push(contentPreview);
     }

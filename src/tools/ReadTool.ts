@@ -12,6 +12,9 @@ import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
 import { isBinaryContent } from '../utils/fileUtils.js';
 import { formatError } from '../utils/errorUtils.js';
+import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
+import { TOKEN_MANAGEMENT, CONTEXT_SIZES, FORMATTING } from '../config/constants.js';
+import { DEFAULT_CONFIG } from '../config/defaults.js';
 import * as fs from 'fs/promises';
 
 export class ReadTool extends BaseTool {
@@ -20,7 +23,6 @@ export class ReadTool extends BaseTool {
     'Read multiple file contents at once. Use for reading related files together, checking code before editing';
   readonly requiresConfirmation = false; // Read-only operation
 
-  private static readonly LINE_NUMBER_WIDTH = 6;
   private config?: Config;
 
   constructor(activityStream: ActivityStream, config?: Config) {
@@ -33,11 +35,11 @@ export class ReadTool extends BaseTool {
    * Capped by both configured limit and context size
    */
   private getMaxTokens(): number {
-    const configuredMax = this.config?.read_max_tokens ?? 3000;
-    const contextSize = this.config?.context_size ?? 16384;
+    const configuredMax = this.config?.read_max_tokens ?? DEFAULT_CONFIG.read_max_tokens;
+    const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
 
     // Cap at 20% of context size to leave room for conversation
-    const contextBasedMax = Math.floor(contextSize * 0.2);
+    const contextBasedMax = Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT);
 
     return Math.min(configuredMax, contextBasedMax);
   }
@@ -210,7 +212,7 @@ export class ReadTool extends BaseTool {
     // Format with line numbers
     const formattedLines = selectedLines.map((line, index) => {
       const lineNum = startLine + index + 1;
-      return `${String(lineNum).padStart(ReadTool.LINE_NUMBER_WIDTH)}\t${line}`;
+      return `${String(lineNum).padStart(FORMATTING.LINE_NUMBER_WIDTH)}\t${line}`;
     });
 
     return `=== ${absolutePath} ===\n${formattedLines.join('\n')}`;
@@ -228,7 +230,7 @@ export class ReadTool extends BaseTool {
    * Get estimated output size for read operations
    */
   getEstimatedOutputSize(): number {
-    return 800; // Read operations typically produce larger output (file contents)
+    return TOOL_OUTPUT_ESTIMATES.READ;
   }
 
   /**
