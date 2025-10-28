@@ -134,7 +134,6 @@ export interface ToolCallState {
   collapsed?: boolean; // For tools that should hide their children immediately
   shouldCollapse?: boolean; // For tools that should collapse after completion
   hideOutput?: boolean; // For tools that should never show output
-  userInitiated?: boolean; // For user-initiated tool calls (e.g., !bash commands)
   diffPreview?: {
     oldContent: string;
     newContent: string;

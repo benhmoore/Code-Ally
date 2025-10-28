@@ -356,7 +356,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       collapsed: event.data.collapsed || false, // Collapse output for subagent tools
       shouldCollapse: event.data.shouldCollapse || false, // Collapse after completion
       hideOutput: event.data.hideOutput || false, // Never show output
-      userInitiated: event.data.userInitiated || false, // For user-initiated commands (!bash)
     };
 
     // Tool call creation must be immediate to avoid race conditions with completion events
@@ -390,16 +389,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       // Clear diff preview on completion - the preview is no longer relevant
       diffPreview: undefined,
     };
-
-    // Add output if provided (for user-initiated commands)
-    if (event.data.output !== undefined) {
-      updates.output = event.data.output;
-    }
-
-    // Preserve userInitiated flag if provided
-    if (event.data.userInitiated !== undefined) {
-      updates.userInitiated = event.data.userInitiated;
-    }
 
     // If tool has shouldCollapse, collapse it on completion (takes priority)
     if (event.data.shouldCollapse) {
@@ -1011,103 +1000,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           return;
         }
       }
-    }
-
-    // Check for bash prefix (!) - run command directly
-    if (trimmed.startsWith('!')) {
-      const command = trimmed.slice(1).trim();
-
-      if (!command) {
-        actions.addMessage({
-          role: 'assistant',
-          content: 'Error: No command provided after !',
-        });
-        return;
-      }
-
-      // Add user message
-      actions.addMessage({
-        role: 'user',
-        content: trimmed,
-      });
-
-      // Emit tool call start event with userInitiated flag
-      const toolCallId = `user-bash-${Date.now()}`;
-      const serviceRegistry = ServiceRegistry.getInstance();
-      const activityStream = serviceRegistry.get('activity_stream');
-
-      if (activityStream) {
-        (activityStream as any).emit({
-          id: toolCallId,
-          type: ActivityEventType.TOOL_CALL_START,
-          timestamp: Date.now(),
-          data: {
-            toolName: 'bash',
-            arguments: { command },
-            userInitiated: true,
-          },
-        });
-      }
-
-      try {
-        // Run bash command directly
-        const { exec } = await import('child_process');
-        const { promisify } = await import('util');
-        const execPromise = promisify(exec);
-
-        const { stdout, stderr } = await execPromise(command, {
-          cwd: process.cwd(),
-          timeout: 120000, // 2 minute timeout
-        });
-
-        const output = stdout + (stderr ? `\nSTDERR:\n${stderr}` : '');
-
-        // Emit tool call end event
-        if (activityStream) {
-          (activityStream as any).emit({
-            id: toolCallId,
-            type: ActivityEventType.TOOL_CALL_END,
-            timestamp: Date.now(),
-            data: {
-              toolName: 'bash',
-              output,
-              success: true,
-              userInitiated: true,
-            },
-          });
-        }
-
-        // Add output as assistant message
-        actions.addMessage({
-          role: 'assistant',
-          content: `Command executed:\n${output}`,
-        });
-      } catch (error: any) {
-        const errorMsg = error.message || 'Unknown error';
-
-        // Emit tool call end event with error
-        if (activityStream) {
-          (activityStream as any).emit({
-            id: toolCallId,
-            type: ActivityEventType.TOOL_CALL_END,
-            timestamp: Date.now(),
-            data: {
-              toolName: 'bash',
-              success: false,
-              error: errorMsg,
-              userInitiated: true,
-            },
-          });
-        }
-
-        // Add error message
-        actions.addMessage({
-          role: 'assistant',
-          content: `Command failed: ${errorMsg}`,
-        });
-      }
-
-      return;
     }
 
     // Check for slash commands
