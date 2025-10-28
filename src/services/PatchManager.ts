@@ -117,17 +117,32 @@ function validatePatchIndex(index: any): index is PatchIndex {
 }
 
 /**
+ * Configuration for PatchManager
+ */
+export interface PatchManagerConfig {
+  /** Function to get current session ID */
+  getSessionId: () => string | null;
+  /** Maximum number of patches to keep per session (default: 100) */
+  maxPatchesPerSession?: number;
+  /** Maximum total size of patches directory per session in bytes (default: 10MB) */
+  maxPatchesSizeBytes?: number;
+}
+
+/**
  * PatchManager service
  */
 export class PatchManager implements IService {
-  private patchesDir: string;
-  private indexFile: string;
+  private getSessionId: () => string | null;
+  private sessionsDir: string;
   private patchIndex: PatchIndex;
+  private maxPatchesPerSession: number;
+  private maxPatchesSizeBytes: number;
 
-  constructor(patchesDir?: string) {
-    // Default to ~/.code-ally/patches/
-    this.patchesDir = patchesDir || path.join(process.env.HOME || process.env.USERPROFILE || '.', '.code-ally', 'patches');
-    this.indexFile = path.join(this.patchesDir, 'patch_index.json');
+  constructor(config: PatchManagerConfig) {
+    this.getSessionId = config.getSessionId;
+    this.sessionsDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.code-ally', 'sessions');
+    this.maxPatchesPerSession = config.maxPatchesPerSession ?? 100;
+    this.maxPatchesSizeBytes = config.maxPatchesSizeBytes ?? 10 * 1024 * 1024; // 10MB default
     this.patchIndex = {
       next_patch_number: 1,
       patches: [],
@@ -135,17 +150,34 @@ export class PatchManager implements IService {
   }
 
   /**
+   * Get the patches directory for the current session
+   */
+  private getPatchesDir(): string | null {
+    const sessionId = this.getSessionId();
+    if (!sessionId) {
+      return null;
+    }
+    return path.join(this.sessionsDir, sessionId, 'patches');
+  }
+
+  /**
+   * Get the index file path for the current session
+   */
+  private getIndexFile(): string | null {
+    const patchesDir = this.getPatchesDir();
+    if (!patchesDir) {
+      return null;
+    }
+    return path.join(patchesDir, 'patch_index.json');
+  }
+
+  /**
    * Initialize the patch manager
    */
   async initialize(): Promise<void> {
-    await this.ensurePatchesDirectory();
-    await this.clearPreviousSessionPatches();
-    this.patchIndex = {
-      next_patch_number: 1,
-      patches: [],
-    };
-    await this.savePatchIndex();
-    logger.info('PatchManager initialized');
+    // Load existing patches if we have a session
+    await this.loadPatchIndex();
+    logger.debug('PatchManager initialized');
   }
 
   /**
@@ -164,12 +196,17 @@ export class PatchManager implements IService {
   // ========== Filesystem Helpers ==========
 
   /**
-   * Ensure patches directory exists
+   * Ensure patches directory exists for current session
    */
   private async ensurePatchesDirectory(): Promise<void> {
+    const patchesDir = this.getPatchesDir();
+    if (!patchesDir) {
+      return; // No session active
+    }
+
     try {
-      await fs.mkdir(this.patchesDir, { recursive: true });
-      logger.debug(`Patches directory ensured at: ${this.patchesDir}`);
+      await fs.mkdir(patchesDir, { recursive: true });
+      logger.debug(`Patches directory ensured at: ${patchesDir}`);
     } catch (error) {
       logger.error('Failed to create patches directory:', error);
       throw error;
@@ -177,16 +214,65 @@ export class PatchManager implements IService {
   }
 
   /**
-   * Save patch index to disk
+   * Load patch index from disk for current session
+   */
+  private async loadPatchIndex(): Promise<void> {
+    const indexFile = this.getIndexFile();
+    if (!indexFile) {
+      // No session active - reset to empty index
+      this.patchIndex = {
+        next_patch_number: 1,
+        patches: [],
+      };
+      return;
+    }
+
+    try {
+      const content = await fs.readFile(indexFile, 'utf-8');
+      const loaded = JSON.parse(content);
+      if (validatePatchIndex(loaded)) {
+        this.patchIndex = loaded;
+        logger.debug(`Loaded ${loaded.patches.length} patches from index`);
+      } else {
+        logger.warn('Invalid patch index structure, resetting');
+        this.patchIndex = {
+          next_patch_number: 1,
+          patches: [],
+        };
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        // Index doesn't exist yet - start fresh
+        this.patchIndex = {
+          next_patch_number: 1,
+          patches: [],
+        };
+      } else {
+        logger.error('Failed to load patch index:', error);
+        this.patchIndex = {
+          next_patch_number: 1,
+          patches: [],
+        };
+      }
+    }
+  }
+
+  /**
+   * Save patch index to disk for current session
    */
   private async savePatchIndex(): Promise<void> {
+    const indexFile = this.getIndexFile();
+    if (!indexFile) {
+      return; // No session active
+    }
+
     try {
       // Validate index structure before saving
       if (!validatePatchIndex(this.patchIndex)) {
         throw new Error('Invalid patch index structure');
       }
 
-      await fs.writeFile(this.indexFile, JSON.stringify(this.patchIndex, null, 2), 'utf-8');
+      await fs.writeFile(indexFile, JSON.stringify(this.patchIndex, null, 2), 'utf-8');
       logger.debug('Patch index saved');
     } catch (error) {
       logger.error('Failed to save patch index:', error);
@@ -197,30 +283,12 @@ export class PatchManager implements IService {
   /**
    * Generate patch filename for a patch number
    */
-  private generatePatchFilename(patchNumber: number): string {
-    return path.join(this.patchesDir, `patch_${String(patchNumber).padStart(3, '0')}.diff`);
-  }
-
-  /**
-   * Clear patches from previous session
-   */
-  private async clearPreviousSessionPatches(): Promise<void> {
-    try {
-      // Remove all patch files
-      const files = await fs.readdir(this.patchesDir).catch(() => []);
-      for (const file of files) {
-        if (file.startsWith('patch_') && file.endsWith('.diff')) {
-          await fs.unlink(path.join(this.patchesDir, file)).catch(() => {});
-          logger.debug(`Cleared previous session patch: ${file}`);
-        }
-      }
-
-      // Remove index file
-      await fs.unlink(this.indexFile).catch(() => {});
-      logger.debug('Cleared previous session patch index');
-    } catch (error) {
-      logger.warn('Failed to clear previous session patches:', error);
+  private generatePatchFilename(patchNumber: number): string | null {
+    const patchesDir = this.getPatchesDir();
+    if (!patchesDir) {
+      return null;
     }
+    return path.join(patchesDir, `patch_${String(patchNumber).padStart(3, '0')}.diff`);
   }
 
   // ========== Capture Operations ==========
@@ -241,13 +309,28 @@ export class PatchManager implements IService {
     newContent?: string
   ): Promise<number | null> {
     try {
+      // Check if we have an active session
+      if (!this.getSessionId()) {
+        logger.debug('No active session - skipping patch capture');
+        return null;
+      }
+
       if (!filePath || typeof filePath !== 'string') {
         logger.error('Invalid file path provided for patch capture');
         return null;
       }
 
+      // Ensure patches directory exists
+      await this.ensurePatchesDirectory();
+
       const patchNumber = this.patchIndex.next_patch_number;
       const patchFile = this.generatePatchFilename(patchNumber);
+
+      if (!patchFile) {
+        logger.error('Failed to generate patch filename');
+        return null;
+      }
+
       const timestamp = new Date().toISOString();
 
       // Resolve to absolute path
@@ -284,6 +367,9 @@ export class PatchManager implements IService {
       this.patchIndex.patches.push(patchEntry);
       this.patchIndex.next_patch_number += 1;
       await this.savePatchIndex();
+
+      // Run cleanup to enforce limits
+      await this.cleanupOldPatches();
 
       logger.info(`Captured ${operationType} for ${filePath} as patch ${patchNumber}`);
       return patchNumber;
@@ -351,12 +437,15 @@ export class PatchManager implements IService {
       this.patchIndex.patches = this.patchIndex.patches.slice(0, -patchesToUndo.length);
       await this.savePatchIndex();
 
-      for (const patchEntry of patchesToUndo) {
-        try {
-          const patchFile = path.join(this.patchesDir, patchEntry.patch_file);
-          await fs.unlink(patchFile).catch(() => {});
-        } catch (error) {
-          logger.warn(`Failed to delete patch file ${patchEntry.patch_file}:`, error);
+      const patchesDir = this.getPatchesDir();
+      if (patchesDir) {
+        for (const patchEntry of patchesToUndo) {
+          try {
+            const patchFile = path.join(patchesDir, patchEntry.patch_file);
+            await fs.unlink(patchFile).catch(() => {});
+          } catch (error) {
+            logger.warn(`Failed to delete patch file ${patchEntry.patch_file}:`, error);
+          }
         }
       }
     }
@@ -389,7 +478,12 @@ export class PatchManager implements IService {
    */
   private async applyReversePatch(patchEntry: PatchMetadata): Promise<boolean> {
     try {
-      const patchFile = path.join(this.patchesDir, patchEntry.patch_file);
+      const patchesDir = this.getPatchesDir();
+      if (!patchesDir) {
+        logger.error('No active session - cannot apply reverse patch');
+        return false;
+      }
+      const patchFile = path.join(patchesDir, patchEntry.patch_file);
 
       // Check if patch file exists
       const patchExists = await fs.access(patchFile).then(() => true).catch(() => false);
@@ -523,7 +617,12 @@ export class PatchManager implements IService {
     currentContent: string
   ): Promise<string | null> {
     try {
-      const patchFile = path.join(this.patchesDir, patchEntry.patch_file);
+      const patchesDir = this.getPatchesDir();
+      if (!patchesDir) {
+        logger.error('No active session - cannot simulate undo');
+        return null;
+      }
+      const patchFile = path.join(patchesDir, patchEntry.patch_file);
 
       // Check if patch file exists
       const patchExists = await fs.access(patchFile).then(() => true).catch(() => false);
@@ -576,15 +675,18 @@ export class PatchManager implements IService {
   async clearPatchHistory(): Promise<{ success: boolean; message: string }> {
     try {
       let removedCount = 0;
+      const patchesDir = this.getPatchesDir();
 
       // Remove all patch files
-      for (const patchEntry of this.patchIndex.patches) {
-        try {
-          const patchFile = path.join(this.patchesDir, patchEntry.patch_file);
-          await fs.unlink(patchFile);
-          removedCount++;
-        } catch (error) {
-          logger.warn(`Failed to remove patch file ${patchEntry.patch_file}:`, error);
+      if (patchesDir) {
+        for (const patchEntry of this.patchIndex.patches) {
+          try {
+            const patchFile = path.join(patchesDir, patchEntry.patch_file);
+            await fs.unlink(patchFile);
+            removedCount++;
+          } catch (error) {
+            logger.warn(`Failed to remove patch file ${patchEntry.patch_file}:`, error);
+          }
         }
       }
 
@@ -627,23 +729,27 @@ export class PatchManager implements IService {
       operationCounts[op] = (operationCounts[op] || 0) + 1;
     }
 
+    const patchesDir = this.getPatchesDir();
+
     // Calculate total size
     let totalSize = 0;
-    try {
-      const files = await fs.readdir(this.patchesDir);
-      for (const file of files) {
-        if (file.startsWith('patch_') && file.endsWith('.diff')) {
-          const filePath = path.join(this.patchesDir, file);
-          const stats = await fs.stat(filePath);
-          totalSize += stats.size;
+    if (patchesDir) {
+      try {
+        const files = await fs.readdir(patchesDir);
+        for (const file of files) {
+          if (file.startsWith('patch_') && file.endsWith('.diff')) {
+            const filePath = path.join(patchesDir, file);
+            const stats = await fs.stat(filePath);
+            totalSize += stats.size;
+          }
         }
+      } catch (error) {
+        logger.warn('Failed to calculate patch files size:', error);
       }
-    } catch (error) {
-      logger.warn('Failed to calculate patch files size:', error);
     }
 
     return {
-      patches_directory: this.patchesDir,
+      patches_directory: patchesDir || 'N/A',
       total_patches: patchCount,
       operation_counts: operationCounts,
       total_size_bytes: totalSize,
@@ -690,12 +796,17 @@ export class PatchManager implements IService {
       return [];
     }
 
+    const patchesDir = this.getPatchesDir();
+    if (!patchesDir) {
+      return [];
+    }
+
     const recentPatches = this.patchIndex.patches.slice(-limit).reverse();
     const fileEntries: UndoFileEntry[] = [];
 
     for (const patchEntry of recentPatches) {
       try {
-        const patchFile = path.join(this.patchesDir, patchEntry.patch_file);
+        const patchFile = path.join(patchesDir, patchEntry.patch_file);
         const patchContent = await fs.readFile(patchFile, 'utf-8');
         const diffContent = extractDiffContent(patchContent);
 
@@ -748,8 +859,11 @@ export class PatchManager implements IService {
         await this.savePatchIndex();
 
         // Delete patch file
-        const patchFile = path.join(this.patchesDir, patchEntry.patch_file);
-        await fs.unlink(patchFile).catch(() => {});
+        const patchesDir = this.getPatchesDir();
+        if (patchesDir) {
+          const patchFile = path.join(patchesDir, patchEntry.patch_file);
+          await fs.unlink(patchFile).catch(() => {});
+        }
 
         const result: UndoResult = {
           success: true,
@@ -827,6 +941,112 @@ export class PatchManager implements IService {
     } catch (error) {
       logger.error(`Failed to generate preview for patch ${patchNumber}:`, error);
       return null;
+    }
+  }
+
+  // ========== Session Management & Cleanup ==========
+
+  /**
+   * Reload patches when session changes
+   * This should be called when switching sessions
+   */
+  async onSessionChange(): Promise<void> {
+    await this.loadPatchIndex();
+    logger.debug(`Patches reloaded for session: ${this.getSessionId() || 'none'}`);
+  }
+
+  /**
+   * Clean up old patches to enforce size and count limits
+   */
+  private async cleanupOldPatches(): Promise<void> {
+    const patchesDir = this.getPatchesDir();
+    if (!patchesDir) {
+      return;
+    }
+
+    try {
+      // Cleanup by count - keep only last N patches
+      if (this.patchIndex.patches.length > this.maxPatchesPerSession) {
+        const toRemove = this.patchIndex.patches.length - this.maxPatchesPerSession;
+        const removedPatches = this.patchIndex.patches.splice(0, toRemove);
+
+        // Delete patch files
+        for (const patch of removedPatches) {
+          const patchFilePath = path.join(patchesDir, patch.patch_file);
+          await fs.unlink(patchFilePath).catch(() => {});
+        }
+
+        await this.savePatchIndex();
+        logger.info(`Cleaned up ${toRemove} old patches (count limit)`);
+      }
+
+      // Cleanup by size - check total size of patches directory
+      await this.cleanupBySize(patchesDir);
+    } catch (error) {
+      logger.warn('Failed to cleanup old patches:', error);
+    }
+  }
+
+  /**
+   * Clean up patches by total directory size
+   */
+  private async cleanupBySize(patchesDir: string): Promise<void> {
+    try {
+      // Calculate total size
+      let totalSize = 0;
+      const files = await fs.readdir(patchesDir);
+
+      for (const file of files) {
+        const filePath = path.join(patchesDir, file);
+        const stats = await fs.stat(filePath).catch(() => null);
+        if (stats && stats.isFile()) {
+          totalSize += stats.size;
+        }
+      }
+
+      // If over limit, remove oldest patches until under limit
+      if (totalSize > this.maxPatchesSizeBytes) {
+        logger.info(`Patches directory size (${totalSize} bytes) exceeds limit (${this.maxPatchesSizeBytes} bytes)`);
+
+        let removedCount = 0;
+        while (totalSize > this.maxPatchesSizeBytes && this.patchIndex.patches.length > 0) {
+          const oldestPatch = this.patchIndex.patches.shift();
+          if (!oldestPatch) break;
+
+          const patchFilePath = path.join(patchesDir, oldestPatch.patch_file);
+          const stats = await fs.stat(patchFilePath).catch(() => null);
+          if (stats) {
+            totalSize -= stats.size;
+          }
+
+          await fs.unlink(patchFilePath).catch(() => {});
+          removedCount++;
+        }
+
+        if (removedCount > 0) {
+          await this.savePatchIndex();
+          logger.info(`Cleaned up ${removedCount} old patches (size limit)`);
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to cleanup patches by size:', error);
+    }
+  }
+
+  /**
+   * Delete all patches for a specific session
+   * Should be called when a session is deleted
+   *
+   * @param sessionId - Session ID to clean up patches for
+   */
+  async cleanupSessionPatches(sessionId: string): Promise<void> {
+    const patchesDir = path.join(this.sessionsDir, sessionId, 'patches');
+
+    try {
+      await fs.rm(patchesDir, { recursive: true, force: true });
+      logger.info(`Deleted patches directory for session: ${sessionId}`);
+    } catch (error) {
+      logger.warn(`Failed to delete patches for session ${sessionId}:`, error);
     }
   }
 }

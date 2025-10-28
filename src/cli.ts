@@ -347,9 +347,13 @@ async function main() {
     const focusManager = new FocusManager();
     registry.registerInstance('focus_manager', focusManager);
 
-    // Create patch manager for undo functionality
+    // Create patch manager for undo functionality (session-specific)
     const { PatchManager } = await import('./services/PatchManager.js');
-    const patchManager = new PatchManager();
+    const patchManager = new PatchManager({
+      getSessionId: () => sessionManager.getCurrentSession(),
+      maxPatchesPerSession: 100, // Keep last 100 patches per session
+      maxPatchesSizeBytes: 10 * 1024 * 1024, // 10MB limit per session
+    });
     await patchManager.initialize();
     registry.registerInstance('patch_manager', patchManager);
 

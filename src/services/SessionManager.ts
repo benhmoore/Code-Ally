@@ -344,11 +344,25 @@ export class SessionManager implements IService {
    */
   async deleteSession(sessionName: string): Promise<boolean> {
     const sessionPath = this.getSessionPath(sessionName);
+    const sessionDir = sessionPath.replace('.json', ''); // Directory for session data (e.g., patches)
+
     try {
+      // Delete session file
       await fs.unlink(sessionPath);
+
+      // Delete session directory (if it exists) - includes patches and other session data
+      try {
+        await fs.rm(sessionDir, { recursive: true, force: true });
+        logger.info(`Deleted session directory: ${sessionDir}`);
+      } catch (dirError) {
+        // Directory might not exist, that's okay
+        logger.debug(`No session directory to delete: ${sessionDir}`);
+      }
+
       if (this.currentSession === sessionName) {
         this.currentSession = null;
       }
+
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -386,6 +400,40 @@ export class SessionManager implements IService {
   async getSessionMessages(sessionName: string): Promise<Message[]> {
     const session = await this.loadSession(sessionName);
     return session?.messages ?? [];
+  }
+
+  /**
+   * Get all session data in a single read (optimized for session resume)
+   *
+   * This method loads the session file once and returns all commonly needed data,
+   * avoiding multiple file reads during session resume.
+   *
+   * @param sessionName - Name of the session
+   * @returns Object containing messages, todos, idle messages, and project context
+   */
+  async getSessionData(sessionName: string): Promise<{
+    messages: Message[];
+    todos: TodoItem[];
+    idleMessages: string[];
+    projectContext: Session['project_context'] | null;
+  }> {
+    const session = await this.loadSession(sessionName);
+
+    if (!session) {
+      return {
+        messages: [],
+        todos: [],
+        idleMessages: [],
+        projectContext: null,
+      };
+    }
+
+    return {
+      messages: session.messages ?? [],
+      todos: session.todos ?? [],
+      idleMessages: session.idle_messages ?? [],
+      projectContext: session.project_context ?? null,
+    };
   }
 
   /**

@@ -76,6 +76,10 @@ export class CommandHandler {
         return await this.handleModel(args);
       case 'debug':
         return await this.handleDebug(args, messages);
+      case 'context':
+        return await this.handleContext(messages);
+      case 'clear':
+        return await this.handleClear();
       case 'compact':
         return await this.handleCompact(args, messages);
       case 'rewind':
@@ -171,6 +175,8 @@ Core Commands:
   /config reset            - Reset all settings to defaults
   /model [ally|service] [name] - Switch model or show current model
   /debug [system|tokens]   - Show debug information
+  /context                 - Show context usage (token count)
+  /clear                   - Clear conversation history
   /compact                 - Compact conversation history
   /rewind                  - Rewind conversation to a previous message
   /undo [count]            - Undo last N file operations (default: 1)
@@ -203,6 +209,46 @@ Todo Commands:
 `;
 
     return { handled: true, response: helpText };
+  }
+
+  /**
+   * Handle /context command - show context usage (alias for /debug tokens)
+   */
+  private async handleContext(messages: Message[]): Promise<CommandResult> {
+    // /context is a shortcut for /debug tokens
+    return this.debugTokens(messages);
+  }
+
+  /**
+   * Handle /clear command - clear conversation history
+   */
+  private async handleClear(): Promise<CommandResult> {
+    if (!this.agent) {
+      return {
+        handled: true,
+        response: 'Error: Agent not available',
+      };
+    }
+
+    // Get system message if it exists
+    const messages = this.agent.getMessages();
+    const systemMessage = messages.find(m => m.role === 'system');
+
+    // Keep only system message
+    const clearedMessages = systemMessage ? [systemMessage] : [];
+    this.agent.setMessages(clearedMessages);
+
+    // Update token manager
+    const registry = ServiceRegistry.getInstance();
+    const tokenManager = registry.get('token_manager');
+    if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
+      (tokenManager as any).updateTokenCount(clearedMessages);
+    }
+
+    return {
+      handled: true,
+      response: 'Conversation history cleared.',
+    };
   }
 
   private async handleConfig(args: string[]): Promise<CommandResult> {

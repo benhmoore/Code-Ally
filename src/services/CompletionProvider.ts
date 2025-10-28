@@ -39,19 +39,20 @@ export interface CompletionContext {
  */
 const SLASH_COMMANDS = [
   { name: '/help', description: 'Show help information' },
+  { name: '/init', description: 'Run setup wizard' },
   { name: '/config', description: 'View or modify configuration' },
+  { name: '/model', description: 'Switch LLM model' },
+  { name: '/debug', description: 'Show debug information' },
+  { name: '/context', description: 'Show context usage' },
   { name: '/clear', description: 'Clear conversation history' },
   { name: '/compact', description: 'Compact conversation context' },
-  { name: '/debug', description: 'Show debug information' },
-  { name: '/model', description: 'Switch LLM model' },
   { name: '/rewind', description: 'Rewind conversation' },
   { name: '/undo', description: 'Undo file operations' },
   { name: '/agent', description: 'Manage specialized agents' },
   { name: '/focus', description: 'Manage focus mode' },
-  { name: '/memory', description: 'Manage memory facts' },
   { name: '/project', description: 'Manage project configuration' },
   { name: '/todo', description: 'Manage todo list' },
-  { name: '/context', description: 'Show context usage' },
+  { name: '/exit', description: 'Exit the application' },
 ];
 
 /**

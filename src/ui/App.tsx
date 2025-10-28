@@ -40,6 +40,83 @@ import { ToolManager } from '../tools/ToolManager.js';
 import { PatchManager } from '../services/PatchManager.js';
 
 /**
+ * Reconstruct ToolCallState objects from message history
+ *
+ * When loading a session from disk, we have messages with tool_calls and tool results,
+ * but we don't have the ToolCallState objects that are needed for proper UI rendering.
+ * This function reconstructs those states from the message history.
+ *
+ * @param messages - Array of messages from the session
+ * @param serviceRegistry - Service registry to look up tool definitions
+ * @returns Array of reconstructed ToolCallState objects
+ */
+function reconstructToolCallsFromMessages(messages: Message[], serviceRegistry: ServiceRegistry): ToolCallState[] {
+  const toolCalls: ToolCallState[] = [];
+  const toolResultsMap = new Map<string, { output: string; error?: string; timestamp: number }>();
+
+  // Get ToolManager to look up tool visibility
+  const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+  // First pass: collect all tool results
+  messages.forEach(msg => {
+    if (msg.role === 'tool' && msg.tool_call_id) {
+      toolResultsMap.set(msg.tool_call_id, {
+        output: msg.content,
+        error: msg.content.startsWith('Error:') ? msg.content : undefined,
+        timestamp: msg.timestamp || Date.now(),
+      });
+    }
+  });
+
+  // Second pass: reconstruct tool call states from assistant messages
+  messages.forEach(msg => {
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+      const baseTimestamp = msg.timestamp || Date.now();
+
+      msg.tool_calls.forEach((tc, index) => {
+        const result = toolResultsMap.get(tc.id);
+        const hasError = result?.error !== undefined;
+
+        // Parse arguments if they're a string
+        let parsedArgs: any;
+        try {
+          parsedArgs = typeof tc.function.arguments === 'string'
+            ? JSON.parse(tc.function.arguments)
+            : tc.function.arguments;
+        } catch {
+          parsedArgs = tc.function.arguments;
+        }
+
+        // Look up tool definition to get visibility settings
+        let visibleInChat = true; // Default to visible
+        if (toolManager) {
+          const toolDef = toolManager.getTool(tc.function.name);
+          if (toolDef) {
+            visibleInChat = toolDef.visibleInChat ?? true;
+          }
+        }
+
+        const toolCallState: ToolCallState = {
+          id: tc.id,
+          status: result ? (hasError ? 'error' : 'success') : 'success', // Default to success if we have the call
+          toolName: tc.function.name,
+          arguments: parsedArgs,
+          output: result?.output,
+          error: result?.error,
+          startTime: baseTimestamp + index, // Slightly offset multiple calls in same message
+          endTime: result?.timestamp,
+          visibleInChat: visibleInChat,
+        };
+
+        toolCalls.push(toolCallState);
+      });
+    }
+  });
+
+  return toolCalls;
+}
+
+/**
  * Props for the App component
  */
 export interface AppProps {
@@ -285,22 +362,27 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         // This prevents auto-save from creating a new session
         sessionManager.setCurrentSession(resumeSession);
 
-        const sessionMessages = await sessionManager.getSessionMessages(resumeSession);
-        const sessionTodos = await sessionManager.getTodos(resumeSession);
-        const sessionIdleMessages = await sessionManager.getIdleMessages(resumeSession);
+        // Reload patches for the new session
+        const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+        if (patchManager) {
+          await patchManager.onSessionChange();
+        }
+
+        // Load all session data in a single read (optimization)
+        const sessionData = await sessionManager.getSessionData(resumeSession);
 
         // Filter out system messages to avoid duplication
-        const userMessages = sessionMessages.filter(m => m.role !== 'system');
+        const userMessages = sessionData.messages.filter(m => m.role !== 'system');
 
         // Load idle messages into IdleMessageGenerator
         const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
-        if (idleMessageGenerator && sessionIdleMessages.length > 0) {
-          (idleMessageGenerator as any).setQueue(sessionIdleMessages);
+        if (idleMessageGenerator && sessionData.idleMessages.length > 0) {
+          (idleMessageGenerator as any).setQueue(sessionData.idleMessages);
         }
 
         // Load todos into TodoManager
-        if (todoManager && sessionTodos.length > 0) {
-          (todoManager as any).setTodos(sessionTodos);
+        if (todoManager && sessionData.todos.length > 0) {
+          (todoManager as any).setTodos(sessionData.todos);
         }
 
         // Bulk load messages (setMessages doesn't trigger auto-save)
@@ -308,16 +390,22 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
         // Load project context into ProjectContextDetector
         const projectContextDetector = serviceRegistry.get('project_context_detector');
-        const sessionProjectContext = await sessionManager.getProjectContext(resumeSession);
-        if (projectContextDetector && sessionProjectContext) {
-          (projectContextDetector as any).setCached(sessionProjectContext);
+        if (projectContextDetector && sessionData.projectContext) {
+          (projectContextDetector as any).setCached(sessionData.projectContext);
         }
+
+        // Reconstruct tool call states from message history for proper rendering
+        const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
+        reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
 
         // Mark session as loaded
         setSessionLoaded(true);
 
         // Update UI state
         actions.setMessages(userMessages);
+
+        // Force Static to remount with loaded session messages
+        actions.forceStaticRemount();
 
         // Update context usage
         const tokenManager = serviceRegistry.get('token_manager');
@@ -792,6 +880,17 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   useEffect(() => {
     if (rewindRequest && rewindRequest.userMessagesCount === -1) {
       const userMessages = state.messages.filter(m => m.role === 'user');
+
+      // Cancel rewind if there are no user messages
+      if (userMessages.length === 0) {
+        setRewindRequest(undefined);
+        actions.addMessage({
+          role: 'assistant',
+          content: 'No user messages to rewind to.',
+        });
+        return;
+      }
+
       const initialIndex = Math.max(0, userMessages.length - 1);
 
       setRewindRequest(prev => prev ? {
@@ -800,7 +899,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         selectedIndex: initialIndex
       } : undefined);
     }
-  }, [rewindRequest, state.messages]);
+  }, [rewindRequest, state.messages, actions]);
 
   // Two-stage undo flow: File list request
   useActivityEvent(ActivityEventType.UNDO_FILE_LIST_REQUEST, (event) => {
@@ -964,23 +1063,48 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         // This prevents auto-save from creating a new session
         sessionManager.setCurrentSession(sessionId);
 
-        // Load session data
-        const sessionMessages = await sessionManager.getSessionMessages(sessionId);
-        const sessionTodos = await sessionManager.getTodos(sessionId);
+        // Reload patches for the new session
+        const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+        if (patchManager) {
+          await patchManager.onSessionChange();
+        }
+
+        // Load all session data in a single read (optimization)
+        const sessionData = await sessionManager.getSessionData(sessionId);
 
         // Filter out system messages to avoid duplication
-        const userMessages = sessionMessages.filter(m => m.role !== 'system');
+        const userMessages = sessionData.messages.filter(m => m.role !== 'system');
 
-        // Load messages into agent (auto-save will now use the correct session)
-        userMessages.forEach(message => agent.addMessage(message));
+        // Bulk load messages into agent (setMessages doesn't trigger per-message events)
+        agent.setMessages(userMessages);
 
         // Load todos into TodoManager
-        if (todoManager && sessionTodos.length > 0) {
-          (todoManager as any).setTodos(sessionTodos);
+        if (todoManager && sessionData.todos.length > 0) {
+          (todoManager as any).setTodos(sessionData.todos);
         }
+
+        // Load idle messages into IdleMessageGenerator (if switching to a session with idle messages)
+        const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
+        if (idleMessageGenerator && sessionData.idleMessages.length > 0) {
+          (idleMessageGenerator as any).setQueue(sessionData.idleMessages);
+        }
+
+        // Load project context into ProjectContextDetector
+        const projectContextDetector = serviceRegistry.get('project_context_detector');
+        if (projectContextDetector && sessionData.projectContext) {
+          (projectContextDetector as any).setCached(sessionData.projectContext);
+        }
+
+        // Clear existing tool calls and reconstruct from message history
+        actions.clearToolCalls();
+        const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
+        reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
 
         // Update UI state
         actions.setMessages(userMessages);
+
+        // Force Static to remount with switched session messages
+        actions.forceStaticRemount();
 
         // Update context usage
         if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
@@ -1003,6 +1127,19 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     // Apply rewind if not cancelled
     if (!cancelled && selectedIndex !== undefined) {
       try {
+        // IMPORTANT: Get user messages BEFORE rewind to find the target message timestamp
+        // After rewind, the target message will be removed from the conversation
+        const userMessagesBeforeRewind = agent.getMessages().filter(m => m.role === 'user');
+        const targetMessage = userMessagesBeforeRewind[selectedIndex];
+
+        // Validate target message exists
+        if (!targetMessage) {
+          throw new Error(`Target message at index ${selectedIndex} not found (${userMessagesBeforeRewind.length} user messages available)`);
+        }
+
+        const rewindTimestamp = (targetMessage as any)?.timestamp || Date.now();
+
+        // Perform the rewind
         const targetMessageContent = await agent.rewindToMessage(selectedIndex);
 
         // Update UI state - get fresh messages from agent, filter out system messages
@@ -1011,11 +1148,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
         // Force Static to remount with new message list
         actions.forceStaticRemount();
-
-        // Find the timestamp of the rewind target message
-        const allMessages = agent.getMessages();
-        const targetMessage = allMessages[selectedIndex];
-        const rewindTimestamp = (targetMessage as any)?.timestamp || Date.now();
 
         // Clear only tool calls that occurred AFTER the rewind point
         // Keep tool calls that happened before to preserve conversation history
