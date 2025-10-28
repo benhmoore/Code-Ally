@@ -410,6 +410,7 @@ async function main() {
     const { TodoWriteTool } = await import('./tools/TodoWriteTool.js');
     const { SessionLookupTool } = await import('./tools/SessionLookupTool.js');
     const { SessionReadTool } = await import('./tools/SessionReadTool.js');
+    const { AskSessionTool } = await import('./tools/AskSessionTool.js');
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
     const { FocusManagerTool } = await import('./tools/FocusManagerTool.js');
@@ -429,6 +430,7 @@ async function main() {
       new TodoWriteTool(activityStream),
       new SessionLookupTool(activityStream),
       new SessionReadTool(activityStream),
+      new AskSessionTool(activityStream),
       new LintTool(activityStream),
       new FormatTool(activityStream),
       new FocusManagerTool(activityStream),
