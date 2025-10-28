@@ -117,6 +117,56 @@ function reconstructToolCallsFromMessages(messages: Message[], serviceRegistry: 
 }
 
 /**
+ * Reconstruct todo list from message history
+ *
+ * When rewinding or loading a session, we need to reconstruct the todo state.
+ * This function finds the last todo_write tool call and extracts the todo list from it.
+ *
+ * @param messages - Array of messages from the session
+ * @returns Array of todos at that point in time, or empty array if no todos found
+ */
+function reconstructTodosFromMessages(messages: Message[]): Array<{
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  activeForm: string;
+}> {
+  // Find all todo_write tool calls by iterating messages in reverse (most recent first)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!msg) continue;
+
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+      // Check each tool call in this message
+      for (const tc of msg.tool_calls) {
+        if (tc.function.name === 'todo_write') {
+          // Parse arguments
+          let args: any;
+          try {
+            args = typeof tc.function.arguments === 'string'
+              ? JSON.parse(tc.function.arguments)
+              : tc.function.arguments;
+          } catch {
+            continue; // Skip malformed tool calls
+          }
+
+          // Extract todos array
+          if (args.todos && Array.isArray(args.todos)) {
+            return args.todos.map((t: any) => ({
+              content: t.content || '',
+              status: t.status || 'pending',
+              activeForm: t.activeForm || t.content || '',
+            }));
+          }
+        }
+      }
+    }
+  }
+
+  // No todo_write calls found - return empty array
+  return [];
+}
+
+/**
  * Props for the App component
  */
 export interface AppProps {
@@ -380,9 +430,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           (idleMessageGenerator as any).setQueue(sessionData.idleMessages);
         }
 
-        // Load todos into TodoManager
-        if (todoManager && sessionData.todos.length > 0) {
-          (todoManager as any).setTodos(sessionData.todos);
+        // Load todos into TodoManager (or clear if session has no todos)
+        if (todoManager) {
+          if (sessionData.todos.length > 0) {
+            (todoManager as any).setTodos(sessionData.todos);
+          } else {
+            (todoManager as any).setTodos([]);
+          }
         }
 
         // Bulk load messages (setMessages doesn't trigger auto-save)
@@ -488,6 +542,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       diffPreview: undefined,
     };
 
+    // If executionStartTime was never set (permission timeout/denial), set it to endTime
+    // This ensures duration = 0 for tools that never actually executed
+    const toolCall = state.activeToolCalls.find((tc: ToolCallState) => tc.id === event.id);
+    if (toolCall && !toolCall.executionStartTime) {
+      updates.executionStartTime = event.timestamp;
+    }
+
     // If tool has shouldCollapse, collapse it on completion (takes priority)
     if (event.data.shouldCollapse) {
       updates.collapsed = true;
@@ -497,6 +558,23 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     }
 
     scheduleToolUpdate.current(event.id, updates, true); // Immediate update for completion
+  });
+
+  // Subscribe to tool execution start events (for accurate timing)
+  useActivityEvent(ActivityEventType.TOOL_EXECUTION_START, (event) => {
+    // Enforce structure
+    if (!event.id) {
+      throw new Error('TOOL_EXECUTION_START event missing required id field');
+    }
+
+    if (!event.timestamp) {
+      throw new Error(`TOOL_EXECUTION_START event missing required 'timestamp' field. ID: ${event.id}`);
+    }
+
+    // Update tool call with execution start time (after permission granted)
+    scheduleToolUpdate.current(event.id, {
+      executionStartTime: event.timestamp,
+    }, true); // Immediate update for timing accuracy
   });
 
   // Subscribe to tool output chunks
@@ -1078,9 +1156,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         // Bulk load messages into agent (setMessages doesn't trigger per-message events)
         agent.setMessages(userMessages);
 
-        // Load todos into TodoManager
-        if (todoManager && sessionData.todos.length > 0) {
-          (todoManager as any).setTodos(sessionData.todos);
+        // Load todos into TodoManager (or clear if session has no todos)
+        if (todoManager) {
+          if (sessionData.todos.length > 0) {
+            (todoManager as any).setTodos(sessionData.todos);
+          } else {
+            (todoManager as any).setTodos([]);
+          }
         }
 
         // Load idle messages into IdleMessageGenerator (if switching to a session with idle messages)
@@ -1127,36 +1209,42 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     // Apply rewind if not cancelled
     if (!cancelled && selectedIndex !== undefined) {
       try {
-        // IMPORTANT: Get user messages BEFORE rewind to find the target message timestamp
-        // After rewind, the target message will be removed from the conversation
-        const userMessagesBeforeRewind = agent.getMessages().filter(m => m.role === 'user');
-        const targetMessage = userMessagesBeforeRewind[selectedIndex];
-
-        // Validate target message exists
-        if (!targetMessage) {
-          throw new Error(`Target message at index ${selectedIndex} not found (${userMessagesBeforeRewind.length} user messages available)`);
-        }
-
-        const rewindTimestamp = (targetMessage as any)?.timestamp || Date.now();
-
-        // Perform the rewind
+        // Perform the rewind on the agent's message array
         const targetMessageContent = await agent.rewindToMessage(selectedIndex);
 
-        // Update UI state - get fresh messages from agent, filter out system messages
-        const newMessages = agent.getMessages().filter(m => m.role !== 'system');
-        actions.setMessages(newMessages);
+        // Get fresh messages from agent after rewind (filter out system messages)
+        const rewindedMessages = agent.getMessages().filter(m => m.role !== 'system');
+
+        // Reconstruct the entire conversation state from rewound messages
+        // This ensures perfect consistency between messages and tool calls
+        const serviceRegistry = ServiceRegistry.getInstance();
+
+        // Clear all tool calls and reconstruct from message history
+        actions.clearToolCalls();
+        const reconstructedToolCalls = reconstructToolCallsFromMessages(rewindedMessages, serviceRegistry);
+        reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
+
+        // Reconstruct todos from message history
+        const reconstructedTodos = reconstructTodosFromMessages(rewindedMessages);
+        const todoManager = serviceRegistry.get('todo_manager');
+        if (todoManager && typeof (todoManager as any).setTodos === 'function') {
+          if (reconstructedTodos.length > 0) {
+            // Convert to TodoItem format with IDs
+            const todoItems = reconstructedTodos.map((t: any) =>
+              (todoManager as any).createTodoItem(t.content, t.status, t.activeForm)
+            );
+            (todoManager as any).setTodos(todoItems);
+          } else {
+            // Clear todos if rewinding to a point before any todos existed
+            (todoManager as any).setTodos([]);
+          }
+        }
+
+        // Update UI state with rewound messages
+        actions.setMessages(rewindedMessages);
 
         // Force Static to remount with new message list
         actions.forceStaticRemount();
-
-        // Clear only tool calls that occurred AFTER the rewind point
-        // Keep tool calls that happened before to preserve conversation history
-        const currentToolCalls = state.activeToolCalls;
-        const toolCallsToKeep = currentToolCalls.filter(tc => tc.startTime < rewindTimestamp);
-
-        // Remove all, then add back the ones we want to keep
-        actions.clearToolCalls();
-        toolCallsToKeep.forEach(tc => actions.addToolCall(tc));
 
         // Pre-fill the input with the target message for editing
         setInputPrefillText(targetMessageContent);

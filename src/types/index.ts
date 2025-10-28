@@ -66,6 +66,8 @@ export interface ToolResult {
 export enum ActivityEventType {
   TOOL_CALL_START = 'tool_call_start',
   TOOL_CALL_END = 'tool_call_end',
+  TOOL_PERMISSION_REQUEST = 'tool_permission_request',
+  TOOL_EXECUTION_START = 'tool_execution_start',
   TOOL_OUTPUT_CHUNK = 'tool_output_chunk',
   THOUGHT_CHUNK = 'thought_chunk',
   ASSISTANT_CHUNK = 'assistant_chunk',
@@ -132,6 +134,7 @@ export interface ToolCallState {
   output?: string;
   error?: string;
   startTime: number;
+  executionStartTime?: number; // When actual execution starts (after permission granted)
   endTime?: number;
   parentId?: string; // For nested tool calls (e.g., subagents)
   visibleInChat?: boolean; // Whether this tool should appear in conversation

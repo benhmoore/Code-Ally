@@ -17,7 +17,7 @@
 
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ActivityEvent } from '../types/index.js';
-import { API_TIMEOUTS, TEXT_LIMITS } from '../config/constants.js';
+import { TEXT_LIMITS } from '../config/constants.js';
 
 /**
  * Trust scope levels for permission management
@@ -111,7 +111,6 @@ export class TrustManager {
   private pendingPermissions: Map<string, {
     resolve: (choice: PermissionChoice) => void;
     reject: (error: Error) => void;
-    timeout: NodeJS.Timeout;
   }> = new Map();
 
   constructor(autoConfirm: boolean = false, activityStream?: ActivityStream) {
@@ -468,28 +467,15 @@ export class TrustManager {
       // Generate unique ID for permission request: perm_{timestamp}_{7-char-random} (base-36, skip '0.' prefix)
       const requestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-      // Set 30-second timeout to prevent infinite waiting
-      const timeout = setTimeout(() => {
-        const pending = this.pendingPermissions.get(requestId);
-        if (pending) {
-          this.pendingPermissions.delete(requestId);
-          reject(new PermissionDeniedError(
-            `Permission request timed out after ${API_TIMEOUTS.PERMISSION_REQUEST / 1000} seconds for ${toolName}`
-          ));
-        }
-      }, API_TIMEOUTS.PERMISSION_REQUEST);
-
       // Store resolver so we can complete it when response arrives
+      // No timeout - user must explicitly permit or deny
       this.pendingPermissions.set(requestId, {
         resolve: (choice: PermissionChoice) => {
-          clearTimeout(timeout);
           resolve(choice);
         },
         reject: (error: Error) => {
-          clearTimeout(timeout);
           reject(error);
         },
-        timeout,
       });
 
       // Extract command string for display if this is a bash operation
@@ -532,11 +518,8 @@ export class TrustManager {
       return;
     }
 
-    // Clear timeout and remove from pending
-    clearTimeout(pending.timeout);
+    // Remove from pending and resolve with choice
     this.pendingPermissions.delete(requestId);
-
-    // Resolve with choice
     pending.resolve(choice);
   }
 

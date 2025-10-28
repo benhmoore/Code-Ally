@@ -317,14 +317,31 @@ export class ToolOrchestrator {
       }
 
       // Check permissions if PermissionManager is available
-      if (this.permissionManager) {
-        // Get the tool to check if it requires confirmation
-        const tool = this.toolManager.getTool(toolName);
+      if (this.permissionManager && tool && tool.requiresConfirmation) {
+        // Emit permission request event (user will deliberate, timer paused)
+        this.emitEvent({
+          id,
+          type: ActivityEventType.TOOL_PERMISSION_REQUEST,
+          timestamp: Date.now(),
+          parentId: effectiveParentId,
+          data: {
+            toolName,
+          },
+        });
 
-        // Only check permissions if the tool requires confirmation
-        if (tool && tool.requiresConfirmation) {
-          await this.permissionManager.checkPermission(toolName, args);
-        }
+        // Wait for user permission (this can take 0-30 seconds)
+        await this.permissionManager.checkPermission(toolName, args);
+
+        // Emit execution start event (timer starts NOW, after permission granted)
+        this.emitEvent({
+          id,
+          type: ActivityEventType.TOOL_EXECUTION_START,
+          timestamp: Date.now(),
+          parentId: effectiveParentId,
+          data: {
+            toolName,
+          },
+        });
       }
 
       // Execute tool via tool manager (pass ID for streaming output)

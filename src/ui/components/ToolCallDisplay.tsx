@@ -88,8 +88,11 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
 
   // Calculate duration (no live updates - just shows duration at render time)
+  // Use executionStartTime if available (excludes user permission deliberation time)
+  // Fall back to startTime for tools that don't require permission
+  const startTime = toolCall.executionStartTime || toolCall.startTime;
   const endTime = toolCall.endTime || Date.now();
-  const duration = endTime - toolCall.startTime;
+  const duration = Math.max(0, endTime - startTime); // Ensure non-negative
   const durationStr = formatDuration(duration);
 
   // Check if this is an agent delegation

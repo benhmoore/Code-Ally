@@ -35,9 +35,6 @@ export const API_TIMEOUTS = {
   /** Additional timeout per retry attempt (1 minute) */
   LLM_REQUEST_RETRY_INCREMENT: 60000,
 
-  /** Permission request timeout (30 seconds) */
-  PERMISSION_REQUEST: 30000,
-
   /** Maximum wait time for cleanup operations (5 seconds) */
   CLEANUP_MAX_WAIT: 5000,
 
