@@ -298,7 +298,12 @@ export class Agent {
             reminderContent += `\nYou are currently working on: "${inProgressTodo.task}". Stay focused on completing this task - don't get distracted by tangential findings in tool results unless they directly block your progress.\n`;
           }
 
-          reminderContent += '\nConsider if this list needs updates based on the user\'s new request. Remember: exactly ONE task must be in_progress when working. Update using todo_write if needed.\n';
+          reminderContent += '\nHousekeeping: Keep the todo list clean and focused.\n';
+          reminderContent += '• Remove completed tasks that are no longer relevant to the conversation\n';
+          reminderContent += '• Remove pending tasks that are no longer needed\n';
+          reminderContent += '• Update task descriptions if they\'ve changed\n';
+          reminderContent += '• Remember: exactly ONE task must be in_progress when working\n\n';
+          reminderContent += 'Update the list now if needed based on the user\'s request.\n';
         }
 
         reminderContent += '</system-reminder>';
