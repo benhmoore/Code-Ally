@@ -391,6 +391,16 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       diffPreview: undefined,
     };
 
+    // Add output if provided (for user-initiated commands)
+    if (event.data.output !== undefined) {
+      updates.output = event.data.output;
+    }
+
+    // Preserve userInitiated flag if provided
+    if (event.data.userInitiated !== undefined) {
+      updates.userInitiated = event.data.userInitiated;
+    }
+
     // If tool has shouldCollapse, collapse it on completion (takes priority)
     if (event.data.shouldCollapse) {
       updates.collapsed = true;
