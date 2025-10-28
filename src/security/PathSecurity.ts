@@ -61,8 +61,21 @@ export function hasPathTraversalPatterns(inputStr: string): boolean {
     '`pwd`',
   ];
 
+  // First, check for dangerous patterns in the string itself
+  // This catches things like "foo/../bar" which contain ".." even if they resolve safely
+  for (const pattern of anywherePatterns) {
+    if (inputStr.includes(pattern)) {
+      return true;
+    }
+  }
+
+  // Check for command substitution patterns
+  if (inputStr.includes('$(') || inputStr.includes('`') || inputStr.includes('${')) {
+    return true;
+  }
+
   // Check for absolute paths - but allow if they're within the current working directory
-  if (inputStr.startsWith('/') || inputStr.startsWith('~')) {
+  if (inputStr.startsWith('/')) {
     // Handle glob patterns within absolute paths
     if (inputStr.includes('*')) {
       // Extract the directory part without the glob
@@ -87,32 +100,21 @@ export function hasPathTraversalPatterns(inputStr: string): boolean {
     }
   }
 
-  // For relative paths, check if they resolve to within CWD
-  // This catches cases like "../../etc/passwd" before pattern checking
+  // For relative paths without dangerous patterns, check if they're within CWD
   if (!inputStr.startsWith('/') && !inputStr.startsWith('~')) {
     try {
-      // If it resolves to within CWD, it's safe regardless of patterns
-      if (isPathWithinCwd(inputStr)) {
-        // Still check for command injection patterns even if within CWD
-        if (inputStr.includes('$(') || inputStr.includes('`') || inputStr.includes('${')) {
-          return true;
-        }
-        return false;
+      // If it doesn't resolve to within CWD, it's dangerous
+      if (!isPathWithinCwd(inputStr)) {
+        return true;
       }
     } catch (error) {
-      // If resolution fails, continue with pattern checks
-    }
-  }
-
-  // Check for traversal patterns that can appear anywhere
-  for (const pattern of anywherePatterns) {
-    if (inputStr.includes(pattern)) {
+      // If resolution fails, consider it dangerous
       return true;
     }
   }
 
-  // Check for environment variable usage that could lead to path traversal
-  return inputStr.includes('$(') || inputStr.includes('`') || inputStr.includes('${');
+  // No dangerous patterns found and path is safe
+  return false;
 }
 
 /**
