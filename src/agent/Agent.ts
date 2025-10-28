@@ -276,7 +276,16 @@ export class Agent {
         let reminderContent = '<system-reminder>\n';
 
         if (todos.length === 0) {
-          reminderContent += 'IMPORTANT: The todo list is currently empty. Create a todo list using todo_write for any task requiring multiple steps, even if the user\'s request doesn\'t explicitly request it. Breaking work into tracked tasks dramatically improves your effectiveness - it helps you maintain focus, avoid getting sidetracked, and ensure nothing is missed. Use todo_write early and often.\n';
+          reminderContent += 'IMPORTANT: The todo list is currently empty. Create a todo list using todo_write for ANY task - even simple single-step tasks. Breaking work into tracked tasks dramatically improves your effectiveness by:\n';
+          reminderContent += '• Providing focus reminders after each tool use\n';
+          reminderContent += '• Helping you stay on track and avoid tangents\n';
+          reminderContent += '• Giving the user visibility into your progress\n';
+          reminderContent += '• Making it clear when work is complete\n\n';
+          reminderContent += 'Examples of good single-task todos:\n';
+          reminderContent += '- "Fix failing tests in PathSecurity"\n';
+          reminderContent += '- "Debug memory leak in WebSocket handler"\n';
+          reminderContent += '- "Add error handling to login endpoint"\n\n';
+          reminderContent += 'Use todo_write at the start of your turn, even for "simple" tasks. It only takes one tool call.\n';
         } else {
           reminderContent += 'Current todos:\n';
           todos.forEach((todo: any, idx: number) => {
