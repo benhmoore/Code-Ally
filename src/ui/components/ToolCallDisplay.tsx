@@ -175,7 +175,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           </Box>
           <Box paddingLeft={indent.length + 8}>
             <Text dimColor>
-              {toolCall.toolName === 'bash'
+              {toolCall.toolName === 'bash' && toolCall.userInitiated
                 ? toolCall.output
                 : toolCall.output.length > TEXT_LIMITS.CONTENT_PREVIEW_MAX
                 ? `${toolCall.output.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`
