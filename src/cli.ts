@@ -411,6 +411,7 @@ async function main() {
     const { SessionLookupTool } = await import('./tools/SessionLookupTool.js');
     const { SessionReadTool } = await import('./tools/SessionReadTool.js');
     const { AskSessionTool } = await import('./tools/AskSessionTool.js');
+    const { ListSessionsTool } = await import('./tools/ListSessionsTool.js');
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
     const { FocusManagerTool } = await import('./tools/FocusManagerTool.js');
@@ -428,6 +429,7 @@ async function main() {
       new AgentTool(activityStream),
       new BatchTool(activityStream),
       new TodoWriteTool(activityStream),
+      new ListSessionsTool(activityStream),
       new SessionLookupTool(activityStream),
       new SessionReadTool(activityStream),
       new AskSessionTool(activityStream),
