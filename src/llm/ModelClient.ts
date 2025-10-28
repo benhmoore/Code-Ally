@@ -94,6 +94,8 @@ export interface ModelClientConfig {
   maxTokens: number;
   /** Keep-alive duration in seconds (optional) */
   keepAlive?: number;
+  /** Reasoning effort level for reasoning models: "low", "medium", "high" (optional) */
+  reasoningEffort?: string;
   /** Activity stream for emitting events (optional) */
   activityStream?: any; // Using 'any' to avoid circular dependency
 }

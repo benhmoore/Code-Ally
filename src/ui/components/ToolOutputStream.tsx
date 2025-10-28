@@ -8,6 +8,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { getStatusColor, type ToolStatus } from '../utils/statusUtils.js';
+import { TEXT_LIMITS } from '../../config/constants.js';
 
 export interface ToolOutputStreamProps {
   /** Name of the tool being executed */
@@ -156,7 +157,7 @@ export const StreamingToolOutput: React.FC<StreamingToolOutputProps> = ({
 
   // Truncate description if too long
   const truncatedDesc =
-    description && description.length > 50 ? description.slice(0, 47) + '...' : description;
+    description && description.length > TEXT_LIMITS.DESCRIPTION_MAX ? description.slice(0, TEXT_LIMITS.DESCRIPTION_MAX - 3) + '...' : description;
 
   return (
     <Box flexDirection="column">
@@ -184,7 +185,7 @@ export const StreamingToolOutput: React.FC<StreamingToolOutputProps> = ({
           )}
           {visibleLines.map((line, idx) => {
             // Truncate very long lines
-            const displayLine = line.length > 120 ? line.slice(0, 117) + '...' : line;
+            const displayLine = line.length > TEXT_LIMITS.LINE_DISPLAY_MAX ? line.slice(0, TEXT_LIMITS.LINE_DISPLAY_MAX - 3) + '...' : line;
             return (
               <Text key={idx} dimColor>
                 {displayLine}

@@ -13,6 +13,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ensureRegistryInitialized, getDefaultRegistry } from '../checkers/CheckerRegistry.js';
 import { formatError } from '../utils/errorUtils.js';
+import { API_TIMEOUTS, BUFFER_SIZES, FORMATTING } from '../config/constants.js';
 
 interface FormatResult {
   file_path: string;
@@ -43,7 +44,7 @@ interface FormatterInfo {
 export class FormatTool extends BaseTool {
   readonly name = 'format';
   readonly description =
-    'Format and auto-fix multiple code files in batch. Supports TypeScript/JavaScript (prettier, eslint --fix if available), JSON, and YAML. Shows diff preview for all files before applying changes.';
+    'Format and auto-fix code files in batch. Supports TypeScript/JavaScript (prettier, eslint --fix), JSON, and YAML. Shows diff preview before changes';
   readonly requiresConfirmation = true; // SENSITIVE: Modifies files
 
   constructor(activityStream: ActivityStream) {
@@ -313,7 +314,7 @@ export class FormatTool extends BaseTool {
   private async formatWithPrettier(filePath: string, content: string): Promise<string> {
     const { stdout } = await this.runCommand('prettier', ['--stdin-filepath', filePath], {
       input: content,
-      timeout: 10000,
+      timeout: API_TIMEOUTS.PRETTIER_FORMAT_TIMEOUT,
     });
     return stdout;
   }
@@ -335,7 +336,7 @@ export class FormatTool extends BaseTool {
 
       await this.runCommand('eslint', ['--fix', tmpPath], {
         cwd: fileDir,
-        timeout: 10000,
+        timeout: API_TIMEOUTS.ESLINT_FIX_TIMEOUT,
         ignoreErrors: true, // eslint returns non-zero on warnings
       });
 
@@ -351,7 +352,7 @@ export class FormatTool extends BaseTool {
    */
   private async formatJSON(_filePath: string, content: string): Promise<string> {
     const data = JSON.parse(content);
-    return JSON.stringify(data, null, 2) + '\n';
+    return JSON.stringify(data, null, FORMATTING.JSON_INDENT_SPACES) + '\n';
   }
 
   /**
@@ -361,7 +362,7 @@ export class FormatTool extends BaseTool {
     try {
       const yaml = await import('yaml');
       const data = yaml.parse(content);
-      return yaml.stringify(data, { indent: 2, lineWidth: 0 });
+      return yaml.stringify(data, { indent: FORMATTING.YAML_INDENT_SPACES, lineWidth: FORMATTING.YAML_LINE_WIDTH });
     } catch (error) {
       throw new Error(`YAML formatting failed: ${formatError(error)}`);
     }
@@ -384,8 +385,7 @@ export class FormatTool extends BaseTool {
       }
 
       // Only include errors (not warnings) and limit to first 10
-      const MAX_ERRORS = 10;
-      const errors = result.errors.slice(0, MAX_ERRORS);
+      const errors = result.errors.slice(0, BUFFER_SIZES.MAX_ERROR_DISPLAY);
 
       // Read content for error context
       const contentLines = content.split('\n');
@@ -434,7 +434,7 @@ export class FormatTool extends BaseTool {
    */
   private async isCommandAvailable(command: string): Promise<boolean> {
     try {
-      await this.runCommand(command, ['--version'], { timeout: 2000 });
+      await this.runCommand(command, ['--version'], { timeout: API_TIMEOUTS.VERSION_CHECK });
       return true;
     } catch {
       return false;

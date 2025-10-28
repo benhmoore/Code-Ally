@@ -20,6 +20,7 @@ import {
 import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
+import { API_TIMEOUTS, TIME_UNITS } from '../config/constants.js';
 
 /**
  * Ollama API payload structure
@@ -36,6 +37,7 @@ interface OllamaPayload {
   };
   tools?: FunctionDefinition[];
   tool_choice?: string;
+  reasoning_effort?: string; // For gpt-oss and reasoning models
 }
 
 /**
@@ -50,10 +52,11 @@ interface ValidationResult {
 export class OllamaClient extends ModelClient {
   private readonly _endpoint: string;
   private _modelName: string; // Not readonly - allows runtime model changes
-  private readonly temperature: number;
-  private readonly contextSize: number;
-  private readonly maxTokens: number;
+  private _temperature: number; // Not readonly - allows runtime changes
+  private _contextSize: number; // Not readonly - allows runtime changes
+  private _maxTokens: number; // Not readonly - allows runtime changes
   private readonly keepAlive?: number;
+  private readonly reasoningEffort?: string;
   private readonly apiUrl: string;
   private readonly activityStream?: ActivityStream;
 
@@ -80,10 +83,11 @@ export class OllamaClient extends ModelClient {
     super();
     this._endpoint = config.endpoint;
     this._modelName = config.modelName || 'qwen2.5-coder:32b';
-    this.temperature = config.temperature;
-    this.contextSize = config.contextSize;
-    this.maxTokens = config.maxTokens;
+    this._temperature = config.temperature;
+    this._contextSize = config.contextSize;
+    this._maxTokens = config.maxTokens;
     this.keepAlive = config.keepAlive;
+    this.reasoningEffort = config.reasoningEffort;
     this.activityStream = config.activityStream;
     this.apiUrl = `${this._endpoint}/api/chat`;
   }
@@ -104,6 +108,36 @@ export class OllamaClient extends ModelClient {
   setModelName(newModelName: string): void {
     logger.debug(`[OLLAMA_CLIENT] Changing model from ${this._modelName} to ${newModelName}`);
     this._modelName = newModelName;
+  }
+
+  /**
+   * Update the temperature at runtime
+   *
+   * @param newTemperature - New temperature value (0.0-2.0)
+   */
+  setTemperature(newTemperature: number): void {
+    logger.debug(`[OLLAMA_CLIENT] Changing temperature from ${this._temperature} to ${newTemperature}`);
+    this._temperature = newTemperature;
+  }
+
+  /**
+   * Update the context size at runtime
+   *
+   * @param newContextSize - New context window size in tokens
+   */
+  setContextSize(newContextSize: number): void {
+    logger.debug(`[OLLAMA_CLIENT] Changing context size from ${this._contextSize} to ${newContextSize}`);
+    this._contextSize = newContextSize;
+  }
+
+  /**
+   * Update the max tokens at runtime
+   *
+   * @param newMaxTokens - New maximum tokens to generate
+   */
+  setMaxTokens(newMaxTokens: number): void {
+    logger.debug(`[OLLAMA_CLIENT] Changing max tokens from ${this._maxTokens} to ${newMaxTokens}`);
+    this._maxTokens = newMaxTokens;
   }
 
   /**
@@ -141,6 +175,7 @@ export class OllamaClient extends ModelClient {
     const maxRetries = _maxRetries;
 
     // Generate unique request ID for this request
+    // Generate request ID: req-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     logger.debug('[OLLAMA_CLIENT] Starting request:', requestId);
 
@@ -199,16 +234,16 @@ export class OllamaClient extends ModelClient {
             };
           }
 
-          // Retry on network errors
+          // Retry on network errors with exponential backoff (2^attempt seconds)
           if (this.isNetworkError(error) && attempt < maxRetries) {
             const waitTime = Math.pow(2, attempt);
-            await this.sleep(waitTime * 1000);
+            await this.sleep(waitTime * TIME_UNITS.MS_PER_SECOND);
             continue;
           }
 
-          // Retry on JSON errors
+          // Retry on JSON errors with linear backoff ((1 + attempt) seconds)
           if (error instanceof SyntaxError && attempt < maxRetries) {
-            const waitTime = (1 + attempt) * 1000;
+            const waitTime = (1 + attempt) * TIME_UNITS.MS_PER_SECOND;
             await this.sleep(waitTime);
             continue;
           }
@@ -245,14 +280,19 @@ export class OllamaClient extends ModelClient {
       messages,
       stream,
       options: {
-        temperature: temperature !== undefined ? temperature : this.temperature,
-        num_ctx: this.contextSize,
-        num_predict: this.maxTokens,
+        temperature: temperature !== undefined ? temperature : this._temperature,
+        num_ctx: this._contextSize,
+        num_predict: this._maxTokens,
       },
     };
 
     if (this.keepAlive !== undefined) {
       payload.options.keep_alive = this.keepAlive;
+    }
+
+    // Add reasoning_effort if configured (for gpt-oss and reasoning models)
+    if (this.reasoningEffort) {
+      payload.reasoning_effort = this.reasoningEffort;
     }
 
     // Add function definitions if provided
@@ -279,8 +319,7 @@ export class OllamaClient extends ModelClient {
 
     try {
       // Calculate adaptive timeout
-      const baseTimeout = 240000; // 4 minutes
-      const timeout = baseTimeout + attempt * 60000; // Add 1 minute per retry
+      const timeout = API_TIMEOUTS.LLM_REQUEST_BASE + attempt * API_TIMEOUTS.LLM_REQUEST_RETRY_INCREMENT;
 
       // Create timeout promise
       const timeoutPromise = new Promise<never>((_, reject) => {

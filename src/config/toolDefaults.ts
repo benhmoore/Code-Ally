@@ -1,5 +1,13 @@
 /**
- * Shared constants and defaults for tool implementations
+ * Tool-specific constants and defaults
+ *
+ * This file contains constants for:
+ * - Tool operation limits (max results, max file sizes, max depths)
+ * - Tool behavior defaults (exclusion patterns, timeouts)
+ * - Tool output estimation (for context budgeting)
+ * - Context usage thresholds (for progressive truncation)
+ *
+ * For application-wide constants (timeouts, UI, animations, etc.), see constants.ts
  */
 
 /**
@@ -40,7 +48,7 @@ export const FILE_EXCLUSIONS = {
  * Timeout limits for command execution
  */
 export const TIMEOUT_LIMITS = {
-  /** Default timeout for bash commands (5 seconds) */
+  /** Fallback default timeout if config is not available (5 seconds) - BashTool uses config.bash_timeout as primary default */
   DEFAULT: 5000,
 
   /** Maximum timeout for bash commands (60 seconds) */
@@ -51,23 +59,28 @@ export const TIMEOUT_LIMITS = {
 } as const;
 
 /**
- * Debounce and timing constants
+ * Token count estimates for tool outputs
+ *
+ * These are used for context budgeting when results haven't been generated yet.
  */
-export const TIMING_CONSTANTS = {
-  /** Debounce delay for command history saves (100ms) */
-  SAVE_DEBOUNCE_MS: 100,
+export const TOOL_OUTPUT_ESTIMATES = {
+  /** Default tool output estimate (400 tokens) */
+  DEFAULT: 400,
 
-  /** Minimum interval between idle messages (10 seconds) */
-  IDLE_MESSAGE_MIN_INTERVAL_MS: 10000,
+  /** Read tool output estimate (800 tokens) */
+  READ: 800,
 
-  /** Idle message variation interval (5 seconds) */
-  IDLE_MESSAGE_VARIATION_MS: 5000,
+  /** Grep tool output estimate (600 tokens) */
+  GREP: 600,
 
-  /** API request timeout (5 seconds) */
-  API_TIMEOUT_MS: 5000,
+  /** Bash tool output estimate (400 tokens) */
+  BASH: 400,
 
-  /** Animation frame duration ~12fps to match Ink (83ms) */
-  ANIMATION_FRAME_MS: 83,
+  /** Glob tool output estimate (300 tokens) */
+  GLOB: 300,
+
+  /** Ls tool output estimate (300 tokens) */
+  LS: 300,
 } as const;
 
 /**
@@ -79,9 +92,11 @@ export const TIMING_CONSTANTS = {
  * - 95%: Emergency mode - minimal results only
  */
 export const CONTEXT_THRESHOLDS = {
+  VISIBILITY: 50,
   NORMAL: 70,
   WARNING: 85,
   CRITICAL: 95,
+  MAX_PERCENT: 100,
 
   WARNINGS: {
     70: 'Context filling: Prioritize essential operations',

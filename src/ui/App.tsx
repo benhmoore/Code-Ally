@@ -23,6 +23,8 @@ import { ProjectWizardView } from './components/ProjectWizardView.js';
 import { RewindSelector } from './components/RewindSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
+import { UI_DELAYS } from '../config/constants.js';
+import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { ReasoningStream } from './components/ReasoningStream.js';
 import { Agent } from '../agent/Agent.js';
 import { CommandHistory } from '../services/CommandHistory.js';
@@ -49,6 +51,9 @@ export interface AppProps {
 
   /** Session to resume (session ID, 'interactive' for selector, or null) */
   resumeSession?: string | 'interactive' | null;
+
+  /** Force show setup wizard (e.g., from --init flag) */
+  showSetupWizard?: boolean;
 }
 
 /**
@@ -58,7 +63,7 @@ export interface AppProps {
  * It subscribes to activity events and updates the app state accordingly.
  * Memoized to prevent unnecessary re-renders when children update.
  */
-const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null }> = ({ agent, resumeSession }) => {
+const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null; showSetupWizard?: boolean }> = ({ agent, resumeSession, showSetupWizard }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
 
@@ -76,7 +81,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   const [permissionSelectedIndex, setPermissionSelectedIndex] = useState(0);
 
   // Model selector state
-  const [modelSelectRequest, setModelSelectRequest] = useState<{ requestId: string; models: ModelOption[]; currentModel?: string } | undefined>(undefined);
+  const [modelSelectRequest, setModelSelectRequest] = useState<{ requestId: string; models: ModelOption[]; currentModel?: string; modelType?: 'ally' | 'service'; typeName?: string } | undefined>(undefined);
   const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
 
   // Config viewer state (non-modal - stays open while user interacts)
@@ -97,6 +102,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
   // Track if we've already processed session resume to prevent duplicate runs
   const sessionResumed = useRef(false);
+
+  // Track if we've already checked for first run to prevent duplicate checks
+  const firstRunChecked = useRef(false);
 
   // Track active background agents (subagents, todo generator, etc.)
   const [activeAgentsCount, setActiveAgentsCount] = useState(0);
@@ -145,13 +153,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       clearTimeout(updateTimerRef.current);
     }
 
-    // If last update was > 2s ago, flush immediately
+    // If last update was beyond throttle window, flush immediately
     const timeSinceLastUpdate = Date.now() - lastUpdateTime.current;
-    if (timeSinceLastUpdate >= 2000) {
+    if (timeSinceLastUpdate >= UI_DELAYS.TOOL_UPDATE_THROTTLE) {
       flushToolUpdates.current();
     } else {
       // Otherwise schedule flush in remaining time
-      const delay = 2000 - timeSinceLastUpdate;
+      const delay = UI_DELAYS.TOOL_UPDATE_THROTTLE - timeSinceLastUpdate;
       updateTimerRef.current = setTimeout(flushToolUpdates.current, delay);
     }
   });
@@ -165,10 +173,40 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     };
   }, []);
 
-  // Initialize services on mount
+  // Initialize services and check for first-run on mount
   useEffect(() => {
     const initializeServices = async () => {
       try {
+        // Get service registry and config manager
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const configManager = serviceRegistry.get<ConfigManager>('config_manager');
+
+        // First-run detection: Check if setup has been completed
+        // OR if explicitly requested via --init flag
+        // OR if required configuration values are missing
+        if (configManager && !firstRunChecked.current) {
+          firstRunChecked.current = true;
+          const setupCompleted = configManager.getValue('setup_completed');
+
+          // Check for required configuration values
+          const endpoint = configManager.getValue('endpoint');
+          const model = configManager.getValue('model');
+
+          // Force setup if:
+          // 1. Setup not completed
+          // 2. Explicitly requested via --init flag
+          // 3. Missing critical config (endpoint or model)
+          const requiresSetup = !setupCompleted ||
+                               showSetupWizard ||
+                               !endpoint ||
+                               !model;
+
+          if (requiresSetup) {
+            // Show setup wizard on first run, when explicitly requested, or if config is incomplete
+            setSetupWizardOpen(true);
+          }
+        }
+
         // Create and load command history
         const history = new CommandHistory();
         await history.load();
@@ -180,9 +218,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         setCompletionProvider(provider);
 
         // Create command handler with service registry and config manager
-        const serviceRegistry = ServiceRegistry.getInstance();
-        const configManager = serviceRegistry.get<ConfigManager>('config_manager');
-
         if (configManager) {
           const handler = new CommandHandler(agent, configManager, serviceRegistry);
           commandHandler.current = handler;
@@ -203,6 +238,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     initializeServices();
   }, [agent, actions]);
 
+  // Track session loading state
+  const [sessionLoaded, setSessionLoaded] = useState(!resumeSession);
+
   // Handle session resume on mount
   useEffect(() => {
     const handleSessionResume = async () => {
@@ -213,7 +251,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
       const todoManager = serviceRegistry.get('todo_manager');
 
-      if (!sessionManager) return;
+      if (!sessionManager) {
+        setSessionLoaded(true);
+        return;
+      }
 
       // If resumeSession is 'interactive', show session selector
       if (resumeSession === 'interactive') {
@@ -224,6 +265,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           selectedIndex: 0,
         });
         sessionResumed.current = true;
+        setSessionLoaded(true);
         return;
       }
 
@@ -235,17 +277,34 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
         const sessionMessages = await sessionManager.getSessionMessages(resumeSession);
         const sessionTodos = await sessionManager.getTodos(resumeSession);
+        const sessionIdleMessages = await sessionManager.getIdleMessages(resumeSession);
 
         // Filter out system messages to avoid duplication
         const userMessages = sessionMessages.filter(m => m.role !== 'system');
 
-        // Load messages into agent (auto-save will now use the correct session)
-        userMessages.forEach(message => agent.addMessage(message));
+        // Load idle messages into IdleMessageGenerator
+        const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
+        if (idleMessageGenerator && sessionIdleMessages.length > 0) {
+          (idleMessageGenerator as any).setQueue(sessionIdleMessages);
+        }
 
         // Load todos into TodoManager
         if (todoManager && sessionTodos.length > 0) {
           (todoManager as any).setTodos(sessionTodos);
         }
+
+        // Bulk load messages (setMessages doesn't trigger auto-save)
+        agent.setMessages(userMessages);
+
+        // Load project context into ProjectContextDetector
+        const projectContextDetector = serviceRegistry.get('project_context_detector');
+        const sessionProjectContext = await sessionManager.getProjectContext(resumeSession);
+        if (projectContextDetector && sessionProjectContext) {
+          (projectContextDetector as any).setCached(sessionProjectContext);
+        }
+
+        // Mark session as loaded
+        setSessionLoaded(true);
 
         // Update UI state
         actions.setMessages(userMessages);
@@ -479,8 +538,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
   // Subscribe to model select request events
   useActivityEvent(ActivityEventType.MODEL_SELECT_REQUEST, (event) => {
-    const { requestId, models, currentModel } = event.data;
-    setModelSelectRequest({ requestId, models, currentModel });
+    const { requestId, models, currentModel, modelType, typeName } = event.data;
+    setModelSelectRequest({ requestId, models, currentModel, modelType, typeName });
     setModelSelectedIndex(0);
   });
 
@@ -496,12 +555,73 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   });
 
   // Subscribe to setup wizard completion events
-  useActivityEvent(ActivityEventType.SETUP_WIZARD_COMPLETE, () => {
+  useActivityEvent(ActivityEventType.SETUP_WIZARD_COMPLETE, async () => {
     setSetupWizardOpen(false);
-    actions.addMessage({
-      role: 'assistant',
-      content: 'Setup completed successfully! Code Ally is ready to use.',
-    });
+
+    // Apply config changes to the current session
+    const registry = ServiceRegistry.getInstance();
+    const configManager = registry.get<ConfigManager>('config_manager');
+
+    if (configManager) {
+      try {
+        // Reload config from disk to get latest values
+        await configManager.initialize();
+        const newConfig = configManager.getConfig();
+
+        // Update main model client with new settings
+        const modelClient = registry.get<any>('model_client');
+        if (modelClient) {
+          if (typeof modelClient.setModelName === 'function' && newConfig.model) {
+            modelClient.setModelName(newConfig.model);
+          }
+          if (typeof modelClient.setTemperature === 'function') {
+            modelClient.setTemperature(newConfig.temperature);
+          }
+          if (typeof modelClient.setContextSize === 'function') {
+            modelClient.setContextSize(newConfig.context_size);
+          }
+          if (typeof modelClient.setMaxTokens === 'function') {
+            modelClient.setMaxTokens(newConfig.max_tokens);
+          }
+        }
+
+        // Update service model client with new settings
+        const serviceModelClient = registry.get<any>('service_model_client');
+        if (serviceModelClient) {
+          const serviceModel = newConfig.service_model ?? newConfig.model;
+          if (typeof serviceModelClient.setModelName === 'function' && serviceModel) {
+            serviceModelClient.setModelName(serviceModel);
+          }
+          if (typeof serviceModelClient.setTemperature === 'function') {
+            serviceModelClient.setTemperature(newConfig.temperature);
+          }
+          if (typeof serviceModelClient.setContextSize === 'function') {
+            serviceModelClient.setContextSize(newConfig.context_size);
+          }
+          if (typeof serviceModelClient.setMaxTokens === 'function') {
+            serviceModelClient.setMaxTokens(newConfig.max_tokens);
+          }
+        }
+
+        // Update App context config for UI display
+        actions.updateConfig(newConfig);
+
+        actions.addMessage({
+          role: 'assistant',
+          content: 'Setup completed successfully! Code Ally is ready to use.',
+        });
+      } catch (error) {
+        actions.addMessage({
+          role: 'assistant',
+          content: `Setup completed, but failed to apply some changes: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        });
+      }
+    } else {
+      actions.addMessage({
+        role: 'assistant',
+        content: 'Setup completed successfully! Code Ally is ready to use.',
+      });
+    }
   });
 
   // Subscribe to setup wizard skip events
@@ -584,7 +704,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
   // Subscribe to model select response events
   useActivityEvent(ActivityEventType.MODEL_SELECT_RESPONSE, async (event) => {
-    const { modelName } = event.data;
+    const { modelName, modelType } = event.data;
+
+    // Get the model type from the stored request (fallback to 'ally' if not specified)
+    const effectiveModelType = modelType || modelSelectRequest?.modelType || 'ally';
 
     // Clear selector immediately (crucial for unblocking input)
     setModelSelectRequest(undefined);
@@ -597,22 +720,31 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
       if (configManager) {
         try {
+          // Determine which config key and client to update
+          const configKey = effectiveModelType === 'service' ? 'service_model' : 'model';
+          const clientKey = effectiveModelType === 'service' ? 'service_model_client' : 'model_client';
+
           // Update config
-          await configManager.setValue('model', modelName);
+          await configManager.setValue(configKey, modelName);
 
           // Update the active ModelClient to use the new model
-          const modelClient = registry.get<any>('model_client');
+          const modelClient = registry.get<any>(clientKey);
           if (modelClient && typeof modelClient.setModelName === 'function') {
             modelClient.setModelName(modelName);
           }
 
           // Update state config for UI display
-          actions.updateConfig({ model: modelName });
+          if (effectiveModelType === 'service') {
+            actions.updateConfig({ service_model: modelName });
+          } else {
+            actions.updateConfig({ model: modelName });
+          }
 
           // Add confirmation message
+          const typeName = effectiveModelType === 'service' ? 'Service model' : 'Model';
           actions.addMessage({
             role: 'assistant',
-            content: `Model changed to: ${modelName}`,
+            content: `${typeName} changed to: ${modelName}`,
           });
         } catch (error) {
           actions.addMessage({
@@ -788,7 +920,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             return;
           }
 
-          // Generate unique tool call ID
+          // Generate unique tool call ID: bash-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
           const toolCallId = `bash-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
           // Create assistant message that describes the bash execution
@@ -913,6 +1045,24 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       // Set thinking state
       actions.setIsThinking(true);
 
+      // Cancel any ongoing background LLM tasks (idle messages, title generation)
+      // This must be done BEFORE calling agent.sendMessage() to avoid resource competition
+      //
+      // Retry behavior:
+      // - IdleMessageGenerator: Will naturally retry every 60s when idle (StatusIndicator)
+      // - SessionTitleGenerator: Will retry when next new session is created (low priority)
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const services = [
+        serviceRegistry.get('idle_message_generator'),
+        (serviceRegistry.get('session_manager') as any)?.titleGenerator,
+      ].filter(Boolean);
+
+      for (const service of services) {
+        if (typeof (service as any).cancel === 'function') {
+          (service as any).cancel();
+        }
+      }
+
       // Send to agent for processing
       try {
         const response = await agent.sendMessage(trimmed);
@@ -1032,7 +1182,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <SessionSelector
             sessions={sessionSelectRequest.sessions}
@@ -1062,12 +1212,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <ModelSelector
             models={modelSelectRequest.models}
             selectedIndex={modelSelectedIndex}
             currentModel={modelSelectRequest.currentModel}
+            typeName={modelSelectRequest.typeName}
             visible={true}
           />
           {/* Hidden InputPrompt for keyboard handling only */}
@@ -1097,7 +1248,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               <ReasoningStream />
 
               {/* Status Indicator - always visible to show todos */}
-              <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} />
+              <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
               <RewindSelector
                 messages={userMessages}
@@ -1129,7 +1280,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <PermissionPrompt
             request={permissionRequest}
@@ -1160,7 +1311,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <ReasoningStream />
 
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           {/* Input Prompt */}
           <InputPrompt
@@ -1181,12 +1332,12 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       <Box marginTop={1}>
         <Text dimColor>
           Ctrl+C to exit{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'} |{' '}
-          {state.contextUsage >= 85 ? (
-            <Text color="red">Context: {100 - state.contextUsage}% remaining - use /compact</Text>
-          ) : state.contextUsage >= 70 ? (
-            <Text color="yellow">Context: {100 - state.contextUsage}% remaining - consider /compact</Text>
+          {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
+            <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
+          ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
+            <Text color="yellow">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - consider /compact</Text>
           ) : (
-            <Text>Context: {100 - state.contextUsage}% remaining</Text>
+            <Text>Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining</Text>
           )}
         </Text>
       </Box>
@@ -1200,7 +1351,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
   const agentSame = prevProps.agent === nextProps.agent;
   const resumeSame = prevProps.resumeSession === nextProps.resumeSession;
-  return agentSame && resumeSame;
+  const setupSame = prevProps.showSetupWizard === nextProps.showSetupWizard;
+  return agentSame && resumeSame && setupSame;
 });
 
 /**
@@ -1218,14 +1370,14 @@ const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
  * const { unmount } = render(<App config={config} />);
  * ```
  */
-export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession }) => {
+export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession, showSetupWizard }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
   return (
     <ActivityProvider activityStream={streamRef.current}>
       <AppProvider initialConfig={config}>
-        <AppContent agent={agent} resumeSession={resumeSession} />
+        <AppContent agent={agent} resumeSession={resumeSession} showSetupWizard={showSetupWizard} />
       </AppProvider>
     </ActivityProvider>
   );

@@ -21,6 +21,7 @@ import { ActivityEventType } from '../../types/index.js';
 import { logger } from '../../services/Logger.js';
 import { PermissionChoice } from '../../agent/TrustManager.js';
 import { Agent } from '../../agent/Agent.js';
+import { UI_DELAYS } from '../../config/constants.js';
 
 interface InputPromptProps {
   /** Callback when user submits input */
@@ -40,7 +41,7 @@ interface InputPromptProps {
   /** Callback when permission selection changes */
   onPermissionNavigate?: (newIndex: number) => void;
   /** Model selector data (if active) */
-  modelSelectRequest?: { requestId: string; models: ModelOption[]; currentModel?: string };
+  modelSelectRequest?: { requestId: string; models: ModelOption[]; currentModel?: string; modelType?: 'ally' | 'service'; typeName?: string };
   /** Selected model index */
   modelSelectedIndex?: number;
   /** Callback when model selection changes */
@@ -168,7 +169,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
     const timer = setTimeout(() => {
       updateCompletions();
-    }, 150);
+    }, UI_DELAYS.COMPLETION_DEBOUNCE);
 
     setCompletionTimer(timer);
 
@@ -388,9 +389,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         const newCount = ctrlCCount + 1;
         setCtrlCCount(newCount);
 
-        // Reset counter after 2 seconds
+        // Reset counter after configured delay
         if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
-        ctrlCTimerRef.current = setTimeout(() => setCtrlCCount(0), 2000);
+        ctrlCTimerRef.current = setTimeout(() => setCtrlCCount(0), UI_DELAYS.CTRL_C_RESET);
 
         // Force quit on 3rd press
         if (newCount >= 3) {
@@ -449,6 +450,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                 data: {
                   requestId: modelSelectRequest.requestId,
                   modelName: selectedModel.name,
+                  modelType: modelSelectRequest.modelType, // Pass through model type
                 },
               });
             } catch (error) {
@@ -472,6 +474,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
               data: {
                 requestId: modelSelectRequest.requestId,
                 modelName: null, // null = cancelled
+                modelType: modelSelectRequest.modelType, // Pass through model type
               },
             });
           } catch (error) {
@@ -748,9 +751,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           const newCount = escCount + 1;
           setEscCount(newCount);
 
-          // Reset counter after 500ms
+          // Reset counter after configured delay
           if (escTimerRef.current) clearTimeout(escTimerRef.current);
-          escTimerRef.current = setTimeout(() => setEscCount(0), 500);
+          escTimerRef.current = setTimeout(() => setEscCount(0), UI_DELAYS.ESC_RESET);
 
           // Open rewind on 2nd escape
           if (newCount >= 2) {

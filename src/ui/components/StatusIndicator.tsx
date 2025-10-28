@@ -14,8 +14,10 @@ import { IdleMessageGenerator } from '../../services/IdleMessageGenerator.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { formatElapsed } from '../utils/timeUtils.js';
 import { getGitBranch } from '../../utils/gitUtils.js';
+import { logger } from '../../services/Logger.js';
 import * as os from 'os';
 import * as path from 'path';
+import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '../../config/constants.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -26,35 +28,50 @@ interface StatusIndicatorProps {
   isCancelling?: boolean;
   /** Recent messages for context-aware idle messages */
   recentMessages?: Array<{ role: string; content: string }>;
+  /** Whether session has finished loading */
+  sessionLoaded?: boolean;
+  /** Whether we're resuming a session (don't generate new messages) */
+  isResuming?: boolean;
 }
 
-const GREETING_MESSAGES = [
-  "Hello! Ready to code?",
-  "Hi there! Let's build something!",
-  "Hey! What are we working on?",
-  "Chirp! Ready to help!",
-  "Welcome back!",
-  "Let's get started!",
-  "Ready to assist!",
-  "Hi! How can I help?",
-];
-
-export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting, isCancelling = false, recentMessages = [] }) => {
+export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting, isCancelling = false, recentMessages = [], sessionLoaded = true, isResuming = false }) => {
   const [currentTask, setCurrentTask] = useState<string | null>(null);
   const [_startTime, setStartTime] = useState<number>(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
 
-  // Pick a random greeting on mount
-  const [initialGreeting] = useState<string>(() => {
-    return GREETING_MESSAGES[Math.floor(Math.random() * GREETING_MESSAGES.length)] || "Ready to help!";
+  // Initialize idle message - start with thinking animation
+  const [idleMessage, setIdleMessage] = useState<string>(() => {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+      if (idleMessageGenerator) {
+        const queueSize = idleMessageGenerator.getQueueSize();
+        // If queue has more than just the default 'Idle' message, use it
+        if (queueSize > 0) {
+          const message = idleMessageGenerator.getCurrentMessage();
+          if (message !== 'Idle') {
+            const queue = idleMessageGenerator.getQueue();
+            const queuePreview = queue.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
+            logger.debug(`[MASCOT] Loaded message from queue on startup (${queueSize} messages available): "${message}"\n  Queue:\n  ${queuePreview}`);
+            return message;
+          }
+        }
+      }
+    } catch {
+      // Fall through to thinking animation
+    }
+
+    // Start with thinking animation while messages generate
+    return '.';
   });
-  const [idleMessage, setIdleMessage] = useState<string>(initialGreeting);
+
+  // Thinking animation state
+  const [thinkingDots, setThinkingDots] = useState<number>(1);
 
   // Use ref to track previous task for comparison without triggering effect re-runs
   const previousTaskRef = useRef<string | null>(null);
   const wasProcessingRef = useRef<boolean>(isProcessing);
   const hasStartedRef = useRef<boolean>(false);
-  const sessionStartTimeRef = useRef<number>(Date.now());
 
   // Reset timer when processing or compacting starts
   useEffect(() => {
@@ -66,8 +83,55 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   const [allTodos, setAllTodos] = useState<Array<{ task: string; status: string; activeForm: string }>>([]);
 
+  // Animate thinking dots while waiting for messages
+  useEffect(() => {
+    // Only animate if showing thinking animation
+    if (idleMessage === '.' || idleMessage === '..' || idleMessage === '...') {
+      const interval = setInterval(() => {
+        setThinkingDots(prev => (prev % 3) + 1);
+        setIdleMessage('.'.repeat((thinkingDots % 3) + 1));
+      }, ANIMATION_TIMING.THINKING_SPEED);
+
+      return () => clearInterval(interval);
+    }
+    return undefined;
+  }, [idleMessage, thinkingDots]);
+
   // Generate idle message on startup
   useEffect(() => {
+    // Don't generate if session hasn't loaded yet
+    if (!sessionLoaded) return;
+
+    // Check if we're resuming and have cached messages
+    if (isResuming) {
+      try {
+        const registry = ServiceRegistry.getInstance();
+        const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+        if (idleMessageGenerator) {
+          const queueSize = idleMessageGenerator.getQueueSize();
+          const message = idleMessageGenerator.getCurrentMessage();
+
+          // If we have real cached messages, use them
+          if (queueSize > 0 && message !== 'Idle' && message !== '.' && message !== '..' && message !== '...') {
+            setIdleMessage(message);
+            logger.debug(`[MASCOT] Displaying cached message on resume: "${message}"`);
+            return; // Don't generate
+          }
+
+          // If resuming but no cached messages (old session), show static message
+          // Don't generate new ones to avoid model client conflicts
+          logger.debug(`[MASCOT] Resuming but no cached messages found, showing static message`);
+          setIdleMessage('Ready to help!');
+        }
+      } catch {
+        // Silently handle errors
+      }
+      return; // Don't generate when resuming
+    }
+
+    let fastPollInterval: NodeJS.Timeout | null = null;
+    let normalPollInterval: NodeJS.Timeout | null = null;
+
     const initIdleMessages = async () => {
       try {
         const registry = ServiceRegistry.getInstance();
@@ -75,12 +139,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         const todoManager = registry.get<TodoManager>('todo_manager');
 
         if (idleMessageGenerator) {
-          // Extract last user and assistant messages
-          const userMessages = (recentMessages as any[]).filter((m: any) => m.role === 'user');
-          const assistantMessages = (recentMessages as any[]).filter((m: any) => m.role === 'assistant');
-          const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1].content : undefined;
-          const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1].content : undefined;
-
           // Get git branch if available
           const gitBranch = getGitBranch() || undefined;
 
@@ -88,28 +146,26 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           const homeDir = os.homedir();
           const homeDirectory = path.basename(homeDir);
 
-          // Calculate session duration
-          const sessionDuration = Math.floor((Date.now() - sessionStartTimeRef.current) / 1000);
-
-          // Get session count and sessions created today
+          // Get session manager
           const sessionManager = registry.get<any>('session_manager');
-          let sessionCount = 0;
-          let sessionsToday = 0;
-          if (sessionManager && typeof sessionManager.getSessionsInfo === 'function') {
+
+          // Get or detect project context
+          const projectContextDetector = registry.get<any>('project_context_detector');
+          let projectContext = undefined;
+
+          if (projectContextDetector) {
             try {
-              const sessions = await sessionManager.getSessionsInfo();
-              sessionCount = sessions.length;
+              // Try to load cached context from session first
+              const cachedContext = await sessionManager?.getProjectContext();
 
-              // Count sessions created today
-              const today = new Date();
-              today.setHours(0, 0, 0, 0);
-              const todayTimestamp = today.getTime();
-
-              sessionsToday = sessions.filter((s: any) => {
-                const sessionDate = new Date(s.last_modified);
-                sessionDate.setHours(0, 0, 0, 0);
-                return sessionDate.getTime() === todayTimestamp;
-              }).length;
+              if (cachedContext && !projectContextDetector.isStale(cachedContext)) {
+                // Use cached context if not stale
+                projectContext = cachedContext;
+                projectContextDetector.setCached(cachedContext);
+              } else {
+                // Detect new context if stale or missing
+                projectContext = await projectContextDetector.detect();
+              }
             } catch {
               // Silently handle errors
             }
@@ -118,20 +174,49 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           // Gather context for idle message generation
           const context: any = {
             cwd: process.cwd(),
-            currentTime: new Date(),
             todos: todoManager ? todoManager.getTodos() : [],
-            lastUserMessage,
-            lastAssistantMessage,
-            messageCount: recentMessages.length,
-            sessionDuration,
             gitBranch,
             homeDirectory,
-            sessionCount,
-            sessionsToday,
+            projectContext,
           };
 
+          // Check if we need immediate generation
+          const needsImmediate = idleMessageGenerator.getQueueSize() <= 1;
+
           // Trigger background generation with context on startup
-          idleMessageGenerator.generateMessageBackground(recentMessages as any, context);
+          idleMessageGenerator.generateMessageBackground(recentMessages as any, context, needsImmediate);
+
+          // If we triggered immediate generation, poll frequently until first message arrives
+          if (needsImmediate) {
+            logger.debug(`[MASCOT] Setting up fast polling (needsImmediate=${needsImmediate}, queueSize=${idleMessageGenerator.getQueueSize()})`);
+            fastPollInterval = setInterval(() => {
+              try {
+                const registry = ServiceRegistry.getInstance();
+                const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+                if (idleMessageGenerator) {
+                  const message = idleMessageGenerator.getCurrentMessage();
+                  const queueSize = idleMessageGenerator.getQueueSize();
+
+                  logger.debug(`[MASCOT] Fast polling check - message: "${message}", queueSize: ${queueSize}`);
+
+                  // Update immediately when first non-default message is available
+                  if (message !== 'Idle' && message !== '.' && message !== '..' && message !== '...') {
+                    const queue = idleMessageGenerator.getQueue();
+                    const queuePreview = queue.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
+                    logger.debug(`[MASCOT] Displaying message from queue (${queueSize} messages available): "${message}"\n  Queue:\n  ${queuePreview}`);
+                    setIdleMessage(message);
+                    // Stop fast polling once we have a real message
+                    if (fastPollInterval) {
+                      clearInterval(fastPollInterval);
+                      fastPollInterval = null;
+                    }
+                  }
+                }
+              } catch (err) {
+                logger.debug(`[MASCOT] Fast polling error: ${err}`);
+              }
+            }, POLLING_INTERVALS.STATUS_FAST);
+          }
         }
       } catch (error) {
         // Silently handle errors
@@ -141,26 +226,37 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     // Start async initialization
     initIdleMessages();
 
-    // Poll for updates every second
-    const pollInterval = setInterval(() => {
+    // Normal polling - cycle through queue every minute
+    normalPollInterval = setInterval(() => {
       try {
         const registry = ServiceRegistry.getInstance();
         const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
         if (idleMessageGenerator) {
+          // Move to next message in queue
+          idleMessageGenerator.nextMessage();
+
           const message = idleMessageGenerator.getCurrentMessage();
+          const queueSize = idleMessageGenerator.getQueueSize();
+
           // Only update if message is not the default "Idle"
           if (message !== 'Idle') {
+            const queue = idleMessageGenerator.getQueue();
+            const queuePreview = queue.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
+            logger.debug(`[MASCOT] Cycling to next message (${queueSize} messages in queue): "${message}"\n  Queue:\n  ${queuePreview}`);
             setIdleMessage(message);
           }
         }
       } catch {
         // Silently handle errors
       }
-    }, 1000);
+    }, POLLING_INTERVALS.STATUS_POLLING);
 
-    return () => clearInterval(pollInterval);
+    return () => {
+      if (fastPollInterval) clearInterval(fastPollInterval);
+      if (normalPollInterval) clearInterval(normalPollInterval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run once on mount
+  }, [sessionLoaded, isResuming]); // Run when session loads
 
   // Continuous idle message generation - generate new message every minute when idle
   useEffect(() => {
@@ -175,15 +271,8 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         const registry = ServiceRegistry.getInstance();
         const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
         const todoManager = registry.get<TodoManager>('todo_manager');
-        const sessionManager = registry.get<any>('session_manager');
 
         if (idleMessageGenerator) {
-          // Extract last user and assistant messages
-          const userMessages = (recentMessages as any[]).filter((m: any) => m.role === 'user');
-          const assistantMessages = (recentMessages as any[]).filter((m: any) => m.role === 'assistant');
-          const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1].content : undefined;
-          const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1].content : undefined;
-
           // Get git branch if available
           const gitBranch = getGitBranch() || undefined;
 
@@ -191,45 +280,17 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           const homeDir = os.homedir();
           const homeDirectory = path.basename(homeDir);
 
-          // Calculate session duration
-          const sessionDuration = Math.floor((Date.now() - sessionStartTimeRef.current) / 1000);
-
-          // Get session count and sessions created today
-          let sessionCount = 0;
-          let sessionsToday = 0;
-          if (sessionManager && typeof sessionManager.getSessionsInfo === 'function') {
-            try {
-              const sessions = await sessionManager.getSessionsInfo();
-              sessionCount = sessions.length;
-
-              // Count sessions created today
-              const today = new Date();
-              today.setHours(0, 0, 0, 0);
-              const todayTimestamp = today.getTime();
-
-              sessionsToday = sessions.filter((s: any) => {
-                const sessionDate = new Date(s.last_modified);
-                sessionDate.setHours(0, 0, 0, 0);
-                return sessionDate.getTime() === todayTimestamp;
-              }).length;
-            } catch {
-              // Silently handle errors
-            }
-          }
+          // Get cached project context
+          const projectContextDetector = registry.get<any>('project_context_detector');
+          const projectContext = projectContextDetector?.getCached();
 
           // Gather context for idle message generation
           const context: any = {
             cwd: process.cwd(),
-            currentTime: new Date(),
             todos: todoManager ? todoManager.getTodos() : [],
-            lastUserMessage,
-            lastAssistantMessage,
-            messageCount: recentMessages.length,
-            sessionDuration,
             gitBranch,
             homeDirectory,
-            sessionCount,
-            sessionsToday,
+            projectContext,
           };
 
           // Trigger background generation with context
@@ -243,10 +304,10 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     // Generate immediately when becoming idle
     generateIdleMessage();
 
-    // Then generate every 60 seconds while idle
+    // Then generate continuously while idle
     const continuousInterval = setInterval(() => {
       generateIdleMessage();
-    }, 60000); // 60 seconds
+    }, POLLING_INTERVALS.STATUS_POLLING);
 
     return () => clearInterval(continuousInterval);
   }, [isProcessing, isCompacting, recentMessages]);
@@ -299,8 +360,8 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     // Initial update
     updateTodos();
 
-    // Update every second
-    const interval = setInterval(updateTodos, 1000);
+    // Update regularly
+    const interval = setInterval(updateTodos, ANIMATION_TIMING.TODO_UPDATE);
 
     return () => clearInterval(interval);
   }, [isProcessing]);

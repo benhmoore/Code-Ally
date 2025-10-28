@@ -18,9 +18,18 @@ import { FocusManager } from '../services/FocusManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TokenManager } from './TokenManager.js';
 import { Message, ActivityEventType } from '../types/index.js';
+import {
+  BUFFER_SIZES,
+  TEXT_LIMITS,
+  CONTEXT_SIZES,
+  BYTE_CONVERSIONS,
+  FORMATTING,
+} from '../config/constants.js';
 import type { ProjectManager } from '../services/ProjectManager.js';
 import type { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
+import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
+import { DEFAULT_CONFIG } from '../config/defaults.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -139,6 +148,7 @@ export class CommandHandler {
    * Generate a random ID for events
    */
   private generateRandomId(): string {
+    // Generate event ID: evt-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     return `evt-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   }
 
@@ -156,7 +166,7 @@ Core Commands:
   /config                  - Toggle configuration viewer
   /config set <key>=<val>  - Set a configuration value
   /config reset            - Reset all settings to defaults
-  /model [name]            - Switch model or show current model
+  /model [ally|service] [name] - Switch model or show current model
   /debug [system|tokens]   - Show debug information
   /compact                 - Compact conversation history
   /rewind                  - Rewind conversation to a previous message
@@ -347,22 +357,44 @@ Todo Commands:
   private async handleModel(args: string[]): Promise<CommandResult> {
     const argString = args.join(' ').trim();
 
-    // Direct model name provided - set it immediately
-    if (argString) {
-      const modelName = argString;
+    // Parse model type (ally/main/service) and model name
+    let modelType: 'ally' | 'service' = 'ally'; // default to ally model
+    let modelName = '';
 
+    if (argString) {
+      const parts = argString.split(/\s+/);
+      const firstArg = parts[0]?.toLowerCase() || '';
+
+      // Check if first arg is a type specifier
+      if (firstArg === 'service') {
+        modelType = 'service';
+        modelName = parts.slice(1).join(' ').trim();
+      } else if (firstArg === 'ally' || firstArg === 'main') {
+        modelType = 'ally';
+        modelName = parts.slice(1).join(' ').trim();
+      } else {
+        // No type specifier, treat entire arg as model name for ally model
+        modelName = argString;
+      }
+    }
+
+    // Direct model name provided - set it immediately
+    if (modelName) {
       try {
-        await this.configManager.setValue('model', modelName);
+        const configKey = modelType === 'service' ? 'service_model' : 'model';
+        await this.configManager.setValue(configKey, modelName);
 
         // Update the active ModelClient to use the new model immediately
-        const modelClient = this.serviceRegistry.get<any>('model_client');
+        const clientKey = modelType === 'service' ? 'service_model_client' : 'model_client';
+        const modelClient = this.serviceRegistry.get<any>(clientKey);
         if (modelClient && typeof modelClient.setModelName === 'function') {
           modelClient.setModelName(modelName);
         }
 
+        const typeName = modelType === 'service' ? 'Service model' : 'Model';
         return {
           handled: true,
-          response: `Model changed to: ${modelName}`,
+          response: `${typeName} changed to: ${modelName}`,
         };
       } catch (error) {
         return {
@@ -372,9 +404,10 @@ Todo Commands:
       }
     }
 
-    // No args - show interactive selector
+    // No model name - show interactive selector
     try {
-      const currentModel = this.configManager.getValue('model');
+      const configKey = modelType === 'service' ? 'service_model' : 'model';
+      const currentModel = this.configManager.getValue(configKey);
       const config = this.configManager.getConfig();
       const endpoint = config.endpoint || 'http://localhost:11434';
 
@@ -409,6 +442,7 @@ Todo Commands:
       const activityStream = this.serviceRegistry.get('activity_stream');
       if (activityStream && typeof (activityStream as any).emit === 'function') {
         const requestId = `model_select_${Date.now()}`;
+        const typeName = modelType === 'service' ? 'service model' : 'ally model';
 
         (activityStream as any).emit({
           id: requestId,
@@ -418,6 +452,8 @@ Todo Commands:
             requestId,
             models,
             currentModel,
+            modelType, // Pass model type so UI knows which config to update
+            typeName, // Display name for UI
           },
         });
 
@@ -425,11 +461,12 @@ Todo Commands:
       }
 
       // Fallback: show list
-      let output = `Current model: ${currentModel || 'not set'}\n\nAvailable models:\n`;
+      const typeName = modelType === 'service' ? 'service model' : 'model';
+      let output = `Current ${typeName}: ${currentModel || 'not set'}\n\nAvailable models:\n`;
       models.forEach(m => {
         output += `  - ${m.name}${m.size ? ` (${m.size})` : ''}\n`;
       });
-      output += '\nUse /model <name> to switch.';
+      output += `\nUse /model ${modelType === 'service' ? 'service ' : ''}<name> to switch.`;
 
       return { handled: true, response: output };
     } catch (error) {
@@ -441,10 +478,12 @@ Todo Commands:
   }
 
   private formatSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes}B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+    if (bytes < BYTE_CONVERSIONS.BYTES_PER_KB) return `${bytes}B`;
+    if (bytes < BYTE_CONVERSIONS.BYTES_PER_MB)
+      return `${(bytes / BYTE_CONVERSIONS.BYTES_PER_KB).toFixed(FORMATTING.FILE_SIZE_DECIMAL_PLACES)}KB`;
+    if (bytes < BYTE_CONVERSIONS.BYTES_PER_GB)
+      return `${(bytes / BYTE_CONVERSIONS.BYTES_PER_MB).toFixed(FORMATTING.FILE_SIZE_DECIMAL_PLACES)}MB`;
+    return `${(bytes / BYTE_CONVERSIONS.BYTES_PER_GB).toFixed(FORMATTING.FILE_SIZE_DECIMAL_PLACES)}GB`;
   }
 
   private async handleInit(): Promise<CommandResult> {
@@ -566,12 +605,14 @@ Todo Commands:
     try {
       // Create a TokenManager instance for token counting
       const config = this.configManager.getConfig();
-      const contextSize = config.context_size || 128000;
+      const contextSize = config.context_size || CONTEXT_SIZES.XLARGE;
       const tokenManager = new TokenManager(contextSize);
 
       // Calculate token statistics
       const totalTokens = tokenManager.estimateMessagesTokens(messages);
-      const percentUsed = ((totalTokens / contextSize) * 100).toFixed(1);
+      const percentUsed = ((totalTokens / contextSize) * 100).toFixed(
+        FORMATTING.PERCENTAGE_DECIMAL_PLACES
+      );
 
       // Breakdown by message type
       let userTokens = 0;
@@ -615,7 +656,7 @@ Todo Commands:
         output += '\n=== MODEL INFO ===\n\n';
         output += `Model:               ${config.model}\n`;
         output += `Temperature:         ${config.temperature || 0.7}\n`;
-        output += `Max Tokens:          ${config.max_tokens || 2048}\n`;
+        output += `Max Tokens:          ${config.max_tokens || DEFAULT_CONFIG.max_tokens}\n`;
       }
 
       return {
@@ -640,7 +681,7 @@ Todo Commands:
       // Format messages as JSON for display
       const contextData = messages.map(msg => ({
         role: msg.role,
-        content: msg.content ? (msg.content.length > 200 ? msg.content.slice(0, 200) + '...' : msg.content) : undefined,
+        content: msg.content ? (msg.content.length > TEXT_LIMITS.CONTENT_PREVIEW_MAX ? msg.content.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3) + '...' : msg.content) : undefined,
         tool_calls: msg.tool_calls,
         tool_call_id: msg.tool_call_id,
         name: msg.name,
@@ -677,10 +718,10 @@ Todo Commands:
     }
 
     // Check if we have enough messages to compact
-    if (messages.length < 3) {
+    if (messages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_COMPACT) {
       return {
         handled: true,
-        response: `Not enough messages to compact (only ${messages.length} messages). Need at least 3 messages.`,
+        response: `Not enough messages to compact (only ${messages.length} messages). Need at least ${BUFFER_SIZES.MIN_MESSAGES_FOR_COMPACT} messages.`,
       };
     }
 
@@ -735,7 +776,7 @@ Todo Commands:
         data: {
           oldContextUsage,
           newContextUsage,
-          threshold: 95, // Manual compaction doesn't have a threshold, use default
+          threshold: CONTEXT_THRESHOLDS.CRITICAL,
           compactedMessages,
         },
       });
@@ -765,7 +806,7 @@ Todo Commands:
     const { systemMessage, otherMessages } = this.extractSystemMessage(messages);
 
     // If we have fewer than 2 messages to summarize, nothing to compact
-    if (otherMessages.length < 2) {
+    if (otherMessages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_HISTORY) {
       return messages;
     }
 

@@ -6,8 +6,15 @@
  */
 
 import { randomUUID } from 'crypto';
+import { TEXT_LIMITS, BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface ToolCallRecord {
+  toolName: string;
+  args: string; // Brief description of arguments
+  timestamp: number;
+}
 
 export interface TodoItem {
   id: string;
@@ -15,6 +22,7 @@ export interface TodoItem {
   status: TodoStatus;
   activeForm: string; // Present continuous form: "Running tests", "Fixing bug"
   created_at: string;
+  toolCalls?: ToolCallRecord[]; // Track tool calls made while working on this todo
 }
 
 export class TodoManager {
@@ -30,7 +38,7 @@ export class TodoManager {
    */
   createTodoItem(task: string, status: TodoStatus = 'pending', activeForm?: string): TodoItem {
     return {
-      id: randomUUID().substring(0, 8),
+      id: randomUUID().substring(0, ID_GENERATION.TODO_ID_LENGTH),
       task: task.trim(),
       status,
       activeForm: activeForm || task.trim(), // Default to task if not provided
@@ -50,9 +58,27 @@ export class TodoManager {
   /**
    * Set the entire todo list
    *
+   * Preserves tool call history for todos that remain in_progress with the same task content.
+   *
    * @param todos - New todo list
    */
   setTodos(todos: TodoItem[]): void {
+    // Preserve tool call history for matching in_progress todos
+    const oldInProgress = this.todos.find(t => t.status === 'in_progress');
+
+    if (oldInProgress && oldInProgress.toolCalls && oldInProgress.toolCalls.length > 0) {
+      // Find matching todo in new list (same task content and still in_progress)
+      const matchingTodo = todos.find(
+        t => t.status === 'in_progress' && t.task === oldInProgress.task
+      );
+
+      if (matchingTodo) {
+        // Preserve tool call history
+        matchingTodo.toolCalls = oldInProgress.toolCalls;
+      }
+      // If no match (todo was completed, changed, or removed), history is lost (intentional)
+    }
+
     this.todos = todos;
   }
 
@@ -121,6 +147,10 @@ export class TodoManager {
     }
 
     todo.status = 'completed';
+    // Clear tool call history when marking complete
+    if (todo.toolCalls) {
+      delete todo.toolCalls;
+    }
     return todo;
   }
 
@@ -177,6 +207,70 @@ export class TodoManager {
    */
   getInProgressTodo(): TodoItem | null {
     return this.todos.find(todo => todo.status === 'in_progress') || null;
+  }
+
+  /**
+   * Record a tool call for the current in-progress todo
+   *
+   * @param toolName - Name of the tool
+   * @param args - Tool arguments (will be truncated for display)
+   */
+  recordToolCall(toolName: string, args: Record<string, any>): void {
+    const inProgressTodo = this.getInProgressTodo();
+    if (!inProgressTodo) {
+      return; // No in-progress todo to track against
+    }
+
+    // Initialize toolCalls array if it doesn't exist
+    if (!inProgressTodo.toolCalls) {
+      inProgressTodo.toolCalls = [];
+    }
+
+    // Create brief description of args (similar to chat display)
+    const argStr = this.formatToolArgs(toolName, args);
+
+    inProgressTodo.toolCalls.push({
+      toolName,
+      args: argStr,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Format tool arguments for brief display
+   *
+   * @param toolName - Name of the tool
+   * @param args - Tool arguments
+   * @returns Brief string representation
+   */
+  private formatToolArgs(toolName: string, args: Record<string, any>): string {
+    // Extract key parameters based on tool type
+    if (toolName === 'read' && args.file_paths) {
+      const paths = Array.isArray(args.file_paths) ? args.file_paths : [args.file_paths];
+      return paths.slice(0, BUFFER_SIZES.TODO_FILE_PATHS_DISPLAY).join(', ') + (paths.length > BUFFER_SIZES.TODO_FILE_PATHS_DISPLAY ? '...' : '');
+    } else if (toolName === 'write' && args.file_path) {
+      return args.file_path;
+    } else if (toolName === 'edit' && args.file_path) {
+      return args.file_path;
+    } else if (toolName === 'bash' && args.command) {
+      return args.command.substring(0, TEXT_LIMITS.COMMAND_DISPLAY_MAX) + (args.command.length > TEXT_LIMITS.COMMAND_DISPLAY_MAX ? '...' : '');
+    } else if (toolName === 'grep' && args.pattern) {
+      return `"${args.pattern}"`;
+    } else if (toolName === 'glob' && args.pattern) {
+      return args.pattern;
+    } else if (toolName === 'ls' && args.path) {
+      return args.path;
+    }
+
+    // Generic fallback: show first key-value pair
+    const keys = Object.keys(args);
+    if (keys.length > 0 && keys[0]) {
+      const firstKey = keys[0];
+      const value = String(args[firstKey]);
+      return value.substring(0, TEXT_LIMITS.VALUE_DISPLAY_MAX) + (value.length > TEXT_LIMITS.VALUE_DISPLAY_MAX ? '...' : '');
+    }
+
+    return '';
   }
 
   /**

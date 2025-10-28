@@ -14,6 +14,7 @@ import * as os from 'os';
 import { AgentManager } from './AgentManager.js';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
+import { CACHE_TIMEOUTS, BUFFER_SIZES } from '../config/constants.js';
 
 export type CompletionType = 'command' | 'file' | 'agent' | 'option';
 
@@ -82,7 +83,7 @@ export class CompletionProvider {
   private agentManager: AgentManager | null = null;
   private agentNamesCache: string[] = [];
   private agentsCacheTime: number = 0;
-  private readonly cacheTTL = 5000; // 5 seconds
+  private readonly cacheTTL = CACHE_TIMEOUTS.COMPLETION_CACHE_TTL;
 
   constructor(agentManager?: AgentManager) {
     this.agentManager = agentManager || null;
@@ -333,13 +334,11 @@ export class CompletionProvider {
       // Execution Settings
       'bash_timeout': 'Bash command timeout (seconds)',
       'auto_confirm': 'Skip permission prompts',
-      'check_context_msg': 'Show context check messages',
       'parallel_tools': 'Enable parallel tool execution',
 
       // UI Preferences
       'theme': 'UI theme name',
       'compact_threshold': 'Auto-compact threshold (%)',
-      'show_token_usage': 'Display token usage',
       'show_context_in_prompt': 'Show context % in prompt',
 
       // Tool Result Preview
@@ -444,7 +443,7 @@ export class CompletionProvider {
         return a.value.localeCompare(b.value);
       });
 
-      return completions.slice(0, 20); // Limit to 20 results
+      return completions.slice(0, BUFFER_SIZES.MAX_COMPLETION_RESULTS); // Limit to 20 results
     } catch (error) {
       // Directory doesn't exist or can't be read - this is expected for new installations
       logger.debug(`Unable to read command directory: ${formatError(error)}`);

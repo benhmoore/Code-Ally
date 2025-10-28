@@ -10,7 +10,7 @@
  */
 
 import { ConfigManager } from './ConfigManager.js';
-import { logger } from './Logger.js';
+import { API_TIMEOUTS, CONTEXT_SIZES, VALID_CONTEXT_SIZES } from '../config/constants.js';
 
 export interface OllamaModel {
   name: string;
@@ -25,6 +25,7 @@ export interface OllamaListResponse {
 export interface SetupConfig {
   endpoint: string;
   model: string;
+  service_model: string | null;
   context_size: number;
   temperature: number;
   auto_confirm: boolean;
@@ -48,9 +49,8 @@ export class SetupWizard {
   /**
    * Mark setup as completed
    */
-  markSetupCompleted(): void {
-    this.configManager.setValue('setup_completed', true);
-    logger.info('[SetupWizard] Setup marked as completed');
+  async markSetupCompleted(): Promise<void> {
+    await this.configManager.setValue('setup_completed', true);
   }
 
   /**
@@ -61,10 +61,9 @@ export class SetupWizard {
   async validateOllamaConnection(endpoint: string): Promise<boolean> {
     try {
       const url = `${endpoint}/api/tags`;
-      logger.debug('[SetupWizard] Testing Ollama connection:', url);
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_ENDPOINT_VALIDATION);
 
       const response = await fetch(url, {
         method: 'GET',
@@ -75,20 +74,12 @@ export class SetupWizard {
       clearTimeout(timeout);
 
       if (!response.ok) {
-        logger.warn('[SetupWizard] Ollama connection failed with status:', response.status);
         return false;
       }
 
-      logger.debug('[SetupWizard] Ollama connection successful');
       return true;
     } catch (error) {
-      if (error instanceof Error) {
-        if (error.name === 'AbortError') {
-          logger.warn('[SetupWizard] Ollama connection timeout');
-        } else {
-          logger.warn('[SetupWizard] Ollama connection error:', error.message);
-        }
-      }
+      // Connection failures during setup are expected, no need to log
       return false;
     }
   }
@@ -101,10 +92,9 @@ export class SetupWizard {
   async getAvailableModels(endpoint: string): Promise<string[]> {
     try {
       const url = `${endpoint}/api/tags`;
-      logger.debug('[SetupWizard] Fetching available models from:', url);
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
+      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_ENDPOINT_VALIDATION);
 
       const response = await fetch(url, {
         method: 'GET',
@@ -115,19 +105,15 @@ export class SetupWizard {
       clearTimeout(timeout);
 
       if (!response.ok) {
-        logger.warn('[SetupWizard] Failed to fetch models, status:', response.status);
         return [];
       }
 
       const data = (await response.json()) as OllamaListResponse;
       const models = data.models.map((m) => m.name);
 
-      logger.debug('[SetupWizard] Found models:', models);
       return models;
     } catch (error) {
-      if (error instanceof Error) {
-        logger.warn('[SetupWizard] Error fetching models:', error.message);
-      }
+      // Connection failures during setup are expected, no need to log
       return [];
     }
   }
@@ -147,8 +133,7 @@ export class SetupWizard {
    * @returns boolean - true if valid
    */
   validateContextSize(contextSize: number): boolean {
-    const validSizes = [16384, 32768, 65536, 131072];
-    return validSizes.includes(contextSize);
+    return (VALID_CONTEXT_SIZES as readonly number[]).includes(contextSize);
   }
 
   /**
@@ -156,25 +141,21 @@ export class SetupWizard {
    * @param config - The setup configuration to apply
    */
   async applySetupConfig(config: SetupConfig): Promise<void> {
-    logger.info('[SetupWizard] Applying setup configuration');
+    await this.configManager.setValue('endpoint', config.endpoint);
+    await this.configManager.setValue('model', config.model);
+    await this.configManager.setValue('service_model', config.service_model);
+    await this.configManager.setValue('context_size', config.context_size);
+    await this.configManager.setValue('temperature', config.temperature);
+    await this.configManager.setValue('auto_confirm', config.auto_confirm);
 
-    this.configManager.setValue('endpoint', config.endpoint);
-    this.configManager.setValue('model', config.model);
-    this.configManager.setValue('context_size', config.context_size);
-    this.configManager.setValue('temperature', config.temperature);
-    this.configManager.setValue('auto_confirm', config.auto_confirm);
-
-    this.markSetupCompleted();
-
-    logger.info('[SetupWizard] Configuration applied successfully');
+    await this.markSetupCompleted();
   }
 
   /**
    * Reset setup completion flag (for re-running setup)
    */
-  resetSetup(): void {
-    this.configManager.setValue('setup_completed', false);
-    logger.info('[SetupWizard] Setup completion flag reset');
+  async resetSetup(): Promise<void> {
+    await this.configManager.setValue('setup_completed', false);
   }
 
   /**
@@ -188,7 +169,7 @@ export class SetupWizard {
    * Get default context size
    */
   getDefaultContextSize(): number {
-    return 32768;
+    return CONTEXT_SIZES.MEDIUM;
   }
 
   /**
@@ -203,10 +184,10 @@ export class SetupWizard {
    */
   getContextSizeOptions(): Array<{ value: number; label: string }> {
     return [
-      { value: 16384, label: '16K (16,384 tokens)' },
-      { value: 32768, label: '32K (32,768 tokens) [Recommended]' },
-      { value: 65536, label: '64K (65,536 tokens)' },
-      { value: 131072, label: '128K (131,072 tokens)' },
+      { value: CONTEXT_SIZES.SMALL, label: '16K (16,384 tokens)' },
+      { value: CONTEXT_SIZES.MEDIUM, label: '32K (32,768 tokens) [Recommended]' },
+      { value: CONTEXT_SIZES.LARGE, label: '64K (65,536 tokens)' },
+      { value: CONTEXT_SIZES.XLARGE, label: '128K (131,072 tokens)' },
     ];
   }
 }

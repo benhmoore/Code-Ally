@@ -17,6 +17,7 @@ export interface CLIOptions {
   temperature?: number;
   contextSize?: number;
   maxTokens?: number;
+  reasoningEffort?: string;
 
   // Configuration management
   init?: boolean;
@@ -24,13 +25,9 @@ export interface CLIOptions {
   configShow?: boolean;
   configReset?: boolean;
 
-  // Security and behavior
-  yesToAll?: boolean;
-  focus?: string;
+  // Logging
   verbose?: boolean;
   debug?: boolean;
-  skipOllamaCheck?: boolean;
-  checkContextMsg?: boolean;
 
   // Session management
   session?: string;
@@ -41,13 +38,7 @@ export interface CLIOptions {
   resume?: string | boolean;
 
   // Advanced settings
-  bashTimeout?: number;
   autoConfirm?: boolean;
-  compact?: boolean;
-
-  // Debug options
-  debugToolCalls?: boolean;
-  debugInfo?: 'system' | 'tokens' | 'context';
 }
 
 /**
@@ -111,6 +102,10 @@ Use '/help' for complete interactive command reference.
         '--max-tokens <int>',
         'Maximum tokens to generate',
         (val) => parseInt(val, 10)
+      )
+      .option(
+        '--reasoning-effort <level>',
+        'Reasoning effort for gpt-oss models (low, medium, high)'
       );
 
     // Configuration Management
@@ -123,26 +118,12 @@ Use '/help' for complete interactive command reference.
       .option('--config-show', 'Show the current configuration')
       .option('--config-reset', 'Reset configuration to defaults');
 
-    // Security and Behavior
+    // Logging
     this.program
-      .option(
-        '--yes-to-all, -y',
-        'Skip all confirmation prompts (dangerous, use with caution)'
-      )
-      .option('--focus <path>', 'Set directory focus at startup')
       .option('--verbose, -v', 'Enable verbose mode with detailed logging')
       .option(
         '--debug',
         'Enable debug mode with DEBUG level logging messages'
-      )
-      .option(
-        '--skip-ollama-check',
-        'Skip the check for Ollama availability'
-      )
-      .option(
-        '--check-context-msg',
-        'Encourage LLM to check its context when redundant tool calls are detected',
-        true
       );
 
     // Session Management
@@ -165,21 +146,7 @@ Use '/help' for complete interactive command reference.
 
     // Advanced Settings
     this.program
-      .option(
-        '--bash-timeout <seconds>',
-        'Bash command timeout in seconds',
-        (val) => parseInt(val, 10)
-      )
-      .option('--auto-confirm', 'Auto-confirm tool executions')
-      .option('--compact', 'Start with compact history');
-
-    // Debug and Diagnostics
-    this.program
-      .option('--debug-tool-calls', 'Print raw tool calls for debugging')
-      .option(
-        '--debug-info <type>',
-        'Show debug information in non-interactive mode (system|tokens|context)'
-      );
+      .option('--auto-confirm', 'Auto-confirm tool executions');
   }
 
   /**
@@ -200,6 +167,7 @@ Use '/help' for complete interactive command reference.
       temperature: opts.temperature,
       contextSize: opts.contextSize,
       maxTokens: opts.maxTokens,
+      reasoningEffort: opts.reasoningEffort,
 
       // Configuration
       init: opts.init,
@@ -207,13 +175,9 @@ Use '/help' for complete interactive command reference.
       configShow: opts.configShow,
       configReset: opts.configReset,
 
-      // Security
-      yesToAll: opts.yesToAll,
-      focus: opts.focus,
+      // Logging
       verbose: opts.verbose,
       debug: opts.debug,
-      skipOllamaCheck: opts.skipOllamaCheck,
-      checkContextMsg: opts.checkContextMsg,
 
       // Session
       session: opts.session,
@@ -224,13 +188,7 @@ Use '/help' for complete interactive command reference.
       resume: opts.resume,
 
       // Advanced
-      bashTimeout: opts.bashTimeout,
       autoConfirm: opts.autoConfirm,
-      compact: opts.compact,
-
-      // Debug
-      debugToolCalls: opts.debugToolCalls,
-      debugInfo: opts.debugInfo as 'system' | 'tokens' | 'context' | undefined,
     };
   }
 

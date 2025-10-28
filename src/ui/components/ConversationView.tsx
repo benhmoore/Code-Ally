@@ -8,6 +8,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
+import { BUFFER_SIZES, TEXT_LIMITS } from '../../config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -76,7 +77,7 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
     }
   });
 
-  // Limit agent delegations to show only last 3 tool calls
+  // Limit agent delegations to show only last N tool calls
   const limitAgentToolCalls = (
     calls: (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[]
   ): (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] => {
@@ -84,11 +85,11 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
       // Check if this is an agent delegation (has 'agent' in toolName)
       const isAgentDelegation = call.toolName === 'agent';
 
-      if (isAgentDelegation && call.children && call.children.length > 3) {
+      if (isAgentDelegation && call.children && call.children.length > BUFFER_SIZES.TOP_ITEMS_PREVIEW) {
         // Keep total count before limiting
         call.totalChildCount = call.children.length;
-        // Keep only last 3 children
-        call.children = call.children.slice(-3);
+        // Keep only last N children
+        call.children = call.children.slice(-BUFFER_SIZES.TOP_ITEMS_PREVIEW);
       }
 
       // Recursively process children
@@ -205,7 +206,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   config,
 }) => {
   const { stdout } = useStdout();
-  const terminalWidth = stdout?.columns || 80; // Fallback to 80 if unavailable
+  const terminalWidth = stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK; // Fallback to 80 if unavailable
 
   // Get git branch on mount
   const [gitBranch, setGitBranch] = useState<string | null>(null);
@@ -281,7 +282,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
   // Pre-render timeline items as JSX for Static component
   const completedJSXItems = React.useMemo(() => {
-    const dividerWidth = Math.max(60, terminalWidth - 4);
+    const dividerWidth = Math.max(TEXT_LIMITS.DIVIDER_MIN_WIDTH, terminalWidth - TEXT_LIMITS.DIVIDER_PADDING);
     const divider = '─'.repeat(dividerWidth);
     const items: React.ReactNode[] = [];
 

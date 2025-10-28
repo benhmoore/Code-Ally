@@ -6,6 +6,7 @@
 
 import * as fs from 'fs/promises';
 import { ensureRegistryInitialized, getDefaultRegistry } from '../checkers/CheckerRegistry.js';
+import { BUFFER_SIZES } from '../config/constants.js';
 
 /**
  * Result of checking a file after modification
@@ -60,9 +61,8 @@ export async function checkFileAfterModification(
 
     // Only include errors, not warnings (context optimization)
     // Limit to first 10 errors to avoid context overflow
-    const MAX_ERRORS = 10;
-    const errors = result.errors.slice(0, MAX_ERRORS);
-    const additionalErrorCount = Math.max(0, result.errors.length - MAX_ERRORS);
+    const errors = result.errors.slice(0, BUFFER_SIZES.MAX_ERROR_DISPLAY);
+    const additionalErrorCount = Math.max(0, result.errors.length - BUFFER_SIZES.MAX_ERROR_DISPLAY);
 
     // Read content for error context
     const contentLines = content.split('\n');

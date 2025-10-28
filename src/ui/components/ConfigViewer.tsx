@@ -43,9 +43,9 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
 
     // Group configurations by category
     const categoryDefs = {
-      'LLM Model Settings': ['model', 'endpoint', 'context_size', 'temperature', 'max_tokens'],
-      'Execution Settings': ['bash_timeout', 'auto_confirm', 'check_context_msg', 'parallel_tools'],
-      'UI Preferences': ['theme', 'compact_threshold', 'show_token_usage', 'show_context_in_prompt'],
+      'LLM Model Settings': ['model', 'service_model', 'endpoint', 'context_size', 'temperature', 'max_tokens', 'reasoning_effort'],
+      'Execution Settings': ['bash_timeout', 'auto_confirm', 'parallel_tools'],
+      'UI Preferences': ['theme', 'compact_threshold', 'show_context_in_prompt'],
       'Tool Result Preview': ['tool_result_preview_lines', 'tool_result_preview_enabled'],
       'Diff Display': ['diff_display_enabled', 'diff_display_max_file_size', 'diff_display_context_lines', 'diff_display_theme', 'diff_display_color_removed', 'diff_display_color_added', 'diff_display_color_modified'],
       'Tool Result Truncation': ['tool_result_max_tokens_normal', 'tool_result_max_tokens_moderate', 'tool_result_max_tokens_aggressive', 'tool_result_max_tokens_critical'],
@@ -54,13 +54,17 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
     // Build categories
     return Object.entries(categoryDefs).map(([name, keys]) => ({
       name,
-      entries: keys.map(key => ({
-        key,
-        type: (CONFIG_TYPES as any)[key],
-        currentValue: (config as any)[key],
-        defaultValue: (DEFAULT_CONFIG as any)[key],
-        isModified: JSON.stringify((config as any)[key]) !== JSON.stringify((DEFAULT_CONFIG as any)[key]),
-      })),
+      entries: keys.map(key => {
+        const currentValue = (config as any)[key];
+        const defaultValue = (DEFAULT_CONFIG as any)[key];
+        return {
+          key,
+          type: (CONFIG_TYPES as any)[key],
+          currentValue,
+          defaultValue,
+          isModified: JSON.stringify(currentValue) !== JSON.stringify(defaultValue),
+        };
+      }),
     }));
   }, []); // Empty deps means recalculate on every render for live updates
 
@@ -74,12 +78,17 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
   let maxCurrentWidth = 0;
   let maxDefaultWidth = 0;
 
+  const formatValue = (val: any) => {
+    if (val === undefined) return 'undefined';
+    return JSON.stringify(val);
+  };
+
   categories.forEach(category => {
     category.entries.forEach(entry => {
       maxKeyWidth = Math.max(maxKeyWidth, entry.key.length);
       maxTypeWidth = Math.max(maxTypeWidth, entry.type.length);
-      maxCurrentWidth = Math.max(maxCurrentWidth, JSON.stringify(entry.currentValue).length);
-      maxDefaultWidth = Math.max(maxDefaultWidth, JSON.stringify(entry.defaultValue).length);
+      maxCurrentWidth = Math.max(maxCurrentWidth, formatValue(entry.currentValue).length);
+      maxDefaultWidth = Math.max(maxDefaultWidth, formatValue(entry.defaultValue).length);
     });
   });
 
@@ -137,25 +146,32 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
             </Box>
 
             {/* Entries */}
-            {category.entries.map((entry, idx) => (
-              <Box key={idx}>
-                <Text color={entry.isModified ? 'green' : undefined}>
-                  {pad(entry.key, maxKeyWidth + 2)}
-                </Text>
-                <Text dimColor>
-                  {pad(entry.type, maxTypeWidth + 2)}
-                </Text>
-                <Text color={entry.isModified ? 'green' : undefined}>
-                  {pad(JSON.stringify(entry.currentValue), maxCurrentWidth + 2)}
-                </Text>
-                <Text dimColor>
-                  {pad(JSON.stringify(entry.defaultValue), maxDefaultWidth + 2)}
-                </Text>
-                <Text color={entry.isModified ? 'yellow' : 'green'}>
-                  {entry.isModified ? 'modified' : 'default'}
-                </Text>
-              </Box>
-            ))}
+            {category.entries.map((entry, idx) => {
+              const formatValue = (val: any) => {
+                if (val === undefined) return 'undefined';
+                return JSON.stringify(val);
+              };
+
+              return (
+                <Box key={idx}>
+                  <Text color={entry.isModified ? 'green' : undefined}>
+                    {pad(entry.key, maxKeyWidth + 2)}
+                  </Text>
+                  <Text dimColor>
+                    {pad(entry.type, maxTypeWidth + 2)}
+                  </Text>
+                  <Text color={entry.isModified ? 'green' : undefined}>
+                    {pad(formatValue(entry.currentValue), maxCurrentWidth + 2)}
+                  </Text>
+                  <Text dimColor>
+                    {pad(formatValue(entry.defaultValue), maxDefaultWidth + 2)}
+                  </Text>
+                  <Text color={entry.isModified ? 'yellow' : 'green'}>
+                    {entry.isModified ? 'modified' : 'default'}
+                  </Text>
+                </Box>
+              );
+            })}
           </Box>
         ))}
 

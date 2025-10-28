@@ -11,12 +11,12 @@ import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
+import { TEXT_LIMITS } from '../config/constants.js';
 import * as fs from 'fs/promises';
 
 export class EditTool extends BaseTool {
   readonly name = 'edit';
-  readonly description =
-    'Find and replace text in a file. Performs exact string matching. Use this for precise text replacements.';
+  readonly description = 'Make edits to a single file using find-and-replace';
   readonly requiresConfirmation = true; // Destructive operation
 
   constructor(activityStream: ActivityStream) {
@@ -154,12 +154,12 @@ export class EditTool extends BaseTool {
         if (suggestions.length > 0) {
           suggestionText += '\n\nSimilar strings found:';
           for (const [match, reason] of suggestions) {
-            suggestionText += `\n- "${this.truncate(match, 100)}" (${reason})`;
+            suggestionText += `\n- "${this.truncate(match, TEXT_LIMITS.EDIT_TARGET_PREVIEW_MAX)}" (${reason})`;
           }
         }
 
         return this.formatErrorResponse(
-          `old_string not found in file: "${this.truncate(oldString, 100)}"`,
+          `old_string not found in file: "${this.truncate(oldString, TEXT_LIMITS.EDIT_TARGET_PREVIEW_MAX)}"`,
           'user_error',
           suggestionText
         );
@@ -222,7 +222,7 @@ export class EditTool extends BaseTool {
    */
   private truncate(str: string, maxLength: number): string {
     if (str.length <= maxLength) return str;
-    return str.substring(0, maxLength - 3) + '...';
+    return str.substring(0, maxLength - TEXT_LIMITS.ELLIPSIS_LENGTH) + '...';
   }
 
   /**
@@ -242,7 +242,7 @@ export class EditTool extends BaseTool {
 
       if (textNormalized.includes(targetNormalized)) {
         matches.push([
-          target.substring(0, 100),
+          target.substring(0, TEXT_LIMITS.EDIT_TARGET_PREVIEW_MAX),
           'Multi-line string with whitespace differences',
         ]);
       }
@@ -274,7 +274,7 @@ export class EditTool extends BaseTool {
       }
 
       // Check for substring matches
-      if (target.length > 5 && (line.includes(target) || target.includes(line))) {
+      if (target.length > TEXT_LIMITS.EDIT_TARGET_MIN_LENGTH && (line.includes(target) || target.includes(line))) {
         matches.push([`Line ${i + 1}: ${line}`, 'Partial match (substring)']);
         continue;
       }

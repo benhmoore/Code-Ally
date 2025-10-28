@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn } from 'child_process';
 import { FileChecker, CheckResult, CheckIssue } from './types.js';
+import { API_TIMEOUTS } from '../config/constants.js';
 
 export class TypeScriptChecker implements FileChecker {
   readonly name = 'typescript';
@@ -79,7 +80,7 @@ export class TypeScriptChecker implements FileChecker {
     }
 
     try {
-      await this.runCommand('tsc', ['--version'], { timeout: 2000 });
+      await this.runCommand('tsc', ['--version'], { timeout: API_TIMEOUTS.VERSION_CHECK });
       this.tscAvailable = true;
     } catch {
       this.tscAvailable = false;
@@ -135,7 +136,7 @@ export class TypeScriptChecker implements FileChecker {
       ['--noEmit', '--pretty', 'false', '--project', tsconfigPath],
       {
         cwd: projectDir,
-        timeout: 30000, // Longer timeout for project checking
+        timeout: API_TIMEOUTS.TSC_PROJECT_CHECK_TIMEOUT,
       }
     );
 
@@ -168,7 +169,7 @@ export class TypeScriptChecker implements FileChecker {
       const { stdout } = await this.runCommand(
         'tsc',
         ['--noEmit', '--pretty', 'false', tmpPath],
-        { timeout: 10000 }
+        { timeout: API_TIMEOUTS.TSC_STANDALONE_CHECK_TIMEOUT }
       );
 
       // Parse tsc output

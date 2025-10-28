@@ -10,6 +10,8 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
+import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
+import { TEXT_LIMITS } from '../config/constants.js';
 
 export abstract class BaseTool {
   /**
@@ -279,13 +281,13 @@ export abstract class BaseTool {
 
           // Truncate long strings
           if (typeof value === 'string') {
-            valueStr = value.length > 50
-              ? `"${value.substring(0, 47)}..."`
+            valueStr = value.length > TEXT_LIMITS.TOOL_PARAM_VALUE_MAX
+              ? `"${value.substring(0, TEXT_LIMITS.TOOL_PARAM_VALUE_MAX - TEXT_LIMITS.ELLIPSIS_LENGTH)}..."`
               : `"${value}"`;
           }
           // Summarize long arrays
           else if (Array.isArray(value)) {
-            valueStr = value.length > 3
+            valueStr = value.length > TEXT_LIMITS.TOOL_PARAM_ARRAY_DISPLAY
               ? `[${value.length} items]`
               : JSON.stringify(value);
           }
@@ -372,7 +374,7 @@ export abstract class BaseTool {
    * @returns Estimated output size in tokens
    */
   getEstimatedOutputSize(): number {
-    return 400; // Default estimate
+    return TOOL_OUTPUT_ESTIMATES.DEFAULT;
   }
 
   /**
@@ -425,8 +427,8 @@ export abstract class BaseTool {
     return entries.map(([key, value]) => {
       const valueStr =
         typeof value === 'string'
-          ? value.length > 50
-            ? value.substring(0, 47) + '...'
+          ? value.length > TEXT_LIMITS.TOOL_PARAM_VALUE_MAX
+            ? value.substring(0, TEXT_LIMITS.TOOL_PARAM_VALUE_MAX - TEXT_LIMITS.ELLIPSIS_LENGTH) + '...'
             : value
           : JSON.stringify(value);
       return `${key}: ${valueStr}`;

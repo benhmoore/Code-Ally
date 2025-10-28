@@ -24,6 +24,8 @@ import { PermissionManager } from '../security/PermissionManager.js';
 import { Message, ActivityEventType, Config } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
+import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
@@ -77,7 +79,6 @@ export class Agent {
   private lastToolCallTime: number = Date.now();
   private activityWatchdogInterval: NodeJS.Timeout | null = null;
   private readonly activityTimeoutMs: number;
-  private static readonly WATCHDOG_CHECK_INTERVAL_MS = 10000;
 
   constructor(
     modelClient: ModelClient,
@@ -92,7 +93,7 @@ export class Agent {
     this.activityStream = activityStream;
     this.config = config;
 
-    // Generate unique instance ID for debugging
+    // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
 
@@ -184,7 +185,7 @@ export class Agent {
       if (elapsedMs > this.activityTimeoutMs) {
         this.handleActivityTimeout(elapsedMs);
       }
-    }, Agent.WATCHDOG_CHECK_INTERVAL_MS);
+    }, POLLING_INTERVALS.AGENT_WATCHDOG);
 
     logger.debug('[AGENT_ACTIVITY]', this.instanceId, 'Activity watchdog started');
   }
@@ -275,13 +276,19 @@ export class Agent {
         let reminderContent = '<system-reminder>\n';
 
         if (todos.length === 0) {
-          reminderContent += 'The todo list is currently empty. For complex multi-step tasks (3+ steps) or non-trivial operations, consider creating a todo list using todo_write. This helps track progress and ensures nothing is missed.\n';
+          reminderContent += 'IMPORTANT: The todo list is currently empty. Create a todo list using todo_write for any task requiring multiple steps, even if the user\'s request doesn\'t explicitly request it. Breaking work into tracked tasks dramatically improves your effectiveness - it helps you maintain focus, avoid getting sidetracked, and ensure nothing is missed. Use todo_write early and often.\n';
         } else {
           reminderContent += 'Current todos:\n';
           todos.forEach((todo: any, idx: number) => {
             const status = todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '→' : '○';
             reminderContent += `${idx + 1}. [${status}] ${todo.task}\n`;
           });
+
+          const inProgressTodo = todos.find((t: any) => t.status === 'in_progress');
+          if (inProgressTodo) {
+            reminderContent += `\nYou are currently working on: "${inProgressTodo.task}". Stay focused on completing this task - don't get distracted by tangential findings in tool results unless they directly block your progress.\n`;
+          }
+
           reminderContent += '\nConsider if this list needs updates based on the user\'s new request. Remember: exactly ONE task must be in_progress when working. Update using todo_write if needed.\n';
         }
 
@@ -441,9 +448,6 @@ export class Agent {
       this.messages[0].content = updatedSystemPrompt;
     }
 
-    // Deduplicate tool results to save context
-    this.deduplicateToolResults();
-
     // Auto-compaction: check if context usage exceeds threshold
     await this.checkAutoCompaction();
 
@@ -451,7 +455,7 @@ export class Agent {
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Sending', this.messages.length, 'messages to LLM');
     if (logger.isDebugEnabled()) {
       this.messages.forEach((msg, idx) => {
-        const preview = msg.content.length > 100 ? msg.content.slice(0, 97) + '...' : msg.content;
+        const preview = msg.content.length > TEXT_LIMITS.MESSAGE_PREVIEW_MAX ? msg.content.slice(0, TEXT_LIMITS.MESSAGE_PREVIEW_MAX - 3) + '...' : msg.content;
         const toolInfo = msg.tool_calls ? ` toolCalls:${msg.tool_calls.length}` : '';
         const toolCallId = msg.tool_call_id ? ` toolCallId:${msg.tool_call_id}` : '';
         console.log(`  [${idx}] ${msg.role}${toolInfo}${toolCallId} - ${preview}`);
@@ -592,9 +596,9 @@ export class Agent {
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.messages.length);
 
     // Check context usage for specialized agents (subagents)
-    // Enforce stricter 90% limit to ensure room for final summary
+    // Enforce stricter limit (WARNING threshold) to ensure room for final summary
     const contextUsage = this.tokenManager.getContextUsagePercentage();
-    if (this.config.isSpecializedAgent && contextUsage >= 90) {
+    if (this.config.isSpecializedAgent && contextUsage >= CONTEXT_THRESHOLDS.WARNING) {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent at', contextUsage + '% context - blocking tool execution to preserve space for summary');
 
       // Remove the assistant message with tool calls we just added
@@ -642,10 +646,17 @@ export class Agent {
    * @returns The text content
    */
   private processTextResponse(response: LLMResponse): string {
+    // Validate that we have actual content
+    const content = response.content || '';
+
+    if (!content.trim()) {
+      logger.warn('[AGENT_RESPONSE]', this.instanceId, 'Model returned empty content - this may indicate the model did not provide a proper response after tool execution');
+    }
+
     // Add assistant message
     const assistantMessage: Message = {
       role: 'assistant',
-      content: response.content,
+      content: content,
       timestamp: Date.now(),
     };
     this.messages.push(assistantMessage);
@@ -659,12 +670,12 @@ export class Agent {
       type: ActivityEventType.AGENT_END,
       timestamp: Date.now(),
       data: {
-        content: response.content,
+        content: content,
         isSpecializedAgent: this.config.isSpecializedAgent || false,
       },
     });
 
-    return response.content;
+    return content;
   }
 
   /**
@@ -789,8 +800,22 @@ export class Agent {
       todos = (todoManager as any).getTodos();
     }
 
+    // Get idle messages if IdleMessageGenerator is available
+    let idleMessages: string[] | undefined;
+    const idleMessageGenerator = registry.get('idle_message_generator');
+    if (idleMessageGenerator && typeof (idleMessageGenerator as any).getQueue === 'function') {
+      idleMessages = (idleMessageGenerator as any).getQueue();
+    }
+
+    // Get project context if ProjectContextDetector is available
+    let projectContext: any | undefined;
+    const projectContextDetector = registry.get('project_context_detector');
+    if (projectContextDetector && typeof (projectContextDetector as any).getCached === 'function') {
+      projectContext = (projectContextDetector as any).getCached();
+    }
+
     // Auto-save (non-blocking, fire and forget)
-    (sessionManager as any).autoSave(this.messages, todos).catch((error: Error) => {
+    (sessionManager as any).autoSave(this.messages, todos, idleMessages, projectContext).catch((error: Error) => {
       logger.error('[AGENT_SESSION]', this.instanceId, 'Failed to auto-save session:', error);
     });
   }
@@ -843,7 +868,7 @@ export class Agent {
   }
 
   /**
-   * Set messages (used for compaction and rewind)
+   * Set messages (used for compaction, rewind, and session loading)
    * @param messages - New message array to replace current messages
    */
   setMessages(messages: Message[]): void {
@@ -914,61 +939,6 @@ export class Agent {
   }
 
   /**
-   * Deduplicate tool results to save context
-   *
-   * Replaces duplicate tool results (same content) with a truncated message.
-   * Keeps the most recent occurrence and truncates earlier ones.
-   */
-  private deduplicateToolResults(): void {
-    // TokenManager is always available (instance variable)
-    if (typeof this.tokenManager.trackToolResult !== 'function') {
-      return; // trackToolResult not available, skip deduplication
-    }
-
-    // Track which tool results we've seen
-    const contentHashes = new Map<string, number>(); // hash -> first message index
-
-    // First pass: identify duplicates
-    for (let i = 0; i < this.messages.length; i++) {
-      const msg = this.messages[i];
-
-      // Only process tool messages
-      if (!msg || msg.role !== 'tool' || !msg.tool_call_id) {
-        continue;
-      }
-
-      // Calculate content hash
-      const hash = (this.tokenManager as any).hashContent(msg.content);
-
-      if (contentHashes.has(hash)) {
-        // This is a duplicate - mark the earlier occurrence for truncation
-        const firstIndex = contentHashes.get(hash)!;
-        const firstMsg = this.messages[firstIndex];
-
-        if (firstMsg) {
-          // Replace earlier occurrence with truncated message
-          this.messages[firstIndex] = {
-            role: firstMsg.role,
-            content: '[Duplicate tool result truncated - content identical to later call]',
-            tool_call_id: firstMsg.tool_call_id,
-            name: firstMsg.name,
-            timestamp: firstMsg.timestamp,
-          };
-
-          logger.debug(
-            '[AGENT_DEDUP]',
-            this.instanceId,
-            `Truncated duplicate tool result at index ${firstIndex}, kept index ${i}`
-          );
-        }
-      } else {
-        // First occurrence of this content
-        contentHashes.set(hash, i);
-      }
-    }
-  }
-
-  /**
    * Check if auto-compaction should trigger based on context usage
    */
   private async checkAutoCompaction(): Promise<void> {
@@ -984,10 +954,10 @@ export class Agent {
 
     // Check current context usage
     const contextUsage = this.tokenManager.getContextUsagePercentage();
-    const threshold = this.config.config.compact_threshold || 95;
+    const threshold = this.config.config.compact_threshold || CONTEXT_THRESHOLDS.CRITICAL;
 
     // Only compact if we exceed threshold and have enough messages
-    if (contextUsage < threshold || this.messages.length < 5) {
+    if (contextUsage < threshold || this.messages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_COMPACTION) {
       return;
     }
 
@@ -1042,7 +1012,7 @@ export class Agent {
     const otherMessages = systemMessage ? this.messages.slice(1) : this.messages;
 
     // If we have fewer than 2 messages to summarize, nothing to compact
-    if (otherMessages.length < 2) {
+    if (otherMessages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_HISTORY) {
       return this.messages;
     }
 
@@ -1132,6 +1102,7 @@ export class Agent {
    * Generate a unique ID for events
    */
   private generateId(): string {
+    // Generate agent ID: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     return `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   }
 

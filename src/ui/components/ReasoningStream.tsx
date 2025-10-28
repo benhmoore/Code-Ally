@@ -10,10 +10,11 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { ActivityEventType } from '../../types/index.js';
+import { ANIMATION_TIMING, TEXT_LIMITS } from '../../config/constants.js';
 
-const MAX_LINES = 2; // Reserve exactly 2 lines for reasoning
-const THOUGHT_LIFETIME_MS = 5000; // 5 seconds
-const CHARS_PER_LINE = 80; // Approximate terminal width
+const MAX_LINES = TEXT_LIMITS.REASONING_MAX_LINES;
+const THOUGHT_LIFETIME_MS = ANIMATION_TIMING.REASONING_THOUGHT_LIFETIME;
+const CHARS_PER_LINE = TEXT_LIMITS.REASONING_CHARS_PER_LINE;
 
 interface TimestampedThought {
   text: string;
@@ -74,7 +75,7 @@ export const ReasoningStream: React.FC = () => {
             }
             setReasoning('');
           }
-        }, 500); // Check every 500ms
+        }, ANIMATION_TIMING.REASONING_CLEANUP_INTERVAL);
       }
     }
 
@@ -100,15 +101,15 @@ export const ReasoningStream: React.FC = () => {
       currentThoughtRef.current = remainder;
     }
 
-    // Throttle updates to prevent UI thrashing (max once per 200ms)
+    // Throttle updates to prevent UI thrashing
     const now = Date.now();
-    if (now - lastUpdateRef.current < 200) {
+    if (now - lastUpdateRef.current < ANIMATION_TIMING.REASONING_THROTTLE) {
       if (throttleTimerRef.current) {
         clearTimeout(throttleTimerRef.current);
       }
       throttleTimerRef.current = setTimeout(() => {
         updateDisplay();
-      }, 200);
+      }, ANIMATION_TIMING.REASONING_THROTTLE);
     } else {
       updateDisplay();
     }

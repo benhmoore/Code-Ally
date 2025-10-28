@@ -7,6 +7,15 @@
 
 import { ModelClient } from '../llm/ModelClient.js';
 import { Message } from '../types/index.js';
+import { CancellableService } from '../types/CancellableService.js';
+import { logger } from './Logger.js';
+import {
+  POLLING_INTERVALS,
+  BUFFER_SIZES,
+  API_TIMEOUTS,
+  TEXT_LIMITS,
+  IDLE_MESSAGE_GENERATION,
+} from '../config/constants.js';
 
 /**
  * Additional context for idle message generation
@@ -16,24 +25,22 @@ export interface IdleContext {
   cwd?: string;
   /** Active todo items */
   todos?: Array<{ task: string; status: string }>;
-  /** Current time for time-aware messages */
-  currentTime?: Date;
-  /** Last user prompt */
-  lastUserMessage?: string;
-  /** Last assistant response */
-  lastAssistantMessage?: string;
-  /** Number of messages in the conversation */
-  messageCount?: number;
-  /** Session duration in seconds */
-  sessionDuration?: number;
   /** Current git branch name */
   gitBranch?: string;
   /** User's home directory name */
   homeDirectory?: string;
-  /** Total number of previous sessions */
-  sessionCount?: number;
-  /** Number of sessions created today */
-  sessionsToday?: number;
+  /** Project context (languages, frameworks, etc.) */
+  projectContext?: {
+    languages: string[];
+    frameworks: string[];
+    projectName?: string;
+    projectType?: string;
+    hasGit: boolean;
+    packageManager?: string;
+    scale: 'small' | 'medium' | 'large';
+    hasDocker?: boolean;
+    cicd?: string[];
+  };
 }
 
 /**
@@ -51,39 +58,118 @@ export interface IdleMessageGeneratorConfig {
 /**
  * IdleMessageGenerator auto-generates idle messages using LLM
  */
-export class IdleMessageGenerator {
+export class IdleMessageGenerator implements CancellableService {
   private modelClient: ModelClient;
-  private currentMessage: string = 'Idle';
+  private messageQueue: string[] = [];
+  private currentMessageIndex: number = 0;
   private isGenerating: boolean = false;
   private lastGenerationTime: number = 0;
   private minInterval: number;
+  private readonly batchSize: number = BUFFER_SIZES.IDLE_MESSAGE_BATCH_SIZE;
+  private readonly refillThreshold: number = BUFFER_SIZES.IDLE_MESSAGE_REFILL_THRESHOLD;
+  private onQueueUpdated?: () => void;
 
   constructor(
     modelClient: ModelClient,
     config: IdleMessageGeneratorConfig = {}
   ) {
     this.modelClient = modelClient;
-    this.minInterval = config.minInterval || 10000; // Default: 10 seconds between generations
+    this.minInterval = config.minInterval || POLLING_INTERVALS.IDLE_MESSAGE_MIN;
+    // Initialize with default message
+    this.messageQueue.push('Idle');
+  }
+
+  /**
+   * Set callback to be called when queue is updated with new messages
+   */
+  setOnQueueUpdated(callback: () => void): void {
+    this.onQueueUpdated = callback;
+  }
+
+  /**
+   * Cancel any ongoing idle message generation
+   *
+   * Called before main agent starts processing to avoid resource competition.
+   * The service will naturally retry later when idle conditions are met.
+   */
+  cancel(): void {
+    if (this.isGenerating) {
+      logger.debug('[IDLE_MSG] 🛑 Cancelling ongoing generation (user interaction started)');
+
+      // Cancel all active requests on the model client
+      // This is safe because we call this BEFORE the agent starts its request
+      if (typeof this.modelClient.cancel === 'function') {
+        this.modelClient.cancel();
+      }
+
+      // Reset flag - the background promise will handle cleanup in finally block
+      this.isGenerating = false;
+    }
   }
 
   /**
    * Get the current idle message
    */
   getCurrentMessage(): string {
-    return this.currentMessage;
+    // If queue is empty, return fallback
+    if (this.messageQueue.length === 0) {
+      return 'Idle';
+    }
+
+    // Return current message (cycling through the queue)
+    const message = this.messageQueue[this.currentMessageIndex % this.messageQueue.length];
+    return message || 'Idle';
   }
 
   /**
-   * Generate a new idle message based on recent conversation context
+   * Move to the next message in the queue
+   */
+  nextMessage(): void {
+    if (this.messageQueue.length > 0) {
+      this.currentMessageIndex = (this.currentMessageIndex + 1) % this.messageQueue.length;
+    }
+  }
+
+  /**
+   * Get number of messages remaining in queue
+   */
+  getQueueSize(): number {
+    return this.messageQueue.length;
+  }
+
+  /**
+   * Get the entire message queue (for persistence)
+   */
+  getQueue(): string[] {
+    logger.debug(`[IDLE_MSG] getQueue called, returning ${this.messageQueue.length} messages: ${JSON.stringify(this.messageQueue.slice(0, 3))}...`);
+    return [...this.messageQueue];
+  }
+
+  /**
+   * Set the message queue (for restoration from session)
+   */
+  setQueue(messages: string[]): void {
+    if (messages && messages.length > 0) {
+      logger.debug(`[IDLE_MSG] setQueue called with ${messages.length} messages: ${JSON.stringify(messages.slice(0, 3))}...`);
+      this.messageQueue = [...messages];
+      this.currentMessageIndex = 0;
+    } else {
+      logger.debug(`[IDLE_MSG] setQueue called with empty/invalid messages: ${JSON.stringify(messages)}`);
+    }
+  }
+
+  /**
+   * Generate a batch of idle messages based on recent conversation context
    *
    * @param recentMessages - Recent conversation messages for context
    * @param context - Additional context (cwd, todos)
-   * @returns Generated message
+   * @returns Array of generated messages
    */
-  async generateMessage(recentMessages: Message[] = [], context?: IdleContext): Promise<string> {
-    const messagePrompt = this.buildMessagePrompt(recentMessages, context);
+  async generateMessageBatch(recentMessages: Message[] = [], context?: IdleContext): Promise<string[]> {
+    const messagePrompt = this.buildBatchMessagePrompt(recentMessages, context);
 
     try {
+      logger.debug('[IDLE_MSG] Sending request to model...');
       const response = await this.modelClient.send(
         [{ role: 'user', content: messagePrompt }],
         {
@@ -92,138 +178,130 @@ export class IdleMessageGenerator {
         }
       );
 
-      const message = response.content.trim();
-
-      // Clean up message - remove quotes, ensure reasonable length
-      let cleanMessage = message.replace(/^["']|["']$/g, '').trim();
-      if (cleanMessage.length > 60) {
-        cleanMessage = cleanMessage.slice(0, 57) + '...';
+      // Check if response was interrupted or had an error - don't process it
+      if ((response as any).interrupted || (response as any).error) {
+        logger.debug('[IDLE_MSG] ⚠️  Response was interrupted/error, keeping existing queue');
+        throw new Error('Generation interrupted or failed');
       }
 
-      return cleanMessage || 'Idle';
+      logger.debug(`[IDLE_MSG] Got response from model, length: ${response.content.length}`);
+      const content = response.content.trim();
+
+      // Parse the response - expecting numbered list or line-separated messages
+      const messages = content
+        .split('\n')
+        .map(line => {
+          // Remove numbering (1. 2. etc.) and quotes
+          return line.replace(/^\d+\.\s*/, '').replace(/^["']|["']$/g, '').trim();
+        })
+        .filter(msg => msg.length > 0 && msg.length <= TEXT_LIMITS.IDLE_MESSAGE_MAX) // Filter valid messages
+        .slice(0, this.batchSize); // Take up to batchSize messages
+
+      // If we got valid messages, return them
+      if (messages.length > 0) {
+        return messages;
+      }
+
+      // Fallback: return default messages
+      logger.warn('[IDLE_MSG] No valid messages parsed, returning fallback');
+      return ['Idle'];
     } catch (error) {
-      console.error('Failed to generate idle message:', error);
-      return 'Idle';
+      // Don't log interrupted/cancelled errors - they're expected
+      if (error instanceof Error && error.message.includes('interrupt')) {
+        throw error; // Re-throw to be handled by caller
+      }
+      logger.error('[IDLE_MSG] Failed to generate idle message batch:', error);
+      return ['Idle'];
     }
   }
 
   /**
-   * Generate an idle message in the background (non-blocking)
+   * Generate idle messages in the background (non-blocking)
    *
-   * Useful for periodically updating the idle message without blocking the UI
+   * Generates a batch of messages and refills the queue.
+   * Only triggers if queue has less than 5 messages remaining.
    *
    * @param recentMessages - Recent conversation messages for context
    * @param context - Additional context (cwd, todos)
+   * @param force - Force generation even if time interval hasn't passed (for initial startup)
    */
-  generateMessageBackground(recentMessages: Message[] = [], context?: IdleContext): void {
-    // Check if enough time has passed since last generation
+  generateMessageBackground(recentMessages: Message[] = [], context?: IdleContext, force: boolean = false): void {
+    // Only generate if queue is running low (less than 5 messages)
+    if (this.messageQueue.length >= this.refillThreshold) {
+      logger.debug(`[IDLE_MSG] ⏭️  Skipping generation - queue has ${this.messageQueue.length} messages (threshold: ${this.refillThreshold})`);
+      return;
+    }
+
+    // Check if enough time has passed since last generation (unless forced)
     const now = Date.now();
-    if (now - this.lastGenerationTime < this.minInterval) {
+    if (!force && now - this.lastGenerationTime < this.minInterval) {
+      const timeLeft = Math.round((this.minInterval - (now - this.lastGenerationTime)) / 1000);
+      logger.debug(`[IDLE_MSG] ⏭️  Skipping generation - ${timeLeft}s until next allowed generation`);
       return;
     }
 
     // Prevent concurrent generations
     if (this.isGenerating) {
+      logger.debug('[IDLE_MSG] ⏭️  Skipping generation - already generating');
       return;
     }
 
+    logger.debug('[IDLE_MSG] 🚀 Starting background idle message generation');
     this.isGenerating = true;
     this.lastGenerationTime = now;
 
     // Run in background
-    this.generateAndStoreMessageAsync(recentMessages, context)
+    this.generateAndRefillQueueAsync(recentMessages, context)
       .catch(error => {
-        console.error('Background idle message generation failed:', error);
+        // Ignore abort/interrupt errors (expected when cancelled)
+        if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
+          logger.debug('[IDLE_MSG] ⚠️  Generation cancelled (aborted by user interaction)');
+        } else {
+          logger.error('[IDLE_MSG] ❌ Generation failed:', error);
+        }
       })
       .finally(() => {
         this.isGenerating = false;
+        logger.debug('[IDLE_MSG] ✅ Generation completed, isGenerating reset to false');
       });
   }
 
   /**
-   * Generate and store message asynchronously
+   * Generate batch of messages and refill queue asynchronously
    */
-  private async generateAndStoreMessageAsync(recentMessages: Message[], context?: IdleContext): Promise<void> {
-    const message = await this.generateMessage(recentMessages, context);
-    this.currentMessage = message;
+  private async generateAndRefillQueueAsync(recentMessages: Message[], context?: IdleContext): Promise<void> {
+    const messages = await this.generateMessageBatch(recentMessages, context);
+    logger.debug(`[IDLE_MSG] 💬 Generated ${messages.length} new messages - first: "${messages[0]}"`);
+
+    // Replace the queue with new messages
+    this.messageQueue = messages;
+    this.currentMessageIndex = 0;
+
+    // Notify that queue has been updated (e.g., to trigger session save)
+    if (this.onQueueUpdated) {
+      try {
+        this.onQueueUpdated();
+      } catch (error) {
+        logger.warn('[IDLE_MSG] ⚠️  onQueueUpdated callback failed:', error);
+      }
+    }
   }
 
   /**
-   * Build the prompt for idle message generation
+   * Build the prompt for batch idle message generation
    */
-  private buildMessagePrompt(_recentMessages: Message[], context?: IdleContext): string {
-    // Add last exchange context (most important)
-    let lastExchangeContext = '';
-    if (context?.lastUserMessage && context?.lastAssistantMessage) {
-      lastExchangeContext = `\n\nLast exchange:
-User: ${context.lastUserMessage.slice(0, 150)}
-Assistant: ${context.lastAssistantMessage.slice(0, 150)}`;
-    }
-
+  private buildBatchMessagePrompt(_recentMessages: Message[], context?: IdleContext): string {
     // Add working directory context
     const cwdContext = context?.cwd
-      ? `\n\nCurrent working directory: ${context.cwd}`
+      ? `\n\nWorking directory: ${context.cwd}`
       : '';
-
-    // Add todo list context
-    let todoContext = '';
-    if (context?.todos && context.todos.length > 0) {
-      const pendingTodos = context.todos.filter(t => t.status === 'pending' || t.status === 'in_progress');
-      if (pendingTodos.length > 0) {
-        todoContext = `\n\nActive tasks:\n${pendingTodos.map(t => `- ${t.task}`).join('\n')}`;
-      }
-    }
-
-    // Add time context
-    let timeContext = '';
-    let dayOfWeek = '';
-    if (context?.currentTime) {
-      const hour = context.currentTime.getHours();
-      const timeOfDay = hour < 6 ? 'very early morning' :
-                        hour < 12 ? 'morning' :
-                        hour < 17 ? 'afternoon' :
-                        hour < 21 ? 'evening' :
-                        'late night';
-
-      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      dayOfWeek = days[context.currentTime.getDay()] || 'Unknown';
-
-      timeContext = `\n\nCurrent time: ${context.currentTime.toLocaleTimeString()} (${timeOfDay}, ${dayOfWeek})`;
-    }
-
-    // Add message count context
-    let messageCountContext = '';
-    if (context?.messageCount !== undefined) {
-      messageCountContext = `\n\nConversation length: ${context.messageCount} messages`;
-      if (context.messageCount > 30) {
-        messageCountContext += ' (long conversation - occasionally make explicit jokes about this, like "42 message marathon!" or "Haven\'t talked this much all day!")';
-      }
-    }
-
-    // Add session duration context
-    let sessionDurationContext = '';
-    if (context?.sessionDuration !== undefined) {
-      const minutes = Math.floor(context.sessionDuration / 60);
-      const hours = Math.floor(minutes / 60);
-      const displayMins = minutes % 60;
-
-      if (hours > 0) {
-        sessionDurationContext = `\n\nSession duration: ${hours}h ${displayMins}m`;
-      } else if (minutes > 0) {
-        sessionDurationContext = `\n\nSession duration: ${minutes} minutes`;
-      }
-
-      if (minutes > 60) {
-        sessionDurationContext += ' (long session - can joke about this!)';
-      }
-    }
 
     // Add git branch context
     let gitBranchContext = '';
     if (context?.gitBranch) {
       gitBranchContext = `\n\nGit branch: ${context.gitBranch}`;
       if (context.gitBranch.includes('fix') || context.gitBranch.includes('hotfix')) {
-        gitBranchContext += ' (fixing bugs - can joke about this!)';
+        gitBranchContext += ' (fixing bugs!)';
       } else if (context.gitBranch.includes('feature') || context.gitBranch.includes('feat')) {
         gitBranchContext += ' (building features!)';
       }
@@ -232,90 +310,90 @@ Assistant: ${context.lastAssistantMessage.slice(0, 150)}`;
     // Add home directory context
     let homeDirContext = '';
     if (context?.homeDirectory) {
-      homeDirContext = `\n\nUser's home directory name: ${context.homeDirectory} (you can occasionally make playful jokes about their username!)`;
+      homeDirContext = `\n\nUsername: ${context.homeDirectory}`;
     }
 
-    // Add session count context
-    let sessionCountContext = '';
-    if (context?.sessionCount !== undefined) {
-      sessionCountContext = `\n\nTotal previous sessions: ${context.sessionCount}`;
-      if (context.sessionCount >= 5) {
-        sessionCountContext += ' (lots of history! Can make humorous promises like "We won\'t make those mistakes again!" or reference their experience)';
+    // Add project context (stable, safe to persist)
+    let projectContext = '';
+    if (context?.projectContext) {
+      const pc = context.projectContext;
+      projectContext = '\n\nProject:';
+
+      if (pc.projectName) {
+        projectContext += `\n- Name: ${pc.projectName}`;
       }
-    }
 
-    // Add sessions today context
-    let sessionsTodayContext = '';
-    if (context?.sessionsToday !== undefined && context.sessionsToday > 0) {
-      sessionsTodayContext = `\n\nSessions created today: ${context.sessionsToday}`;
-      if (context.sessionsToday >= 3) {
-        sessionsTodayContext += ' (busy day! Can joke about how much they\'re chatting with you today)';
+      if (pc.projectType) {
+        projectContext += `\n- Type: ${pc.projectType}`;
       }
+
+      if (pc.languages.length > 0) {
+        projectContext += `\n- Languages: ${pc.languages.join(', ')}`;
+      }
+
+      if (pc.frameworks.length > 0) {
+        projectContext += `\n- Frameworks: ${pc.frameworks.join(', ')}`;
+      }
+
+      if (pc.packageManager) {
+        projectContext += `\n- Package manager: ${pc.packageManager}`;
+      }
+
+      if (pc.hasDocker) {
+        projectContext += `\n- Docker: Yes (containerized!)`;
+      }
+
+      if (pc.cicd && pc.cicd.length > 0) {
+        projectContext += `\n- CI/CD: ${pc.cicd.join(', ')}`;
+      }
+
+      projectContext += `\n\n(Feel free to make playful references to the tech stack, Docker, and CI/CD!)`;
     }
 
-    return `You are Ally, a cheeky chick mascot with ADHD energy. Generate ONE surprising, unexpected idle message (max 6 words).
+    return `You are Ally, a cheeky chick mascot with ADHD energy. Generate EXACTLY ${IDLE_MESSAGE_GENERATION.GENERATION_COUNT} surprising, unexpected idle messages (max ${IDLE_MESSAGE_GENERATION.MAX_WORDS} words each).
+
+FORMAT: Return as a numbered list, one message per line:
+1. First message
+2. Second message
+...
+10. Tenth message
 
 CRITICAL RULES:
 - BE BOLD and SURPRISING - safe greetings are BORING
 - USE the context provided - reference real details when possible
+- OCCASIONALLY use syntax from the primary language (e.g., "let code = 'time';" for JavaScript, "impl Ready {}" for Rust)
 - NO generic "ready to code" or "let's go" phrases
 - VARIETY is key - be creative and unpredictable
-- Mix humor styles: fake facts, empty promises, playful observations, self-aware jokes
+- Mix humor styles: fake facts, empty promises, playful observations, self-aware jokes, language syntax
 
-Think: What would make someone laugh or smile unexpectedly?
+STRICT SAFETY RULES - NEVER BREAK THESE:
+- NO messages that sound like errors or failures
+- NO messages referencing user actions as if they failed or had issues
+- NO technical status messages (avoid "Switched to X", "Built Y", "Installed Z", etc.)
+- Keep jokes CLEARLY recognizable as jokes, not system messages
+- When referencing technical context (git branch, etc.), be playful not status-like
 
-Examples:
+Think: What would make someone laugh or smile unexpectedly WITHOUT confusing them?
+
+Examples (be creative, don't copy these):
 - "Let's goooo!"
-- "Vibing and ready!"
 - "What's cookin'?"
-- "Hit me with it!"
-- "Ready to crush it!"
-- "Let's ship this!"
-- "You're up late!" (if late night)
-- "Early bird gets the bug!" (if early morning)
-- "That was fire!" (after success)
-- "Nailed it!"
-- "Feeling lucky today!"
-- "Bring it on!"
-- "Code time!"
-- "We're on a roll!" (if long conversation)
-- "Still going strong!" (if long conversation)
-- "27 message marathon session!" (if long conversation - be explicit!)
-- "Haven't talked this much all day!" (if long conversation)
-- "My beak's getting tired!" (if very long conversation)
-- "Is this a record?!" (if very long conversation)
-- "Happy Monday!" (day of week)
-- "TGIF vibes!" (if Friday)
-- "Sunday Funday coding!" (if Sunday)
-- "Hump day grind!" (if Wednesday)
-- "2 hour session! Legend!" (if long session)
-- "We've been at this 90 minutes!" (session duration)
-- "Working on 'fix-the-fix' branch?" (referencing branch name)
-- "Feature branch energy!" (if on feature branch)
-- "Is your name really 'bhm128'?" (playful username joke)
-- "Nice username, bhm128!" (home directory reference)
 - "Nothing will go wrong today!" (humorous empty promise)
-- "This time it'll work, promise!" (humorous promise)
-- "No mistakes this time, right?" (if lots of sessions)
-- "We're getting good at this!" (if lots of sessions)
 - "Experts say code yourself!" (fake expert advice)
-- "Studies show: more bugs = more fun!" (fake expert advice)
-- "Research suggests coffee helps!" (fake expert wisdom)
-- "Pros recommend: just ship it!" (fake expert advice)
-- "You're really chatting me up today!" (if multiple sessions today)
-- "Third session today? I'm flattered!" (if busy day)
-- "We're best friends now, right?" (if lots of sessions today)
-- "Someone's productive today!" (if multiple sessions)
-${lastExchangeContext}${cwdContext}${todoContext}${timeContext}${messageCountContext}${sessionDurationContext}${gitBranchContext}${homeDirContext}${sessionCountContext}${sessionsTodayContext}
+- "Feature branch vibes!" (if on feature branch)
+- "const ready = true;" (JavaScript syntax)
+- "impl Ready {}" (Rust syntax, if Rust project)
+${cwdContext}${gitBranchContext}${homeDirContext}${projectContext}
 
-Reply with ONLY the message, nothing else. No quotes, no punctuation unless natural.`;
+Reply with ONLY the numbered list, nothing else. No quotes around messages, no punctuation unless natural.`;
   }
 
   /**
    * Reset to default idle message
    */
   reset(): void {
-    this.currentMessage = 'Idle';
+    this.messageQueue = ['Idle'];
+    this.currentMessageIndex = 0;
   }
 
   /**
@@ -323,11 +401,10 @@ Reply with ONLY the message, nothing else. No quotes, no punctuation unless natu
    */
   async cleanup(): Promise<void> {
     // Wait for pending generation to complete
-    const maxWait = 5000; // 5 seconds
     const startTime = Date.now();
 
-    while (this.isGenerating && Date.now() - startTime < maxWait) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+    while (this.isGenerating && Date.now() - startTime < API_TIMEOUTS.CLEANUP_MAX_WAIT) {
+      await new Promise(resolve => setTimeout(resolve, POLLING_INTERVALS.CLEANUP));
     }
   }
 }

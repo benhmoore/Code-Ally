@@ -19,6 +19,7 @@ import { generateShortId } from '../utils/id.js';
 import type { TodoItem } from './TodoManager.js';
 import { SessionTitleGenerator } from './SessionTitleGenerator.js';
 import { logger } from './Logger.js';
+import { TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
 
 /**
  * Configuration for SessionManager
@@ -44,7 +45,7 @@ export class SessionManager implements IService {
 
   constructor(config: SessionManagerConfig = {}) {
     this.sessionsDir = SESSIONS_DIR;
-    this.maxSessions = config.maxSessions ?? 100;
+    this.maxSessions = config.maxSessions ?? BUFFER_SIZES.MAX_SESSIONS_DEFAULT;
     this.titleGenerator = config.modelClient
       ? new SessionTitleGenerator(config.modelClient)
       : null;
@@ -86,6 +87,14 @@ export class SessionManager implements IService {
       // Ignore errors during cleanup
       logger.debug('[SESSION] Error during temp file cleanup:', error);
     }
+  }
+
+  /**
+   * Set the model client for title generation
+   * Call this after service model client is created
+   */
+  setModelClient(modelClient: any): void {
+    this.titleGenerator = new SessionTitleGenerator(modelClient);
   }
 
   /**
@@ -218,6 +227,7 @@ export class SessionManager implements IService {
       }
 
       const sessionPath = this.getSessionPath(sessionName);
+      // Generate temp file with timestamp and random suffix (base-36 string starting at index 7)
       const tempPath = `${sessionPath}.tmp.${Date.now()}.${Math.random().toString(36).substring(7)}`;
 
       try {
@@ -398,8 +408,8 @@ export class SessionManager implements IService {
         if (firstUserMessage) {
           const content = firstUserMessage.content.trim();
           const cleanContent = content.replace(/\s+/g, ' ');
-          displayName = cleanContent.length > 40
-            ? cleanContent.slice(0, 40) + '...'
+          displayName = cleanContent.length > TEXT_LIMITS.COMMAND_DISPLAY_MAX
+            ? cleanContent.slice(0, TEXT_LIMITS.COMMAND_DISPLAY_MAX) + '...'
             : cleanContent;
         } else {
           displayName = '(no messages)';
@@ -521,6 +531,36 @@ export class SessionManager implements IService {
   }
 
   /**
+   * Get idle messages from a session
+   *
+   * @param sessionName - Name of the session (defaults to current session)
+   * @returns Array of idle messages
+   */
+  async getIdleMessages(sessionName?: string): Promise<string[]> {
+    const name = sessionName ?? this.currentSession;
+    if (!name) return [];
+
+    const session = await this.loadSession(name);
+    const messages = session?.idle_messages ?? [];
+    logger.debug(`[SESSION] getIdleMessages for ${name}: ${messages.length} messages - ${JSON.stringify(messages.slice(0, 3))}...`);
+    return messages;
+  }
+
+  /**
+   * Get project context from a session
+   *
+   * @param sessionName - Name of the session (defaults to current session)
+   * @returns Project context or null if not found
+   */
+  async getProjectContext(sessionName?: string): Promise<Session['project_context'] | null> {
+    const name = sessionName ?? this.currentSession;
+    if (!name) return null;
+
+    const session = await this.loadSession(name);
+    return session?.project_context ?? null;
+  }
+
+  /**
    * Save todos to a session
    *
    * @param todos - Array of todos to save
@@ -567,11 +607,15 @@ export class SessionManager implements IService {
    *
    * @param messages - Current conversation messages
    * @param todos - Current todos
+   * @param idleMessages - Idle message queue
+   * @param projectContext - Project context
    * @returns True if saved successfully
    */
   async autoSave(
     messages: Message[],
-    todos?: TodoItem[]
+    todos?: TodoItem[],
+    idleMessages?: string[],
+    projectContext?: Session['project_context']
   ): Promise<boolean> {
     const name = this.currentSession;
     if (!name) return false;
@@ -602,6 +646,13 @@ export class SessionManager implements IService {
       session.messages = filteredMessages;
       if (todos !== undefined) {
         session.todos = todos;
+      }
+      if (idleMessages !== undefined && idleMessages.length > 0) {
+        logger.debug(`[SESSION] Saving ${idleMessages.length} idle messages: ${JSON.stringify(idleMessages.slice(0, 3))}...`);
+        session.idle_messages = idleMessages;
+      }
+      if (projectContext !== undefined) {
+        session.project_context = projectContext;
       }
       session.updated_at = new Date().toISOString();
 

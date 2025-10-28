@@ -4,6 +4,7 @@ import { ToolCallState } from '../../types';
 import { OutputScroller } from './OutputScroller';
 import { AnimationTicker } from '../../services/AnimationTicker.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
+import { TEXT_LIMITS } from '../../config/constants.js';
 
 // Simple text-based spinner animation
 const SimpleSpinner: React.FC = () => {
@@ -101,7 +102,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         {toolCall.status === 'error' && toolCall.error && (
           <Text color="red" dimColor>
             {' '}
-            - {toolCall.error.split('\n')[0]?.slice(0, 60) || 'Unknown error'}
+            - {toolCall.error.split('\n')[0]?.slice(0, TEXT_LIMITS.ERROR_DISPLAY_MAX) || 'Unknown error'}
           </Text>
         )}
       </Box>

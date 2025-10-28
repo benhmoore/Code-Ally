@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { useStdout } from 'ink';
 import { ToolCallState } from '../../types';
 import { ToolMessage } from './ToolMessage';
+import { TEXT_LIMITS } from '../../config/constants.js';
 
 interface ToolGroupMessageProps {
   /** Array of concurrent tool call states */
@@ -12,10 +13,10 @@ interface ToolGroupMessageProps {
 }
 
 // Height reserved for static UI elements (prompt, status line, etc.)
-const STATIC_UI_HEIGHT = 4;
+const STATIC_UI_HEIGHT = TEXT_LIMITS.STATIC_UI_HEIGHT;
 
 // Minimum height per tool to prevent cramping
-const MIN_HEIGHT_PER_TOOL = 3;
+const MIN_HEIGHT_PER_TOOL = TEXT_LIMITS.MIN_HEIGHT_PER_TOOL;
 
 /**
  * ToolGroupMessage Component
@@ -50,7 +51,7 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
   terminalHeightOverride,
 }) => {
   const { stdout } = useStdout();
-  const terminalHeight = terminalHeightOverride || stdout?.rows || 24;
+  const terminalHeight = terminalHeightOverride || stdout?.rows || TEXT_LIMITS.TERMINAL_HEIGHT_FALLBACK;
 
   // Calculate available height for tools
   const { availableHeight, heightPerTool } = useMemo(() => {

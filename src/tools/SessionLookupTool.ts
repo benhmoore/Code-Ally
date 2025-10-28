@@ -11,6 +11,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { SessionManager } from '../services/SessionManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { formatRelativeTime } from '../ui/utils/timeUtils.js';
+import { BUFFER_SIZES, TEXT_LIMITS } from '../config/constants.js';
 
 interface MessageSnippet {
   message_index: number;
@@ -33,6 +34,7 @@ export class SessionLookupTool extends BaseTool {
   readonly description =
     'Search through past conversation sessions. Use this when the user asks about previous work (e.g., "what was our last conversation?", "how did we fix X before?"). Provide keywords array to search (supports multiple keywords with "any" or "all" mode), or omit keywords to get most recent sessions by time. Returns matching sessions with optional message snippets.';
   readonly requiresConfirmation = false;
+  readonly visibleInChat = false; // Don't clutter chat with session lookups
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -170,8 +172,8 @@ export class SessionLookupTool extends BaseTool {
             const firstMatch = keywordMatches[0];
             if (firstMatch) {
               const matchIndex = contentLower.indexOf(firstMatch);
-              const snippetStart = Math.max(0, matchIndex - 100);
-              const snippetEnd = Math.min(message.content.length, matchIndex + firstMatch.length + 100);
+              const snippetStart = Math.max(0, matchIndex - TEXT_LIMITS.SESSION_SNIPPET_CONTEXT);
+              const snippetEnd = Math.min(message.content.length, matchIndex + firstMatch.length + TEXT_LIMITS.SESSION_SNIPPET_CONTEXT);
               const snippet = message.content.slice(snippetStart, snippetEnd);
 
               // Create preview with ellipsis
@@ -183,11 +185,11 @@ export class SessionLookupTool extends BaseTool {
                 message_index: i,
                 role: message.role as 'user' | 'assistant',
                 content: preview,
-                match_preview: message.content.slice(matchIndex, matchIndex + firstMatch.length + 50),
+                match_preview: message.content.slice(matchIndex, matchIndex + firstMatch.length + TEXT_LIMITS.SESSION_MATCH_CONTEXT),
               });
 
               // Limit snippets per session to avoid overwhelming context
-              if (snippets.length >= 3) break;
+              if (snippets.length >= BUFFER_SIZES.TOP_ITEMS_PREVIEW) break;
             }
           }
         }

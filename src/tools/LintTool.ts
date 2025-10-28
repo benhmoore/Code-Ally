@@ -42,7 +42,7 @@ interface FileCheckResult {
 export class LintTool extends BaseTool {
   readonly name = 'lint';
   readonly description =
-    'Check multiple files for syntax and parse errors. Supports TypeScript, JavaScript, JSON, and YAML files. Returns detailed error and warning information for each file.';
+    'Check files for syntax and parse errors. Supports TypeScript, JavaScript, JSON, and YAML. Returns detailed error and warning information';
   readonly requiresConfirmation = false; // NON-DESTRUCTIVE: Read-only operation
 
   constructor(activityStream: ActivityStream) {
