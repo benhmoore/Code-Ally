@@ -64,18 +64,13 @@ const GENERAL_GUIDELINES = `## Code Conventions
 - Follow surrounding context for framework choices
 
 ## File References
-**Required format: [path](path) or [path:line](path:line) - NEVER use brackets alone.**
+When referencing specific code locations, use markdown link format:
+- [src/utils/helper.ts:42](src/utils/helper.ts:42) - with line number for precise references
+- [src/example.txt](src/example.txt) - without line number for general file references
 
-When discussing specific code locations, always include line numbers to ensure verifiable claims:
-- [src/utils/helper.ts:42](src/utils/helper.ts:42) ✓ Preferred - specific and verifiable
-- [src/example.txt](src/example.txt) ✓ Acceptable for general file references
-
-FORBIDDEN:
-- src/example.txt (plain text)
-- [src/example.txt] (brackets without link)
-- Any other format
-
-Only use in prose, never in code blocks.
+Don't use square brackets in other contexts:
+- Wrong: "The files are [ALLY.md], [src], and [dist]"
+- Right: "The files are ALLY.md, src, and dist"
 
 ## Prohibited
 - Committing without explicit request
