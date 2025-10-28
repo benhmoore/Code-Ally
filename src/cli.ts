@@ -347,6 +347,12 @@ async function main() {
     const focusManager = new FocusManager();
     registry.registerInstance('focus_manager', focusManager);
 
+    // Create patch manager for undo functionality
+    const { PatchManager } = await import('./services/PatchManager.js');
+    const patchManager = new PatchManager();
+    await patchManager.initialize();
+    registry.registerInstance('patch_manager', patchManager);
+
     // Create LLM client (main agent model)
     const modelClient = new OllamaClient({
       endpoint: config.endpoint,

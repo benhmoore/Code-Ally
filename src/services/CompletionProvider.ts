@@ -45,6 +45,7 @@ const SLASH_COMMANDS = [
   { name: '/debug', description: 'Show debug information' },
   { name: '/model', description: 'Switch LLM model' },
   { name: '/rewind', description: 'Rewind conversation' },
+  { name: '/undo', description: 'Undo file operations' },
   { name: '/agent', description: 'Manage specialized agents' },
   { name: '/focus', description: 'Manage focus mode' },
   { name: '/memory', description: 'Manage memory facts' },
@@ -83,6 +84,8 @@ export class CompletionProvider {
   private agentManager: AgentManager | null = null;
   private agentNamesCache: string[] = [];
   private agentsCacheTime: number = 0;
+  private commandNamesCache: string[] = [];
+  private commandsCacheTime: number = 0;
   private readonly cacheTTL = CACHE_TIMEOUTS.COMPLETION_CACHE_TTL;
 
   constructor(agentManager?: AgentManager) {
@@ -109,6 +112,8 @@ export class CompletionProvider {
     // Determine what kind of completion to provide
     if (context.lineStart.startsWith('/')) {
       return await this.getCommandCompletions(context);
+    } else if (context.lineStart.startsWith('!')) {
+      return await this.getBashCompletions(context);
     } else if (context.currentWord.startsWith('@')) {
       return await this.getAgentCompletions(context);
     } else if (this.looksLikeFilePath(context.currentWord)) {
@@ -371,6 +376,47 @@ export class CompletionProvider {
   }
 
   /**
+   * Get bash completions (for !bash syntax)
+   */
+  private async getBashCompletions(context: CompletionContext): Promise<Completion[]> {
+    // Remove the ! prefix
+    const bashCommand = context.lineStart.slice(1).trim();
+    const parts = bashCommand.split(/\s+/).filter(p => p.length > 0);
+
+    // Count words (including partial word at cursor)
+    const hasTrailingSpace = context.lineStart.endsWith(' ');
+    const wordCount = hasTrailingSpace ? parts.length + 1 : parts.length;
+
+    // First word - complete command name from PATH
+    if (wordCount === 1) {
+      const prefix = parts[0] || '';
+      return await this.getCommandNameCompletions(prefix);
+    }
+
+    // Subsequent words - complete file paths
+    // Check if current word looks like a file path or is empty
+    if (this.looksLikeFilePath(context.currentWord) || context.currentWord === '') {
+      return await this.getFileCompletions(context);
+    }
+
+    return [];
+  }
+
+  /**
+   * Get command name completions from PATH
+   */
+  private async getCommandNameCompletions(prefix: string): Promise<Completion[]> {
+    const commandNames = await this.getCommandNames();
+    return commandNames
+      .filter(name => name.startsWith(prefix))
+      .map(name => ({
+        value: name,
+        description: 'Command',
+        type: 'command' as const,
+      }));
+  }
+
+  /**
    * Get agent completions (for @agent syntax)
    */
   private async getAgentCompletions(context: CompletionContext): Promise<Completion[]> {
@@ -484,6 +530,59 @@ export class CompletionProvider {
   }
 
   /**
+   * Get list of available command names from PATH
+   */
+  private async getCommandNames(): Promise<string[]> {
+    // Use cache if fresh
+    const now = Date.now();
+    if (this.commandNamesCache.length > 0 && now - this.commandsCacheTime < this.cacheTTL) {
+      return this.commandNamesCache;
+    }
+
+    try {
+      const pathEnv = process.env.PATH || '';
+      const pathDirs = pathEnv.split(':').filter(dir => dir.length > 0);
+      const commandSet = new Set<string>();
+
+      // Read each directory in PATH
+      for (const dir of pathDirs) {
+        try {
+          const entries = await fs.readdir(dir, { withFileTypes: true });
+
+          for (const entry of entries) {
+            // Only add executable files
+            if (entry.isFile()) {
+              try {
+                // Check if file is executable by attempting to stat with mode check
+                const filePath = `${dir}/${entry.name}`;
+                const stats = await fs.stat(filePath);
+                // Check for executable permission (user, group, or other)
+                const isExecutable = (stats.mode & 0o111) !== 0;
+
+                if (isExecutable) {
+                  commandSet.add(entry.name);
+                }
+              } catch {
+                // Skip files we can't stat
+              }
+            }
+          }
+        } catch {
+          // Skip directories we can't read
+        }
+      }
+
+      this.commandNamesCache = Array.from(commandSet).sort();
+      this.commandsCacheTime = now;
+
+      return this.commandNamesCache;
+    } catch (error) {
+      logger.debug(`Unable to read PATH directories: ${formatError(error)}`);
+      return [];
+    }
+  }
+
+  /**
    * Check if string looks like a file path
    */
   private looksLikeFilePath(str: string): boolean {
@@ -510,6 +609,14 @@ export class CompletionProvider {
   invalidateAgentCache(): void {
     this.agentNamesCache = [];
     this.agentsCacheTime = 0;
+  }
+
+  /**
+   * Invalidate command cache
+   */
+  invalidateCommandCache(): void {
+    this.commandNamesCache = [];
+    this.commandsCacheTime = 0;
   }
 
   /**

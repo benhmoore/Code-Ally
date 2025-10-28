@@ -279,6 +279,14 @@ export class LineEditTool extends BaseTool {
       // Write the modified content
       await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
 
+      // Capture the operation as a patch for undo functionality
+      const patchNumber = await this.captureOperationPatch(
+        'line_edit',
+        absolutePath,
+        fileContent,
+        modifiedContent
+      );
+
       const response = this.formatSuccessResponse({
         content: operationDescription, // Human-readable output for LLM
         file_path: absolutePath,
@@ -286,6 +294,11 @@ export class LineEditTool extends BaseTool {
         lines_before: totalLines,
         lines_after: modifiedLines.length,
       });
+
+      // Add patch information to result if patch was captured
+      if (patchNumber !== null) {
+        response.patch_number = patchNumber;
+      }
 
       // Check file for syntax/parse errors after modification
       // Matches Python CodeAlly pattern exactly

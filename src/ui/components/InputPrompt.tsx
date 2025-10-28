@@ -56,6 +56,16 @@ interface InputPromptProps {
   rewindRequest?: { requestId: string; userMessagesCount: number; selectedIndex: number };
   /** Callback when rewind selection changes */
   onRewindNavigate?: (newIndex: number) => void;
+  /** Undo prompt data (if active) */
+  undoRequest?: { requestId: string; count: number; patches: any[]; previewData: any[] };
+  /** Selected undo option index */
+  undoSelectedIndex?: number;
+  /** Callback when undo selection changes */
+  onUndoNavigate?: (newIndex: number) => void;
+  /** Undo file list (two-stage flow) */
+  undoFileListRequest?: { requestId: string; fileList: any[]; selectedIndex: number };
+  /** Callback when undo file list selection changes */
+  onUndoFileListNavigate?: (newIndex: number) => void;
   /** Activity stream for emitting events */
   activityStream?: ActivityStream;
   /** Agent instance for interruption */
@@ -86,6 +96,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   configViewerOpen = false,
   rewindRequest,
   onRewindNavigate,
+  undoRequest,
+  undoSelectedIndex = 0,
+  onUndoNavigate,
+  undoFileListRequest,
+  onUndoFileListNavigate,
   activityStream,
   agent,
   prefillText,
@@ -616,6 +631,144 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
 
         // Block all other input when rewind selector is active
+        return;
+      }
+
+      // ===== Undo File List Navigation (Two-Stage Flow - Stage 1) =====
+      if (undoFileListRequest && onUndoFileListNavigate && activityStream) {
+        const filesCount = undoFileListRequest.fileList.length;
+        const currentIndex = undoFileListRequest.selectedIndex;
+
+        // Up arrow - navigate to previous file
+        if (key.upArrow) {
+          const newIndex = Math.max(0, currentIndex - 1);
+          onUndoFileListNavigate(newIndex);
+          return;
+        }
+
+        // Down arrow - navigate to next file
+        if (key.downArrow) {
+          const newIndex = Math.min(filesCount - 1, currentIndex + 1);
+          onUndoFileListNavigate(newIndex);
+          return;
+        }
+
+        // Enter - select file (move to stage 2: show diff)
+        if (key.return) {
+          try {
+            const selectedFile = undoFileListRequest.fileList[currentIndex];
+            if (selectedFile) {
+              activityStream.emit({
+                id: `undo_file_selected_${Date.now()}`,
+                type: ActivityEventType.UNDO_FILE_SELECTED,
+                timestamp: Date.now(),
+                data: {
+                  requestId: undoFileListRequest.requestId,
+                  patchNumber: selectedFile.patch_number,
+                  filePath: selectedFile.file_path,
+                },
+              });
+            }
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit file selection:', error);
+          }
+          return;
+        }
+
+        // Escape or Ctrl+C - cancel undo
+        if (key.escape || (key.ctrl && input === 'c')) {
+          // Prevent duplicate cancellations for same request
+          if (lastCancelledIdRef.current === undoFileListRequest.requestId) return;
+          lastCancelledIdRef.current = undoFileListRequest.requestId;
+
+          try {
+            activityStream.emit({
+              id: `undo_cancelled_${Date.now()}`,
+              type: ActivityEventType.UNDO_CANCELLED,
+              timestamp: Date.now(),
+              data: {
+                requestId: undoFileListRequest.requestId,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit undo cancellation:', error);
+          }
+          return;
+        }
+
+        // Block all other input when file list is active
+        return;
+      }
+
+      // ===== Undo Prompt Navigation (Two-Stage Flow - Stage 2) =====
+      if (undoRequest && onUndoNavigate && activityStream) {
+        const optionsCount = 2; // Confirm and Cancel
+
+        // Up arrow - navigate to previous option
+        if (key.upArrow) {
+          const newIndex = Math.max(0, undoSelectedIndex - 1);
+          onUndoNavigate(newIndex);
+          return;
+        }
+
+        // Down arrow - navigate to next option
+        if (key.downArrow) {
+          const newIndex = Math.min(optionsCount - 1, undoSelectedIndex + 1);
+          onUndoNavigate(newIndex);
+          return;
+        }
+
+        // Enter - submit selection
+        if (key.return) {
+          const confirmed = undoSelectedIndex === 0; // 0 = Confirm, 1 = Cancel
+          try {
+            if (confirmed) {
+              activityStream.emit({
+                id: `undo_confirm_${Date.now()}`,
+                type: ActivityEventType.UNDO_CONFIRM,
+                timestamp: Date.now(),
+                data: {
+                  requestId: undoRequest.requestId,
+                },
+              });
+            } else {
+              activityStream.emit({
+                id: `undo_file_back_${Date.now()}`,
+                type: ActivityEventType.UNDO_FILE_BACK,
+                timestamp: Date.now(),
+                data: {
+                  requestId: undoRequest.requestId,
+                },
+              });
+            }
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit undo response:', error);
+          }
+          return;
+        }
+
+        // Escape or Ctrl+C - go back to file list
+        if (key.escape || (key.ctrl && input === 'c')) {
+          // Prevent duplicate cancellations for same request
+          if (lastCancelledIdRef.current === undoRequest.requestId) return;
+          lastCancelledIdRef.current = undoRequest.requestId;
+
+          try {
+            activityStream.emit({
+              id: `undo_file_back_${Date.now()}`,
+              type: ActivityEventType.UNDO_FILE_BACK,
+              timestamp: Date.now(),
+              data: {
+                requestId: undoRequest.requestId,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit undo back:', error);
+          }
+          return;
+        }
+
+        // Block all other input when undo prompt is active
         return;
       }
 

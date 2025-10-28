@@ -135,6 +135,14 @@ export class WriteTool extends BaseTool {
       // Write the file
       await fs.writeFile(absolutePath, content, 'utf-8');
 
+      // Capture the operation as a patch for undo functionality
+      const patchNumber = await this.captureOperationPatch(
+        'write',
+        absolutePath,
+        existingContent,
+        content
+      );
+
       const stats = await fs.stat(absolutePath);
 
       const successMessage = `Wrote ${stats.size} bytes to ${absolutePath}`;
@@ -145,6 +153,11 @@ export class WriteTool extends BaseTool {
         bytes_written: stats.size,
         backup_created: createBackup && fileExists,
       });
+
+      // Add patch information to result if patch was captured
+      if (patchNumber !== null) {
+        response.patch_number = patchNumber;
+      }
 
       // Check file for syntax/parse errors after modification
       // Matches Python CodeAlly pattern exactly

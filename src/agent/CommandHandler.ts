@@ -27,6 +27,7 @@ import {
 } from '../config/constants.js';
 import type { ProjectManager } from '../services/ProjectManager.js';
 import type { TodoManager } from '../services/TodoManager.js';
+import type { PatchManager } from '../services/PatchManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
@@ -79,6 +80,8 @@ export class CommandHandler {
         return await this.handleCompact(args, messages);
       case 'rewind':
         return await this.handleRewind();
+      case 'undo':
+        return await this.handleUndo(args, messages);
       case 'exit':
       case 'quit':
         return await this.handleExit();
@@ -170,6 +173,7 @@ Core Commands:
   /debug [system|tokens]   - Show debug information
   /compact                 - Compact conversation history
   /rewind                  - Rewind conversation to a previous message
+  /undo [count]            - Undo last N file operations (default: 1)
   /exit, /quit             - Exit the application
 
 Agent Commands:
@@ -352,6 +356,58 @@ Todo Commands:
     });
 
     return { handled: true }; // Selection handled via UI
+  }
+
+  private async handleUndo(_args: string[], _messages: Message[]): Promise<CommandResult> {
+    // Get PatchManager from service registry
+    const patchManager = this.serviceRegistry.get<PatchManager>('patch_manager');
+
+    if (!patchManager) {
+      return {
+        handled: true,
+        response: 'Undo feature not available (patch manager not initialized).',
+      };
+    }
+
+    try {
+      // Get list of recent file changes
+      const fileList = await patchManager.getRecentFileList(10);
+
+      if (fileList.length === 0) {
+        return {
+          handled: true,
+          response: 'No operations to undo',
+        };
+      }
+
+      // Emit UNDO_FILE_LIST_REQUEST event for UI to show file list
+      const activityStream = this.serviceRegistry.get('activity_stream');
+      if (!activityStream || typeof (activityStream as any).emit !== 'function') {
+        return {
+          handled: true,
+          response: 'Undo feature not available (activity stream not found).',
+        };
+      }
+
+      const requestId = `undo_${Date.now()}`;
+
+      (activityStream as any).emit({
+        id: requestId,
+        type: ActivityEventType.UNDO_FILE_LIST_REQUEST,
+        timestamp: Date.now(),
+        data: {
+          requestId,
+          fileList,
+        },
+      });
+
+      return { handled: true }; // UI will handle the rest
+    } catch (error) {
+      return {
+        handled: true,
+        response: `Error during undo operation: ${formatError(error)}`,
+      };
+    }
   }
 
   private async handleModel(args: string[]): Promise<CommandResult> {

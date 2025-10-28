@@ -185,6 +185,14 @@ export class EditTool extends BaseTool {
       // Write the modified content
       await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
 
+      // Capture the operation as a patch for undo functionality
+      const patchNumber = await this.captureOperationPatch(
+        'edit',
+        absolutePath,
+        content,
+        modifiedContent
+      );
+
       const successMessage = `Made ${replaceAll ? count : 1} replacement(s) in ${absolutePath}`;
 
       const response = this.formatSuccessResponse({
@@ -192,6 +200,11 @@ export class EditTool extends BaseTool {
         file_path: absolutePath,
         replacements_made: replaceAll ? count : 1,
       });
+
+      // Add patch information to result if patch was captured
+      if (patchNumber !== null) {
+        response.patch_number = patchNumber;
+      }
 
       // Check file for syntax/parse errors after modification
       // Matches Python CodeAlly pattern exactly

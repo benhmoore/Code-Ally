@@ -434,4 +434,49 @@ export abstract class BaseTool {
       return `${key}: ${valueStr}`;
     });
   }
+
+  /**
+   * Capture a file operation as a patch for undo functionality
+   *
+   * Call this after successfully performing a file modification to enable undo.
+   *
+   * @param operationType - Type of operation (write, edit, line_edit, delete)
+   * @param filePath - Path to the file being modified
+   * @param originalContent - Original content before modification
+   * @param newContent - New content after modification (undefined for delete)
+   * @returns Patch number if successful, null otherwise
+   */
+  protected async captureOperationPatch(
+    operationType: string,
+    filePath: string,
+    originalContent: string,
+    newContent?: string
+  ): Promise<number | null> {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const patchManager = registry.get<any>('patch_manager');
+
+      if (!patchManager) {
+        // PatchManager not registered - this is fine, just means undo is disabled
+        return null;
+      }
+
+      const patchNumber = await patchManager.captureOperation(
+        operationType,
+        filePath,
+        originalContent,
+        newContent
+      );
+
+      if (patchNumber !== null) {
+        console.debug(`[${this.name}] Captured ${operationType} operation as patch ${patchNumber}`);
+      }
+
+      return patchNumber;
+    } catch (error) {
+      // Silently handle errors - patch capture should never break the tool
+      console.error(`[${this.name}] Failed to capture patch:`, error);
+      return null;
+    }
+  }
 }

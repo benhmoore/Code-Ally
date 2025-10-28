@@ -23,6 +23,8 @@ import { ProjectWizardView } from './components/ProjectWizardView.js';
 import { RewindSelector } from './components/RewindSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
+import { UndoPrompt } from './components/UndoPrompt.js';
+import { UndoFileList } from './components/UndoFileList.js';
 import { UI_DELAYS } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { ReasoningStream } from './components/ReasoningStream.js';
@@ -35,6 +37,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ConfigManager } from '../services/ConfigManager.js';
 import { SessionManager } from '../services/SessionManager.js';
 import { ToolManager } from '../tools/ToolManager.js';
+import { PatchManager } from '../services/PatchManager.js';
 
 /**
  * Props for the App component
@@ -96,6 +99,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Rewind selector state
   const [rewindRequest, setRewindRequest] = useState<{ requestId: string; userMessagesCount: number; selectedIndex: number } | undefined>(undefined);
   const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
+
+  // Undo prompt state
+  const [undoRequest, setUndoRequest] = useState<{ requestId: string; count: number; patches: any[]; previewData: any[] } | undefined>(undefined);
+  const [undoSelectedIndex, setUndoSelectedIndex] = useState(0);
+
+  // Undo file list state (two-stage flow)
+  const [undoFileListRequest, setUndoFileListRequest] = useState<{ requestId: string; fileList: any[]; selectedIndex: number } | undefined>(undefined);
 
   // Session selector state
   const [sessionSelectRequest, setSessionSelectRequest] = useState<{ requestId: string; sessions: import('../types/index.js').SessionInfo[]; selectedIndex: number } | undefined>(undefined);
@@ -792,6 +802,146 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     }
   }, [rewindRequest, state.messages]);
 
+  // Two-stage undo flow: File list request
+  useActivityEvent(ActivityEventType.UNDO_FILE_LIST_REQUEST, (event) => {
+    const { requestId, fileList } = event.data;
+
+    if (!requestId || !fileList) {
+      throw new Error(`UNDO_FILE_LIST_REQUEST event missing required fields. ID: ${event.id}`);
+    }
+
+    setUndoFileListRequest({
+      requestId,
+      fileList,
+      selectedIndex: 0, // Start with first file selected
+    });
+  });
+
+  // Two-stage undo flow: File selected (show diff preview)
+  useActivityEvent(ActivityEventType.UNDO_FILE_SELECTED, async (event) => {
+    const { patchNumber, filePath } = event.data;
+
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+
+    if (!patchManager) {
+      actions.addMessage({
+        role: 'assistant',
+        content: 'Error: Patch manager not available',
+      });
+      return;
+    }
+
+    try {
+      // Get preview for single patch
+      const preview = await patchManager.previewSinglePatch(patchNumber);
+
+      if (!preview) {
+        actions.addMessage({
+          role: 'assistant',
+          content: `Error: Could not load preview for ${filePath}`,
+        });
+        return;
+      }
+
+      // Show single file diff with Confirm/Cancel options
+      setUndoRequest({
+        requestId: `undo_single_${patchNumber}`,
+        count: 1,
+        patches: [{ patch_number: patchNumber, file_path: filePath }],
+        previewData: [preview],
+      });
+      setUndoSelectedIndex(0);
+    } catch (error) {
+      actions.addMessage({
+        role: 'assistant',
+        content: `Error loading preview: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  });
+
+  // Two-stage undo flow: Back to file list
+  useActivityEvent(ActivityEventType.UNDO_FILE_BACK, () => {
+    // Clear diff view, keep file list
+    setUndoRequest(undefined);
+    setUndoSelectedIndex(0);
+  });
+
+  // Two-stage undo flow: Confirm undo
+  useActivityEvent(ActivityEventType.UNDO_CONFIRM, async (event) => {
+    const { requestId } = event.data;
+
+    // Extract patch number from request ID (format: "undo_single_<patch_number>")
+    const patchNumber = parseInt(requestId.replace('undo_single_', ''));
+
+    if (isNaN(patchNumber)) {
+      actions.addMessage({
+        role: 'assistant',
+        content: 'Error: Invalid patch number',
+      });
+      return;
+    }
+
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+
+    if (!patchManager) {
+      actions.addMessage({
+        role: 'assistant',
+        content: 'Error: Patch manager not available',
+      });
+      return;
+    }
+
+    try {
+      // Execute undo for single patch
+      const result = await patchManager.undoSinglePatch(patchNumber);
+
+      // Clear diff view
+      setUndoRequest(undefined);
+      setUndoSelectedIndex(0);
+
+      if (result.success) {
+        const fileList = result.reverted_files.map((f: string) => `  - ${f}`).join('\n');
+        actions.addMessage({
+          role: 'assistant',
+          content: `Successfully undid operation:\n${fileList}`,
+        });
+
+        // Refresh file list
+        const updatedFileList = await patchManager.getRecentFileList(10);
+        if (updatedFileList.length > 0) {
+          setUndoFileListRequest({
+            requestId: `undo_${Date.now()}`,
+            fileList: updatedFileList,
+            selectedIndex: 0,
+          });
+        } else {
+          // No more files to undo, close the flow
+          setUndoFileListRequest(undefined);
+        }
+      } else {
+        const errors = result.failed_operations.join('\n  - ');
+        actions.addMessage({
+          role: 'assistant',
+          content: `Undo failed:\n  - ${errors}`,
+        });
+      }
+    } catch (error) {
+      actions.addMessage({
+        role: 'assistant',
+        content: `Error during undo: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  });
+
+  // Two-stage undo flow: Cancel entire flow
+  useActivityEvent(ActivityEventType.UNDO_CANCELLED, () => {
+    setUndoFileListRequest(undefined);
+    setUndoRequest(undefined);
+    setUndoSelectedIndex(0);
+  });
+
   // Subscribe to rewind response events
   // Subscribe to session select response events
   useActivityEvent(ActivityEventType.SESSION_SELECT_RESPONSE, async (event) => {
@@ -1273,6 +1423,66 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             </Box>
           );
         })()
+      ) : undoFileListRequest && !undoRequest ? (
+        /* Undo File List (two-stage flow - stage 1) */
+        <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream />
+
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+          <UndoFileList
+            request={undoFileListRequest}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              isActive={true}
+              commandHistory={commandHistory.current || undefined}
+              completionProvider={completionProvider || undefined}
+              undoFileListRequest={undoFileListRequest}
+              onUndoFileListNavigate={(newIndex) => setUndoFileListRequest(prev => prev ? { ...prev, selectedIndex: newIndex } : undefined)}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+            />
+          </Box>
+        </Box>
+      ) : undoRequest ? (
+        /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
+        <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream />
+
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+          <UndoPrompt
+            request={undoRequest}
+            selectedIndex={undoSelectedIndex}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              isActive={true}
+              commandHistory={commandHistory.current || undefined}
+              completionProvider={completionProvider || undefined}
+              undoRequest={undoRequest}
+              undoSelectedIndex={undoSelectedIndex}
+              onUndoNavigate={setUndoSelectedIndex}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+            />
+          </Box>
+        </Box>
       ) : permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">

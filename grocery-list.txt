@@ -1,0 +1,7 @@
+apples
+oranges
+bananas
+milk
+bread
+eggs
+cheese
