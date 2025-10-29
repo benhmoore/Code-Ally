@@ -29,6 +29,12 @@ export const AGENTS_DIR = join(ALLY_HOME, 'agents');
 export const PLUGINS_DIR = join(ALLY_HOME, 'plugins');
 
 /**
+ * Plugin virtual environments directory
+ * Stores isolated Python/Node environments for each plugin
+ */
+export const PLUGIN_ENVS_DIR = join(ALLY_HOME, 'plugin-envs');
+
+/**
  * Base cache directory
  */
 export const CACHE_DIR = join(ALLY_HOME, 'cache');
@@ -55,6 +61,8 @@ export const STANDARD_DIRECTORIES = [
   ALLY_HOME,
   SESSIONS_DIR,
   AGENTS_DIR,
+  PLUGINS_DIR,
+  PLUGIN_ENVS_DIR,
   CACHE_DIR,
   COMPLETION_CACHE_DIR,
 ];

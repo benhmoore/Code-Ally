@@ -188,6 +188,9 @@ export interface AppProps {
 
   /** Force show setup wizard (e.g., from --init flag) */
   showSetupWizard?: boolean;
+
+  /** Number of loaded plugins */
+  pluginCount?: number;
 }
 
 /**
@@ -197,7 +200,7 @@ export interface AppProps {
  * It subscribes to activity events and updates the app state accordingly.
  * Memoized to prevent unnecessary re-renders when children update.
  */
-const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null; showSetupWizard?: boolean }> = ({ agent, resumeSession, showSetupWizard }) => {
+const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null; showSetupWizard?: boolean; pluginCount?: number }> = ({ agent, resumeSession, showSetupWizard, pluginCount }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
 
@@ -1599,6 +1602,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         rewindNotices={state.rewindNotices}
         staticRemountKey={state.staticRemountKey}
         config={state.config}
+        pluginCount={pluginCount}
       />
 
       {/* Config Viewer (non-modal - shown above input) */}
@@ -2034,14 +2038,14 @@ const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
  * const { unmount } = render(<App config={config} />);
  * ```
  */
-export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession, showSetupWizard }) => {
+export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession, showSetupWizard, pluginCount }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
   return (
     <ActivityProvider activityStream={streamRef.current}>
       <AppProvider initialConfig={config}>
-        <AppContent agent={agent} resumeSession={resumeSession} showSetupWizard={showSetupWizard} />
+        <AppContent agent={agent} resumeSession={resumeSession} showSetupWizard={showSetupWizard} pluginCount={pluginCount} />
       </AppProvider>
     </ActivityProvider>
   );

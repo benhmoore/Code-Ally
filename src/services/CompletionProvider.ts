@@ -75,6 +75,8 @@ const AGENT_SUBCOMMANDS = [
  */
 const PLUGIN_SUBCOMMANDS = [
   { name: 'config', description: 'Configure a plugin' },
+  { name: 'install', description: 'Install a plugin from local path' },
+  { name: 'uninstall', description: 'Uninstall a plugin' },
 ];
 
 /**
@@ -330,6 +332,16 @@ export class CompletionProvider {
 
     // Complete plugin names for /plugin config (user typed "/plugin config ")
     if (command === '/plugin' && subcommand === 'config' && wordCount === 3) {
+      return await this.getPluginNameCompletions(context.currentWord);
+    }
+
+    // Complete file paths for /plugin install (user typed "/plugin install ")
+    if (command === '/plugin' && subcommand === 'install' && wordCount >= 3) {
+      return await this.getFileCompletions(context);
+    }
+
+    // Complete plugin names for /plugin uninstall (user typed "/plugin uninstall ")
+    if (command === '/plugin' && subcommand === 'uninstall' && wordCount === 3) {
       return await this.getPluginNameCompletions(context.currentWord);
     }
 

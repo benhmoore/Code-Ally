@@ -12,6 +12,7 @@ import type { CommandResult } from '../CommandHandler.js';
 import { PLUGINS_DIR } from '../../config/paths.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import type { PluginManifest } from '../../plugins/PluginLoader.js';
 import { formatError } from '../../utils/errorUtils.js';
 
@@ -43,7 +44,19 @@ export class PluginCommand extends Command {
       return this.handlePluginConfig(pluginName, serviceRegistry);
     }
 
-    return this.createError('Unknown plugin subcommand. Use /plugin config <plugin-name>');
+    if (subcommand.toLowerCase() === 'install') {
+      // /plugin install <path>
+      const pluginPath = parts.slice(1).join(' ').trim();
+      return this.handlePluginInstall(pluginPath, serviceRegistry);
+    }
+
+    if (subcommand.toLowerCase() === 'uninstall') {
+      // /plugin uninstall <plugin-name>
+      const pluginName = parts.slice(1).join(' ').trim();
+      return this.handlePluginUninstall(pluginName, serviceRegistry);
+    }
+
+    return this.createError('Unknown plugin subcommand. Use /plugin config|install|uninstall');
   }
 
   /**
@@ -121,6 +134,94 @@ export class PluginCommand extends Command {
       );
     } catch (error) {
       return this.createError(`Failed to configure plugin '${pluginName}': ${formatError(error)}`);
+    }
+  }
+
+  /**
+   * Handle plugin installation from local path
+   */
+  private async handlePluginInstall(
+    pluginPath: string,
+    serviceRegistry: ServiceRegistry
+  ): Promise<CommandResult> {
+    if (!pluginPath) {
+      return this.createError('Plugin path required. Use /plugin install <path>');
+    }
+
+    try {
+      // Resolve path (handle relative paths, ~, etc.)
+      const resolvedPath = pluginPath.startsWith('~')
+        ? pluginPath.replace('~', homedir())
+        : pluginPath;
+
+      // Get PluginLoader from registry
+      const pluginLoader = serviceRegistry.get('plugin_loader');
+      if (!pluginLoader || typeof (pluginLoader as any).installFromPath !== 'function') {
+        return this.createError('PluginLoader not available');
+      }
+
+      // Install the plugin
+      const result = await (pluginLoader as any).installFromPath(resolvedPath, PLUGINS_DIR);
+
+      if (!result.success) {
+        return this.createError(result.error || 'Failed to install plugin');
+      }
+
+      // Register tools with ToolManager
+      const toolManager = serviceRegistry.get('tool_manager');
+      if (toolManager && result.tools && result.tools.length > 0 && typeof (toolManager as any).registerTools === 'function') {
+        (toolManager as any).registerTools(result.tools);
+      }
+
+      // Return success message with appropriate details
+      if (result.tools && result.tools.length > 0) {
+        return {
+          handled: true,
+          response: `✓ Plugin '${result.pluginName}' installed successfully with ${result.tools.length} tool(s)`,
+        };
+      } else {
+        return {
+          handled: true,
+          response: `✓ Plugin '${result.pluginName}' installed successfully. Use /plugin config ${result.pluginName} to configure it.`,
+        };
+      }
+    } catch (error) {
+      return this.createError(`Failed to install plugin: ${formatError(error)}`);
+    }
+  }
+
+  /**
+   * Handle plugin uninstall
+   */
+  private async handlePluginUninstall(
+    pluginName: string,
+    serviceRegistry: ServiceRegistry
+  ): Promise<CommandResult> {
+    if (!pluginName) {
+      return this.createError('Plugin name required. Use /plugin uninstall <plugin-name>');
+    }
+
+    try {
+      // Get PluginLoader from registry
+      const pluginLoader = serviceRegistry.get('plugin_loader');
+      if (!pluginLoader || typeof (pluginLoader as any).uninstall !== 'function') {
+        return this.createError('PluginLoader not available');
+      }
+
+      // Uninstall the plugin
+      const result = await (pluginLoader as any).uninstall(pluginName, PLUGINS_DIR);
+
+      if (!result.success) {
+        return this.createError(result.error || 'Failed to uninstall plugin');
+      }
+
+      // Return success message
+      return {
+        handled: true,
+        response: `✓ Plugin '${pluginName}' uninstalled successfully`,
+      };
+    } catch (error) {
+      return this.createError(`Failed to uninstall plugin: ${formatError(error)}`);
     }
   }
 }

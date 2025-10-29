@@ -49,6 +49,8 @@ interface ConversationViewProps {
   staticRemountKey: number;
   /** Config for displaying model info */
   config?: any;
+  /** Number of loaded plugins */
+  pluginCount?: number;
 }
 
 /**
@@ -208,6 +210,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   rewindNotices = [],
   staticRemountKey,
   config,
+  pluginCount,
 }) => {
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK; // Fallback to 80 if unavailable
@@ -354,6 +357,9 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
               <Text>Ally v{packageJson.version}</Text>
               <Text dimColor>{config?.model || 'No model configured'}</Text>
               <Text dimColor>{process.cwd()}</Text>
+              {pluginCount !== undefined && pluginCount > 0 && (
+                <Text dimColor>{pluginCount} plugin{pluginCount === 1 ? '' : 's'} loaded</Text>
+              )}
               {gitBranch && (
                 <Text dimColor color="yellow">branch: {gitBranch}</Text>
               )}

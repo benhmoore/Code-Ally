@@ -145,6 +145,44 @@ export class PluginConfigManager {
   }
 
   /**
+   * Normalize config types (convert strings to proper types based on schema)
+   */
+  private normalizeConfigTypes(config: any, schema: PluginConfigSchema): any {
+    if (!schema?.schema?.properties) {
+      return config;
+    }
+
+    const normalized: any = { ...config };
+
+    for (const [key, property] of Object.entries(schema.schema.properties)) {
+      const prop = property as ConfigProperty;
+      const value = config[key];
+
+      // Skip if value is not provided
+      if (value === undefined || value === null || value === '') {
+        continue;
+      }
+
+      // Convert based on expected type
+      if (prop.type === 'integer' || prop.type === 'number') {
+        if (typeof value === 'string') {
+          const num = Number(value);
+          if (!isNaN(num)) {
+            normalized[key] = num;
+          }
+        }
+      } else if (prop.type === 'boolean') {
+        if (typeof value === 'string') {
+          normalized[key] = value === 'true';
+        }
+      }
+      // string type doesn't need conversion
+    }
+
+    return normalized;
+  }
+
+  /**
    * Validate config against schema
    */
   private validateConfig(config: any, schema: PluginConfigSchema): { valid: boolean; errors: string[] } {
@@ -169,10 +207,35 @@ export class PluginConfigManager {
         continue;
       }
 
-      // Type validation
-      const actualType = typeof value;
-      if (actualType !== prop.type && value !== undefined && value !== null) {
-        errors.push(`Field '${key}' has invalid type. Expected ${prop.type}, got ${actualType}`);
+      // Type validation with coercion support
+      if (value !== undefined && value !== null) {
+        const actualType = typeof value;
+        let isValid = false;
+
+        // For integer/number types, accept both number and string-numbers
+        if (prop.type === 'integer' || prop.type === 'number') {
+          if (actualType === 'number') {
+            isValid = true;
+          } else if (actualType === 'string' && !isNaN(Number(value)) && value.trim() !== '') {
+            isValid = true;
+          }
+        }
+        // For boolean type, accept boolean or string boolean
+        else if (prop.type === 'boolean') {
+          if (actualType === 'boolean') {
+            isValid = true;
+          } else if (actualType === 'string' && (value === 'true' || value === 'false')) {
+            isValid = true;
+          }
+        }
+        // For string type
+        else if (prop.type === 'string') {
+          isValid = actualType === 'string';
+        }
+
+        if (!isValid) {
+          errors.push(`Field '${key}' has invalid type. Expected ${prop.type}, got ${actualType}`);
+        }
       }
     }
 
@@ -197,9 +260,12 @@ export class PluginConfigManager {
     schema?: PluginConfigSchema
   ): Promise<void> {
     try {
+      // Normalize types if schema is provided (convert strings to proper types)
+      const normalizedConfig = schema ? this.normalizeConfigTypes(config, schema) : config;
+
       // Validate config if schema is provided
       if (schema) {
-        const validation = this.validateConfig(config, schema);
+        const validation = this.validateConfig(normalizedConfig, schema);
         if (!validation.valid) {
           throw new Error(
             `Invalid configuration for plugin '${pluginName}':\n${validation.errors.join('\n')}`
@@ -208,7 +274,7 @@ export class PluginConfigManager {
       }
 
       // Encrypt secrets if schema is provided
-      const configToSave = schema ? await this.encryptSecrets(config, schema) : config;
+      const configToSave = schema ? await this.encryptSecrets(normalizedConfig, schema) : normalizedConfig;
 
       // Ensure plugin directory exists
       await fs.mkdir(pluginPath, { recursive: true });

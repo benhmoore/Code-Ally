@@ -2,9 +2,9 @@ import { BaseTool } from '../tools/BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn } from 'child_process';
-import { join, isAbsolute } from 'path';
 import { TIMEOUT_LIMITS } from '../config/toolDefaults.js';
-import type { ToolDefinition } from './PluginLoader.js';
+import type { ToolDefinition, PluginManifest } from './PluginLoader.js';
+import type { PluginEnvironmentManager } from './PluginEnvironmentManager.js';
 
 /**
  * Wraps external executable plugins (Python scripts, shell scripts, etc.)
@@ -28,20 +28,26 @@ export class ExecutableToolWrapper extends BaseTool {
 	private readonly schema: any;
 	private readonly timeout: number;
 	private readonly config?: any;
+	private readonly manifest: PluginManifest;
+	private readonly envManager: PluginEnvironmentManager;
 
 	/**
 	 * Creates a new ExecutableToolWrapper instance.
 	 *
 	 * @param toolDef - Tool definition containing metadata and configuration
+	 * @param manifest - Complete plugin manifest (for runtime info)
 	 * @param pluginPath - Absolute path to the plugin directory
 	 * @param activityStream - Activity stream for logging and user feedback
+	 * @param envManager - Plugin environment manager for venv paths
 	 * @param timeout - Maximum execution time in milliseconds (default: 120000ms / 2 minutes)
 	 * @param config - Optional plugin configuration to be injected as environment variables
 	 */
 	constructor(
 		toolDef: ToolDefinition,
+		manifest: PluginManifest,
 		pluginPath: string,
 		activityStream: ActivityStream,
+		envManager: PluginEnvironmentManager,
 		timeout: number = 120000,
 		config?: any
 	) {
@@ -63,6 +69,8 @@ export class ExecutableToolWrapper extends BaseTool {
 		this.schema = toolDef.schema || {};
 		this.timeout = timeout;
 		this.config = config;
+		this.manifest = manifest;
+		this.envManager = envManager;
 	}
 
 	/**
@@ -97,11 +105,10 @@ export class ExecutableToolWrapper extends BaseTool {
 		this.captureParams(args);
 
 		try {
-			// Resolve any relative file paths in the arguments
-			const resolvedArgs = this.resolveFilePaths(args);
-
 			// Execute the plugin and get results
-			const output = await this.executePlugin(resolvedArgs);
+			// Note: Arguments are passed through unchanged. Plugins execute with
+			// cwd set to their directory, so they can use relative paths naturally.
+			const output = await this.executePlugin(args);
 
 			return output;
 		} catch (error) {
@@ -112,53 +119,6 @@ export class ExecutableToolWrapper extends BaseTool {
 		}
 	}
 
-	/**
-	 * Resolves relative file paths in the arguments object.
-	 * If a value looks like a file path and is relative, it's resolved against the plugin directory.
-	 *
-	 * @param args - Arguments object potentially containing file paths
-	 * @returns Arguments object with resolved file paths
-	 */
-	private resolveFilePaths(args: any): any {
-		if (!args || typeof args !== 'object') {
-			return args;
-		}
-
-		const resolved: any = Array.isArray(args) ? [] : {};
-
-		for (const [key, value] of Object.entries(args)) {
-			if (typeof value === 'string' && this.looksLikeFilePath(value)) {
-				// If it's a relative path, resolve it against the plugin directory
-				if (!isAbsolute(value)) {
-					resolved[key] = join(this.workingDir, value);
-				} else {
-					resolved[key] = value;
-				}
-			} else if (typeof value === 'object' && value !== null) {
-				// Recursively resolve nested objects/arrays
-				resolved[key] = this.resolveFilePaths(value);
-			} else {
-				resolved[key] = value;
-			}
-		}
-
-		return resolved;
-	}
-
-	/**
-	 * Heuristic to determine if a string looks like a file path.
-	 * Looks for common path indicators like slashes, dots, or file extensions.
-	 */
-	private looksLikeFilePath(value: string): boolean {
-		// Check for common path patterns
-		return (
-			value.includes('/') ||
-			value.includes('\\') ||
-			value.startsWith('./') ||
-			value.startsWith('../') ||
-			/\.[a-zA-Z0-9]{1,4}$/.test(value) // Has file extension
-		);
-	}
 
 	/**
 	 * Converts plugin configuration to environment variables.
@@ -180,6 +140,27 @@ export class ExecutableToolWrapper extends BaseTool {
 	}
 
 	/**
+	 * Resolves the actual command to execute, injecting venv Python if needed.
+	 *
+	 * If the plugin specifies runtime='python3' and command='python3',
+	 * automatically uses the venv Python interpreter.
+	 *
+	 * @returns Resolved command path
+	 */
+	private getResolvedCommand(): string {
+		// If plugin uses Python runtime and command is python3, use venv Python
+		if (
+			this.manifest.runtime === 'python3' &&
+			(this.command === 'python3' || this.command === 'python')
+		) {
+			return this.envManager.getPythonPath(this.manifest.name);
+		}
+
+		// Otherwise use command as-is
+		return this.command;
+	}
+
+	/**
 	 * Spawns the external process and manages its execution.
 	 *
 	 * @param args - Resolved arguments to pass to the plugin
@@ -193,8 +174,11 @@ export class ExecutableToolWrapper extends BaseTool {
 			let outputTruncated = false;
 			let timedOut = false;
 
+			// Resolve the actual command (with venv injection if needed)
+			const resolvedCommand = this.getResolvedCommand();
+
 			// Spawn the child process
-			const child = spawn(this.command, this.commandArgs, {
+			const child = spawn(resolvedCommand, this.commandArgs, {
 				cwd: this.workingDir,
 				env: {
 					...process.env,

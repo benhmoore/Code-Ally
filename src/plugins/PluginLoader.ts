@@ -25,6 +25,7 @@ import { BaseTool } from '../tools/BaseTool.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
 import { PluginConfigManager } from './PluginConfigManager.js';
+import { PluginEnvironmentManager } from './PluginEnvironmentManager.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { logger } from '../services/Logger.js';
@@ -53,6 +54,17 @@ export interface PluginManifest {
 
   /** Configuration schema for interactive setup (optional) */
   config?: PluginConfigSchema;
+
+  /** Runtime environment (e.g., 'python3', 'node') */
+  runtime?: string;
+
+  /** Dependency specification for automatic installation */
+  dependencies?: {
+    /** Dependencies file (e.g., "requirements.txt", "package.json") */
+    file: string;
+    /** Optional custom install command */
+    install_command?: string;
+  };
 
   // Backward compatibility fields (deprecated)
   /** @deprecated Use tools array instead */
@@ -105,7 +117,7 @@ export interface PluginConfigSchema {
  * Configuration property definition
  */
 export interface ConfigProperty {
-  type: 'string' | 'number' | 'boolean';
+  type: 'string' | 'number' | 'boolean' | 'integer';
   description: string;
   required?: boolean;
   secret?: boolean;
@@ -130,10 +142,12 @@ let pendingConfigRequests: Array<{
 export class PluginLoader {
   private activityStream: ActivityStream;
   private configManager: PluginConfigManager;
+  private envManager: PluginEnvironmentManager;
 
   constructor(activityStream: ActivityStream, configManager: PluginConfigManager) {
     this.activityStream = activityStream;
     this.configManager = configManager;
+    this.envManager = new PluginEnvironmentManager();
   }
 
   /**
@@ -155,6 +169,207 @@ export class PluginLoader {
   }
 
   /**
+   * Install a plugin from a local filesystem path
+   *
+   * Validates the plugin manifest, copies it to the plugins directory,
+   * and loads it (triggering dependency installation if needed).
+   *
+   * @param sourcePath - Absolute path to the plugin directory
+   * @param pluginsDir - Target plugins directory (defaults to PLUGINS_DIR)
+   * @returns Object with success status, plugin name, and loaded tools
+   */
+  async installFromPath(
+    sourcePath: string,
+    pluginsDir: string
+  ): Promise<{
+    success: boolean;
+    pluginName?: string;
+    tools?: BaseTool[];
+    error?: string;
+  }> {
+    try {
+      // Validate source path exists
+      try {
+        const stat = await fs.stat(sourcePath);
+        if (!stat.isDirectory()) {
+          return { success: false, error: 'Source path is not a directory' };
+        }
+      } catch {
+        return { success: false, error: 'Source path does not exist' };
+      }
+
+      // Read and validate manifest
+      const manifestPath = join(sourcePath, 'plugin.json');
+      let manifest: PluginManifest;
+
+      try {
+        const manifestContent = await fs.readFile(manifestPath, 'utf-8');
+        manifest = JSON.parse(manifestContent);
+      } catch (error) {
+        return {
+          success: false,
+          error: `Invalid or missing plugin.json: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+      }
+
+      // Validate required manifest fields
+      if (!manifest.name) {
+        return { success: false, error: 'Plugin manifest missing required field: name' };
+      }
+
+      if (!manifest.tools || manifest.tools.length === 0) {
+        return { success: false, error: 'Plugin manifest missing or empty tools array' };
+      }
+
+      // Check if plugin already exists - if so, remove it (update scenario)
+      const targetPath = join(pluginsDir, manifest.name);
+      let isUpdate = false;
+      try {
+        await fs.access(targetPath);
+        isUpdate = true;
+        logger.info(`[PluginLoader] Updating existing plugin '${manifest.name}'`);
+        await fs.rm(targetPath, { recursive: true, force: true });
+      } catch {
+        // Target doesn't exist - fresh install
+      }
+
+      // Copy plugin directory to plugins folder
+      logger.info(
+        `[PluginLoader] ${isUpdate ? 'Updating' : 'Installing'} plugin '${manifest.name}' from ${sourcePath}`
+      );
+      await this.copyDirectory(sourcePath, targetPath);
+
+      // Load the plugin (this triggers dependency installation)
+      const tools = await this.loadPlugin(targetPath);
+
+      // If no tools loaded, check if it's because config is needed (not an error)
+      if (tools.length === 0) {
+        // Check if plugin requires configuration
+        if (manifest.config) {
+          const isComplete = await this.configManager.isConfigComplete(
+            manifest.name,
+            targetPath,
+            manifest.config
+          );
+
+          if (!isComplete) {
+            // Plugin needs configuration - this is expected, not an error
+            logger.info(
+              `[PluginLoader] ✓ Plugin '${manifest.name}' installed successfully. Configuration required before use.`
+            );
+            return {
+              success: true,
+              pluginName: manifest.name,
+              tools: [],
+            };
+          }
+        }
+
+        // Not a config issue - actual failure
+        return {
+          success: false,
+          error: 'Plugin installed but failed to load tools. Check logs for details.',
+        };
+      }
+
+      logger.info(
+        `[PluginLoader] ✓ Plugin '${manifest.name}' installed successfully with ${tools.length} tool(s)`
+      );
+
+      return {
+        success: true,
+        pluginName: manifest.name,
+        tools,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to install plugin: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  /**
+   * Uninstall a plugin
+   *
+   * Removes the plugin directory and its virtual environment.
+   *
+   * @param pluginName - Name of the plugin to uninstall
+   * @param pluginsDir - Plugins directory (defaults to PLUGINS_DIR)
+   * @returns Object with success status and error if any
+   */
+  async uninstall(
+    pluginName: string,
+    pluginsDir: string
+  ): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    try {
+      const pluginPath = join(pluginsDir, pluginName);
+
+      // Check if plugin exists
+      try {
+        await fs.access(pluginPath);
+      } catch {
+        return {
+          success: false,
+          error: `Plugin '${pluginName}' not found`,
+        };
+      }
+
+      // Remove plugin directory
+      logger.info(`[PluginLoader] Uninstalling plugin '${pluginName}'`);
+      await fs.rm(pluginPath, { recursive: true, force: true });
+
+      // Remove plugin environment if it exists
+      await this.envManager.removeEnvironment(pluginName);
+
+      logger.info(`[PluginLoader] ✓ Plugin '${pluginName}' uninstalled successfully`);
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to uninstall plugin: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  /**
+   * Copy directory recursively
+   *
+   * @param src - Source directory
+   * @param dest - Destination directory
+   */
+  private async copyDirectory(src: string, dest: string): Promise<void> {
+    // Create destination directory
+    await fs.mkdir(dest, { recursive: true });
+
+    // Read source directory
+    const entries = await fs.readdir(src, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const srcPath = join(src, entry.name);
+      const destPath = join(dest, entry.name);
+
+      if (entry.isDirectory()) {
+        // Skip certain directories
+        if (entry.name === 'venv' || entry.name === 'node_modules' || entry.name === '__pycache__' || entry.name === '.git') {
+          continue;
+        }
+        // Recursively copy subdirectory
+        await this.copyDirectory(srcPath, destPath);
+      } else {
+        // Copy file
+        await fs.copyFile(srcPath, destPath);
+      }
+    }
+  }
+
+  /**
    * Load all plugins from the specified directory
    *
    * Creates the directory if it doesn't exist, then scans for subdirectories
@@ -164,13 +379,14 @@ export class PluginLoader {
    * @param pluginDir - Path to the plugins directory
    * @returns Array of loaded tool instances
    */
-  async loadPlugins(pluginDir: string): Promise<BaseTool[]> {
+  async loadPlugins(pluginDir: string): Promise<{ tools: BaseTool[], pluginCount: number }> {
     const tools: BaseTool[] = [];
+    let pluginCount = 0;
 
     try {
       // Ensure the plugins directory exists
       await fs.mkdir(pluginDir, { recursive: true });
-      logger.info(`[PluginLoader] Scanning plugins directory: ${pluginDir}`);
+      logger.debug(`[PluginLoader] Scanning plugins directory: ${pluginDir}`);
 
       // Read all entries in the plugins directory
       let entries: string[];
@@ -182,7 +398,7 @@ export class PluginLoader {
             error instanceof Error ? error.message : String(error)
           }`
         );
-        return tools;
+        return { tools, pluginCount };
       }
 
       // Filter to only directories (each plugin should be in its own subdirectory)
@@ -205,11 +421,11 @@ export class PluginLoader {
       }
 
       if (pluginDirs.length === 0) {
-        logger.info('[PluginLoader] No plugin directories found');
-        return tools;
+        logger.debug('[PluginLoader] No plugin directories found');
+        return { tools, pluginCount };
       }
 
-      logger.info(`[PluginLoader] Found ${pluginDirs.length} potential plugin(s)`);
+      logger.debug(`[PluginLoader] Found ${pluginDirs.length} potential plugin(s)`);
 
       // Attempt to load each plugin
       for (const pluginPath of pluginDirs) {
@@ -217,7 +433,8 @@ export class PluginLoader {
           const pluginTools = await this.loadPlugin(pluginPath);
           if (pluginTools.length > 0) {
             tools.push(...pluginTools);
-            logger.info(
+            pluginCount++;
+            logger.debug(
               `[PluginLoader] Successfully loaded plugin with ${pluginTools.length} tool(s): ${pluginTools.map(t => t.name).join(', ')}`
             );
           }
@@ -231,11 +448,7 @@ export class PluginLoader {
         }
       }
 
-      if (tools.length > 0) {
-        logger.info(`[PluginLoader] Successfully loaded ${tools.length} plugin(s)`);
-      } else {
-        logger.info('[PluginLoader] No plugins loaded');
-      }
+      logger.debug(`[PluginLoader] Successfully loaded ${pluginCount} plugin(s) with ${tools.length} tool(s)`);
     } catch (error) {
       // Catch-all for unexpected errors during the loading process
       logger.error(
@@ -245,7 +458,7 @@ export class PluginLoader {
       );
     }
 
-    return tools;
+    return { tools, pluginCount };
   }
 
   /**
@@ -409,11 +622,28 @@ export class PluginLoader {
       }
     }
 
+    // Ensure dependencies are installed if plugin specifies them
+    if (manifest.runtime && manifest.dependencies) {
+      const depsReady = await this.envManager.ensureDependencies(
+        manifest.name,
+        pluginPath,
+        manifest.runtime,
+        manifest.dependencies
+      );
+
+      if (!depsReady) {
+        logger.error(
+          `[PluginLoader] Failed to install dependencies for plugin '${manifest.name}'. Plugin will not be loaded.`
+        );
+        return [];
+      }
+    }
+
     // Load all tools in the toolset
     const tools: BaseTool[] = [];
     for (const toolDef of manifest.tools) {
       try {
-        const tool = await this.loadToolFromDefinition(toolDef, pluginPath, pluginConfig);
+        const tool = await this.loadToolFromDefinition(toolDef, manifest, pluginPath, pluginConfig);
         tools.push(tool);
       } catch (error) {
         logger.error(
@@ -434,12 +664,14 @@ export class PluginLoader {
    * with the external process via stdio.
    *
    * @param toolDef - Tool definition from plugin manifest
+   * @param manifest - Complete plugin manifest (for runtime info)
    * @param pluginPath - Path to the plugin directory
    * @param config - Plugin configuration object (if available)
    * @returns Loaded tool wrapper instance
    */
   private async loadToolFromDefinition(
     toolDef: ToolDefinition,
+    manifest: PluginManifest,
     pluginPath: string,
     config?: any
   ): Promise<BaseTool> {
@@ -459,8 +691,10 @@ export class PluginLoader {
     // Create the wrapper instance
     const tool = new ExecutableToolWrapper(
       toolDef,
+      manifest,
       pluginPath,
       this.activityStream,
+      this.envManager,
       toolDef.timeout,
       config
     );
