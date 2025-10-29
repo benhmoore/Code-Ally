@@ -13,8 +13,6 @@
 
 import { Agent } from './Agent.js';
 import { ConfigManager } from '../services/ConfigManager.js';
-import { AgentManager } from '../services/AgentManager.js';
-import { FocusManager } from '../services/FocusManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TokenManager } from './TokenManager.js';
 import { Message, ActivityEventType } from '../types/index.js';
@@ -22,24 +20,33 @@ import {
   BUFFER_SIZES,
   TEXT_LIMITS,
   CONTEXT_SIZES,
-  BYTE_CONVERSIONS,
   FORMATTING,
 } from '../config/constants.js';
-import type { ProjectManager } from '../services/ProjectManager.js';
-import type { TodoManager } from '../services/TodoManager.js';
-import type { PatchManager } from '../services/PatchManager.js';
-import { formatError } from '../utils/errorUtils.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
+import type { MessageMetadata } from '../types/index.js';
+import { Command } from './commands/Command.js';
+import { UndoCommand } from './commands/UndoCommand.js';
+import { ClearCommand } from './commands/ClearCommand.js';
+import { FocusCommand } from './commands/FocusCommand.js';
+import { DefocusCommand } from './commands/DefocusCommand.js';
+import { FocusShowCommand } from './commands/FocusShowCommand.js';
+import { ConfigCommand } from './commands/ConfigCommand.js';
+import { ModelCommand } from './commands/ModelCommand.js';
+import { ProjectCommand } from './commands/ProjectCommand.js';
+import { TodoCommand } from './commands/TodoCommand.js';
+import { AgentCommand } from './commands/AgentCommand.js';
 
 export interface CommandResult {
   handled: boolean;
   response?: string;
   updatedMessages?: Message[];
+  metadata?: MessageMetadata; // Presentation hints for command responses
 }
 
 export class CommandHandler {
   private agent: Agent | null;
+  private commands: Map<string, Command> = new Map();
 
   constructor(
     agent: Agent | null,
@@ -47,6 +54,27 @@ export class CommandHandler {
     private serviceRegistry: ServiceRegistry
   ) {
     this.agent = agent;
+
+    // Register class-based commands
+    this.registerCommand(new UndoCommand());
+    this.registerCommand(new ClearCommand());
+    this.registerCommand(new FocusCommand());
+    this.registerCommand(new DefocusCommand());
+    this.registerCommand(new FocusShowCommand());
+    this.registerCommand(new ConfigCommand());
+    this.registerCommand(new ModelCommand());
+    this.registerCommand(new ProjectCommand());
+    this.registerCommand(new TodoCommand());
+    this.registerCommand(new AgentCommand());
+  }
+
+  /**
+   * Register a command instance
+   */
+  private registerCommand(command: Command): void {
+    // Strip the leading "/" from the command name
+    const commandName = command.name.startsWith('/') ? command.name.slice(1) : command.name;
+    this.commands.set(commandName, command);
   }
 
   /**
@@ -65,50 +93,28 @@ export class CommandHandler {
 
     const { command, args } = parsed;
 
+    // Check if this is a class-based command
+    const commandInstance = this.commands.get(command);
+    if (commandInstance) {
+      return await commandInstance.execute(args, messages, this.serviceRegistry);
+    }
+
     // Route to appropriate handler
     switch (command) {
       // Core commands
       case 'help':
         return await this.handleHelp();
-      case 'config':
-        return await this.handleConfig(args);
-      case 'model':
-        return await this.handleModel(args);
       case 'debug':
         return await this.handleDebug(args, messages);
       case 'context':
         return await this.handleContext(messages);
-      case 'clear':
-        return await this.handleClear();
       case 'compact':
         return await this.handleCompact(args, messages);
       case 'rewind':
         return await this.handleRewind();
-      case 'undo':
-        return await this.handleUndo(args, messages);
       case 'exit':
       case 'quit':
         return await this.handleExit();
-
-      // Agent commands
-      case 'agent':
-        return await this.handleAgent(args, messages);
-
-      // Focus commands
-      case 'focus':
-        return await this.handleFocus(args);
-      case 'defocus':
-        return await this.handleDefocus();
-      case 'focus-show':
-        return await this.handleFocusShow();
-
-      // Project commands
-      case 'project':
-        return await this.handleProject(args, messages);
-
-      // Todo commands
-      case 'todo':
-        return await this.handleTodo(args);
 
       // Setup wizard
       case 'init':
@@ -219,161 +225,6 @@ Todo Commands:
     return this.debugTokens(messages);
   }
 
-  /**
-   * Handle /clear command - clear conversation history
-   */
-  private async handleClear(): Promise<CommandResult> {
-    if (!this.agent) {
-      return {
-        handled: true,
-        response: 'Error: Agent not available',
-      };
-    }
-
-    // Get system message if it exists
-    const messages = this.agent.getMessages();
-    const systemMessage = messages.find(m => m.role === 'system');
-
-    // Keep only system message
-    const clearedMessages = systemMessage ? [systemMessage] : [];
-    this.agent.setMessages(clearedMessages);
-
-    // Update token manager
-    const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get('token_manager');
-    if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
-      (tokenManager as any).updateTokenCount(clearedMessages);
-    }
-
-    return {
-      handled: true,
-      response: 'Conversation history cleared.',
-    };
-  }
-
-  private async handleConfig(args: string[]): Promise<CommandResult> {
-    const argString = args.join(' ').trim();
-
-    // Parse subcommands
-    const parts = argString.split(/\s+/);
-    const subcommand = parts[0];
-
-    // No args or "show" - show interactive config viewer
-    if (!argString || subcommand?.toLowerCase() === 'show') {
-      const activityStream = this.serviceRegistry.get('activity_stream');
-
-      if (!activityStream || typeof (activityStream as any).emit !== 'function') {
-        return {
-          handled: true,
-          response: 'Configuration viewer not available.',
-        };
-      }
-
-      // Emit config view request event
-      const requestId = `config_view_${Date.now()}`;
-
-      (activityStream as any).emit({
-        id: requestId,
-        type: ActivityEventType.CONFIG_VIEW_REQUEST,
-        timestamp: Date.now(),
-        data: {
-          requestId,
-        },
-      });
-
-      return { handled: true }; // Handled via UI
-    }
-
-    if (!subcommand) {
-      return { handled: true, response: 'Invalid config command' };
-    }
-
-    if (subcommand.toLowerCase() === 'reset') {
-      return this.handleConfigReset();
-    }
-
-    if (subcommand.toLowerCase() === 'set') {
-      // /config set key=value
-      const kvString = parts.slice(1).join(' ');
-      return this.handleConfigSet(kvString);
-    }
-
-    return {
-      handled: true,
-      response: 'Invalid format. Use /config, /config set key=value, or /config reset',
-    };
-  }
-
-  private async handleConfigSet(kvString: string): Promise<CommandResult> {
-    const parts = kvString.split('=', 2);
-
-    if (parts.length !== 2 || !parts[0] || !parts[1]) {
-      return {
-        handled: true,
-        response: 'Invalid format. Use /config set key=value',
-      };
-    }
-
-    const key = parts[0].trim();
-    const valueString = parts[1].trim();
-
-    // Check if key exists
-    if (!this.configManager.hasKey(key)) {
-      return {
-        handled: true,
-        response: `Unknown configuration key: ${key}. Use /config show to see all options.`,
-      };
-    }
-
-    try {
-      // Parse value based on type
-      let value: any = valueString;
-
-      // Try to parse as JSON first (handles booleans, numbers, etc.)
-      try {
-        value = JSON.parse(valueString);
-      } catch {
-        // Keep as string if not valid JSON
-        value = valueString;
-      }
-
-      await this.configManager.setValue(key as any, value);
-
-      return {
-        handled: true,
-        response: `Configuration updated: ${key}=${JSON.stringify(value)}`,
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        response: `Error updating configuration: ${formatError(error)}`,
-      };
-    }
-  }
-
-  private async handleConfigReset(): Promise<CommandResult> {
-    try {
-      const changes = await this.configManager.reset();
-      const changedKeys = Object.keys(changes);
-
-      if (changedKeys.length === 0) {
-        return {
-          handled: true,
-          response: 'Configuration is already at default values.',
-        };
-      }
-
-      return {
-        handled: true,
-        response: `Configuration reset to defaults. ${changedKeys.length} settings changed.`,
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        response: `Error resetting configuration: ${formatError(error)}`,
-      };
-    }
-  }
 
   /**
    * Handle /rewind command - show interactive conversation rewind UI
@@ -402,190 +253,6 @@ Todo Commands:
     });
 
     return { handled: true }; // Selection handled via UI
-  }
-
-  private async handleUndo(_args: string[], _messages: Message[]): Promise<CommandResult> {
-    // Get PatchManager from service registry
-    const patchManager = this.serviceRegistry.get<PatchManager>('patch_manager');
-
-    if (!patchManager) {
-      return {
-        handled: true,
-        response: 'Undo feature not available (patch manager not initialized).',
-      };
-    }
-
-    try {
-      // Get list of recent file changes
-      const fileList = await patchManager.getRecentFileList(10);
-
-      if (fileList.length === 0) {
-        return {
-          handled: true,
-          response: 'No operations to undo',
-        };
-      }
-
-      // Emit UNDO_FILE_LIST_REQUEST event for UI to show file list
-      const activityStream = this.serviceRegistry.get('activity_stream');
-      if (!activityStream || typeof (activityStream as any).emit !== 'function') {
-        return {
-          handled: true,
-          response: 'Undo feature not available (activity stream not found).',
-        };
-      }
-
-      const requestId = `undo_${Date.now()}`;
-
-      (activityStream as any).emit({
-        id: requestId,
-        type: ActivityEventType.UNDO_FILE_LIST_REQUEST,
-        timestamp: Date.now(),
-        data: {
-          requestId,
-          fileList,
-        },
-      });
-
-      return { handled: true }; // UI will handle the rest
-    } catch (error) {
-      return {
-        handled: true,
-        response: `Error during undo operation: ${formatError(error)}`,
-      };
-    }
-  }
-
-  private async handleModel(args: string[]): Promise<CommandResult> {
-    const argString = args.join(' ').trim();
-
-    // Parse model type (ally/main/service) and model name
-    let modelType: 'ally' | 'service' = 'ally'; // default to ally model
-    let modelName = '';
-
-    if (argString) {
-      const parts = argString.split(/\s+/);
-      const firstArg = parts[0]?.toLowerCase() || '';
-
-      // Check if first arg is a type specifier
-      if (firstArg === 'service') {
-        modelType = 'service';
-        modelName = parts.slice(1).join(' ').trim();
-      } else if (firstArg === 'ally' || firstArg === 'main') {
-        modelType = 'ally';
-        modelName = parts.slice(1).join(' ').trim();
-      } else {
-        // No type specifier, treat entire arg as model name for ally model
-        modelName = argString;
-      }
-    }
-
-    // Direct model name provided - set it immediately
-    if (modelName) {
-      try {
-        const configKey = modelType === 'service' ? 'service_model' : 'model';
-        await this.configManager.setValue(configKey, modelName);
-
-        // Update the active ModelClient to use the new model immediately
-        const clientKey = modelType === 'service' ? 'service_model_client' : 'model_client';
-        const modelClient = this.serviceRegistry.get<any>(clientKey);
-        if (modelClient && typeof modelClient.setModelName === 'function') {
-          modelClient.setModelName(modelName);
-        }
-
-        const typeName = modelType === 'service' ? 'Service model' : 'Model';
-        return {
-          handled: true,
-          response: `${typeName} changed to: ${modelName}`,
-        };
-      } catch (error) {
-        return {
-          handled: true,
-          response: `Error changing model: ${formatError(error)}`,
-        };
-      }
-    }
-
-    // No model name - show interactive selector
-    try {
-      const configKey = modelType === 'service' ? 'service_model' : 'model';
-      const currentModel = this.configManager.getValue(configKey);
-      const config = this.configManager.getConfig();
-      const endpoint = config.endpoint || 'http://localhost:11434';
-
-      // Fetch available models from Ollama
-      const response = await fetch(`${endpoint}/api/tags`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (!response.ok) {
-        return {
-          handled: true,
-          response: `Failed to fetch models from Ollama (HTTP ${response.status}). Try /model <name> to set directly.`,
-        };
-      }
-
-      const data = (await response.json()) as { models?: Array<{ name: string; size?: number; modified_at?: string }> };
-      const models = (data.models || []).map(m => ({
-        name: m.name,
-        size: m.size ? this.formatSize(m.size) : undefined,
-        modified: m.modified_at,
-      }));
-
-      if (models.length === 0) {
-        return {
-          handled: true,
-          response: 'No models available in Ollama. Install models with: ollama pull <model>',
-        };
-      }
-
-      // Emit interactive selection request
-      const activityStream = this.serviceRegistry.get('activity_stream');
-      if (activityStream && typeof (activityStream as any).emit === 'function') {
-        const requestId = `model_select_${Date.now()}`;
-        const typeName = modelType === 'service' ? 'service model' : 'ally model';
-
-        (activityStream as any).emit({
-          id: requestId,
-          type: 'model_select_request',
-          timestamp: Date.now(),
-          data: {
-            requestId,
-            models,
-            currentModel,
-            modelType, // Pass model type so UI knows which config to update
-            typeName, // Display name for UI
-          },
-        });
-
-        return { handled: true }; // Selection handled via UI
-      }
-
-      // Fallback: show list
-      const typeName = modelType === 'service' ? 'service model' : 'model';
-      let output = `Current ${typeName}: ${currentModel || 'not set'}\n\nAvailable models:\n`;
-      models.forEach(m => {
-        output += `  - ${m.name}${m.size ? ` (${m.size})` : ''}\n`;
-      });
-      output += `\nUse /model ${modelType === 'service' ? 'service ' : ''}<name> to switch.`;
-
-      return { handled: true, response: output };
-    } catch (error) {
-      return {
-        handled: true,
-        response: `Error fetching models: ${formatError(error)}`,
-      };
-    }
-  }
-
-  private formatSize(bytes: number): string {
-    if (bytes < BYTE_CONVERSIONS.BYTES_PER_KB) return `${bytes}B`;
-    if (bytes < BYTE_CONVERSIONS.BYTES_PER_MB)
-      return `${(bytes / BYTE_CONVERSIONS.BYTES_PER_KB).toFixed(FORMATTING.FILE_SIZE_DECIMAL_PLACES)}KB`;
-    if (bytes < BYTE_CONVERSIONS.BYTES_PER_GB)
-      return `${(bytes / BYTE_CONVERSIONS.BYTES_PER_MB).toFixed(FORMATTING.FILE_SIZE_DECIMAL_PLACES)}MB`;
-    return `${(bytes / BYTE_CONVERSIONS.BYTES_PER_GB).toFixed(FORMATTING.FILE_SIZE_DECIMAL_PLACES)}GB`;
   }
 
   private async handleInit(): Promise<CommandResult> {
@@ -1010,206 +677,6 @@ Todo Commands:
     process.exit(0);
   }
 
-  // ===========================
-  // Agent Commands
-  // ===========================
-
-  private async handleAgent(args: string[], _messages: Message[]): Promise<CommandResult> {
-    const argString = args.join(' ').trim();
-
-    if (!argString) {
-      return {
-        handled: true,
-        response: `Agent Commands:
-  /agent create <description> - Create new specialized agent
-  /agent ls                   - List available agents
-  /agent show <name>          - Show agent details
-  /agent use <name> <task>    - Use specific agent
-  /agent delete <name>        - Delete agent
-`,
-      };
-    }
-
-    const parts = argString.split(/\s+/);
-    const subcommand = parts[0];
-    if (!subcommand) {
-      return { handled: true, response: 'Invalid agent command' };
-    }
-
-    switch (subcommand.toLowerCase()) {
-      case 'create':
-        return this.handleAgentCreate(parts.slice(1).join(' '));
-      case 'ls':
-      case 'list':
-        return this.handleAgentList();
-      case 'show':
-        return this.handleAgentShow(parts.slice(1).join(' '));
-      case 'use':
-        return this.handleAgentUse(parts.slice(1).join(' '));
-      case 'delete':
-      case 'rm':
-        return this.handleAgentDelete(parts.slice(1).join(' '));
-      default:
-        return {
-          handled: true,
-          response: `Unknown agent subcommand: ${subcommand}`,
-        };
-    }
-  }
-
-  private async handleAgentCreate(_description: string): Promise<CommandResult> {
-    if (!_description) {
-      return {
-        handled: true,
-        response: 'Description required. Usage: /agent create <description>',
-      };
-    }
-
-    // TODO: Implement agent creation (requires LLM integration)
-    return {
-      handled: true,
-      response: 'Agent creation not yet implemented',
-    };
-  }
-
-  private async handleAgentList(): Promise<CommandResult> {
-    const agentManager = this.serviceRegistry.get('agentManager') as AgentManager;
-    const agents = await agentManager.listAgents();
-
-    if (agents.length === 0) {
-      return {
-        handled: true,
-        response: 'No agents available. Use /agent create to create one.',
-      };
-    }
-
-    let output = 'Available Agents:\n\n';
-
-    for (const agent of agents) {
-      output += `  - ${agent.name}: ${agent.description}\n`;
-    }
-
-    return { handled: true, response: output };
-  }
-
-  private async handleAgentShow(name: string): Promise<CommandResult> {
-    if (!name) {
-      return {
-        handled: true,
-        response: 'Agent name required. Usage: /agent show <name>',
-      };
-    }
-
-    const agentManager = this.serviceRegistry.get('agentManager') as AgentManager;
-    const agent = await agentManager.loadAgent(name);
-
-    if (!agent) {
-      return {
-        handled: true,
-        response: `Agent '${name}' not found.`,
-      };
-    }
-
-    let output = `Agent: ${agent.name}\n\n`;
-    output += `Description: ${agent.description}\n`;
-    output += `Created: ${agent.created_at || 'Unknown'}\n\n`;
-    output += `System Prompt:\n${agent.system_prompt}\n`;
-
-    return { handled: true, response: output };
-  }
-
-  private async handleAgentUse(_args: string): Promise<CommandResult> {
-    // TODO: Implement agent delegation
-    return {
-      handled: true,
-      response: 'Agent delegation not yet implemented',
-    };
-  }
-
-  private async handleAgentDelete(name: string): Promise<CommandResult> {
-    if (!name) {
-      return {
-        handled: true,
-        response: 'Agent name required. Usage: /agent delete <name>',
-      };
-    }
-
-    const agentManager = this.serviceRegistry.get('agentManager') as AgentManager;
-    const deleted = await agentManager.deleteAgent(name);
-
-    if (deleted) {
-      return {
-        handled: true,
-        response: `Agent '${name}' deleted successfully.`,
-      };
-    } else {
-      return {
-        handled: true,
-        response: `Failed to delete agent '${name}'. It may not exist or cannot be deleted.`,
-      };
-    }
-  }
-
-  // ===========================
-  // Focus Commands
-  // ===========================
-
-  private async handleFocus(args: string[]): Promise<CommandResult> {
-    const path = args.join(' ').trim();
-
-    if (!path) {
-      const focusManager = this.serviceRegistry.get('focusManager') as FocusManager;
-      const focused = focusManager.isFocused();
-
-      if (focused) {
-        const display = focusManager.getFocusDisplay();
-        return {
-          handled: true,
-          response: `Currently focused on: ${display}\n\nUsage:\n  /focus <path>  - Set focus\n  /defocus       - Clear focus`,
-        };
-      } else {
-        return {
-          handled: true,
-          response: 'No focus is currently set.\n\nUsage: /focus <path>',
-        };
-      }
-    }
-
-    const focusManager = this.serviceRegistry.get('focusManager') as FocusManager;
-    const result = await focusManager.setFocus(path);
-
-    return {
-      handled: true,
-      response: result.message,
-    };
-  }
-
-  private async handleDefocus(): Promise<CommandResult> {
-    const focusManager = this.serviceRegistry.get('focusManager') as FocusManager;
-    const result = focusManager.clearFocus();
-
-    return {
-      handled: true,
-      response: result.message,
-    };
-  }
-
-  private async handleFocusShow(): Promise<CommandResult> {
-    const focusManager = this.serviceRegistry.get('focusManager') as FocusManager;
-    const display = focusManager.getFocusDisplay();
-
-    if (display) {
-      return {
-        handled: true,
-        response: `Current focus: ${display}`,
-      };
-    } else {
-      return {
-        handled: true,
-        response: 'No focus is currently set.',
-      };
-    }
-  }
 
   // ===========================
   // Memory Commands - REMOVED
@@ -1218,113 +685,6 @@ Todo Commands:
   // Session metadata can be accessed through the SessionManager service and persists
   // across sessions without requiring a separate storage mechanism.
 
-  // ===========================
-  // Project Commands
-  // ===========================
-
-  private async handleProject(
-    args: string[],
-    _messages: Message[]
-  ): Promise<CommandResult> {
-    const argString = args.join(' ').trim();
-
-    if (!argString) {
-      return {
-        handled: true,
-        response: `Project Commands:
-  /project init    - Initialize project context
-  /project edit    - Edit project file
-  /project view    - View project file
-  /project clear   - Clear project context
-`,
-      };
-    }
-
-    const parts = argString.split(/\s+/);
-    const subcommand = parts[0];
-    if (!subcommand) {
-      return { handled: true, response: 'Invalid project command' };
-    }
-
-    const projectManager = this.serviceRegistry.get('projectManager') as ProjectManager;
-
-    switch (subcommand.toLowerCase()) {
-      case 'init':
-        return this.handleProjectInit(projectManager);
-      case 'edit':
-        return this.handleProjectEdit(projectManager);
-      case 'view':
-        return this.handleProjectView(projectManager);
-      case 'clear':
-        return this.handleProjectClear(projectManager);
-      default:
-        return {
-          handled: true,
-          response: `Unknown project subcommand: ${subcommand}`,
-        };
-    }
-  }
-
-  private async handleProjectInit(_projectManager: ProjectManager): Promise<CommandResult> {
-    const activityStream = this.serviceRegistry.get('activity_stream');
-
-    if (!activityStream || typeof (activityStream as any).emit !== 'function') {
-      return {
-        handled: true,
-        response: 'Project wizard not available.',
-      };
-    }
-
-    // Emit project wizard request event
-    const requestId = `project_wizard_${Date.now()}`;
-
-    (activityStream as any).emit({
-      id: requestId,
-      type: ActivityEventType.PROJECT_WIZARD_REQUEST,
-      timestamp: Date.now(),
-      data: {
-        requestId,
-      },
-    });
-
-    return { handled: true }; // Handled via UI
-  }
-
-  private async handleProjectEdit(_projectManager: ProjectManager): Promise<CommandResult> {
-    // TODO: Implement project file editing
-    return {
-      handled: true,
-      response: 'Project editing not yet implemented',
-    };
-  }
-
-  private async handleProjectView(projectManager: ProjectManager): Promise<CommandResult> {
-    const context = await projectManager.getContext();
-
-    if (!context) {
-      return {
-        handled: true,
-        response: 'No project context found. Use /project init to create one.',
-      };
-    }
-
-    let output = `Project: ${context.name}\n\n`;
-    output += `Description: ${context.description}\n`;
-    output += `Files: ${context.files.length}\n`;
-    output += `Created: ${new Date(context.created).toLocaleString()}\n`;
-    output += `Updated: ${new Date(context.updated).toLocaleString()}\n`;
-
-    return { handled: true, response: output };
-  }
-
-  private async handleProjectClear(projectManager: ProjectManager): Promise<CommandResult> {
-    await projectManager.clearContext();
-
-    return {
-      handled: true,
-      response: 'Project context cleared.',
-    };
-  }
 
   // ===========================
   // NOTE: Undo functionality removed
@@ -1335,173 +695,4 @@ Todo Commands:
   // - git restore <file> (restore specific file)
   // - git reset --hard  (reset all changes)
 
-  // ===========================
-  // Todo Commands
-  // ===========================
-
-  private async handleTodo(args: string[]): Promise<CommandResult> {
-    const argString = args.join(' ').trim();
-
-    if (!argString) {
-      return await this.handleTodoShow();
-    }
-
-    const parts = argString.split(/\s+/);
-    const subcommand = parts[0];
-    if (!subcommand) {
-      return { handled: true, response: 'Invalid todo command' };
-    }
-
-    const todoManager = this.serviceRegistry.get('todo_manager') as TodoManager;
-
-    if (!todoManager) {
-      return {
-        handled: true,
-        response: 'Todo manager not available.',
-      };
-    }
-
-    switch (subcommand.toLowerCase()) {
-      case 'add':
-        return this.handleTodoAdd(todoManager, parts.slice(1).join(' '));
-      case 'complete':
-      case 'done':
-        return this.handleTodoComplete(todoManager, parts.length > 1 ? parts[1] : undefined);
-      case 'clear':
-        return this.handleTodoClear(todoManager, false);
-      case 'clear-all':
-        return this.handleTodoClear(todoManager, true);
-      default:
-        return {
-          handled: true,
-          response: `Unknown todo subcommand: ${subcommand}. Type /help for usage.`,
-        };
-    }
-  }
-
-  private async handleTodoShow(): Promise<CommandResult> {
-    const todoManager = this.serviceRegistry.get('todo_manager') as TodoManager;
-
-    if (!todoManager) {
-      return {
-        handled: true,
-        response: 'Todo manager not available.',
-      };
-    }
-
-    const todos = todoManager.getTodos();
-
-    if (todos.length === 0) {
-      return {
-        handled: true,
-        response: 'No todos. Use /todo add <task> to add one.',
-      };
-    }
-
-    let output = 'Todo List:\n\n';
-
-    const inProgress = todoManager.getInProgressTodo();
-    const pending = todos.filter(t => t.status === 'pending');
-    const completed = todoManager.getCompletedTodos();
-
-    // Show in-progress task (highlighted)
-    if (inProgress) {
-      output += `  → IN PROGRESS: ${inProgress.task}\n\n`;
-    }
-
-    // Show pending tasks with indices
-    if (pending.length > 0) {
-      output += 'Pending:\n';
-      pending.forEach((todo, index) => {
-        output += `  ${index}. ${todo.task}\n`;
-      });
-      output += '\n';
-    }
-
-    // Show completed tasks
-    if (completed.length > 0) {
-      output += 'Completed:\n';
-      completed.forEach(todo => {
-        output += `  ✓ ${todo.task}\n`;
-      });
-    }
-
-    return { handled: true, response: output };
-  }
-
-  private async handleTodoAdd(
-    todoManager: TodoManager,
-    task: string
-  ): Promise<CommandResult> {
-    if (!task || task.trim() === '') {
-      return {
-        handled: true,
-        response: 'Task description required. Usage: /todo add <task>',
-      };
-    }
-
-    const newTodo = todoManager.createTodoItem(task.trim(), 'pending');
-    const todos = todoManager.getTodos();
-    todos.push(newTodo);
-    todoManager.setTodos(todos);
-
-    return {
-      handled: true,
-      response: `Todo added: ${task.trim()}`,
-    };
-  }
-
-  private async handleTodoComplete(
-    todoManager: TodoManager,
-    indexStr: string | undefined
-  ): Promise<CommandResult> {
-    if (!indexStr) {
-      return {
-        handled: true,
-        response: 'Index required. Usage: /todo complete <index>',
-      };
-    }
-
-    const index = parseInt(indexStr, 10);
-
-    if (isNaN(index) || index < 0) {
-      return {
-        handled: true,
-        response: 'Invalid index. Use /todo to see indices.',
-      };
-    }
-
-    const completedTodo = todoManager.completeTodoByIndex(index);
-
-    if (!completedTodo) {
-      return {
-        handled: true,
-        response: `No pending todo at index ${index}. Use /todo to see current list.`,
-      };
-    }
-
-    return {
-      handled: true,
-      response: `Completed: ${completedTodo.task}`,
-    };
-  }
-
-  private async handleTodoClear(
-    todoManager: TodoManager,
-    clearAll: boolean
-  ): Promise<CommandResult> {
-    const cleared = todoManager.clearTodos(clearAll);
-
-    if (cleared === 0) {
-      return {
-        handled: true,
-        response: clearAll ? 'No todos to clear.' : 'No completed todos to clear.',
-      };
-    }
-
-    return {
-      handled: true,
-      response: `Cleared ${cleared} ${clearAll ? 'todo(s)' : 'completed todo(s)'}.`,
-    };
-  }
 }

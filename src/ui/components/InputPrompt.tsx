@@ -74,6 +74,12 @@ interface InputPromptProps {
   prefillText?: string;
   /** Callback when prefill is consumed */
   onPrefillConsumed?: () => void;
+  /** Callback when exit confirmation state changes */
+  onExitConfirmationChange?: (isWaitingForConfirmation: boolean) => void;
+  /** External buffer value (for preserving across renders) */
+  bufferValue?: string;
+  /** Callback when buffer changes */
+  onBufferChange?: (value: string) => void;
 }
 
 /**
@@ -105,9 +111,12 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   agent,
   prefillText,
   onPrefillConsumed,
+  onExitConfirmationChange,
+  bufferValue,
+  onBufferChange,
 }) => {
   const { exit } = useApp();
-  const [buffer, setBuffer] = useState('');
+  const [buffer, setBuffer] = useState(bufferValue || '');
   const [cursorPosition, setCursorPosition] = useState(0);
 
   // Handle prefill text
@@ -146,11 +155,33 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [escCount, setEscCount] = useState(0);
   const escTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Exit confirmation mechanism (Ctrl+C on empty buffer - 1s to confirm)
+  const [isWaitingForExitConfirmation, setIsWaitingForExitConfirmation] = useState(false);
+  const exitConfirmationTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   // Track last cancelled request IDs to prevent duplicates
   const lastCancelledIdRef = useRef<string | null>(null);
 
   // Prevent re-entry during escape key processing
   const processingEscapeRef = useRef(false);
+
+  // Notify parent when exit confirmation state changes
+  useEffect(() => {
+    onExitConfirmationChange?.(isWaitingForExitConfirmation);
+  }, [isWaitingForExitConfirmation, onExitConfirmationChange]);
+
+  // Sync with external buffer value (when parent changes it)
+  useEffect(() => {
+    if (bufferValue !== undefined && bufferValue !== buffer) {
+      setBuffer(bufferValue);
+      setCursorPosition(bufferValue.length);
+    }
+  }, [bufferValue]);
+
+  // Notify parent when buffer changes
+  useEffect(() => {
+    onBufferChange?.(buffer);
+  }, [buffer, onBufferChange]);
 
   /**
    * Update completions based on current input
@@ -882,7 +913,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // ===== Escape - Dismiss Completions or Double-Escape for Rewind =====
+      // ===== Escape - Dismiss Completions, Interrupt Agent, or Double-Escape for Rewind =====
       if (key.escape) {
         // Prevent infinite loop from re-entry during state updates
         if (processingEscapeRef.current) return;
@@ -899,7 +930,36 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Second priority: Double-escape to open rewind (only when no modal active)
+        // Second priority: Interrupt agent if processing (single escape)
+        if (agent && agent.isProcessing()) {
+          logger.debug('[INPUT] Escape - interrupting main agent');
+
+          // Emit immediate visual feedback before interrupting
+          if (activityStream) {
+            activityStream.emit({
+              id: `user-interrupt-${Date.now()}`,
+              type: ActivityEventType.USER_INTERRUPT_INITIATED,
+              timestamp: Date.now(),
+              data: {},
+            });
+          }
+
+          // Interrupt the agent (will cancel LLM request immediately)
+          agent.interrupt();
+
+          // Also interrupt all subagents through AgentTool
+          if (activityStream) {
+            activityStream.emit({
+              id: `interrupt-${Date.now()}`,
+              type: ActivityEventType.INTERRUPT_ALL,
+              timestamp: Date.now(),
+              data: {},
+            });
+          }
+          return;
+        }
+
+        // Third priority: Double-escape to open rewind (only when no modal active)
         if (!modelSelectRequest && !sessionSelectRequest && !rewindRequest && !permissionRequest && activityStream) {
           const newCount = escCount + 1;
           setEscCount(newCount);
@@ -941,8 +1001,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // ===== Clear Buffer / Quit / Interrupt (Ctrl+C) =====
-      // Priority order: clear buffer -> interrupt -> quit
+      // ===== Clear Buffer / Quit (Ctrl+C) =====
+      // Priority order: clear buffer -> exit confirmation -> quit
       // Use ref to avoid stale closure issues
       if (key.ctrl && input === 'c') {
         const currentBuffer = bufferRef.current;
@@ -954,40 +1014,38 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           setCursorPosition(0);
           setHistoryIndex(-1);
           setShowCompletions(false);
-          return;
-        }
-
-        // Priority 2: Interrupt ALL ongoing operations (main agent + subagents + tools)
-        if (agent && agent.isProcessing()) {
-          logger.debug('[INPUT] Ctrl+C - interrupting main agent');
-
-          // Emit immediate visual feedback before interrupting
-          if (activityStream) {
-            activityStream.emit({
-              id: `user-interrupt-${Date.now()}`,
-              type: ActivityEventType.USER_INTERRUPT_INITIATED,
-              timestamp: Date.now(),
-              data: {},
-            });
-          }
-
-          // Interrupt the agent (will cancel LLM request immediately)
-          agent.interrupt();
-
-          // Also interrupt all subagents through AgentTool
-          if (activityStream) {
-            activityStream.emit({
-              id: `interrupt-${Date.now()}`,
-              type: ActivityEventType.INTERRUPT_ALL,
-              timestamp: Date.now(),
-              data: {},
-            });
+          // Also clear exit confirmation if active
+          if (isWaitingForExitConfirmation) {
+            setIsWaitingForExitConfirmation(false);
+            if (exitConfirmationTimerRef.current) {
+              clearTimeout(exitConfirmationTimerRef.current);
+              exitConfirmationTimerRef.current = null;
+            }
           }
           return;
         }
 
-        // Priority 3: Buffer is empty and no agent processing - quit immediately
-        exit();
+        // Priority 2: Buffer is empty - check if waiting for confirmation
+        if (isWaitingForExitConfirmation) {
+          // Second Ctrl+C within 1 second - quit
+          exit();
+          return;
+        }
+
+        // Priority 3: First Ctrl+C on empty buffer - start confirmation timer
+        setIsWaitingForExitConfirmation(true);
+
+        // Clear any existing timer
+        if (exitConfirmationTimerRef.current) {
+          clearTimeout(exitConfirmationTimerRef.current);
+        }
+
+        // Set 1-second timer to reset confirmation
+        exitConfirmationTimerRef.current = setTimeout(() => {
+          setIsWaitingForExitConfirmation(false);
+          exitConfirmationTimerRef.current = null;
+        }, 1000);
+
         return;
       }
 

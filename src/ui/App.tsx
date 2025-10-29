@@ -227,6 +227,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   const [rewindRequest, setRewindRequest] = useState<{ requestId: string; userMessagesCount: number; selectedIndex: number } | undefined>(undefined);
   const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
 
+  // Input buffer state - preserve across modal renders
+  const [inputBuffer, setInputBuffer] = useState<string>('');
+
   // Undo prompt state
   const [undoRequest, setUndoRequest] = useState<{ requestId: string; count: number; patches: any[]; previewData: any[] } | undefined>(undefined);
   const [undoSelectedIndex, setUndoSelectedIndex] = useState(0);
@@ -248,6 +251,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
   // Track cancellation state for immediate visual feedback
   const [isCancelling, setIsCancelling] = useState(false);
+
+  // Track exit confirmation state (Ctrl+C on empty buffer)
+  const [isWaitingForExitConfirmation, setIsWaitingForExitConfirmation] = useState(false);
 
   // Throttle tool call updates to max once every 2 seconds
   const pendingToolUpdates = useRef<Map<string, Partial<ToolCallState>>>(new Map());
@@ -1240,11 +1246,23 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           }
         }
 
+        // Force Static to remount FIRST (before adding notice)
+        // This prevents the notice from being rendered twice
+        actions.forceStaticRemount();
+
         // Update UI state with rewound messages
         actions.setMessages(rewindedMessages);
 
-        // Force Static to remount with new message list
-        actions.forceStaticRemount();
+        // Clear any previous rewind notices to prevent duplicates
+        actions.clearRewindNotices();
+
+        // Add rewind notice to mark the rewind point
+        // This happens after remount, so it will only be rendered once
+        actions.addRewindNotice({
+          id: `rewind_${Date.now()}`,
+          timestamp: Date.now(),
+          targetMessageIndex: selectedIndex,
+        });
 
         // Pre-fill the input with the target message for editing
         setInputPrefillText(targetMessageContent);
@@ -1389,6 +1407,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             actions.addMessage({
               role: 'assistant',
               content: result.response,
+              metadata: result.metadata, // Pass command metadata for styling
             });
           }
 
@@ -1482,6 +1501,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         activeToolCalls={state.activeToolCalls}
         contextUsage={state.contextUsage}
         compactionNotices={state.compactionNotices}
+        rewindNotices={state.rewindNotices}
         staticRemountKey={state.staticRemountKey}
         config={state.config}
       />
@@ -1572,6 +1592,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               agent={agent}
               prefillText={inputPrefillText}
               onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
             />
           </Box>
         </Box>
@@ -1605,6 +1627,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               agent={agent}
               prefillText={inputPrefillText}
               onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
             />
           </Box>
         </Box>
@@ -1638,6 +1662,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                   agent={agent}
                   prefillText={inputPrefillText}
                   onPrefillConsumed={() => setInputPrefillText(undefined)}
+                  bufferValue={inputBuffer}
+                  onBufferChange={setInputBuffer}
                 />
               </Box>
             </Box>
@@ -1669,6 +1695,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               agent={agent}
               prefillText={inputPrefillText}
               onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
             />
           </Box>
         </Box>
@@ -1700,6 +1728,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               agent={agent}
               prefillText={inputPrefillText}
               onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
             />
           </Box>
         </Box>
@@ -1731,6 +1761,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               agent={agent}
               prefillText={inputPrefillText}
               onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
             />
           </Box>
         </Box>
@@ -1754,6 +1786,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             agent={agent}
             prefillText={inputPrefillText}
             onPrefillConsumed={() => setInputPrefillText(undefined)}
+            onExitConfirmationChange={setIsWaitingForExitConfirmation}
+            bufferValue={inputBuffer}
+            onBufferChange={setInputBuffer}
           />
         </Box>
       )}
@@ -1761,7 +1796,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       {/* Footer / Help */}
       <Box marginTop={1}>
         <Text dimColor>
-          Ctrl+C to exit{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'} |{' '}
+          <Text color={isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'} |{' '}
           {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
             <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
           ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (

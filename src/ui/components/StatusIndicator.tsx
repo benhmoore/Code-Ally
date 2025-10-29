@@ -408,7 +408,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         {isProcessing || isCompacting ? (
           <>
             <Text>{allTodos.length === 0 ? 'Thinking...' : currentTask || 'Processing...'}</Text>
-            <Text dimColor> (ctrl+c to interrupt) </Text>
+            <Text dimColor> (esc to interrupt) </Text>
             <Text dimColor>[{formatElapsed(elapsed)}]</Text>
           </>
         ) : (

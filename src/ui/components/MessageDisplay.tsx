@@ -50,6 +50,9 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message }) => 
       ? safeContent.replace(/<think>.*?<\/think>/s, '').trim()
       : safeContent;
 
+    // Check if this is a command response that should be styled in yellow
+    const isCommandResponse = message.metadata?.isCommandResponse === true;
+
     return (
       <Box flexDirection="column">
         {thinking && (
@@ -60,7 +63,11 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message }) => 
           </Box>
         )}
         {regularContent && (
-          <MarkdownText content={regularContent} />
+          isCommandResponse ? (
+            <Text color="yellow">{regularContent}</Text>
+          ) : (
+            <MarkdownText content={regularContent} />
+          )
         )}
         {/* Note: Tool calls are now displayed via ToolCallDisplay in ConversationView */}
       </Box>

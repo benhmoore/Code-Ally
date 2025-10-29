@@ -21,6 +21,15 @@ export interface CompactionNotice {
 }
 
 /**
+ * Rewind notice for UI display
+ */
+export interface RewindNotice {
+  id: string;
+  timestamp: number;
+  targetMessageIndex: number;
+}
+
+/**
  * Global application state
  */
 export interface AppState {
@@ -50,6 +59,9 @@ export interface AppState {
 
   /** Compaction notices to display in conversation */
   compactionNotices: CompactionNotice[];
+
+  /** Rewind notices to display in conversation */
+  rewindNotices: RewindNotice[];
 
   /** Counter to force Static component remount (for rewind/compaction) */
   staticRemountKey: number;
@@ -94,6 +106,12 @@ export interface AppActions {
 
   /** Add a compaction notice */
   addCompactionNotice: (notice: CompactionNotice) => void;
+
+  /** Add a rewind notice */
+  addRewindNotice: (notice: RewindNotice) => void;
+
+  /** Clear all rewind notices */
+  clearRewindNotices: () => void;
 
   /** Force Static component to remount (for rewind/compaction) */
   forceStaticRemount: () => void;
@@ -145,6 +163,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [streamingContent, setStreamingContent] = useState<string | undefined>(undefined);
   const [isCompacting, setIsCompacting] = useState<boolean>(false);
   const [compactionNotices, setCompactionNotices] = useState<CompactionNotice[]>([]);
+  const [rewindNotices, setRewindNotices] = useState<RewindNotice[]>([]);
   const [staticRemountKey, setStaticRemountKey] = useState<number>(0);
 
   // Batching mechanism for tool call updates
@@ -256,6 +275,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setCompactionNotices((prev) => [...prev, notice]);
   }, []);
 
+  const addRewindNotice = useCallback((notice: RewindNotice) => {
+    setRewindNotices((prev) => [...prev, notice]);
+  }, []);
+
+  const clearRewindNotices = useCallback(() => {
+    setRewindNotices([]);
+  }, []);
+
   const forceStaticRemount = useCallback(() => {
     setStaticRemountKey((prev) => prev + 1);
   }, []);
@@ -271,8 +298,9 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     streamingContent,
     isCompacting,
     compactionNotices,
+    rewindNotices,
     staticRemountKey,
-  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, staticRemountKey]);
+  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, staticRemountKey]);
 
   // Memoize actions object to prevent unnecessary context updates
   const actions = React.useMemo(() => ({
@@ -288,8 +316,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setStreamingContent,
     setIsCompacting,
     addCompactionNotice,
+    addRewindNotice,
+    clearRewindNotices,
     forceStaticRemount,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, forceStaticRemount]);
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, addRewindNotice, clearRewindNotices, forceStaticRemount]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

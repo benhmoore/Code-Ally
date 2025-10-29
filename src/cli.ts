@@ -33,6 +33,9 @@ import { formatRelativeTime } from './ui/utils/timeUtils.js';
  * Call this on exit to ensure clean terminal state.
  */
 function resetTerminalState(): void {
+  // Clear screen and move cursor to home
+  process.stdout.write('\x1b[2J\x1b[H');
+
   // Close any open hyperlinks (OSC 8)
   process.stdout.write('\x1b]8;;\x1b\\');
 
@@ -53,6 +56,32 @@ function resetTerminalState(): void {
 
   // Ensure we're at the start of a new line
   process.stdout.write('\n');
+}
+
+/**
+ * Clean exit with proper terminal cleanup and stdout flushing
+ *
+ * Ensures all escape sequences are processed before the application exits.
+ * This prevents the terminal from getting stuck waiting for input.
+ */
+function cleanExit(code: number = 0): void {
+  resetTerminalState();
+
+  // Wait for stdout to drain before exiting
+  if (process.stdout.write('')) {
+    // Buffer is empty, exit immediately
+    process.exit(code);
+  } else {
+    // Buffer has pending data, wait for drain
+    process.stdout.once('drain', () => {
+      process.exit(code);
+    });
+
+    // Fallback timeout to prevent hanging
+    setTimeout(() => {
+      process.exit(code);
+    }, 100);
+  }
 }
 
 /**
@@ -269,7 +298,7 @@ async function handleOnceMode(
     }
   } catch (error) {
     console.error('Error:', error);
-    process.exit(1);
+    cleanExit(1);
   }
 }
 
@@ -466,6 +495,11 @@ async function main() {
     await agentManager.ensureDefaultAgent();
     registry.registerInstance('agent_manager', agentManager);
 
+    // Create project manager for project context
+    const { ProjectManager } = await import('./services/ProjectManager.js');
+    const projectManager = new ProjectManager();
+    registry.registerInstance('project_manager', projectManager);
+
     // Get system prompt from prompts module
     const { getMainSystemPrompt } = await import('./prompts/systemMessages.js');
     const isOnceMode = !!options.once;
@@ -510,7 +544,7 @@ async function main() {
     if (options.once) {
       await handleOnceMode(options.once, options, agent, sessionManager);
       await registry.shutdown();
-      process.exit(0);
+      cleanExit(0);
     }
 
     // Interactive mode - Render the Ink UI
@@ -533,21 +567,22 @@ async function main() {
     // Wait for the app to exit
     await waitUntilExit();
 
-    // Critical: Comprehensive terminal reset to clean up ANY escape sequence leakage
-    resetTerminalState();
-
     // No final save needed - auto-save happens after every user message and model response
     // A final save here would just overwrite good data with potentially stale data
 
     // Cleanup
     await registry.shutdown();
+
+    // Exit cleanly with terminal reset and stdout flush
+    cleanExit(0);
   } catch (error) {
     // Critical: Reset terminal even on fatal errors (only if UI was started)
-    if (inkUIStarted) {
-      resetTerminalState();
-    }
     console.error('Fatal error:', error);
-    process.exit(1);
+    if (inkUIStarted) {
+      cleanExit(1);
+    } else {
+      process.exit(1);
+    }
   }
 }
 
@@ -561,24 +596,27 @@ process.on('exit', () => {
 
 process.on('SIGINT', () => {
   if (inkUIStarted) {
-    resetTerminalState();
+    cleanExit(130); // Standard exit code for SIGINT
+  } else {
+    process.exit(130);
   }
-  process.exit(130); // Standard exit code for SIGINT
 });
 
 process.on('SIGTERM', () => {
   if (inkUIStarted) {
-    resetTerminalState();
+    cleanExit(143); // Standard exit code for SIGTERM
+  } else {
+    process.exit(143);
   }
-  process.exit(143); // Standard exit code for SIGTERM
 });
 
 process.on('uncaughtException', (error) => {
-  if (inkUIStarted) {
-    resetTerminalState();
-  }
   console.error('Uncaught exception:', error);
-  process.exit(1);
+  if (inkUIStarted) {
+    cleanExit(1);
+  } else {
+    process.exit(1);
+  }
 });
 
 main();

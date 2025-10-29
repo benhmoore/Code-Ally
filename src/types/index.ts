@@ -15,6 +15,16 @@ export interface Message {
   tool_call_id?: string;
   tool_calls?: ToolCall[];
   timestamp?: number; // For chronological ordering with tool calls
+  metadata?: MessageMetadata; // Presentation hints and command metadata
+}
+
+/**
+ * Optional metadata for messages
+ */
+export interface MessageMetadata {
+  /** Whether this is a command response that should be styled in yellow */
+  isCommandResponse?: boolean;
+  // Future: Add more presentation hints as needed
 }
 
 // ===========================

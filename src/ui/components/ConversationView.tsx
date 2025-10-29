@@ -3,7 +3,7 @@ import { Box, Text, Static, useStdout } from 'ink';
 import { Message, ToolCallState } from '../../types/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
-import { CompactionNotice } from '../contexts/AppContext.js';
+import { CompactionNotice, RewindNotice } from '../contexts/AppContext.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -43,6 +43,8 @@ interface ConversationViewProps {
   contextUsage: number;
   /** Compaction notices to display */
   compactionNotices?: CompactionNotice[];
+  /** Rewind notices to display */
+  rewindNotices?: RewindNotice[];
   /** Key to force Static remount for compaction/rewind */
   staticRemountKey: number;
   /** Config for displaying model info */
@@ -160,12 +162,13 @@ function renderToolCallTree(
 }
 
 /**
- * Item that can be rendered chronologically (either a message, tool call, or compaction notice)
+ * Item that can be rendered chronologically (either a message, tool call, compaction notice, or rewind notice)
  */
 type TimelineItem =
   | { type: 'message'; message: Message; index: number; timestamp: number }
   | { type: 'toolCall'; toolCall: ToolCallState & { children?: ToolCallState[] }; timestamp: number }
-  | { type: 'compactionNotice'; notice: CompactionNotice; timestamp: number };
+  | { type: 'compactionNotice'; notice: CompactionNotice; timestamp: number }
+  | { type: 'rewindNotice'; notice: RewindNotice; timestamp: number };
 
 
 /**
@@ -202,6 +205,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   activeToolCalls = [],
   contextUsage,
   compactionNotices = [],
+  rewindNotices = [],
   staticRemountKey,
   config,
 }) => {
@@ -276,9 +280,18 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       });
     });
 
+    // Add rewind notices
+    rewindNotices.forEach((notice) => {
+      timeline.push({
+        type: 'rewindNotice',
+        notice,
+        timestamp: notice.timestamp,
+      });
+    });
+
     timeline.sort((a, b) => a.timestamp - b.timestamp);
     return timeline;
-  }, [messages, completedToolCalls, compactionNotices]);
+  }, [messages, completedToolCalls, compactionNotices, rewindNotices]);
 
   // Pre-render timeline items as JSX for Static component
   const completedJSXItems = React.useMemo(() => {
@@ -295,7 +308,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
             {renderToolCallTree(item.toolCall, 0)}
           </Box>
         );
-      } else {
+      } else if (item.type === 'compactionNotice') {
         // Compaction notice
         items.push(
           <Box key={`compaction-${item.notice.id}`} flexDirection="column" marginY={1}>
@@ -303,6 +316,18 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
             <Box>
               <Text color="cyan" bold>Context compacted</Text>
               <Text dimColor> - Previous conversation summarized (was at {item.notice.oldContextUsage}%, threshold {item.notice.threshold}%)</Text>
+            </Box>
+            <Box><Text dimColor>{divider}</Text></Box>
+          </Box>
+        );
+      } else if (item.type === 'rewindNotice') {
+        // Rewind notice
+        items.push(
+          <Box key={`rewind-${item.notice.id}`} flexDirection="column" marginY={1}>
+            <Box><Text dimColor>{divider}</Text></Box>
+            <Box>
+              <Text color="yellow" bold>Conversation rewound</Text>
+              <Text dimColor> - Returned to message #{item.notice.targetMessageIndex + 1}</Text>
             </Box>
             <Box><Text dimColor>{divider}</Text></Box>
           </Box>
@@ -360,10 +385,11 @@ export const ConversationView = React.memo(ConversationViewComponent, (prevProps
   const streamingSame = prevProps.streamingContent === nextProps.streamingContent;
   const toolCallsSame = prevProps.activeToolCalls === nextProps.activeToolCalls;
   const contextSame = prevProps.contextUsage === nextProps.contextUsage;
-  const noticesSame = prevProps.compactionNotices === nextProps.compactionNotices;
+  const compactionNoticesSame = prevProps.compactionNotices === nextProps.compactionNotices;
+  const rewindNoticesSame = prevProps.rewindNotices === nextProps.rewindNotices;
   const isThinkingSame = prevProps.isThinking === nextProps.isThinking;
   const staticKeySame = prevProps.staticRemountKey === nextProps.staticRemountKey;
   const configSame = prevProps.config === nextProps.config;
 
-  return messagesSame && streamingSame && toolCallsSame && contextSame && noticesSame && isThinkingSame && staticKeySame && configSame;
+  return messagesSame && streamingSame && toolCallsSame && contextSame && compactionNoticesSame && rewindNoticesSame && isThinkingSame && staticKeySame && configSame;
 });
