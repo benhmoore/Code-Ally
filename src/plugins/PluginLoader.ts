@@ -101,6 +101,9 @@ export interface ToolDefinition {
 
   /** JSON Schema for tool parameters */
   schema?: any;
+
+  /** Optional usage guidance to inject into agent system prompt */
+  usageGuidance?: string;
 }
 
 /**

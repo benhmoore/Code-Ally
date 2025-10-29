@@ -117,6 +117,23 @@ export class ToolManager {
   }
 
   /**
+   * Get all tool usage guidance strings for injection into system prompt
+   *
+   * @returns Array of guidance strings from tools that provide them
+   */
+  getToolUsageGuidance(): string[] {
+    const guidances: string[] = [];
+
+    for (const tool of this.tools.values()) {
+      if (tool.usageGuidance) {
+        guidances.push(tool.usageGuidance);
+      }
+    }
+
+    return guidances;
+  }
+
+  /**
    * Execute a tool with the given arguments
    *
    * @param toolName - Name of the tool to execute

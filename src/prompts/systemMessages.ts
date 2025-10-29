@@ -257,6 +257,29 @@ export async function getMainSystemPrompt(tokenManager?: any, toolResultManager?
     logger.warn('Failed to load todos for system prompt:', formatError(error));
   }
 
+  // Get tool usage guidance
+  let toolGuidanceContext = '';
+  try {
+    const serviceRegistry = ServiceRegistry.getInstance();
+
+    if (serviceRegistry && serviceRegistry.hasService('tool_manager')) {
+      const toolManager = serviceRegistry.get<any>('tool_manager');
+      if (toolManager && typeof toolManager.getToolUsageGuidance === 'function') {
+        const guidances = toolManager.getToolUsageGuidance();
+
+        if (guidances && guidances.length > 0) {
+          toolGuidanceContext = `
+
+## Tool Usage Guidance
+
+${guidances.join('\n\n')}`;
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn('Failed to load tool guidance for system prompt:', formatError(error));
+  }
+
   // Add once-mode specific instructions
   const onceModeInstructions = isOnceMode
     ? `
@@ -266,7 +289,7 @@ This is a non-interactive, single-turn conversation. Your response will be final
     : '';
 
   // Combine core directives with context
-  return `${CORE_DIRECTIVES}${onceModeInstructions}
+  return `${CORE_DIRECTIVES}${onceModeInstructions}${toolGuidanceContext}
 
 **Context:**
 ${context}${todoContext}`;

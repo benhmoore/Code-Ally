@@ -57,6 +57,13 @@ export abstract class BaseTool {
   readonly shouldCollapse: boolean = false;
 
   /**
+   * Optional usage guidance to inject into the agent's system prompt
+   * Use this to provide examples and instructions about when/how to use this tool
+   * Example: "When answering questions about current information, always verify by searching first."
+   */
+  readonly usageGuidance?: string;
+
+  /**
    * Activity stream for emitting events
    */
   protected activityStream: ActivityStream;
