@@ -6,7 +6,7 @@
  * application structure.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityProvider, useActivityStreamContext } from './contexts/ActivityContext.js';
@@ -38,6 +38,7 @@ import { ConfigManager } from '../services/ConfigManager.js';
 import { SessionManager } from '../services/SessionManager.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { PatchManager } from '../services/PatchManager.js';
+import { FocusManager } from '../services/FocusManager.js';
 
 /**
  * Reconstruct ToolCallState objects from message history
@@ -254,6 +255,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
   // Track exit confirmation state (Ctrl+C on empty buffer)
   const [isWaitingForExitConfirmation, setIsWaitingForExitConfirmation] = useState(false);
+
+  // Get current focus display (if any)
+  const currentFocus = useMemo(() => {
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const focusManager = serviceRegistry.get<FocusManager>('focus_manager');
+    return focusManager?.getFocusDisplay() ?? null;
+  }, [state.messages.length]); // Re-compute when messages change (focus commands add messages)
 
   // Throttle tool call updates to max once every 2 seconds
   const pendingToolUpdates = useRef<Map<string, Partial<ToolCallState>>>(new Map());
@@ -1796,7 +1804,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       {/* Footer / Help */}
       <Box marginTop={1}>
         <Text dimColor>
-          <Text color={isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'} |{' '}
+          <Text color={isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'}{currentFocus && <Text> | Focus: <Text color="magenta">{currentFocus}</Text></Text>} |{' '}
           {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
             <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
           ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (

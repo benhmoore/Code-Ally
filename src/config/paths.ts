@@ -24,6 +24,11 @@ export const SESSIONS_DIR = join(ALLY_HOME, 'sessions');
 export const AGENTS_DIR = join(ALLY_HOME, 'agents');
 
 /**
+ * Plugins directory for custom tools
+ */
+export const PLUGINS_DIR = join(ALLY_HOME, 'plugins');
+
+/**
  * Base cache directory
  */
 export const CACHE_DIR = join(ALLY_HOME, 'cache');

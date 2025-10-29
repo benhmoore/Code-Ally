@@ -477,8 +477,17 @@ async function main() {
       new FocusManagerTool(activityStream),
     ];
 
-    // Create tool manager
-    const toolManager = new ToolManager(tools, activityStream);
+    // Load user plugins from ~/.ally/plugins
+    const { PluginLoader } = await import('./plugins/PluginLoader.js');
+    const { PLUGINS_DIR } = await import('./config/paths.js');
+    const pluginLoader = new PluginLoader(activityStream);
+    const pluginTools = await pluginLoader.loadPlugins(PLUGINS_DIR);
+
+    // Merge built-in tools with plugin tools
+    const allTools = [...tools, ...pluginTools];
+
+    // Create tool manager with all tools
+    const toolManager = new ToolManager(allTools, activityStream);
     registry.registerInstance('tool_manager', toolManager);
 
     // Create trust manager for permission tracking

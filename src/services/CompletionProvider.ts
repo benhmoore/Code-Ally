@@ -49,7 +49,9 @@ const SLASH_COMMANDS = [
   { name: '/rewind', description: 'Rewind conversation' },
   { name: '/undo', description: 'Undo file operations' },
   { name: '/agent', description: 'Manage specialized agents' },
-  { name: '/focus', description: 'Manage focus mode' },
+  { name: '/focus', description: 'Set focus to a specific path' },
+  { name: '/defocus', description: 'Clear current focus' },
+  { name: '/focus-show', description: 'Show current focus' },
   { name: '/project', description: 'Manage project configuration' },
   { name: '/todo', description: 'Manage todo list' },
   { name: '/exit', description: 'Exit the application' },
@@ -302,6 +304,11 @@ export class CompletionProvider {
         }));
     }
 
+    // Complete file paths for /focus (user typed "/focus ")
+    if (command === '/focus' && wordCount >= 2) {
+      return await this.getFileCompletions(context);
+    }
+
     return [];
   }
 
@@ -438,27 +445,51 @@ export class CompletionProvider {
    */
   private async getFileCompletions(context: CompletionContext): Promise<Completion[]> {
     try {
-      const path = context.currentWord;
+      let path = context.currentWord;
+
+      // If path ends with /, user has completed a directory name
+      // Show contents of that directory instead of filtering by name
+      const endsWithSlash = path.endsWith('/');
+      if (endsWithSlash && path.length > 1) {
+        path = path.slice(0, -1); // Remove trailing slash for processing
+      }
 
       // Resolve relative paths
       let baseDir: string;
       let searchPattern: string;
 
-      if (path.startsWith('/')) {
-        // Absolute path
-        baseDir = dirname(path) || '/';
-        searchPattern = basename(path);
-      } else if (path.startsWith('~')) {
-        // Home directory
-        const homedir = os.homedir();
-        const expandedPath = path.replace('~', homedir);
-        baseDir = dirname(expandedPath);
-        searchPattern = basename(expandedPath);
+      if (endsWithSlash) {
+        // User typed trailing slash - show contents of this directory
+        if (path.startsWith('/')) {
+          // Absolute path: /foo/bar/ -> show contents of /foo/bar
+          baseDir = path || '/';
+        } else if (path.startsWith('~')) {
+          // Home directory: ~/foo/ -> show contents of ~/foo
+          const homedir = os.homedir();
+          baseDir = path.replace('~', homedir);
+        } else {
+          // Relative path: src/ -> show contents of src
+          baseDir = path || '.';
+        }
+        searchPattern = ''; // Show all entries in the directory
       } else {
-        // Relative path - check if it contains a separator
-        const hasSeparator = path.includes('/') || path.includes('\\');
-        baseDir = hasSeparator ? dirname(path) : '.';
-        searchPattern = basename(path);
+        // User is typing - show completions that match partial name
+        if (path.startsWith('/')) {
+          // Absolute path
+          baseDir = dirname(path) || '/';
+          searchPattern = basename(path);
+        } else if (path.startsWith('~')) {
+          // Home directory
+          const homedir = os.homedir();
+          const expandedPath = path.replace('~', homedir);
+          baseDir = dirname(expandedPath);
+          searchPattern = basename(expandedPath);
+        } else {
+          // Relative path - check if it contains a separator
+          const hasSeparator = path.includes('/') || path.includes('\\');
+          baseDir = hasSeparator ? dirname(path) : '.';
+          searchPattern = basename(path);
+        }
       }
 
       // Read directory
