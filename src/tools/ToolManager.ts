@@ -43,6 +43,17 @@ export class ToolManager {
   }
 
   /**
+   * Register additional tools at runtime
+   *
+   * @param tools - Array of tools to register
+   */
+  registerTools(tools: BaseTool[]): void {
+    for (const tool of tools) {
+      this.tools.set(tool.name, tool);
+    }
+  }
+
+  /**
    * Generate function definitions for all tools
    *
    * @param excludeTools - Optional list of tool names to exclude

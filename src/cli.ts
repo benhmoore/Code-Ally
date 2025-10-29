@@ -479,8 +479,12 @@ async function main() {
 
     // Load user plugins from ~/.ally/plugins
     const { PluginLoader } = await import('./plugins/PluginLoader.js');
+    const { PluginConfigManager } = await import('./plugins/PluginConfigManager.js');
     const { PLUGINS_DIR } = await import('./config/paths.js');
-    const pluginLoader = new PluginLoader(activityStream);
+    const pluginConfigManager = new PluginConfigManager();
+    registry.registerInstance('plugin_config_manager', pluginConfigManager);
+    const pluginLoader = new PluginLoader(activityStream, pluginConfigManager);
+    registry.registerInstance('plugin_loader', pluginLoader);
     const pluginTools = await pluginLoader.loadPlugins(PLUGINS_DIR);
 
     // Merge built-in tools with plugin tools

@@ -4,7 +4,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn } from 'child_process';
 import { join, isAbsolute } from 'path';
 import { TIMEOUT_LIMITS } from '../config/toolDefaults.js';
-import type { PluginManifest } from './PluginLoader.js';
+import type { ToolDefinition } from './PluginLoader.js';
 
 /**
  * Wraps external executable plugins (Python scripts, shell scripts, etc.)
@@ -27,38 +27,42 @@ export class ExecutableToolWrapper extends BaseTool {
 	private readonly workingDir: string;
 	private readonly schema: any;
 	private readonly timeout: number;
+	private readonly config?: any;
 
 	/**
 	 * Creates a new ExecutableToolWrapper instance.
 	 *
-	 * @param manifest - Plugin manifest containing metadata and configuration
+	 * @param toolDef - Tool definition containing metadata and configuration
 	 * @param pluginPath - Absolute path to the plugin directory
 	 * @param activityStream - Activity stream for logging and user feedback
 	 * @param timeout - Maximum execution time in milliseconds (default: 120000ms / 2 minutes)
+	 * @param config - Optional plugin configuration to be injected as environment variables
 	 */
 	constructor(
-		manifest: PluginManifest,
+		toolDef: ToolDefinition,
 		pluginPath: string,
 		activityStream: ActivityStream,
-		timeout: number = 120000
+		timeout: number = 120000,
+		config?: any
 	) {
 		// BaseTool constructor only takes activityStream
 		super(activityStream);
 
 		// Set abstract properties
-		this.name = manifest.name.replace(/-/g, '_');
-		this.description = manifest.description || '';
-		this.requiresConfirmation = manifest.requiresConfirmation ?? false;
+		this.name = toolDef.name;
+		this.description = toolDef.description || '';
+		this.requiresConfirmation = toolDef.requiresConfirmation ?? false;
 
-		if (!manifest.command) {
-			throw new Error(`Plugin manifest for '${manifest.name}' is missing required 'command' field`);
+		if (!toolDef.command) {
+			throw new Error(`Tool definition for '${toolDef.name}' is missing required 'command' field`);
 		}
 
-		this.command = manifest.command;
-		this.commandArgs = manifest.args || [];
+		this.command = toolDef.command;
+		this.commandArgs = toolDef.args || [];
 		this.workingDir = pluginPath;
-		this.schema = manifest.schema || {};
+		this.schema = toolDef.schema || {};
 		this.timeout = timeout;
+		this.config = config;
 	}
 
 	/**
@@ -157,6 +161,25 @@ export class ExecutableToolWrapper extends BaseTool {
 	}
 
 	/**
+	 * Converts plugin configuration to environment variables.
+	 * Each config key is prefixed with PLUGIN_CONFIG_ and converted to uppercase.
+	 *
+	 * @returns Object containing environment variables
+	 */
+	private getConfigEnvVars(): Record<string, string> {
+		if (!this.config || typeof this.config !== 'object') {
+			return {};
+		}
+
+		const envVars: Record<string, string> = {};
+		for (const [key, value] of Object.entries(this.config)) {
+			const envKey = `PLUGIN_CONFIG_${key.toUpperCase()}`;
+			envVars[envKey] = String(value);
+		}
+		return envVars;
+	}
+
+	/**
 	 * Spawns the external process and manages its execution.
 	 *
 	 * @param args - Resolved arguments to pass to the plugin
@@ -173,6 +196,10 @@ export class ExecutableToolWrapper extends BaseTool {
 			// Spawn the child process
 			const child = spawn(this.command, this.commandArgs, {
 				cwd: this.workingDir,
+				env: {
+					...process.env,
+					...this.getConfigEnvVars()
+				},
 				stdio: ['pipe', 'pipe', 'pipe']
 			});
 

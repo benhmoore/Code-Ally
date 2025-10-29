@@ -53,6 +53,7 @@ const SLASH_COMMANDS = [
   { name: '/defocus', description: 'Clear current focus' },
   { name: '/focus-show', description: 'Show current focus' },
   { name: '/project', description: 'Manage project configuration' },
+  { name: '/plugin', description: 'Manage plugins' },
   { name: '/todo', description: 'Manage todo list' },
   { name: '/exit', description: 'Exit the application' },
 ];
@@ -67,6 +68,13 @@ const AGENT_SUBCOMMANDS = [
   { name: 'show', description: 'Show agent details' },
   { name: 'delete', description: 'Delete an agent' },
   { name: 'use', description: 'Use a specialized agent' },
+];
+
+/**
+ * Plugin subcommands
+ */
+const PLUGIN_SUBCOMMANDS = [
+  { name: 'config', description: 'Configure a plugin' },
 ];
 
 /**
@@ -309,6 +317,22 @@ export class CompletionProvider {
       return await this.getFileCompletions(context);
     }
 
+    // Complete subcommands for /plugin (user typed "/plugin ")
+    if (command === '/plugin' && wordCount === 2) {
+      const prefix = subcommand || '';
+      return PLUGIN_SUBCOMMANDS.filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
+    }
+
+    // Complete plugin names for /plugin config (user typed "/plugin config ")
+    if (command === '/plugin' && subcommand === 'config' && wordCount === 3) {
+      return await this.getPluginNameCompletions(context.currentWord);
+    }
+
     return [];
   }
 
@@ -324,6 +348,38 @@ export class CompletionProvider {
         description: 'Specialized agent',
         type: 'agent' as const,
       }));
+  }
+
+  /**
+   * Get plugin name completions
+   */
+  private async getPluginNameCompletions(prefix: string): Promise<Completion[]> {
+    try {
+      const { PLUGINS_DIR } = await import('../config/paths.js');
+      const entries = await fs.readdir(PLUGINS_DIR);
+
+      // Filter directories that start with prefix
+      const pluginNames: string[] = [];
+      for (const entry of entries) {
+        try {
+          const stat = await fs.stat(`${PLUGINS_DIR}/${entry}`);
+          if (stat.isDirectory() && entry.startsWith(prefix)) {
+            pluginNames.push(entry);
+          }
+        } catch {
+          // Skip entries we can't stat
+        }
+      }
+
+      return pluginNames.map(name => ({
+        value: name,
+        description: 'Plugin',
+        type: 'option' as const,
+      }));
+    } catch (error) {
+      logger.debug(`Unable to read plugins directory: ${formatError(error)}`);
+      return [];
+    }
   }
 
   /**
@@ -670,5 +726,12 @@ export class CompletionProvider {
    */
   getTodoSubcommands(): Array<{ name: string; description: string }> {
     return [...TODO_SUBCOMMANDS];
+  }
+
+  /**
+   * Get plugin subcommands
+   */
+  getPluginSubcommands(): Array<{ name: string; description: string }> {
+    return [...PLUGIN_SUBCOMMANDS];
   }
 }

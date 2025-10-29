@@ -8,14 +8,16 @@ The `PluginLoader` class provides a dynamic plugin loading system for the Ally c
 
 ```typescript
 import { PluginLoader } from './plugins/PluginLoader.js';
+import { PluginConfigManager } from './plugins/PluginConfigManager.js';
 import { ActivityStream } from './services/ActivityStream.js';
 import { PLUGINS_DIR } from './config/paths.js';
 
 // Create activity stream
 const activityStream = new ActivityStream();
 
-// Initialize plugin loader
-const loader = new PluginLoader(activityStream);
+// Initialize plugin config manager and loader
+const pluginConfigManager = new PluginConfigManager();
+const loader = new PluginLoader(activityStream, pluginConfigManager);
 
 // Load all plugins
 const pluginTools = await loader.loadPlugins(PLUGINS_DIR);

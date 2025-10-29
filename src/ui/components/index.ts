@@ -28,3 +28,4 @@ export {
 } from './ToolOutputStream.js';
 export { TodoDisplay } from './TodoDisplay.js';
 export { ModelSelector, type ModelOption } from './ModelSelector.js';
+export { PluginConfigView } from './PluginConfigView.js';

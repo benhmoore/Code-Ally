@@ -20,6 +20,7 @@ import { ModelSelector, ModelOption } from './components/ModelSelector.js';
 import { ConfigViewer } from './components/ConfigViewer.js';
 import { SetupWizardView } from './components/SetupWizardView.js';
 import { ProjectWizardView } from './components/ProjectWizardView.js';
+import { PluginConfigView } from './components/PluginConfigView.js';
 import { RewindSelector } from './components/RewindSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
@@ -39,6 +40,8 @@ import { SessionManager } from '../services/SessionManager.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { PatchManager } from '../services/PatchManager.js';
 import { FocusManager } from '../services/FocusManager.js';
+import { PluginConfigManager } from '../plugins/PluginConfigManager.js';
+import { logger } from '../services/Logger.js';
 
 /**
  * Reconstruct ToolCallState objects from message history
@@ -224,9 +227,54 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Project wizard state
   const [projectWizardOpen, setProjectWizardOpen] = useState(false);
 
+  // Plugin config state
+  const [pluginConfigRequest, setPluginConfigRequest] = useState<{ pluginName: string; pluginPath: string; schema: any; existingConfig?: any } | undefined>(undefined);
+
   // Rewind selector state
   const [rewindRequest, setRewindRequest] = useState<{ requestId: string; userMessagesCount: number; selectedIndex: number } | undefined>(undefined);
   const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
+
+  // Check for pending plugin config requests on mount
+  useEffect(() => {
+    const checkPendingPluginConfig = async () => {
+      // Dynamic import to avoid circular dependencies
+      const { PluginLoader } = await import('../plugins/PluginLoader.js');
+
+      // Check if there's a pending config request
+      const pendingRequest = PluginLoader.getPendingConfigRequest();
+      if (pendingRequest) {
+        logger.debug('[App] Found pending plugin config request on mount:', pendingRequest.pluginName);
+
+        // Load existing config if available
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
+        let existingConfig: any = undefined;
+
+        if (pluginConfigManager) {
+          try {
+            existingConfig = await pluginConfigManager.loadConfig(
+              pendingRequest.pluginName,
+              pendingRequest.pluginPath,
+              pendingRequest.schema
+            );
+            logger.debug(`[App] Loaded existing config for pending request: ${JSON.stringify(existingConfig)}`);
+          } catch (error) {
+            logger.debug(`[App] No existing config found for pending request: ${error}`);
+          }
+        }
+
+        // Set the plugin config request state
+        setPluginConfigRequest({
+          pluginName: pendingRequest.pluginName,
+          pluginPath: pendingRequest.pluginPath,
+          schema: pendingRequest.schema,
+          existingConfig: existingConfig || {},
+        });
+      }
+    };
+
+    checkPendingPluginConfig();
+  }, []);
 
   // Input buffer state - preserve across modal renders
   const [inputBuffer, setInputBuffer] = useState<string>('');
@@ -844,6 +892,45 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       role: 'assistant',
       content: 'Project configuration skipped. You can run /project init anytime.',
     });
+  });
+
+  // Subscribe to plugin config request events
+  useActivityEvent(ActivityEventType.PLUGIN_CONFIG_REQUEST, async (event) => {
+    logger.debug('[App] Received PLUGIN_CONFIG_REQUEST event:', JSON.stringify(event.data, null, 2));
+    const { pluginName, pluginPath, schema } = event.data;
+
+    if (!pluginName || !pluginPath || !schema) {
+      logger.error('[App] PLUGIN_CONFIG_REQUEST event missing required fields');
+      return;
+    }
+
+    logger.debug(`[App] Setting up config request for plugin: ${pluginName}`);
+
+    // Load existing config if available
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
+    let existingConfig: any = undefined;
+
+    logger.debug(`[App] PluginConfigManager available: ${!!pluginConfigManager}`);
+
+    if (pluginConfigManager) {
+      try {
+        existingConfig = await pluginConfigManager.loadConfig(pluginName, pluginPath, schema);
+        logger.debug(`[App] Loaded existing config: ${JSON.stringify(existingConfig)}`);
+      } catch (error) {
+        logger.debug(`[App] No existing config found or error loading: ${error}`);
+        // Ignore errors, just start with empty config
+      }
+    }
+
+    logger.debug(`[App] Calling setPluginConfigRequest`);
+    setPluginConfigRequest({
+      pluginName,
+      pluginPath,
+      schema,
+      existingConfig: existingConfig || {},
+    });
+    logger.debug(`[App] pluginConfigRequest state should now be set`);
   });
 
   // Subscribe to context usage updates (real-time updates during tool execution)
@@ -1570,6 +1657,110 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                   data: {},
                 });
               }
+            }}
+          />
+        </Box>
+      ) : /* Plugin Config View (modal - replaces input when active) */
+      pluginConfigRequest ? (
+        <Box marginTop={1}>
+          <PluginConfigView
+            pluginName={pluginConfigRequest.pluginName}
+            configSchema={pluginConfigRequest.schema}
+            existingConfig={pluginConfigRequest.existingConfig}
+            onComplete={async (config) => {
+              const serviceRegistry = ServiceRegistry.getInstance();
+              const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
+
+              if (!pluginConfigManager) {
+                actions.addMessage({
+                  role: 'assistant',
+                  content: 'Error: Plugin configuration manager not available',
+                });
+                setPluginConfigRequest(undefined);
+                return;
+              }
+
+              try {
+                // Save the configuration
+                await pluginConfigManager.saveConfig(
+                  pluginConfigRequest.pluginName,
+                  pluginConfigRequest.pluginPath,
+                  config,
+                  pluginConfigRequest.schema
+                );
+
+                // Reload the plugin immediately
+                const { PluginLoader } = await import('../plugins/PluginLoader.js');
+                const pluginLoader = serviceRegistry.get<InstanceType<typeof PluginLoader>>('plugin_loader');
+                const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+                if (pluginLoader && toolManager) {
+                  try {
+                    // Reload plugin to get the tools
+                    const newTools = await pluginLoader.reloadPlugin(
+                      pluginConfigRequest.pluginName,
+                      pluginConfigRequest.pluginPath
+                    );
+
+                    // Register the new tools
+                    toolManager.registerTools(newTools);
+
+                    logger.info(`Plugin '${pluginConfigRequest.pluginName}' reloaded successfully`);
+                  } catch (reloadError) {
+                    logger.error(`Error reloading plugin '${pluginConfigRequest.pluginName}':`, reloadError);
+                    // Continue - config was saved, just the reload failed
+                  }
+                }
+
+                // Emit completion event
+                if (activityStream) {
+                  activityStream.emit({
+                    id: `plugin_config_complete_${Date.now()}`,
+                    type: ActivityEventType.PLUGIN_CONFIG_COMPLETE,
+                    timestamp: Date.now(),
+                    data: {
+                      pluginName: pluginConfigRequest.pluginName,
+                      pluginPath: pluginConfigRequest.pluginPath,
+                    },
+                  });
+                }
+
+                // Clear request
+                setPluginConfigRequest(undefined);
+
+                // Add success message
+                actions.addMessage({
+                  role: 'assistant',
+                  content: `✓ Plugin '${pluginConfigRequest.pluginName}' configured and activated!`,
+                });
+              } catch (error) {
+                actions.addMessage({
+                  role: 'assistant',
+                  content: `Error saving plugin configuration: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                });
+                setPluginConfigRequest(undefined);
+              }
+            }}
+            onCancel={() => {
+              // Emit cancel event
+              if (activityStream) {
+                activityStream.emit({
+                  id: `plugin_config_cancel_${Date.now()}`,
+                  type: ActivityEventType.PLUGIN_CONFIG_CANCEL,
+                  timestamp: Date.now(),
+                  data: {
+                    pluginName: pluginConfigRequest.pluginName,
+                  },
+                });
+              }
+
+              // Clear request
+              setPluginConfigRequest(undefined);
+
+              actions.addMessage({
+                role: 'assistant',
+                content: `Plugin configuration cancelled. Plugin '${pluginConfigRequest.pluginName}' remains inactive.`,
+              });
             }}
           />
         </Box>

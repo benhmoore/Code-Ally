@@ -23,6 +23,8 @@
 
 import { BaseTool } from '../tools/BaseTool.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { ActivityEventType } from '../types/index.js';
+import { PluginConfigManager } from './PluginConfigManager.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { logger } from '../services/Logger.js';
@@ -30,7 +32,8 @@ import { logger } from '../services/Logger.js';
 /**
  * Plugin manifest schema
  *
- * Describes the metadata and configuration for an executable plugin.
+ * Describes the metadata and configuration for a plugin toolset.
+ * Every plugin is a toolset (even single-tool plugins).
  */
 export interface PluginManifest {
   /** Unique plugin identifier (should match directory name) */
@@ -42,21 +45,81 @@ export interface PluginManifest {
   /** Human-readable description of what the plugin does */
   description: string;
 
-  /** Command to execute (e.g., "python3", "node", "./script.sh") */
-  command: string;
-
-  /** Arguments to pass to the command (e.g., ["search.py", "--verbose"]) */
-  args?: string[];
-
-  /** Whether the tool requires user confirmation before execution */
-  requiresConfirmation?: boolean;
-
-  /** JSON Schema for tool parameters (optional) */
-  schema?: any;
-
   /** Plugin author information (optional) */
   author?: string;
+
+  /** Array of tools provided by this plugin */
+  tools: ToolDefinition[];
+
+  /** Configuration schema for interactive setup (optional) */
+  config?: PluginConfigSchema;
+
+  // Backward compatibility fields (deprecated)
+  /** @deprecated Use tools array instead */
+  command?: string;
+  /** @deprecated Use tools array instead */
+  args?: string[];
+  /** @deprecated Use tools array instead */
+  requiresConfirmation?: boolean;
+  /** @deprecated Use tools array instead */
+  schema?: any;
 }
+
+/**
+ * Individual tool definition within a plugin toolset
+ */
+export interface ToolDefinition {
+  /** Tool name (will be exposed to LLM) */
+  name: string;
+
+  /** Tool description for LLM */
+  description: string;
+
+  /** Command to execute */
+  command: string;
+
+  /** Command arguments */
+  args?: string[];
+
+  /** Requires user confirmation before execution */
+  requiresConfirmation?: boolean;
+
+  /** Timeout in milliseconds (default: 120000) */
+  timeout?: number;
+
+  /** JSON Schema for tool parameters */
+  schema?: any;
+}
+
+/**
+ * Plugin configuration schema
+ */
+export interface PluginConfigSchema {
+  schema: {
+    type: 'object';
+    properties: Record<string, ConfigProperty>;
+  };
+}
+
+/**
+ * Configuration property definition
+ */
+export interface ConfigProperty {
+  type: 'string' | 'number' | 'boolean';
+  description: string;
+  required?: boolean;
+  secret?: boolean;
+  default?: any;
+}
+
+/**
+ * Pending plugin config requests (stored at module level for UI to check on mount)
+ */
+let pendingConfigRequests: Array<{
+  pluginName: string;
+  pluginPath: string;
+  schema: PluginConfigSchema;
+}> = [];
 
 /**
  * PluginLoader - Discovers and loads plugins from the plugins directory
@@ -66,9 +129,29 @@ export interface PluginManifest {
  */
 export class PluginLoader {
   private activityStream: ActivityStream;
+  private configManager: PluginConfigManager;
 
-  constructor(activityStream: ActivityStream) {
+  constructor(activityStream: ActivityStream, configManager: PluginConfigManager) {
     this.activityStream = activityStream;
+    this.configManager = configManager;
+  }
+
+  /**
+   * Get any pending configuration requests
+   * Returns the first pending request and removes it from the queue
+   */
+  static getPendingConfigRequest(): { pluginName: string; pluginPath: string; schema: PluginConfigSchema } | null {
+    if (pendingConfigRequests.length === 0) {
+      return null;
+    }
+    return pendingConfigRequests.shift() || null;
+  }
+
+  /**
+   * Clear all pending configuration requests
+   */
+  static clearPendingConfigRequests(): void {
+    pendingConfigRequests = [];
   }
 
   /**
@@ -131,10 +214,12 @@ export class PluginLoader {
       // Attempt to load each plugin
       for (const pluginPath of pluginDirs) {
         try {
-          const tool = await this.loadPlugin(pluginPath);
-          if (tool) {
-            tools.push(tool);
-            logger.info(`[PluginLoader] Successfully loaded plugin: ${tool.name}`);
+          const pluginTools = await this.loadPlugin(pluginPath);
+          if (pluginTools.length > 0) {
+            tools.push(...pluginTools);
+            logger.info(
+              `[PluginLoader] Successfully loaded plugin with ${pluginTools.length} tool(s): ${pluginTools.map(t => t.name).join(', ')}`
+            );
           }
         } catch (error) {
           // Log the error but continue loading other plugins
@@ -164,15 +249,50 @@ export class PluginLoader {
   }
 
   /**
+   * Reload a single plugin after configuration
+   *
+   * Used to reload a plugin after its configuration has been provided.
+   * Reads the manifest, loads the configuration, and returns loaded tools.
+   *
+   * @param pluginName - Name of the plugin to reload
+   * @param pluginPath - Path to the plugin directory
+   * @returns Array of loaded tool instances
+   */
+  async reloadPlugin(pluginName: string, pluginPath: string): Promise<BaseTool[]> {
+    logger.info(`[PluginLoader] Reloading plugin '${pluginName}' from ${pluginPath}`);
+
+    try {
+      const tools = await this.loadPlugin(pluginPath);
+
+      if (tools.length > 0) {
+        logger.info(
+          `[PluginLoader] Successfully reloaded plugin '${pluginName}' with ${tools.length} tool(s): ${tools.map(t => t.name).join(', ')}`
+        );
+      } else {
+        logger.warn(`[PluginLoader] No tools loaded when reloading plugin '${pluginName}'`);
+      }
+
+      return tools;
+    } catch (error) {
+      logger.error(
+        `[PluginLoader] Failed to reload plugin '${pluginName}': ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Load a single plugin from a directory
    *
-   * Reads and validates the plugin.json manifest, then creates an
-   * ExecutableToolWrapper to handle the plugin execution.
+   * Reads and validates the plugin.json manifest, then creates
+   * ExecutableToolWrapper instances for each tool in the toolset.
    *
    * @param pluginPath - Path to the plugin directory
-   * @returns Loaded tool instance, or null if the plugin couldn't be loaded
+   * @returns Array of loaded tool instances
    */
-  private async loadPlugin(pluginPath: string): Promise<BaseTool | null> {
+  private async loadPlugin(pluginPath: string): Promise<BaseTool[]> {
     const manifestPath = join(pluginPath, 'plugin.json');
 
     // Check if plugin.json exists
@@ -182,7 +302,7 @@ export class PluginLoader {
       logger.warn(
         `[PluginLoader] Skipping ${pluginPath}: No plugin.json manifest found`
       );
-      return null;
+      return [];
     }
 
     // Read and parse the manifest
@@ -196,7 +316,7 @@ export class PluginLoader {
           error instanceof Error ? error.message : String(error)
         }`
       );
-      return null;
+      return [];
     }
 
     // Validate required fields
@@ -204,42 +324,124 @@ export class PluginLoader {
       logger.error(
         `[PluginLoader] Invalid manifest in ${pluginPath}: Missing required field 'name'`
       );
-      return null;
+      return [];
     }
 
-    if (!manifest.command) {
-      logger.error(
-        `[PluginLoader] Invalid manifest in ${pluginPath}: Missing required field 'command'`
+    // Backward compatibility: convert old single-tool format to toolset
+    if (!manifest.tools && manifest.command) {
+      logger.info(
+        `[PluginLoader] Converting legacy plugin '${manifest.name}' to toolset format`
       );
-      return null;
+      manifest.tools = [
+        {
+          name: manifest.name.replace(/-/g, '_'),
+          description: manifest.description,
+          command: manifest.command,
+          args: manifest.args,
+          requiresConfirmation: manifest.requiresConfirmation,
+          schema: manifest.schema,
+        },
+      ];
     }
 
-    // Load the executable plugin
-    try {
-      return await this.loadExecutablePlugin(pluginPath, manifest);
-    } catch (error) {
+    // Validate tools array
+    if (!manifest.tools || manifest.tools.length === 0) {
       logger.error(
-        `[PluginLoader] Failed to load plugin '${manifest.name}': ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `[PluginLoader] Invalid manifest in ${pluginPath}: Missing or empty 'tools' array`
       );
-      return null;
+      return [];
     }
+
+    // Check if plugin requires configuration
+    let pluginConfig: any = null;
+    if (manifest.config) {
+      const isComplete = await this.configManager.isConfigComplete(
+        manifest.name,
+        pluginPath,
+        manifest.config
+      );
+
+      if (!isComplete) {
+        // Config is incomplete, store pending request and emit event
+        logger.info(
+          `[PluginLoader] Plugin '${manifest.name}' requires configuration. Storing pending request and emitting event.`
+        );
+
+        // Store the request so UI can pick it up on mount
+        pendingConfigRequests.push({
+          pluginName: manifest.name,
+          pluginPath: pluginPath,
+          schema: manifest.config,
+        });
+
+        // Also emit event (in case UI is already mounted)
+        this.activityStream.emit({
+          id: `plugin-config-${manifest.name}-${Date.now()}`,
+          type: ActivityEventType.PLUGIN_CONFIG_REQUEST,
+          timestamp: Date.now(),
+          data: {
+            pluginName: manifest.name,
+            pluginPath: pluginPath,
+            schema: manifest.config,
+          },
+        });
+
+        return [];
+      }
+
+      // Config is complete, load it
+      try {
+        pluginConfig = await this.configManager.loadConfig(
+          manifest.name,
+          pluginPath,
+          manifest.config
+        );
+        logger.debug(
+          `[PluginLoader] Loaded configuration for plugin '${manifest.name}'`
+        );
+      } catch (error) {
+        logger.error(
+          `[PluginLoader] Failed to load config for plugin '${manifest.name}': ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+        return [];
+      }
+    }
+
+    // Load all tools in the toolset
+    const tools: BaseTool[] = [];
+    for (const toolDef of manifest.tools) {
+      try {
+        const tool = await this.loadToolFromDefinition(toolDef, pluginPath, pluginConfig);
+        tools.push(tool);
+      } catch (error) {
+        logger.error(
+          `[PluginLoader] Failed to load tool '${toolDef.name}' from plugin '${manifest.name}': ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+
+    return tools;
   }
 
   /**
-   * Load an executable plugin (Python, shell script, etc.)
+   * Load a single tool from its definition
    *
    * Creates an ExecutableToolWrapper instance that handles communication
    * with the external process via stdio.
    *
+   * @param toolDef - Tool definition from plugin manifest
    * @param pluginPath - Path to the plugin directory
-   * @param manifest - Parsed plugin manifest
+   * @param config - Plugin configuration object (if available)
    * @returns Loaded tool wrapper instance
    */
-  private async loadExecutablePlugin(
+  private async loadToolFromDefinition(
+    toolDef: ToolDefinition,
     pluginPath: string,
-    manifest: PluginManifest
+    config?: any
   ): Promise<BaseTool> {
     // Import ExecutableToolWrapper dynamically to avoid circular dependencies
     let ExecutableToolWrapper: any;
@@ -248,7 +450,7 @@ export class PluginLoader {
       ExecutableToolWrapper = wrapperModule.ExecutableToolWrapper;
     } catch (error) {
       throw new Error(
-        `ExecutableToolWrapper not found. Executable plugins are not yet supported. Error: ${
+        `ExecutableToolWrapper not found. Error: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
@@ -256,9 +458,11 @@ export class PluginLoader {
 
     // Create the wrapper instance
     const tool = new ExecutableToolWrapper(
-      manifest,
+      toolDef,
       pluginPath,
-      this.activityStream
+      this.activityStream,
+      toolDef.timeout,
+      config
     );
 
     return tool;

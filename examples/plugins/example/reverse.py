@@ -4,15 +4,18 @@ Reverse String Plugin - Example Executable Plugin
 
 This demonstrates how to create an executable plugin in any language.
 The plugin receives JSON via stdin and outputs JSON via stdout.
+Configuration is read from environment variables.
 """
 
 import json
 import sys
+import os
 
 
 def reverse_string(text: str, preserve_case: bool = True) -> dict:
     """
     Reverse a string, optionally preserving case.
+    Applies prefix/suffix from configuration if provided.
 
     Args:
         text: The string to reverse
@@ -22,6 +25,11 @@ def reverse_string(text: str, preserve_case: bool = True) -> dict:
         Dictionary with success status and result
     """
     try:
+        # Read configuration from environment variables
+        prefix = os.getenv('PLUGIN_CONFIG_PREFIX', '')
+        suffix = os.getenv('PLUGIN_CONFIG_SUFFIX', '')
+        api_key = os.getenv('PLUGIN_CONFIG_API_KEY', '')
+
         if preserve_case:
             # Simple reversal
             reversed_text = text[::-1]
@@ -29,12 +37,23 @@ def reverse_string(text: str, preserve_case: bool = True) -> dict:
             # Reverse and convert to lowercase
             reversed_text = text[::-1].lower()
 
+        # Apply prefix and suffix from config
+        if prefix:
+            reversed_text = prefix + reversed_text
+        if suffix:
+            reversed_text = reversed_text + suffix
+
         return {
             'success': True,
             'original': text,
             'reversed': reversed_text,
             'length': len(text),
-            'preserved_case': preserve_case
+            'preserved_case': preserve_case,
+            'config_applied': {
+                'prefix': prefix if prefix else None,
+                'suffix': suffix if suffix else None,
+                'api_key_present': bool(api_key)
+            }
         }
     except Exception as e:
         return {

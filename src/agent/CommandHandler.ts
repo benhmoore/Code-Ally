@@ -6,6 +6,7 @@
  * - Agent: agent create/ls/show/use/delete
  * - Focus: focus, defocus, focus-show
  * - Project: project init/edit/view/clear
+ * - Plugin: plugin config
  * - Utility: undo
  *
  * Note: Memory commands have been removed. Use session metadata for persistent facts.
@@ -36,6 +37,7 @@ import { ModelCommand } from './commands/ModelCommand.js';
 import { ProjectCommand } from './commands/ProjectCommand.js';
 import { TodoCommand } from './commands/TodoCommand.js';
 import { AgentCommand } from './commands/AgentCommand.js';
+import { PluginCommand } from './commands/PluginCommand.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -66,6 +68,7 @@ export class CommandHandler {
     this.registerCommand(new ProjectCommand());
     this.registerCommand(new TodoCommand());
     this.registerCommand(new AgentCommand());
+    this.registerCommand(new PluginCommand());
   }
 
   /**
@@ -212,6 +215,9 @@ Todo Commands:
   /todo complete <index>   - Complete a todo by index
   /todo clear              - Clear completed todos
   /todo clear-all          - Clear all todos
+
+Plugin Commands:
+  /plugin config <name>    - Configure a plugin
 `;
 
     return { handled: true, response: helpText };

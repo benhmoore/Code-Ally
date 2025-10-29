@@ -111,6 +111,9 @@ export enum ActivityEventType {
   CONTEXT_USAGE_UPDATE = 'context_usage_update',
   AUTO_COMPACTION_START = 'auto_compaction_start',
   AUTO_COMPACTION_COMPLETE = 'auto_compaction_complete',
+  PLUGIN_CONFIG_REQUEST = 'plugin_config_request',
+  PLUGIN_CONFIG_COMPLETE = 'plugin_config_complete',
+  PLUGIN_CONFIG_CANCEL = 'plugin_config_cancel',
 }
 
 export interface ActivityEvent {
