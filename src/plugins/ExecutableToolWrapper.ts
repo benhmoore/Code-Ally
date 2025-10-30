@@ -110,7 +110,7 @@ export class ExecutableToolWrapper extends BaseTool {
 			// Execute the plugin and get results
 			// Note: Arguments are passed through unchanged. Plugins execute with
 			// cwd set to their directory, so they can use relative paths naturally.
-			const output = await this.executePlugin(args);
+			const output = await this.executePlugin(args, this.currentAbortSignal);
 
 			return output;
 		} catch (error) {
@@ -166,9 +166,10 @@ export class ExecutableToolWrapper extends BaseTool {
 	 * Spawns the external process and manages its execution.
 	 *
 	 * @param args - Resolved arguments to pass to the plugin
+	 * @param abortSignal - Optional AbortSignal for interrupting plugin execution
 	 * @returns Promise resolving to the tool result
 	 */
-	private async executePlugin(args: any): Promise<ToolResult> {
+	private async executePlugin(args: any, abortSignal?: AbortSignal): Promise<ToolResult> {
 		return new Promise((resolve, reject) => {
 			const MAX_OUTPUT_SIZE = 10 * 1024 * 1024; // 10MB
 			let stdout = '';
@@ -188,6 +189,26 @@ export class ExecutableToolWrapper extends BaseTool {
 				},
 				stdio: ['pipe', 'pipe', 'pipe']
 			});
+
+			// Set up abort handler
+			const abortHandler = () => {
+				child.kill('SIGTERM');
+				setTimeout(() => {
+					if (child.exitCode === null) {
+						child.kill('SIGKILL');
+					}
+				}, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+			};
+
+			if (abortSignal) {
+				if (abortSignal.aborted) {
+					// Already aborted, kill immediately
+					abortHandler();
+				} else {
+					// Listen for future abort
+					abortSignal.addEventListener('abort', abortHandler);
+				}
+			}
 
 			// Write arguments to stdin as JSON early to avoid double-rejection
 			// This happens before event handlers are set up to catch write errors cleanly
@@ -254,6 +275,19 @@ export class ExecutableToolWrapper extends BaseTool {
 			// Handle process exit
 			child.on('close', (code) => {
 				clearTimeout(timeoutId);
+
+				// Clean up abort listener
+				if (abortSignal) {
+					abortSignal.removeEventListener('abort', abortHandler);
+				}
+
+				// Check if killed due to abort
+				if (abortSignal?.aborted) {
+					reject(new Error(
+						'Plugin execution interrupted by user'
+					));
+					return;
+				}
 
 				if (timedOut) {
 					reject(new Error(

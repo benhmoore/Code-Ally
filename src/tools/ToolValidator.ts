@@ -4,13 +4,13 @@
  * Provides lightweight validation of tool arguments with enhanced error messages.
  */
 
-import { FunctionDefinition, ParameterSchema } from '../types/index.js';
+import { FunctionDefinition, ParameterSchema, ErrorType } from '../types/index.js';
 import { BaseTool } from './BaseTool.js';
 
 export interface ValidationResult {
   valid: boolean;
   error?: string;
-  error_type?: string;
+  error_type?: ErrorType;
   suggestion?: string;
 }
 

@@ -5,11 +5,16 @@ Reverse String Plugin - Example Executable Plugin
 This demonstrates how to create an executable plugin in any language.
 The plugin receives JSON via stdin and outputs JSON via stdout.
 Configuration is read from environment variables.
+
+Signal Handling:
+- Handles SIGTERM/SIGINT for graceful shutdown when interrupted
+- More complex plugins should cleanup resources (files, connections, etc.) in the handler
 """
 
 import json
 import sys
 import os
+import signal
 
 
 def reverse_string(text: str, preserve_case: bool = True) -> dict:
@@ -63,8 +68,19 @@ def reverse_string(text: str, preserve_case: bool = True) -> dict:
         }
 
 
+def signal_handler(sig, frame):
+    """Handle SIGTERM/SIGINT gracefully."""
+    # For simple plugins like this, we can just exit
+    # More complex plugins would cleanup resources here
+    sys.exit(0)
+
+
 def main():
     """Main entry point - reads JSON from stdin, outputs JSON to stdout."""
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     try:
         # Read input from stdin
         input_data = json.loads(sys.stdin.read())

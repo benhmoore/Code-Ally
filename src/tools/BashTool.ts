@@ -103,7 +103,7 @@ export class BashTool extends BaseTool {
 
     // Execute command
     try {
-      const result = await this.executeCommand(command, workingDir, timeout, outputMode);
+      const result = await this.executeCommand(command, workingDir, timeout, outputMode, this.currentAbortSignal);
       return result;
     } catch (error) {
       return this.formatErrorResponse(
@@ -162,7 +162,8 @@ export class BashTool extends BaseTool {
     command: string,
     workingDir: string,
     timeout: number,
-    outputMode: string = 'full'
+    outputMode: string = 'full',
+    abortSignal?: AbortSignal
   ): Promise<ToolResult> {
     let stdout = '';
     let stderr = '';
@@ -176,6 +177,26 @@ export class BashTool extends BaseTool {
         shell: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+
+      // Set up abort handler
+      const abortHandler = () => {
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (child.exitCode === null) {
+            child.kill('SIGKILL');
+          }
+        }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+      };
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          // Already aborted, kill immediately
+          abortHandler();
+        } else {
+          // Listen for future abort
+          abortSignal.addEventListener('abort', abortHandler);
+        }
+      }
 
       // Set up timeout
       const timeoutHandle = setTimeout(() => {
@@ -209,7 +230,24 @@ export class BashTool extends BaseTool {
       // Handle process exit
       child.on('close', (code: number | null) => {
         clearTimeout(timeoutHandle);
+
+        // Clean up abort listener
+        if (abortSignal) {
+          abortSignal.removeEventListener('abort', abortHandler);
+        }
+
         returnCode = code;
+
+        // Check if killed due to abort
+        if (abortSignal?.aborted) {
+          resolve(
+            this.formatErrorResponse(
+              'Command interrupted by user',
+              'interrupted'
+            )
+          );
+          return;
+        }
 
         // Check if command timed out
         if (timedOut) {

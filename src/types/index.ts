@@ -61,10 +61,25 @@ export interface ParameterSchema {
   required?: string[];
 }
 
+export type ErrorType =
+  | 'validation_error'
+  | 'system_error'
+  | 'permission_error'
+  | 'permission_denied'
+  | 'security_error'
+  | 'timeout_error'
+  | 'command_failed'
+  | 'interrupted'
+  | 'execution_error'
+  | 'plugin_error'
+  | 'user_error'
+  | 'file_error'
+  | 'general';
+
 export interface ToolResult {
   success: boolean;
   error: string;
-  error_type?: string;
+  error_type?: ErrorType;
   suggestion?: string;
   [key: string]: any;
 }

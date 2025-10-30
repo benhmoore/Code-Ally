@@ -68,6 +68,9 @@ export class Agent {
     isTimeout: boolean;
   } = { reason: '', isTimeout: false };
 
+  // Tool execution abort controller
+  private toolAbortController?: AbortController;
+
   // Context tracking (isolated per agent)
   private tokenManager: TokenManager;
   private toolResultManager: any; // ToolResultManager instance
@@ -403,6 +406,12 @@ export class Agent {
       // Cancel ongoing LLM request immediately
       this.cancel();
 
+      // Abort any ongoing tool executions
+      if (this.toolAbortController) {
+        this.toolAbortController.abort();
+        this.toolAbortController = undefined;
+      }
+
       // Stop activity watchdog
       this.stopActivityWatchdog();
 
@@ -423,6 +432,25 @@ export class Agent {
    */
   isProcessing(): boolean {
     return this.requestInProgress;
+  }
+
+  /**
+   * Start tool execution by creating a fresh AbortController
+   * Called at the beginning of each tool execution batch
+   * @returns AbortSignal for the tool execution
+   */
+  private startToolExecution(): AbortSignal {
+    this.toolAbortController = new AbortController();
+    return this.toolAbortController.signal;
+  }
+
+  /**
+   * Get the current tool abort signal
+   * Used by ToolOrchestrator to pass signal to tools
+   * @returns AbortSignal if available, undefined otherwise
+   */
+  getToolAbortSignal(): AbortSignal | undefined {
+    return this.toolAbortController?.signal;
   }
 
   /**
@@ -639,6 +667,10 @@ export class Agent {
 
     // Execute tool calls via orchestrator (pass original calls for unwrapping)
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Executing tool calls via orchestrator...');
+
+    // Start tool execution and create abort controller
+    this.startToolExecution();
+
     await this.toolOrchestrator.executeToolCalls(toolCalls);
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.messages.length);
 

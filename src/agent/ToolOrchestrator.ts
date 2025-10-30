@@ -345,7 +345,13 @@ export class ToolOrchestrator {
       }
 
       // Execute tool via tool manager (pass ID for streaming output)
-      result = await this.toolManager.executeTool(toolName, args, id);
+      result = await this.toolManager.executeTool(
+        toolName,
+        args,
+        id,
+        false,
+        this.agent.getToolAbortSignal()
+      );
 
       // Record successful tool call for in-progress todo tracking (main agent only)
       if (result.success && !this.config.isSpecializedAgent && toolName !== 'todo_write') {
@@ -370,8 +376,14 @@ export class ToolOrchestrator {
         });
       }
     } catch (error) {
-      // Handle any errors during execution
-      if (
+      // Handle abort/interrupt errors specially
+      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('interrupted'))) {
+        result = {
+          success: false,
+          error: 'Tool execution interrupted by user',
+          error_type: 'interrupted',
+        };
+      } else if (
         error instanceof DirectoryTraversalError ||
         error instanceof PermissionDeniedError
       ) {

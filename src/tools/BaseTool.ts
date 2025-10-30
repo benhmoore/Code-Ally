@@ -5,7 +5,7 @@
  * and event emission. All concrete tools must extend this class.
  */
 
-import { ToolResult, ActivityEvent, ActivityEventType } from '../types/index.js';
+import { ToolResult, ActivityEvent, ActivityEventType, ErrorType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
@@ -83,6 +83,11 @@ export abstract class BaseTool {
   protected currentCallId?: string;
 
   /**
+   * Current abort signal (set during execute for access in executeImpl)
+   */
+  protected currentAbortSignal?: AbortSignal;
+
+  /**
    * Preview changes before execution (e.g., show diff for file edits)
    *
    * Called by ToolOrchestrator BEFORE permission checks, allowing users
@@ -107,10 +112,12 @@ export abstract class BaseTool {
    *
    * @param args - Tool-specific parameters
    * @param callId - Tool call ID from ToolOrchestrator (for streaming output)
+   * @param abortSignal - Optional AbortSignal for interrupting tool execution
    * @returns Tool result dictionary
    */
-  async execute(args: any, callId?: string): Promise<ToolResult> {
+  async execute(args: any, callId?: string, abortSignal?: AbortSignal): Promise<ToolResult> {
     this.currentCallId = callId;
+    this.currentAbortSignal = abortSignal;
 
     // Extract and remove todo_id from args (it's not a tool-specific parameter)
     const todoId = args.todo_id;
@@ -118,6 +125,11 @@ export abstract class BaseTool {
     delete cleanArgs.todo_id;
 
     try {
+      // Check if already aborted before starting
+      if (abortSignal?.aborted) {
+        throw new Error('AbortError: Tool execution was interrupted');
+      }
+
       const result = await this.executeImpl(cleanArgs);
 
       // If execution was successful and todo_id was provided, mark todo as complete
@@ -127,6 +139,15 @@ export abstract class BaseTool {
 
       return result;
     } catch (error) {
+      // Detect abort errors
+      if (error instanceof Error &&
+          (error.message?.includes('AbortError') || abortSignal?.aborted)) {
+        return this.formatErrorResponse(
+          'Tool execution interrupted by user',
+          'interrupted'
+        );
+      }
+
       const errorResult = this.formatErrorResponse(
         formatError(error),
         'system_error'
@@ -134,6 +155,7 @@ export abstract class BaseTool {
       return errorResult;
     } finally {
       this.currentCallId = undefined;
+      this.currentAbortSignal = undefined;
     }
   }
 
@@ -275,7 +297,7 @@ export abstract class BaseTool {
    */
   protected formatErrorResponse(
     errorMessage: string,
-    errorType: string = 'general',
+    errorType: ErrorType = 'general',
     suggestion?: string,
     additionalFields?: Record<string, any>
   ): ToolResult {

@@ -140,13 +140,15 @@ export class ToolManager {
    * @param args - Tool arguments
    * @param callId - Tool call ID from orchestrator (for streaming output)
    * @param _preApproved - Whether permission has been pre-approved
+   * @param abortSignal - Optional AbortSignal for interrupting tool execution
    * @returns Tool result
    */
   async executeTool(
     toolName: string,
     args: Record<string, any>,
     callId?: string,
-    _preApproved: boolean = false
+    _preApproved: boolean = false,
+    abortSignal?: AbortSignal
   ): Promise<ToolResult> {
     const tool = this.tools.get(toolName);
     if (!tool) {
@@ -183,7 +185,7 @@ export class ToolManager {
     }
 
     try {
-      const result = await tool.execute(args, callId);
+      const result = await tool.execute(args, callId, abortSignal);
 
       this.trackFileOperation(toolName, args, result);
 
@@ -197,6 +199,10 @@ export class ToolManager {
 
       return result;
     } catch (error) {
+      // Propagate abort errors without wrapping
+      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('interrupted'))) {
+        throw error;
+      }
       return {
         success: false,
         error: formatError(error),
