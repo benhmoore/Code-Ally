@@ -3,12 +3,15 @@
  *
  * Provides centralized storage and operations for session-based todo lists.
  * Todo items are stored in-memory and persisted to session data.
+ * Emits events when todos change for immediate UI updates.
  */
 
 import { randomUUID } from 'crypto';
 import { TEXT_LIMITS, BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
+import { ActivityStream } from './ActivityStream.js';
+import { ActivityEventType } from '../types/index.js';
 
-export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+export type TodoStatus = 'proposed' | 'pending' | 'in_progress' | 'completed';
 
 export interface ToolCallRecord {
   toolName: string;
@@ -23,10 +26,17 @@ export interface TodoItem {
   activeForm: string; // Present continuous form: "Running tests", "Fixing bug"
   created_at: string;
   toolCalls?: ToolCallRecord[]; // Track tool calls made while working on this todo
+  dependencies?: string[]; // IDs of todos that must complete first
+  subtasks?: TodoItem[]; // Nested subtasks (max depth 1)
 }
 
 export class TodoManager {
   private todos: TodoItem[] = [];
+  private activityStream: ActivityStream | null = null;
+
+  constructor(activityStream?: ActivityStream) {
+    this.activityStream = activityStream || null;
+  }
 
   /**
    * Create a new todo item
@@ -34,16 +44,33 @@ export class TodoManager {
    * @param task - Task description
    * @param status - Todo status (default: pending)
    * @param activeForm - Present continuous form of task
+   * @param dependencies - Optional array of todo IDs that must complete first
+   * @param subtasks - Optional array of nested subtasks
    * @returns New todo item
    */
-  createTodoItem(task: string, status: TodoStatus = 'pending', activeForm?: string): TodoItem {
-    return {
+  createTodoItem(
+    task: string,
+    status: TodoStatus = 'pending',
+    activeForm?: string,
+    dependencies?: string[],
+    subtasks?: TodoItem[]
+  ): TodoItem {
+    const item: TodoItem = {
       id: randomUUID().substring(0, ID_GENERATION.TODO_ID_LENGTH),
       task: task.trim(),
       status,
-      activeForm: activeForm || task.trim(), // Default to task if not provided
+      activeForm: activeForm || task.trim(),
       created_at: new Date().toISOString(),
     };
+
+    if (dependencies && dependencies.length > 0) {
+      item.dependencies = dependencies;
+    }
+    if (subtasks && subtasks.length > 0) {
+      item.subtasks = subtasks;
+    }
+
+    return item;
   }
 
   /**
@@ -59,10 +86,14 @@ export class TodoManager {
    * Set the entire todo list
    *
    * Preserves tool call history for todos that remain in_progress with the same task content.
+   * Auto-completes parents when all subtasks are complete.
    *
    * @param todos - New todo list
    */
   setTodos(todos: TodoItem[]): void {
+    // Auto-complete parents when all subtasks complete
+    todos = this.autoCompleteParents(todos);
+
     // Preserve tool call history for matching in_progress todos
     const oldInProgress = this.todos.find(t => t.status === 'in_progress');
 
@@ -80,6 +111,16 @@ export class TodoManager {
     }
 
     this.todos = todos;
+
+    // Emit event for immediate UI update
+    if (this.activityStream) {
+      this.activityStream.emit({
+        id: `todo-update-${Date.now()}`,
+        type: ActivityEventType.TODO_UPDATE,
+        timestamp: Date.now(),
+        data: { todos: this.todos },
+      });
+    }
   }
 
   /**
@@ -332,30 +373,218 @@ export class TodoManager {
     const lines: string[] = [];
     const inProgress = this.getInProgressTodo();
     const pending = this.todos.filter(t => t.status === 'pending');
+    const proposed = this.todos.filter(t => t.status === 'proposed');
     const completed = this.getCompletedTodos();
+    const blockedIds = this.getBlockedTodoIds();
 
-    // Show in-progress task
+    // Show in-progress task with subtasks
     if (inProgress) {
       lines.push(`  → IN PROGRESS: ${inProgress.task}`);
+      if (inProgress.subtasks && inProgress.subtasks.length > 0) {
+        inProgress.subtasks.forEach(subtask => {
+          const prefix = subtask.status === 'in_progress' ? '→' : subtask.status === 'completed' ? '✓' : ' ';
+          lines.push(`      ↳ ${prefix} ${subtask.task}`);
+        });
+      }
     }
 
-    // Show pending tasks
-    if (pending.length > 0) {
-      lines.push(`  PENDING:`);
-      pending.forEach((todo, index) => {
+    // Split pending into ready and blocked
+    const readyPending = pending.filter(t => !blockedIds.has(t.id));
+    const blockedPending = pending.filter(t => blockedIds.has(t.id));
+
+    // Show ready pending tasks
+    if (readyPending.length > 0) {
+      lines.push(`  PENDING (READY):`);
+      readyPending.forEach((todo, index) => {
         lines.push(`    ${index + 1}. ${todo.task}`);
       });
     }
 
-    // Show completed tasks
+    // Show blocked pending tasks
+    if (blockedPending.length > 0) {
+      lines.push(`  PENDING (BLOCKED):`);
+      blockedPending.forEach((todo, index) => {
+        const depNames = this.getDependencyNames(todo.id);
+        lines.push(`    ${index + 1}. ${todo.task} (waiting on: ${depNames.join(', ')})`);
+      });
+    }
+
+    // Show proposed tasks (awaiting decision)
+    if (proposed.length > 0) {
+      lines.push(`  PROPOSED (awaiting decision):`);
+      proposed.forEach((todo, index) => {
+        lines.push(`    ${index + 1}. ${todo.task}`);
+      });
+    }
+
+    // Show completed tasks with subtasks
     if (completed.length > 0) {
       lines.push(`  COMPLETED:`);
       completed.forEach(todo => {
         lines.push(`    ✓ ${todo.task}`);
+        if (todo.subtasks && todo.subtasks.length > 0) {
+          todo.subtasks.forEach(subtask => {
+            lines.push(`      ✓ ${subtask.task}`);
+          });
+        }
       });
     }
 
     const tasksText = lines.join('\n');
-    return `**Your Current Tasks:**\n${tasksText}\n\n*Update your todo list with todo_write, marking tasks as 'in_progress' or 'completed' as you work.*`;
+    const helperText = proposed.length > 0
+      ? '*Manage todos with todo_add/todo_update/todo_remove/todo_clear. Proposed todos must be confirmed, modified, or declined. Blocked todos cannot be in_progress until dependencies complete. Completing all subtasks auto-completes the parent.*'
+      : '*Manage todos with todo_add/todo_update/todo_remove/todo_clear. Blocked todos cannot be in_progress until dependencies complete. Completing all subtasks auto-completes the parent.*';
+    return `**Your Current Tasks:**\n${tasksText}\n\n${helperText}`;
+  }
+
+  /**
+   * Get IDs of blocked todos (have incomplete dependencies)
+   */
+  getBlockedTodoIds(todos?: TodoItem[]): Set<string> {
+    const todoList = todos || this.todos;
+    const completedIds = new Set(todoList.filter(t => t.status === 'completed').map(t => t.id));
+    const blocked = new Set<string>();
+
+    for (const todo of todoList) {
+      if (todo.dependencies && todo.dependencies.length > 0) {
+        const hasIncompleteDeps = todo.dependencies.some(depId => !completedIds.has(depId));
+        if (hasIncompleteDeps) {
+          blocked.add(todo.id);
+        }
+      }
+    }
+
+    return blocked;
+  }
+
+  /**
+   * Get names of dependencies for a todo
+   */
+  getDependencyNames(todoId: string): string[] {
+    const todo = this.todos.find(t => t.id === todoId);
+    if (!todo || !todo.dependencies) return [];
+
+    return todo.dependencies
+      .map(depId => this.todos.find(t => t.id === depId)?.task)
+      .filter((name): name is string => name !== undefined);
+  }
+
+  /**
+   * Auto-complete parents when all subtasks complete
+   */
+  autoCompleteParents(todos: TodoItem[]): TodoItem[] {
+    return todos.map(todo => {
+      if (todo.subtasks && todo.subtasks.length > 0) {
+        const allSubtasksComplete = todo.subtasks.every(st => st.status === 'completed');
+        if (allSubtasksComplete && todo.status !== 'completed') {
+          return { ...todo, status: 'completed' as TodoStatus };
+        }
+      }
+      return todo;
+    });
+  }
+
+  /**
+   * Validate dependencies exist and no circular references
+   */
+  validateDependencies(todos: TodoItem[]): string | null {
+    const todoIds = new Set(todos.map(t => t.id));
+
+    // Check all dependencies exist
+    for (const todo of todos) {
+      if (todo.dependencies) {
+        for (const depId of todo.dependencies) {
+          if (!todoIds.has(depId)) {
+            return `Todo "${todo.task}" depends on non-existent todo ID: ${depId}`;
+          }
+        }
+      }
+    }
+
+    // Check for circular dependencies
+    const visited = new Set<string>();
+    const recursionStack = new Set<string>();
+
+    const hasCycle = (todoId: string): boolean => {
+      if (recursionStack.has(todoId)) return true;
+      if (visited.has(todoId)) return false;
+
+      visited.add(todoId);
+      recursionStack.add(todoId);
+
+      const todo = todos.find(t => t.id === todoId);
+      if (todo?.dependencies) {
+        for (const depId of todo.dependencies) {
+          if (hasCycle(depId)) return true;
+        }
+      }
+
+      recursionStack.delete(todoId);
+      return false;
+    };
+
+    for (const todo of todos) {
+      if (hasCycle(todo.id)) {
+        return `Circular dependency detected involving todo: "${todo.task}"`;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Validate subtask depth (max 1 level)
+   */
+  validateSubtaskDepth(todos: TodoItem[]): string | null {
+    for (const todo of todos) {
+      if (todo.subtasks) {
+        for (const subtask of todo.subtasks) {
+          if (subtask.subtasks && subtask.subtasks.length > 0) {
+            return `Subtasks cannot have nested subtasks. Maximum depth is 1. Parent: "${todo.task}"`;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Validate blocked todos are not in_progress
+   */
+  validateInProgressNotBlocked(todos: TodoItem[]): string | null {
+    const blockedIds = this.getBlockedTodoIds(todos);
+    const blockedInProgress = todos.filter(t =>
+      t.status === 'in_progress' && blockedIds.has(t.id)
+    );
+
+    if (blockedInProgress.length > 0 && blockedInProgress[0]) {
+      const depNames = this.getDependencyNames(blockedInProgress[0].id);
+      return `Cannot mark blocked todo as in_progress: "${blockedInProgress[0].task}". Complete dependencies first: ${depNames.join(', ')}`;
+    }
+
+    return null;
+  }
+
+  /**
+   * Validate subtask in_progress rule
+   */
+  validateSubtaskInProgress(parent: TodoItem): string | null {
+    if (!parent.subtasks || parent.subtasks.length === 0) return null;
+
+    const incompleteSubtasks = parent.subtasks.filter(
+      st => st.status === 'pending' || st.status === 'in_progress'
+    );
+    const inProgressSubtasks = parent.subtasks.filter(st => st.status === 'in_progress');
+
+    if (incompleteSubtasks.length > 0) {
+      if (inProgressSubtasks.length === 0) {
+        return `Parent "${parent.task}" has incomplete subtasks but none are in_progress. Mark one subtask as in_progress.`;
+      }
+      if (inProgressSubtasks.length > 1) {
+        return `Parent "${parent.task}" has ${inProgressSubtasks.length} subtasks in_progress. Only ONE subtask can be in_progress at a time.`;
+      }
+    }
+
+    return null;
   }
 }

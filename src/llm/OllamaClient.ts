@@ -388,7 +388,17 @@ export class OllamaClient extends ModelClient {
           throw new Error('Streaming interrupted by user');
         }
 
-        const { done, value } = await reader.read();
+        // Add timeout protection for stream reads
+        // Ollama can start streaming but then hang without closing the stream
+        const readTimeout = API_TIMEOUTS.LLM_REQUEST_BASE;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error('Stream read timeout - no data received'));
+          }, readTimeout);
+        });
+
+        const readPromise = reader.read();
+        const { done, value } = await Promise.race([readPromise, timeoutPromise]);
         if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
@@ -456,6 +466,17 @@ export class OllamaClient extends ModelClient {
           role: 'assistant',
           content: aggregatedContent || '[Request interrupted by user]',
           interrupted: true,
+          _content_was_streamed: contentWasStreamed,
+        };
+      }
+      if (error.message === 'Stream read timeout - no data received') {
+        logger.error('[OLLAMA_CLIENT] Stream hung - no data received for', API_TIMEOUTS.LLM_REQUEST_BASE / 1000, 'seconds on request:', requestId);
+        logger.error('[OLLAMA_CLIENT] Aggregated content before timeout:', aggregatedContent.length, 'chars');
+        // Return what we have so far rather than throwing
+        return {
+          role: 'assistant',
+          content: aggregatedContent || '[Stream timeout - model may have crashed]',
+          error: true,
           _content_was_streamed: contentWasStreamed,
         };
       }

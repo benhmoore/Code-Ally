@@ -44,6 +44,25 @@ export interface AgentConfig {
   config: Config;
   /** Parent tool call ID (for nested agents) */
   parentCallId?: string;
+  /** Required tool calls that must be executed before agent can exit */
+  requiredToolCalls?: string[];
+}
+
+/**
+ * Tool context for controlling agent behavior during specific tool operations.
+ * Used to restrict tool availability and inject system reminders.
+ */
+export interface ToolContext {
+  /** The tool that triggered this context (e.g., "plan") */
+  triggerTool: string;
+  /** If set, ONLY these tools are allowed - exclusive mode */
+  availableTools?: string[];
+  /** If set, these tools are preferred - soft suggestion mode */
+  suggestedTools?: string[];
+  /** Context message to inject as system reminder */
+  systemReminder: string;
+  /** Arbitrary contextual data (e.g., proposed todos) */
+  data?: any;
 }
 
 /**
@@ -83,6 +102,13 @@ export class Agent {
   private activityWatchdogInterval: NodeJS.Timeout | null = null;
   private readonly activityTimeoutMs: number;
 
+  // Required tool calls tracking
+  private calledRequiredTools: Set<string> = new Set();
+  private requiredToolWarningCount: number = 0;
+
+  // Tool context tracking - used for dynamic tool filtering
+  private currentToolContext: ToolContext | null = null;
+
   constructor(
     modelClient: ModelClient,
     toolManager: ToolManager,
@@ -99,6 +125,11 @@ export class Agent {
     // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
+
+    // Debug log for required tools configuration
+    if (config.requiredToolCalls && config.requiredToolCalls.length > 0) {
+      console.log(`[REQUIRED_TOOLS_DEBUG] Agent ${this.instanceId} configured with required tools:`, config.requiredToolCalls);
+    }
 
     // Set activity timeout (convert seconds to milliseconds)
     // Only enable for specialized agents (subagents) to detect infinite loops
@@ -156,6 +187,19 @@ export class Agent {
    */
   getTokenManager(): TokenManager {
     return this.tokenManager;
+  }
+
+  /**
+   * Set the current tool context
+   * Used to control tool availability and inject system reminders
+   */
+  setCurrentToolContext(context: ToolContext | null): void {
+    this.currentToolContext = context;
+    if (context) {
+      logger.debug('[AGENT_TOOL_CONTEXT]', this.instanceId, 'Tool context set:', context.triggerTool);
+    } else {
+      logger.debug('[AGENT_TOOL_CONTEXT]', this.instanceId, 'Tool context cleared');
+    }
   }
 
   /**
@@ -279,7 +323,7 @@ export class Agent {
         let reminderContent = '<system-reminder>\n';
 
         if (todos.length === 0) {
-          reminderContent += 'IMPORTANT: The todo list is currently empty. Create a todo list using todo_write for ANY task - even simple single-step tasks. Breaking work into tracked tasks dramatically improves your effectiveness by:\n';
+          reminderContent += 'IMPORTANT: The todo list is currently empty. Create a todo list using todo_add for ANY task - even simple single-step tasks. Breaking work into tracked tasks dramatically improves your effectiveness by:\n';
           reminderContent += '• Providing focus reminders after each tool use\n';
           reminderContent += '• Helping you stay on track and avoid tangents\n';
           reminderContent += '• Giving the user visibility into your progress\n';
@@ -288,7 +332,7 @@ export class Agent {
           reminderContent += '- "Fix failing tests in PathSecurity"\n';
           reminderContent += '- "Debug memory leak in WebSocket handler"\n';
           reminderContent += '- "Add error handling to login endpoint"\n\n';
-          reminderContent += 'Use todo_write at the start of your turn, even for "simple" tasks. It only takes one tool call.\n';
+          reminderContent += 'Use todo_add at the start of your turn, even for "simple" tasks. It only takes one tool call.\n';
         } else {
           reminderContent += 'Current todos:\n';
           todos.forEach((todo: any, idx: number) => {
@@ -460,9 +504,44 @@ export class Agent {
    */
   private async getLLMResponse(): Promise<LLMResponse> {
     // Get function definitions from tool manager
-    // Exclude todo_write from specialized agents (only main agent can manage todos)
+    // Exclude todo management tools from specialized agents (only main agent can manage todos)
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-    const excludeTools = allowTodoManagement ? undefined : ['todo_write'];
+    let excludeTools = allowTodoManagement ? undefined : ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
+
+    // Handle currentToolContext for tool filtering
+    if (this.currentToolContext) {
+      if (this.currentToolContext.availableTools) {
+        // Exclusive mode: Only allow tools in availableTools
+        // Get all registered tool names
+        const allTools = this.toolManager.getAllTools().map(tool => tool.name);
+
+        // Compute tools to exclude (all tools NOT in availableTools)
+        const contextExclusions = allTools.filter(
+          toolName => !this.currentToolContext!.availableTools!.includes(toolName)
+        );
+
+        // Merge with existing excludeTools
+        const existingExclusions = excludeTools || [];
+        excludeTools = [...new Set([...existingExclusions, ...contextExclusions])];
+
+        logger.debug(
+          '[TOOL_CONTEXT]',
+          this.instanceId,
+          'Context filtering active (exclusive mode):',
+          'available=', this.currentToolContext.availableTools,
+          'excluded=', contextExclusions
+        );
+      } else if (this.currentToolContext.suggestedTools) {
+        // Soft mode: Don't restrict tools (we'll use this for system reminder in next task)
+        logger.debug(
+          '[TOOL_CONTEXT]',
+          this.instanceId,
+          'Context filtering active (soft mode):',
+          'suggested=', this.currentToolContext.suggestedTools
+        );
+      }
+    }
+
     const functions = this.toolManager.getFunctionDefinitions(excludeTools);
 
     // Regenerate system prompt with current context (todos, etc.) before each LLM call
@@ -488,6 +567,23 @@ export class Agent {
       }
 
       this.messages[0].content = updatedSystemPrompt;
+    }
+
+    // Inject context-aware system reminder if currentToolContext is set
+    if (this.currentToolContext) {
+      const contextReminder: Message = {
+        role: 'system',
+        content: `<system-reminder>\n${this.currentToolContext.systemReminder}\n</system-reminder>`,
+        timestamp: Date.now(),
+      };
+      this.messages.push(contextReminder);
+      logger.debug(
+        '[TOOL_CONTEXT]',
+        this.instanceId,
+        'Injected context-aware system reminder:',
+        this.currentToolContext.triggerTool
+      );
+      console.log(`[TOOL_CONTEXT_DEBUG] Injected system reminder for context: ${this.currentToolContext.triggerTool}`);
     }
 
     // Auto-compaction: check if context usage exceeds threshold
@@ -554,9 +650,10 @@ export class Agent {
    * Process LLM response (handles both tool calls and text)
    *
    * @param response - LLM response
+   * @param isRetry - Whether this is a retry after empty response
    * @returns Final text response
    */
-  private async processLLMResponse(response: LLMResponse): Promise<string> {
+  private async processLLMResponse(response: LLMResponse, isRetry: boolean = false): Promise<string> {
     // Check for interruption
     if (this.interrupted || response.interrupted) {
       return '[Request interrupted by user]';
@@ -588,7 +685,7 @@ export class Agent {
       return await this.processToolResponse(response, toolCalls);
     } else {
       // Text-only response
-      return this.processTextResponse(response);
+      return await this.processTextResponse(response, isRetry);
     }
   }
 
@@ -674,6 +771,20 @@ export class Agent {
     await this.toolOrchestrator.executeToolCalls(toolCalls);
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.messages.length);
 
+    // Track required tool calls
+    if (this.config.requiredToolCalls && this.config.requiredToolCalls.length > 0) {
+      console.log(`[REQUIRED_TOOLS_DEBUG] Checking ${unwrappedToolCalls.length} tool calls for required tools`);
+      unwrappedToolCalls.forEach(tc => {
+        console.log(`[REQUIRED_TOOLS_DEBUG] Tool executed: ${tc.function.name}`);
+        if (this.config.requiredToolCalls?.includes(tc.function.name)) {
+          this.calledRequiredTools.add(tc.function.name);
+          console.log(`[REQUIRED_TOOLS_DEBUG] ✓ Tracked required tool call: ${tc.function.name}`);
+          console.log(`[REQUIRED_TOOLS_DEBUG] Called so far:`, Array.from(this.calledRequiredTools));
+          logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, `Tracked required tool call: ${tc.function.name}`);
+        }
+      });
+    }
+
     // Clear current turn (for redundancy detection)
     this.toolManager.clearCurrentTurn();
 
@@ -688,18 +799,129 @@ export class Agent {
   /**
    * Process a text-only response (no tool calls)
    *
-   * @param response - LLM text response
+   * @param response - LLM response with text content
+   * @param isRetry - Whether this is a retry after empty response
    * @returns The text content
    */
-  private processTextResponse(response: LLMResponse): string {
+  private async processTextResponse(response: LLMResponse, isRetry: boolean = false): Promise<string> {
     // Validate that we have actual content
     const content = response.content || '';
 
-    if (!content.trim()) {
-      logger.warn('[AGENT_RESPONSE]', this.instanceId, 'Model returned empty content - this may indicate the model did not provide a proper response after tool execution');
+    // Check if empty AND we just executed tools AND this is not already a retry
+    if (!content.trim() && !isRetry) {
+      // Check if previous message had tool calls (indicates we're in follow-up after tools)
+      const lastMessage = this.messages[this.messages.length - 1];
+      const isAfterToolExecution = lastMessage?.role === 'assistant' && lastMessage?.tool_calls && lastMessage.tool_calls.length > 0;
+
+      if (isAfterToolExecution) {
+        logger.warn('[AGENT_RESPONSE]', this.instanceId, 'Empty response after tool execution - attempting recovery');
+
+        // Add continuation prompt
+        const continuationPrompt: Message = {
+          role: 'user',
+          content: '<system-reminder>\nYou just executed tool calls but did not provide any response. Please provide your response now based on the tool results.\n</system-reminder>',
+          timestamp: Date.now(),
+        };
+        this.messages.push(continuationPrompt);
+
+        // Retry LLM call
+        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Retrying LLM call after empty response...');
+        const retryResponse = await this.getLLMResponse();
+
+        // Process retry (mark as retry to prevent infinite loop)
+        return await this.processLLMResponse(retryResponse, true);
+      } else {
+        // Empty response but not after tool execution - just log debug
+        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Model returned empty content');
+      }
+    } else if (!content.trim() && isRetry) {
+      // Still empty after retry - use fallback
+      logger.error('[AGENT_RESPONSE]', this.instanceId, 'Still empty after retry - using fallback message');
+      const fallbackContent = this.config.isSpecializedAgent
+        ? 'Task completed. Tool results are available in the conversation history.'
+        : 'I apologize, but I encountered an issue generating a response. The requested operations have been completed.';
+
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: fallbackContent,
+        timestamp: Date.now(),
+      };
+      this.messages.push(assistantMessage);
+      this.autoSaveSession();
+
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.AGENT_END,
+        timestamp: Date.now(),
+        data: {
+          content: fallbackContent,
+          isSpecializedAgent: this.config.isSpecializedAgent || false,
+        },
+      });
+
+      return fallbackContent;
     }
 
-    // Add assistant message
+    // Check if all required tool calls have been executed before allowing agent to exit
+    if (this.config.requiredToolCalls && this.config.requiredToolCalls.length > 0 && !this.interrupted) {
+      console.log(`[REQUIRED_TOOLS_DEBUG] Agent attempting to exit with text response`);
+      console.log(`[REQUIRED_TOOLS_DEBUG] Required tools:`, this.config.requiredToolCalls);
+      console.log(`[REQUIRED_TOOLS_DEBUG] Called tools:`, Array.from(this.calledRequiredTools));
+
+      const missingTools = this.config.requiredToolCalls.filter(tool => !this.calledRequiredTools.has(tool));
+      console.log(`[REQUIRED_TOOLS_DEBUG] Missing tools:`, missingTools);
+
+      if (missingTools.length > 0) {
+        // Not all required tools have been called
+        if (this.requiredToolWarningCount >= BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS) {
+          // Exceeded max warnings - fail the operation
+          const errorMessage = `Agent failed to call required tools after ${BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS} warnings. Missing tools: ${missingTools.join(', ')}`;
+          console.log(`[REQUIRED_TOOLS_DEBUG] ✗ FAILING - exceeded max warnings (${this.requiredToolWarningCount}/${BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS})`);
+          console.log(`[REQUIRED_TOOLS_DEBUG] Error message:`, errorMessage);
+          logger.error('[AGENT_REQUIRED_TOOLS]', this.instanceId, errorMessage);
+
+          const assistantMessage: Message = {
+            role: 'assistant',
+            content: `[Error: ${errorMessage}]`,
+            timestamp: Date.now(),
+          };
+          this.messages.push(assistantMessage);
+          this.autoSaveSession();
+
+          return `[Error: ${errorMessage}]`;
+        }
+
+        // Send reminder to call required tools
+        this.requiredToolWarningCount++;
+        console.log(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${this.requiredToolWarningCount}/${BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS}`);
+        console.log(`[REQUIRED_TOOLS_DEBUG] Sending reminder to call: ${missingTools.join(', ')}`);
+        logger.warn('[AGENT_REQUIRED_TOOLS]', this.instanceId,
+          `Agent attempting to exit without calling required tools (warning ${this.requiredToolWarningCount}/${BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS}). Missing: ${missingTools.join(', ')}`);
+
+        const reminderMessage: Message = {
+          role: 'system',
+          content: '<system-reminder>\n' +
+            `You must call the following required tool(s) before completing your task: ${missingTools.join(', ')}\n` +
+            `Please call ${missingTools.length === 1 ? 'this tool' : 'these tools'} now.\n` +
+            '</system-reminder>',
+          timestamp: Date.now(),
+        };
+        this.messages.push(reminderMessage);
+
+        // Get new response from LLM
+        logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, 'Requesting LLM to call required tools...');
+        const retryResponse = await this.getLLMResponse();
+
+        // Recursively process the response
+        return await this.processLLMResponse(retryResponse);
+      } else {
+        // All required tools have been called
+        console.log(`[REQUIRED_TOOLS_DEBUG] ✓ SUCCESS - All required tools have been called`);
+        logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, 'All required tools have been called:', Array.from(this.calledRequiredTools));
+      }
+    }
+
+    // Normal path - we have content and all required tools (if any) have been called
     const assistantMessage: Message = {
       role: 'assistant',
       content: content,
@@ -732,9 +954,9 @@ export class Agent {
    * @returns System prompt string
    */
   generateSystemPrompt(): string {
-    // Exclude todo_write from specialized agents (only main agent can manage todos)
+    // Exclude todo management tools from specialized agents (only main agent can manage todos)
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-    const excludeTools = allowTodoManagement ? undefined : ['todo_write'];
+    const excludeTools = allowTodoManagement ? undefined : ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
     const functions = this.toolManager.getFunctionDefinitions(excludeTools);
 
     let prompt = this.config.systemPrompt || 'You are a helpful AI assistant.';

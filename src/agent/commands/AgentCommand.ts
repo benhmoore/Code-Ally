@@ -5,6 +5,7 @@
  */
 
 import { Command } from './Command.js';
+import { ActivityEventType } from '../../types/index.js';
 import type { Message } from '../../types/index.js';
 import type { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
@@ -32,7 +33,7 @@ export class AgentCommand extends Command {
 
     switch (subcommand.toLowerCase()) {
       case 'create':
-        return this.handleCreate(restArgs.join(' '));
+        return this.handleCreate(restArgs.join(' '), serviceRegistry);
       case 'ls':
       case 'list':
         return this.handleList(serviceRegistry);
@@ -42,7 +43,7 @@ export class AgentCommand extends Command {
       case 'rm':
         return this.handleDelete(restArgs.join(' '), serviceRegistry);
       case 'use':
-        return this.handleUse(restArgs.join(' '));
+        return this.handleUse(restArgs.join(' '), serviceRegistry);
       default:
         return {
           handled: true,
@@ -64,18 +65,14 @@ export class AgentCommand extends Command {
     };
   }
 
-  private async handleCreate(description: string): Promise<CommandResult> {
-    if (!description) {
-      return {
-        handled: true,
-        response: 'Description required. Usage: /agent create <description>',
-      };
-    }
-
-    return {
-      handled: true,
-      response: 'Agent creation not yet implemented',
-    };
+  private async handleCreate(description: string, serviceRegistry: ServiceRegistry): Promise<CommandResult> {
+    // Trigger agent creation wizard
+    return this.emitActivityEvent(
+      serviceRegistry,
+      ActivityEventType.AGENT_WIZARD_REQUEST,
+      { initialDescription: description || '' },
+      'agent_wizard'
+    );
   }
 
   private async handleList(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
@@ -154,17 +151,37 @@ export class AgentCommand extends Command {
     }
   }
 
-  private async handleUse(args: string): Promise<CommandResult> {
-    if (!args) {
-      return {
-        handled: true,
-        response: 'Usage: /agent use <name> <task>',
-      };
+  private async handleUse(args: string, serviceRegistry: ServiceRegistry): Promise<CommandResult> {
+    if (!args.trim()) {
+      return this.createError('Usage: /agent use <name> <task>\nExample: /agent use repo-reviewer Analyze the codebase for quality issues');
     }
 
-    return {
-      handled: true,
-      response: 'Agent delegation not yet implemented',
-    };
+    const agentManager = this.getRequiredService<AgentManager>(serviceRegistry, 'agent_manager', 'agent use');
+    if ('handled' in agentManager) return agentManager; // Error result
+
+    // Parse arguments: first word is agent name, rest is task
+    const parts = args.trim().split(/\s+/);
+    const agentName = parts[0]!; // Safe: args.trim() was checked above
+    const taskPrompt = parts.slice(1).join(' ');
+
+    if (!taskPrompt) {
+      return this.createError(`Task description required.\nUsage: /agent use ${agentName} <task-description>`);
+    }
+
+    // Verify agent exists
+    const agentExists = await agentManager.agentExists(agentName);
+    if (!agentExists) {
+      const agents = await agentManager.listAgents();
+      const agentNames = agents.map(a => a.name).join(', ');
+      return this.createError(`Agent '${agentName}' not found.\nAvailable agents: ${agentNames}`);
+    }
+
+    // Emit event to trigger agent execution
+    return this.emitActivityEvent(
+      serviceRegistry,
+      ActivityEventType.AGENT_USE_REQUEST,
+      { agentName, taskPrompt },
+      'agent_use'
+    );
   }
 }

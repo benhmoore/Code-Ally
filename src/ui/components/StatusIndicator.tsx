@@ -9,8 +9,10 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { TodoManager } from '../../services/TodoManager.js';
+import { TodoManager, TodoItem } from '../../services/TodoManager.js';
 import { IdleMessageGenerator } from '../../services/IdleMessageGenerator.js';
+import { ActivityStream } from '../../services/ActivityStream.js';
+import { ActivityEventType } from '../../types/index.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { formatElapsed } from '../utils/timeUtils.js';
 import { getGitBranch } from '../../utils/gitUtils.js';
@@ -81,7 +83,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     }
   }, [isProcessing, isCompacting]);
 
-  const [allTodos, setAllTodos] = useState<Array<{ task: string; status: string; activeForm: string }>>([]);
+  const [allTodos, setAllTodos] = useState<TodoItem[]>([]);
 
   // Animate thinking dots while waiting for messages
   useEffect(() => {
@@ -172,9 +174,10 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           }
 
           // Gather context for idle message generation
+          // Filter out proposed todos (drafts awaiting acceptance)
           const context: any = {
             cwd: process.cwd(),
-            todos: todoManager ? todoManager.getTodos() : [],
+            todos: todoManager ? todoManager.getTodos().filter(t => t.status !== 'proposed') : [],
             gitBranch,
             homeDirectory,
             projectContext,
@@ -285,9 +288,10 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           const projectContext = projectContextDetector?.getCached();
 
           // Gather context for idle message generation
+          // Filter out proposed todos (drafts awaiting acceptance)
           const context: any = {
             cwd: process.cwd(),
-            todos: todoManager ? todoManager.getTodos() : [],
+            todos: todoManager ? todoManager.getTodos().filter(t => t.status !== 'proposed') : [],
             gitBranch,
             homeDirectory,
             projectContext,
@@ -322,7 +326,49 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     }
   }, [isProcessing]);
 
-  // Update task status and elapsed time every second
+  // Subscribe to TODO_UPDATE events for immediate todo display updates
+  useEffect(() => {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const activityStream = registry.get<ActivityStream>('activity_stream');
+      const todoManager = registry.get<TodoManager>('todo_manager');
+
+      if (activityStream && todoManager) {
+        // Update todos immediately when TODO_UPDATE event fires
+        const handleTodoUpdate = () => {
+          try {
+            const todos = todoManager.getTodos();
+            setAllTodos([...todos].reverse());
+
+            // Update current task if in progress
+            const inProgress = todoManager.getInProgressTodo();
+            const newTask = inProgress?.activeForm || null;
+
+            // Reset timer when task changes (only when processing)
+            if (isProcessing && newTask && previousTaskRef.current !== newTask) {
+              setStartTime(Date.now());
+              setElapsedSeconds(0);
+              previousTaskRef.current = newTask;
+            }
+
+            setCurrentTask(newTask);
+          } catch (error) {
+            // Silently handle errors
+          }
+        };
+
+        // Subscribe to TODO_UPDATE events
+        const unsubscribe = activityStream.subscribe(ActivityEventType.TODO_UPDATE, handleTodoUpdate);
+
+        return unsubscribe;
+      }
+    } catch (error) {
+      // Silently handle errors
+    }
+    return undefined;
+  }, [isProcessing]);
+
+  // Update task status and elapsed time every second (polling fallback)
   useEffect(() => {
     // Function to update todo status
     const updateTodos = () => {
@@ -344,6 +390,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           setCurrentTask(newTask);
 
           // Get all todos for display (reversed order)
+          // Include proposed todos (they'll be displayed greyed out)
           const todos = todoManager.getTodos();
           setAllTodos([...todos].reverse());
         }
@@ -360,7 +407,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     // Initial update
     updateTodos();
 
-    // Update regularly
+    // Update regularly (fallback for edge cases)
     const interval = setInterval(updateTodos, ANIMATION_TIMING.TODO_UPDATE);
 
     return () => clearInterval(interval);
@@ -396,6 +443,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   const getCheckbox = (status: string): string => {
     if (status === 'completed') return '☑';
     if (status === 'in_progress') return '☐';
+    if (status === 'proposed') return '◯'; // Empty circle for proposed
     return '☐';
   };
 
@@ -420,26 +468,80 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       {allTodos.length > 0 && (
         <Box flexDirection="column" marginLeft={3}>
           {allTodos.map((todo, index) => (
-            <Box key={index}>
-              {/* Arrow for in-progress task */}
-              {todo.status === 'in_progress' ? (
-                <>
-                  <Text color="yellow">→ </Text>
-                  <Text color="yellow">{getCheckbox(todo.status)}</Text>
-                  <Text> </Text>
-                  <Text color="yellow">{todo.task}</Text>
-                </>
-              ) : (
-                <>
-                  <Text>   </Text>
-                  <Text color={todo.status === 'completed' ? 'green' : 'white'}>
-                    {getCheckbox(todo.status)}
-                  </Text>
-                  <Text> </Text>
-                  <Text color={todo.status === 'completed' ? 'green' : 'white'} dimColor={todo.status === 'completed'}>
-                    {todo.task}
-                  </Text>
-                </>
+            <Box key={index} flexDirection="column">
+              {/* Parent todo */}
+              <Box>
+                {/* Arrow for in-progress task */}
+                {todo.status === 'in_progress' ? (
+                  <>
+                    <Text color="yellow">→ </Text>
+                    <Text color="yellow">{getCheckbox(todo.status)}</Text>
+                    <Text> </Text>
+                    <Text color="yellow">{todo.task}</Text>
+                  </>
+                ) : todo.status === 'proposed' ? (
+                  <>
+                    <Text>   </Text>
+                    <Text color="gray" dimColor>
+                      {getCheckbox(todo.status)}
+                    </Text>
+                    <Text> </Text>
+                    <Text color="gray" dimColor>
+                      {todo.task}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text>   </Text>
+                    <Text color={todo.status === 'completed' ? 'green' : 'white'}>
+                      {getCheckbox(todo.status)}
+                    </Text>
+                    <Text> </Text>
+                    <Text color={todo.status === 'completed' ? 'green' : 'white'} dimColor={todo.status === 'completed'}>
+                      {todo.task}
+                    </Text>
+                  </>
+                )}
+              </Box>
+
+              {/* Subtasks with indentation */}
+              {todo.subtasks && todo.subtasks.length > 0 && (
+                <Box flexDirection="column" marginLeft={6}>
+                  {todo.subtasks.map((subtask, subIndex) => (
+                    <Box key={subIndex}>
+                      {subtask.status === 'in_progress' ? (
+                        <>
+                          <Text color="yellow">↳ → </Text>
+                          <Text color="yellow">{getCheckbox(subtask.status)}</Text>
+                          <Text> </Text>
+                          <Text color="yellow">{subtask.task}</Text>
+                        </>
+                      ) : subtask.status === 'proposed' ? (
+                        <>
+                          <Text color="gray" dimColor>↳   </Text>
+                          <Text color="gray" dimColor>
+                            {getCheckbox(subtask.status)}
+                          </Text>
+                          <Text> </Text>
+                          <Text color="gray" dimColor>
+                            {subtask.task}
+                          </Text>
+                        </>
+                      ) : (
+                        <>
+                          <Text color={subtask.status === 'completed' ? 'green' : 'white'} dimColor={subtask.status === 'completed'}>↳   </Text>
+                          <Text color={subtask.status === 'completed' ? 'green' : 'white'}>
+                            {getCheckbox(subtask.status)}
+                          </Text>
+                          <Text> </Text>
+                          <Text color={subtask.status === 'completed' ? 'green' : 'white'} dimColor={subtask.status === 'completed'}>
+                            {subtask.task}
+                          </Text>
+                        </>
+                      )}
+                    </Box>
+                  ))}
+                </Box>
               )}
             </Box>
           ))}

@@ -111,7 +111,10 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
   // Status indicator
   const statusColor = getStatusColor(toolCall.status);
-  const statusIcon = isRunning ? '...' : getStatusIcon(toolCall.status);
+  const statusIcon = getStatusIcon(toolCall.status);
+
+  // Prefix icon: arrow for running, status icon for completed
+  const prefixIcon = isRunning ? '→' : statusIcon;
 
   const toolCallCount = toolCall.totalChildCount || 0;
 
@@ -121,8 +124,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         {/* Indentation */}
         <Text>{indent}</Text>
 
-        {/* Arrow prefix */}
-        <Text color={statusColor}>→ </Text>
+        {/* Status prefix icon */}
+        <Text color={statusColor}>{prefixIcon} </Text>
 
         {/* Tool name (or agent name for agent tool) */}
         <Text color={statusColor} bold={level === 0}>
@@ -134,8 +137,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           <Text dimColor> ({argsPreview})</Text>
         )}
 
-        {/* Duration/Status */}
-        <Text dimColor> [{isRunning ? durationStr : statusIcon}{!isRunning && ` ${durationStr}`}]</Text>
+        {/* Duration */}
+        <Text dimColor> [{isRunning ? '...' : ''}{isRunning ? ' ' : ''}{durationStr}]</Text>
       </Box>
 
       {/* Diff preview (hidden if collapsed or hideOutput) */}

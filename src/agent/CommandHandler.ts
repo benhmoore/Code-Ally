@@ -157,7 +157,8 @@ export class CommandHandler {
     const command = withoutSlash.slice(0, spaceIndex).toLowerCase();
     const argsString = withoutSlash.slice(spaceIndex + 1).trim();
 
-    return { command, args: argsString ? [argsString] : [] };
+    // Split args on whitespace to get individual arguments
+    return { command, args: argsString ? argsString.split(/\s+/) : [] };
   }
 
   /**

@@ -20,6 +20,7 @@ import { ModelSelector, ModelOption } from './components/ModelSelector.js';
 import { ConfigViewer } from './components/ConfigViewer.js';
 import { SetupWizardView } from './components/SetupWizardView.js';
 import { ProjectWizardView } from './components/ProjectWizardView.js';
+import { AgentWizardView } from './components/AgentWizardView.js';
 import { PluginConfigView } from './components/PluginConfigView.js';
 import { RewindSelector } from './components/RewindSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
@@ -120,55 +121,6 @@ function reconstructToolCallsFromMessages(messages: Message[], serviceRegistry: 
   return toolCalls;
 }
 
-/**
- * Reconstruct todo list from message history
- *
- * When rewinding or loading a session, we need to reconstruct the todo state.
- * This function finds the last todo_write tool call and extracts the todo list from it.
- *
- * @param messages - Array of messages from the session
- * @returns Array of todos at that point in time, or empty array if no todos found
- */
-function reconstructTodosFromMessages(messages: Message[]): Array<{
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  activeForm: string;
-}> {
-  // Find all todo_write tool calls by iterating messages in reverse (most recent first)
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (!msg) continue;
-
-    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-      // Check each tool call in this message
-      for (const tc of msg.tool_calls) {
-        if (tc.function.name === 'todo_write') {
-          // Parse arguments
-          let args: any;
-          try {
-            args = typeof tc.function.arguments === 'string'
-              ? JSON.parse(tc.function.arguments)
-              : tc.function.arguments;
-          } catch {
-            continue; // Skip malformed tool calls
-          }
-
-          // Extract todos array
-          if (args.todos && Array.isArray(args.todos)) {
-            return args.todos.map((t: any) => ({
-              content: t.content || '',
-              status: t.status || 'pending',
-              activeForm: t.activeForm || t.content || '',
-            }));
-          }
-        }
-      }
-    }
-  }
-
-  // No todo_write calls found - return empty array
-  return [];
-}
 
 /**
  * Props for the App component
@@ -229,6 +181,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
   // Project wizard state
   const [projectWizardOpen, setProjectWizardOpen] = useState(false);
+
+  // Agent wizard state
+  const [agentWizardOpen, setAgentWizardOpen] = useState(false);
+  const [agentWizardData, setAgentWizardData] = useState<{ initialDescription?: string }>({});
 
   // Plugin config state
   const [pluginConfigRequest, setPluginConfigRequest] = useState<{ pluginName: string; pluginPath: string; schema: any; existingConfig?: any } | undefined>(undefined);
@@ -897,6 +853,108 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     });
   });
 
+  // Subscribe to agent wizard request events
+  useActivityEvent(ActivityEventType.AGENT_WIZARD_REQUEST, (event) => {
+    const { initialDescription } = event.data || {};
+    setAgentWizardData({ initialDescription });
+    setAgentWizardOpen(true);
+  });
+
+  // Subscribe to agent wizard completion events
+  useActivityEvent(ActivityEventType.AGENT_WIZARD_COMPLETE, async (event) => {
+    const { name, description, systemPrompt, tools } = event.data || {};
+    setAgentWizardOpen(false);
+
+    // Save the agent using AgentManager
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const agentManager = serviceRegistry.get<AgentManager>('agent_manager');
+
+    if (agentManager && name && description && systemPrompt) {
+      try {
+        await agentManager.saveAgent({
+          name,
+          description,
+          system_prompt: systemPrompt,
+          tools, // undefined = all tools
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        actions.addMessage({
+          role: 'assistant',
+          content: `✓ Agent '${name}' has been created successfully!\n\nYou can use it with:\n  • agent(task_prompt="...", agent_name="${name}")\n  • /agent use ${name} <task>`,
+        });
+      } catch (error) {
+        actions.addMessage({
+          role: 'assistant',
+          content: `Failed to create agent: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    }
+  });
+
+  // Subscribe to agent wizard skip events
+  useActivityEvent(ActivityEventType.AGENT_WIZARD_SKIP, () => {
+    setAgentWizardOpen(false);
+    actions.addMessage({
+      role: 'assistant',
+      content: 'Agent creation cancelled. You can run /agent create anytime.',
+    });
+  });
+
+  // Subscribe to agent use request events
+  useActivityEvent(ActivityEventType.AGENT_USE_REQUEST, async (event) => {
+    const { agentName, taskPrompt } = event.data || {};
+
+    if (!agentName || !taskPrompt) {
+      actions.addMessage({
+        role: 'assistant',
+        content: 'Error: Missing agent name or task prompt',
+      });
+      return;
+    }
+
+    // Get the tool manager and execute the agent tool directly
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+    const agentTool = toolManager?.getTool('agent');
+
+    if (!agentTool) {
+      actions.addMessage({
+        role: 'assistant',
+        content: 'Error: Agent tool not available',
+      });
+      return;
+    }
+
+    // Execute the agent tool
+    try {
+      const result = await agentTool.execute({
+        task_prompt: taskPrompt,
+        agent_name: agentName,
+      });
+
+      if (result.success) {
+        // Agent executed successfully, result is in the response
+        const response = (result as any).agent_response || 'Agent completed task';
+        actions.addMessage({
+          role: 'assistant',
+          content: response,
+        });
+      } else {
+        actions.addMessage({
+          role: 'assistant',
+          content: `Agent execution failed: ${result.error}`,
+        });
+      }
+    } catch (error) {
+      actions.addMessage({
+        role: 'assistant',
+        content: `Error executing agent: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  });
+
   // Subscribe to plugin config request events
   useActivityEvent(ActivityEventType.PLUGIN_CONFIG_REQUEST, async (event) => {
     logger.debug('[App] Received PLUGIN_CONFIG_REQUEST event:', JSON.stringify(event.data, null, 2));
@@ -1328,20 +1386,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         const reconstructedToolCalls = reconstructToolCallsFromMessages(rewindedMessages, serviceRegistry);
         reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
 
-        // Reconstruct todos from message history
-        const reconstructedTodos = reconstructTodosFromMessages(rewindedMessages);
+        // Clear todos when rewinding
+        // Note: With the new todo management tools (todo_add, todo_update, todo_remove, todo_clear),
+        // we can no longer reconstruct todos from messages since there's no single "snapshot" tool.
+        // Todo state is preserved in session saves but not in rewind operations.
         const todoManager = serviceRegistry.get('todo_manager');
         if (todoManager && typeof (todoManager as any).setTodos === 'function') {
-          if (reconstructedTodos.length > 0) {
-            // Convert to TodoItem format with IDs
-            const todoItems = reconstructedTodos.map((t: any) =>
-              (todoManager as any).createTodoItem(t.content, t.status, t.activeForm)
-            );
-            (todoManager as any).setTodos(todoItems);
-          } else {
-            // Clear todos if rewinding to a point before any todos existed
-            (todoManager as any).setTodos([]);
-          }
+          (todoManager as any).setTodos([]);
         }
 
         // Force Static to remount FIRST (before adding notice)
@@ -1657,6 +1708,33 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                 activityStream.emit({
                   id: `project_wizard_skip_${Date.now()}`,
                   type: ActivityEventType.PROJECT_WIZARD_SKIP,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+          />
+        </Box>
+      ) : /* Agent Wizard (modal - replaces input when active) */
+      agentWizardOpen ? (
+        <Box marginTop={1}>
+          <AgentWizardView
+            initialDescription={agentWizardData.initialDescription}
+            onComplete={(agentData) => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `agent_wizard_complete_${Date.now()}`,
+                  type: ActivityEventType.AGENT_WIZARD_COMPLETE,
+                  timestamp: Date.now(),
+                  data: agentData,
+                });
+              }
+            }}
+            onCancel={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `agent_wizard_skip_${Date.now()}`,
+                  type: ActivityEventType.AGENT_WIZARD_SKIP,
                   timestamp: Date.now(),
                   data: {},
                 });

@@ -172,10 +172,11 @@ export class BashTool extends BaseTool {
 
     return new Promise((resolve) => {
       // Spawn process
+      // Use 'inherit' for stdin to allow interactive commands like npm/npx to work properly
       const child: ChildProcess = spawn(command, {
         cwd: workingDir,
         shell: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['inherit', 'pipe', 'pipe'],
       });
 
       // Set up abort handler

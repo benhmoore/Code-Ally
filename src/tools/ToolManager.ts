@@ -54,6 +54,41 @@ export class ToolManager {
   }
 
   /**
+   * Register a single contextual tool at runtime
+   *
+   * Contextual tools are dynamically added based on the current context
+   * (e.g., plugin-provided tools). This method checks for duplicates
+   * to prevent overwriting existing tools.
+   *
+   * @param tool - Tool to register
+   */
+  registerTool(tool: BaseTool): void {
+    if (this.tools.has(tool.name)) {
+      console.debug(`[TOOL_MANAGER] Tool '${tool.name}' already registered, skipping duplicate`);
+      return;
+    }
+    this.tools.set(tool.name, tool);
+    console.debug(`[TOOL_MANAGER] Registered contextual tool: ${tool.name}`);
+  }
+
+  /**
+   * Unregister a contextual tool by name
+   *
+   * Removes a dynamically added tool from the registry. Only removes
+   * if the tool exists; silently handles non-existent tools.
+   *
+   * @param toolName - Name of the tool to unregister
+   */
+  unregisterTool(toolName: string): void {
+    if (!this.tools.has(toolName)) {
+      console.debug(`[TOOL_MANAGER] Tool '${toolName}' not found, skipping unregister`);
+      return;
+    }
+    this.tools.delete(toolName);
+    console.debug(`[TOOL_MANAGER] Unregistered contextual tool: ${toolName}`);
+  }
+
+  /**
    * Generate function definitions for all tools
    *
    * @param excludeTools - Optional list of tool names to exclude
@@ -101,8 +136,9 @@ export class ToolManager {
       };
     }
 
-    // Add todo_id parameter to all tools (unless it's TodoWriteTool itself)
-    if (tool.name !== 'todo_write') {
+    // Add todo_id parameter to all tools (unless it's a todo management tool)
+    const todoManagementTools = ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
+    if (!todoManagementTools.includes(tool.name)) {
       if (!functionDef.function.parameters.properties) {
         functionDef.function.parameters.properties = {};
       }

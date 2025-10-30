@@ -29,8 +29,8 @@ export const API_TIMEOUTS = {
   /** Ollama model validation timeout (10 seconds) */
   OLLAMA_MODEL_VALIDATION: 10000,
 
-  /** Base timeout for LLM requests (4 minutes) */
-  LLM_REQUEST_BASE: 240000,
+  /** Base timeout for LLM requests (6 minutes) */
+  LLM_REQUEST_BASE: 360000,
 
   /** Additional timeout per retry attempt (1 minute) */
   LLM_REQUEST_RETRY_INCREMENT: 60000,
@@ -327,6 +327,9 @@ export const BUFFER_SIZES = {
 
   /** Number of recent agent messages to include in summary */
   AGENT_RECENT_MESSAGES: 3,
+
+  /** Maximum warnings before required tool call failure */
+  AGENT_REQUIRED_TOOL_MAX_WARNINGS: 2,
 
   /** Maximum file paths to display in todo items */
   TODO_FILE_PATHS_DISPLAY: 2,

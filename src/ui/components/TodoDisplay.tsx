@@ -53,6 +53,23 @@ export const TodoDisplay: React.FC = () => {
     return null;
   }
 
+  // Helper to get display text for a todo (includes active subtask if present)
+  const getTodoDisplayText = (todo: TodoItem | undefined): string => {
+    if (!todo) return '';
+
+    let text = todo.task;
+
+    // If todo has subtasks, find the active one
+    if (todo.subtasks && todo.subtasks.length > 0) {
+      const activeSubtask = todo.subtasks.find(st => st.status === 'in_progress');
+      if (activeSubtask) {
+        text += ` › ${activeSubtask.task}`;
+      }
+    }
+
+    return text;
+  };
+
   // Take only the first N incomplete todos
   const displayTodos = incompleteTodos.slice(0, BUFFER_SIZES.MAX_TODO_DISPLAY_ITEMS);
 
@@ -62,20 +79,20 @@ export const TodoDisplay: React.FC = () => {
       <Text color="yellow" bold>
         NEXT:{' '}
       </Text>
-      <Text>{displayTodos[0]?.task || ''}</Text>
+      <Text>{getTodoDisplayText(displayTodos[0])}</Text>
 
       {/* Show additional todos if they exist */}
       {displayTodos.length > 1 && (
         <>
           <Text dimColor> | </Text>
-          <Text dimColor>{displayTodos[1]?.task || ''}</Text>
+          <Text dimColor>{getTodoDisplayText(displayTodos[1])}</Text>
         </>
       )}
 
       {displayTodos.length > 2 && (
         <>
           <Text dimColor> | </Text>
-          <Text dimColor>{displayTodos[2]?.task || ''}</Text>
+          <Text dimColor>{getTodoDisplayText(displayTodos[2])}</Text>
         </>
       )}
 

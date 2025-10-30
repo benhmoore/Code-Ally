@@ -19,6 +19,7 @@ export interface AgentData {
   system_prompt: string;
   model?: string;
   temperature?: number;
+  tools?: string[]; // Tool names this agent can use. Empty array = all tools, undefined = all tools
   created_at?: string;
   updated_at?: string;
 }
@@ -241,9 +242,19 @@ Continue working until you have thoroughly addressed the task through comprehens
         if (match) {
           const key = match[1];
           const value = match[2];
-          // Remove quotes from values
           if (key && value) {
-            metadata[key] = value.replace(/^["']|["']$/g, '');
+            // Handle JSON arrays (for tools field)
+            if (value.trim().startsWith('[')) {
+              try {
+                metadata[key] = JSON.parse(value);
+              } catch {
+                // If JSON parse fails, treat as string
+                metadata[key] = value.replace(/^["']|["']$/g, '');
+              }
+            } else {
+              // Remove quotes from simple values
+              metadata[key] = value.replace(/^["']|["']$/g, '');
+            }
           }
         }
       });
@@ -254,6 +265,7 @@ Continue working until you have thoroughly addressed the task through comprehens
         system_prompt: body.trim(),
         model: metadata.model,
         temperature: metadata.temperature ? parseFloat(metadata.temperature) : undefined,
+        tools: metadata.tools, // Array of tool names or undefined
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
       };
@@ -280,6 +292,11 @@ Continue working until you have thoroughly addressed the task through comprehens
 
     if (agent.temperature !== undefined) {
       lines.push(`temperature: ${agent.temperature}`);
+    }
+
+    if (agent.tools !== undefined) {
+      // Write tools as JSON array
+      lines.push(`tools: ${JSON.stringify(agent.tools)}`);
     }
 
     lines.push(`created_at: "${agent.created_at || new Date().toISOString()}"`);

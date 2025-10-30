@@ -364,7 +364,7 @@ async function main() {
     registry.registerInstance('activity_stream', activityStream);
 
     // Create todo manager
-    const todoManager = new TodoManager();
+    const todoManager = new TodoManager(activityStream);
     registry.registerInstance('todo_manager', todoManager);
 
     // Create path resolver
@@ -444,9 +444,18 @@ async function main() {
     const { GlobTool } = await import('./tools/GlobTool.js');
     const { GrepTool } = await import('./tools/GrepTool.js');
     const { LsTool } = await import('./tools/LsTool.js');
+    const { TreeTool } = await import('./tools/TreeTool.js');
     const { AgentTool } = await import('./tools/AgentTool.js');
+    const { ExploreTool } = await import('./tools/ExploreTool.js');
+    const { PlanTool } = await import('./tools/PlanTool.js');
     const { BatchTool } = await import('./tools/BatchTool.js');
-    const { TodoWriteTool } = await import('./tools/TodoWriteTool.js');
+    const { TodoAddTool } = await import('./tools/TodoAddTool.js');
+    const { TodoRemoveTool } = await import('./tools/TodoRemoveTool.js');
+    const { TodoUpdateTool } = await import('./tools/TodoUpdateTool.js');
+    const { TodoClearTool } = await import('./tools/TodoClearTool.js');
+    // Note: ConfirmProposalTool, ModifyProposalTool, and DeclineProposalTool are contextual tools
+    // They are NOT registered as default tools, but are dynamically registered when needed
+    // via Agent's currentToolContext.availableTools mechanism
     const { SessionLookupTool } = await import('./tools/SessionLookupTool.js');
     const { SessionReadTool } = await import('./tools/SessionReadTool.js');
     const { AskSessionTool } = await import('./tools/AskSessionTool.js');
@@ -465,9 +474,17 @@ async function main() {
       new GlobTool(activityStream),
       new GrepTool(activityStream),
       new LsTool(activityStream),
+      new TreeTool(activityStream),
       new AgentTool(activityStream),
+      new ExploreTool(activityStream),
+      new PlanTool(activityStream),
       new BatchTool(activityStream),
-      new TodoWriteTool(activityStream),
+      new TodoAddTool(activityStream),
+      new TodoRemoveTool(activityStream),
+      new TodoUpdateTool(activityStream),
+      new TodoClearTool(activityStream),
+      // Proposal tools (ConfirmProposalTool, ModifyProposalTool, DeclineProposalTool) are
+      // contextual and registered dynamically via Agent's currentToolContext, not here
       new ListSessionsTool(activityStream),
       new SessionLookupTool(activityStream),
       new SessionReadTool(activityStream),
@@ -507,6 +524,11 @@ async function main() {
     const agentManager = new AgentManager();
     await agentManager.ensureDefaultAgent();
     registry.registerInstance('agent_manager', agentManager);
+
+    // Create agent generation service for LLM-assisted agent creation
+    const { AgentGenerationService } = await import('./services/AgentGenerationService.js');
+    const agentGenerationService = new AgentGenerationService(serviceModelClient);
+    registry.registerInstance('agent_generation_service', agentGenerationService);
 
     // Create project manager for project context
     const { ProjectManager } = await import('./services/ProjectManager.js');

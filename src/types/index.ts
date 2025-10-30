@@ -109,6 +109,7 @@ export enum ActivityEventType {
   CONFIG_VIEW_RESPONSE = 'config_view_response',
   REWIND_REQUEST = 'rewind_request',
   REWIND_RESPONSE = 'rewind_response',
+  TODO_UPDATE = 'todo_update',
   UNDO_FILE_LIST_REQUEST = 'undo_file_list_request',
   UNDO_FILE_SELECTED = 'undo_file_selected',
   UNDO_FILE_BACK = 'undo_file_back',
@@ -123,6 +124,13 @@ export enum ActivityEventType {
   PROJECT_WIZARD_REQUEST = 'project_wizard_request',
   PROJECT_WIZARD_COMPLETE = 'project_wizard_complete',
   PROJECT_WIZARD_SKIP = 'project_wizard_skip',
+  AGENT_WIZARD_REQUEST = 'agent_wizard_request',
+  AGENT_WIZARD_COMPLETE = 'agent_wizard_complete',
+  AGENT_WIZARD_SKIP = 'agent_wizard_skip',
+  AGENT_SELECT_REQUEST = 'agent_select_request',
+  AGENT_SELECT_RESPONSE = 'agent_select_response',
+  AGENT_USE_REQUEST = 'agent_use_request',
+  AGENT_USE_COMPLETE = 'agent_use_complete',
   CONTEXT_USAGE_UPDATE = 'context_usage_update',
   AUTO_COMPACTION_START = 'auto_compaction_start',
   AUTO_COMPACTION_COMPLETE = 'auto_compaction_complete',
@@ -276,9 +284,17 @@ export interface Session {
   todos?: Array<{
     id: string;
     task: string;
-    status: 'pending' | 'in_progress' | 'completed';
+    status: 'proposed' | 'pending' | 'in_progress' | 'completed';
     activeForm: string;
     created_at: string;
+    dependencies?: string[];
+    subtasks?: Array<{
+      id: string;
+      task: string;
+      status: 'proposed' | 'pending' | 'in_progress' | 'completed';
+      activeForm: string;
+      created_at: string;
+    }>;
   }>;
   idle_messages?: string[]; // Queue of generated idle messages
   project_context?: {

@@ -707,9 +707,11 @@ export class SessionManager implements IService {
       await this.saveSessionData(name, session);
 
       // Trigger title generation for new sessions
+      // Only generate title after BOTH user message AND assistant response
       if (filteredMessages.length > 0 && !session.title && !session.metadata?.title) {
         const firstUserMessage = filteredMessages.find(msg => msg.role === 'user');
-        if (firstUserMessage && this.titleGenerator) {
+        const hasAssistantResponse = filteredMessages.some(msg => msg.role === 'assistant');
+        if (firstUserMessage && hasAssistantResponse && this.titleGenerator) {
           this.titleGenerator.generateTitleBackground(
             name,
             firstUserMessage.content,

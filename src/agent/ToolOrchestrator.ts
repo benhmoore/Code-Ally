@@ -116,6 +116,9 @@ export class ToolOrchestrator {
    *
    * Batch is a transparent wrapper - we extract its children and execute them as if
    * the model called them directly.
+   *
+   * IMPORTANT: Invalid batches are NOT unwrapped. They execute normally so
+   * BatchTool.executeImpl() can validate and return proper errors.
    */
   private unwrapBatchCalls(toolCalls: ToolCall[]): ToolCall[] {
     const unwrapped: ToolCall[] = [];
@@ -125,17 +128,34 @@ export class ToolOrchestrator {
       if (toolCall.function.name === 'batch') {
         const tools = toolCall.function.arguments.tools;
 
-        if (Array.isArray(tools)) {
-          // Convert each tool spec into a proper tool call
-          tools.forEach((spec: any, index: number) => {
-            unwrapped.push({
-              id: `${toolCall.id}-unwrapped-${index}`,
-              type: 'function',
-              function: {
-                name: spec.name,
-                arguments: spec.arguments,
-              },
-            });
+        // Quick pre-validation: if obviously invalid, don't unwrap
+        // Let BatchTool.executeImpl() run and provide detailed validation errors
+        const shouldUnwrap =
+          Array.isArray(tools) &&
+          tools.length > 0 &&
+          tools.length <= BUFFER_SIZES.MAX_BATCH_SIZE &&
+          tools.every(spec =>
+            typeof spec === 'object' && spec !== null &&
+            typeof spec.name === 'string' &&
+            typeof spec.arguments === 'object' && spec.arguments !== null
+          );
+
+        if (!shouldUnwrap) {
+          // Invalid batch - keep as batch tool call, will validate when executed
+          unwrapped.push(toolCall);
+          continue;
+        }
+
+        // Valid batch - unwrap into individual tool calls
+        for (let index = 0; index < tools.length; index++) {
+          const spec = tools[index];
+          unwrapped.push({
+            id: `${toolCall.id}-unwrapped-${index}`,
+            type: 'function',
+            function: {
+              name: spec.name,
+              arguments: spec.arguments,
+            },
           });
         }
       } else {
@@ -178,10 +198,37 @@ export class ToolOrchestrator {
       },
     });
 
+    // IMPORTANT: Emit START events for all tools BEFORE execution begins
+    // This ensures batch tool calls are visible in UI immediately, not when they start executing
+    const effectiveParentId = this.parentCallId || groupId;
+    const isCollapsed = this.config.isSpecializedAgent === true;
+
+    for (const toolCall of toolCalls) {
+      const tool = this.toolManager.getTool(toolCall.function.name);
+      const shouldCollapse = (tool as any)?.shouldCollapse || false;
+      const hideOutput = (tool as any)?.hideOutput || false;
+
+      this.emitEvent({
+        id: toolCall.id,
+        type: ActivityEventType.TOOL_CALL_START,
+        timestamp: Date.now(),
+        parentId: effectiveParentId,
+        data: {
+          toolName: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+          visibleInChat: tool?.visibleInChat ?? true,
+          isTransparent: tool?.isTransparentWrapper || false,
+          collapsed: isCollapsed,
+          shouldCollapse,
+          hideOutput,
+        },
+      });
+    }
+
     try {
       // Execute all tools in parallel
       const results = await Promise.all(
-        toolCalls.map(tc => this.executeSingleTool(tc, groupId))
+        toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId))
       );
 
       // Process results (add to conversation)
@@ -235,15 +282,32 @@ export class ToolOrchestrator {
   }
 
   /**
-   * Execute a single tool call
+   * Execute a single tool call after START event has been emitted
+   * Used by concurrent execution where START events are emitted upfront
    *
    * @param toolCall - Tool call to execute
    * @param parentId - Optional parent ID for grouped execution
    * @returns Tool execution result
    */
-  private async executeSingleTool(
+  private async executeSingleToolAfterStart(
     toolCall: ToolCall,
     parentId?: string
+  ): Promise<ToolResult> {
+    return this.executeSingleTool(toolCall, parentId, false);
+  }
+
+  /**
+   * Execute a single tool call
+   *
+   * @param toolCall - Tool call to execute
+   * @param parentId - Optional parent ID for grouped execution
+   * @param emitStartEvent - Whether to emit START event (default: true)
+   * @returns Tool execution result
+   */
+  private async executeSingleTool(
+    toolCall: ToolCall,
+    parentId?: string,
+    emitStartEvent: boolean = true
   ): Promise<ToolResult> {
     const { id, function: func } = toolCall;
     const { name: toolName, arguments: args } = func;
@@ -253,14 +317,15 @@ export class ToolOrchestrator {
 
     // If we have a parent context from a nested agent, use it; otherwise use the group parentId
     const effectiveParentId = this.parentCallId || parentId;
-    logger.debug('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId);
+    logger.debug('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId, 'emitStartEvent:', emitStartEvent);
 
     // Reset tool call activity timer to prevent timeout
     this.agent.resetToolCallActivity();
 
     // Auto-promote first pending todo to in_progress
     // This helps the agent track progress through the todo list
-    if (toolName !== 'todo_write') {
+    const todoManagementTools = ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
+    if (!todoManagementTools.includes(toolName)) {
       const registry = ServiceRegistry.getInstance();
       const todoManager = registry.get<TodoManager>('todo_manager');
 
@@ -280,26 +345,30 @@ export class ToolOrchestrator {
       }
     }
 
-    // Emit start event FIRST (creates tool call in UI state)
+    // Prepare tool display properties (needed for both START and END events)
     const isCollapsed = this.config.isSpecializedAgent === true;
     const shouldCollapse = (tool as any)?.shouldCollapse || false;
     const hideOutput = (tool as any)?.hideOutput || false;
 
-    this.emitEvent({
-      id,
-      type: ActivityEventType.TOOL_CALL_START,
-      timestamp: Date.now(),
-      parentId: effectiveParentId,
-      data: {
-        toolName,
-        arguments: args,
-        visibleInChat: tool?.visibleInChat ?? true,
-        isTransparent: tool?.isTransparentWrapper || false,
-        collapsed: isCollapsed, // Collapse tools from subagents immediately
-        shouldCollapse, // Collapse after completion (for AgentTool)
-        hideOutput, // Never show output (for AgentTool)
-      },
-    });
+    // Emit start event FIRST (creates tool call in UI state)
+    // Skip if already emitted (for concurrent execution)
+    if (emitStartEvent) {
+      this.emitEvent({
+        id,
+        type: ActivityEventType.TOOL_CALL_START,
+        timestamp: Date.now(),
+        parentId: effectiveParentId,
+        data: {
+          toolName,
+          arguments: args,
+          visibleInChat: tool?.visibleInChat ?? true,
+          isTransparent: tool?.isTransparentWrapper || false,
+          collapsed: isCollapsed, // Collapse tools from subagents immediately
+          shouldCollapse, // Collapse after completion (for AgentTool)
+          hideOutput, // Never show output (for AgentTool)
+        },
+      });
+    }
 
     // CRITICAL: After TOOL_CALL_START, we MUST emit TOOL_CALL_END
     // Use try-finally to guarantee this happens
@@ -354,7 +423,8 @@ export class ToolOrchestrator {
       );
 
       // Record successful tool call for in-progress todo tracking (main agent only)
-      if (result.success && !this.config.isSpecializedAgent && toolName !== 'todo_write') {
+      const todoManagementTools = ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
+      if (result.success && !this.config.isSpecializedAgent && !todoManagementTools.includes(toolName)) {
         const registry = ServiceRegistry.getInstance();
         const todoManager = registry.get<TodoManager>('todo_manager');
         if (todoManager) {
@@ -552,7 +622,7 @@ export class ToolOrchestrator {
         }
       }
 
-      reminder += `\n\nStay on task. Use todo_write to mark complete when finished.`;
+      reminder += `\n\nStay on task. Use todo_update to mark todos as complete when finished.`;
 
       return reminder;
     } catch (error) {

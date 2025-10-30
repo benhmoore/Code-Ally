@@ -270,6 +270,20 @@ export class AgentTool extends BaseTool {
       throw error;
     }
 
+    // Filter tools based on agent configuration
+    let filteredToolManager = toolManager;
+    if (agentData.tools !== undefined && agentData.tools.length > 0) {
+      // Agent has specific tool restrictions - create filtered tool manager
+      logger.debug('[AGENT_TOOL] Filtering tools for agent:', agentData.tools);
+      const allowedToolNames = new Set(agentData.tools);
+      const allTools = toolManager.getAllTools();
+      const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
+      filteredToolManager = new ToolManager(filteredTools, this.activityStream);
+      logger.debug('[AGENT_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
+    } else {
+      logger.debug('[AGENT_TOOL] Agent has access to all tools (unrestricted)');
+    }
+
     // Create scoped registry for sub-agent (currently unused - for future extension)
     // const scopedRegistry = new ScopedServiceRegistryProxy(registry);
 
@@ -288,7 +302,7 @@ export class AgentTool extends BaseTool {
 
     const subAgent = new Agent(
       mainModelClient,
-      toolManager,
+      filteredToolManager, // Use filtered tool manager if agent has restrictions
       this.activityStream,
       agentConfig,
       configManager, // Pass configManager for token limit configuration
@@ -350,7 +364,7 @@ export class AgentTool extends BaseTool {
       }
 
       // Append note to all agent responses
-      return finalResponse + '\n\nNote: the user will not see this summary by default. If needed, share relevant information with the user in your own response.';
+      return finalResponse + '\n\nIMPORTANT: The user CANNOT see this summary. You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
     } catch (error) {
       logger.debug('[AGENT_TOOL] ERROR during sub-agent execution:', error);
       throw error;
