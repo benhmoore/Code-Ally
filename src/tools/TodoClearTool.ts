@@ -8,6 +8,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
+import { autoSaveTodos } from '../utils/todoUtils.js';
 
 export class TodoClearTool extends BaseTool {
   readonly name = 'todo_clear';
@@ -50,28 +51,7 @@ export class TodoClearTool extends BaseTool {
       todoManager.setTodos([]);
 
       // Auto-save
-      const sessionManager = registry.get('session_manager');
-      if (sessionManager && typeof (sessionManager as any).autoSave === 'function') {
-        const agent = registry.get('agent');
-        const messages =
-          agent && typeof (agent as any).getMessages === 'function'
-            ? (agent as any).getMessages()
-            : [];
-        const idleMessageGenerator = registry.get('idle_message_generator');
-        const idleMessages =
-          idleMessageGenerator && typeof (idleMessageGenerator as any).getQueue === 'function'
-            ? (idleMessageGenerator as any).getQueue()
-            : undefined;
-        const projectContextDetector = registry.get('project_context_detector');
-        const projectContext =
-          projectContextDetector &&
-          typeof (projectContextDetector as any).getCached === 'function'
-            ? (projectContextDetector as any).getCached()
-            : undefined;
-        (sessionManager as any).autoSave(messages, [], idleMessages, projectContext).catch((error: Error) => {
-          console.error('[TodoClearTool] Failed to auto-save session:', error);
-        });
-      }
+      await autoSaveTodos([]);
 
       return this.formatSuccessResponse({
         content: `Cleared ${previousCount} todo(s)`,

@@ -11,6 +11,26 @@ import { FunctionDefinition, ToolResult } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
+import { TOOL_NAMES } from '../config/toolDefaults.js';
+
+/**
+ * Tool with custom function definition
+ */
+interface ToolWithCustomDefinition extends BaseTool {
+  getFunctionDefinition(): FunctionDefinition;
+}
+
+/**
+ * Type guard to check if a tool has a custom getFunctionDefinition method
+ */
+function hasCustomFunctionDefinition(tool: BaseTool): tool is ToolWithCustomDefinition {
+  return (
+    typeof tool === 'object' &&
+    tool !== null &&
+    'getFunctionDefinition' in tool &&
+    typeof (tool as any).getFunctionDefinition === 'function'
+  );
+}
 
 export class ToolManager {
   private tools: Map<string, BaseTool>;
@@ -118,8 +138,8 @@ export class ToolManager {
     let functionDef: FunctionDefinition;
 
     // Check if tool provides custom definition
-    if ('getFunctionDefinition' in tool && typeof (tool as any).getFunctionDefinition === 'function') {
-      functionDef = (tool as any).getFunctionDefinition();
+    if (hasCustomFunctionDefinition(tool)) {
+      functionDef = tool.getFunctionDefinition();
     } else {
       // Generate default definition by introspecting the tool
       functionDef = {
@@ -137,8 +157,7 @@ export class ToolManager {
     }
 
     // Add todo_id parameter to all tools (unless it's a todo management tool)
-    const todoManagementTools = ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
-    if (!todoManagementTools.includes(tool.name)) {
+    if (!(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(tool.name)) {
       if (!functionDef.function.parameters.properties) {
         functionDef.function.parameters.properties = {};
       }

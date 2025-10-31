@@ -25,6 +25,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { BUFFER_SIZES } from '../config/constants.js';
+import { TOOL_NAMES } from '../config/toolDefaults.js';
 
 /**
  * Tool call structure from LLM
@@ -324,8 +325,7 @@ export class ToolOrchestrator {
 
     // Auto-promote first pending todo to in_progress
     // This helps the agent track progress through the todo list
-    const todoManagementTools = ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
-    if (!todoManagementTools.includes(toolName)) {
+    if (!(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(toolName)) {
       const registry = ServiceRegistry.getInstance();
       const todoManager = registry.get<TodoManager>('todo_manager');
 
@@ -423,8 +423,7 @@ export class ToolOrchestrator {
       );
 
       // Record successful tool call for in-progress todo tracking (main agent only)
-      const todoManagementTools = ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
-      if (result.success && !this.config.isSpecializedAgent && !todoManagementTools.includes(toolName)) {
+      if (result.success && !this.config.isSpecializedAgent && !(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(toolName)) {
         const registry = ServiceRegistry.getInstance();
         const todoManager = registry.get<TodoManager>('todo_manager');
         if (todoManager) {

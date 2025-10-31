@@ -12,6 +12,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager, TodoStatus } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
+import { autoSaveTodos } from '../utils/todoUtils.js';
 
 export class TodoUpdateTool extends BaseTool {
   readonly name = 'todo_update';
@@ -148,84 +149,17 @@ export class TodoUpdateTool extends BaseTool {
         );
       }
 
-      // Validate dependencies exist and no circular refs
-      const depError = todoManager.validateDependencies(updatedTodos);
-      if (depError) {
-        return this.formatErrorResponse(depError, 'validation_error');
-      }
-
-      // Validate subtask depth (max 1)
-      const depthError = todoManager.validateSubtaskDepth(updatedTodos);
-      if (depthError) {
-        return this.formatErrorResponse(depthError, 'validation_error');
-      }
-
-      // Validate blocked todos not in_progress
-      const blockedError = todoManager.validateInProgressNotBlocked(updatedTodos);
-      if (blockedError) {
-        return this.formatErrorResponse(blockedError, 'validation_error');
-      }
-
-      // Validate "exactly ONE in_progress" rule after updates
-      const inProgressCount = updatedTodos.filter(t => t.status === 'in_progress').length;
-      const incompleteCount = updatedTodos.filter(
-        t => t.status === 'pending' || t.status === 'in_progress'
-      ).length;
-
-      if (incompleteCount > 0) {
-        if (inProgressCount === 0) {
-          return this.formatErrorResponse(
-            'After updates, at least one incomplete task must be marked as "in_progress".',
-            'validation_error',
-            'Mark the task you are currently working on as in_progress'
-          );
-        }
-        if (inProgressCount > 1) {
-          return this.formatErrorResponse(
-            `After updates, only ONE task can be "in_progress" at a time. Found ${inProgressCount} in_progress tasks.`,
-            'validation_error',
-            'Mark only your current task as in_progress, others should be pending'
-          );
-        }
-      }
-
-      // Validate subtask in_progress rule
-      const inProgressParent = updatedTodos.find(t => t.status === 'in_progress');
-      if (inProgressParent) {
-        const subtaskError = todoManager.validateSubtaskInProgress(inProgressParent);
-        if (subtaskError) {
-          return this.formatErrorResponse(subtaskError, 'validation_error');
-        }
+      // Validate all rules
+      const validationError = todoManager.validateAllRules(updatedTodos);
+      if (validationError) {
+        return this.formatErrorResponse(validationError, 'validation_error');
       }
 
       // Write back the updated list
       todoManager.setTodos(updatedTodos);
 
       // Auto-save to session
-      const sessionManager = registry.get('session_manager');
-      if (sessionManager && typeof (sessionManager as any).autoSave === 'function') {
-        const agent = registry.get('agent');
-        const messages =
-          agent && typeof (agent as any).getMessages === 'function'
-            ? (agent as any).getMessages()
-            : [];
-        const idleMessageGenerator = registry.get('idle_message_generator');
-        const idleMessages =
-          idleMessageGenerator && typeof (idleMessageGenerator as any).getQueue === 'function'
-            ? (idleMessageGenerator as any).getQueue()
-            : undefined;
-        const projectContextDetector = registry.get('project_context_detector');
-        const projectContext =
-          projectContextDetector &&
-          typeof (projectContextDetector as any).getCached === 'function'
-            ? (projectContextDetector as any).getCached()
-            : undefined;
-        (sessionManager as any)
-          .autoSave(messages, updatedTodos, idleMessages, projectContext)
-          .catch((error: Error) => {
-            console.error('[TodoUpdateTool] Failed to auto-save session:', error);
-          });
-      }
+      await autoSaveTodos(updatedTodos);
 
       const incompleteTodos = todoManager.getIncompleteTodos();
       let message = `Updated ${updatedItems.length} todo(s):\n${updatedItems.map(item => `  - ${item}`).join('\n')}`;

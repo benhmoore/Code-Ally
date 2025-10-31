@@ -26,6 +26,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
 import { PluginConfigManager } from './PluginConfigManager.js';
 import { PluginEnvironmentManager } from './PluginEnvironmentManager.js';
+import { PLUGIN_FILES } from './constants.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { logger } from '../services/Logger.js';
@@ -202,7 +203,7 @@ export class PluginLoader {
       }
 
       // Read and validate manifest
-      const manifestPath = join(sourcePath, 'plugin.json');
+      const manifestPath = join(sourcePath, PLUGIN_FILES.MANIFEST);
       let manifest: PluginManifest;
 
       try {
@@ -211,7 +212,7 @@ export class PluginLoader {
       } catch (error) {
         return {
           success: false,
-          error: `Invalid or missing plugin.json: ${
+          error: `Invalid or missing ${PLUGIN_FILES.MANIFEST}: ${
             error instanceof Error ? error.message : String(error)
           }`,
         };
@@ -502,21 +503,21 @@ export class PluginLoader {
   /**
    * Load a single plugin from a directory
    *
-   * Reads and validates the plugin.json manifest, then creates
+   * Reads and validates the plugin manifest, then creates
    * ExecutableToolWrapper instances for each tool in the toolset.
    *
    * @param pluginPath - Path to the plugin directory
    * @returns Array of loaded tool instances
    */
   private async loadPlugin(pluginPath: string): Promise<BaseTool[]> {
-    const manifestPath = join(pluginPath, 'plugin.json');
+    const manifestPath = join(pluginPath, PLUGIN_FILES.MANIFEST);
 
-    // Check if plugin.json exists
+    // Check if manifest exists
     try {
       await fs.access(manifestPath);
     } catch {
       logger.warn(
-        `[PluginLoader] Skipping ${pluginPath}: No plugin.json manifest found`
+        `[PluginLoader] Skipping ${pluginPath}: No ${PLUGIN_FILES.MANIFEST} manifest found`
       );
       return [];
     }
@@ -528,7 +529,7 @@ export class PluginLoader {
       manifest = JSON.parse(manifestContent);
     } catch (error) {
       logger.error(
-        `[PluginLoader] Failed to parse plugin.json in ${pluginPath}: ${
+        `[PluginLoader] Failed to parse ${PLUGIN_FILES.MANIFEST} in ${pluginPath}: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
@@ -602,6 +603,9 @@ export class PluginLoader {
           },
         });
 
+        logger.debug(
+          `[PluginLoader] Plugin '${manifest.name}' waiting for configuration - returning empty tools array`
+        );
         return [];
       }
 

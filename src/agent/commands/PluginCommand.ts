@@ -12,9 +12,15 @@ import type { CommandResult } from '../CommandHandler.js';
 import { PLUGINS_DIR } from '../../config/paths.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import type { PluginManifest } from '../../plugins/PluginLoader.js';
 import { formatError } from '../../utils/errorUtils.js';
+import { PathUtils } from '../../plugins/utils.js';
+import type {
+  PluginConfigManagerService,
+  PluginLoaderService,
+  ToolManagerService,
+} from '../../plugins/interfaces.js';
+import { PLUGIN_FILES } from '../../plugins/constants.js';
 
 export class PluginCommand extends Command {
   readonly name = '/plugin';
@@ -84,7 +90,7 @@ export class PluginCommand extends Command {
       }
 
       // Read plugin manifest
-      const manifestPath = join(pluginPath, 'plugin.json');
+      const manifestPath = join(pluginPath, PLUGIN_FILES.MANIFEST);
       let manifest: PluginManifest;
 
       try {
@@ -104,12 +110,12 @@ export class PluginCommand extends Command {
       }
 
       // Load existing config if any
-      const configManager = serviceRegistry.get('plugin_config_manager');
+      const configManager = serviceRegistry.get<PluginConfigManagerService>('plugin_config_manager');
       let existingConfig: any = null;
 
-      if (configManager && typeof (configManager as any).loadConfig === 'function') {
+      if (configManager) {
         try {
-          existingConfig = await (configManager as any).loadConfig(
+          existingConfig = await configManager.loadConfig(
             pluginName,
             pluginPath,
             manifest.config
@@ -150,27 +156,25 @@ export class PluginCommand extends Command {
 
     try {
       // Resolve path (handle relative paths, ~, etc.)
-      const resolvedPath = pluginPath.startsWith('~')
-        ? pluginPath.replace('~', homedir())
-        : pluginPath;
+      const resolvedPath = PathUtils.resolvePath(pluginPath);
 
       // Get PluginLoader from registry
-      const pluginLoader = serviceRegistry.get('plugin_loader');
-      if (!pluginLoader || typeof (pluginLoader as any).installFromPath !== 'function') {
+      const pluginLoader = serviceRegistry.get<PluginLoaderService>('plugin_loader');
+      if (!pluginLoader) {
         return this.createError('PluginLoader not available');
       }
 
       // Install the plugin
-      const result = await (pluginLoader as any).installFromPath(resolvedPath, PLUGINS_DIR);
+      const result = await pluginLoader.installFromPath(resolvedPath, PLUGINS_DIR);
 
       if (!result.success) {
         return this.createError(result.error || 'Failed to install plugin');
       }
 
       // Register tools with ToolManager
-      const toolManager = serviceRegistry.get('tool_manager');
-      if (toolManager && result.tools && result.tools.length > 0 && typeof (toolManager as any).registerTools === 'function') {
-        (toolManager as any).registerTools(result.tools);
+      const toolManager = serviceRegistry.get<ToolManagerService>('tool_manager');
+      if (toolManager && result.tools && result.tools.length > 0) {
+        toolManager.registerTools(result.tools);
       }
 
       // Return success message with appropriate details
@@ -203,13 +207,13 @@ export class PluginCommand extends Command {
 
     try {
       // Get PluginLoader from registry
-      const pluginLoader = serviceRegistry.get('plugin_loader');
-      if (!pluginLoader || typeof (pluginLoader as any).uninstall !== 'function') {
+      const pluginLoader = serviceRegistry.get<PluginLoaderService>('plugin_loader');
+      if (!pluginLoader) {
         return this.createError('PluginLoader not available');
       }
 
       // Uninstall the plugin
-      const result = await (pluginLoader as any).uninstall(pluginName, PLUGINS_DIR);
+      const result = await pluginLoader.uninstall(pluginName, PLUGINS_DIR);
 
       if (!result.success) {
         return this.createError(result.error || 'Failed to uninstall plugin');

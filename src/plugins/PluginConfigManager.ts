@@ -11,48 +11,35 @@ import { join } from 'path';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import { logger } from '../services/Logger.js';
 import type { PluginConfigSchema, ConfigProperty } from './PluginLoader.js';
-
-/**
- * Encryption configuration
- * Uses AES-256-GCM for authenticated encryption
- */
-const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
-const KEY_LENGTH = 32; // 256 bits
-const IV_LENGTH = 16; // 128 bits
-
-/**
- * Encrypted field marker
- */
-const ENCRYPTED_PREFIX = '__ENCRYPTED__:';
+import { PLUGIN_ENCRYPTION, PLUGIN_FILES } from './constants.js';
+import { ConfigUtils } from './utils.js';
 
 export class PluginConfigManager {
   private encryptionKey: Buffer | null = null;
 
   /**
    * Get or create the encryption key
-   * Key is derived from a machine-specific identifier
+   * Key is derived from machine-specific identifier for local-only encryption
    */
   private async getEncryptionKey(): Promise<Buffer> {
     if (this.encryptionKey) {
       return this.encryptionKey;
     }
 
-    // Use a machine-specific identifier for key derivation
-    // In a real production system, you might want to use a more secure key storage
     const keyMaterial = process.env.USER || process.env.USERNAME || 'ally-default';
     const salt = Buffer.from('ally-plugin-config-salt');
 
-    this.encryptionKey = scryptSync(keyMaterial, salt, KEY_LENGTH);
+    this.encryptionKey = scryptSync(keyMaterial, salt, PLUGIN_ENCRYPTION.KEY_LENGTH);
     return this.encryptionKey;
   }
 
   /**
-   * Encrypt a string value
+   * Encrypt a string value using AES-256-GCM
    */
   private async encrypt(value: string): Promise<string> {
     const key = await this.getEncryptionKey();
-    const iv = randomBytes(IV_LENGTH);
-    const cipher = createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
+    const iv = randomBytes(PLUGIN_ENCRYPTION.IV_LENGTH);
+    const cipher = createCipheriv(PLUGIN_ENCRYPTION.ALGORITHM, key, iv);
 
     let encrypted = cipher.update(value, 'utf8', 'hex');
     encrypted += cipher.final('hex');
@@ -60,7 +47,8 @@ export class PluginConfigManager {
     const authTag = cipher.getAuthTag();
 
     // Format: iv:authTag:encrypted
-    return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
+    const sep = PLUGIN_ENCRYPTION.SEPARATOR;
+    return `${iv.toString('hex')}${sep}${authTag.toString('hex')}${sep}${encrypted}`;
   }
 
   /**
@@ -68,7 +56,7 @@ export class PluginConfigManager {
    */
   private async decrypt(encryptedValue: string): Promise<string> {
     const key = await this.getEncryptionKey();
-    const parts = encryptedValue.split(':');
+    const parts = encryptedValue.split(PLUGIN_ENCRYPTION.SEPARATOR);
 
     if (parts.length !== 3) {
       throw new Error('Invalid encrypted value format');
@@ -78,7 +66,7 @@ export class PluginConfigManager {
     const authTag = Buffer.from(parts[1]!, 'hex');
     const encrypted = parts[2]!;
 
-    const decipher = createDecipheriv(ENCRYPTION_ALGORITHM, key, iv);
+    const decipher = createDecipheriv(PLUGIN_ENCRYPTION.ALGORITHM, key, iv);
     decipher.setAuthTag(authTag);
 
     const decrypted = decipher.update(encrypted, 'hex', 'utf8') + decipher.final('utf8');
@@ -95,15 +83,16 @@ export class PluginConfigManager {
     }
 
     const encrypted = { ...config };
+    const prefix = `${PLUGIN_ENCRYPTION.PREFIX}${PLUGIN_ENCRYPTION.SEPARATOR}`;
 
     for (const [key, property] of Object.entries(schema.schema.properties)) {
       const prop = property as ConfigProperty;
-      if (prop.secret && encrypted[key] !== undefined && encrypted[key] !== null) {
+      if (prop.secret && !ConfigUtils.isEmpty(encrypted[key])) {
         const value = String(encrypted[key]);
         // Only encrypt if not already encrypted
-        if (!value.startsWith(ENCRYPTED_PREFIX)) {
+        if (!value.startsWith(prefix)) {
           const encryptedValue = await this.encrypt(value);
-          encrypted[key] = `${ENCRYPTED_PREFIX}${encryptedValue}`;
+          encrypted[key] = `${prefix}${encryptedValue}`;
         }
       }
     }
@@ -120,14 +109,15 @@ export class PluginConfigManager {
     }
 
     const decrypted = { ...config };
+    const prefix = `${PLUGIN_ENCRYPTION.PREFIX}${PLUGIN_ENCRYPTION.SEPARATOR}`;
 
     for (const [key, property] of Object.entries(schema.schema.properties)) {
       const prop = property as ConfigProperty;
-      if (prop.secret && decrypted[key] !== undefined && decrypted[key] !== null) {
+      if (prop.secret && !ConfigUtils.isEmpty(decrypted[key])) {
         const value = String(decrypted[key]);
-        if (value.startsWith(ENCRYPTED_PREFIX)) {
+        if (value.startsWith(prefix)) {
           try {
-            const encryptedValue = value.substring(ENCRYPTED_PREFIX.length);
+            const encryptedValue = value.substring(prefix.length);
             decrypted[key] = await this.decrypt(encryptedValue);
           } catch (error) {
             logger.warn(
@@ -158,25 +148,11 @@ export class PluginConfigManager {
       const prop = property as ConfigProperty;
       const value = config[key];
 
-      // Skip if value is not provided
-      if (value === undefined || value === null || value === '') {
+      if (ConfigUtils.isEmpty(value)) {
         continue;
       }
 
-      // Convert based on expected type
-      if (prop.type === 'integer' || prop.type === 'number') {
-        if (typeof value === 'string') {
-          const num = Number(value);
-          if (!isNaN(num)) {
-            normalized[key] = num;
-          }
-        }
-      } else if (prop.type === 'boolean') {
-        if (typeof value === 'string') {
-          normalized[key] = value === 'true';
-        }
-      }
-      // string type doesn't need conversion
+      normalized[key] = ConfigUtils.coerceType(value, prop.type);
     }
 
     return normalized;
@@ -197,45 +173,19 @@ export class PluginConfigManager {
       const value = config[key];
 
       // Check required fields
-      if (prop.required && (value === undefined || value === null || value === '')) {
+      if (prop.required && ConfigUtils.isEmpty(value)) {
         errors.push(`Required field '${key}' is missing`);
         continue;
       }
 
       // Skip type validation if field is not required and not provided
-      if (!prop.required && (value === undefined || value === null)) {
+      if (!prop.required && ConfigUtils.isEmpty(value)) {
         continue;
       }
 
       // Type validation with coercion support
-      if (value !== undefined && value !== null) {
-        const actualType = typeof value;
-        let isValid = false;
-
-        // For integer/number types, accept both number and string-numbers
-        if (prop.type === 'integer' || prop.type === 'number') {
-          if (actualType === 'number') {
-            isValid = true;
-          } else if (actualType === 'string' && !isNaN(Number(value)) && value.trim() !== '') {
-            isValid = true;
-          }
-        }
-        // For boolean type, accept boolean or string boolean
-        else if (prop.type === 'boolean') {
-          if (actualType === 'boolean') {
-            isValid = true;
-          } else if (actualType === 'string' && (value === 'true' || value === 'false')) {
-            isValid = true;
-          }
-        }
-        // For string type
-        else if (prop.type === 'string') {
-          isValid = actualType === 'string';
-        }
-
-        if (!isValid) {
-          errors.push(`Field '${key}' has invalid type. Expected ${prop.type}, got ${actualType}`);
-        }
+      if (!ConfigUtils.isEmpty(value) && !ConfigUtils.validateType(value, prop.type)) {
+        errors.push(`Field '${key}' has invalid type. Expected ${prop.type}, got ${typeof value}`);
       }
     }
 
@@ -246,7 +196,7 @@ export class PluginConfigManager {
    * Get the config file path for a plugin
    */
   private getConfigPath(pluginPath: string): string {
-    return join(pluginPath, 'config.json');
+    return join(pluginPath, PLUGIN_FILES.CONFIG);
   }
 
   /**

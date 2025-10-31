@@ -25,7 +25,7 @@ import { Message, ActivityEventType, Config } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
-import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
+import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
@@ -506,7 +506,7 @@ export class Agent {
     // Get function definitions from tool manager
     // Exclude todo management tools from specialized agents (only main agent can manage todos)
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-    let excludeTools = allowTodoManagement ? undefined : ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
+    let excludeTools = allowTodoManagement ? undefined : ([...TOOL_NAMES.TODO_MANAGEMENT_TOOLS] as string[]);
 
     // Handle currentToolContext for tool filtering
     if (this.currentToolContext) {
@@ -956,7 +956,7 @@ export class Agent {
   generateSystemPrompt(): string {
     // Exclude todo management tools from specialized agents (only main agent can manage todos)
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-    const excludeTools = allowTodoManagement ? undefined : ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'];
+    const excludeTools = allowTodoManagement ? undefined : ([...TOOL_NAMES.TODO_MANAGEMENT_TOOLS] as string[]);
     const functions = this.toolManager.getFunctionDefinitions(excludeTools);
 
     let prompt = this.config.systemPrompt || 'You are a helpful AI assistant.';

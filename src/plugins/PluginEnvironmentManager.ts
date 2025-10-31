@@ -16,6 +16,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../services/Logger.js';
 import { PLUGIN_ENVS_DIR } from '../config/paths.js';
+import { PLUGIN_FILES, PLUGIN_TIMEOUTS, PluginEnvironmentStatus } from './constants.js';
 
 const execAsync = promisify(exec);
 
@@ -38,7 +39,7 @@ interface EnvironmentState {
   name: string;
 
   /** Installation status */
-  status: 'uninstalled' | 'installing' | 'ready' | 'error';
+  status: PluginEnvironmentStatus;
 
   /** Error message if status is 'error' */
   error?: string;
@@ -70,7 +71,7 @@ export class PluginEnvironmentManager {
     dependencies: PluginDependencies
   ): Promise<boolean> {
     const envPath = join(PLUGIN_ENVS_DIR, pluginName);
-    const markerFile = join(envPath, '.installed');
+    const markerFile = join(envPath, PLUGIN_FILES.STATE_MARKER);
 
     // Check if already installed
     try {
@@ -97,7 +98,7 @@ export class PluginEnvironmentManager {
       // Mark as installed
       const state: EnvironmentState = {
         name: pluginName,
-        status: 'ready',
+        status: PluginEnvironmentStatus.READY,
         installed_at: new Date().toISOString(),
       };
       await fs.writeFile(markerFile, JSON.stringify(state, null, 2));
@@ -113,7 +114,7 @@ export class PluginEnvironmentManager {
       // Save error state
       const state: EnvironmentState = {
         name: pluginName,
-        status: 'error',
+        status: PluginEnvironmentStatus.ERROR,
         error: errorMsg,
       };
       try {
@@ -129,16 +130,9 @@ export class PluginEnvironmentManager {
 
   /**
    * Setup Python virtual environment and install dependencies
-   *
-   * Creates a venv and installs packages from requirements.txt
-   *
-   * @param _pluginName - Name of the plugin (unused but kept for interface consistency)
-   * @param pluginPath - Absolute path to the plugin directory
-   * @param envPath - Path where venv should be created
-   * @param dependencies - Dependency specification
    */
   private async setupPythonEnv(
-    _pluginName: string,
+    pluginName: string,
     pluginPath: string,
     envPath: string,
     dependencies: PluginDependencies
@@ -147,10 +141,10 @@ export class PluginEnvironmentManager {
     await fs.mkdir(envPath, { recursive: true });
 
     // Create virtual environment
-    logger.info(`[PluginEnvironmentManager]   → Creating virtual environment`);
+    logger.info(`[PluginEnvironmentManager]   → Creating virtual environment for '${pluginName}'`);
     try {
       await execAsync(`python3 -m venv "${envPath}"`, {
-        timeout: 60000, // 60 seconds
+        timeout: PLUGIN_TIMEOUTS.VENV_CREATION,
       });
     } catch (error) {
       throw new Error(
@@ -180,7 +174,7 @@ export class PluginEnvironmentManager {
 
       const { stderr } = await execAsync(installCmd, {
         cwd: pluginPath,
-        timeout: 300000, // 5 minutes
+        timeout: PLUGIN_TIMEOUTS.DEPENDENCY_INSTALL,
       });
 
       // Log output for debugging (only if there are warnings/errors)
@@ -216,16 +210,13 @@ export class PluginEnvironmentManager {
 
   /**
    * Check if a plugin's environment is ready
-   *
-   * @param pluginName - Name of the plugin
-   * @returns True if environment is installed and ready
    */
   async isReady(pluginName: string): Promise<boolean> {
-    const markerFile = join(PLUGIN_ENVS_DIR, pluginName, '.installed');
+    const markerFile = join(PLUGIN_ENVS_DIR, pluginName, PLUGIN_FILES.STATE_MARKER);
     try {
       const content = await fs.readFile(markerFile, 'utf-8');
       const state: EnvironmentState = JSON.parse(content);
-      return state.status === 'ready';
+      return state.status === PluginEnvironmentStatus.READY;
     } catch {
       return false;
     }

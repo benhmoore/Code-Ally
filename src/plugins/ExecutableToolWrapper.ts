@@ -1,8 +1,8 @@
 import { BaseTool } from '../tools/BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { spawn } from 'child_process';
-import { TIMEOUT_LIMITS } from '../config/toolDefaults.js';
+import { spawn, ChildProcess } from 'child_process';
+import { TIMEOUT_LIMITS, TOOL_LIMITS } from '../config/toolDefaults.js';
 import type { ToolDefinition, PluginManifest } from './PluginLoader.js';
 import type { PluginEnvironmentManager } from './PluginEnvironmentManager.js';
 
@@ -163,6 +163,20 @@ export class ExecutableToolWrapper extends BaseTool {
 	}
 
 	/**
+	 * Gracefully terminate a child process with SIGTERM, followed by SIGKILL if needed
+	 *
+	 * @param child - Child process to terminate
+	 */
+	private terminateProcess(child: ChildProcess): void {
+		child.kill('SIGTERM');
+		setTimeout(() => {
+			if (child.exitCode === null) {
+				child.kill('SIGKILL');
+			}
+		}, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+	}
+
+	/**
 	 * Spawns the external process and manages its execution.
 	 *
 	 * @param args - Resolved arguments to pass to the plugin
@@ -171,7 +185,6 @@ export class ExecutableToolWrapper extends BaseTool {
 	 */
 	private async executePlugin(args: any, abortSignal?: AbortSignal): Promise<ToolResult> {
 		return new Promise((resolve, reject) => {
-			const MAX_OUTPUT_SIZE = 10 * 1024 * 1024; // 10MB
 			let stdout = '';
 			let stderr = '';
 			let outputTruncated = false;
@@ -192,12 +205,7 @@ export class ExecutableToolWrapper extends BaseTool {
 
 			// Set up abort handler
 			const abortHandler = () => {
-				child.kill('SIGTERM');
-				setTimeout(() => {
-					if (child.exitCode === null) {
-						child.kill('SIGKILL');
-					}
-				}, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+				this.terminateProcess(child);
 			};
 
 			if (abortSignal) {
@@ -219,8 +227,8 @@ export class ExecutableToolWrapper extends BaseTool {
 			} catch (error) {
 				child.kill();
 				reject(new Error(
-					`Failed to serialize arguments to JSON: ${error instanceof Error ? error.message : String(error)}\n` +
-					`Arguments: ${JSON.stringify(args, null, 2)}`
+					`Failed to serialize arguments to JSON: ${error instanceof Error ? error.message : String(error)}
+Arguments: ${JSON.stringify(args, null, 2)}`
 				));
 				return;
 			}
@@ -228,30 +236,23 @@ export class ExecutableToolWrapper extends BaseTool {
 			// Set up timeout
 			const timeoutId = setTimeout(() => {
 				timedOut = true;
-				child.kill('SIGTERM');
-
-				// Force kill after graceful shutdown delay if process doesn't terminate
-				setTimeout(() => {
-					if (child.exitCode === null) {
-						child.kill('SIGKILL');
-					}
-				}, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+				this.terminateProcess(child);
 			}, this.timeout);
 
 			// Handle spawn errors
 			child.on('error', (error) => {
 				clearTimeout(timeoutId);
 				reject(new Error(
-					`Failed to spawn process '${this.command}': ${error.message}\n` +
-					`Working directory: ${this.workingDir}\n` +
-					`Command: ${this.command} ${this.commandArgs.join(' ')}`
+					`Failed to spawn process '${this.command}': ${error.message}
+Working directory: ${this.workingDir}
+Command: ${this.command} ${this.commandArgs.join(' ')}`
 				));
 			});
 
 			// Collect stdout with size limits and streaming
 			child.stdout.on('data', (data) => {
 				const chunk = data.toString();
-				if (stdout.length + chunk.length <= MAX_OUTPUT_SIZE) {
+				if (stdout.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
 					stdout += chunk;
 					// Stream output for real-time feedback
 					this.emitOutputChunk(chunk);
@@ -266,7 +267,7 @@ export class ExecutableToolWrapper extends BaseTool {
 			// Collect stderr with size limits
 			child.stderr.on('data', (data) => {
 				const chunk = data.toString();
-				if (stderr.length + chunk.length <= MAX_OUTPUT_SIZE) {
+				if (stderr.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
 					stderr += chunk;
 					this.emitOutputChunk(chunk);
 				}
@@ -283,27 +284,25 @@ export class ExecutableToolWrapper extends BaseTool {
 
 				// Check if killed due to abort
 				if (abortSignal?.aborted) {
-					reject(new Error(
-						'Plugin execution interrupted by user'
-					));
+					reject(new Error('Plugin execution interrupted by user'));
 					return;
 				}
 
 				if (timedOut) {
 					reject(new Error(
-						`Plugin execution timed out after ${this.timeout}ms\n` +
-						`Command: ${this.command} ${this.commandArgs.join(' ')}\n` +
-						`Stderr: ${stderr || '(none)'}`
+						`Plugin execution timed out after ${this.timeout}ms
+Command: ${this.command} ${this.commandArgs.join(' ')}
+Stderr: ${stderr || '(none)'}`
 					));
 					return;
 				}
 
 				if (code !== 0) {
 					reject(new Error(
-						`Plugin exited with code ${code}\n` +
-						`Command: ${this.command} ${this.commandArgs.join(' ')}\n` +
-						`Stdout: ${stdout || '(none)'}\n` +
-						`Stderr: ${stderr || '(none)'}`
+						`Plugin exited with code ${code}
+Command: ${this.command} ${this.commandArgs.join(' ')}
+Stdout: ${stdout || '(none)'}
+Stderr: ${stderr || '(none)'}`
 					));
 					return;
 				}
@@ -331,8 +330,8 @@ export class ExecutableToolWrapper extends BaseTool {
 	private parsePluginOutput(stdout: string, stderr: string, outputTruncated: boolean = false): ToolResult {
 		if (!stdout.trim()) {
 			return this.formatErrorResponse(
-				'Plugin produced no output\n' +
-				`Stderr: ${stderr || '(none)'}`,
+				`Plugin produced no output
+Stderr: ${stderr || '(none)'}`,
 				'plugin_error'
 			);
 		}
@@ -377,11 +376,14 @@ export class ExecutableToolWrapper extends BaseTool {
 			});
 
 		} catch (error) {
-			// JSON parse failed - return raw output with error context
+			// JSON parse failed - return raw output with enhanced error context
 			return this.formatErrorResponse(
-				`Failed to parse plugin output as JSON: ${error instanceof Error ? error.message : String(error)}\n` +
-				`Raw output:\n${stdout}\n` +
-				`Stderr: ${stderr || '(none)'}`,
+				`Failed to parse plugin output as JSON: ${error instanceof Error ? error.message : String(error)}
+Plugin: ${this.name}
+Command: ${this.command} ${this.commandArgs.join(' ')}
+Raw output:
+${stdout}
+Stderr: ${stderr || '(none)'}`,
 				'plugin_error'
 			);
 		}

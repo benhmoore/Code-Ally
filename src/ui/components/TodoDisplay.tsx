@@ -97,8 +97,8 @@ export const TodoDisplay: React.FC = () => {
       )}
 
       {/* Show indicator if more todos exist */}
-      {incompleteTodos.length > 3 && (
-        <Text dimColor> (+{incompleteTodos.length - 3} more)</Text>
+      {incompleteTodos.length > BUFFER_SIZES.MAX_TODO_DISPLAY_ITEMS && (
+        <Text dimColor> (+{incompleteTodos.length - BUFFER_SIZES.MAX_TODO_DISPLAY_ITEMS} more)</Text>
       )}
     </Box>
   );

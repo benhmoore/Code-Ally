@@ -10,6 +10,7 @@ import { Box, Text, useInput } from 'ink';
 import { PluginConfigSchema, ConfigProperty } from '../../plugins/PluginLoader.js';
 import { logger } from '../../services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
+import { PLUGIN_UI } from '../../plugins/constants.js';
 
 interface PluginConfigViewProps {
   pluginName: string;
@@ -91,9 +92,9 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
     if (step === ConfigStep.FIELD_INPUT && currentProperty) {
       if (currentProperty.type === 'boolean') {
         // Boolean field - Y/N input
-        if (input === 'y' || input === 'Y') {
+        if (PLUGIN_UI.BOOLEAN_YES.includes(input as any)) {
           handleFieldSubmit(true);
-        } else if (input === 'n' || input === 'N') {
+        } else if (PLUGIN_UI.BOOLEAN_NO.includes(input as any)) {
           handleFieldSubmit(false);
         }
       } else {
@@ -118,9 +119,9 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
         }
       }
     } else if (step === ConfigStep.CONFIRM) {
-      if (input === 'y' || input === 'Y') {
+      if (PLUGIN_UI.BOOLEAN_YES.includes(input as any)) {
         handleConfirm();
-      } else if (input === 'n' || input === 'N') {
+      } else if (PLUGIN_UI.BOOLEAN_NO.includes(input as any)) {
         onCancel();
       }
     }
@@ -309,8 +310,8 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
         paddingX={2}
         paddingY={1}
         flexDirection="column"
-        minHeight={15}
-        width={80}
+        minHeight={PLUGIN_UI.CONFIG_VIEW_MIN_HEIGHT}
+        width={PLUGIN_UI.CONFIG_VIEW_WIDTH}
       >
         {step === ConfigStep.FIELD_INPUT && renderFieldInput()}
         {step === ConfigStep.CONFIRM && renderConfirmation()}

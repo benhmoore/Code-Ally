@@ -305,8 +305,8 @@ export class TodoManager {
 
     // Generic fallback: show first key-value pair
     const keys = Object.keys(args);
-    if (keys.length > 0 && keys[0]) {
-      const firstKey = keys[0];
+    const firstKey = keys[0];
+    if (firstKey !== undefined) {
       const value = String(args[firstKey]);
       return value.substring(0, TEXT_LIMITS.VALUE_DISPLAY_MAX) + (value.length > TEXT_LIMITS.VALUE_DISPLAY_MAX ? '...' : '');
     }
@@ -583,6 +583,58 @@ export class TodoManager {
       if (inProgressSubtasks.length > 1) {
         return `Parent "${parent.task}" has ${inProgressSubtasks.length} subtasks in_progress. Only ONE subtask can be in_progress at a time.`;
       }
+    }
+
+    return null;
+  }
+
+  /**
+   * Validate "exactly ONE in_progress" rule
+   */
+  validateExactlyOneInProgress(todos: TodoItem[]): string | null {
+    const inProgressCount = todos.filter(t => t.status === 'in_progress').length;
+    const incompleteCount = todos.filter(
+      t => t.status === 'pending' || t.status === 'in_progress'
+    ).length;
+
+    if (incompleteCount > 0) {
+      if (inProgressCount === 0) {
+        return 'At least one incomplete task must be marked as "in_progress".';
+      }
+      if (inProgressCount > 1) {
+        return `Only ONE task can be "in_progress" at a time. Found ${inProgressCount} in_progress tasks.`;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Validate all todo rules in a single method
+   * Returns the first validation error encountered, or null if all validations pass
+   */
+  validateAllRules(todos: TodoItem[]): string | null {
+    // Validate dependencies exist and no circular refs
+    const depError = this.validateDependencies(todos);
+    if (depError) return depError;
+
+    // Validate subtask depth (max 1)
+    const depthError = this.validateSubtaskDepth(todos);
+    if (depthError) return depthError;
+
+    // Validate blocked todos not in_progress
+    const blockedError = this.validateInProgressNotBlocked(todos);
+    if (blockedError) return blockedError;
+
+    // Validate "exactly ONE in_progress" rule
+    const inProgressError = this.validateExactlyOneInProgress(todos);
+    if (inProgressError) return inProgressError;
+
+    // Validate subtask in_progress rule for the current in_progress parent
+    const inProgressParent = todos.find(t => t.status === 'in_progress');
+    if (inProgressParent) {
+      const subtaskError = this.validateSubtaskInProgress(inProgressParent);
+      if (subtaskError) return subtaskError;
     }
 
     return null;

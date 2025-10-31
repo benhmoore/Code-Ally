@@ -25,6 +25,9 @@ export const TOOL_LIMITS = {
 
   /** Maximum context lines to show around matches */
   MAX_CONTEXT_LINES: 10,
+
+  /** Maximum output size for plugin execution (10MB) */
+  MAX_PLUGIN_OUTPUT_SIZE: 10 * 1024 * 1024,
 } as const;
 
 /**
@@ -103,4 +106,12 @@ export const CONTEXT_THRESHOLDS = {
     85: 'Approaching limit: Complete current task then wrap up',
     95: 'CRITICAL: Stop tool use after current operation and summarize immediately',
   },
+} as const;
+
+/**
+ * Tool name constants
+ */
+export const TOOL_NAMES = {
+  /** Todo management tools that don't receive the todo_id parameter */
+  TODO_MANAGEMENT_TOOLS: ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'],
 } as const;

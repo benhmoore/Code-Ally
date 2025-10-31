@@ -8,6 +8,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
+import { autoSaveTodos } from '../utils/todoUtils.js';
 
 export class TodoRemoveTool extends BaseTool {
   readonly name = 'todo_remove';
@@ -105,76 +106,17 @@ export class TodoRemoveTool extends BaseTool {
         return todo;
       });
 
-      // Validate dependencies exist and no circular refs
-      const depError = todoManager.validateDependencies(remainingTodos);
-      if (depError) {
-        return this.formatErrorResponse(depError, 'validation_error');
-      }
-
-      // Validate subtask depth (max 1)
-      const depthError = todoManager.validateSubtaskDepth(remainingTodos);
-      if (depthError) {
-        return this.formatErrorResponse(depthError, 'validation_error');
-      }
-
-      // Validate blocked todos not in_progress
-      const blockedError = todoManager.validateInProgressNotBlocked(remainingTodos);
-      if (blockedError) {
-        return this.formatErrorResponse(blockedError, 'validation_error');
-      }
-
-      // Validate "exactly ONE in_progress" rule after removal
-      const inProgressCount = remainingTodos.filter(t => t.status === 'in_progress').length;
-      const incompleteCount = remainingTodos.filter(
-        t => t.status === 'pending' || t.status === 'in_progress'
-      ).length;
-
-      if (incompleteCount > 0 && inProgressCount === 0) {
-        return this.formatErrorResponse(
-          'After removal, at least one incomplete task must be marked as "in_progress".',
-          'validation_error',
-          'Use todo_update to mark a task as in_progress before removing'
-        );
-      }
-
-      if (inProgressCount > 1) {
-        return this.formatErrorResponse(
-          `After removal, only ONE task can be "in_progress". Found ${inProgressCount}.`,
-          'validation_error'
-        );
-      }
-
-      // Validate subtask in_progress rule
-      const inProgressParent = remainingTodos.find(t => t.status === 'in_progress');
-      if (inProgressParent) {
-        const subtaskError = todoManager.validateSubtaskInProgress(inProgressParent);
-        if (subtaskError) {
-          return this.formatErrorResponse(subtaskError, 'validation_error');
-        }
+      // Validate all rules
+      const validationError = todoManager.validateAllRules(remainingTodos);
+      if (validationError) {
+        return this.formatErrorResponse(validationError, 'validation_error');
       }
 
       // Write remaining todos
       todoManager.setTodos(remainingTodos);
 
       // Auto-save
-      const sessionManager = registry.get('session_manager');
-      if (sessionManager && typeof (sessionManager as any).autoSave === 'function') {
-        const agent = registry.get('agent');
-        const messages = agent && typeof (agent as any).getMessages === 'function'
-          ? (agent as any).getMessages()
-          : [];
-        const idleMessageGenerator = registry.get('idle_message_generator');
-        const idleMessages = idleMessageGenerator && typeof (idleMessageGenerator as any).getQueue === 'function'
-          ? (idleMessageGenerator as any).getQueue()
-          : undefined;
-        const projectContextDetector = registry.get('project_context_detector');
-        const projectContext = projectContextDetector && typeof (projectContextDetector as any).getCached === 'function'
-          ? (projectContextDetector as any).getCached()
-          : undefined;
-        (sessionManager as any).autoSave(messages, remainingTodos, idleMessages, projectContext).catch((error: Error) => {
-          console.error('[TodoRemoveTool] Failed to auto-save session:', error);
-        });
-      }
+      await autoSaveTodos(remainingTodos);
 
       const incompleteTodos = todoManager.getIncompleteTodos();
       const message = `Removed ${removedItems.length} todo(s):\n${removedItems.map(item => `  - ${item}`).join('\n')}\n\n${incompleteTodos.length} task(s) remaining.`;
