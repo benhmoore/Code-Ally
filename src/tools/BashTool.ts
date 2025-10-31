@@ -38,7 +38,7 @@ export class BashTool extends BaseTool {
           properties: {
             command: {
               type: 'string',
-              description: `Shell command to execute. IMPORTANT: Use non-interactive flags: npm create ... -- --yes, npm init -y, apt install -y, etc. Commands will be killed if idle for ${TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000}+ seconds.`,
+              description: `Shell command to execute. IMPORTANT: Use non-interactive flags: npm create -y ..., npm init -y, apt install -y, etc. Commands will be killed if idle for ${TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000}+ seconds.`,
             },
             description: {
               type: 'string',
@@ -160,7 +160,7 @@ export class BashTool extends BaseTool {
    */
   private checkInteractiveCommand(command: string): { isInteractive: boolean; suggestion?: string } {
     const patterns = [
-      { pattern: /^npm\s+create(?!\s+.*--\s+--yes)/, suggestion: 'Add -- --yes: npm create vite@latest myapp -- --yes' },
+      { pattern: /^npm\s+create(?!\s+(-y|--yes)(?:\s|$))/, suggestion: 'Add -y flag: npm create -y vite@latest myapp -- --template react-ts' },
       { pattern: /^npm\s+init(?!\s+(-y|--yes))/, suggestion: 'Use: npm init -y' },
       { pattern: /^npx\s+create-[^\s]+(?!.*(-y|--yes))/, suggestion: 'Many create-* tools support -y flag' },
       { pattern: /^(apt-get|apt)\s+install(?!\s+.*-y)/, suggestion: 'Add -y flag' },

@@ -381,6 +381,92 @@ describe('OllamaClient', () => {
 
       expect(result.tool_calls![0].function.arguments).toEqual({ command: 'ls' });
     });
+
+    it('should return error response on validation failure for continuation', async () => {
+      // Response has invalid tool call (missing function name)
+      const invalidResponse = {
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'call-123',
+              type: 'function',
+              function: {
+                // Missing name - will fail validation
+                arguments: { command: 'ls' },
+              },
+            },
+          ],
+        },
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => invalidResponse,
+      });
+
+      const messages: Message[] = [{ role: 'user', content: 'Test' }];
+
+      const result = await client.send(messages, { stream: false });
+
+      // Should return error response with validation failure flag (for Agent-level continuation)
+      expect(result.error).toBe(true);
+      expect(result.tool_call_validation_failed).toBe(true);
+      expect(result.validation_errors).toBeDefined();
+      expect(result.validation_errors!.length).toBeGreaterThan(0);
+      expect(result.tool_calls).toBeDefined(); // Malformed calls included
+      expect(mockFetch).toHaveBeenCalledTimes(1); // No retry - Agent handles continuation
+    });
+
+    it('should return error response on streaming validation failure for continuation', async () => {
+      // Streaming response has invalid tool call
+      const invalidStreamChunk = JSON.stringify({
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'call-123',
+              type: 'function',
+              function: {
+                // Missing name - will fail validation
+                arguments: { command: 'ls' },
+              },
+            },
+          ],
+        },
+        done: true,
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({
+                done: false,
+                value: new TextEncoder().encode(invalidStreamChunk),
+              })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+          }),
+        },
+      });
+
+      const messages: Message[] = [{ role: 'user', content: 'Test' }];
+
+      const result = await client.send(messages, { stream: true });
+
+      // Should return error response with validation failure flag (for Agent-level continuation)
+      expect(result.error).toBe(true);
+      expect(result.tool_call_validation_failed).toBe(true);
+      expect(result.validation_errors).toBeDefined();
+      expect(result.validation_errors!.length).toBeGreaterThan(0);
+      expect(result.tool_calls).toBeDefined(); // Malformed calls included
+      expect(mockFetch).toHaveBeenCalledTimes(1); // No retry - Agent handles continuation
+    });
+
   });
 
   describe('Payload preparation', () => {

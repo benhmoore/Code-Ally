@@ -8,10 +8,10 @@
 import { ToolResult, ActivityEvent, ActivityEventType, ErrorType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { TEXT_LIMITS } from '../config/constants.js';
+import { logger } from '../services/Logger.js';
 
 export abstract class BaseTool {
   /**
@@ -62,13 +62,6 @@ export abstract class BaseTool {
    * Example: "When answering questions about current information, always verify by searching first."
    */
   readonly usageGuidance?: string;
-
-  /**
-   * Whether this tool requires a todo_id parameter when todos exist
-   * Set to false for meta-tools (todo management, planning, exploration)
-   * Default: true (most tools should be linked to a todo)
-   */
-  readonly requiresTodoId: boolean = true;
 
   /**
    * Activity stream for emitting events
@@ -126,35 +119,13 @@ export abstract class BaseTool {
     this.currentCallId = callId;
     this.currentAbortSignal = abortSignal;
 
-    // Extract and remove todo_id and completes_todo from args (they're not tool-specific parameters)
-    const todoId = args.todo_id;
-    const completesTodo = args.completes_todo ?? false; // Default to false
-    const cleanArgs = { ...args };
-    delete cleanArgs.todo_id;
-    delete cleanArgs.completes_todo;
-
-    // Validate todo_id if required
-    const todoValidation = this.validateTodoId(todoId);
-    if (!todoValidation.valid) {
-      return this.formatErrorResponse(
-        todoValidation.error!,
-        'validation_error',
-        todoValidation.suggestion
-      );
-    }
-
     try {
       // Check if already aborted before starting
       if (abortSignal?.aborted) {
         throw new Error('AbortError: Tool execution was interrupted');
       }
 
-      const result = await this.executeImpl(cleanArgs);
-
-      // If execution was successful, todo_id was provided, and completes_todo is true, mark todo as complete
-      if (result.success && todoId && completesTodo) {
-        this.markTodoComplete(todoId);
-      }
+      const result = await this.executeImpl(args);
 
       return result;
     } catch (error) {
@@ -182,89 +153,6 @@ export abstract class BaseTool {
    * Abstract implementation method - subclasses must implement this
    */
   protected abstract executeImpl(args: any): Promise<ToolResult>;
-
-  /**
-   * Validate todo_id parameter based on tool requirements and todo state
-   *
-   * @param todoId - The todo_id from tool arguments (may be undefined)
-   * @returns Validation result with error details if invalid
-   */
-  private validateTodoId(todoId: string | undefined): { valid: boolean; error?: string; suggestion?: string } {
-    // If tool doesn't require todo_id, it's always valid
-    if (!this.requiresTodoId) {
-      return { valid: true };
-    }
-
-    // Get todo manager
-    const registry = ServiceRegistry.getInstance();
-    const todoManager = registry.get<TodoManager>('todo_manager');
-
-    if (!todoManager) {
-      // No todo manager available - allow execution (graceful degradation)
-      return { valid: true };
-    }
-
-    const todos = todoManager.getTodos();
-
-    // If no todos exist, todo_id is not required
-    if (todos.length === 0) {
-      return { valid: true };
-    }
-
-    // Todos exist and this tool requires todo_id - validate it
-    if (!todoId) {
-      return {
-        valid: false,
-        error: `todo_id is required when todos exist`,
-        suggestion: `Use TodoWrite to create a todo first, or specify todo_id from existing todos: ${todos.slice(0, 3).map((t: any) => t.id).join(', ')}`,
-      };
-    }
-
-    // Verify todo_id exists and is not completed
-    const todo = todos.find((t: any) => t.id === todoId);
-    if (!todo) {
-      return {
-        valid: false,
-        error: `Invalid todo_id: ${todoId}`,
-        suggestion: `Available todo IDs: ${todos.slice(0, 5).map((t: any) => `${t.id} (${t.task})`).join(', ')}`,
-      };
-    }
-
-    if (todo.status === 'completed') {
-      return {
-        valid: false,
-        error: `Cannot use completed todo: ${todoId}`,
-        suggestion: `Use a pending or in_progress todo, or create a new one with TodoWrite`,
-      };
-    }
-
-    return { valid: true };
-  }
-
-  /**
-   * Mark a todo as complete by ID
-   * Called automatically when a tool execution succeeds and completes_todo=true
-   *
-   * @param todoId - ID of the todo to mark as complete
-   */
-  private markTodoComplete(todoId: string): void {
-    try {
-      const registry = ServiceRegistry.getInstance();
-      const todoManager = registry.get<TodoManager>('todo_manager');
-
-      if (todoManager) {
-        const completedTodo = todoManager.completeTodoById(todoId);
-        if (!completedTodo) {
-          // Todo not found - silently ignore (may have been already completed or removed)
-          return;
-        }
-      }
-    } catch (error) {
-      // Silently handle errors to avoid disrupting tool execution
-      // Todo completion is a convenience feature and should never break the tool
-      console.error(`[BaseTool] Failed to complete todo ${todoId}:`, error);
-    }
-  }
 
   /**
    * Emit an event to the activity stream
@@ -575,7 +463,7 @@ export abstract class BaseTool {
       );
 
       if (patchNumber !== null) {
-        console.debug(`[${this.name}] Captured ${operationType} operation as patch ${patchNumber}`);
+        logger.debug(`[${this.name}] Captured ${operationType} operation as patch ${patchNumber}`);
       }
 
       return patchNumber;

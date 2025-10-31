@@ -6,7 +6,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { TodoManager, TodoStatus } from '../services/TodoManager.js';
+import { TodoManager, TodoStatus, TodoItem } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { autoSaveTodos } from '../utils/todoUtils.js';
 
@@ -19,10 +19,9 @@ interface TodoInput {
 export class TodoAddTool extends BaseTool {
   readonly name = 'todo_add';
   readonly description =
-    'Add new todos to the existing list without replacing it. Validates "exactly ONE in_progress" rule against the complete combined list. Use this when adding tasks to ongoing work.';
+    'Add new todos to the existing list without replacing it. Validates "at most ONE in_progress" rule against the complete combined list (0 or 1 allowed). Use this when adding tasks to ongoing work.';
   readonly requiresConfirmation = false;
-  readonly visibleInChat = false;
-  readonly requiresTodoId = false; // Todo management tools don't need todo_id
+  readonly visibleInChat = true;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -54,6 +53,35 @@ export class TodoAddTool extends BaseTool {
                   activeForm: {
                     type: 'string',
                     description: 'Present continuous form (e.g., "Running tests")',
+                  },
+                  dependencies: {
+                    type: 'array',
+                    description: 'Optional array of todo IDs that must complete before this task can start',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  subtasks: {
+                    type: 'array',
+                    description: 'Optional nested subtasks for hierarchical breakdown (max depth 1)',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        content: {
+                          type: 'string',
+                          description: 'Subtask description in imperative form',
+                        },
+                        status: {
+                          type: 'string',
+                          description: 'Subtask status: proposed, pending, in_progress, or completed',
+                        },
+                        activeForm: {
+                          type: 'string',
+                          description: 'Present continuous form of subtask',
+                        },
+                      },
+                      required: ['content', 'status', 'activeForm'],
+                    },
                   },
                 },
                 required: ['content', 'status', 'activeForm'],
@@ -103,15 +131,27 @@ export class TodoAddTool extends BaseTool {
 
       // Get current todos and append new ones
       const existingTodos = todoManager.getTodos();
-      const createdTodos = newTodos.map((t: TodoInput) =>
-        todoManager.createTodoItem(
+      const createdTodos = newTodos.map((t: TodoInput) => {
+        // Process subtasks if provided
+        let processedSubtasks: TodoItem[] | undefined;
+        if ((t as any).subtasks && Array.isArray((t as any).subtasks)) {
+          processedSubtasks = (t as any).subtasks.map((st: any) =>
+            todoManager.createTodoItem(
+              st.content,
+              st.status as TodoStatus,
+              st.activeForm
+            )
+          );
+        }
+
+        return todoManager.createTodoItem(
           t.content,
           t.status as TodoStatus,
           t.activeForm,
           (t as any).dependencies,
-          (t as any).subtasks
-        )
-      );
+          processedSubtasks
+        );
+      });
       const combinedTodos = [...existingTodos, ...createdTodos];
 
       // Validate all rules
@@ -130,7 +170,13 @@ export class TodoAddTool extends BaseTool {
       let message = `Added ${createdTodos.length} todo(s). ${incompleteTodos.length} task(s) remaining.`;
 
       if (incompleteTodos.length === 0) {
-        message += '\n\n⚠️  All todos completed! You must either:\n  1. Add more todos (if more work is needed), OR\n  2. End your turn and respond to the user';
+        message += '\n\n✓ All todos completed! Next steps:\n  1. Add more todos if there\'s more work, OR\n  2. End your turn and respond to the user';
+      }
+
+      // Include summary of current todos so agent can see what exists
+      const todoSummary = todoManager.generateActiveContext();
+      if (todoSummary) {
+        message += `\n\nCurrent todos:\n${todoSummary}`;
       }
 
       return this.formatSuccessResponse({

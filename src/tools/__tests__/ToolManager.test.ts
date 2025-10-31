@@ -130,21 +130,6 @@ describe('ToolManager', () => {
       expect(result.error).toContain('Redundant tool call');
     });
 
-    it('should ignore todo_id when detecting duplicates', async () => {
-      await toolManager.executeTool('read', {
-        file_paths: ['test.txt'],
-        todo_id: 'task1'
-      });
-
-      const result = await toolManager.executeTool('read', {
-        file_paths: ['test.txt'],
-        todo_id: 'task2'
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Redundant tool call');
-    });
-
     it('should allow same call after clearing turn with warning', async () => {
       await toolManager.executeTool('read', { file_paths: ['test.txt'] });
 

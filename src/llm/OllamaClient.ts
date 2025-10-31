@@ -5,7 +5,7 @@
  * - Streaming and non-streaming responses
  * - Function calling (both legacy and modern formats)
  * - Tool call validation and repair
- * - Automatic retry with exponential backoff
+ * - Automatic retry with exponential backoff (network errors, HTTP 500/503, JSON errors, validation errors)
  * - Request cancellation via AbortController
  *
  * Based on the Python implementation with TypeScript improvements.
@@ -165,6 +165,7 @@ export class OllamaClient extends ModelClient {
    * Send messages to Ollama and receive a response
    *
    * Implements retry logic with exponential backoff and tool call validation.
+   * Both streaming and non-streaming responses support validation retry.
    *
    * @param messages - Conversation history
    * @param options - Send options
@@ -183,7 +184,7 @@ export class OllamaClient extends ModelClient {
     const payload = this.preparePayload(messages, functions, stream, temperature);
 
     try {
-      // Retry loop with exponential backoff
+      // Retry loop with exponential backoff (network errors only)
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           // Execute request with cancellation support
@@ -193,35 +194,29 @@ export class OllamaClient extends ModelClient {
           if (result.tool_calls && result.tool_calls.length > 0) {
             const validationResult = this.normalizeToolCallsInMessage(result);
 
-            // For non-streaming, retry on validation errors
-            if (!stream && !validationResult.valid) {
-              // Attempt to retry with error feedback
-              const retryResult = await this.handleToolCallValidationRetry(
-                result,
-                messages,
-                functions,
-                maxRetries
+            // GAP 3: Return validation error response for Agent-level continuation
+            // Instead of retrying the entire request, return error response with malformed tool calls
+            // This allows Agent to add the assistant's response to history and request continuation
+            if (!validationResult.valid) {
+              logger.warn(
+                `[OLLAMA_CLIENT] Tool call validation failed in ${stream ? 'streaming' : 'non-streaming'} response, ` +
+                `returning error for Agent-level continuation...`
               );
+              logger.debug('[OLLAMA_CLIENT] Validation errors:', validationResult.errors);
 
-              if (retryResult) {
-                return retryResult;
-              }
-
-              // Return error response if retries exhausted
+              // Return error response with malformed tool calls and validation errors
               return {
                 role: 'assistant',
-                content: `I attempted to call tools but encountered validation errors. ${validationResult.errors.join('; ')}`,
+                content: result.content || '',
+                tool_calls: result.tool_calls, // Include malformed calls
+                error: true,
                 tool_call_validation_failed: true,
                 validation_errors: validationResult.errors,
               };
             }
-
-            // For streaming, just log errors (can't retry)
-            if (stream && !validationResult.valid) {
-              console.warn('Tool call validation errors in streaming response:', validationResult.errors);
-            }
           }
 
+          // Validation passed or no tool calls - return result
           return result;
         } catch (error: any) {
           // Handle abort/interruption
@@ -237,6 +232,15 @@ export class OllamaClient extends ModelClient {
           // Retry on network errors with exponential backoff (2^attempt seconds)
           if (this.isNetworkError(error) && attempt < maxRetries) {
             const waitTime = Math.pow(2, attempt);
+            await this.sleep(waitTime * TIME_UNITS.MS_PER_SECOND);
+            continue;
+          }
+
+          // Retry on HTTP 500/503 errors with exponential backoff (2^attempt seconds)
+          // These are often transient errors (malformed tool calls, internal server errors)
+          if (this.isRetryableHttpError(error) && attempt < maxRetries) {
+            const waitTime = Math.pow(2, attempt);
+            logger.warn(`[OLLAMA_CLIENT] HTTP ${error.httpStatus} error on request ${requestId}, retrying in ${waitTime}s... (attempt ${attempt + 1}/${maxRetries})`);
             await this.sleep(waitTime * TIME_UNITS.MS_PER_SECOND);
             continue;
           }
@@ -345,13 +349,20 @@ export class OllamaClient extends ModelClient {
       // Check response status
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        // Create error with status code attached for retry logic
+        const error: any = new Error(`HTTP ${response.status}: ${errorText}`);
+        error.httpStatus = response.status;
+        throw error;
       }
 
       // Process response
       if (stream) {
         return await this.processStreamingResponse(requestId, response, abortController);
       } else {
+        // Non-streaming mode - parse response
+        // GAP 2: For non-streaming, the entire response arrives at once, so HTTP errors
+        // happen before we get any data. However, we still wrap in try-catch to maintain
+        // consistency with streaming error handling.
         const data = await response.json();
         return this.parseNonStreamingResponse(data);
       }
@@ -380,6 +391,8 @@ export class OllamaClient extends ModelClient {
     let aggregatedThinking = '';
     let aggregatedMessage: Partial<LLMResponse> = { role: 'assistant' };
     let contentWasStreamed = false;
+    let hadThinking = false; // Track if we've seen thinking chunks
+    let thinkingComplete = false; // Track if thinking block completed
 
     try {
       while (true) {
@@ -430,6 +443,7 @@ export class OllamaClient extends ModelClient {
             // Accumulate thinking
             const thinkingChunk = message.thinking || '';
             if (thinkingChunk) {
+              hadThinking = true;
               aggregatedThinking += thinkingChunk;
               aggregatedMessage.thinking = aggregatedThinking;
 
@@ -440,6 +454,17 @@ export class OllamaClient extends ModelClient {
                   type: ActivityEventType.THOUGHT_CHUNK,
                   timestamp: Date.now(),
                   data: { chunk: thinkingChunk },
+                });
+              }
+            } else if (hadThinking && !thinkingComplete) {
+              // First chunk without thinking after having thinking = thinking block complete
+              thinkingComplete = true;
+              if (this.activityStream && aggregatedThinking) {
+                this.activityStream.emit({
+                  id: `thinking-complete-${requestId}`,
+                  type: ActivityEventType.THOUGHT_COMPLETE,
+                  timestamp: Date.now(),
+                  data: { thinking: aggregatedThinking },
                 });
               }
             }
@@ -480,6 +505,28 @@ export class OllamaClient extends ModelClient {
           _content_was_streamed: contentWasStreamed,
         };
       }
+
+      // GAP 2: HTTP errors during streaming - check if we have partial response
+      // If we received any content or tool calls before the error, return partial response
+      const hasPartialResponse = aggregatedContent.trim().length > 0 || (aggregatedMessage.tool_calls && aggregatedMessage.tool_calls.length > 0);
+
+      if (hasPartialResponse) {
+        logger.warn('[OLLAMA_CLIENT] HTTP error during streaming with partial response - returning partial data');
+        logger.debug('[OLLAMA_CLIENT] Partial content length:', aggregatedContent.length, 'Tool calls:', aggregatedMessage.tool_calls?.length || 0);
+
+        return {
+          role: 'assistant',
+          content: aggregatedContent,
+          tool_calls: aggregatedMessage.tool_calls,
+          thinking: aggregatedThinking || undefined,
+          error: true,
+          partial: true,
+          error_message: `Response interrupted: ${error.message}`,
+          _content_was_streamed: contentWasStreamed,
+        } as LLMResponse;
+      }
+
+      // No partial response - re-throw for full retry
       throw error;
     }
 
@@ -638,80 +685,6 @@ export class OllamaClient extends ModelClient {
     return { valid: true, errors: [], repaired };
   }
 
-  /**
-   * Handle tool call validation retry
-   */
-  private async handleToolCallValidationRetry(
-    result: LLMResponse,
-    originalMessages: Message[],
-    functions?: FunctionDefinition[],
-    _maxRetries: number = 2
-  ): Promise<LLMResponse | null> {
-    // Build retry conversation with error feedback
-    const errorMessage = this.createToolCallErrorMessage(result);
-
-    // Convert tool_calls format from LLMResponse to Message format
-    const toolCallsForMessage = result.tool_calls?.map(tc => ({
-      id: tc.id,
-      type: 'function' as const,
-      function: {
-        name: tc.function.name,
-        arguments: tc.function.arguments,
-      },
-    }));
-
-    const retryMessages: Message[] = [
-      ...originalMessages,
-      {
-        role: 'assistant' as const,
-        content: result.content || '',
-        tool_calls: toolCallsForMessage,
-      },
-      {
-        role: 'user' as const,
-        content: errorMessage,
-      },
-    ];
-
-    // Retry without streaming
-    try {
-      return await this.send(retryMessages, { functions, stream: false, maxRetries: 0 });
-    } catch (error) {
-      return null;
-    }
-  }
-
-  /**
-   * Create error message for tool call validation failures
-   */
-  private createToolCallErrorMessage(result: LLMResponse): string {
-    const validationResult = this.normalizeToolCallsInMessage(result);
-
-    let message = 'I encountered errors with your tool calls. Please fix these issues:\n\n';
-
-    validationResult.errors.forEach((error, index) => {
-      message += `${index + 1}. ${error}\n`;
-    });
-
-    message += '\nPlease ensure your tool calls follow this exact format:\n';
-    message += '```json\n';
-    message += JSON.stringify(
-      {
-        id: 'unique-id',
-        type: 'function',
-        function: {
-          name: 'tool_name',
-          arguments: {},
-        },
-      },
-      null,
-      2
-    );
-    message += '\n```\n\n';
-    message += 'Try your tool calls again with the correct format.';
-
-    return message;
-  }
 
   /**
    * Handle request errors and generate user-friendly responses
@@ -770,6 +743,18 @@ export class OllamaClient extends ModelClient {
       error.message?.includes('ECONNREFUSED') ||
       error.message?.includes('ETIMEDOUT')
     );
+  }
+
+  /**
+   * Check if error is a retryable HTTP error (500/503)
+   *
+   * HTTP 500 (Internal Server Error): Often caused by malformed tool calls or model errors
+   * HTTP 503 (Service Unavailable): Temporary server overload or maintenance
+   *
+   * Both are typically transient and may succeed on retry
+   */
+  private isRetryableHttpError(error: any): boolean {
+    return error.httpStatus === 500 || error.httpStatus === 503;
   }
 
   /**

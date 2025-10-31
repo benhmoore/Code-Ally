@@ -21,7 +21,12 @@ interface TimestampedThought {
   completedAt: number;
 }
 
-export const ReasoningStream: React.FC = () => {
+interface ReasoningStreamProps {
+  config?: any;
+}
+
+export const ReasoningStream: React.FC<ReasoningStreamProps> = ({ config }) => {
+  const showThinkingInChat = config?.show_thinking_in_chat ?? false;
   const [reasoning, setReasoning] = useState<string>('');
   const currentThoughtRef = useRef<string>(''); // Current streaming thought
   const thoughtHistoryRef = useRef<TimestampedThought[]>([]); // Previous completed thoughts with timestamps
@@ -139,7 +144,13 @@ export const ReasoningStream: React.FC = () => {
     // Join all thoughts
     const fullText = allThoughts.join(' ');
 
-    // Truncate to fit within MAX_LINES by complete sentences
+    // If show_thinking_in_chat is enabled, don't truncate - show everything
+    if (showThinkingInChat) {
+      setReasoning(fullText);
+      return;
+    }
+
+    // Otherwise, truncate to fit within MAX_LINES by complete sentences
     const maxChars = MAX_LINES * CHARS_PER_LINE;
     let displayText = fullText;
 
@@ -200,7 +211,20 @@ export const ReasoningStream: React.FC = () => {
   useActivityEvent(ActivityEventType.AGENT_END, () => {
     isStreamingRef.current = false;
 
-    // Move current thought to history if exists and it fits within MAX_LINES
+    // If show_thinking_in_chat is enabled, clear immediately (thinking will appear in chat history)
+    if (showThinkingInChat) {
+      thoughtHistoryRef.current = [];
+      currentThoughtRef.current = '';
+      setReasoning('');
+
+      if (cleanupTimerRef.current) {
+        clearInterval(cleanupTimerRef.current);
+        cleanupTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Otherwise, move current thought to history if exists and it fits within MAX_LINES
     if (currentThoughtRef.current) {
       const remainderLines = Math.ceil(currentThoughtRef.current.length / CHARS_PER_LINE);
       if (remainderLines <= MAX_LINES) {

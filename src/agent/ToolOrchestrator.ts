@@ -67,6 +67,7 @@ export class ToolOrchestrator {
   private toolResultManager: ToolResultManager | null = null;
   private permissionManager: PermissionManager | null = null;
   private parentCallId?: string; // Parent context for nested agents
+  private cycleDetectionResults: Map<string, { toolName: string; count: number; isValidRepeat: boolean }> = new Map();
 
   constructor(
     toolManager: ToolManager,
@@ -90,13 +91,20 @@ export class ToolOrchestrator {
    * Execute tool calls (concurrent or sequential based on tool types)
    *
    * @param toolCalls - Array of tool calls from LLM
+   * @param cycles - Optional map of tool call ID to cycle detection info
    */
-  async executeToolCalls(toolCalls: ToolCall[]): Promise<void> {
+  async executeToolCalls(
+    toolCalls: ToolCall[],
+    cycles?: Map<string, { toolName: string; count: number; isValidRepeat: boolean }>
+  ): Promise<void> {
     logger.debug('[TOOL_ORCHESTRATOR] executeToolCalls called with', toolCalls.length, 'tool calls');
 
     if (toolCalls.length === 0) {
       return;
     }
+
+    // Store cycles for later use in result formatting
+    this.cycleDetectionResults = cycles || new Map();
 
     // Unwrap batch tool calls into individual tool calls
     const unwrappedCalls = this.unwrapBatchCalls(toolCalls);
@@ -445,6 +453,12 @@ export class ToolOrchestrator {
         });
       }
     } catch (error) {
+      // Handle permission denied as interrupt - don't catch, let it bubble up
+      if (error instanceof PermissionDeniedError) {
+        console.log('[PERMISSION] Permission denied - interrupting agent execution');
+        throw error;
+      }
+
       // Handle abort/interrupt errors specially
       if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('interrupted'))) {
         result = {
@@ -452,10 +466,7 @@ export class ToolOrchestrator {
           error: 'Tool execution interrupted by user',
           error_type: 'interrupted',
         };
-      } else if (
-        error instanceof DirectoryTraversalError ||
-        error instanceof PermissionDeniedError
-      ) {
+      } else if (error instanceof DirectoryTraversalError) {
         result = {
           success: false,
           error: error.message,
@@ -505,15 +516,29 @@ export class ToolOrchestrator {
     toolCall: ToolCall,
     result: ToolResult
   ): Promise<void> {
-    // Format result as natural language
-    const formattedResult = this.formatToolResult(toolCall.function.name, result);
+    // Format result as natural language (pass toolCallId for cycle detection)
+    const formattedResult = this.formatToolResult(toolCall.function.name, result, toolCall.id);
 
     logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool:', toolCall.function.name, 'id:', toolCall.id, 'success:', result.success, 'resultLength:', formattedResult.length);
+
+    // Check for duplicate result content to prevent context bloat
+    const tokenManager = this.agent.getTokenManager();
+    const previousCallId = tokenManager.trackToolResult(toolCall.id, formattedResult);
+
+    let finalContent: string;
+    if (previousCallId) {
+      // Result is identical to a previous call - replace with reference
+      finalContent = `[Duplicate result: This ${toolCall.function.name} call returned identical content to call ID ${previousCallId}. Review that result above instead of re-reading. Repeated identical reads waste context space.]`;
+      logger.debug('[TOOL_ORCHESTRATOR] Deduplicated result for', toolCall.function.name, '- references call', previousCallId);
+    } else {
+      // Unique result - use full content
+      finalContent = formattedResult;
+    }
 
     // Add tool result message to conversation
     this.agent.addMessage({
       role: 'tool',
-      content: formattedResult,
+      content: finalContent,
       tool_call_id: toolCall.id,
       name: toolCall.function.name,
     });
@@ -529,27 +554,30 @@ export class ToolOrchestrator {
    *
    * @param toolName - Name of the tool
    * @param result - Tool execution result
+   * @param toolCallId - Tool call ID for cycle detection
    * @returns Formatted result string
    */
-  private formatToolResult(toolName: string, result: ToolResult): string {
+  private formatToolResult(toolName: string, result: ToolResult, toolCallId?: string): string {
     // Handle internal-only tool results (for special tools like delegate_task)
     if ((result as any)._internal_only) {
       return (result as any).result || 'Internal operation completed';
     }
 
-    // Extract warning before serialization to ensure it's not lost during truncation
+    // Extract warning and system_reminder before serialization to ensure they're not lost during truncation
     const warning = result.warning;
-    const resultWithoutWarning = { ...result };
-    delete resultWithoutWarning.warning;
+    const systemReminder = (result as any).system_reminder;
+    const resultWithoutExtras = { ...result };
+    delete resultWithoutExtras.warning;
+    delete (resultWithoutExtras as any).system_reminder;
 
     // Serialize result object to JSON (includes all metadata like file_check)
     // This matches Python CodeAlly's behavior in response_processor.py
     let resultStr: string;
     try {
-      resultStr = JSON.stringify(resultWithoutWarning);
+      resultStr = JSON.stringify(resultWithoutExtras);
     } catch (error) {
       // Fallback for non-serializable objects
-      resultStr = String(resultWithoutWarning);
+      resultStr = String(resultWithoutExtras);
     }
 
     // Apply context-aware truncation if ToolResultManager is available
@@ -560,6 +588,22 @@ export class ToolOrchestrator {
     // Append warning after truncation to ensure it's always visible
     if (warning) {
       resultStr += `\n\n⚠️  ${warning}`;
+    }
+
+    // Inject system_reminder from tool result (if provided)
+    // This allows tools to inject contextual reminders directly into their results
+    if (systemReminder) {
+      resultStr += `\n\n<system-reminder>${systemReminder}</system-reminder>`;
+    }
+
+    // Inject cycle detection warning if this tool call is part of a cycle
+    if (toolCallId && this.cycleDetectionResults.has(toolCallId)) {
+      const cycleInfo = this.cycleDetectionResults.get(toolCallId)!;
+      if (!cycleInfo.isValidRepeat) {
+        const cycleWarning = `You've called "${cycleInfo.toolName}" with identical arguments ${cycleInfo.count} times recently, getting the same results. This suggests you're stuck in a loop. Consider trying a different approach or re-reading previous results.`;
+        resultStr += `\n\n<system-reminder>${cycleWarning}</system-reminder>`;
+        logger.debug('[TOOL_ORCHESTRATOR] Injected cycle warning for', toolName, 'call', toolCallId);
+      }
     }
 
     // Inject focus reminder in every tool result if there's an active todo (main agent only)

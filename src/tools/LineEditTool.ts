@@ -238,7 +238,7 @@ export class LineEditTool extends BaseTool {
         return this.formatErrorResponse(
           `line_number ${lineNumber} does not exist (file has ${totalLines} line${totalLines !== 1 ? 's' : ''})`,
           'validation_error',
-          `Last lines of file:\n${context}`
+          `Last lines of file:\n${context}\n\nUse the Read tool to see the actual file content.`
         );
       }
 
@@ -338,8 +338,9 @@ export class LineEditTool extends BaseTool {
     const endLine = lineNumber + numLines - 1;
 
     if (endLine > totalLines) {
+      const context = this.getLineContext(lines, totalLines, Math.max(1, totalLines - TEXT_LIMITS.LINE_EDIT_CONTEXT_LINES));
       return {
-        error: `Cannot delete ${numLines} line(s) starting at line ${lineNumber} (file has ${totalLines} line${totalLines !== 1 ? 's' : ''})`,
+        error: `Cannot delete ${numLines} line(s) starting at line ${lineNumber} (file has ${totalLines} line${totalLines !== 1 ? 's' : ''}).\n\nLast lines of file:\n${context}\n\nUse the Read tool to see the actual file content.`,
       };
     }
 

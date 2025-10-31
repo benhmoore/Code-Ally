@@ -25,6 +25,5 @@ export { TodoAddTool } from './TodoAddTool.js';
 export { TodoRemoveTool } from './TodoRemoveTool.js';
 export { TodoUpdateTool } from './TodoUpdateTool.js';
 export { TodoClearTool } from './TodoClearTool.js';
-export { ConfirmProposalTool } from './ConfirmProposalTool.js';
-export { ModifyProposalTool } from './ModifyProposalTool.js';
-export { DeclineProposalTool } from './DeclineProposalTool.js';
+export { TodoListTool } from './TodoListTool.js';
+export { DenyProposalTool } from './DenyProposalTool.js';

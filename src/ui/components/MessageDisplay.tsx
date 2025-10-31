@@ -7,6 +7,8 @@ import { TEXT_LIMITS } from '../../config/constants.js';
 interface MessageDisplayProps {
   /** Message to display */
   message: Message;
+  /** Configuration (for show_thinking_in_chat) */
+  config?: any;
 }
 
 /**
@@ -24,8 +26,9 @@ interface MessageDisplayProps {
  * - Memoized to prevent re-renders (messages never change)
  * - Critical for smooth performance with long conversations
  */
-const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message }) => {
+const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, config }) => {
   const { role, content, name } = message;
+  const showThinking = config?.show_thinking_in_chat ?? false;
 
   // User messages - bold with prompt prefix
   if (role === 'user') {
@@ -43,30 +46,26 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message }) => 
     // Handle empty or undefined content
     const safeContent = content || '';
 
-    // Check for thinking content (simplified extraction)
-    const thinkingMatch = safeContent.match(/<think>(.*?)<\/think>/s);
-    const thinking = thinkingMatch?.[1]?.trim() || null;
-    const regularContent = thinking
-      ? safeContent.replace(/<think>.*?<\/think>/s, '').trim()
-      : safeContent;
+    // Get thinking from message field (native reasoning from model)
+    const thinking = message.thinking?.trim() || null;
 
     // Check if this is a command response that should be styled in yellow
     const isCommandResponse = message.metadata?.isCommandResponse === true;
 
     return (
       <Box flexDirection="column">
-        {thinking && (
+        {showThinking && thinking && (
           <Box marginBottom={1}>
             <Text dimColor italic color="cyan">
               {thinking}
             </Text>
           </Box>
         )}
-        {regularContent && (
+        {safeContent && (
           isCommandResponse ? (
-            <Text color="yellow">{regularContent}</Text>
+            <Text color="yellow">{safeContent}</Text>
           ) : (
-            <MarkdownText content={regularContent} />
+            <MarkdownText content={safeContent} />
           )
         )}
         {/* Note: Tool calls are now displayed via ToolCallDisplay in ConversationView */}

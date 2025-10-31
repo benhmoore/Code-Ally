@@ -620,6 +620,22 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     }
   });
 
+  // Subscribe to thinking complete (when thinking block finishes during streaming)
+  useActivityEvent(ActivityEventType.THOUGHT_COMPLETE, (event) => {
+    const thinking = event.data?.thinking || '';
+
+    // Only add to chat if show_thinking_in_chat is enabled
+    if (state.config?.show_thinking_in_chat && thinking) {
+      // Add thinking as an assistant message
+      actions.addMessage({
+        role: 'assistant',
+        content: '',
+        thinking: thinking,
+        timestamp: Date.now(),
+      });
+    }
+  });
+
   // Track agent start (both main and specialized agents)
   useActivityEvent(ActivityEventType.AGENT_START, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
@@ -1850,7 +1866,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       sessionSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
           {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream />
+          <ReasoningStream config={state.config} />
 
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
@@ -1882,7 +1898,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modelSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
           {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream />
+          <ReasoningStream config={state.config} />
 
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
@@ -1920,7 +1936,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           return (
             <Box marginTop={1} flexDirection="column">
               {/* Reasoning Stream - shows thinking tokens */}
-              <ReasoningStream />
+              <ReasoningStream config={state.config} />
 
               {/* Status Indicator - always visible to show todos */}
               <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
@@ -1954,7 +1970,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Undo File List (two-stage flow - stage 1) */
         <Box marginTop={1} flexDirection="column">
           {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream />
+          <ReasoningStream config={state.config} />
 
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
@@ -1985,7 +2001,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
         <Box marginTop={1} flexDirection="column">
           {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream />
+          <ReasoningStream config={state.config} />
 
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
@@ -2018,7 +2034,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
           {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream />
+          <ReasoningStream config={state.config} />
 
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
@@ -2051,7 +2067,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Input Group - Status Indicator + Input Prompt */
         <Box marginTop={1} flexDirection="column">
           {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream />
+          <ReasoningStream config={state.config} />
 
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />

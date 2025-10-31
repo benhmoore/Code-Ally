@@ -118,6 +118,6 @@ export const CONTEXT_THRESHOLDS = {
  * Tool name constants
  */
 export const TOOL_NAMES = {
-  /** Todo management tools that don't receive the todo_id parameter */
+  /** Todo management tools */
   TODO_MANAGEMENT_TOOLS: ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'],
 } as const;

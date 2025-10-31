@@ -3,7 +3,7 @@
  *
  * Safely marks todos as completed or updates their status by reading current
  * state from TodoManager. Prevents race conditions where stale state overwrites
- * recent changes (e.g., after confirm_proposal).
+ * recent changes (e.g., after plan or todo_add).
  */
 
 import { BaseTool } from './BaseTool.js';
@@ -17,10 +17,9 @@ import { autoSaveTodos } from '../utils/todoUtils.js';
 export class TodoUpdateTool extends BaseTool {
   readonly name = 'todo_update';
   readonly description =
-    'Update status of specific todos. Safely marks todos as completed or changes their status by finding them by id or content. Use when you need to update a few todos, especially after other tools have modified the todo list (e.g., after confirm_proposal). This prevents accidentally overwriting recent changes.';
+    'Update status of one or more todos in a single call. Accepts an array of updates to safely change todo status (pending/in_progress/completed) by finding todos by id or content. Can update multiple todos at once. Use this instead of reading and rewriting the entire list to prevent accidentally overwriting recent changes from other tools (e.g., after plan or todo_add).';
   readonly requiresConfirmation = false;
-  readonly visibleInChat = false;
-  readonly requiresTodoId = false; // Todo management tools don't need todo_id
+  readonly visibleInChat = true;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -150,6 +149,25 @@ export class TodoUpdateTool extends BaseTool {
         );
       }
 
+      // Auto-clean broken dependencies (remove references to completed/deleted todos)
+      const completedIds = new Set(
+        updatedTodos.filter(t => t.status === 'completed').map(t => t.id)
+      );
+      const existingIds = new Set(updatedTodos.map(t => t.id));
+      const cleanedWarnings: string[] = [];
+
+      updatedTodos.forEach(todo => {
+        if (todo.dependencies && todo.dependencies.length > 0) {
+          const cleaned = todo.dependencies.filter(
+            depId => existingIds.has(depId) && !completedIds.has(depId)
+          );
+          if (cleaned.length !== todo.dependencies.length) {
+            cleanedWarnings.push(todo.task);
+          }
+          todo.dependencies = cleaned.length > 0 ? cleaned : undefined;
+        }
+      });
+
       // Validate all rules
       const validationError = todoManager.validateAllRules(updatedTodos);
       if (validationError) {
@@ -173,7 +191,13 @@ export class TodoUpdateTool extends BaseTool {
 
       if (incompleteTodos.length === 0) {
         message +=
-          '\n\n⚠️  All todos completed! You must either:\n  1. Add more todos (if more work is needed), OR\n  2. End your turn and respond to the user';
+          '\n\n✓ All todos completed! Next steps:\n  1. Add more todos if there\'s more work, OR\n  2. End your turn and respond to the user';
+      }
+
+      // Include summary of current todos so agent can see what exists
+      const todoSummary = todoManager.generateActiveContext();
+      if (todoSummary) {
+        message += `\n\nCurrent todos:\n${todoSummary}`;
       }
 
       return this.formatSuccessResponse({

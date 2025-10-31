@@ -184,7 +184,7 @@ Core Commands:
   /config set <key>=<val>  - Set a configuration value
   /config reset            - Reset all settings to defaults
   /model [ally|service] [name] - Switch model or show current model
-  /debug [system|tokens]   - Show debug information
+  /debug [system|tokens|context|chat] - Show debug information
   /context                 - Show context usage (token count)
   /clear                   - Clear conversation history
   /compact                 - Compact conversation history
@@ -297,6 +297,7 @@ Plugin Commands:
   /debug system    - Show system prompt and tool definitions
   /debug tokens    - Show token usage and memory stats
   /debug context   - Show conversation context
+  /debug chat      - Log full chat history as JSON to console
 `,
       };
     }
@@ -314,10 +315,12 @@ Plugin Commands:
         return this.debugTokens(messages);
       case 'context':
         return this.debugContext(messages);
+      case 'chat':
+        return this.debugChat(messages);
       default:
         return {
           handled: true,
-          response: `Unknown debug subcommand: ${subcommand}. Available: system, tokens, context`,
+          response: `Unknown debug subcommand: ${subcommand}. Available: system, tokens, context, chat`,
         };
     }
   }
@@ -477,6 +480,27 @@ Plugin Commands:
       return {
         handled: true,
         response: `Error displaying context: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      };
+    }
+  }
+
+  /**
+   * Debug: Log full chat history to console as JSON
+   */
+  private async debugChat(messages: Message[]): Promise<CommandResult> {
+    try {
+      console.log('\n=== FULL CHAT HISTORY (JSON) ===\n');
+      console.log(JSON.stringify(messages, null, 2));
+      console.log('\n=== END CHAT HISTORY ===\n');
+
+      return {
+        handled: true,
+        response: `Chat history logged to console (${messages.length} messages)`,
+      };
+    } catch (error) {
+      return {
+        handled: true,
+        response: `Error logging chat history: ${error instanceof Error ? error.message : 'Unknown error'}`,
       };
     }
   }

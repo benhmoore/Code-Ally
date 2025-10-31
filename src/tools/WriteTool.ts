@@ -15,7 +15,7 @@ import * as path from 'path';
 
 export class WriteTool extends BaseTool {
   readonly name = 'write';
-  readonly description = 'Create or overwrite files on local filesystem';
+  readonly description = 'Create a new file with the specified content. FAILS if file already exists. Use edit or line_edit to modify existing files.';
   readonly requiresConfirmation = true; // Destructive operation
 
   constructor(activityStream: ActivityStream) {
@@ -40,11 +40,7 @@ export class WriteTool extends BaseTool {
             },
             content: {
               type: 'string',
-              description: 'Content to write to the file',
-            },
-            create_backup: {
-              type: 'boolean',
-              description: 'Create a backup file (.bak) before writing (default: false)',
+              description: 'Complete file content for the new file.',
             },
           },
           required: ['file_path', 'content'],
@@ -68,15 +64,15 @@ export class WriteTool extends BaseTool {
     await this.safelyEmitDiffPreview(
       absolutePath,
       async () => {
-        // Check if file exists and read existing content
-        let existingContent = '';
+        // Check if file exists
         try {
           await fs.access(absolutePath);
-          existingContent = await fs.readFile(absolutePath, 'utf-8');
+          // File exists - write will fail, so show warning in preview
+          return { oldContent: '[File exists - write will fail]', newContent: content };
         } catch {
-          // File doesn't exist - that's ok for write
+          // File doesn't exist - show as new file creation
+          return { oldContent: '', newContent: content };
         }
-        return { oldContent: existingContent, newContent: content };
       },
       'write'
     );
@@ -89,7 +85,6 @@ export class WriteTool extends BaseTool {
     // Extract and validate parameters
     const filePath = args.file_path as string;
     const content = args.content as string;
-    const createBackup = args.create_backup === true;
 
     if (!filePath) {
       return this.formatErrorResponse(
@@ -111,21 +106,22 @@ export class WriteTool extends BaseTool {
     const absolutePath = resolvePath(filePath);
 
     try {
-      // Check if file exists and read existing content
+      // Check if file exists
       let fileExists = false;
-      let existingContent = '';
       try {
         await fs.access(absolutePath);
         fileExists = true;
-        existingContent = await fs.readFile(absolutePath, 'utf-8');
       } catch {
         fileExists = false;
       }
 
-      // Create backup if requested and file exists
-      if (createBackup && fileExists) {
-        const backupPath = `${absolutePath}.bak`;
-        await fs.writeFile(backupPath, existingContent, 'utf-8');
+      // Fail if file already exists (prevent accidental overwrites)
+      if (fileExists) {
+        return this.formatErrorResponse(
+          `File already exists: ${absolutePath}`,
+          'file_error',
+          'Use edit or line_edit to modify existing files. The write tool only creates new files.'
+        );
       }
 
       // Create parent directory if it doesn't exist
@@ -139,19 +135,18 @@ export class WriteTool extends BaseTool {
       const patchNumber = await this.captureOperationPatch(
         'write',
         absolutePath,
-        existingContent,
+        '', // No existing content (file is new)
         content
       );
 
       const stats = await fs.stat(absolutePath);
 
-      const successMessage = `Wrote ${stats.size} bytes to ${absolutePath}`;
+      const successMessage = `Created new file ${absolutePath} (${stats.size} bytes)`;
 
       const response = this.formatSuccessResponse({
         content: successMessage, // Human-readable output for LLM
         file_path: absolutePath,
         bytes_written: stats.size,
-        backup_created: createBackup && fileExists,
       });
 
       // Add patch information to result if patch was captured

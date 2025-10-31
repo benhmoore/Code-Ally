@@ -11,9 +11,6 @@ import { FunctionDefinition, ToolResult } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
-import { TOOL_NAMES } from '../config/toolDefaults.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { TodoManager } from '../services/TodoManager.js';
 
 /**
  * Tool with custom function definition
@@ -158,36 +155,6 @@ export class ToolManager {
       };
     }
 
-    // Add todo_id and completes_todo parameters only if todos exist
-    // (except for todo management tools which never need these)
-    if (!(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(tool.name)) {
-      // Check if todos exist
-      const registry = ServiceRegistry.getInstance();
-      const todoManager = registry.get<TodoManager>('todo_manager');
-      const todosExist = todoManager ? todoManager.getTodos().length > 0 : false;
-
-      // Only add parameters if todos exist
-      if (todosExist) {
-        if (!functionDef.function.parameters.properties) {
-          functionDef.function.parameters.properties = {};
-        }
-
-        // Add todo_id parameter (required if tool.requiresTodoId is true)
-        functionDef.function.parameters.properties.todo_id = {
-          type: 'string',
-          description: tool.requiresTodoId
-            ? 'ID of the todo this tool call is working on (required)'
-            : 'Optional: ID of the todo this tool call is associated with',
-        };
-
-        // Add completes_todo parameter (optional, defaults to false)
-        functionDef.function.parameters.properties.completes_todo = {
-          type: 'boolean',
-          description: 'Whether this tool call completes the todo (default: false). Set to true only on the final tool call that finishes the task.',
-        };
-      }
-    }
-
     return functionDef;
   }
 
@@ -235,10 +202,7 @@ export class ToolManager {
       };
     }
 
-    const argsWithoutTodoId = { ...args };
-    delete argsWithoutTodoId.todo_id;
-
-    const duplicateCheck = this.duplicateDetector.check(toolName, argsWithoutTodoId);
+    const duplicateCheck = this.duplicateDetector.check(toolName, args);
     if (duplicateCheck.shouldBlock) {
       return {
         success: false,
@@ -265,7 +229,7 @@ export class ToolManager {
       this.trackFileOperation(toolName, args, result);
 
       if (result.success) {
-        this.duplicateDetector.recordCall(toolName, argsWithoutTodoId);
+        this.duplicateDetector.recordCall(toolName, args);
 
         if (duplicateCheck.isDuplicate && duplicateCheck.message) {
           result.warning = duplicateCheck.message;

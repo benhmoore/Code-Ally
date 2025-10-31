@@ -60,6 +60,10 @@ export interface LLMResponse {
   validation_errors?: string[];
   /** Flag indicating tool call validation failed */
   tool_call_validation_failed?: boolean;
+  /** Flag indicating this is a partial response (interrupted by error mid-stream) */
+  partial?: boolean;
+  /** Error message for partial/interrupted responses */
+  error_message?: string;
 }
 
 /**

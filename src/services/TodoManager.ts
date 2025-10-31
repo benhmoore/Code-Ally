@@ -33,6 +33,7 @@ export interface TodoItem {
 export class TodoManager {
   private todos: TodoItem[] = [];
   private activityStream: ActivityStream | null = null;
+  private lastLoggedContext: string | null = null; // Track last logged context to avoid duplicates
 
   constructor(activityStream?: ActivityStream) {
     this.activityStream = activityStream || null;
@@ -121,6 +122,9 @@ export class TodoManager {
         data: { todos: this.todos },
       });
     }
+
+    // Log todos when they are updated
+    this.logTodosIfChanged();
   }
 
   /**
@@ -132,6 +136,20 @@ export class TodoManager {
   addTodos(tasks: string[]): TodoItem[] {
     const newTodos = tasks.map(task => this.createTodoItem(task));
     this.todos.push(...newTodos);
+
+    // Emit event for immediate UI update
+    if (this.activityStream) {
+      this.activityStream.emit({
+        id: `todo-update-${Date.now()}`,
+        type: ActivityEventType.TODO_UPDATE,
+        timestamp: Date.now(),
+        data: { todos: this.todos },
+      });
+    }
+
+    // Log todos when they are updated
+    this.logTodosIfChanged();
+
     return newTodos;
   }
 
@@ -170,6 +188,8 @@ export class TodoManager {
     const todoToComplete = this.todos[originalIndex];
     if (todoToComplete) {
       todoToComplete.status = 'completed';
+      // Log todos when they are modified
+      this.logTodosIfChanged();
     }
 
     return todo;
@@ -192,6 +212,8 @@ export class TodoManager {
     if (todo.toolCalls) {
       delete todo.toolCalls;
     }
+    // Log todos when they are modified
+    this.logTodosIfChanged();
     return todo;
   }
 
@@ -206,11 +228,14 @@ export class TodoManager {
 
     if (clearAll) {
       this.todos = [];
-      return originalCount;
     } else {
       this.todos = this.todos.filter(todo => todo.status !== 'completed');
-      return originalCount - this.todos.length;
     }
+
+    // Log todos when they are cleared
+    this.logTodosIfChanged();
+
+    return originalCount - this.todos.length;
   }
 
   /**
@@ -438,6 +463,21 @@ export class TodoManager {
   }
 
   /**
+   * Log todos to console if they have changed since last log
+   * Called once per turn OR when todos are updated, whichever comes first
+   */
+  logTodosIfChanged(): void {
+    const currentContext = this.generateActiveContext();
+    const contextString = currentContext || '(empty todo list)';
+
+    // Only log if context changed since last log
+    if (contextString !== this.lastLoggedContext) {
+      console.log('[TODO_CONTEXT]', contextString.substring(0, 150) + (contextString.length > 150 ? '...' : ''));
+      this.lastLoggedContext = contextString;
+    }
+  }
+
+  /**
    * Get IDs of blocked todos (have incomplete dependencies)
    */
   getBlockedTodoIds(todos?: TodoItem[]): Set<string> {
@@ -550,6 +590,8 @@ export class TodoManager {
 
   /**
    * Validate blocked todos are not in_progress
+   *
+   * Ensures todos with incomplete dependencies cannot be marked as in_progress.
    */
   validateInProgressNotBlocked(todos: TodoItem[]): string | null {
     const blockedIds = this.getBlockedTodoIds(todos);
@@ -558,8 +600,9 @@ export class TodoManager {
     );
 
     if (blockedInProgress.length > 0 && blockedInProgress[0]) {
-      const depNames = this.getDependencyNames(blockedInProgress[0].id);
-      return `Cannot mark blocked todo as in_progress: "${blockedInProgress[0].task}". Complete dependencies first: ${depNames.join(', ')}`;
+      const todo = blockedInProgress[0];
+      const depNames = this.getDependencyNames(todo.id);
+      return `Cannot mark blocked todo as in_progress: "${todo.task}" (id: ${todo.id}). Complete dependencies first: ${depNames.join(', ')}. Use todo_update to mark this as pending until dependencies complete.`;
     }
 
     return null;
@@ -567,6 +610,9 @@ export class TodoManager {
 
   /**
    * Validate subtask in_progress rule
+   *
+   * When a parent has incomplete subtasks, ensures exactly one subtask is in_progress
+   * to maintain focus and clarity about which subtask is being actively worked on.
    */
   validateSubtaskInProgress(parent: TodoItem): string | null {
     if (!parent.subtasks || parent.subtasks.length === 0) return null;
@@ -578,10 +624,12 @@ export class TodoManager {
 
     if (incompleteSubtasks.length > 0) {
       if (inProgressSubtasks.length === 0) {
-        return `Parent "${parent.task}" has incomplete subtasks but none are in_progress. Mark one subtask as in_progress.`;
+        const pendingNames = incompleteSubtasks.map(st => `"${st.task}"`).join(', ');
+        return `Parent "${parent.task}" has incomplete subtasks but none are in_progress. Mark one of these as in_progress: ${pendingNames}`;
       }
       if (inProgressSubtasks.length > 1) {
-        return `Parent "${parent.task}" has ${inProgressSubtasks.length} subtasks in_progress. Only ONE subtask can be in_progress at a time.`;
+        const inProgressNames = inProgressSubtasks.map(st => `"${st.task}"`).join(', ');
+        return `Parent "${parent.task}" has ${inProgressSubtasks.length} subtasks in_progress: ${inProgressNames}. Only ONE subtask can be in_progress at a time. Mark all but one as pending.`;
       }
     }
 
@@ -589,21 +637,21 @@ export class TodoManager {
   }
 
   /**
-   * Validate "exactly ONE in_progress" rule
+   * Validate "at most ONE in_progress" rule
+   *
+   * Allows 0 or 1 in_progress todos to prevent confusion.
+   * Only blocks when multiple todos are marked in_progress simultaneously.
    */
-  validateExactlyOneInProgress(todos: TodoItem[]): string | null {
-    const inProgressCount = todos.filter(t => t.status === 'in_progress').length;
-    const incompleteCount = todos.filter(
-      t => t.status === 'pending' || t.status === 'in_progress'
-    ).length;
+  validateAtMostOneInProgress(todos: TodoItem[]): string | null {
+    const inProgressTodos = todos.filter(t => t.status === 'in_progress');
+    const inProgressCount = inProgressTodos.length;
 
-    if (incompleteCount > 0) {
-      if (inProgressCount === 0) {
-        return 'At least one incomplete task must be marked as "in_progress".';
-      }
-      if (inProgressCount > 1) {
-        return `Only ONE task can be "in_progress" at a time. Found ${inProgressCount} in_progress tasks.`;
-      }
+    // Allow 0 or 1 in_progress - only block when >1 (ambiguous state)
+    if (inProgressCount > 1) {
+      const taskDetails = inProgressTodos
+        .map(t => `"${t.task}" (id: ${t.id})`)
+        .join(', ');
+      return `Only ONE task can be "in_progress" at a time. Found ${inProgressCount} in_progress tasks: ${taskDetails}. Use todo_update to mark all but one as pending.`;
     }
 
     return null;
@@ -626,8 +674,8 @@ export class TodoManager {
     const blockedError = this.validateInProgressNotBlocked(todos);
     if (blockedError) return blockedError;
 
-    // Validate "exactly ONE in_progress" rule
-    const inProgressError = this.validateExactlyOneInProgress(todos);
+    // Validate "at most ONE in_progress" rule
+    const inProgressError = this.validateAtMostOneInProgress(todos);
     if (inProgressError) return inProgressError;
 
     // Validate subtask in_progress rule for the current in_progress parent

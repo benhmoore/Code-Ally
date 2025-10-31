@@ -1,0 +1,291 @@
+================================================================================
+CODE ALLY LLM REQUEST/RESPONSE FLOW DIAGRAM
+================================================================================
+
+                           CLI ENTRY POINT (cli.ts)
+                                    |
+                    ________________|________________
+                   |                                |
+            [--once mode]                   [Interactive mode]
+                   |                                |
+                   v                                v
+            Single Message                    Main Loop
+            + sendMessage()                   + sendMessage()
+                   |                                |
+                   └────────────────┬───────────────┘
+                                    |
+                                    v
+                     ┌──────────────────────────────────┐
+                     |  Agent.sendMessage() (line 286)  |
+                     |  - Add user message              |
+                     |  - Inject system reminders       |
+                     |  - Start watchdog timer          |
+                     └──────────────────────────────────┘
+                                    |
+                                    v
+                     ┌──────────────────────────────────┐
+                     |  Agent.getLLMResponse() (376)    |
+                     |  - Prepare function definitions  |
+                     |  - Regenerate system prompt      |
+                     |  - Call modelClient.send()       |
+                     └──────────────────────────────────┘
+                                    |
+                                    v
+        ┌───────────────────────────────────────────────────────┐
+        |   OllamaClient.send() (line 173) - MAIN CLIENT LAYER   |
+        |                                                        |
+        |  RETRY LOOP (0 to maxRetries=3):                      |
+        |  ├─ executeRequestWithCancellation() (line 190)       |
+        |  │  ├─ Create AbortController                         |
+        |  │  ├─ Set adaptive timeout (30s + attempt*10s)       |
+        |  │  ├─ fetch() request                                |
+        |  │  └─ Process streaming or non-streaming response    |
+        |  │                                                    |
+        |  ├─ RESPONSE PARSING (line 498-545)                  |
+        |  │  ├─ Extract tool_calls array                       |
+        |  │  ├─ Convert legacy function_call format            |
+        |  │  └─ Return LLMResponse object                      |
+        |  │                                                    |
+        |  ├─ TOOL CALL VALIDATION (line 550-639)              |
+        |  │  ├─ Normalize IDs, types, function structure       |
+        |  │  ├─ Validate/repair arguments                      |
+        |  │  └─ Return ValidationResult                        |
+        |  │                                                    |
+        |  └─ ERROR HANDLING (line 226-254)                    |
+        |     ├─ AbortError → return interrupted response       |
+        |     ├─ Network errors → exponential backoff retry     |
+        |     ├─ JSON errors → linear backoff retry             |
+        |     └─ Other → handleRequestError() + suggestions     |
+        └───────────────────────────────────────────────────────┘
+                                    |
+                        ┌───────────┴───────────┐
+                        |                       |
+                        v                       v
+           HAS TOOL CALLS           NO TOOL CALLS (Text only)
+                        |                       |
+                        v                       v
+        ┌──────────────────────────┐  ┌─────────────────────────┐
+        | processToolResponse()    |  | processTextResponse()   |
+        | (line 690-788)           |  | (line 797-854)          |
+        |                          |  |                         |
+        | 1. Add assistant message |  | 1. Check content empty? |
+        |    with tool_calls       |  |                         |
+        |                          |  | 2. If empty after tools |
+        | 2. Execute tool calls    |  |    → Add continuation   |
+        |    via ToolOrchestrator  |  |    → Retry LLM          |
+        |                          |  |                         |
+        | 3. Format tool results   |  | 3. If still empty       |
+        |                          |  |    → Use fallback       |
+        | 4. Add tool result msgs  |  |                         |
+        |    to conversation       |  | 4. Check required tools |
+        |                          |  |    → Re-prompt if need  |
+        | 5. Get follow-up response|  |                         |
+        |    (RECURSIVE)           |  | 5. Add assistant msg    |
+        |                          |  |    + return content     |
+        └──────────────────────────┘  └─────────────────────────┘
+                        |                       |
+                        └───────────┬───────────┘
+                                    |
+                                    v
+                     ┌──────────────────────────────┐
+                     | Return final response to user |
+                     | Emit completion event        |
+                     | Auto-save session            |
+                     └──────────────────────────────┘
+
+
+================================================================================
+SUBAGENT FLOWS (Tool Delegation)
+================================================================================
+
+AgentTool, ExploreTool, PlanTool all follow the same pattern:
+
+Tool Triggered (e.g., agent(), explore(), plan())
+       |
+       v
+┌──────────────────────────────────────┐
+| Create specialized Agent instance    |
+| - isSpecializedAgent = true          |
+| - Filter tools (whitelist)           |
+| - Create system prompt               |
+| - Set parentCallId for nesting       |
+└──────────────────────────────────────┘
+       |
+       v
+SubAgent.sendMessage()
+       |
+       └──> [SAME as Main Agent Flow - see above]
+            (Uses same modelClient from registry)
+            (With activity timeout monitoring)
+       |
+       v
+┌──────────────────────────────────────┐
+| Handle response                      |
+| - Check if empty (line 329)          |
+| - Extract summary from conversation  |
+| - Request explicit summary if needed |
+| - Return to parent via tool result   |
+└──────────────────────────────────────┘
+
+
+================================================================================
+SERVICE BACKGROUND FLOWS
+================================================================================
+
+Flow A: SessionTitleGenerator
+───────────────────────────────
+Session first message
+       |
+       v
+SessionManager.generateTitle()
+       |
+       v
+service_model_client.send(messages, { stream: false })
+       |
+       └──> [Standard OllamaClient retry logic]
+       |
+       v
+Set title or use fallback (non-blocking)
+
+
+Flow B: IdleMessageGenerator
+──────────────────────────────
+Idle timeout (10 seconds)
+       |
+       v
+IdleMessageGenerator.generateMessage()
+       |
+       v
+service_model_client.send(messages, { stream: false })
+       |
+       └──> [Standard OllamaClient retry logic]
+       |
+       v
+Add to queue or log error (non-blocking)
+       |
+       v
+Trigger auto-save on queue update
+
+
+Flow C: AskSessionTool
+──────────────────────
+User calls ask_session(session_id, question)
+       |
+       v
+Load session content
+       |
+       v
+service_model_client.send(messages, { stream: false })
+       |
+       └──> [Standard OllamaClient retry logic]
+            [No tool calls allowed - pure text response]
+       |
+       v
+Return answer to user
+
+
+================================================================================
+ERROR DETECTION & HANDLING SUMMARY
+================================================================================
+
+LAYER 1: Transport/Network (OllamaClient.ts:238-249)
+─────────────────────────────────────────────────────
+Error Type         Detection              Action
+──────────────────────────────────────────────────────
+ECONNREFUSED       error.message contains Exponential backoff (2^n)
+ETIMEDOUT          "ECONNREFUSED"         Max 3 retries
+Network TypeError  error.message contains
+                   "fetch" or "network"
+Timeout            Promise.race() timeout Adaptive timeout
+JSON Parse Error   JSON.parse() fails     Linear backoff (1+n)
+
+
+LAYER 2: HTTP/Response (OllamaClient.ts:346-349)
+────────────────────────────────────────────────
+Error Type         Detection              Action
+──────────────────────────────────────────────────
+HTTP 404           response.status === 404 Return error response
+HTTP 500           response.status === 500 Return error response
+Non-ok status      !response.ok            Include error text
+Response null      !response.ok            Throw to retry loop
+
+
+LAYER 3: Parsing/Validation (OllamaClient.ts:550-639)
+──────────────────────────────────────────────────────
+Error Type         Detection              Action
+──────────────────────────────────────────────────
+Missing ID         !call.id ||            Generate repaired ID
+                   typeof !== 'string'    or reject
+Missing type       !call.type             Set to 'function'
+Invalid function   !call.function ||      Return error
+                   typeof !== 'object'
+No function name   !call.function.name || Return error
+Bad JSON args      JSON.parse() fails     Try to repair or reject
+Wrong arg type     typeof !== expected    Log warning (streaming)
+                                          Retry (non-streaming)
+
+
+LAYER 4: Response Content (Agent.ts:797-827)
+──────────────────────────────────────────────
+Error Type         Detection              Action
+──────────────────────────────────────────────
+Empty after tools  !content.trim() &&     Add continuation prompt
+                   isAfterToolExecution   Retry with isRetry=true
+                   && !isRetry
+Still empty        !content.trim() &&     Use fallback message
+                   isRetry=true
+
+
+LAYER 5: Agent Behavior (Agent.ts:220-260)
+──────────────────────────────────────────
+Error Type         Detection              Action
+──────────────────────────────────────────────
+Activity timeout   elapsedMs >            Interrupt agent
+(subagents only)   activityTimeoutMs      Return error
+
+
+LAYER 6: Context Limits (Agent.ts:728-754)
+───────────────────────────────────────────
+Error Type         Detection              Action
+──────────────────────────────────────────────
+Too much context   contextUsage >= 90%    Skip tool execution
+(subagents only)   && isSpecializedAgent  Request final summary
+
+
+LAYER 7: Required Tools (Agent.ts:856-912)
+───────────────────────────────────────────
+Error Type         Detection              Action
+──────────────────────────────────────────────
+Missing required   missingTools.length>0  Issue warnings (max 5)
+tool calls         && trying to exit      Then fail if exceeded
+
+
+================================================================================
+KEY RETRY OPPORTUNITIES (Not Yet Implemented)
+================================================================================
+
+1. Empty response BEFORE tool execution
+   Location: Agent.ts:376 after getLLMResponse()
+   Why: Ollama 500 errors can return empty content on first response
+   Current: Only detected AFTER tool execution
+   
+2. HTTP 503 (Service Unavailable) retry
+   Location: OllamaClient.ts:346-349
+   Why: Ollama might be temporarily down
+   Current: Returns error immediately
+   
+3. Streaming validation errors
+   Location: OllamaClient.ts:219-223
+   Why: Streaming responses can have malformed tool calls
+   Current: Only logs warning, doesn't retry
+   
+4. Tool execution failures
+   Location: ToolOrchestrator.ts:417-423
+   Why: Tools can fail due to transient conditions
+   Current: Returns error immediately
+   
+5. Service model client isolation
+   Location: cli.ts:404-412
+   Why: Background services fail silently
+   Current: No error reporting or retry at higher level
+

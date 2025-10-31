@@ -14,6 +14,7 @@ export interface Message {
   name?: string;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
+  thinking?: string; // Native reasoning/thinking content from model
   timestamp?: number; // For chronological ordering with tool calls
   metadata?: MessageMetadata; // Presentation hints and command metadata
 }
@@ -96,6 +97,7 @@ export enum ActivityEventType {
   TOOL_EXECUTION_START = 'tool_execution_start',
   TOOL_OUTPUT_CHUNK = 'tool_output_chunk',
   THOUGHT_CHUNK = 'thought_chunk',
+  THOUGHT_COMPLETE = 'thought_complete',
   ASSISTANT_CHUNK = 'assistant_chunk',
   AGENT_START = 'agent_start',
   AGENT_END = 'agent_end',
@@ -211,10 +213,8 @@ export interface Config {
   theme: string;
   compact_threshold: number;
   show_context_in_prompt: boolean;
-
-  // Tool Result Settings
-  tool_result_preview_lines: number;
-  tool_result_preview_enabled: boolean;
+  show_thinking_in_chat: boolean;
+  show_full_tool_output: boolean;
 
   // Tool Call Retry Settings
   tool_call_retry_enabled: boolean;

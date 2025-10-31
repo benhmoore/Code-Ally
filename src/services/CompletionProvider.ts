@@ -80,6 +80,16 @@ const PLUGIN_SUBCOMMANDS = [
 ];
 
 /**
+ * Debug subcommands
+ */
+const DEBUG_SUBCOMMANDS = [
+  { name: 'system', description: 'Show system prompt and tool definitions' },
+  { name: 'tokens', description: 'Show token usage and memory stats' },
+  { name: 'context', description: 'Show conversation context' },
+  { name: 'chat', description: 'Log full chat history as JSON to console' },
+];
+
+/**
  * Todo subcommands
  */
 const TODO_SUBCOMMANDS = [
@@ -230,6 +240,17 @@ export class CompletionProvider {
     // Complete agent names for /agent delete
     if (command === '/agent' && subcommand === 'delete' && wordCount === 3) {
       return await this.getAgentNameCompletions(context.currentWord);
+    }
+
+    // Complete subcommands for /debug (user typed "/debug ")
+    if (command === '/debug' && wordCount === 2) {
+      const prefix = subcommand || '';
+      return DEBUG_SUBCOMMANDS.filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
     }
 
     // Complete subcommands for /todo (user typed "/todo ")
@@ -421,10 +442,8 @@ export class CompletionProvider {
       'theme': 'UI theme name',
       'compact_threshold': 'Auto-compact threshold (%)',
       'show_context_in_prompt': 'Show context % in prompt',
-
-      // Tool Result Preview
-      'tool_result_preview_lines': 'Preview lines count',
-      'tool_result_preview_enabled': 'Enable tool previews',
+      'show_thinking_in_chat': 'Show model thinking in chat',
+      'show_full_tool_output': 'Show full tool output without truncation',
 
       // Diff Display
       'diff_display_enabled': 'Show file diffs',
@@ -731,6 +750,13 @@ export class CompletionProvider {
    */
   getAgentSubcommands(): Array<{ name: string; description: string }> {
     return [...AGENT_SUBCOMMANDS];
+  }
+
+  /**
+   * Get debug subcommands
+   */
+  getDebugSubcommands(): Array<{ name: string; description: string }> {
+    return [...DEBUG_SUBCOMMANDS];
   }
 
   /**

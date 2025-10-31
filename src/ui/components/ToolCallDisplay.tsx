@@ -23,6 +23,8 @@ interface ToolCallDisplayProps {
   level?: number;
   /** Nested tool calls */
   children?: React.ReactNode;
+  /** Config for output display preferences */
+  config?: any;
 }
 
 /**
@@ -84,6 +86,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   toolCall,
   level = 0,
   children,
+  config,
 }) => {
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
 
@@ -163,9 +166,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           </Box>
           <Box paddingLeft={indent.length + 8}>
             <Text color="red" dimColor>
-              {toolCall.error.length > TEXT_LIMITS.CONTENT_PREVIEW_MAX
-                ? `${toolCall.error.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`
-                : toolCall.error}
+              {config?.show_full_tool_output || toolCall.error.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
+                ? toolCall.error
+                : `${toolCall.error.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
             </Text>
           </Box>
         </Box>
@@ -181,9 +184,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           </Box>
           <Box paddingLeft={indent.length + 8}>
             <Text dimColor>
-              {toolCall.output.length > TEXT_LIMITS.CONTENT_PREVIEW_MAX
-                ? `${toolCall.output.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`
-                : toolCall.output}
+              {config?.show_full_tool_output || toolCall.output.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
+                ? toolCall.output
+                : `${toolCall.output.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
             </Text>
           </Box>
         </Box>

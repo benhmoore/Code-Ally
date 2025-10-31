@@ -40,12 +40,8 @@ export const DEFAULT_CONFIG: Config = {
   theme: 'default', // UI theme name
   compact_threshold: 95, // Context % threshold for auto-compact
   show_context_in_prompt: false, // Show context % in input prompt
-
-  // ==========================================
-  // TOOL RESULT PREVIEW SETTINGS
-  // ==========================================
-  tool_result_preview_lines: 3, // Lines to show in tool result preview
-  tool_result_preview_enabled: true, // Enable tool result previews
+  show_thinking_in_chat: false, // Show model thinking content in chat conversation
+  show_full_tool_output: false, // Show full tool output without truncation in UI
 
   // ==========================================
   // TOOL CALL RETRY SETTINGS
@@ -118,10 +114,8 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   theme: 'string',
   compact_threshold: 'number',
   show_context_in_prompt: 'boolean',
-
-  // Tool Result Preview
-  tool_result_preview_lines: 'number',
-  tool_result_preview_enabled: 'boolean',
+  show_thinking_in_chat: 'boolean',
+  show_full_tool_output: 'boolean',
 
   // Tool Call Retry
   tool_call_retry_enabled: 'boolean',

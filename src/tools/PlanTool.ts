@@ -22,9 +22,6 @@ import { ToolManager } from './ToolManager.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
-import { ConfirmProposalTool } from './ConfirmProposalTool.js';
-import { ModifyProposalTool } from './ModifyProposalTool.js';
-import { DeclineProposalTool } from './DeclineProposalTool.js';
 
 // Planning tools: read-only tools + explore for nested research + todo_add for proposals
 const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo_add'];
@@ -117,7 +114,6 @@ export class PlanTool extends BaseTool {
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = true; // Hide detailed output
-  readonly requiresTodoId = false; // Planning is a meta-task that creates todos
 
   readonly usageGuidance = `**When to use plan:**
 - Need to implement new feature/component
@@ -322,15 +318,22 @@ Use plan() before implementing complex features to ensure alignment with existin
           },
         });
 
-        // Set currentToolContext on main Agent with proposed todos
-        await this.setMainAgentToolContext(registry);
+        // Auto-accept proposed todos
+        await this.autoAcceptProposedTodos(registry);
 
-        // Append note that user cannot see this
-        const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this plan. You must share the plan, summarized or verbatim, with the user in your own response.';
+        // Get current todo summary to include in result
+        const currentTodoManager = registry.get<TodoManager>('todo_manager');
+        const todoSummary = currentTodoManager?.generateActiveContext();
+        let content = finalResponse + '\n\nIMPORTANT: The user CANNOT see this plan. You must share the plan, summarized or verbatim, with the user in your own response.';
+
+        if (todoSummary) {
+          content += `\n\nActivated todos:\n${todoSummary}`;
+        }
 
         return this.formatSuccessResponse({
-          content: result,
+          content,
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
+          system_reminder: `The plan has been automatically accepted and todos activated. If this plan doesn't align with user intent, use deny_proposal to reject it and explain why.`,
         });
       } finally {
         // Clean up delegation tracking
@@ -416,107 +419,53 @@ Use plan() before implementing complex features to ensure alignment with existin
   }
 
   /**
-   * Set currentToolContext on main Agent with proposed todos
-   * This creates an exclusive tool mode with only confirm_proposal, modify_proposal, and decline_proposal available
+   * Auto-accept proposed todos by converting them from proposed → pending/in_progress
+   * First todo becomes in_progress if no existing in_progress todo exists
    */
-  private async setMainAgentToolContext(registry: ServiceRegistry): Promise<void> {
+  private async autoAcceptProposedTodos(registry: ServiceRegistry): Promise<void> {
     try {
-      // Get the main agent from registry
-      const mainAgent = registry.get<Agent>('agent');
-      if (!mainAgent) {
-        logger.debug('[PLAN_TOOL] Main agent not found in registry, skipping context setup');
-        return;
-      }
-
-      // Check if this is the main agent (not a specialized agent)
-      // @ts-ignore - accessing private property for validation
-      if (mainAgent.config?.isSpecializedAgent) {
-        logger.debug('[PLAN_TOOL] Agent is specialized, skipping context setup');
-        return;
-      }
-
       // Get TodoManager to retrieve proposed todos
       const todoManager = registry.get<TodoManager>('todo_manager');
       if (!todoManager) {
-        logger.debug('[PLAN_TOOL] TodoManager not found in registry, skipping context setup');
+        logger.debug('[PLAN_TOOL] TodoManager not found in registry, skipping auto-accept');
         return;
       }
 
-      // Get proposed todos
+      // Get all todos and filter for proposed ones
       const allTodos = todoManager.getTodos();
       const proposedTodos = allTodos.filter(todo => todo.status === 'proposed');
+      const existingTodos = allTodos.filter(todo => todo.status !== 'proposed');
 
-      // Only set context if we have proposed todos
+      // If no proposed todos, nothing to do
       if (proposedTodos.length === 0) {
-        logger.debug('[PLAN_TOOL] No proposed todos found, skipping context setup');
+        logger.debug('[PLAN_TOOL] No proposed todos found, skipping auto-accept');
         return;
       }
 
-      // Get ToolManager to register proposal tools
-      const toolManager = registry.get<ToolManager>('tool_manager');
-      if (!toolManager) {
-        logger.debug('[PLAN_TOOL] ToolManager not found in registry, skipping tool registration');
-        return;
-      }
+      // Check if there's already an in_progress todo (to avoid violating "at most ONE in_progress" rule)
+      const hasExistingInProgress = existingTodos.some(todo => todo.status === 'in_progress');
 
-      // Get ActivityStream for tool constructors
-      const activityStream = registry.get<ActivityStream>('activity_stream');
-      if (!activityStream) {
-        logger.debug('[PLAN_TOOL] ActivityStream not found in registry, skipping tool registration');
-        return;
-      }
-
-      // Instantiate and register the three proposal tools
-      try {
-        logger.debug('[PLAN_TOOL] Registering proposal tools...');
-
-        const confirmProposalTool = new ConfirmProposalTool(activityStream);
-        toolManager.registerTool(confirmProposalTool);
-        logger.debug('[PLAN_TOOL] Registered confirm_proposal tool');
-
-        const modifyProposalTool = new ModifyProposalTool(activityStream);
-        toolManager.registerTool(modifyProposalTool);
-        logger.debug('[PLAN_TOOL] Registered modify_proposal tool');
-
-        const declineProposalTool = new DeclineProposalTool(activityStream);
-        toolManager.registerTool(declineProposalTool);
-        logger.debug('[PLAN_TOOL] Registered decline_proposal tool');
-
-        logger.debug('[PLAN_TOOL] Successfully registered all 3 proposal tools');
-      } catch (error) {
-        logger.debug('[PLAN_TOOL] Error registering proposal tools:', error);
-        // Non-fatal, continue with context setup
-      }
-
-      // Build system reminder message
-      const todoList = proposedTodos
-        .map((todo, index) => `   ${index + 1}. ${todo.task}`)
-        .join('\n');
-
-      const systemReminder = `The plan tool has completed and created ${proposedTodos.length} proposed todo${proposedTodos.length !== 1 ? 's' : ''}:
-
-${todoList}
-
-These proposed todos are NOT yet visible in the user's todo list. You must take one of these actions:
-
-**Available Tools (exclusive mode):**
-- confirm_proposal: Accept the proposed todos and activate them (first becomes in_progress, rest pending)
-- modify_proposal: Adjust the proposed todos before accepting (add/remove/reorder tasks)
-- decline_proposal: Reject the proposal entirely (optionally provide a reason)
-
-**You MUST use one of these tools.** After reviewing the plan, decide whether to confirm, modify, or decline the proposal.`;
-
-      // Set the tool context with exclusive mode (only these 3 tools available)
-      mainAgent.setCurrentToolContext({
-        triggerTool: 'plan',
-        availableTools: ['confirm_proposal', 'modify_proposal', 'decline_proposal'],
-        systemReminder,
-        data: proposedTodos,
+      // Convert proposed todos to pending/in_progress
+      // First todo becomes in_progress ONLY if no existing in_progress todo exists
+      const activatedTodos = proposedTodos.map((todo, index) => {
+        const newStatus = index === 0 && !hasExistingInProgress ? 'in_progress' : 'pending';
+        return {
+          ...todo,
+          status: newStatus as 'in_progress' | 'pending',
+        };
       });
 
-      logger.debug('[PLAN_TOOL] Set tool context on main agent with', proposedTodos.length, 'proposed todos');
+      // Combine existing todos with newly activated todos
+      const newTodoList = [...existingTodos, ...activatedTodos];
+
+      // Update TodoManager with new todo list
+      todoManager.setTodos(newTodoList);
+
+      console.log('[PLAN_TOOL] Auto-accepted', proposedTodos.length, 'proposed todos. New total:', newTodoList.length);
+      console.log('[PLAN_TOOL] First 3 activated todos:', activatedTodos.slice(0, 3).map(t => ({ task: t.task, status: t.status })));
+      logger.debug('[PLAN_TOOL] Auto-accepted', proposedTodos.length, 'proposed todos');
     } catch (error) {
-      logger.debug('[PLAN_TOOL] Error setting main agent tool context:', error);
+      logger.debug('[PLAN_TOOL] Error auto-accepting proposed todos:', error);
       // Don't throw - this is non-critical, plan can still succeed
     }
   }

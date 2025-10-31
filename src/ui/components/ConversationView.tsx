@@ -150,13 +150,14 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
  */
 function renderToolCallTree(
   toolCall: ToolCallState & { children?: ToolCallState[] },
-  level: number = 0
+  level: number = 0,
+  config?: any
 ): React.ReactNode {
   return (
-    <ToolCallDisplay key={toolCall.id} toolCall={toolCall} level={level}>
+    <ToolCallDisplay key={toolCall.id} toolCall={toolCall} level={level} config={config}>
       {toolCall.children && toolCall.children.length > 0 && (
         <>
-          {toolCall.children.map((child) => renderToolCallTree(child, level + 1))}
+          {toolCall.children.map((child) => renderToolCallTree(child, level + 1, config))}
         </>
       )}
     </ToolCallDisplay>
@@ -180,11 +181,12 @@ const ActiveContent = React.memo<{
   runningToolCalls: (ToolCallState & { children?: ToolCallState[] })[];
   streamingContent?: string;
   contextUsage: number;
-}>(({ runningToolCalls, streamingContent }) => (
+  config?: any;
+}>(({ runningToolCalls, streamingContent, config }) => (
   <>
     {runningToolCalls.map((toolCall) => (
       <Box key={`running-tool-${toolCall.id}`}>
-        {renderToolCallTree(toolCall, 0)}
+        {renderToolCallTree(toolCall, 0, config)}
       </Box>
     ))}
 
@@ -304,11 +306,11 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
     completedTimeline.forEach((item) => {
       if (item.type === 'message') {
-        items.push(<MessageDisplay key={`msg-${item.index}`} message={item.message} />);
+        items.push(<MessageDisplay key={`msg-${item.index}`} message={item.message} config={config} />);
       } else if (item.type === 'toolCall') {
         items.push(
           <Box key={`tool-${item.toolCall.id}`}>
-            {renderToolCallTree(item.toolCall, 0)}
+            {renderToolCallTree(item.toolCall, 0, config)}
           </Box>
         );
       } else if (item.type === 'compactionNotice') {
@@ -378,6 +380,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         runningToolCalls={runningToolCalls}
         streamingContent={streamingContent}
         contextUsage={contextUsage}
+        config={config}
       />
     </Box>
   );

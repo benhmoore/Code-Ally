@@ -453,9 +453,8 @@ async function main() {
     const { TodoRemoveTool } = await import('./tools/TodoRemoveTool.js');
     const { TodoUpdateTool } = await import('./tools/TodoUpdateTool.js');
     const { TodoClearTool } = await import('./tools/TodoClearTool.js');
-    // Note: ConfirmProposalTool, ModifyProposalTool, and DeclineProposalTool are contextual tools
-    // They are NOT registered as default tools, but are dynamically registered when needed
-    // via Agent's currentToolContext.availableTools mechanism
+    const { TodoListTool } = await import('./tools/TodoListTool.js');
+    const { DenyProposalTool } = await import('./tools/DenyProposalTool.js');
     const { SessionLookupTool } = await import('./tools/SessionLookupTool.js');
     const { SessionReadTool } = await import('./tools/SessionReadTool.js');
     const { AskSessionTool } = await import('./tools/AskSessionTool.js');
@@ -483,8 +482,8 @@ async function main() {
       new TodoRemoveTool(activityStream),
       new TodoUpdateTool(activityStream),
       new TodoClearTool(activityStream),
-      // Proposal tools (ConfirmProposalTool, ModifyProposalTool, DeclineProposalTool) are
-      // contextual and registered dynamically via Agent's currentToolContext, not here
+      new TodoListTool(activityStream),
+      new DenyProposalTool(activityStream), // Always available
       new ListSessionsTool(activityStream),
       new SessionLookupTool(activityStream),
       new SessionReadTool(activityStream),

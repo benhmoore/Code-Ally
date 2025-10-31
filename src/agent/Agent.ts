@@ -26,6 +26,8 @@ import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
 
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
@@ -105,9 +107,24 @@ export class Agent {
   // Required tool calls tracking
   private calledRequiredTools: Set<string> = new Set();
   private requiredToolWarningCount: number = 0;
+  private requiredToolWarningMessageIndex: number = -1; // Track warning message for removal
 
   // Tool context tracking - used for dynamic tool filtering
   private currentToolContext: ToolContext | null = null;
+
+  // Validation attempt tracking - tracks validation retries across continuations
+  private validationAttemptCount: number = 0;
+  private readonly MAX_VALIDATION_ATTEMPTS: number = 2;
+
+  // Tool call cycle detection - tracks recent tool calls to detect repetitive patterns
+  private toolCallHistory: Array<{
+    signature: string;
+    toolName: string;
+    timestamp: number;
+    fileHashes?: Map<string, string>; // For read ops, track file content hashes
+  }> = [];
+  private readonly MAX_TOOL_HISTORY = 15;
+  private readonly CYCLE_THRESHOLD = 3; // Same signature 3 times = warning
 
   constructor(
     modelClient: ModelClient,
@@ -287,6 +304,10 @@ export class Agent {
     // Start activity watchdog for specialized agents
     this.startActivityWatchdog();
 
+    // Clear tool call cycle history on new user input
+    this.toolCallHistory = [];
+    logger.debug('[AGENT_CYCLE_DETECTION]', this.instanceId, 'Cleared cycle history on new user message');
+
     // Add user message
     const userMessage: Message = {
       role: 'user',
@@ -323,16 +344,7 @@ export class Agent {
         let reminderContent = '<system-reminder>\n';
 
         if (todos.length === 0) {
-          reminderContent += 'IMPORTANT: The todo list is currently empty. Create a todo list using todo_add for ANY task - even simple single-step tasks. Breaking work into tracked tasks dramatically improves your effectiveness by:\n';
-          reminderContent += '• Providing focus reminders after each tool use\n';
-          reminderContent += '• Helping you stay on track and avoid tangents\n';
-          reminderContent += '• Giving the user visibility into your progress\n';
-          reminderContent += '• Making it clear when work is complete\n\n';
-          reminderContent += 'Examples of good single-task todos:\n';
-          reminderContent += '- "Fix failing tests in PathSecurity"\n';
-          reminderContent += '- "Debug memory leak in WebSocket handler"\n';
-          reminderContent += '- "Add error handling to login endpoint"\n\n';
-          reminderContent += 'Use todo_add at the start of your turn, even for "simple" tasks. It only takes one tool call.\n';
+          reminderContent += 'Note: The todo list is currently empty. For complex multi-step tasks, consider using todo_add to track progress and stay focused. Todos provide reminders after each tool use and help prevent drift. For simple single-step operations, todos are optional.\n';
         } else {
           reminderContent += 'Current todos:\n';
           todos.forEach((todo: any, idx: number) => {
@@ -349,7 +361,7 @@ export class Agent {
           reminderContent += '• Remove completed tasks that are no longer relevant to the conversation\n';
           reminderContent += '• Remove pending tasks that are no longer needed\n';
           reminderContent += '• Update task descriptions if they\'ve changed\n';
-          reminderContent += '• Remember: exactly ONE task must be in_progress when working\n\n';
+          reminderContent += '• Remember: when working on todos, keep exactly ONE task in_progress\n\n';
           reminderContent += 'Update the list now if needed based on the user\'s request.\n';
         }
 
@@ -394,6 +406,16 @@ export class Agent {
 
       return finalResponse;
     } catch (error) {
+      // Import PermissionDeniedError locally to check instance
+      const { PermissionDeniedError } = await import('../security/PathSecurity.js');
+
+      // Treat permission denial as user interruption
+      if (error instanceof PermissionDeniedError) {
+        console.log('[PERMISSION] Permission denied - treating as interrupt');
+        this.interrupted = true;
+        return this.handleInterruption();
+      }
+
       if (this.interrupted || (error instanceof Error && error.message.includes('interrupted'))) {
         return this.handleInterruption();
       }
@@ -659,13 +681,121 @@ export class Agent {
       return '[Request interrupted by user]';
     }
 
-    // Check for error
-    if (response.error) {
+    // GAP 2: Partial response due to HTTP error (mid-stream interruption)
+    // Detect partial responses that were interrupted by HTTP 500/503 errors
+    // If we have partial content/tool_calls, continue from where we left off
+    if (response.error && response.partial && !isRetry) {
+      const hasContent = response.content && response.content.trim().length > 0;
+      const hasToolCalls = response.tool_calls && response.tool_calls.length > 0;
+
+      if (hasContent || hasToolCalls) {
+        console.log(`[CONTINUATION] Gap 2: Partial response due to HTTP error - prodding model to continue (content=${hasContent}, toolCalls=${hasToolCalls})`);
+        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Partial response due to HTTP error - attempting continuation');
+        logger.debug(`[AGENT_RESPONSE] Partial response details: content=${hasContent}, toolCalls=${hasToolCalls}`);
+
+        // Add the partial assistant response to conversation history
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: response.content || '',
+          tool_calls: response.tool_calls?.map(tc => ({
+            id: tc.id,
+            type: 'function' as const,
+            function: {
+              name: tc.function.name,
+              arguments: tc.function.arguments,
+            },
+          })),
+          thinking: response.thinking,
+          timestamp: Date.now(),
+        };
+        this.messages.push(assistantMessage);
+
+        // Add continuation prompt mentioning the error
+        const continuationPrompt: Message = {
+          role: 'user',
+          content: `<system-reminder>\nYour previous response encountered an error and was interrupted: ${response.error_message || 'Unknown error'}. Please continue where you left off.\n</system-reminder>`,
+          timestamp: Date.now(),
+        };
+        this.messages.push(continuationPrompt);
+
+        // Get continuation from LLM
+        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after partial HTTP error response...');
+        const continuationResponse = await this.getLLMResponse();
+
+        // Process continuation (mark as retry to prevent infinite loop)
+        return await this.processLLMResponse(continuationResponse, true);
+      }
+    }
+
+    // GAP 3: Tool call validation errors
+    // Detect validation errors where tool calls are malformed (missing function name, invalid JSON, etc.)
+    // Add assistant's response with malformed calls to history and request continuation with error details
+    if (response.error && response.tool_call_validation_failed && !isRetry) {
+      this.validationAttemptCount++;
+
+      console.log(`[CONTINUATION] Gap 3: Tool call validation failed - prodding model to fix (attempt ${this.validationAttemptCount}/${this.MAX_VALIDATION_ATTEMPTS})`);
+      console.log(`[CONTINUATION] Validation errors: ${response.validation_errors?.join('; ')}`);
+      logger.debug(
+        `[AGENT_RESPONSE]', this.instanceId, 'Tool call validation failed - ` +
+        `attempt ${this.validationAttemptCount}/${this.MAX_VALIDATION_ATTEMPTS}`
+      );
+      logger.debug(`[AGENT_RESPONSE] Validation errors: ${response.validation_errors?.join('; ')}`);
+
+      // Check if we've exceeded the max validation attempts
+      if (this.validationAttemptCount > this.MAX_VALIDATION_ATTEMPTS) {
+        logger.error(
+          `[AGENT_RESPONSE]', this.instanceId, ` +
+          `'Tool call validation failed after ${this.MAX_VALIDATION_ATTEMPTS} attempts - returning error`
+        );
+        // Reset counter for next request
+        this.validationAttemptCount = 0;
+
+        const errorDetails = response.validation_errors?.join('; ') || 'Unknown validation errors';
+        return `I attempted to call tools but encountered persistent validation errors after ${this.MAX_VALIDATION_ATTEMPTS} attempts: ${errorDetails}`;
+      }
+
+      // Add the assistant's response with malformed tool calls to conversation history
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: response.content || '',
+        tool_calls: response.tool_calls?.map(tc => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: {
+            name: tc.function.name,
+            arguments: tc.function.arguments,
+          },
+        })),
+        thinking: response.thinking,
+        timestamp: Date.now(),
+      };
+      this.messages.push(assistantMessage);
+
+      // Add continuation prompt with validation error details
+      const errorDetails = response.validation_errors?.join('\n- ') || 'Unknown validation errors';
+      const continuationPrompt: Message = {
+        role: 'user',
+        content: `<system-reminder>\nYour previous response contained tool call validation errors:\n- ${errorDetails}\n\nPlease try again with properly formatted tool calls.\n</system-reminder>`,
+        timestamp: Date.now(),
+      };
+      this.messages.push(continuationPrompt);
+
+      // Get continuation from LLM
+      logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after validation errors...');
+      const continuationResponse = await this.getLLMResponse();
+
+      // Process continuation (mark as retry to prevent infinite loop)
+      return await this.processLLMResponse(continuationResponse, true);
+    }
+
+    // Check for error (non-partial, non-validation errors)
+    if (response.error && !response.partial && !response.tool_call_validation_failed) {
       return response.content || 'An error occurred';
     }
 
     // Extract tool calls
     const toolCalls = response.tool_calls || [];
+    const content = response.content || '';
 
     // Log LLM response to trace tool call origins
     logger.debug('[AGENT] LLM response - hasContent:', !!response.content, 'toolCallCount:', toolCalls.length);
@@ -676,14 +806,52 @@ export class Agent {
       });
     }
 
+    // GAP 1: Truly empty response (no content AND no tool calls)
+    // Detect when the model provides neither text nor tool calls
+    // Note: Empty content WITH tool calls is valid - the model can directly call tools
+    if (!content.trim() && toolCalls.length === 0 && !isRetry) {
+      console.log('[CONTINUATION] Gap 1: Truly empty response (no content, no tools) - prodding model to continue');
+      logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Truly empty response (no content, no tools) - attempting continuation');
+
+      // First, add the assistant's empty response to conversation history
+      // This allows the model to see it provided nothing and should continue
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: '', // Truly empty - no content, no tool calls
+        // No tool_calls since toolCalls.length === 0
+        thinking: response.thinking,
+        timestamp: Date.now(),
+      };
+      this.messages.push(assistantMessage);
+
+      // Add generic continuation prompt
+      const continuationPrompt: Message = {
+        role: 'user',
+        content: '<system-reminder>\nYour response appears incomplete. Please continue where you left off.\n</system-reminder>',
+        timestamp: Date.now(),
+      };
+      this.messages.push(continuationPrompt);
+
+      // Get continuation from LLM
+      logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after truly empty response...');
+      const continuationResponse = await this.getLLMResponse();
+
+      // Process continuation (mark as retry to prevent infinite loop)
+      return await this.processLLMResponse(continuationResponse, true);
+    }
+
     if (toolCalls.length > 0) {
       // Check for interruption before processing tools
       if (this.interrupted) {
         return '[Request interrupted by user]';
       }
+      // Reset validation counter on successful response with tool calls
+      this.validationAttemptCount = 0;
       // Response contains tool calls
       return await this.processToolResponse(response, toolCalls);
     } else {
+      // Reset validation counter on successful text-only response
+      this.validationAttemptCount = 0;
       // Text-only response
       return await this.processTextResponse(response, isRetry);
     }
@@ -725,6 +893,7 @@ export class Agent {
       role: 'assistant',
       content: response.content || '',
       tool_calls: toolCallsForMessage,
+      thinking: response.thinking,
       timestamp: Date.now(),
     };
     this.messages.push(assistantMessage);
@@ -762,14 +931,26 @@ export class Agent {
       return await this.processLLMResponse(finalResponse);
     }
 
+    // Detect cycles BEFORE executing tools
+    const cycles = this.detectToolCallCycles(unwrappedToolCalls);
+    if (cycles.size > 0) {
+      logger.debug('[AGENT_CYCLE_DETECTION]', this.instanceId, `Detected ${cycles.size} potential cycles`);
+    }
+
     // Execute tool calls via orchestrator (pass original calls for unwrapping)
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Executing tool calls via orchestrator...');
 
     // Start tool execution and create abort controller
     this.startToolExecution();
 
-    await this.toolOrchestrator.executeToolCalls(toolCalls);
+    await this.toolOrchestrator.executeToolCalls(toolCalls, cycles);
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.messages.length);
+
+    // Add tool calls to history for cycle detection (AFTER execution)
+    this.addToolCallsToHistory(unwrappedToolCalls);
+
+    // Check if cycle pattern is broken (3 consecutive different calls)
+    this.clearCycleHistoryIfBroken();
 
     // Track required tool calls
     if (this.config.requiredToolCalls && this.config.requiredToolCalls.length > 0) {
@@ -814,7 +995,8 @@ export class Agent {
       const isAfterToolExecution = lastMessage?.role === 'assistant' && lastMessage?.tool_calls && lastMessage.tool_calls.length > 0;
 
       if (isAfterToolExecution) {
-        logger.warn('[AGENT_RESPONSE]', this.instanceId, 'Empty response after tool execution - attempting recovery');
+        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Empty response after tool execution - attempting continuation');
+        logger.debug(`[AGENT_RESPONSE] Empty response after ${lastMessage.tool_calls?.length || 0} tool calls`);
 
         // Add continuation prompt
         const continuationPrompt: Message = {
@@ -824,8 +1006,8 @@ export class Agent {
         };
         this.messages.push(continuationPrompt);
 
-        // Retry LLM call
-        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Retrying LLM call after empty response...');
+        // Get continuation from LLM
+        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after empty response...');
         const retryResponse = await this.getLLMResponse();
 
         // Process retry (mark as retry to prevent infinite loop)
@@ -835,8 +1017,8 @@ export class Agent {
         logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Model returned empty content');
       }
     } else if (!content.trim() && isRetry) {
-      // Still empty after retry - use fallback
-      logger.error('[AGENT_RESPONSE]', this.instanceId, 'Still empty after retry - using fallback message');
+      // Still empty after continuation attempt - use fallback
+      logger.error('[AGENT_RESPONSE]', this.instanceId, 'Still empty after continuation attempt - using fallback message');
       const fallbackContent = this.config.isSpecializedAgent
         ? 'Task completed. Tool results are available in the conversation history.'
         : 'I apologize, but I encountered an issue generating a response. The requested operations have been completed.';
@@ -906,6 +1088,7 @@ export class Agent {
             '</system-reminder>',
           timestamp: Date.now(),
         };
+        this.requiredToolWarningMessageIndex = this.messages.length; // Track index before push
         this.messages.push(reminderMessage);
 
         // Get new response from LLM
@@ -918,6 +1101,16 @@ export class Agent {
         // All required tools have been called
         console.log(`[REQUIRED_TOOLS_DEBUG] ✓ SUCCESS - All required tools have been called`);
         logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, 'All required tools have been called:', Array.from(this.calledRequiredTools));
+
+        // Remove the warning message from history if it exists
+        if (this.requiredToolWarningMessageIndex >= 0 && this.requiredToolWarningMessageIndex < this.messages.length) {
+          const warningMessage = this.messages[this.requiredToolWarningMessageIndex];
+          if (warningMessage && warningMessage.role === 'system' && warningMessage.content.includes('must call the following required tool')) {
+            console.log(`[REQUIRED_TOOLS_DEBUG] Removing satisfied warning from conversation history at index ${this.requiredToolWarningMessageIndex}`);
+            this.messages.splice(this.requiredToolWarningMessageIndex, 1);
+            this.requiredToolWarningMessageIndex = -1; // Reset
+          }
+        }
       }
     }
 
@@ -1380,6 +1573,218 @@ export class Agent {
   cancel(): void {
     if (this.modelClient.cancel) {
       this.modelClient.cancel();
+    }
+  }
+
+  /**
+   * Create a normalized signature for a tool call
+   * Used for cycle detection to identify identical tool calls
+   *
+   * @param toolCall - Tool call to create signature for
+   * @returns Normalized signature string
+   */
+  private createToolCallSignature(toolCall: {
+    function: { name: string; arguments: Record<string, any> };
+  }): string {
+    const { name, arguments: args } = toolCall.function;
+
+    // Start with tool name
+    let signature = name;
+
+    // Sort argument keys for consistency
+    const sortedKeys = Object.keys(args || {}).sort();
+
+    // Add each argument to signature
+    for (const key of sortedKeys) {
+      const value = args[key];
+
+      // Handle arrays specially (join with comma)
+      if (Array.isArray(value)) {
+        signature += `|${key}:${value.join(',')}`;
+      } else if (typeof value === 'object' && value !== null) {
+        // For objects, stringify and sort keys
+        signature += `|${key}:${JSON.stringify(value)}`;
+      } else {
+        signature += `|${key}:${value}`;
+      }
+    }
+
+    return signature;
+  }
+
+  /**
+   * Get hash of file content for tracking modifications
+   *
+   * @param filePath - Path to file
+   * @returns MD5 hash of file content or null if file doesn't exist
+   */
+  private getFileHash(filePath: string): string | null {
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      return crypto.createHash('md5').update(content).digest('hex');
+    } catch (error) {
+      // File doesn't exist or can't be read
+      return null;
+    }
+  }
+
+  /**
+   * Check if a repeated read call is valid (file was modified)
+   *
+   * @param toolCall - Current tool call
+   * @param previousCalls - Previous history entries with same signature
+   * @returns True if file was modified between reads
+   */
+  private isValidFileRepeat(
+    toolCall: { function: { name: string; arguments: Record<string, any> } },
+    previousCalls: Array<{
+      signature: string;
+      toolName: string;
+      timestamp: number;
+      fileHashes?: Map<string, string>;
+    }>
+  ): boolean {
+    // Only applies to read tool
+    if (toolCall.function.name !== 'Read' && toolCall.function.name !== 'read') {
+      return false;
+    }
+
+    // Get file path from arguments
+    const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
+    if (!filePath) {
+      return false;
+    }
+
+    // Get current file hash
+    const currentHash = this.getFileHash(filePath);
+    if (!currentHash) {
+      return false; // File doesn't exist
+    }
+
+    // Check if any previous call has a different hash (file was modified)
+    for (const prevCall of previousCalls) {
+      if (prevCall.fileHashes && prevCall.fileHashes.has(filePath)) {
+        const prevHash = prevCall.fileHashes.get(filePath);
+        if (prevHash !== currentHash) {
+          return true; // File was modified
+        }
+      }
+    }
+
+    return false; // File unchanged
+  }
+
+  /**
+   * Detect tool call cycles in the current batch of tool calls
+   *
+   * @param toolCalls - Array of tool calls to check
+   * @returns Map of tool_call_id to cycle info (if cycle detected)
+   */
+  private detectToolCallCycles(
+    toolCalls: Array<{
+      id: string;
+      function: { name: string; arguments: Record<string, any> };
+    }>
+  ): Map<string, { toolName: string; count: number; isValidRepeat: boolean }> {
+    const cycles = new Map<string, { toolName: string; count: number; isValidRepeat: boolean }>();
+
+    for (const toolCall of toolCalls) {
+      const signature = this.createToolCallSignature(toolCall);
+
+      // Count occurrences in recent history
+      const previousCalls = this.toolCallHistory.filter(entry => entry.signature === signature);
+      const count = previousCalls.length + 1; // +1 for current call
+
+      if (count >= this.CYCLE_THRESHOLD) {
+        // Check if this is a valid repeat (file modification)
+        const isValidRepeat = this.isValidFileRepeat(toolCall, previousCalls);
+
+        cycles.set(toolCall.id, {
+          toolName: toolCall.function.name,
+          count,
+          isValidRepeat,
+        });
+
+        logger.debug(
+          '[AGENT_CYCLE_DETECTION]',
+          this.instanceId,
+          `Detected cycle: ${toolCall.function.name} called ${count} times (valid repeat: ${isValidRepeat})`
+        );
+      }
+    }
+
+    return cycles;
+  }
+
+  /**
+   * Add tool calls to history for cycle detection
+   *
+   * @param toolCalls - Tool calls to add to history
+   */
+  private addToolCallsToHistory(
+    toolCalls: Array<{
+      id: string;
+      function: { name: string; arguments: Record<string, any> };
+    }>
+  ): void {
+    for (const toolCall of toolCalls) {
+      const signature = this.createToolCallSignature(toolCall);
+      let fileHashes: Map<string, string> | undefined;
+
+      // For read tools, capture file hashes BEFORE execution
+      if (toolCall.function.name === 'Read' || toolCall.function.name === 'read') {
+        fileHashes = new Map();
+        const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
+
+        if (filePath) {
+          const hash = this.getFileHash(filePath);
+          if (hash) {
+            fileHashes.set(filePath, hash);
+          }
+        }
+
+        // Handle multiple file paths if provided
+        if (toolCall.function.arguments.file_paths && Array.isArray(toolCall.function.arguments.file_paths)) {
+          for (const path of toolCall.function.arguments.file_paths) {
+            const hash = this.getFileHash(path);
+            if (hash) {
+              fileHashes.set(path, hash);
+            }
+          }
+        }
+      }
+
+      this.toolCallHistory.push({
+        signature,
+        toolName: toolCall.function.name,
+        timestamp: Date.now(),
+        fileHashes,
+      });
+    }
+
+    // Trim history to max size (sliding window)
+    while (this.toolCallHistory.length > this.MAX_TOOL_HISTORY) {
+      this.toolCallHistory.shift();
+    }
+  }
+
+  /**
+   * Clear cycle history if the pattern is broken
+   * Called after tool execution to check if last 3 calls are all different
+   */
+  private clearCycleHistoryIfBroken(): void {
+    if (this.toolCallHistory.length < 3) {
+      return;
+    }
+
+    // Check last 3 entries
+    const last3 = this.toolCallHistory.slice(-3);
+    const signatures = last3.map(entry => entry.signature);
+
+    // If all different, cycle is broken - clear history
+    if (new Set(signatures).size === 3) {
+      logger.debug('[AGENT_CYCLE_DETECTION]', this.instanceId, 'Cycle broken - clearing history');
+      this.toolCallHistory = [];
     }
   }
 
