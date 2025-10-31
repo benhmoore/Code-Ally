@@ -60,6 +60,7 @@ export class ExploreTool extends BaseTool {
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = true; // Hide detailed output
+  readonly requiresTodoId = false; // Exploration is research that may precede todo creation
 
   readonly usageGuidance = `**When to use explore:**
 - Understanding codebase structure and architecture

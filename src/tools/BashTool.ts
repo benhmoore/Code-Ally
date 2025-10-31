@@ -38,7 +38,7 @@ export class BashTool extends BaseTool {
           properties: {
             command: {
               type: 'string',
-              description: 'Shell command to execute',
+              description: `Shell command to execute. IMPORTANT: Use non-interactive flags: npm create ... -- --yes, npm init -y, apt install -y, etc. Commands will be killed if idle for ${TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000}+ seconds.`,
             },
             description: {
               type: 'string',
@@ -156,6 +156,27 @@ export class BashTool extends BaseTool {
   }
 
   /**
+   * Check if command is likely interactive (pre-execution)
+   */
+  private checkInteractiveCommand(command: string): { isInteractive: boolean; suggestion?: string } {
+    const patterns = [
+      { pattern: /^npm\s+create(?!\s+.*--\s+--yes)/, suggestion: 'Add -- --yes: npm create vite@latest myapp -- --yes' },
+      { pattern: /^npm\s+init(?!\s+(-y|--yes))/, suggestion: 'Use: npm init -y' },
+      { pattern: /^npx\s+create-[^\s]+(?!.*(-y|--yes))/, suggestion: 'Many create-* tools support -y flag' },
+      { pattern: /^(apt-get|apt)\s+install(?!\s+.*-y)/, suggestion: 'Add -y flag' },
+      { pattern: /^(vi|vim|nano|emacs|less|more)\s/, suggestion: 'Text editors are interactive' },
+      { pattern: /^(python3?|node|irb|php)$/, suggestion: 'Use with -c flag or script file' },
+    ];
+
+    for (const { pattern, suggestion } of patterns) {
+      if (pattern.test(command.trim())) {
+        return { isInteractive: true, suggestion };
+      }
+    }
+    return { isInteractive: false };
+  }
+
+  /**
    * Execute a command with streaming output
    */
   private async executeCommand(
@@ -169,14 +190,26 @@ export class BashTool extends BaseTool {
     let stderr = '';
     let returnCode: number | null = null;
     let timedOut = false;
+    let lastOutputTime = Date.now();
+    let idleKilled = false;
+
+    // Check for known interactive patterns
+    const interactiveCheck = this.checkInteractiveCommand(command);
+    if (interactiveCheck.isInteractive) {
+      return this.formatErrorResponse(
+        `Command appears to be interactive and may hang`,
+        'validation_error',
+        interactiveCheck.suggestion
+      );
+    }
 
     return new Promise((resolve) => {
       // Spawn process
-      // Use 'inherit' for stdin to allow interactive commands like npm/npx to work properly
+      // Use 'ignore' for stdin to prevent hanging on interactive prompts
       const child: ChildProcess = spawn(command, {
         cwd: workingDir,
         shell: true,
-        stdio: ['inherit', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       // Set up abort handler
@@ -210,11 +243,30 @@ export class BashTool extends BaseTool {
         }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
       }, timeout);
 
+      // Idle detection: kill process if no output for configured idle timeout
+      const idleCheckInterval = setInterval(() => {
+        const now = Date.now();
+        const idleTime = now - lastOutputTime;
+
+        // If process is running and has been idle for too long, it's likely waiting for input
+        if (child.exitCode === null && idleTime > TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT) {
+          idleKilled = true;
+          clearInterval(idleCheckInterval);
+          child.kill('SIGTERM');
+          setTimeout(() => {
+            if (child.exitCode === null) {
+              child.kill('SIGKILL');
+            }
+          }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+        }
+      }, TIMEOUT_LIMITS.IDLE_CHECK_INTERVAL);
+
       // Handle stdout
       if (child.stdout) {
         child.stdout.on('data', (data: Buffer) => {
           const chunk = data.toString();
           stdout += chunk;
+          lastOutputTime = Date.now(); // Update last output time
           this.emitOutputChunk(chunk);
         });
       }
@@ -224,6 +276,7 @@ export class BashTool extends BaseTool {
         child.stderr.on('data', (data: Buffer) => {
           const chunk = data.toString();
           stderr += chunk;
+          lastOutputTime = Date.now(); // Update last output time
           this.emitOutputChunk(chunk);
         });
       }
@@ -231,6 +284,7 @@ export class BashTool extends BaseTool {
       // Handle process exit
       child.on('close', (code: number | null) => {
         clearTimeout(timeoutHandle);
+        clearInterval(idleCheckInterval);
 
         // Clean up abort listener
         if (abortSignal) {
@@ -245,6 +299,21 @@ export class BashTool extends BaseTool {
             this.formatErrorResponse(
               'Command interrupted by user',
               'interrupted'
+            )
+          );
+          return;
+        }
+
+        // Check if killed due to idle (likely interactive prompt)
+        if (idleKilled) {
+          const combined = stdout + stderr;
+          const lastOutput = combined.trim().split('\n').slice(-3).join('\n');
+          const idleSeconds = TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000;
+          resolve(
+            this.formatErrorResponse(
+              `Command appears to be waiting for input (idle for ${idleSeconds}+ seconds)\n\nLast output:\n${lastOutput}`,
+              'interactive_command',
+              'Use non-interactive flags like --yes, -y, or provide input via pipe'
             )
           );
           return;

@@ -20,6 +20,7 @@ export class TodoUpdateTool extends BaseTool {
     'Update status of specific todos. Safely marks todos as completed or changes their status by finding them by id or content. Use when you need to update a few todos, especially after other tools have modified the todo list (e.g., after confirm_proposal). This prevents accidentally overwriting recent changes.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = false;
+  readonly requiresTodoId = false; // Todo management tools don't need todo_id
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

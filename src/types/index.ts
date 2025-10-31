@@ -70,6 +70,7 @@ export type ErrorType =
   | 'timeout_error'
   | 'command_failed'
   | 'interrupted'
+  | 'interactive_command'
   | 'execution_error'
   | 'plugin_error'
   | 'user_error'

@@ -16,6 +16,7 @@ export class TodoClearTool extends BaseTool {
     'Clear all todos. Use when starting fresh or when all work is complete and you want to clean up.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = false;
+  readonly requiresTodoId = false; // Todo management tools don't need todo_id
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

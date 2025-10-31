@@ -24,6 +24,7 @@ export class ModifyProposalTool extends BaseTool {
     'Modify proposed todos before acceptance. Updates the proposal with modified todos (still status="proposed"). Use to adjust, add, or remove tasks from the proposal.';
   readonly requiresConfirmation = false; // Only modifies todo list (internal state). User sees proposal in agent's message, and agent decides whether to accept/modify/decline.
   readonly visibleInChat = true;
+  readonly requiresTodoId = false; // Proposal management tool doesn't need todo_id
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

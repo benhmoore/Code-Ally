@@ -19,6 +19,7 @@ export class DeclineProposalTool extends BaseTool {
     'Decline and remove proposed todos. Clears proposed todos from the list and resets proposal state. Optionally provide a reason for declining.';
   readonly requiresConfirmation = false; // Only modifies todo list (internal state). User sees proposal in agent's message, and agent decides whether to accept/modify/decline.
   readonly visibleInChat = true;
+  readonly requiresTodoId = false; // Proposal management tool doesn't need todo_id
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

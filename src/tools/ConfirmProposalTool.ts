@@ -19,6 +19,7 @@ export class ConfirmProposalTool extends BaseTool {
     'Accept and activate proposed todos. Converts proposed todos to pending/in_progress (first one in_progress, rest pending) and activates them for execution.';
   readonly requiresConfirmation = false; // Only modifies todo list (internal state). User sees proposal in agent's message, and agent decides whether to accept/modify/decline.
   readonly visibleInChat = true;
+  readonly requiresTodoId = false; // Proposal management tool doesn't need todo_id
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

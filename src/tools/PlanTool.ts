@@ -117,6 +117,7 @@ export class PlanTool extends BaseTool {
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = true; // Hide detailed output
+  readonly requiresTodoId = false; // Planning is a meta-task that creates todos
 
   readonly usageGuidance = `**When to use plan:**
 - Need to implement new feature/component

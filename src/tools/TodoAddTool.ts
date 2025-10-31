@@ -22,6 +22,7 @@ export class TodoAddTool extends BaseTool {
     'Add new todos to the existing list without replacing it. Validates "exactly ONE in_progress" rule against the complete combined list. Use this when adding tasks to ongoing work.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = false;
+  readonly requiresTodoId = false; // Todo management tools don't need todo_id
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

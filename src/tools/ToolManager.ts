@@ -12,6 +12,8 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
 import { TOOL_NAMES } from '../config/toolDefaults.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { TodoManager } from '../services/TodoManager.js';
 
 /**
  * Tool with custom function definition
@@ -156,16 +158,34 @@ export class ToolManager {
       };
     }
 
-    // Add todo_id parameter to all tools (unless it's a todo management tool)
+    // Add todo_id and completes_todo parameters only if todos exist
+    // (except for todo management tools which never need these)
     if (!(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(tool.name)) {
-      if (!functionDef.function.parameters.properties) {
-        functionDef.function.parameters.properties = {};
-      }
+      // Check if todos exist
+      const registry = ServiceRegistry.getInstance();
+      const todoManager = registry.get<TodoManager>('todo_manager');
+      const todosExist = todoManager ? todoManager.getTodos().length > 0 : false;
 
-      functionDef.function.parameters.properties.todo_id = {
-        type: 'string',
-        description: 'Optional: ID of todo to mark as complete upon successful execution',
-      };
+      // Only add parameters if todos exist
+      if (todosExist) {
+        if (!functionDef.function.parameters.properties) {
+          functionDef.function.parameters.properties = {};
+        }
+
+        // Add todo_id parameter (required if tool.requiresTodoId is true)
+        functionDef.function.parameters.properties.todo_id = {
+          type: 'string',
+          description: tool.requiresTodoId
+            ? 'ID of the todo this tool call is working on (required)'
+            : 'Optional: ID of the todo this tool call is associated with',
+        };
+
+        // Add completes_todo parameter (optional, defaults to false)
+        functionDef.function.parameters.properties.completes_todo = {
+          type: 'boolean',
+          description: 'Whether this tool call completes the todo (default: false). Set to true only on the final tool call that finishes the task.',
+        };
+      }
     }
 
     return functionDef;
