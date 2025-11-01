@@ -236,9 +236,9 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
             permissionManager
           );
         } else {
-          // Acquire agent from pool
-          logger.debug('[EXPLORE_TOOL] Acquiring agent from pool');
-          pooledAgent = await agentPoolService.acquire(agentConfig);
+          // Acquire agent from pool with filtered ToolManager
+          logger.debug('[EXPLORE_TOOL] Acquiring agent from pool with filtered ToolManager');
+          pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
           explorationAgent = pooledAgent.agent;
           agentId = pooledAgent.agentId;
           logger.debug('[EXPLORE_TOOL] Acquired pooled agent:', agentId);

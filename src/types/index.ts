@@ -25,6 +25,8 @@ export interface Message {
 export interface MessageMetadata {
   /** Whether this is a command response that should be styled in yellow */
   isCommandResponse?: boolean;
+  /** Whether this message should be removed after the current turn */
+  ephemeral?: boolean;
   // Future: Add more presentation hints as needed
 }
 

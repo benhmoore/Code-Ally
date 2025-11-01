@@ -64,6 +64,12 @@ export abstract class BaseTool {
   readonly usageGuidance?: string;
 
   /**
+   * Optional plugin name for plugin-provided tools
+   * Set by ExecutableToolWrapper to identify the source plugin
+   */
+  readonly pluginName?: string;
+
+  /**
    * Activity stream for emitting events
    */
   protected activityStream: ActivityStream;

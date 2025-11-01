@@ -178,9 +178,10 @@ export class AgentPoolService implements IService {
    * object with a release() method to return the agent to the pool.
    *
    * @param agentConfig - Configuration for the agent
+   * @param customToolManager - Optional custom ToolManager (e.g., filtered tools for read-only agents)
    * @returns PooledAgent with release function
    */
-  async acquire(agentConfig: AgentConfig): Promise<PooledAgent> {
+  async acquire(agentConfig: AgentConfig, customToolManager?: ToolManager): Promise<PooledAgent> {
     // Try to find an available agent with matching configuration
     const availableAgent = this.findAvailableAgent(agentConfig);
 
@@ -209,12 +210,21 @@ export class AgentPoolService implements IService {
 
     const agentId = this.generateAgentId();
 
+    // Use custom ToolManager if provided, otherwise use default
+    const toolManager = customToolManager || this.toolManager;
+
+    if (customToolManager) {
+      logger.debug(`[AGENT_POOL] Creating agent ${agentId} with custom ToolManager (filtered tools)`);
+    } else {
+      logger.debug(`[AGENT_POOL] Creating agent ${agentId} with default ToolManager (all tools)`);
+    }
+
     // Create agent with error handling
     let agent: Agent;
     try {
       agent = new Agent(
         this.modelClient,
-        this.toolManager,
+        toolManager,
         this.activityStream,
         agentConfig,
         this.configManager,

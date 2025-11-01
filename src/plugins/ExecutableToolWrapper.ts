@@ -22,6 +22,7 @@ export class ExecutableToolWrapper extends BaseTool {
 	description: string;
 	requiresConfirmation: boolean;
 	usageGuidance?: string;
+	pluginName?: string;
 
 	private readonly command: string;
 	private readonly commandArgs: string[];
@@ -60,6 +61,7 @@ export class ExecutableToolWrapper extends BaseTool {
 		this.description = toolDef.description || '';
 		this.requiresConfirmation = toolDef.requiresConfirmation ?? false;
 		this.usageGuidance = toolDef.usageGuidance;
+		this.pluginName = manifest.name;
 
 		if (!toolDef.command) {
 			throw new Error(`Tool definition for '${toolDef.name}' is missing required 'command' field`);

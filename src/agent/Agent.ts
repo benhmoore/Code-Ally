@@ -900,6 +900,37 @@ export class Agent {
   }
 
   /**
+   * Clean up ephemeral messages from conversation history
+   * Called after assistant provides final text response for a turn
+   * Removes all messages marked as ephemeral
+   */
+  private cleanupEphemeralMessages(): void {
+    const originalLength = this.messages.length;
+
+    // Filter out ephemeral messages
+    this.messages = this.messages.filter(msg => {
+      const isEphemeral = msg.metadata?.ephemeral === true;
+      if (isEphemeral) {
+        logger.debug('[AGENT_EPHEMERAL]', this.instanceId,
+          `Removing ephemeral message: role=${msg.role}, tool_call_id=${msg.tool_call_id || 'n/a'}`);
+      }
+      return !isEphemeral;
+    });
+
+    const removedCount = originalLength - this.messages.length;
+    if (removedCount > 0) {
+      logger.debug('[AGENT_EPHEMERAL]', this.instanceId,
+        `Cleaned up ${removedCount} ephemeral message(s)`);
+
+      // Update token count after cleanup
+      this.tokenManager.updateTokenCount(this.messages);
+
+      // Auto-save after cleanup
+      this.autoSaveSession();
+    }
+  }
+
+  /**
    * Process a text-only response (no tool calls)
    *
    * @param response - LLM response with text content
@@ -951,6 +982,10 @@ export class Agent {
         timestamp: Date.now(),
       };
       this.messages.push(assistantMessage);
+
+      // Clean up ephemeral messages BEFORE auto-save
+      this.cleanupEphemeralMessages();
+
       this.autoSaveSession();
 
       this.emitEvent({
@@ -1043,6 +1078,10 @@ export class Agent {
       timestamp: Date.now(),
     };
     this.messages.push(assistantMessage);
+
+    // Clean up ephemeral messages BEFORE auto-save
+    // This ensures ephemeral content doesn't persist in session files
+    this.cleanupEphemeralMessages();
 
     // Auto-save after text response
     this.autoSaveSession();
@@ -1392,7 +1431,11 @@ export class Agent {
   private async performCompaction(): Promise<Message[]> {
     // Extract system message and other messages
     const systemMessage = this.messages[0]?.role === 'system' ? this.messages[0] : null;
-    const otherMessages = systemMessage ? this.messages.slice(1) : this.messages;
+    let otherMessages = systemMessage ? this.messages.slice(1) : this.messages;
+
+    // Filter out ephemeral messages before compaction
+    // They should have been cleaned up already, but this is a safety net
+    otherMessages = otherMessages.filter(msg => !msg.metadata?.ephemeral);
 
     // If we have fewer than 2 messages to summarize, nothing to compact
     if (otherMessages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_HISTORY) {

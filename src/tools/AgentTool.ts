@@ -372,7 +372,7 @@ export class AgentTool extends BaseTool {
 
         // Acquire agent from pool
         logger.debug('[AGENT_TOOL] Acquiring agent from pool with poolKey:', poolKey);
-        pooledAgent = await agentPoolService.acquire(agentConfig);
+        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
         subAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
         logger.debug(`[AGENT_TOOL] Using pooled agent ${agentId} for ${agentData.name}`);

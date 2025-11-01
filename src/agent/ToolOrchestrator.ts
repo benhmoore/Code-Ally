@@ -541,9 +541,14 @@ export class ToolOrchestrator {
 
     logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool:', toolCall.function.name, 'id:', toolCall.id, 'success:', result.success, 'resultLength:', formattedResult.length);
 
-    // Check for duplicate result content to prevent context bloat
+    // Check if this is an ephemeral read
+    const isEphemeral = (result as any)._ephemeral === true;
+
+    // Skip duplicate detection for ephemeral reads (they're temporary anyway)
     const tokenManager = this.agent.getTokenManager();
-    const previousCallId = tokenManager.trackToolResult(toolCall.id, formattedResult);
+    const previousCallId = isEphemeral
+      ? null
+      : tokenManager.trackToolResult(toolCall.id, formattedResult);
 
     let finalContent: string;
     if (previousCallId) {
@@ -552,18 +557,24 @@ export class ToolOrchestrator {
       logger.debug('[TOOL_ORCHESTRATOR] Deduplicated result for', toolCall.function.name, '- references call', previousCallId);
     } else {
       // Unique result - use full content
-      finalContent = formattedResult;
+      // Add ephemeral warning if present
+      const ephemeralWarning = (result as any)._ephemeral_warning;
+      finalContent = ephemeralWarning
+        ? `${ephemeralWarning}\n\n${formattedResult}`
+        : formattedResult;
     }
 
-    // Add tool result message to conversation
+    // Add tool result message to conversation with ephemeral metadata
     this.agent.addMessage({
       role: 'tool',
       content: finalContent,
       tool_call_id: toolCall.id,
       name: toolCall.function.name,
+      metadata: isEphemeral ? { ephemeral: true } : undefined,
     });
 
-    logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool result added to agent conversation');
+    logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool result added to agent conversation',
+      isEphemeral ? '(EPHEMERAL)' : '');
   }
 
   /**

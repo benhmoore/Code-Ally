@@ -168,7 +168,29 @@ export class ToolManager {
 
     for (const tool of this.tools.values()) {
       if (tool.usageGuidance) {
-        guidances.push(tool.usageGuidance);
+        // If tool has a plugin name, prepend it to the first line
+        if (tool.pluginName) {
+          // Split guidance into lines to modify the first line
+          const lines = tool.usageGuidance.split('\n');
+          if (lines.length > 0 && lines[0]) {
+            // Check if first line starts with "**When to use" pattern
+            const firstLine = lines[0];
+            const whenMatch = firstLine.match(/^(\*\*When to use [^:]+:\*\*)/);
+            if (whenMatch) {
+              // Insert plugin attribution after the bold header
+              lines[0] = `${whenMatch[1]} (from plugin: ${tool.pluginName})`;
+            } else {
+              // Fallback: just prepend plugin info at the start
+              lines[0] = `(from plugin: ${tool.pluginName}) ${firstLine}`;
+            }
+            guidances.push(lines.join('\n'));
+          } else {
+            guidances.push(tool.usageGuidance);
+          }
+        } else {
+          // Built-in tool - use guidance as-is
+          guidances.push(tool.usageGuidance);
+        }
       }
     }
 

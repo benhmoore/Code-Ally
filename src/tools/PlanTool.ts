@@ -292,9 +292,9 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
             permissionManager
           );
         } else {
-          // Acquire agent from pool
-          logger.debug('[PLAN_TOOL] Acquiring agent from pool');
-          pooledAgent = await agentPoolService.acquire(agentConfig);
+          // Acquire agent from pool with filtered ToolManager
+          logger.debug('[PLAN_TOOL] Acquiring agent from pool with filtered ToolManager');
+          pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
           planningAgent = pooledAgent.agent;
           agentId = pooledAgent.agentId;
           logger.debug('[PLAN_TOOL] Acquired pooled agent:', agentId);

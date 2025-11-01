@@ -57,7 +57,14 @@ const AGENT_DELEGATION_GUIDELINES = `## Tool Selection
 - For 5+ items, delegate subsets to agents (group related tasks, run in parallel)
 
 ## Agent Tagging
-- @agent_name syntax → delegate using agent tool`;
+- @agent_name syntax → delegate using agent tool
+
+## Creative Agent Usage
+Agents persist in memory (persist=true, default) and can be queried later with agent_ask:
+- **File muse**: explore(task="Understand auth.ts architecture") → agent_ask(agent_id="...", message="How does token refresh work?")
+- **Implement + validate**: agent(task="Add OAuth", agent_name="implementor") → agent(task="Review OAuth implementation", agent_name="validator")
+- **Iterative refinement**: plan(requirements="Add feature X") → agent_ask(agent_id="...", message="How would we handle edge case Y?")
+- **Context preservation**: Create specialized agents to offload deep analysis, keeping main conversation focused`;
 
 // Additional guidelines that apply to all agents
 const GENERAL_GUIDELINES = `## Code Conventions

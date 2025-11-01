@@ -45,6 +45,15 @@ export class ReadTool extends BaseTool {
   }
 
   /**
+   * Get the maximum allowed tokens for ephemeral reads
+   * Allows up to 90% of context size for temporary large file reads
+   */
+  private getEphemeralMaxTokens(): number {
+    const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
+    return Math.floor(contextSize * 0.9); // 90% of context
+  }
+
+  /**
    * Provide custom function definition
    */
   getFunctionDefinition(): FunctionDefinition {
@@ -71,6 +80,10 @@ export class ReadTool extends BaseTool {
               type: 'integer',
               description: 'Start reading from this line number (1-based)',
             },
+            ephemeral: {
+              type: 'boolean',
+              description: 'If true, read significantly larger files (up to 90% of context vs normal 20% limit). Content is transient - automatically removed after this turn to preserve context. Use for one-time inspection of large files.',
+            },
           },
           required: ['file_paths'],
         },
@@ -84,6 +97,7 @@ export class ReadTool extends BaseTool {
     const filePaths = args.file_paths;
     const limit = args.limit !== undefined ? Number(args.limit) : 0;
     const offset = args.offset !== undefined ? Number(args.offset) : 0;
+    const ephemeral = args.ephemeral === true;
 
     if (!Array.isArray(filePaths) || filePaths.length === 0) {
       return this.formatErrorResponse(
@@ -94,16 +108,20 @@ export class ReadTool extends BaseTool {
     }
 
     const estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
-    const maxTokens = this.getMaxTokens();
+    const maxTokens = ephemeral ? this.getEphemeralMaxTokens() : this.getMaxTokens();
 
     if (estimatedTokens > maxTokens) {
       const examples = filePaths.length === 1
         ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=50, limit=100)`
         : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
 
+      const ephemeralHint = !ephemeral
+        ? ' Or use ephemeral=true to read larger files temporarily (content removed after current turn).'
+        : '';
+
       return this.formatErrorResponse(
         `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds limit of ${maxTokens}. ` +
-        `Use grep/glob to search for specific content, or use limit/offset for targeted reading. ` +
+        `Use grep/glob to search for specific content, or use limit/offset for targeted reading.${ephemeralHint} ` +
         `Example: ${examples}`,
         'validation_error',
         `Use targeted reading with limit parameter or search within files first using grep`
@@ -140,12 +158,22 @@ export class ReadTool extends BaseTool {
     const combinedContent = results.join('\n\n');
 
     // If some files failed, include warning in content but still succeed
-    return this.formatSuccessResponse({
+    const result = this.formatSuccessResponse({
       content: combinedContent,
       files_read: filesRead,
       files_failed: errors.length,
       partial_failure: errors.length > 0,
     });
+
+    // Mark result as ephemeral if requested
+    if (ephemeral) {
+      (result as any)._ephemeral = true;
+      (result as any)._ephemeral_warning =
+        '[EPHEMERAL READ: This content will be removed from conversation after current turn. ' +
+        'If you need it later, use a regular read or save key information in your response.]';
+    }
+
+    return result;
   }
 
   /**
@@ -203,11 +231,30 @@ export class ReadTool extends BaseTool {
 
     // Split into lines
     const lines = content.split('\n');
+    const totalLines = lines.length;
+
+    // Validate offset against file size
+    if (offset > 0 && offset > totalLines) {
+      // Calculate helpful suggestions
+      const lastPageStart = Math.max(1, totalLines - (limit || 50));
+
+      return `=== ${absolutePath} ===\n` +
+        `[Cannot read from offset ${offset}: file only has ${totalLines} line${totalLines !== 1 ? 's' : ''}. ` +
+        `Try reading from the beginning (offset=1)` +
+        (limit ? `, or offset=${lastPageStart} to read the last ${Math.min(limit, totalLines)} lines.` : '.') +
+        `]`;
+    }
 
     // Apply offset and limit
     const startLine = offset > 0 ? offset - 1 : 0;
     const endLine = limit > 0 ? startLine + limit : lines.length;
     const selectedLines = lines.slice(startLine, endLine);
+
+    // Add informational header if only showing a slice
+    let header = `=== ${absolutePath} ===`;
+    if (offset > 1 || (limit > 0 && endLine < totalLines)) {
+      header += `\n[Showing lines ${startLine + 1}-${Math.min(endLine, totalLines)} of ${totalLines} total lines]`;
+    }
 
     // Format with line numbers
     const formattedLines = selectedLines.map((line, index) => {
@@ -215,7 +262,7 @@ export class ReadTool extends BaseTool {
       return `${String(lineNum).padStart(FORMATTING.LINE_NUMBER_WIDTH)}\t${line}`;
     });
 
-    return `=== ${absolutePath} ===\n${formattedLines.join('\n')}`;
+    return `${header}\n${formattedLines.join('\n')}`;
   }
 
 
