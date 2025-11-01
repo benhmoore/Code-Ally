@@ -20,6 +20,7 @@ import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING } from '../config/constants.js';
+import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 
 export class AgentTool extends BaseTool {
   readonly name = 'agent';
@@ -62,6 +63,10 @@ export class AgentTool extends BaseTool {
               type: 'string',
               description: 'Name of agent to use (default: "general")',
             },
+            persist: {
+              type: 'boolean',
+              description: 'Whether to persist the agent for reuse. If true, returns agent_id for tracking. Set to false for one-time ephemeral agents. Default: true.',
+            },
           },
           required: ['task_prompt'],
         },
@@ -74,6 +79,7 @@ export class AgentTool extends BaseTool {
 
     const agentName = args.agent_name || 'general';
     const taskPrompt = args.task_prompt;
+    const persist = args.persist ?? true;
 
     // Validate task_prompt parameter
     if (!taskPrompt || typeof taskPrompt !== 'string') {
@@ -92,6 +98,15 @@ export class AgentTool extends BaseTool {
       );
     }
 
+    // Validate persist parameter
+    if (persist !== undefined && typeof persist !== 'boolean') {
+      return this.formatErrorResponse(
+        'persist parameter must be a boolean',
+        'validation_error',
+        'Example: agent(task_prompt="...", persist=true)'
+      );
+    }
+
     // Execute single agent - pass currentCallId to avoid race conditions
     // IMPORTANT: this.currentCallId is set by BaseTool.execute() before executeImpl is called
     // We capture it here to avoid it being overwritten by concurrent executions
@@ -103,7 +118,7 @@ export class AgentTool extends BaseTool {
       );
     }
 
-    return await this.executeSingleAgentWrapper(agentName, taskPrompt, callId);
+    return await this.executeSingleAgentWrapper(agentName, taskPrompt, persist, callId);
   }
 
   /**
@@ -112,19 +127,27 @@ export class AgentTool extends BaseTool {
   private async executeSingleAgentWrapper(
     agentName: string,
     taskPrompt: string,
+    persist: boolean,
     callId: string
   ): Promise<ToolResult> {
-    logger.debug('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId);
+    logger.debug('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId, 'persist:', persist);
 
     try {
-      const result = await this.executeSingleAgent(agentName, taskPrompt, callId);
+      const result = await this.executeSingleAgent(agentName, taskPrompt, persist, callId);
 
       if (result.success) {
-        return this.formatSuccessResponse({
+        const successResponse: Record<string, any> = {
           content: result.result, // Human-readable output for LLM
           agent_name: result.agent_used,
           duration_seconds: result.duration_seconds,
-        });
+        };
+
+        // Include agent_id if agent was persisted
+        if (result.agent_id) {
+          successResponse.agent_id = result.agent_id;
+        }
+
+        return this.formatSuccessResponse(successResponse);
       } else {
         return this.formatErrorResponse(
           result.error || 'Agent execution failed',
@@ -145,9 +168,10 @@ export class AgentTool extends BaseTool {
   private async executeSingleAgent(
     agentName: string,
     taskPrompt: string,
+    persist: boolean,
     callId: string
   ): Promise<any> {
-    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId);
+    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId, 'persist:', persist);
     const startTime = Date.now();
 
     try {
@@ -185,8 +209,8 @@ export class AgentTool extends BaseTool {
 
       // Execute the agent task
       logger.debug('[AGENT_TOOL] Executing agent task...');
-      const result = await this.executeAgentTask(agentData, taskPrompt, callId);
-      logger.debug('[AGENT_TOOL] Agent task completed. Result length:', result?.length || 0);
+      const taskResult = await this.executeAgentTask(agentData, taskPrompt, persist, callId);
+      logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
 
       const duration = (Date.now() - startTime) / 1000;
 
@@ -197,17 +221,24 @@ export class AgentTool extends BaseTool {
         timestamp: Date.now(),
         data: {
           agentName,
-          result,
+          result: taskResult.result,
           duration,
         },
       });
 
-      return {
+      const response: any = {
         success: true,
-        result,
+        result: taskResult.result,
         agent_used: agentName,
         duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
       };
+
+      // Include agent_id if available
+      if (taskResult.agent_id) {
+        response.agent_id = taskResult.agent_id;
+      }
+
+      return response;
     } catch (error) {
       return {
         success: false,
@@ -223,9 +254,10 @@ export class AgentTool extends BaseTool {
   private async executeAgentTask(
     agentData: any,
     taskPrompt: string,
+    persist: boolean,
     callId: string
-  ): Promise<string> {
-    logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId);
+  ): Promise<{ result: string; agent_id?: string }> {
+    logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'persist:', persist);
     const registry = ServiceRegistry.getInstance();
 
     // Get required services - STRICT: no fallbacks
@@ -290,24 +322,83 @@ export class AgentTool extends BaseTool {
     // Create sub-agent with scoped context and parent relationship
     // IMPORTANT: Use callId parameter, not this.currentCallId (which can be overwritten by concurrent calls)
     logger.debug('[AGENT_TOOL] Creating sub-agent with parentCallId:', callId);
-    const agentConfig: AgentConfig = {
-      isSpecializedAgent: true,
-      verbose: false,
-      systemPrompt: specializedPrompt,
-      baseAgentPrompt: agentData.system_prompt, // Store for dynamic regeneration
-      taskPrompt: taskPrompt, // Store for dynamic regeneration
-      config: config,
-      parentCallId: callId, // Link nested tools to this agent call (use parameter, not this.currentCallId!)
-    };
 
-    const subAgent = new Agent(
-      mainModelClient,
-      filteredToolManager, // Use filtered tool manager if agent has restrictions
-      this.activityStream,
-      agentConfig,
-      configManager, // Pass configManager for token limit configuration
-      permissionManager // Pass permissionManager so subagents go through same permission screening
-    );
+    // Choose between pooled or ephemeral agent
+    let subAgent: Agent;
+    let pooledAgent: PooledAgent | null = null;
+    let agentId: string | null = null;
+
+    if (persist) {
+      // Use AgentPoolService for persistent agent
+      const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+
+      if (!agentPoolService) {
+        // Graceful fallback: AgentPoolService not available
+        logger.warn('[AGENT_TOOL] AgentPoolService not available, falling back to ephemeral agent');
+        const agentConfig: AgentConfig = {
+          isSpecializedAgent: true,
+          verbose: false,
+          systemPrompt: specializedPrompt,
+          baseAgentPrompt: agentData.system_prompt,
+          taskPrompt: taskPrompt,
+          config: config,
+          parentCallId: callId,
+        };
+
+        subAgent = new Agent(
+          mainModelClient,
+          filteredToolManager,
+          this.activityStream,
+          agentConfig,
+          configManager,
+          permissionManager
+        );
+      } else {
+        // IMPORTANT: Create unique pool key for this agent config
+        // Must include agent_name to avoid mixing different custom agents
+        const poolKey = `agent-${agentData.name}`;
+
+        // Create config with pool metadata
+        const agentConfig: AgentConfig = {
+          isSpecializedAgent: true,
+          verbose: false,
+          systemPrompt: specializedPrompt,
+          baseAgentPrompt: agentData.system_prompt,
+          taskPrompt: taskPrompt,
+          config: config,
+          parentCallId: callId,
+          _poolKey: poolKey, // CRITICAL: Add this for pool matching
+        };
+
+        // Acquire agent from pool
+        logger.debug('[AGENT_TOOL] Acquiring agent from pool with poolKey:', poolKey);
+        pooledAgent = await agentPoolService.acquire(agentConfig);
+        subAgent = pooledAgent.agent;
+        agentId = pooledAgent.agentId;
+        logger.debug(`[AGENT_TOOL] Using pooled agent ${agentId} for ${agentData.name}`);
+      }
+    } else {
+      // Create ephemeral agent
+      logger.debug('[AGENT_TOOL] Creating ephemeral agent');
+      const agentConfig: AgentConfig = {
+        isSpecializedAgent: true,
+        verbose: false,
+        systemPrompt: specializedPrompt,
+        baseAgentPrompt: agentData.system_prompt,
+        taskPrompt: taskPrompt,
+        config: config,
+        parentCallId: callId,
+      };
+
+      subAgent = new Agent(
+        mainModelClient,
+        filteredToolManager,
+        this.activityStream,
+        agentConfig,
+        configManager,
+        permissionManager
+      );
+    }
 
     // Track active delegation
     this.activeDelegations.set(callId, {
@@ -364,7 +455,14 @@ export class AgentTool extends BaseTool {
       }
 
       // Append note to all agent responses
-      return finalResponse + '\n\nIMPORTANT: The user CANNOT see this summary. You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
+      const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this summary. You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
+
+      // Return result with optional agent_id
+      const returnValue: { result: string; agent_id?: string } = { result };
+      if (agentId) {
+        returnValue.agent_id = agentId;
+      }
+      return returnValue;
     } catch (error) {
       logger.debug('[AGENT_TOOL] ERROR during sub-agent execution:', error);
       throw error;
@@ -373,8 +471,13 @@ export class AgentTool extends BaseTool {
       logger.debug('[AGENT_TOOL] Cleaning up sub-agent...');
       this.activeDelegations.delete(callId);
 
-      // Clean up sub-agent
-      await subAgent.cleanup();
+      // Conditional cleanup: release pooled agent or cleanup ephemeral agent
+      if (pooledAgent) {
+        logger.debug('[AGENT_TOOL] Releasing agent back to pool');
+        pooledAgent.release();
+      } else {
+        await subAgent.cleanup();
+      }
     }
   }
 

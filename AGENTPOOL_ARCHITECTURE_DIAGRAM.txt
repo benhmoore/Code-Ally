@@ -1,0 +1,258 @@
+AGENTPOOL SERVICE ARCHITECTURE DIAGRAM
+======================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         CLI ENTRY POINT (cli.ts)                        │
+│                                                                          │
+│  1. Create ServiceRegistry.getInstance()                                │
+│  2. Register core services (config, session, activity stream)           │
+│  3. Create AgentPoolService with dependencies                           │
+│  4. Register AgentPoolService in registry                               │
+│  5. Add AgentPoolTool to tools array                                    │
+│  6. Create ToolManager with all tools                                   │
+│  7. Create Agent with ToolManager                                       │
+│  8. Render UI or handle --once mode                                     │
+│  9. Call registry.shutdown() on exit                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │               │               │
+                    ▼               ▼               ▼
+        ┌──────────────────┐  ┌──────────────┐  ┌─────────────────┐
+        │ AgentPoolService │  │ AgentPoolTool│  │ PoolCommand     │
+        ├──────────────────┤  ├──────────────┤  ├─────────────────┤
+        │ - submitTask()   │  │ - execute()  │  │ - status        │
+        │ - getTaskStatus()│  │ - format     │  │ - clear         │
+        │ - getTaskResult()│  │   results    │  └─────────────────┘
+        │ - initialize()   │  │ - error      │
+        │ - cleanup()      │  │   handling   │
+        └──────────────────┘  └──────────────┘
+                    │               │
+                    └───────────────┼───────────────┘
+                                    │
+                    ┌───────────────┴────────────────┐
+                    │ ServiceRegistry.getInstance()  │
+                    ├─────────────────────────────────┤
+                    │ Services Map:                   │
+                    │ - config_manager               │
+                    │ - activity_stream              │
+                    │ - agent_pool_service ◄─────────┤──┐
+                    │ - tool_manager                 │  │ Registered by:
+                    │ - agent                        │  │ 1. Service class
+                    │ - token_manager                │  │ 2. Tool class
+                    │ - ... other services           │  │ 3. Command class
+                    └─────────────────────────────────┘  │
+                                                         │
+        ┌────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   AGENTPOOL EXECUTION LIFECYCLE                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+                    User Message
+                         │
+                         ▼
+                    Agent.sendMessage()
+                         │
+                         ▼
+            LLM identifies agent_pool() call
+                         │
+                         ▼
+        ToolOrchestrator.executeToolCalls()
+                         │
+                         ▼
+          AgentPoolTool.execute(args)
+                         │
+        ┌────────────────┴────────────────┐
+        │                                 │
+        ▼                                 ▼
+ submitTask() for           submitTask() for
+ each task in array         each task in array
+        │                                 │
+        └────────────────┬────────────────┘
+                         │
+                         ▼
+      AgentPoolService.submitTask(config, msg)
+                         │
+        ┌────────────────┴────────────────┐
+        │                                 │
+        ▼                                 ▼
+   Create PooledAgentHandle      Add to taskQueue
+   - poolId: "pool-xxx"          if < maxQueuedTasks
+   - agentId: ""
+   - status: "queued"
+   - createdAt: now
+        │                                 │
+        └────────────────┬────────────────┘
+                         │
+                         ▼
+            processQueue() - Process tasks
+             with concurrency control
+             (max N agents at once)
+                         │
+        ┌────────────────┴────────────────┐
+        │                                 │
+        ▼                                 ▼
+   Create Agent              Put in activeAgents
+   Execute: agent.sendMessage()  or add to queue
+        │                                 │
+        ├── success ──────┐               │
+        │                 │               │
+        │            status: completed   │
+        │            cache result        │
+        │                 │               │
+        └────────────────┬┘               │
+                         │               │
+                    activeAgents.delete(poolId)
+                         │               │
+                         └───────────────┘
+                                 │
+                                 ▼
+                   processQueue() continues
+                   (next queued task starts)
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      TOOLRESULT FLOW                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+AgentPoolTool.execute()
+    │
+    ├─ Validate inputs
+    │
+    ├─ Get AgentPoolService from registry
+    │
+    ├─ Submit all tasks (returns PooledAgentHandle[])
+    │       Handle = { poolId, agentId, status, createdAt }
+    │
+    ├─ Format response via formatSuccessResponse()
+    │       {
+    │         success: true,
+    │         error: '',
+    │         content: 'Submitted 3 tasks',
+    │         task_handles: [{pool_id, agentId}],
+    │       }
+    │
+    └─ Return ToolResult to LLM
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    CONCURRENT EXECUTION EXAMPLE                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Submitted Tasks:
+  T1: "Analyze code"      ──┐
+  T2: "Run tests"         ──┤
+  T3: "Generate docs"     ──┼── 3 tasks submitted
+  T4: "Format files"      ──┤
+  T5: "Deploy"            ──┘
+
+Max Agents: 3
+
+Timeline:
+  t=0s:   T1, T2, T3 START (running)  |  T4, T5 QUEUED
+  t=5s:   T1 DONE                     |  T4 START (running)  |  T5 QUEUED
+  t=8s:   T2 DONE                     |  T5 START (running)
+  t=12s:  T3 DONE
+  t=15s:  T4 DONE
+  t=20s:  T5 DONE
+
+Results accessible via:
+  getTaskStatus("pool-xxx")  ──> { status, agentId, ... }
+  getTaskResult("pool-xxx")  ──> "task output string"
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   SERVICE LIFECYCLE PATTERN                             │
+└─────────────────────────────────────────────────────────────────────────┘
+
+     ┌────────────────────────┐
+     │  Create AgentPoolService │
+     └────────────┬───────────┘
+                  │
+                  ▼
+     ┌────────────────────────┐
+     │  .initialize()         │
+     │  - Create cleanup      │
+     │    interval            │
+     └────────────┬───────────┘
+                  │
+                  ▼
+     ┌────────────────────────┐
+     │  Register in registry  │
+     │  registry.registerInstance(
+     │    'agent_pool_service',
+     │    agentPoolService)   │
+     └────────────┬───────────┘
+                  │
+                  ▼
+     ┌────────────────────────┐
+     │  Service Running       │
+     │  - submitTask()        │
+     │  - processQueue()      │
+     │  - executeTask()       │
+     │  - getTaskStatus()     │
+     └────────────┬───────────┘
+                  │
+      (App shutdown signal)
+                  │
+                  ▼
+     ┌────────────────────────┐
+     │  registry.shutdown()   │
+     │  calls cleanup() on    │
+     │  all services          │
+     └────────────┬───────────┘
+                  │
+                  ▼
+     ┌────────────────────────┐
+     │  .cleanup()            │
+     │  - Stop all agents     │
+     │  - Clear queue         │
+     │  - Clear handles       │
+     │  - Clear cache         │
+     └────────────┬───────────┘
+                  │
+                  ▼
+     ┌────────────────────────┐
+     │  Service Cleaned Up    │
+     │  Resources Released    │
+     └────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    KEY INTEGRATION POINTS                               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+1. ServiceRegistry Integration
+   ├─ Implement IService interface
+   ├─ Register in cli.ts after line 520
+   ├─ Access via registry.get<AgentPoolService>('agent_pool_service')
+   └─ Cleanup via registry.shutdown()
+
+2. Tool Integration
+   ├─ Extend BaseTool
+   ├─ Implement executeImpl()
+   ├─ Use formatSuccessResponse() / formatErrorResponse()
+   ├─ Return PooledAgentHandle[] with pool_id
+   └─ Added to tools[] before ToolManager creation
+
+3. Command Integration (Optional)
+   ├─ Extend Command class
+   ├─ Register in CommandHandler constructor
+   ├─ Use createResponse() / createError()
+   └─ Support subcommands via argument parsing
+
+4. Configuration
+   ├─ maxAgents: max concurrent agents
+   ├─ maxQueuedTasks: max tasks in queue
+   ├─ taskTimeoutMs: execution timeout
+   └─ enableAutoCleanup: auto-cleanup old tasks
+
+5. Error Handling
+   ├─ Validation errors (bad input)
+   ├─ Execution errors (task failed)
+   ├─ Timeout errors (exceeded timeout)
+   ├─ System errors (service unavailable)
+   └─ All caught and formatted as ToolResult
+

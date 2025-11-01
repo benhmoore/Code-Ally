@@ -198,6 +198,9 @@ Agent Commands:
   /agent show <name>       - Show agent details
   /agent use <name> <task> - Use specific agent for a task
   /agent delete <name>     - Delete an agent
+  /agent active            - Show active pooled agents
+  /agent stats             - Show pool statistics
+  /agent clear [id]        - Clear specific agent or all from pool
 
 Focus Commands:
   /focus <path>            - Set directory focus

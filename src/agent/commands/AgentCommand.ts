@@ -1,7 +1,9 @@
 /**
- * AgentCommand - Manage agents
+ * AgentCommand - Manage agents and agent pool
  *
- * Provides subcommands for creating, listing, showing, using, and deleting agents.
+ * Provides subcommands for:
+ * - Managing user-created specialized agents (create, list, show, use, delete)
+ * - Managing the agent pool (active, stats, clear)
  */
 
 import { Command } from './Command.js';
@@ -10,12 +12,13 @@ import type { Message } from '../../types/index.js';
 import type { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 import type { AgentManager } from '../../services/AgentManager.js';
+import type { AgentPoolService } from '../../services/AgentPoolService.js';
 
 export class AgentCommand extends Command {
   readonly name = '/agent';
-  readonly description = 'Manage agents';
+  readonly description = 'Manage agents and agent pool';
 
-  // Use yellow output for delete subcommand only
+  // Use yellow output for simple status messages
   protected readonly useYellowOutput = true;
 
   async execute(
@@ -32,6 +35,7 @@ export class AgentCommand extends Command {
     const restArgs = args.slice(1);
 
     switch (subcommand.toLowerCase()) {
+      // User-created agent management
       case 'create':
         return this.handleCreate(restArgs.join(' '), serviceRegistry);
       case 'ls':
@@ -44,6 +48,15 @@ export class AgentCommand extends Command {
         return this.handleDelete(restArgs.join(' '), serviceRegistry);
       case 'use':
         return this.handleUse(restArgs.join(' '), serviceRegistry);
+
+      // Agent pool management
+      case 'active':
+        return this.handleActive(serviceRegistry);
+      case 'stats':
+        return this.handleStats(serviceRegistry);
+      case 'clear':
+        return this.handleClear(restArgs, serviceRegistry);
+
       default:
         return {
           handled: true,
@@ -56,11 +69,18 @@ export class AgentCommand extends Command {
     return {
       handled: true,
       response: `Agent Commands:
+
+Specialized Agent Management:
   /agent create <description> - Create new specialized agent
   /agent ls                   - List available agents
   /agent show <name>          - Show agent details
   /agent use <name> <task>    - Use specific agent
   /agent delete <name>        - Delete agent
+
+Agent Pool Management:
+  /agent active               - Show active pooled agents
+  /agent stats                - Show pool statistics
+  /agent clear [agent_id]     - Clear specific agent or all if no ID
 `,
     };
   }
@@ -183,5 +203,138 @@ export class AgentCommand extends Command {
       { agentName, taskPrompt },
       'agent_use'
     );
+  }
+
+  // ===========================
+  // Agent Pool Management
+  // ===========================
+
+  /**
+   * Show active agents in the pool
+   */
+  private async handleActive(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
+    const agentPool = serviceRegistry.get<AgentPoolService>('agent_pool');
+    if (!agentPool) {
+      return this.createError('Agent pool not available');
+    }
+
+    const agentIds = agentPool.getAgentIds();
+
+    if (agentIds.length === 0) {
+      return {
+        handled: true,
+        response: 'No active agents in the pool.',
+      };
+    }
+
+    let output = 'Active Agents:\n\n';
+
+    for (const agentId of agentIds) {
+      const metadata = agentPool.getAgentMetadata(agentId);
+      if (!metadata) continue;
+
+      const status = metadata.inUse ? 'IN USE' : 'AVAILABLE';
+      const type = metadata.config.isSpecializedAgent ? 'Specialized' : 'Standard';
+      const age = this.formatDuration(Date.now() - metadata.createdAt);
+      const lastUsed = this.formatDuration(Date.now() - metadata.lastAccessedAt);
+
+      output += `  ${agentId}\n`;
+      output += `    Status:      ${status}\n`;
+      output += `    Type:        ${type}\n`;
+      output += `    Age:         ${age}\n`;
+      output += `    Last Used:   ${lastUsed}\n`;
+      output += `    Use Count:   ${metadata.useCount}\n`;
+      output += '\n';
+    }
+
+    // Multi-line output, not yellow
+    return { handled: true, response: output };
+  }
+
+  /**
+   * Show pool statistics
+   */
+  private async handleStats(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
+    const agentPool = serviceRegistry.get<AgentPoolService>('agent_pool');
+    if (!agentPool) {
+      return this.createError('Agent pool not available');
+    }
+
+    const stats = agentPool.getPoolStats();
+
+    let output = 'Agent Pool Statistics:\n\n';
+    output += `  Total Agents:     ${stats.totalAgents}/${stats.maxPoolSize}\n`;
+    output += `  In Use:           ${stats.inUseAgents}\n`;
+    output += `  Available:        ${stats.availableAgents}\n`;
+
+    if (stats.oldestAgentAge !== null) {
+      output += `  Oldest Agent:     ${this.formatDuration(stats.oldestAgentAge)}\n`;
+    }
+    if (stats.newestAgentAge !== null) {
+      output += `  Newest Agent:     ${this.formatDuration(stats.newestAgentAge)}\n`;
+    }
+
+    // Multi-line output, not yellow
+    return { handled: true, response: output };
+  }
+
+  /**
+   * Clear specific agent or all agents from pool
+   */
+  private async handleClear(args: string[], serviceRegistry: ServiceRegistry): Promise<CommandResult> {
+    const agentPool = serviceRegistry.get<AgentPoolService>('agent_pool');
+    if (!agentPool) {
+      return this.createError('Agent pool not available');
+    }
+
+    // If agent_id provided, clear specific agent
+    if (args.length > 0) {
+      const agentId = args[0]!;
+
+      if (!agentPool.hasAgent(agentId)) {
+        return this.createError(`Agent '${agentId}' not found in pool. Use /agent active to see active agents.`);
+      }
+
+      const removed = await agentPool.removeAgent(agentId);
+
+      if (removed) {
+        return this.createResponse(`Removed agent '${agentId}' from pool.`);
+      } else {
+        return this.createError(`Cannot clear agent '${agentId}' - currently in use.`);
+      }
+    }
+
+    // Clear entire pool
+    const stats = agentPool.getPoolStats();
+    if (stats.totalAgents === 0) {
+      return this.createResponse('Pool is already empty.');
+    }
+
+    if (stats.inUseAgents > 0) {
+      return this.createError(`Cannot clear pool - ${stats.inUseAgents} agent(s) currently in use.`);
+    }
+
+    await agentPool.clearPool();
+    return this.createResponse(`Cleared ${stats.totalAgents} agent(s) from pool.`);
+  }
+
+  /**
+   * Format a duration in milliseconds to human-readable string
+   */
+  private formatDuration(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+      return `${days}d ${hours % 24}h`;
+    } else if (hours > 0) {
+      return `${hours}h ${minutes % 60}m`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds % 60}s`;
+    } else {
+      return `${seconds}s`;
+    }
   }
 }

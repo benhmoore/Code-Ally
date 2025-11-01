@@ -533,3 +533,21 @@ export const TOKEN_MANAGEMENT = {
   /** Context near capacity warning threshold (80%) */
   NEAR_CAPACITY_THRESHOLD: 80,
 } as const;
+
+// ===========================================
+// AGENT POOL MANAGEMENT
+// ===========================================
+
+/**
+ * Agent pool configuration for persistent specialized agents
+ */
+export const AGENT_POOL = {
+  /** Default maximum pool size (number of concurrent agents) */
+  DEFAULT_MAX_SIZE: 10,
+
+  /** Default idle timeout before agent eviction (5 minutes) */
+  DEFAULT_IDLE_TIMEOUT_MS: 5 * 60 * 1000,
+
+  /** Default cleanup interval for idle agent eviction (1 minute) */
+  DEFAULT_CLEANUP_INTERVAL_MS: 60 * 1000,
+} as const;

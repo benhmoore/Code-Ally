@@ -144,8 +144,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         <Text dimColor> [{isRunning ? '...' : ''}{isRunning ? ' ' : ''}{durationStr}]</Text>
       </Box>
 
-      {/* Diff preview (hidden if collapsed or hideOutput) */}
-      {!toolCall.collapsed && !toolCall.hideOutput && toolCall.diffPreview && (
+      {/* Diff preview (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
+      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && toolCall.diffPreview && (
         <Box flexDirection="column" marginTop={1} marginBottom={1} paddingLeft={indent.length + 4}>
           <DiffDisplay
             oldContent={toolCall.diffPreview.oldContent}
@@ -174,8 +174,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Output as threaded child (hidden if collapsed or hideOutput) */}
-      {!toolCall.collapsed && !toolCall.hideOutput && toolCall.output && !toolCall.error && (
+      {/* Output as threaded child (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
+      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && toolCall.output && !toolCall.error && (
         <Box flexDirection="column">
           <Box>
             <Text>{indent}    </Text>
@@ -192,16 +192,16 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Truncation indicator for agent delegations with many tool calls (hidden if collapsed or hideOutput) */}
-      {!toolCall.collapsed && !toolCall.hideOutput && isAgentDelegation && toolCallCount > 3 && (
+      {/* Truncation indicator for agent delegations with many tool calls (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
+      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && isAgentDelegation && toolCallCount > 3 && (
         <Box>
           <Text>{indent}    </Text>
           <Text dimColor>... (showing last 3 of {toolCallCount} tool calls)</Text>
         </Box>
       )}
 
-      {/* Nested tool calls (hidden if collapsed) */}
-      {!toolCall.collapsed && children}
+      {/* Nested tool calls (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
+      {(!toolCall.collapsed || config?.show_full_tool_output) && (!toolCall.hideOutput || config?.show_full_tool_output) && children}
     </Box>
   );
 };

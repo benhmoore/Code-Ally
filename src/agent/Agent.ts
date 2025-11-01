@@ -48,6 +48,8 @@ export interface AgentConfig {
   parentCallId?: string;
   /** Required tool calls that must be executed before agent can exit */
   requiredToolCalls?: string[];
+  /** Internal: Unique key for pool matching (used by AgentTool to distinguish custom agents) */
+  _poolKey?: string;
 }
 
 /**
@@ -184,6 +186,13 @@ export class Agent {
    */
   getTokenManager(): TokenManager {
     return this.tokenManager;
+  }
+
+  /**
+   * Get the tool orchestrator (used by agent_ask to update parent call ID)
+   */
+  getToolOrchestrator(): ToolOrchestrator {
+    return this.toolOrchestrator;
   }
 
 

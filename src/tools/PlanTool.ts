@@ -22,6 +22,7 @@ import { ToolManager } from './ToolManager.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
+import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 
 // Planning tools: read-only tools + explore for nested research + todo_add for proposals
 const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo_add'];
@@ -146,6 +147,10 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
               type: 'string',
               description: 'Task or feature requirements. Can be minimal - planning agent will research and fill in details.',
             },
+            persist: {
+              type: 'boolean',
+              description: 'Whether to persist the agent for reuse. If true, returns agent_id for tracking. Set to false for one-time ephemeral agents. Default: true.',
+            },
           },
           required: ['requirements'],
         },
@@ -157,6 +162,7 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
     this.captureParams(args);
 
     const requirements = args.requirements;
+    const persist = args.persist ?? true;
 
     // Validate requirements parameter
     if (!requirements || typeof requirements !== 'string') {
@@ -164,6 +170,15 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
         'requirements parameter is required and must be a string',
         'validation_error',
         'Example: plan(requirements="Add user authentication with JWT")'
+      );
+    }
+
+    // Validate persist parameter
+    if (persist !== undefined && typeof persist !== 'boolean') {
+      return this.formatErrorResponse(
+        'persist parameter must be a boolean',
+        'validation_error',
+        'Example: plan(requirements="...", persist=true)'
       );
     }
 
@@ -176,17 +191,22 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
       );
     }
 
-    return await this.executePlanning(requirements, callId);
+    return await this.executePlanning(requirements, persist, callId);
   }
 
   /**
    * Execute planning with specialized agent
+   *
+   * @param requirements - The requirements for the implementation plan
+   * @param persist - Whether to use AgentPoolService for agent persistence
+   * @param callId - Unique call identifier for tracking
    */
   private async executePlanning(
     requirements: string,
+    persist: boolean,
     callId: string
   ): Promise<ToolResult> {
-    logger.debug('[PLAN_TOOL] Starting planning, callId:', callId);
+    logger.debug('[PLAN_TOOL] Starting planning, callId:', callId, 'persist:', persist);
     const startTime = Date.now();
 
     try {
@@ -238,8 +258,7 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
         },
       });
 
-      // Create planning agent
-      logger.debug('[PLAN_TOOL] Creating planning agent with parentCallId:', callId);
+      // Create agent configuration
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
         allowTodoManagement: true, // Planning agent can create proposed todos
@@ -252,14 +271,46 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
         requiredToolCalls: ['todo_add'], // Planning agent MUST call todo_add before exiting
       };
 
-      const planningAgent = new Agent(
-        mainModelClient,
-        filteredToolManager,
-        this.activityStream,
-        agentConfig,
-        configManager,
-        permissionManager
-      );
+      // Choose between pooled or ephemeral agent
+      let planningAgent: Agent;
+      let pooledAgent: PooledAgent | null = null;
+      let agentId: string | null = null;
+
+      if (persist) {
+        // Use AgentPoolService for persistent agent
+        const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+
+        if (!agentPoolService) {
+          // Graceful fallback: AgentPoolService not available
+          logger.warn('[PLAN_TOOL] AgentPoolService not available, falling back to ephemeral agent');
+          planningAgent = new Agent(
+            mainModelClient,
+            filteredToolManager,
+            this.activityStream,
+            agentConfig,
+            configManager,
+            permissionManager
+          );
+        } else {
+          // Acquire agent from pool
+          logger.debug('[PLAN_TOOL] Acquiring agent from pool');
+          pooledAgent = await agentPoolService.acquire(agentConfig);
+          planningAgent = pooledAgent.agent;
+          agentId = pooledAgent.agentId;
+          logger.debug('[PLAN_TOOL] Acquired pooled agent:', agentId);
+        }
+      } else {
+        // Create ephemeral agent
+        logger.debug('[PLAN_TOOL] Creating ephemeral planning agent with parentCallId:', callId);
+        planningAgent = new Agent(
+          mainModelClient,
+          filteredToolManager,
+          this.activityStream,
+          agentConfig,
+          configManager,
+          permissionManager
+        );
+      }
 
       // Track active delegation
       this.activeDelegations.set(callId, {
@@ -315,16 +366,33 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
           content += `\n\nActivated todos:\n${todoSummary}`;
         }
 
-        return this.formatSuccessResponse({
+        // Build response with optional agent_id
+        const successResponse: Record<string, any> = {
           content,
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
           system_reminder: `The plan has been automatically accepted and todos activated. If this plan doesn't align with user intent, use deny_proposal to reject it and explain why.`,
-        });
+        };
+
+        // Include agent_id if agent was persisted
+        if (agentId) {
+          successResponse.agent_id = agentId;
+        }
+
+        return this.formatSuccessResponse(successResponse);
       } finally {
         // Clean up delegation tracking
         logger.debug('[PLAN_TOOL] Cleaning up planning agent...');
         this.activeDelegations.delete(callId);
-        await planningAgent.cleanup();
+
+        // Only cleanup if not using pooled agent
+        if (pooledAgent) {
+          // Release agent back to pool
+          logger.debug('[PLAN_TOOL] Releasing agent back to pool');
+          pooledAgent.release();
+        } else {
+          // Cleanup ephemeral agent
+          await planningAgent.cleanup();
+        }
       }
     } catch (error) {
       return this.formatErrorResponse(

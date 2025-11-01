@@ -1,0 +1,111 @@
+AGENTPOOL SERVICE ARCHITECTURE RESEARCH - SUMMARY
+==================================================
+
+Two comprehensive documents have been created:
+
+1. AGENTPOOL_ARCHITECTURE_RESEARCH.md (21KB)
+   - Complete architectural patterns from Code Ally codebase
+   - ServiceRegistry patterns with real file locations and line numbers
+   - Tool result patterns with concrete examples
+   - Command infrastructure design
+   - Service cleanup and lifecycle patterns
+   - Full service registration flow in cli.ts
+
+2. AGENTPOOL_INTEGRATION_GUIDE.md (16KB)
+   - Complete service class template for AgentPoolService
+   - Tool integration with BaseTool pattern
+   - ServiceRegistry registration code
+   - Optional command integration (/pool commands)
+   - ToolResult return patterns
+   - Testing patterns with vitest
+
+KEY FINDINGS:
+
+ServiceRegistry Patterns:
+- Use registerInstance() for singletons
+- Implement IService interface for cleanup
+- Retrieve via registry.get<Type>('service_name')
+- Registry.shutdown() calls cleanup() on all services
+
+Tool Result Patterns:
+- ToolResult interface: { success, error, error_type, suggestion, ...custom }
+- Use formatSuccessResponse({custom_fields}) for success
+- Use formatErrorResponse(message, errorType, suggestion) for errors
+- Return IDs/handles in custom fields for tracking
+- Use _internal_only flag for LLM-only results
+
+Command Infrastructure:
+- Extend Command base class with name, description, execute()
+- Register in CommandHandler constructor
+- Support subcommands via argument parsing
+- Use helper methods: createResponse(), createError(), getRequiredService()
+
+Service Cleanup:
+- Implement IService with initialize() and cleanup()
+- Registry calls cleanup() during shutdown
+- Errors caught gracefully, cleanup continues
+- Call registry.shutdown() before exit
+
+FILE LOCATIONS REFERENCED:
+- /Users/benmoore/CodeAlly-TS/src/services/ServiceRegistry.ts (1-220)
+- /Users/benmoore/CodeAlly-TS/src/cli.ts (314-560)
+- /Users/benmoore/CodeAlly-TS/src/types/index.ts (256-265)
+- /Users/benmoore/CodeAlly-TS/src/tools/BaseTool.ts (200-344)
+- /Users/benmoore/CodeAlly-TS/src/agent/commands/Command.ts (1-130)
+- /Users/benmoore/CodeAlly-TS/src/agent/CommandHandler.ts (42-131)
+- /Users/benmoore/CodeAlly-TS/src/services/SessionManager.ts (37-107)
+
+AGENTPOOL SERVICE IMPLEMENTATION CHECKLIST:
+
+Service Implementation:
+[ ] Create AgentPoolService class implementing IService
+[ ] Implement initialize() for setup
+[ ] Implement cleanup() for shutdown
+[ ] Add submitTask(agentConfig, message) method
+[ ] Return PooledAgentHandle with pool_id for tracking
+[ ] Implement concurrent execution with max agent limit
+[ ] Add task queuing with max queue size
+[ ] Implement timeout handling
+[ ] Add result caching with auto-cleanup
+
+Tool Integration:
+[ ] Create AgentPoolTool extending BaseTool
+[ ] Implement getFunctionDefinition() for LLM
+[ ] Use formatSuccessResponse() for success
+[ ] Use formatErrorResponse() for errors
+[ ] Return pool_ids for task tracking
+[ ] Support wait_for_completion parameter
+
+CLI Integration:
+[ ] Import service in cli.ts
+[ ] Create instance with config values
+[ ] Call initialize()
+[ ] Register in ServiceRegistry
+[ ] Add tool to tools array
+[ ] Register cleanup via registry.shutdown()
+
+Testing:
+[ ] Test unique pool ID generation
+[ ] Test queuing when at capacity
+[ ] Test rejection when queue full
+[ ] Test concurrent execution
+[ ] Test timeout handling
+[ ] Test cleanup
+
+Command Integration (Optional):
+[ ] Create PoolCommand extending Command
+[ ] Add status subcommand
+[ ] Add clear subcommand
+[ ] Register in CommandHandler
+
+NEXT STEPS:
+
+1. Review both documents in detail
+2. Implement AgentPoolService following the template
+3. Create AgentPoolTool with proper ToolResult formatting
+4. Integrate into cli.ts following the patterns
+5. Add tests using the testing patterns provided
+6. Consider optional /pool command for user control
+
+All specific file paths, line numbers, and code examples are included in the
+detailed research documents.

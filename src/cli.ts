@@ -448,6 +448,9 @@ async function main() {
     const { AgentTool } = await import('./tools/AgentTool.js');
     const { ExploreTool } = await import('./tools/ExploreTool.js');
     const { PlanTool } = await import('./tools/PlanTool.js');
+    const { AgentAskTool } = await import('./tools/AgentAskTool.js');
+    const { AgentKillTool } = await import('./tools/AgentKillTool.js');
+    const { AgentListActiveTool } = await import('./tools/AgentListActiveTool.js');
     const { BatchTool } = await import('./tools/BatchTool.js');
     const { TodoAddTool } = await import('./tools/TodoAddTool.js');
     const { TodoRemoveTool } = await import('./tools/TodoRemoveTool.js');
@@ -477,6 +480,9 @@ async function main() {
       new AgentTool(activityStream),
       new ExploreTool(activityStream),
       new PlanTool(activityStream),
+      new AgentAskTool(activityStream),
+      new AgentKillTool(activityStream),
+      new AgentListActiveTool(activityStream),
       new BatchTool(activityStream),
       new TodoAddTool(activityStream),
       new TodoRemoveTool(activityStream),
@@ -556,6 +562,24 @@ async function main() {
     // Register main agent's TokenManager in ServiceRegistry for global access (UI, etc)
     const tokenManager = agent.getTokenManager();
     registry.registerInstance('token_manager', tokenManager);
+
+    // Create agent pool service for managing concurrent agent instances
+    const { AgentPoolService } = await import('./services/AgentPoolService.js');
+    const agentPoolService = new AgentPoolService(
+      modelClient,
+      toolManager,
+      activityStream,
+      configManager,
+      permissionManager,
+      {
+        maxPoolSize: 10, // Keep up to 10 agents in pool
+        idleTimeoutMs: 5 * 60 * 1000, // Evict after 5 minutes idle
+        cleanupIntervalMs: 60 * 1000, // Check for idle agents every minute
+        verbose: options.debug || false, // Enable verbose logging in debug mode
+      }
+    );
+    await agentPoolService.initialize();
+    registry.registerInstance('agent_pool', agentPoolService);
 
     // Set up callback to save session when idle messages are generated
     // (Must be after agent is registered)

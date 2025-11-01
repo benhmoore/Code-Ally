@@ -88,6 +88,26 @@ export class ToolOrchestrator {
   }
 
   /**
+   * Update the parent call ID for nested tool calls
+   * Used by agent_ask to temporarily reparent tool calls under the current call
+   *
+   * @param parentCallId - New parent call ID
+   */
+  setParentCallId(parentCallId: string | undefined): void {
+    this.parentCallId = parentCallId;
+    logger.debug('[TOOL_ORCHESTRATOR] Updated parentCallId to:', this.parentCallId);
+  }
+
+  /**
+   * Get the current parent call ID
+   *
+   * @returns Current parent call ID
+   */
+  getParentCallId(): string | undefined {
+    return this.parentCallId;
+  }
+
+  /**
    * Execute tool calls (concurrent or sequential based on tool types)
    *
    * @param toolCalls - Array of tool calls from LLM
