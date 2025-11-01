@@ -104,7 +104,7 @@ export class SessionTitleGenerator implements CancellableService {
 
       return cleanTitle || 'New Session';
     } catch (error) {
-      logger.error('[TITLE_GEN] ❌ Failed to generate session title:', error);
+      logger.debug('[TITLE_GEN] ❌ Failed to generate session title:', error);
       // Fallback: use first 40 chars of first message
       const content = firstUserMessage.content.trim();
       const cleanContent = content.replace(/\s+/g, ' ');
