@@ -69,6 +69,7 @@ export class Agent {
   // Interruption state - consolidated for clarity
   private interrupted: boolean = false;
   private wasInterrupted: boolean = false;
+  private interruptionType: 'cancel' | 'interjection' | null = null;
   private interruptionContext: {
     reason: string;
     isTimeout: boolean;
@@ -358,6 +359,8 @@ export class Agent {
       data: {
         message,
         isSpecializedAgent: this.config.isSpecializedAgent || false,
+        instanceId: this.instanceId,
+        agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
       },
     });
 
@@ -369,12 +372,8 @@ export class Agent {
       // Send to LLM and process response
       const response = await this.getLLMResponse();
 
-      // Check if interrupted before processing
-      if (this.interrupted) {
-        throw new Error('Request interrupted by user');
-      }
-
       // Process response (handles both tool calls and text responses)
+      // Note: processLLMResponse handles interruptions internally (both cancel and interjection types)
       const finalResponse = await this.processLLMResponse(response);
 
       return finalResponse;
@@ -435,18 +434,21 @@ export class Agent {
   /**
    * Interrupt the current request
    *
-   * Called when user presses Ctrl+C during an ongoing request.
+   * Called when user presses Ctrl+C or submits a message during an ongoing request.
    * Immediately cancels the LLM request and sets interrupt flag for graceful cleanup.
+   *
+   * @param type - Type of interruption: 'cancel' (default) or 'interjection'
    */
-  interrupt(): void {
+  interrupt(type: 'cancel' | 'interjection' = 'cancel'): void {
     if (this.requestInProgress) {
       this.interrupted = true;
+      this.interruptionType = type;
 
       // Cancel ongoing LLM request immediately
       this.cancel();
 
-      // Abort any ongoing tool executions
-      if (this.toolAbortController) {
+      // Abort any ongoing tool executions (only for full cancellation)
+      if (type === 'cancel' && this.toolAbortController) {
         this.toolAbortController.abort();
         this.toolAbortController = undefined;
       }
@@ -461,6 +463,8 @@ export class Agent {
         data: {
           interrupted: true,
           isSpecializedAgent: this.config.isSpecializedAgent || false,
+          instanceId: this.instanceId,
+          agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
         },
       });
     }
@@ -471,6 +475,21 @@ export class Agent {
    */
   isProcessing(): boolean {
     return this.requestInProgress;
+  }
+
+  /**
+   * Add user interjection message
+   * Called when user submits message mid-response
+   */
+  addUserInterjection(message: string): void {
+    this.messages.push({
+      role: 'user',
+      content: message,
+      timestamp: Date.now(),
+      metadata: { isInterjection: true },
+    });
+
+    logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'User interjection added:', message.substring(0, 50));
   }
 
   /**
@@ -600,7 +619,39 @@ export class Agent {
   private async processLLMResponse(response: LLMResponse, isRetry: boolean = false): Promise<string> {
     // Check for interruption
     if (this.interrupted || response.interrupted) {
-      return '[Request interrupted by user]';
+      // Handle interjection vs cancellation
+      if (this.interruptionType === 'interjection') {
+        // Preserve partial response if we have content
+        if (response.content || response.tool_calls) {
+          this.messages.push({
+            role: 'assistant',
+            content: response.content || '',
+            tool_calls: response.tool_calls?.map(tc => ({
+              id: tc.id,
+              type: 'function' as const,
+              function: {
+                name: tc.function.name,
+                arguments: tc.function.arguments,
+              },
+            })),
+            thinking: response.thinking,
+            timestamp: Date.now(),
+            metadata: { partial: true },
+          });
+        }
+
+        // Reset flags
+        this.interrupted = false;
+        this.interruptionType = null;
+
+        // Resume with continuation call
+        logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection, continuing...');
+        const continuationResponse = await this.getLLMResponse();
+        return await this.processLLMResponse(continuationResponse);
+      } else {
+        // Regular cancel - throw error as before
+        return '[Request interrupted by user]';
+      }
     }
 
     // GAP 2: Partial response due to HTTP error (mid-stream interruption)
@@ -995,6 +1046,8 @@ export class Agent {
         data: {
           content: fallbackContent,
           isSpecializedAgent: this.config.isSpecializedAgent || false,
+          instanceId: this.instanceId,
+          agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
         },
       });
 
@@ -1094,6 +1147,8 @@ export class Agent {
       data: {
         content: content,
         isSpecializedAgent: this.config.isSpecializedAgent || false,
+        instanceId: this.instanceId,
+        agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
       },
     });
 

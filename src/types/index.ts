@@ -27,6 +27,10 @@ export interface MessageMetadata {
   isCommandResponse?: boolean;
   /** Whether this message should be removed after the current turn */
   ephemeral?: boolean;
+  /** Whether this is a user interjection mid-response */
+  isInterjection?: boolean;
+  /** Whether this is a partial assistant response (interrupted mid-stream) */
+  partial?: boolean;
   // Future: Add more presentation hints as needed
 }
 
@@ -142,6 +146,7 @@ export enum ActivityEventType {
   PLUGIN_CONFIG_REQUEST = 'plugin_config_request',
   PLUGIN_CONFIG_COMPLETE = 'plugin_config_complete',
   PLUGIN_CONFIG_CANCEL = 'plugin_config_cancel',
+  USER_INTERJECTION = 'user_interjection',
 }
 
 export interface ActivityEvent {

@@ -67,6 +67,7 @@ Understand structure, find implementations, trace features, analyze dependencies
 Delegates to read-only agent. Prefer over manual grep/read sequences.`;
 
   private activeDelegations: Map<string, any> = new Map();
+  private currentPooledAgent: PooledAgent | null = null;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -241,6 +242,7 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
           pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
           explorationAgent = pooledAgent.agent;
           agentId = pooledAgent.agentId;
+          this.currentPooledAgent = pooledAgent; // Track for interjection routing
           logger.debug('[EXPLORE_TOOL] Acquired pooled agent:', agentId);
         }
       } else {
@@ -323,6 +325,7 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
           // Release agent back to pool
           logger.debug('[EXPLORE_TOOL] Releasing agent back to pool');
           pooledAgent.release();
+          this.currentPooledAgent = null; // Clear tracked pooled agent
         } else {
           // Cleanup ephemeral agent
           await explorationAgent.cleanup();
@@ -403,6 +406,27 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
         agent.interrupt();
       }
     }
+  }
+
+  /**
+   * Inject user message into active pooled agent
+   * Used for routing interjections to subagents
+   */
+  injectUserMessage(message: string): void {
+    if (!this.currentPooledAgent) {
+      logger.warn('[EXPLORE_TOOL] injectUserMessage called but no active pooled agent');
+      return;
+    }
+
+    const agent = this.currentPooledAgent.agent;
+    if (!agent) {
+      logger.warn('[EXPLORE_TOOL] injectUserMessage called but pooled agent has no agent instance');
+      return;
+    }
+
+    logger.debug('[EXPLORE_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
+    agent.addUserInterjection(message);
+    agent.interrupt('interjection');
   }
 
   /**

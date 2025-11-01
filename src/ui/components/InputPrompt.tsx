@@ -26,6 +26,8 @@ import { UI_DELAYS } from '../../config/constants.js';
 interface InputPromptProps {
   /** Callback when user submits input */
   onSubmit: (input: string) => void;
+  /** Callback when user interjections (submits mid-response) */
+  onInterjection?: (message: string) => void;
   /** Whether input is currently active/enabled */
   isActive?: boolean;
   /** Placeholder text to show when empty */
@@ -87,6 +89,7 @@ interface InputPromptProps {
  */
 export const InputPrompt: React.FC<InputPromptProps> = ({
   onSubmit,
+  onInterjection,
   isActive = true,
   placeholder = 'Type a message...',
   commandHistory,
@@ -996,7 +999,26 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           setBuffer(before + '\n' + after);
           setCursorPosition(cursorPosition + 1);
         } else {
-          handleSubmit();
+          // Check if agent is processing - if so, this is an interjection
+          const message = buffer.trim();
+          if (!message) return;
+
+          if (agent && agent.isProcessing()) {
+            // This is an interjection mid-response
+            if (onInterjection) {
+              onInterjection(message);
+              // Clear buffer after interjection
+              setBuffer('');
+              setCursorPosition(0);
+              setHistoryIndex(-1);
+              setHistoryBuffer('');
+              setShowCompletions(false);
+              setCompletions([]);
+            }
+          } else {
+            // Normal submission
+            handleSubmit();
+          }
         }
         return;
       }
@@ -1159,7 +1181,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     charCount += lineLength + 1; // +1 for newline character
   }
 
-  // Determine prompt style based on first character (command mode)
+  // Determine prompt style based on first character (command mode) or agent state
   const isCommandMode = buffer.startsWith('/');
   const isBashMode = buffer.startsWith('!');
   const isAgentMode = buffer.startsWith('@');

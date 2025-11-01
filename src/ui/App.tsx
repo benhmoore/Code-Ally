@@ -263,6 +263,15 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Track exit confirmation state (Ctrl+C on empty buffer)
   const [isWaitingForExitConfirmation, setIsWaitingForExitConfirmation] = useState(false);
 
+  // Track agent stack for routing interjections to correct agent
+  const [agentStack, setAgentStack] = useState<Array<{instanceId: string, agentName?: string}>>([]);
+
+  // Helper function to get current agent from stack
+  const getCurrentAgent = (): {instanceId: string, agentName?: string} | null => {
+    if (agentStack.length === 0) return null;
+    return agentStack[agentStack.length - 1] || null;
+  };
+
   // Get current focus display (if any)
   const currentFocus = useMemo(() => {
     const serviceRegistry = ServiceRegistry.getInstance();
@@ -639,6 +648,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Track agent start (both main and specialized agents)
   useActivityEvent(ActivityEventType.AGENT_START, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
+    const instanceId = event.data?.instanceId;
+    const agentName = event.data?.agentName;
+
+    // Push to agent stack
+    if (instanceId) {
+      setAgentStack((prev) => [...prev, { instanceId, agentName }]);
+    }
 
     // Increment count for specialized agents (subagents, todo generator, etc.)
     if (isSpecialized) {
@@ -653,6 +669,18 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Track agent end (both main and specialized agents)
   useActivityEvent(ActivityEventType.AGENT_END, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
+    const instanceId = event.data?.instanceId;
+
+    // Pop from agent stack (matching instanceId)
+    if (instanceId) {
+      setAgentStack((prev) => {
+        const index = prev.findIndex(a => a.instanceId === instanceId);
+        if (index !== -1) {
+          return [...prev.slice(0, index), ...prev.slice(index + 1)];
+        }
+        return prev;
+      });
+    }
 
     // Decrement count for specialized agents
     if (isSpecialized) {
@@ -1440,6 +1468,99 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     }
   });
 
+  // Handle user interjection (submitting message mid-response)
+  const handleInterjection = async (message: string) => {
+    if (!agent) return;
+
+    logger.debug('[APP] Handling interjection:', message);
+
+    // Add user message to UI conversation
+    actions.addMessage({
+      role: 'user',
+      content: message,
+      timestamp: Date.now(),
+      metadata: {
+        isInterjection: true,
+      },
+    });
+
+    // Get current agent from stack
+    const currentAgent = getCurrentAgent();
+
+    if (!currentAgent) {
+      // Stack is empty, send to main agent (current behavior)
+      logger.debug('[APP] Agent stack empty, routing to main agent');
+
+      agent.addUserInterjection(message);
+      agent.interrupt('interjection');
+
+      activityStream.emit({
+        id: `interjection-${Date.now()}`,
+        type: ActivityEventType.USER_INTERJECTION,
+        timestamp: Date.now(),
+        parentId: 'root',
+        data: {
+          message,
+          targetAgent: 'main',
+        },
+      });
+    } else {
+      // Stack has agents, route to the current (top) agent
+      logger.debug('[APP] Routing interjection to agent:', currentAgent.instanceId, currentAgent.agentName);
+
+      // Get ServiceRegistry to access tools
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+      if (!toolManager) {
+        logger.error('[APP] ToolManager not available for interjection routing');
+        // Fallback to main agent
+        agent.addUserInterjection(message);
+        agent.interrupt('interjection');
+        return;
+      }
+
+      // Try to route to the appropriate tool based on agent name
+      let routed = false;
+
+      // Check if this is a specialized agent (explore, plan, agent)
+      if (currentAgent.agentName && currentAgent.agentName !== 'main') {
+        const toolName = currentAgent.agentName === 'specialized' ? 'agent' : currentAgent.agentName;
+        const tool = toolManager.getTool(toolName);
+
+        if (tool && typeof (tool as any).injectUserMessage === 'function') {
+          try {
+            (tool as any).injectUserMessage(message);
+            routed = true;
+            logger.debug('[APP] Routed interjection to tool:', toolName);
+          } catch (error) {
+            logger.error('[APP] Failed to inject message into tool:', error);
+          }
+        }
+      }
+
+      // Fallback to main agent if routing failed
+      if (!routed) {
+        logger.debug('[APP] Fallback: routing to main agent');
+        agent.addUserInterjection(message);
+        agent.interrupt('interjection');
+      }
+
+      // Emit event for UI
+      activityStream.emit({
+        id: `interjection-${Date.now()}`,
+        type: ActivityEventType.USER_INTERJECTION,
+        timestamp: Date.now(),
+        parentId: currentAgent.instanceId,
+        data: {
+          message,
+          targetAgent: currentAgent.agentName || 'unknown',
+          targetInstanceId: currentAgent.instanceId,
+        },
+      });
+    }
+  };
+
   // Handle user input
   const handleInput = async (input: string) => {
     const trimmed = input.trim();
@@ -1880,6 +2001,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <Box height={0} overflow="hidden">
             <InputPrompt
               onSubmit={handleInput}
+              onInterjection={handleInterjection}
               isActive={true}
               commandHistory={commandHistory.current || undefined}
               completionProvider={completionProvider || undefined}
@@ -1914,6 +2036,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <Box height={0} overflow="hidden">
             <InputPrompt
               onSubmit={handleInput}
+              onInterjection={handleInterjection}
               isActive={true}
               commandHistory={commandHistory.current || undefined}
               completionProvider={completionProvider || undefined}
@@ -1950,6 +2073,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               <Box height={0} overflow="hidden">
                 <InputPrompt
                   onSubmit={handleInput}
+                  onInterjection={handleInterjection}
                   isActive={true}
                   commandHistory={commandHistory.current || undefined}
                   completionProvider={completionProvider || undefined}
@@ -1983,6 +2107,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <Box height={0} overflow="hidden">
             <InputPrompt
               onSubmit={handleInput}
+              onInterjection={handleInterjection}
               isActive={true}
               commandHistory={commandHistory.current || undefined}
               completionProvider={completionProvider || undefined}
@@ -2015,6 +2140,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <Box height={0} overflow="hidden">
             <InputPrompt
               onSubmit={handleInput}
+              onInterjection={handleInterjection}
               isActive={true}
               commandHistory={commandHistory.current || undefined}
               completionProvider={completionProvider || undefined}
@@ -2048,6 +2174,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <Box height={0} overflow="hidden">
             <InputPrompt
               onSubmit={handleInput}
+              onInterjection={handleInterjection}
               isActive={true}
               commandHistory={commandHistory.current || undefined}
               completionProvider={completionProvider || undefined}
@@ -2075,6 +2202,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           {/* Input Prompt */}
           <InputPrompt
             onSubmit={handleInput}
+            onInterjection={handleInterjection}
             isActive={true}
             commandHistory={commandHistory.current || undefined}
             completionProvider={completionProvider || undefined}

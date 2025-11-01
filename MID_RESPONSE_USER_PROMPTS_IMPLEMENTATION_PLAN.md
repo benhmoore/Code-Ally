@@ -183,61 +183,80 @@ private interruptAll(): void {
 
 ### 2.2 Input Detection Strategy
 
-**Option A: Dedicated Prompt Mode (Recommended)**
+**Unified Input Approach (Recommended)**
 
-Add a new input mode triggered by a special key (e.g., `Ctrl+M` for "message"):
+Use the existing input interface - no special trigger needed. The behavior changes based on agent state:
 
 ```typescript
-// InputPrompt.tsx - new key handler
-if (key.ctrl && input === 'm') {
+// InputPrompt.tsx - handleSubmit
+const handleSubmit = async () => {
+  const message = input.trim();
+  if (!message) return;
+
   if (agent && agent.isProcessing()) {
-    // Enter "mid-response prompt mode"
-    setMidResponsePromptActive(true);
-    setMidResponseBuffer('');
-    return;
+    // Agent is processing - this is an interjection
+    await onInterjection(message);
+  } else {
+    // Normal input flow
+    await onInput(message);
   }
-}
+
+  setInput('');
+};
 ```
 
 **Why this approach**:
-- Clear user intent (Ctrl+M = "I want to send a message NOW")
-- Avoids conflict with normal input buffering
-- Easy to implement visual indicator
-- Can show special "Interjection >" prompt
+- **Intuitive**: User types and presses Enter, just like normal
+- **No new keybindings**: Existing muscle memory works
+- **Context-aware**: Same interface, different behavior based on state
+- **Discoverable**: Users will naturally try it
 
-**Option B: Automatic Buffering (Not Recommended)**
+**Visual Feedback**:
+```typescript
+// Show different prompt based on state
+const promptPrefix = agent?.isProcessing()
+  ? '> (interjecting) '
+  : '> ';
+```
 
-Buffer all input during agent processing and submit on Enter:
-- **Risk**: Confusing UX - user might expect Enter to just interrupt
-- **Risk**: No way to cancel the buffered message
-- **Risk**: Conflicts with completion/history navigation
-
-**Decision**: Use **Option A** (Ctrl+M trigger)
+**Edge Cases**:
+- User types during processing → input is buffered normally
+- User presses Enter → submits as interjection
+- Escape → still clears input (no special behavior needed)
 
 ### 2.3 Input Flow State Machine
 
 ```
-[Normal Mode]
-  ↓ (User presses Ctrl+M while agent processing)
-[Mid-Response Prompt Mode]
-  ↓ (User types message)
-[Buffer Accumulating]
-  ↓ (User presses Enter)
-[Submit Interjection]
-  → Interrupt current response (preserve partial)
-  → Emit USER_INTERJECTION event
-  → Add user message to correct context
-  → Resume agent processing
-  ↓
-[Normal Mode]
+[Agent Idle]
+  User types → Input buffer accumulates
+  User presses Enter → Standard handleInput()
+
+[Agent Processing]
+  User types → Input buffer accumulates (same as idle)
+  User presses Enter → Interjection flow:
+    → Interrupt current response (preserve partial)
+    → Emit USER_INTERJECTION event
+    → Add user message to correct context
+    → Resume agent processing
 ```
+
+**Key insight**: The input mechanism doesn't change - only the submit handler behavior changes based on `agent.isProcessing()`
 
 ### 2.4 Visual Indicators
 
-**During Typing**:
+**During Typing** (agent idle):
 ```
-> Agent is processing...
-Interjection > [cursor here]
+> [cursor here]
+```
+
+**During Typing** (agent processing):
+```
+> (interjecting) [cursor here]
+```
+
+Or even simpler - just change the prompt color:
+```
+> [cursor here]  ← yellow/dimmed when agent is processing
 ```
 
 **After Submit (in tool call display)**:
@@ -993,9 +1012,9 @@ private async checkAutoCompaction(): Promise<void> {
 **Goal**: Enable interjections for main agent without subagent support.
 
 **Deliverables**:
-1. ✅ InputPrompt: Ctrl+M trigger for interjection mode
-2. ✅ InputPrompt: Visual indicator for interjection mode
-3. ✅ InputPrompt: Separate submit handler for interjections
+1. ✅ InputPrompt: Detect agent.isProcessing() state
+2. ✅ InputPrompt: Visual indicator (prompt prefix/color change)
+3. ✅ InputPrompt: Conditional submit handler (interjection vs normal)
 4. ✅ Agent: Modified `interrupt()` with type parameter
 5. ✅ Agent: Updated `processLLMResponse()` to preserve partial responses
 6. ✅ Agent: `addUserInterjection()` method
@@ -1004,15 +1023,15 @@ private async checkAutoCompaction(): Promise<void> {
 9. ✅ Types: Add `isInterjection` and `partial` message metadata
 
 **Testing**:
-- User can press Ctrl+M while main agent is processing
-- Interjection prompt appears with visual indicator
-- User can type message and submit with Enter
+- User can type while main agent is processing
+- Prompt shows visual indicator (color/prefix change)
+- User presses Enter to submit interjection
 - Main agent receives message and continues processing
 - Partial response is preserved in conversation
 - Session saving includes interjection metadata
 
 **Files to Modify**:
-- `/src/ui/components/InputPrompt.tsx` (~100 lines)
+- `/src/ui/components/InputPrompt.tsx` (~30 lines - much simpler!)
 - `/src/agent/Agent.ts` (~50 lines)
 - `/src/ui/App.tsx` (~80 lines)
 - `/src/types/index.ts` (~10 lines)
@@ -1032,12 +1051,12 @@ private async checkAutoCompaction(): Promise<void> {
 4. ✅ AgentTool: `injectUserMessage()` method
 5. ✅ AgentTool: Delegation lookup by callId
 6. ✅ ExploreTool/PlanTool: Same interjection support
-7. ✅ App: Visual indicator showing target agent
+7. ✅ App: Visual indicator showing target agent (e.g., "→ explore")
 
 **Testing**:
 - User starts task that delegates to subagent
-- While subagent is processing, user presses Ctrl+M
-- UI shows "Interjection → explore"
+- While subagent is processing, user types message
+- UI shows "→ explore" or similar indicator
 - User submits message
 - Message is added to subagent's context (not main)
 - Subagent continues processing with new context
@@ -1554,11 +1573,11 @@ Resume LLM call
 
 **Q2**: Undo an interjection?
 
-**A**: Could support "Ctrl+Z" to remove last interjection message. Requires careful state management. Phase 4.
+**A**: Could support message history navigation to remove. Requires careful state management. Phase 4.
 
-**Q3**: Interjection templates/shortcuts?
+**Q3**: Quick interjection shortcuts?
 
-**A**: See Phase 4 - predefined quick actions. Example: "Ctrl+Shift+W" = "Wrap this up now"
+**A**: Could add completion suggestions when agent is processing: "wrap up", "be concise", "show code", etc. Phase 4.
 
 ---
 
@@ -1568,7 +1587,7 @@ This implementation plan provides a comprehensive roadmap for mid-response user 
 
 ### Summary of Approach
 
-1. **Ctrl+M trigger** for interjection mode (clear, non-conflicting)
+1. **Unified input interface** - no special trigger, just context-aware behavior
 2. **Agent stack tracking** for routing to correct context
 3. **Interrupt preservation** (partial responses kept)
 4. **Event-driven UI updates** (USER_INTERJECTION event)

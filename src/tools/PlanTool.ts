@@ -121,6 +121,7 @@ New features, following existing patterns, comprehensive roadmap before coding.
 Creates proposed todos as drafts; use deny_proposal if misaligned.`;
 
   private activeDelegations: Map<string, any> = new Map();
+  private currentPooledAgent: PooledAgent | null = null;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -297,6 +298,7 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
           pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
           planningAgent = pooledAgent.agent;
           agentId = pooledAgent.agentId;
+          this.currentPooledAgent = pooledAgent; // Track for interjection routing
           logger.debug('[PLAN_TOOL] Acquired pooled agent:', agentId);
         }
       } else {
@@ -389,6 +391,7 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
           // Release agent back to pool
           logger.debug('[PLAN_TOOL] Releasing agent back to pool');
           pooledAgent.release();
+          this.currentPooledAgent = null; // Clear tracked pooled agent
         } else {
           // Cleanup ephemeral agent
           await planningAgent.cleanup();
@@ -469,6 +472,27 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
         agent.interrupt();
       }
     }
+  }
+
+  /**
+   * Inject user message into active pooled agent
+   * Used for routing interjections to subagents
+   */
+  injectUserMessage(message: string): void {
+    if (!this.currentPooledAgent) {
+      logger.warn('[PLAN_TOOL] injectUserMessage called but no active pooled agent');
+      return;
+    }
+
+    const agent = this.currentPooledAgent.agent;
+    if (!agent) {
+      logger.warn('[PLAN_TOOL] injectUserMessage called but pooled agent has no agent instance');
+      return;
+    }
+
+    logger.debug('[PLAN_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
+    agent.addUserInterjection(message);
+    agent.interrupt('interjection');
   }
 
   /**
