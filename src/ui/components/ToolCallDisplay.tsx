@@ -6,23 +6,23 @@
  * - Real-time duration tracking
  * - Params preview
  * - Support for parallel execution
+ * - Displays user interjections nested under running tool calls
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Box, Text } from 'ink';
-import { ToolCallState } from '../../types/index.js';
+import { ToolCallState, ActivityEventType } from '../../types/index.js';
 import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { TEXT_LIMITS } from '../../config/constants.js';
+import { useActivityEvent } from '../hooks/useActivityEvent.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
-  toolCall: ToolCallState & { totalChildCount?: number };
+  toolCall: ToolCallState & { totalChildCount?: number; children?: ToolCallState[] };
   /** Indentation level (0 = root) */
   level?: number;
-  /** Nested tool calls */
-  children?: React.ReactNode;
   /** Config for output display preferences */
   config?: any;
 }
@@ -85,10 +85,32 @@ function formatArgsPreview(args: any, toolName?: string): string {
 const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   toolCall,
   level = 0,
-  children,
   config,
 }) => {
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
+
+  // Track interjections for this tool call
+  const [interjections, setInterjections] = useState<Array<{ message: string; timestamp: number }>>([]);
+
+  // Subscribe to USER_INTERJECTION events to capture interjections for this tool call
+  useActivityEvent(ActivityEventType.USER_INTERJECTION, (event) => {
+    // Only add interjections that belong to this tool call
+    if (event.parentId === toolCall.id) {
+      const message = event.data?.message || '';
+      const timestamp = event.timestamp || Date.now();
+
+      setInterjections((prev) => {
+        // Avoid duplicates by checking if we already have this exact interjection
+        const exists = prev.some(
+          (i) => i.message === message && Math.abs(i.timestamp - timestamp) < 100
+        );
+        if (exists) return prev;
+
+        // Add new interjection, sorted by timestamp
+        return [...prev, { message, timestamp }].sort((a, b) => a.timestamp - b.timestamp);
+      });
+    }
+  }, [toolCall.id]);
 
   // Calculate duration (no live updates - just shows duration at render time)
   // Use executionStartTime if available (excludes user permission deliberation time)
@@ -200,8 +222,65 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Nested tool calls (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
-      {(!toolCall.collapsed || config?.show_full_tool_output) && (!toolCall.hideOutput || config?.show_full_tool_output) && children}
+      {/* Nested content: interleaved tool calls and interjections sorted by timestamp */}
+      {(!toolCall.collapsed || config?.show_full_tool_output) && (!toolCall.hideOutput || config?.show_full_tool_output) && (() => {
+        // Build combined list of children and interjections
+        type NestedItem =
+          | { type: 'toolCall'; data: ToolCallState; timestamp: number }
+          | { type: 'interjection'; data: { message: string; timestamp: number }; timestamp: number };
+
+        const items: NestedItem[] = [];
+
+        // Add nested tool calls
+        if (toolCall.children) {
+          toolCall.children.forEach(child => {
+            items.push({
+              type: 'toolCall',
+              data: child,
+              timestamp: child.startTime
+            });
+          });
+        }
+
+        // Add interjections
+        interjections.forEach(interjection => {
+          items.push({
+            type: 'interjection',
+            data: interjection,
+            timestamp: interjection.timestamp
+          });
+        });
+
+        // Sort by timestamp
+        items.sort((a, b) => a.timestamp - b.timestamp);
+
+        // Render items in order
+        return (
+          <>
+            {items.map((item, idx) => {
+              if (item.type === 'interjection') {
+                return (
+                  <Box key={`interjection-${idx}-${item.timestamp}`}>
+                    <Text>{indent}    </Text>
+                    <Text color="yellow" bold>{'> '}</Text>
+                    <Text color="yellow" bold>{item.data.message}</Text>
+                  </Box>
+                );
+              } else {
+                // Recursively render nested tool call
+                return (
+                  <ToolCallDisplay
+                    key={item.data.id}
+                    toolCall={item.data}
+                    level={level + 1}
+                    config={config}
+                  />
+                );
+              }
+            })}
+          </>
+        );
+      })()}
     </Box>
   );
 };

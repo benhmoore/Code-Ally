@@ -62,6 +62,34 @@ export class ToolManager {
   }
 
   /**
+   * Find the currently active tool that supports message injection
+   *
+   * Checks explore, plan, and agent tools for an active pooled agent.
+   * Returns the tool instance, name, and call ID if found.
+   *
+   * @returns {tool: BaseTool, name: string, callId: string} if found, undefined otherwise
+   */
+  getActiveInjectableTool(): { tool: BaseTool; name: string; callId: string } | undefined {
+    const injectableToolNames = ['explore', 'plan', 'agent'];
+
+    for (const toolName of injectableToolNames) {
+      const tool = this.tools.get(toolName);
+      if (tool && typeof (tool as any).injectUserMessage === 'function') {
+        // Check if this tool has an active pooled agent and current call ID
+        if ((tool as any).currentPooledAgent && (tool as any).currentCallId) {
+          return {
+            tool,
+            name: toolName,
+            callId: (tool as any).currentCallId
+          };
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
    * Register additional tools at runtime
    *
    * @param tools - Array of tools to register

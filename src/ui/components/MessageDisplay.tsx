@@ -32,9 +32,12 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
 
   // User messages - bold with prompt prefix
   if (role === 'user') {
+    // Check if this is an interjection (mid-response user message)
+    const isInterjection = message.metadata?.isInterjection === true;
+
     return (
       <Box flexDirection="column">
-        <Text bold color="white">
+        <Text bold color={isInterjection ? 'yellow' : 'white'}>
           {`> ${content}`}
         </Text>
       </Box>

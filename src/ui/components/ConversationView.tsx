@@ -146,7 +146,7 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
 }
 
 /**
- * Render tool call with children recursively
+ * Render tool call (children are rendered internally by ToolCallDisplay)
  */
 function renderToolCallTree(
   toolCall: ToolCallState & { children?: ToolCallState[] },
@@ -154,13 +154,7 @@ function renderToolCallTree(
   config?: any
 ): React.ReactNode {
   return (
-    <ToolCallDisplay key={toolCall.id} toolCall={toolCall} level={level} config={config}>
-      {toolCall.children && toolCall.children.length > 0 && (
-        <>
-          {toolCall.children.map((child) => renderToolCallTree(child, level + 1, config))}
-        </>
-      )}
-    </ToolCallDisplay>
+    <ToolCallDisplay key={toolCall.id} toolCall={toolCall} level={level} config={config} />
   );
 }
 
@@ -251,6 +245,12 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
       // Skip system messages - they're internal prompts
       if (message.role === 'system') {
+        return;
+      }
+
+      // Skip interjection messages that are nested under tool calls (non-root parentId)
+      // Interjections to main agent (parentId: 'root') should still appear in main conversation
+      if (message.metadata?.isInterjection === true && message.metadata?.parentId !== 'root') {
         return;
       }
 

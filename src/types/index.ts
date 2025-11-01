@@ -29,6 +29,8 @@ export interface MessageMetadata {
   ephemeral?: boolean;
   /** Whether this is a user interjection mid-response */
   isInterjection?: boolean;
+  /** Parent ID for nested interjections (tool call ID or 'root') */
+  parentId?: string;
   /** Whether this is a partial assistant response (interrupted mid-stream) */
   partial?: boolean;
   // Future: Add more presentation hints as needed

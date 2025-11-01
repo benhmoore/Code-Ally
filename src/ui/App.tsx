@@ -45,6 +45,33 @@ import { PluginConfigManager } from '../plugins/PluginConfigManager.js';
 import { logger } from '../services/Logger.js';
 
 /**
+ * Reconstruct USER_INTERJECTION events from message history
+ *
+ * When loading a session from disk, interjection messages have metadata with parentId,
+ * but we need to re-emit USER_INTERJECTION events so ToolCallDisplay can capture them.
+ *
+ * @param messages - Array of messages from the session
+ * @param activityStream - ActivityStream to emit events to
+ */
+function reconstructInterjectionsFromMessages(messages: Message[], activityStream: ActivityStream): void {
+  messages.forEach((msg) => {
+    if (msg.role === 'user' && msg.metadata?.isInterjection && msg.metadata?.parentId) {
+      // Re-emit USER_INTERJECTION event for this interjection
+      activityStream.emit({
+        id: `interjection-reconstructed-${msg.timestamp || Date.now()}`,
+        type: ActivityEventType.USER_INTERJECTION,
+        timestamp: msg.timestamp || Date.now(),
+        parentId: msg.metadata.parentId,
+        data: {
+          message: msg.content,
+          reconstructed: true,
+        },
+      });
+    }
+  });
+}
+
+/**
  * Reconstruct ToolCallState objects from message history
  *
  * When loading a session from disk, we have messages with tool_calls and tool results,
@@ -263,15 +290,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Track exit confirmation state (Ctrl+C on empty buffer)
   const [isWaitingForExitConfirmation, setIsWaitingForExitConfirmation] = useState(false);
 
-  // Track agent stack for routing interjections to correct agent
-  const [agentStack, setAgentStack] = useState<Array<{instanceId: string, agentName?: string}>>([]);
-
-  // Helper function to get current agent from stack
-  const getCurrentAgent = (): {instanceId: string, agentName?: string} | null => {
-    if (agentStack.length === 0) return null;
-    return agentStack[agentStack.length - 1] || null;
-  };
-
   // Get current focus display (if any)
   const currentFocus = useMemo(() => {
     const serviceRegistry = ServiceRegistry.getInstance();
@@ -482,6 +500,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
         reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
 
+        // Reconstruct interjection events from message history
+        reconstructInterjectionsFromMessages(userMessages, activityStream);
+
         // Mark session as loaded
         setSessionLoaded(true);
 
@@ -648,13 +669,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Track agent start (both main and specialized agents)
   useActivityEvent(ActivityEventType.AGENT_START, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
-    const instanceId = event.data?.instanceId;
-    const agentName = event.data?.agentName;
-
-    // Push to agent stack
-    if (instanceId) {
-      setAgentStack((prev) => [...prev, { instanceId, agentName }]);
-    }
 
     // Increment count for specialized agents (subagents, todo generator, etc.)
     if (isSpecialized) {
@@ -669,18 +683,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Track agent end (both main and specialized agents)
   useActivityEvent(ActivityEventType.AGENT_END, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
-    const instanceId = event.data?.instanceId;
-
-    // Pop from agent stack (matching instanceId)
-    if (instanceId) {
-      setAgentStack((prev) => {
-        const index = prev.findIndex(a => a.instanceId === instanceId);
-        if (index !== -1) {
-          return [...prev.slice(0, index), ...prev.slice(index + 1)];
-        }
-        return prev;
-      });
-    }
 
     // Decrement count for specialized agents
     if (isSpecialized) {
@@ -1388,6 +1390,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
         reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
 
+        // Reconstruct interjection events from message history
+        reconstructInterjectionsFromMessages(userMessages, activityStream);
+
         // Update UI state
         actions.setMessages(userMessages);
 
@@ -1429,6 +1434,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         actions.clearToolCalls();
         const reconstructedToolCalls = reconstructToolCallsFromMessages(rewindedMessages, serviceRegistry);
         reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
+
+        // Reconstruct interjection events from message history
+        reconstructInterjectionsFromMessages(rewindedMessages, activityStream);
 
         // Clear todos when rewinding
         // Note: With the new todo management tools (todo_add, todo_update, todo_remove, todo_clear),
@@ -1474,91 +1482,63 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
     logger.debug('[APP] Handling interjection:', message);
 
-    // Add user message to UI conversation
+    // Get ServiceRegistry to access tools
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+    // Find currently active injectable tool (explore, plan, agent)
+    const activeTool = toolManager?.getActiveInjectableTool();
+
+    let routedToTool = false;
+    let targetToolName = 'main';
+    let parentId = 'root';
+
+    if (activeTool) {
+      // Route to active tool
+      logger.debug('[APP] Routing interjection to active tool:', activeTool.name);
+
+      try {
+        (activeTool.tool as any).injectUserMessage(message);
+        routedToTool = true;
+        targetToolName = activeTool.name;
+        parentId = activeTool.callId; // Use tool call ID for nesting
+
+        logger.debug('[APP] Successfully routed to tool:', activeTool.name, 'callId:', activeTool.callId);
+      } catch (error) {
+        logger.error('[APP] Failed to inject into tool:', error);
+        routedToTool = false;
+      }
+    }
+
+    // Fallback to main agent if no active tool or routing failed
+    if (!routedToTool) {
+      logger.debug('[APP] Routing interjection to main agent');
+      agent.addUserInterjection(message);
+      agent.interrupt('interjection');
+    }
+
+    // Add user message to UI conversation with parentId for reconstruction
     actions.addMessage({
       role: 'user',
       content: message,
       timestamp: Date.now(),
       metadata: {
         isInterjection: true,
+        parentId: parentId,
       },
     });
 
-    // Get current agent from stack
-    const currentAgent = getCurrentAgent();
-
-    if (!currentAgent) {
-      // Stack is empty, send to main agent (current behavior)
-      logger.debug('[APP] Agent stack empty, routing to main agent');
-
-      agent.addUserInterjection(message);
-      agent.interrupt('interjection');
-
-      activityStream.emit({
-        id: `interjection-${Date.now()}`,
-        type: ActivityEventType.USER_INTERJECTION,
-        timestamp: Date.now(),
-        parentId: 'root',
-        data: {
-          message,
-          targetAgent: 'main',
-        },
-      });
-    } else {
-      // Stack has agents, route to the current (top) agent
-      logger.debug('[APP] Routing interjection to agent:', currentAgent.instanceId, currentAgent.agentName);
-
-      // Get ServiceRegistry to access tools
-      const serviceRegistry = ServiceRegistry.getInstance();
-      const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
-
-      if (!toolManager) {
-        logger.error('[APP] ToolManager not available for interjection routing');
-        // Fallback to main agent
-        agent.addUserInterjection(message);
-        agent.interrupt('interjection');
-        return;
-      }
-
-      // Try to route to the appropriate tool based on agent name
-      let routed = false;
-
-      // Check if this is a specialized agent (explore, plan, agent)
-      if (currentAgent.agentName && currentAgent.agentName !== 'main') {
-        const toolName = currentAgent.agentName === 'specialized' ? 'agent' : currentAgent.agentName;
-        const tool = toolManager.getTool(toolName);
-
-        if (tool && typeof (tool as any).injectUserMessage === 'function') {
-          try {
-            (tool as any).injectUserMessage(message);
-            routed = true;
-            logger.debug('[APP] Routed interjection to tool:', toolName);
-          } catch (error) {
-            logger.error('[APP] Failed to inject message into tool:', error);
-          }
-        }
-      }
-
-      // Fallback to main agent if routing failed
-      if (!routed) {
-        logger.debug('[APP] Fallback: routing to main agent');
-        agent.addUserInterjection(message);
-        agent.interrupt('interjection');
-      }
-
-      // Emit event for UI
-      activityStream.emit({
-        id: `interjection-${Date.now()}`,
-        type: ActivityEventType.USER_INTERJECTION,
-        timestamp: Date.now(),
-        parentId: currentAgent.instanceId,
-        data: {
-          message,
-          targetAgent: currentAgent.agentName || 'unknown',
-          targetInstanceId: currentAgent.instanceId,
-        },
-      });
-    }
+    // Emit event for UI
+    activityStream.emit({
+      id: `interjection-${Date.now()}`,
+      type: ActivityEventType.USER_INTERJECTION,
+      timestamp: Date.now(),
+      parentId: parentId,
+      data: {
+        message,
+        targetAgent: targetToolName,
+      },
+    });
   };
 
   // Handle user input
