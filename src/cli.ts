@@ -464,7 +464,6 @@ async function main() {
     const { ListSessionsTool } = await import('./tools/ListSessionsTool.js');
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
-    const { FocusManagerTool } = await import('./tools/FocusManagerTool.js');
 
     const tools = [
       new BashTool(activityStream, config),
@@ -496,7 +495,6 @@ async function main() {
       new AskSessionTool(activityStream),
       new LintTool(activityStream),
       new FormatTool(activityStream),
-      new FocusManagerTool(activityStream),
     ];
 
     // Load user plugins from ~/.ally/plugins
