@@ -68,16 +68,8 @@ export class TreeTool extends BaseTool {
   readonly requiresConfirmation = false; // Read-only operation
 
   readonly usageGuidance = `**When to use tree:**
-- Getting an overview of project structure
-- Understanding directory hierarchy at a glance
-- Exploring multiple directory branches simultaneously
-
-**Example usage:**
-- tree(paths=["."])  // Show entire project structure
-- tree(paths=["src", "tests"])  // Explore multiple directories
-- tree(paths=["backend"], depth=2)  // Limit depth to prevent explosion
-
-Prefer tree over multiple sequential ls calls for directory exploration.`;
+Project structure overview, directory hierarchy, exploring multiple branches.
+Prefer over multiple ls calls.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

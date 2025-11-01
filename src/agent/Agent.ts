@@ -51,23 +51,6 @@ export interface AgentConfig {
 }
 
 /**
- * Tool context for controlling agent behavior during specific tool operations.
- * Used to restrict tool availability and inject system reminders.
- */
-export interface ToolContext {
-  /** The tool that triggered this context (e.g., "plan") */
-  triggerTool: string;
-  /** If set, ONLY these tools are allowed - exclusive mode */
-  availableTools?: string[];
-  /** If set, these tools are preferred - soft suggestion mode */
-  suggestedTools?: string[];
-  /** Context message to inject as system reminder */
-  systemReminder: string;
-  /** Arbitrary contextual data (e.g., proposed todos) */
-  data?: any;
-}
-
-/**
  * Agent orchestrates the entire conversation flow
  */
 export class Agent {
@@ -108,9 +91,6 @@ export class Agent {
   private calledRequiredTools: Set<string> = new Set();
   private requiredToolWarningCount: number = 0;
   private requiredToolWarningMessageIndex: number = -1; // Track warning message for removal
-
-  // Tool context tracking - used for dynamic tool filtering
-  private currentToolContext: ToolContext | null = null;
 
   // Validation attempt tracking - tracks validation retries across continuations
   private validationAttemptCount: number = 0;
@@ -206,18 +186,6 @@ export class Agent {
     return this.tokenManager;
   }
 
-  /**
-   * Set the current tool context
-   * Used to control tool availability and inject system reminders
-   */
-  setCurrentToolContext(context: ToolContext | null): void {
-    this.currentToolContext = context;
-    if (context) {
-      logger.debug('[AGENT_TOOL_CONTEXT]', this.instanceId, 'Tool context set:', context.triggerTool);
-    } else {
-      logger.debug('[AGENT_TOOL_CONTEXT]', this.instanceId, 'Tool context cleared');
-    }
-  }
 
   /**
    * Reset the tool call activity timer
@@ -344,25 +312,21 @@ export class Agent {
         let reminderContent = '<system-reminder>\n';
 
         if (todos.length === 0) {
-          reminderContent += 'Note: The todo list is currently empty. For complex multi-step tasks, consider using todo_add to track progress and stay focused. Todos provide reminders after each tool use and help prevent drift. For simple single-step operations, todos are optional.\n';
+          reminderContent += 'Todo list empty. For multi-step tasks, use todo_add to track progress.\n';
         } else {
           reminderContent += 'Current todos:\n';
           todos.forEach((todo: any, idx: number) => {
-            const status = todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '→' : '○';
+            const status = todo.status === 'completed' ? 'DONE' : todo.status === 'in_progress' ? 'ACTIVE' : 'PENDING';
             reminderContent += `${idx + 1}. [${status}] ${todo.task}\n`;
           });
 
           const inProgressTodo = todos.find((t: any) => t.status === 'in_progress');
           if (inProgressTodo) {
-            reminderContent += `\nYou are currently working on: "${inProgressTodo.task}". Stay focused on completing this task - don't get distracted by tangential findings in tool results unless they directly block your progress.\n`;
+            reminderContent += `\nCurrently working on: "${inProgressTodo.task}". Stay focused unless blocked.\n`;
           }
 
-          reminderContent += '\nHousekeeping: Keep the todo list clean and focused.\n';
-          reminderContent += '• Remove completed tasks that are no longer relevant to the conversation\n';
-          reminderContent += '• Remove pending tasks that are no longer needed\n';
-          reminderContent += '• Update task descriptions if they\'ve changed\n';
-          reminderContent += '• Remember: when working on todos, keep exactly ONE task in_progress\n\n';
-          reminderContent += 'Update the list now if needed based on the user\'s request.\n';
+          reminderContent += '\nKeep list clean: remove irrelevant tasks, maintain ONE in_progress task.\n';
+          reminderContent += 'Update list now if needed based on user request.\n';
         }
 
         reminderContent += '</system-reminder>';
@@ -528,41 +492,7 @@ export class Agent {
     // Get function definitions from tool manager
     // Exclude todo management tools from specialized agents (only main agent can manage todos)
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-    let excludeTools = allowTodoManagement ? undefined : ([...TOOL_NAMES.TODO_MANAGEMENT_TOOLS] as string[]);
-
-    // Handle currentToolContext for tool filtering
-    if (this.currentToolContext) {
-      if (this.currentToolContext.availableTools) {
-        // Exclusive mode: Only allow tools in availableTools
-        // Get all registered tool names
-        const allTools = this.toolManager.getAllTools().map(tool => tool.name);
-
-        // Compute tools to exclude (all tools NOT in availableTools)
-        const contextExclusions = allTools.filter(
-          toolName => !this.currentToolContext!.availableTools!.includes(toolName)
-        );
-
-        // Merge with existing excludeTools
-        const existingExclusions = excludeTools || [];
-        excludeTools = [...new Set([...existingExclusions, ...contextExclusions])];
-
-        logger.debug(
-          '[TOOL_CONTEXT]',
-          this.instanceId,
-          'Context filtering active (exclusive mode):',
-          'available=', this.currentToolContext.availableTools,
-          'excluded=', contextExclusions
-        );
-      } else if (this.currentToolContext.suggestedTools) {
-        // Soft mode: Don't restrict tools (we'll use this for system reminder in next task)
-        logger.debug(
-          '[TOOL_CONTEXT]',
-          this.instanceId,
-          'Context filtering active (soft mode):',
-          'suggested=', this.currentToolContext.suggestedTools
-        );
-      }
-    }
+    const excludeTools = allowTodoManagement ? undefined : ([...TOOL_NAMES.TODO_MANAGEMENT_TOOLS] as string[]);
 
     const functions = this.toolManager.getFunctionDefinitions(excludeTools);
 
@@ -589,23 +519,6 @@ export class Agent {
       }
 
       this.messages[0].content = updatedSystemPrompt;
-    }
-
-    // Inject context-aware system reminder if currentToolContext is set
-    if (this.currentToolContext) {
-      const contextReminder: Message = {
-        role: 'system',
-        content: `<system-reminder>\n${this.currentToolContext.systemReminder}\n</system-reminder>`,
-        timestamp: Date.now(),
-      };
-      this.messages.push(contextReminder);
-      logger.debug(
-        '[TOOL_CONTEXT]',
-        this.instanceId,
-        'Injected context-aware system reminder:',
-        this.currentToolContext.triggerTool
-      );
-      console.log(`[TOOL_CONTEXT_DEBUG] Injected system reminder for context: ${this.currentToolContext.triggerTool}`);
     }
 
     // Auto-compaction: check if context usage exceeds threshold

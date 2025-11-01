@@ -404,11 +404,11 @@ export class TodoManager {
 
     // Show in-progress task with subtasks
     if (inProgress) {
-      lines.push(`  → IN PROGRESS: ${inProgress.task}`);
+      lines.push(`  [ACTIVE] ${inProgress.task}`);
       if (inProgress.subtasks && inProgress.subtasks.length > 0) {
         inProgress.subtasks.forEach(subtask => {
-          const prefix = subtask.status === 'in_progress' ? '→' : subtask.status === 'completed' ? '✓' : ' ';
-          lines.push(`      ↳ ${prefix} ${subtask.task}`);
+          const prefix = subtask.status === 'in_progress' ? 'ACTIVE' : subtask.status === 'completed' ? 'DONE' : 'PENDING';
+          lines.push(`    - [${prefix}] ${subtask.task}`);
         });
       }
     }

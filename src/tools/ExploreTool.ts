@@ -62,17 +62,8 @@ export class ExploreTool extends BaseTool {
   readonly hideOutput = true; // Hide detailed output
 
   readonly usageGuidance = `**When to use explore:**
-- Understanding codebase structure and architecture
-- Finding specific implementations or patterns
-- Tracing feature implementations across files
-- Analyzing dependencies and relationships
-
-**Example usage:**
-- explore(task_description="Find how user authentication is implemented")
-- explore(task_description="Analyze the REST API structure and endpoints")
-- explore(task_description="Understand the plugin system architecture")
-
-The explore tool delegates to a read-only exploration agent. Use it instead of manual grep/read sequences.`;
+Understand structure, find implementations, trace features, analyze dependencies.
+Delegates to read-only agent. Prefer over manual grep/read sequences.`;
 
   private activeDelegations: Map<string, any> = new Map();
 

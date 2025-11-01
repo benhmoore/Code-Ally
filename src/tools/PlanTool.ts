@@ -116,23 +116,8 @@ export class PlanTool extends BaseTool {
   readonly hideOutput = true; // Hide detailed output
 
   readonly usageGuidance = `**When to use plan:**
-- Need to implement new feature/component
-- Want to follow existing patterns and conventions
-- Require comprehensive implementation roadmap
-- Need to understand full context before coding
-
-**Example usage:**
-- plan(requirements="Add user profile editing feature")
-- plan(requirements="Implement caching layer for API calls")
-- plan(requirements="Create custom validation tool")
-- plan(requirements="Add dark mode support to UI components")
-
-**Working with plan results:**
-- The plan tool researches existing patterns and creates detailed implementation plans
-- Plan agent will create proposed todos (status="proposed") as drafts
-- Proposed todos are NOT visible in the user's todo list until you accept them
-
-Use plan() before implementing complex features to ensure alignment with existing architecture.`;
+New features, following existing patterns, comprehensive roadmap before coding.
+Creates proposed todos as drafts; use deny_proposal if misaligned.`;
 
   private activeDelegations: Map<string, any> = new Map();
 
