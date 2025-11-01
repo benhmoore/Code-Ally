@@ -66,6 +66,7 @@ describe('GrepTool', () => {
       const result = await grepTool.execute({
         pattern: 'test',
         path: tempDir,
+        output_mode: 'content',
       });
 
       expect(result.success).toBe(true);
@@ -78,6 +79,7 @@ describe('GrepTool', () => {
       const result = await grepTool.execute({
         pattern: 'class',
         path: tempDir,
+        output_mode: 'content',
       });
 
       expect(result.success).toBe(true);
@@ -91,6 +93,7 @@ describe('GrepTool', () => {
         pattern: 'TEST',
         path: tempDir,
         case_insensitive: true,
+        output_mode: 'content',
       });
 
       expect(result.success).toBe(true);
@@ -130,6 +133,7 @@ describe('GrepTool', () => {
         pattern: 'test',
         path: tempDir,
         max_results: 2,
+        output_mode: 'content',
       });
 
       expect(result.success).toBe(true);
@@ -140,6 +144,7 @@ describe('GrepTool', () => {
       const result = await grepTool.execute({
         pattern: 'testFunc',
         path: tempDir,
+        output_mode: 'content',
       });
 
       expect(result.success).toBe(true);
@@ -153,6 +158,7 @@ describe('GrepTool', () => {
       const result = await grepTool.execute({
         pattern: 'test.*\\(',
         path: tempDir,
+        output_mode: 'content',
       });
 
       expect(result.success).toBe(true);
@@ -197,6 +203,7 @@ describe('GrepTool', () => {
       const result = await grepTool.execute({
         pattern: 'test',
         path: tempDir,
+        output_mode: 'content',
       });
 
       // Should succeed but not match the binary file
@@ -209,6 +216,7 @@ describe('GrepTool', () => {
       const result = await grepTool.execute({
         pattern: 'constructor',
         path: tempDir,
+        output_mode: 'content',
       });
 
       expect(result.success).toBe(true);
@@ -235,6 +243,7 @@ describe('GrepTool', () => {
       const result = await grepTool.execute({
         pattern: 'class',
         path: tempDir,
+        output_mode: 'content',
       });
 
       const preview = grepTool.getResultPreview(result, 5);

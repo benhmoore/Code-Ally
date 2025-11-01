@@ -25,7 +25,7 @@ interface FileInfo {
 export class GlobTool extends BaseTool {
   readonly name = 'glob';
   readonly description =
-    'Find files using glob patterns. Examples: \'*.ts\' (TypeScript files), \'**/*.test.js\' (test files recursively). Use * for wildcards, ** for recursive';
+    'Find files using glob patterns, sorted by modification time (newest first). Examples: \'*.ts\' (TypeScript files), \'**/*.test.js\' (test files recursively). Use * for wildcards, ** for recursive';
   readonly requiresConfirmation = false; // Read-only operation
 
   constructor(activityStream: ActivityStream) {
@@ -49,11 +49,6 @@ export class GlobTool extends BaseTool {
               description:
                 'Glob pattern to match files (e.g., "*.ts", "**/*.js", "src/**/*test*")',
             },
-            preset: {
-              type: 'string',
-              description:
-                'Pattern preset: "tests", "configs", "all_ts", "all_js", "components" (overrides pattern if provided)',
-            },
             path: {
               type: 'string',
               description: 'Search root directory (default: current directory)',
@@ -68,10 +63,6 @@ export class GlobTool extends BaseTool {
               type: 'integer',
               description: `Maximum number of results (default: ${TOOL_LIMITS.MAX_SEARCH_RESULTS})`,
             },
-            sort_by: {
-              type: 'string',
-              description: 'Sort order: "modified" for newest first (default), "name" for alphabetical',
-            },
           },
           required: ['pattern'],
         },
@@ -84,34 +75,19 @@ export class GlobTool extends BaseTool {
     this.captureParams(args);
 
     // Extract and validate parameters
-    const preset = args.preset as string | undefined;
-    let pattern = args.pattern as string;
-
-    // Apply preset patterns (overrides pattern if provided)
-    if (preset) {
-      const presetMap: Record<string, string> = {
-        tests: '**/*{.test,.spec}.{ts,tsx,js,jsx,py}',
-        configs: '**/*.{json,yaml,yml,toml,ini,config.js,config.ts}',
-        all_ts: '**/*.{ts,tsx}',
-        all_js: '**/*.{js,jsx}',
-        components: '**/{components,component}/**/*.{ts,tsx,js,jsx}',
-      };
-      pattern = presetMap[preset] || pattern;
-    }
-
+    const pattern = args.pattern as string;
     const searchPath = (args.path as string) || '.';
     const excludePatterns = (args.exclude as string[]) || [];
     const maxResults = Math.min(
       Number(args.max_results) || TOOL_LIMITS.MAX_SEARCH_RESULTS,
       TOOL_LIMITS.MAX_SEARCH_RESULTS
     );
-    const sortBy = (args.sort_by as string) || 'modified'; // Default: newest first
 
-    if (!pattern && !preset) {
+    if (!pattern) {
       return this.formatErrorResponse(
-        'pattern or preset parameter is required',
+        'pattern parameter is required',
         'validation_error',
-        'Example: glob(pattern="**/*.ts") or glob(preset="tests")'
+        'Example: glob(pattern="**/*.ts")'
       );
     }
 
@@ -179,14 +155,8 @@ export class GlobTool extends BaseTool {
         }
       }
 
-      // Sort based on sort_by parameter
-      if (sortBy === 'name') {
-        // Alphabetical sort
-        fileInfos.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-      } else {
-        // Default: modification time (newest first)
-        fileInfos.sort((a, b) => b.modified - a.modified);
-      }
+      // Sort by modification time (newest first)
+      fileInfos.sort((a, b) => b.modified - a.modified);
 
       // Apply limit
       const totalMatches = fileInfos.length;

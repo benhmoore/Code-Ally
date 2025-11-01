@@ -23,6 +23,11 @@ export class ReadTool extends BaseTool {
     'Read multiple file contents at once. Use for reading related files together, checking code before editing';
   readonly requiresConfirmation = false; // Read-only operation
 
+  readonly usageGuidance = `**When to use read:**
+Regular reads (default) keep file content in context for future reference - prefer this for most use cases.
+ONLY use ephemeral=true when file exceeds normal token limit AND you need one-time inspection.
+WARNING: Ephemeral content is automatically removed after one turn - you'll lose access to it.`;
+
   private config?: Config;
 
   constructor(activityStream: ActivityStream, config?: Config) {
@@ -82,7 +87,7 @@ export class ReadTool extends BaseTool {
             },
             ephemeral: {
               type: 'boolean',
-              description: 'If true, read significantly larger files (up to 90% of context vs normal 20% limit). Content is transient - automatically removed after this turn to preserve context. Use for one-time inspection of large files.',
+              description: 'ONLY use when file exceeds normal token limit. Allows reading up to 90% of context (vs normal 20% limit). WARNING: Content is automatically removed after one turn - you will lose access to it. Do NOT use for files within normal limits. Prefer regular reads to keep content available for reference.',
             },
           },
           required: ['file_paths'],
@@ -116,15 +121,15 @@ export class ReadTool extends BaseTool {
         : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
 
       const ephemeralHint = !ephemeral
-        ? ' Or use ephemeral=true to read larger files temporarily (content removed after current turn).'
+        ? ' As a LAST RESORT for one-time inspection only: ephemeral=true (WARNING: content removed after one turn, you will lose access).'
         : '';
 
       return this.formatErrorResponse(
         `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds limit of ${maxTokens}. ` +
-        `Use grep/glob to search for specific content, or use limit/offset for targeted reading.${ephemeralHint} ` +
-        `Example: ${examples}`,
+        `FIRST try: Use grep/glob to search for specific content, or use limit/offset for targeted reading. ` +
+        `Example: ${examples}.${ephemeralHint}`,
         'validation_error',
-        `Use targeted reading with limit parameter or search within files first using grep`
+        `Prefer targeted reading with limit/offset or search with grep/glob over ephemeral reads`
       );
     }
 

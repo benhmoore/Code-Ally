@@ -94,6 +94,10 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
               type: 'string',
               description: 'Description of what to explore or find in the codebase. Be specific about what you want to understand.',
             },
+            thoroughness: {
+              type: 'string',
+              description: 'Level of thoroughness for exploration: "quick" (2-5 tool calls, basic search), "medium" (5-10 tool calls, systematic exploration, default), "very thorough" (10-20 tool calls, comprehensive analysis across multiple locations).',
+            },
             persist: {
               type: 'boolean',
               description: 'Whether to persist the agent for reuse. If true, returns agent_id for tracking. Set to false for one-time ephemeral agents. Default: true.',
@@ -109,6 +113,7 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
     this.captureParams(args);
 
     const taskDescription = args.task_description;
+    const thoroughness = args.thoroughness ?? 'medium';
     const persist = args.persist ?? true;
 
     // Validate task_description parameter
@@ -117,6 +122,15 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
         'task_description parameter is required and must be a string',
         'validation_error',
         'Example: explore(task_description="Find how error handling is implemented")'
+      );
+    }
+
+    // Validate thoroughness parameter
+    if (thoroughness !== 'quick' && thoroughness !== 'medium' && thoroughness !== 'very thorough') {
+      return this.formatErrorResponse(
+        'thoroughness parameter must be one of: "quick", "medium", "very thorough"',
+        'validation_error',
+        'Example: explore(task_description="...", thoroughness="medium")'
       );
     }
 
@@ -138,18 +152,20 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
       );
     }
 
-    return await this.executeExploration(taskDescription, persist, callId);
+    return await this.executeExploration(taskDescription, thoroughness, persist, callId);
   }
 
   /**
    * Execute exploration with read-only agent
    *
    * @param taskDescription - The exploration task to execute
+   * @param thoroughness - Level of thoroughness: "quick", "medium", or "very thorough"
    * @param persist - Whether to use AgentPoolService for agent persistence
    * @param callId - Unique call identifier for tracking
    */
   private async executeExploration(
     taskDescription: string,
+    thoroughness: string,
     persist: boolean,
     callId: string
   ): Promise<ToolResult> {
@@ -192,7 +208,7 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
       logger.debug('[EXPLORE_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
 
       // Create specialized system prompt
-      const specializedPrompt = await this.createExplorationSystemPrompt(taskDescription);
+      const specializedPrompt = await this.createExplorationSystemPrompt(taskDescription, thoroughness);
 
       // Emit exploration start event
       this.emitEvent({
@@ -301,7 +317,7 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
         });
 
         // Append note that user cannot see this
-        const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this summary. You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
+        const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this output! You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
 
         // Build response with optional agent_id
         const successResponse: Record<string, any> = {
@@ -342,17 +358,74 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
   /**
    * Create specialized system prompt for exploration
    */
-  private async createExplorationSystemPrompt(taskDescription: string): Promise<string> {
-    logger.debug('[EXPLORE_TOOL] Creating exploration system prompt');
+  private async createExplorationSystemPrompt(taskDescription: string, thoroughness: string): Promise<string> {
+    logger.debug('[EXPLORE_TOOL] Creating exploration system prompt with thoroughness:', thoroughness);
     try {
+      // Adjust the base prompt based on thoroughness level
+      const adjustedPrompt = this.adjustPromptForThoroughness(EXPLORATION_SYSTEM_PROMPT, thoroughness);
+
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-      const result = await getAgentSystemPrompt(EXPLORATION_SYSTEM_PROMPT, taskDescription);
+      const result = await getAgentSystemPrompt(adjustedPrompt, taskDescription);
       logger.debug('[EXPLORE_TOOL] System prompt created, length:', result?.length || 0);
       return result;
     } catch (error) {
       logger.debug('[EXPLORE_TOOL] ERROR creating system prompt:', error);
       throw error;
     }
+  }
+
+  /**
+   * Adjust exploration system prompt based on thoroughness level
+   */
+  private adjustPromptForThoroughness(basePrompt: string, thoroughness: string): string {
+    // Extract the guidelines section and replace the tool call guidance
+    const guidelinesMatch = basePrompt.match(/(\*\*Important Guidelines:\*\*\n(?:.*\n)*)/);
+
+    if (!guidelinesMatch) {
+      // Fallback if pattern doesn't match
+      logger.error('[EXPLORE_TOOL] Guidelines section not found in base prompt, returning unmodified prompt');
+      return basePrompt;
+    }
+
+    let thoroughnessGuidance: string;
+
+    switch (thoroughness) {
+      case 'quick':
+        thoroughnessGuidance = `**Important Guidelines:**
+- You have READ-ONLY access - you cannot modify files
+- Be efficient and focused (aim for 2-5 tool calls)
+- Prioritize grep/glob over extensive file reading
+- Provide quick, concise summaries of findings
+- Focus on speed over comprehensiveness
+- If you can't find something quickly, explain what you searched`;
+        break;
+
+      case 'very thorough':
+        thoroughnessGuidance = `**Important Guidelines:**
+- You have READ-ONLY access - you cannot modify files
+- Be comprehensive and meticulous (aim for 10-20 tool calls)
+- Check multiple locations and consider various naming conventions
+- Trace dependencies deeply and understand complete call chains
+- Read extensively to build complete understanding
+- Cross-reference findings across multiple files
+- Investigate edge cases and alternative implementations
+- Always provide detailed, structured summaries with extensive context
+- Document all patterns, architectural decisions, and relationships found`;
+        break;
+
+      case 'medium':
+      default:
+        thoroughnessGuidance = `**Important Guidelines:**
+- You have READ-ONLY access - you cannot modify files
+- Be thorough but efficient with tool usage (aim for 5-10 tool calls)
+- Always provide clear, structured summaries of findings
+- Highlight key files, patterns, and architectural decisions
+- If you can't find something, explain what you searched and what was missing`;
+        break;
+    }
+
+    // Replace the guidelines section
+    return basePrompt.replace(/\*\*Important Guidelines:\*\*\n(?:.*\n)*?(?=\n\w|\n$|$)/s, thoroughnessGuidance + '\n\n');
   }
 
   /**

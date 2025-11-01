@@ -2,7 +2,7 @@
  * GrepTool - Search file contents using regex patterns
  *
  * Provides powerful pattern-based search across files with filtering,
- * context lines, and line numbering.
+ * context lines, line numbering, and multiple output modes.
  */
 
 import { BaseTool } from './BaseTool.js';
@@ -17,6 +17,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import fg from 'fast-glob';
 
+type OutputMode = 'files_with_matches' | 'content' | 'count';
+
 interface GrepMatch {
   file: string;
   line: number;
@@ -25,11 +27,19 @@ interface GrepMatch {
   after?: string[];
 }
 
+interface FileCount {
+  file: string;
+  count: number;
+}
+
 export class GrepTool extends BaseTool {
   readonly name = 'grep';
   readonly description =
-    'Search files for text patterns. Use for finding code patterns, text search across files, regex matching';
+    'Search files for text patterns with multiple output modes. Use for finding code patterns, text search across files, regex matching. Supports files_with_matches (default), content (with context), and count modes. Supports multiline regex patterns.';
   readonly requiresConfirmation = false; // Read-only operation
+  readonly usageGuidance = `**When to use grep:**
+Locate patterns across files or inspect matching lines with regex.
+Set output_mode="files_with_matches" for file lists (default), "content" for snippets with context, "count" for per-file totals.`;
 
   private static readonly MAX_RESULTS = TOOL_LIMITS.MAX_SEARCH_RESULTS;
   private static readonly MAX_FILE_SIZE = TOOL_LIMITS.MAX_FILE_SIZE;
@@ -53,31 +63,60 @@ export class GrepTool extends BaseTool {
           properties: {
             pattern: {
               type: 'string',
-              description: 'Regex pattern to search for',
+              description: 'The regular expression pattern to search for in file contents',
             },
             path: {
               type: 'string',
-              description: 'File or directory path to search (default: current directory)',
+              description: 'File or directory to search in (rg PATH). Defaults to current working directory.',
             },
             glob: {
               type: 'string',
-              description: 'Glob pattern to filter files (e.g., "*.ts", "**/*.js")',
+              description: 'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") - maps to rg --glob',
             },
-            file_type: {
+            type: {
               type: 'string',
-              description: 'File type shortcut: "ts", "js", "py", "all_code" (overrides glob if provided)',
+              description: 'File type to search (rg --type). Common types: js, py, rust, go, java, ts, tsx, etc. More efficient than glob for standard file types.',
             },
-            case_insensitive: {
+            '-i': {
               type: 'boolean',
-              description: 'Perform case-insensitive search (default: false)',
+              description: 'Case insensitive search (rg -i)',
             },
-            context_lines: {
-              type: 'integer',
-              description: 'Number of context lines to show before and after matches (default: 0, max: 10)',
+            output_mode: {
+              type: 'string',
+              description: 'Output mode: "content" shows matching lines (supports -A/-B/-C context, -n line numbers), "files_with_matches" shows file paths (default), "count" shows match counts.',
+            },
+            '-A': {
+              type: 'number',
+              description: 'Number of lines to show after each match (rg -A). Requires output_mode: "content", ignored otherwise.',
+            },
+            '-B': {
+              type: 'number',
+              description: 'Number of lines to show before each match (rg -B). Requires output_mode: "content", ignored otherwise.',
+            },
+            '-C': {
+              type: 'number',
+              description: 'Number of lines to show before and after each match (rg -C). Requires output_mode: "content", ignored otherwise.',
+            },
+            multiline: {
+              type: 'boolean',
+              description: 'Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false.',
             },
             max_results: {
               type: 'integer',
               description: `Maximum number of results to return (default: ${GrepTool.MAX_RESULTS})`,
+            },
+            // Backward compatibility parameters (deprecated but still supported)
+            file_type: {
+              type: 'string',
+              description: '[Deprecated: use "type" instead] File type shortcut',
+            },
+            case_insensitive: {
+              type: 'boolean',
+              description: '[Deprecated: use "-i" instead] Case-insensitive search',
+            },
+            context_lines: {
+              type: 'integer',
+              description: '[Deprecated: use -A/-B/-C instead] Context lines',
             },
           },
           required: ['pattern'],
@@ -93,25 +132,54 @@ export class GrepTool extends BaseTool {
     // Extract and validate parameters
     const pattern = args.pattern as string;
     const searchPath = (args.path as string) || '.';
-    const fileType = args.file_type as string | undefined;
+
+    // Support both new 'type' and legacy 'file_type' parameters
+    const fileType = (args.type as string | undefined) || (args.file_type as string | undefined);
     let filePattern = (args.glob as string) || '*';
 
-    // Apply file_type shortcuts (overrides glob if provided)
+    // Apply file type shortcuts (overrides glob if provided)
     if (fileType) {
       const typeMap: Record<string, string> = {
         ts: '**/*.{ts,tsx}',
+        tsx: '**/*.tsx',
         js: '**/*.{js,jsx}',
+        jsx: '**/*.jsx',
         py: '**/*.py',
+        rust: '**/*.rs',
+        go: '**/*.go',
+        java: '**/*.java',
+        c: '**/*.{c,h}',
+        cpp: '**/*.{cpp,hpp,cc,cxx}',
         all_code: '**/*.{ts,tsx,js,jsx,py,go,java,c,cpp,rs,rb}',
       };
       filePattern = typeMap[fileType] || filePattern;
     }
 
-    const caseInsensitive = Boolean(args.case_insensitive);
-    const contextLines = Math.min(
-      Math.max(0, Number(args.context_lines) || 0),
+    // Support both new '-i' and legacy 'case_insensitive' parameters
+    const caseInsensitive = Boolean(args['-i'] ?? args.case_insensitive);
+
+    // Support both new -A/-B/-C and legacy context_lines parameters
+    const legacyContextLines = args.context_lines as number | undefined;
+    const linesAfter = Math.min(
+      Math.max(0, Number(args['-A']) || legacyContextLines || 0),
       GrepTool.MAX_CONTEXT_LINES
     );
+    const linesBefore = Math.min(
+      Math.max(0, Number(args['-B']) || legacyContextLines || 0),
+      GrepTool.MAX_CONTEXT_LINES
+    );
+    const linesContext = Math.min(
+      Math.max(0, Number(args['-C']) || 0),
+      GrepTool.MAX_CONTEXT_LINES
+    );
+
+    // If -C is provided, it overrides -A and -B
+    const contextAfter = linesContext > 0 ? linesContext : linesAfter;
+    const contextBefore = linesContext > 0 ? linesContext : linesBefore;
+
+    const multiline = Boolean(args.multiline);
+    const outputMode = (args.output_mode as OutputMode) || 'files_with_matches';
+
     const maxResults = Math.min(
       Number(args.max_results) || GrepTool.MAX_RESULTS,
       GrepTool.MAX_RESULTS
@@ -128,7 +196,10 @@ export class GrepTool extends BaseTool {
     // Compile regex
     let regex: RegExp;
     try {
-      const flags = caseInsensitive ? 'i' : '';
+      let flags = caseInsensitive ? 'gi' : 'g';
+      if (multiline) {
+        flags += 's'; // 's' flag makes '.' match newlines
+      }
       regex = new RegExp(pattern, flags);
     } catch (error) {
       return this.formatErrorResponse(
@@ -174,13 +245,20 @@ export class GrepTool extends BaseTool {
 
       // Search files
       const matches: GrepMatch[] = [];
+      const filesWithMatches = new Set<string>();
+      const fileCounts = new Map<string, number>();
       let filesSearched = 0;
       let filesSkippedLarge = 0;
       let filesSkippedBinary = 0;
       let filesSkippedError = 0;
 
       for (const filePath of filesToSearch) {
-        if (matches.length >= maxResults) {
+        // For files_with_matches mode, stop when we have enough unique files
+        if (outputMode === 'files_with_matches' && filesWithMatches.size >= maxResults) {
+          break;
+        }
+        // For content mode, stop when we have enough matches
+        if (outputMode === 'content' && matches.length >= maxResults) {
           break;
         }
 
@@ -203,17 +281,45 @@ export class GrepTool extends BaseTool {
 
           filesSearched++;
 
-          // Search line by line
-          const lines = content.split('\n');
-          const fileMatches = this.searchLines(
-            lines,
-            regex,
-            filePath,
-            contextLines,
-            maxResults - matches.length
-          );
+          // Search based on mode
+          if (multiline) {
+            // For multiline mode, search entire content at once
+            const fileMatches = this.searchMultiline(
+              content,
+              regex,
+              filePath,
+              contextBefore,
+              contextAfter,
+              outputMode === 'content' ? maxResults - matches.length : Number.MAX_SAFE_INTEGER
+            );
 
-          matches.push(...fileMatches);
+            if (fileMatches.length > 0) {
+              filesWithMatches.add(filePath);
+              fileCounts.set(filePath, fileMatches.length);
+              if (outputMode === 'content') {
+                matches.push(...fileMatches);
+              }
+            }
+          } else {
+            // Search line by line
+            const lines = content.split('\n');
+            const fileMatches = this.searchLines(
+              lines,
+              regex,
+              filePath,
+              contextBefore,
+              contextAfter,
+              outputMode === 'content' ? maxResults - matches.length : Number.MAX_SAFE_INTEGER
+            );
+
+            if (fileMatches.length > 0) {
+              filesWithMatches.add(filePath);
+              fileCounts.set(filePath, fileMatches.length);
+              if (outputMode === 'content') {
+                matches.push(...fileMatches);
+              }
+            }
+          }
         } catch {
           // Skip files that can't be read
           filesSkippedError++;
@@ -221,48 +327,78 @@ export class GrepTool extends BaseTool {
         }
       }
 
-      // Format results
-      const limitedResults = matches.length > maxResults;
-      const matchesToReturn = matches.slice(0, maxResults);
-
-      // Format as human-readable content
-      const contentLines: string[] = [];
-      for (const match of matchesToReturn) {
-        contentLines.push(`${match.file}:${match.line}:${match.content}`);
-        if (match.before && match.before.length > 0) {
-          for (const line of match.before) {
-            contentLines.push(`  ${line}`);
-          }
-        }
-        if (match.after && match.after.length > 0) {
-          for (const line of match.after) {
-            contentLines.push(`  ${line}`);
-          }
-        }
-      }
-
-      const content = contentLines.join('\n');
-
+      // Format results based on output mode
       const totalSkipped = filesSkippedLarge + filesSkippedBinary + filesSkippedError;
-
-      // Group matches by file for easier LLM navigation
-      const matchesByFile: Record<string, number> = {};
-      for (const match of matches) {
-        matchesByFile[match.file] = (matchesByFile[match.file] || 0) + 1;
-      }
-
-      return this.formatSuccessResponse({
-        content, // Human-readable output for LLM
-        matches: matchesToReturn, // Structured data
-        matches_by_file: matchesByFile, // File -> count mapping
-        total_matches: matches.length,
+      let content = '';
+      let responseData: any = {
+        output_mode: outputMode,
         files_searched: filesSearched,
         files_skipped: totalSkipped,
         files_skipped_large: filesSkippedLarge,
         files_skipped_binary: filesSkippedBinary,
         files_skipped_error: filesSkippedError,
-        limited_results: limitedResults,
-      });
+      };
+
+      if (outputMode === 'files_with_matches') {
+        // Only return unique file paths
+        const fileList = Array.from(filesWithMatches).slice(0, maxResults);
+        content = fileList.join('\n');
+        responseData.files = fileList;
+        responseData.total_files = fileList.length;
+        responseData.limited_results = filesWithMatches.size > maxResults;
+      } else if (outputMode === 'count') {
+        // Return files with their match counts
+        const countList: FileCount[] = Array.from(fileCounts.entries())
+          .map(([file, count]) => ({ file, count }))
+          .slice(0, maxResults);
+
+        const contentLines = countList.map((fc) => `${fc.count}:${fc.file}`);
+        content = contentLines.join('\n');
+        responseData.file_counts = countList;
+        responseData.total_files = countList.length;
+        responseData.total_matches = Array.from(fileCounts.values()).reduce((a, b) => a + b, 0);
+        responseData.limited_results = fileCounts.size > maxResults;
+      } else {
+        // content mode - show matching lines with context
+        const limitedResults = matches.length > maxResults;
+        const matchesToReturn = matches.slice(0, maxResults);
+
+        const contentLines: string[] = [];
+        for (const match of matchesToReturn) {
+          // Add context before
+          if (match.before && match.before.length > 0) {
+            for (let i = 0; i < match.before.length; i++) {
+              const lineNum = match.line - match.before.length + i;
+              contentLines.push(`${match.file}:${lineNum}:${match.before[i]}`);
+            }
+          }
+          // Add matching line
+          contentLines.push(`${match.file}:${match.line}:${match.content}`);
+          // Add context after
+          if (match.after && match.after.length > 0) {
+            for (let i = 0; i < match.after.length; i++) {
+              const lineNum = match.line + i + 1;
+              contentLines.push(`${match.file}:${lineNum}:${match.after[i]}`);
+            }
+          }
+        }
+
+        content = contentLines.join('\n');
+        responseData.matches = matchesToReturn;
+        responseData.total_matches = matches.length;
+        responseData.limited_results = limitedResults;
+
+        // Group matches by file for easier LLM navigation
+        const matchesByFile: Record<string, number> = {};
+        for (const match of matches) {
+          matchesByFile[match.file] = (matchesByFile[match.file] || 0) + 1;
+        }
+        responseData.matches_by_file = matchesByFile;
+      }
+
+      responseData.content = content;
+
+      return this.formatSuccessResponse(responseData);
     } catch (error) {
       return this.formatErrorResponse(
         `Error searching files: ${formatError(error)}`,
@@ -278,7 +414,8 @@ export class GrepTool extends BaseTool {
     lines: string[],
     regex: RegExp,
     filePath: string,
-    contextLines: number,
+    contextBefore: number,
+    contextAfter: number,
     maxMatches: number
   ): GrepMatch[] {
     const matches: GrepMatch[] = [];
@@ -293,16 +430,67 @@ export class GrepTool extends BaseTool {
         };
 
         // Add context lines if requested
-        if (contextLines > 0) {
-          const beforeStart = Math.max(0, i - contextLines);
+        if (contextBefore > 0) {
+          const beforeStart = Math.max(0, i - contextBefore);
           match.before = lines.slice(beforeStart, i);
+        }
 
-          const afterEnd = Math.min(lines.length, i + contextLines + 1);
+        if (contextAfter > 0) {
+          const afterEnd = Math.min(lines.length, i + contextAfter + 1);
           match.after = lines.slice(i + 1, afterEnd);
         }
 
         matches.push(match);
       }
+    }
+
+    return matches;
+  }
+
+  /**
+   * Search content for multiline pattern matches
+   */
+  private searchMultiline(
+    content: string,
+    regex: RegExp,
+    filePath: string,
+    contextBefore: number,
+    contextAfter: number,
+    maxMatches: number
+  ): GrepMatch[] {
+    const matches: GrepMatch[] = [];
+    const lines = content.split('\n');
+
+    // Find all matches in the content
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(content)) !== null && matches.length < maxMatches) {
+      // Find which line this match starts on
+      const beforeMatch = content.substring(0, match.index);
+      const lineNumber = beforeMatch.split('\n').length;
+
+      // Get the matched content (may span multiple lines)
+      const matchedText = match[0];
+
+      const grepMatch: GrepMatch = {
+        file: filePath,
+        line: lineNumber,
+        content: matchedText,
+      };
+
+      // Add context lines if requested
+      if (contextBefore > 0) {
+        const beforeStart = Math.max(0, lineNumber - 1 - contextBefore);
+        grepMatch.before = lines.slice(beforeStart, lineNumber - 1);
+      }
+
+      if (contextAfter > 0) {
+        const matchLineCount = matchedText.split('\n').length;
+        const afterStart = lineNumber - 1 + matchLineCount;
+        const afterEnd = Math.min(lines.length, afterStart + contextAfter);
+        grepMatch.after = lines.slice(afterStart, afterEnd);
+      }
+
+      matches.push(grepMatch);
     }
 
     return matches;
@@ -331,19 +519,88 @@ export class GrepTool extends BaseTool {
       return super.getResultPreview(result, maxLines);
     }
 
-    const matches = result.matches as GrepMatch[] | undefined;
-    const totalMatches = result.total_matches ?? 0;
+    const outputMode = result.output_mode as OutputMode;
     const filesSearched = result.files_searched ?? 0;
     const filesSkipped = result.files_skipped ?? 0;
 
     const lines: string[] = [];
 
-    // Main summary line
-    let summary = `Found ${totalMatches} match(es) in ${filesSearched} file(s)`;
-    if (filesSkipped > 0) {
-      summary += `, ${filesSkipped} skipped`;
+    // Build summary based on output mode
+    if (outputMode === 'files_with_matches') {
+      const files = result.files as string[] | undefined;
+      const totalFiles = result.total_files ?? 0;
+      let summary = `Found ${totalFiles} file(s) with matches`;
+      if (filesSearched > 0) {
+        summary += ` (searched ${filesSearched})`;
+      }
+      if (filesSkipped > 0) {
+        summary += `, ${filesSkipped} skipped`;
+      }
+      lines.push(summary);
+
+      // Show file list preview
+      if (files && files.length > 0) {
+        const previewCount = Math.min(files.length, maxLines - lines.length);
+        for (let i = 0; i < previewCount; i++) {
+          const file = files[i];
+          if (file) {
+            const relativePath = path.relative(process.cwd(), file);
+            lines.push(`  ${relativePath}`);
+          }
+        }
+        if (files.length > previewCount) {
+          lines.push('  ...');
+        }
+      }
+    } else if (outputMode === 'count') {
+      const fileCounts = result.file_counts as FileCount[] | undefined;
+      const totalMatches = result.total_matches ?? 0;
+      const totalFiles = result.total_files ?? 0;
+      let summary = `Found ${totalMatches} match(es) in ${totalFiles} file(s)`;
+      if (filesSkipped > 0) {
+        summary += `, ${filesSkipped} skipped`;
+      }
+      lines.push(summary);
+
+      // Show count preview
+      if (fileCounts && fileCounts.length > 0) {
+        const previewCount = Math.min(fileCounts.length, maxLines - lines.length);
+        for (let i = 0; i < previewCount; i++) {
+          const fc = fileCounts[i];
+          if (fc) {
+            const relativePath = path.relative(process.cwd(), fc.file);
+            lines.push(`  ${fc.count}: ${relativePath}`);
+          }
+        }
+        if (fileCounts.length > previewCount) {
+          lines.push('  ...');
+        }
+      }
+    } else {
+      // content mode
+      const matches = result.matches as GrepMatch[] | undefined;
+      const totalMatches = result.total_matches ?? 0;
+      let summary = `Found ${totalMatches} match(es) in ${filesSearched} file(s)`;
+      if (filesSkipped > 0) {
+        summary += `, ${filesSkipped} skipped`;
+      }
+      lines.push(summary);
+
+      // Show match preview
+      if (matches && matches.length > 0) {
+        const previewCount = Math.min(matches.length, maxLines - lines.length);
+        for (let i = 0; i < previewCount; i++) {
+          const match = matches[i];
+          if (match) {
+            const relativePath = path.relative(process.cwd(), match.file);
+            lines.push(`  ${relativePath}:${match.line}: ${match.content.trim()}`);
+          }
+        }
+        if (matches.length > previewCount) {
+          lines.push('  ...');
+        }
+      }
     }
-    lines.push(summary);
 
     // Show breakdown of skipped files if any
     if (filesSkipped > 0) {
@@ -353,21 +610,6 @@ export class GrepTool extends BaseTool {
       if (result.files_skipped_error) skippedDetails.push(`${result.files_skipped_error} unreadable`);
       if (skippedDetails.length > 0) {
         lines.push(`  Skipped: ${skippedDetails.join(', ')}`);
-      }
-    }
-
-    if (matches && matches.length > 0) {
-      const previewCount = Math.min(matches.length, maxLines - lines.length);
-      for (let i = 0; i < previewCount; i++) {
-        const match = matches[i];
-        if (match) {
-          const relativePath = path.relative(process.cwd(), match.file);
-          lines.push(`${relativePath}:${match.line}: ${match.content.trim()}`);
-        }
-      }
-
-      if (matches.length > previewCount) {
-        lines.push('...');
       }
     }
 
