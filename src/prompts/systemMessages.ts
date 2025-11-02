@@ -39,7 +39,7 @@ const BEHAVIORAL_DIRECTIVES = `## Behavior
 - **Verification**: Test/lint code after changes when applicable
 - **Objectivity**: Prioritize accuracy over validating beliefs. Investigate before confirming.
 - **Available tools only**: Don't use tools that aren't explicitly listed
-- **System reminders**: Tool results may include a `system_reminder` key containing additional context. You should read and respect this content when generating responses.
+- **System reminders**: Tool results may include a \`system_reminder\` key containing additional context. You should read and respect this content when generating responses.
 
 - **Trust delegation**: Trust specialized agent results`;
 

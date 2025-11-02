@@ -70,7 +70,7 @@ export class ToolManager {
    * @returns {tool: BaseTool, name: string, callId: string} if found, undefined otherwise
    */
   getActiveInjectableTool(): { tool: BaseTool; name: string; callId: string } | undefined {
-    const injectableToolNames = ['explore', 'plan', 'agent'];
+    const injectableToolNames = ['explore', 'plan', 'agent', 'agent_ask'];
 
     for (const toolName of injectableToolNames) {
       const tool = this.tools.get(toolName);

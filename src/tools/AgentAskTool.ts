@@ -17,13 +17,14 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { AgentPoolService, AgentMetadata } from '../services/AgentPoolService.js';
+import { AgentPoolService, AgentMetadata, PooledAgent } from '../services/AgentPoolService.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 
 export class AgentAskTool extends BaseTool {
   readonly name = 'agent_ask';
+  private currentPooledAgent: PooledAgent | null = null;
   readonly description =
     'Continue conversation with a persistent agent created by explore/plan. Send additional messages to the same agent instance. Use when you need follow-up questions or iterative refinement.';
   readonly requiresConfirmation = false; // Read-only operation (for explore agents) or planning operation
@@ -161,6 +162,13 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
       // Get agent instance
       const agent = metadata.agent;
 
+      // Track pooled agent for interjection routing
+      this.currentPooledAgent = {
+        agent,
+        agentId,
+        release: () => {} // No-op since we're using an existing pooled agent
+      };
+
       // Save original parent call ID and temporarily update to current call ID
       // This ensures tool calls made by the agent nest under the current agent_ask call
       const orchestrator = agent.getToolOrchestrator();
@@ -216,6 +224,8 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
         // Always restore original parent call ID
         orchestrator.setParentCallId(originalParentCallId);
         logger.debug('[ASK_AGENT_TOOL] Restored agent parent call ID to', originalParentCallId);
+        // Clear tracked pooled agent
+        this.currentPooledAgent = null;
       }
     } catch (error) {
       return this.formatErrorResponse(
@@ -326,5 +336,26 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
     }
 
     return lines.slice(0, maxLines);
+  }
+
+  /**
+   * Inject user message into active pooled agent
+   * Used for routing interjections to subagents
+   */
+  injectUserMessage(message: string): void {
+    if (!this.currentPooledAgent) {
+      logger.warn('[AGENT_ASK_TOOL] injectUserMessage called but no active pooled agent');
+      return;
+    }
+
+    const agent = this.currentPooledAgent.agent;
+    if (!agent) {
+      logger.warn('[AGENT_ASK_TOOL] injectUserMessage called but pooled agent has no agent instance');
+      return;
+    }
+
+    logger.debug('[AGENT_ASK_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
+    agent.addUserInterjection(message);
+    agent.interrupt('interjection');
   }
 }
