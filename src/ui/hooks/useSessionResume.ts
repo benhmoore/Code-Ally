@@ -1,0 +1,265 @@
+/**
+ * useSessionResume - Handle session resumption on mount
+ *
+ * This hook handles loading a session from disk when the app starts,
+ * including restoring messages, todos, tool calls, and project context.
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import { Agent } from '../../agent/Agent.js';
+import { ActivityStream } from '../../services/ActivityStream.js';
+import { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import { SessionManager } from '../../services/SessionManager.js';
+import { PatchManager } from '../../services/PatchManager.js';
+import { ToolManager } from '../../tools/ToolManager.js';
+import { AppActions } from '../contexts/AppContext.js';
+import { Message, ToolCallState } from '../../types/index.js';
+import { SessionSelectRequest } from './useModalState.js';
+
+/**
+ * Reconstruct USER_INTERJECTION events from message history
+ *
+ * When loading a session from disk, interjection messages have metadata with parentId,
+ * but we need to re-emit USER_INTERJECTION events so ToolCallDisplay can capture them.
+ *
+ * @param messages - Array of messages from the session
+ * @param activityStream - ActivityStream to emit events to
+ */
+export function reconstructInterjectionsFromMessages(messages: Message[], activityStream: ActivityStream): void {
+  messages.forEach((msg) => {
+    if (msg.role === 'user' && msg.metadata?.isInterjection && msg.metadata?.parentId) {
+      // Re-emit USER_INTERJECTION event for this interjection
+      activityStream.emit({
+        id: `interjection-reconstructed-${msg.timestamp || Date.now()}`,
+        type: 'USER_INTERJECTION' as any,
+        timestamp: msg.timestamp || Date.now(),
+        parentId: msg.metadata.parentId,
+        data: {
+          message: msg.content,
+          reconstructed: true,
+        },
+      });
+    }
+  });
+}
+
+/**
+ * Reconstruct ToolCallState objects from message history
+ *
+ * When loading a session from disk, we have messages with tool_calls and tool results,
+ * but we don't have the ToolCallState objects that are needed for proper UI rendering.
+ * This function reconstructs those states from the message history.
+ *
+ * @param messages - Array of messages from the session
+ * @param serviceRegistry - Service registry to look up tool definitions
+ * @returns Array of reconstructed ToolCallState objects
+ */
+export function reconstructToolCallsFromMessages(messages: Message[], serviceRegistry: ServiceRegistry): ToolCallState[] {
+  const toolCalls: ToolCallState[] = [];
+  const toolResultsMap = new Map<string, { output: string; error?: string; timestamp: number }>();
+
+  // Get ToolManager to look up tool visibility
+  const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+  // First pass: collect all tool results
+  messages.forEach(msg => {
+    if (msg.role === 'tool' && msg.tool_call_id) {
+      toolResultsMap.set(msg.tool_call_id, {
+        output: msg.content,
+        error: msg.content.startsWith('Error:') ? msg.content : undefined,
+        timestamp: msg.timestamp || Date.now(),
+      });
+    }
+  });
+
+  // Second pass: reconstruct tool call states from assistant messages
+  messages.forEach(msg => {
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+      const baseTimestamp = msg.timestamp || Date.now();
+
+      msg.tool_calls.forEach((tc, index) => {
+        const result = toolResultsMap.get(tc.id);
+        const hasError = result?.error !== undefined;
+
+        // Parse arguments if they're a string
+        let parsedArgs: any;
+        try {
+          parsedArgs = typeof tc.function.arguments === 'string'
+            ? JSON.parse(tc.function.arguments)
+            : tc.function.arguments;
+        } catch {
+          parsedArgs = tc.function.arguments;
+        }
+
+        // Look up tool definition to get visibility settings
+        let visibleInChat = true; // Default to visible
+        if (toolManager) {
+          const toolDef = toolManager.getTool(tc.function.name);
+          if (toolDef) {
+            visibleInChat = toolDef.visibleInChat ?? true;
+          }
+        }
+
+        const toolCallState: ToolCallState = {
+          id: tc.id,
+          status: result ? (hasError ? 'error' : 'success') : 'success', // Default to success if we have the call
+          toolName: tc.function.name,
+          arguments: parsedArgs,
+          output: result?.output,
+          error: result?.error,
+          startTime: baseTimestamp + index, // Slightly offset multiple calls in same message
+          endTime: result?.timestamp,
+          visibleInChat: visibleInChat,
+        };
+
+        toolCalls.push(toolCallState);
+      });
+    }
+  });
+
+  return toolCalls;
+}
+
+/**
+ * Result of session resume operation
+ */
+export interface SessionResumeResult {
+  /** Whether session has been loaded */
+  sessionLoaded: boolean;
+}
+
+/**
+ * Handle session resumption on mount
+ *
+ * @param resumeSession - Session to resume (session ID, 'interactive' for selector, or null)
+ * @param agent - The agent instance
+ * @param actions - App context actions
+ * @param activityStream - ActivityStream to emit events
+ * @param setSessionSelectRequest - Callback to show session selector
+ * @returns Session resume state
+ *
+ * @example
+ * ```tsx
+ * const { sessionLoaded } = useSessionResume(
+ *   props.resumeSession,
+ *   agent,
+ *   actions,
+ *   activityStream,
+ *   modal.setSessionSelectRequest
+ * );
+ * ```
+ */
+export const useSessionResume = (
+  resumeSession: string | 'interactive' | null | undefined,
+  agent: Agent,
+  actions: AppActions,
+  activityStream: ActivityStream,
+  setSessionSelectRequest: (request?: SessionSelectRequest) => void
+): SessionResumeResult => {
+  const [sessionLoaded, setSessionLoaded] = useState(!resumeSession);
+  const sessionResumed = useRef(false);
+
+  useEffect(() => {
+    const handleSessionResume = async () => {
+      // Only run once
+      if (sessionResumed.current) return;
+
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
+      const todoManager = serviceRegistry.get('todo_manager');
+
+      if (!sessionManager) {
+        setSessionLoaded(true);
+        return;
+      }
+
+      // If resumeSession is 'interactive', show session selector
+      if (resumeSession === 'interactive') {
+        const sessions = await sessionManager.getSessionsInfoByDirectory();
+        setSessionSelectRequest({
+          requestId: `session_select_${Date.now()}`,
+          sessions,
+          selectedIndex: 0,
+        });
+        sessionResumed.current = true;
+        setSessionLoaded(true);
+        return;
+      }
+
+      // If resumeSession is a session ID, load it directly
+      if (resumeSession && typeof resumeSession === 'string') {
+        // CRITICAL: Set current session FIRST before loading messages
+        // This prevents auto-save from creating a new session
+        sessionManager.setCurrentSession(resumeSession);
+
+        // Reload patches for the new session
+        const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+        if (patchManager) {
+          await patchManager.onSessionChange();
+        }
+
+        // Load all session data in a single read (optimization)
+        const sessionData = await sessionManager.getSessionData(resumeSession);
+
+        // Filter out system messages to avoid duplication
+        const userMessages = sessionData.messages.filter(m => m.role !== 'system');
+
+        // Load idle messages into IdleMessageGenerator
+        const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
+        if (idleMessageGenerator && sessionData.idleMessages.length > 0) {
+          (idleMessageGenerator as any).setQueue(sessionData.idleMessages);
+        }
+
+        // Load todos into TodoManager (or clear if session has no todos)
+        if (todoManager) {
+          if (sessionData.todos.length > 0) {
+            (todoManager as any).setTodos(sessionData.todos);
+          } else {
+            (todoManager as any).setTodos([]);
+          }
+        }
+
+        // Bulk load messages (setMessages doesn't trigger auto-save)
+        agent.setMessages(userMessages);
+
+        // Load project context into ProjectContextDetector
+        const projectContextDetector = serviceRegistry.get('project_context_detector');
+        if (projectContextDetector && sessionData.projectContext) {
+          (projectContextDetector as any).setCached(sessionData.projectContext);
+        }
+
+        // Reconstruct tool call states from message history for proper rendering
+        const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
+        reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
+
+        // Reconstruct interjection events from message history
+        reconstructInterjectionsFromMessages(userMessages, activityStream);
+
+        // Mark session as loaded
+        setSessionLoaded(true);
+
+        // Update UI state
+        actions.setMessages(userMessages);
+
+        // Force Static to remount with loaded session messages
+        actions.forceStaticRemount();
+
+        // Update context usage
+        const tokenManager = serviceRegistry.get('token_manager');
+        if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
+          (tokenManager as any).updateTokenCount(agent.getMessages());
+          const contextUsage = (tokenManager as any).getContextUsagePercentage();
+          actions.setContextUsage(contextUsage);
+        }
+
+        sessionResumed.current = true;
+      }
+    };
+
+    handleSessionResume();
+  }, [resumeSession, agent, actions, activityStream, setSessionSelectRequest]);
+
+  return {
+    sessionLoaded,
+  };
+};

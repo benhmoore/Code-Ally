@@ -18,6 +18,10 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
 import { TokenManager } from './TokenManager.js';
+import { InterruptionManager } from './InterruptionManager.js';
+import { ActivityMonitor } from './ActivityMonitor.js';
+import { RequiredToolTracker } from './RequiredToolTracker.js';
+import { MessageValidator } from './MessageValidator.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { ConfigManager } from '../services/ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
@@ -66,17 +70,8 @@ export class Agent {
   private messages: Message[] = [];
   private requestInProgress: boolean = false;
 
-  // Interruption state - consolidated for clarity
-  private interrupted: boolean = false;
-  private wasInterrupted: boolean = false;
-  private interruptionType: 'cancel' | 'interjection' | null = null;
-  private interruptionContext: {
-    reason: string;
-    isTimeout: boolean;
-  } = { reason: '', isTimeout: false };
-
-  // Tool execution abort controller
-  private toolAbortController?: AbortController;
+  // Interruption management - delegated to InterruptionManager
+  private interruptionManager: InterruptionManager;
 
   // Context tracking (isolated per agent)
   private tokenManager: TokenManager;
@@ -85,19 +80,14 @@ export class Agent {
   // Agent instance ID for debugging
   private readonly instanceId: string;
 
-  // Activity watchdog - detects agents stuck generating tokens without tool calls
-  private lastToolCallTime: number = Date.now();
-  private activityWatchdogInterval: NodeJS.Timeout | null = null;
-  private readonly activityTimeoutMs: number;
+  // Activity monitoring - detects agents stuck generating tokens without tool calls
+  private activityMonitor: ActivityMonitor;
 
-  // Required tool calls tracking
-  private calledRequiredTools: Set<string> = new Set();
-  private requiredToolWarningCount: number = 0;
-  private requiredToolWarningMessageIndex: number = -1; // Track warning message for removal
+  // Required tool calls tracking - delegated to RequiredToolTracker
+  private requiredToolTracker: RequiredToolTracker;
 
-  // Validation attempt tracking - tracks validation retries across continuations
-  private validationAttemptCount: number = 0;
-  private readonly MAX_VALIDATION_ATTEMPTS: number = 2;
+  // Message validation - delegated to MessageValidator
+  private messageValidator: MessageValidator;
 
   // Tool call cycle detection - tracks recent tool calls to detect repetitive patterns
   private toolCallHistory: Array<{
@@ -126,16 +116,38 @@ export class Agent {
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
 
-    // Debug log for required tools configuration
+    // Create interruption manager
+    this.interruptionManager = new InterruptionManager();
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'InterruptionManager created');
+
+    // Create required tool tracker
+    this.requiredToolTracker = new RequiredToolTracker(this.instanceId);
     if (config.requiredToolCalls && config.requiredToolCalls.length > 0) {
+      this.requiredToolTracker.setRequired(config.requiredToolCalls);
       console.log(`[REQUIRED_TOOLS_DEBUG] Agent ${this.instanceId} configured with required tools:`, config.requiredToolCalls);
     }
 
-    // Set activity timeout (convert seconds to milliseconds)
-    // Only enable for specialized agents (subagents) to detect infinite loops
-    this.activityTimeoutMs = config.config.tool_call_activity_timeout * 1000;
-    if (config.isSpecializedAgent && this.activityTimeoutMs > 0) {
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Activity timeout enabled:', this.activityTimeoutMs, 'ms');
+    // Create message validator
+    this.messageValidator = new MessageValidator({
+      maxAttempts: 2,
+      instanceId: this.instanceId,
+    });
+
+    // Create activity monitor for detecting agents stuck generating tokens
+    // Only enabled for specialized agents (subagents) to detect infinite loops
+    const activityTimeoutMs = config.config.tool_call_activity_timeout * 1000;
+    this.activityMonitor = new ActivityMonitor({
+      timeoutMs: activityTimeoutMs,
+      checkIntervalMs: POLLING_INTERVALS.AGENT_WATCHDOG,
+      enabled: config.isSpecializedAgent === true && activityTimeoutMs > 0,
+      instanceId: this.instanceId,
+      onTimeout: (elapsedMs: number) => {
+        this.handleActivityTimeout(elapsedMs);
+      },
+    });
+
+    if (config.isSpecializedAgent && activityTimeoutMs > 0) {
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Activity monitor enabled:', activityTimeoutMs, 'ms');
     }
 
     // Create agent's own TokenManager for isolated context tracking
@@ -202,68 +214,45 @@ export class Agent {
    * Called by ToolOrchestrator when a tool call is executed
    */
   resetToolCallActivity(): void {
-    this.lastToolCallTime = Date.now();
-    logger.debug('[AGENT_ACTIVITY]', this.instanceId, 'Tool call activity reset');
+    this.activityMonitor.recordActivity();
   }
 
   /**
-   * Start watchdog timer for tool call activity
+   * Start activity monitoring
    *
    * Monitors specialized agents (subagents) for token generation without tool calls.
    * If no tool calls occur within the timeout period, the agent is interrupted.
    */
-  private startActivityWatchdog(): void {
-    // Only enable for specialized agents (subagents)
-    if (!this.config.isSpecializedAgent || this.activityTimeoutMs <= 0) {
-      return;
-    }
+  private startActivityMonitoring(): void {
+    this.activityMonitor.start();
+  }
 
-    // Reset activity timer at start
-    this.lastToolCallTime = Date.now();
-
-    this.activityWatchdogInterval = setInterval(() => {
-      const elapsedMs = Date.now() - this.lastToolCallTime;
-
-      if (elapsedMs > this.activityTimeoutMs) {
-        this.handleActivityTimeout(elapsedMs);
-      }
-    }, POLLING_INTERVALS.AGENT_WATCHDOG);
-
-    logger.debug('[AGENT_ACTIVITY]', this.instanceId, 'Activity watchdog started');
+  /**
+   * Stop activity monitoring
+   */
+  private stopActivityMonitoring(): void {
+    this.activityMonitor.stop();
   }
 
   /**
    * Handle activity timeout by interrupting the agent
+   *
+   * This is invoked by ActivityMonitor when timeout is detected.
+   *
+   * @param elapsedMs - Milliseconds elapsed since last activity
    */
   private handleActivityTimeout(elapsedMs: number): void {
     const elapsedSeconds = Math.round(elapsedMs / 1000);
-    const timeoutSeconds = this.activityTimeoutMs / 1000;
-
-    logger.warn(
-      '[AGENT_ACTIVITY]', this.instanceId,
-      `Activity timeout: ${elapsedSeconds}s since last tool call (limit: ${timeoutSeconds}s)`
-    );
 
     // Set interruption context
-    this.interruptionContext = {
-      reason: `Agent stuck: no tool calls for ${elapsedSeconds} seconds (timeout: ${timeoutSeconds}s)`,
+    this.interruptionManager.setInterruptionContext({
+      reason: `Agent stuck: no tool calls for ${elapsedSeconds} seconds`,
       isTimeout: true,
-    };
+    });
 
-    // Interrupt and stop watchdog
+    // Interrupt and stop monitoring
     this.interrupt();
-    this.stopActivityWatchdog();
-  }
-
-  /**
-   * Stop the activity watchdog timer
-   */
-  private stopActivityWatchdog(): void {
-    if (this.activityWatchdogInterval) {
-      clearInterval(this.activityWatchdogInterval);
-      this.activityWatchdogInterval = null;
-      logger.debug('[AGENT_ACTIVITY]', this.instanceId, 'Activity watchdog stopped');
-    }
+    this.stopActivityMonitoring();
   }
 
   /**
@@ -279,8 +268,8 @@ export class Agent {
    * @returns Promise resolving to the assistant's final response
    */
   async sendMessage(message: string): Promise<string> {
-    // Start activity watchdog for specialized agents
-    this.startActivityWatchdog();
+    // Start activity monitoring for specialized agents
+    this.startActivityMonitoring();
 
     // Clear tool call cycle history on new user input
     this.toolCallHistory = [];
@@ -295,7 +284,7 @@ export class Agent {
     this.messages.push(userMessage);
 
     // If the previous request was interrupted, add a system reminder
-    if (this.wasInterrupted) {
+    if (this.interruptionManager.wasRequestInterrupted()) {
       const systemReminder: Message = {
         role: 'system',
         content: '<system-reminder>\nUser interrupted. Prioritize answering their new prompt over continuing your todo list. After responding, reassess if the todo list is still relevant. Do not blindly continue with pending todos.\n</system-reminder>',
@@ -305,7 +294,7 @@ export class Agent {
       logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Injected system reminder after interruption');
 
       // Reset the flag after injecting the reminder
-      this.wasInterrupted = false;
+      this.interruptionManager.clearWasInterrupted();
     }
 
     // Auto-save after user message
@@ -366,7 +355,7 @@ export class Agent {
 
     try {
       // Reset interrupted flag and mark request in progress
-      this.interrupted = false;
+      this.interruptionManager.reset();
       this.requestInProgress = true;
 
       // Send to LLM and process response
@@ -384,11 +373,11 @@ export class Agent {
       // Treat permission denial as user interruption
       if (error instanceof PermissionDeniedError) {
         console.log('[PERMISSION] Permission denied - treating as interrupt');
-        this.interrupted = true;
+        this.interruptionManager.interrupt();
         return this.handleInterruption();
       }
 
-      if (this.interrupted || (error instanceof Error && error.message.includes('interrupted'))) {
+      if (this.interruptionManager.isInterrupted() || (error instanceof Error && error.message.includes('interrupted'))) {
         return this.handleInterruption();
       }
       throw error;
@@ -404,13 +393,14 @@ export class Agent {
    * For user interruptions or main agent, returns a message.
    */
   private handleInterruption(): string {
-    this.wasInterrupted = true;
+    this.interruptionManager.markRequestAsInterrupted();
 
-    const message = this.interruptionContext.reason || '[Request interrupted by user]';
-    const wasTimeout = this.interruptionContext.isTimeout;
+    const context = this.interruptionManager.getInterruptionContext();
+    const message = context.reason || '[Request interrupted by user]';
+    const wasTimeout = context.isTimeout;
 
     // Clear interruption state
-    this.interruptionContext = { reason: '', isTimeout: false };
+    this.interruptionManager.reset();
 
     // Timeouts on subagents should fail as tool errors
     if (wasTimeout && this.config.isSpecializedAgent) {
@@ -426,9 +416,8 @@ export class Agent {
    */
   private cleanupRequestState(): void {
     this.requestInProgress = false;
-    this.interrupted = false;
-    this.interruptionContext = { reason: '', isTimeout: false };
-    this.stopActivityWatchdog();
+    this.interruptionManager.cleanup();
+    this.stopActivityMonitoring();
   }
 
   /**
@@ -441,20 +430,14 @@ export class Agent {
    */
   interrupt(type: 'cancel' | 'interjection' = 'cancel'): void {
     if (this.requestInProgress) {
-      this.interrupted = true;
-      this.interruptionType = type;
+      // Set interruption state via InterruptionManager (handles abort controller)
+      this.interruptionManager.interrupt(type);
 
       // Cancel ongoing LLM request immediately
       this.cancel();
 
-      // Abort any ongoing tool executions (only for full cancellation)
-      if (type === 'cancel' && this.toolAbortController) {
-        this.toolAbortController.abort();
-        this.toolAbortController = undefined;
-      }
-
-      // Stop activity watchdog
-      this.stopActivityWatchdog();
+      // Stop activity monitoring
+      this.stopActivityMonitoring();
 
       this.emitEvent({
         id: this.generateId(),
@@ -498,8 +481,7 @@ export class Agent {
    * @returns AbortSignal for the tool execution
    */
   private startToolExecution(): AbortSignal {
-    this.toolAbortController = new AbortController();
-    return this.toolAbortController.signal;
+    return this.interruptionManager.startToolExecution();
   }
 
   /**
@@ -508,7 +490,7 @@ export class Agent {
    * @returns AbortSignal if available, undefined otherwise
    */
   getToolAbortSignal(): AbortSignal | undefined {
-    return this.toolAbortController?.signal;
+    return this.interruptionManager.getToolAbortSignal();
   }
 
   /**
@@ -618,9 +600,9 @@ export class Agent {
    */
   private async processLLMResponse(response: LLMResponse, isRetry: boolean = false): Promise<string> {
     // Check for interruption
-    if (this.interrupted || response.interrupted) {
+    if (this.interruptionManager.isInterrupted() || response.interrupted) {
       // Handle interjection vs cancellation
-      if (this.interruptionType === 'interjection') {
+      if (this.interruptionManager.getInterruptionType() === 'interjection') {
         // Preserve partial response if we have content
         if (response.content || response.tool_calls) {
           this.messages.push({
@@ -641,15 +623,15 @@ export class Agent {
         }
 
         // Reset flags
-        this.interrupted = false;
-        this.interruptionType = null;
+        this.interruptionManager.reset();
 
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection, continuing...');
         const continuationResponse = await this.getLLMResponse();
         return await this.processLLMResponse(continuationResponse);
       } else {
-        // Regular cancel - throw error as before
+        // Regular cancel - mark as interrupted for next request
+        this.interruptionManager.markRequestAsInterrupted();
         return '[Request interrupted by user]';
       }
     }
@@ -703,28 +685,19 @@ export class Agent {
     // GAP 3: Tool call validation errors
     // Detect validation errors where tool calls are malformed (missing function name, invalid JSON, etc.)
     // Add assistant's response with malformed calls to history and request continuation with error details
-    if (response.error && response.tool_call_validation_failed && !isRetry) {
-      this.validationAttemptCount++;
+    const validationResult = this.messageValidator.validate(response, isRetry);
 
-      console.log(`[CONTINUATION] Gap 3: Tool call validation failed - prodding model to fix (attempt ${this.validationAttemptCount}/${this.MAX_VALIDATION_ATTEMPTS})`);
-      console.log(`[CONTINUATION] Validation errors: ${response.validation_errors?.join('; ')}`);
-      logger.debug(
-        `[AGENT_RESPONSE]', this.instanceId, 'Tool call validation failed - ` +
-        `attempt ${this.validationAttemptCount}/${this.MAX_VALIDATION_ATTEMPTS}`
-      );
-      logger.debug(`[AGENT_RESPONSE] Validation errors: ${response.validation_errors?.join('; ')}`);
+    if (!validationResult.isValid && !isRetry) {
+      // Log the validation attempt
+      this.messageValidator.logAttempt(validationResult.errors);
 
       // Check if we've exceeded the max validation attempts
-      if (this.validationAttemptCount > this.MAX_VALIDATION_ATTEMPTS) {
-        logger.error(
-          `[AGENT_RESPONSE]', this.instanceId, ` +
-          `'Tool call validation failed after ${this.MAX_VALIDATION_ATTEMPTS} attempts - returning error`
-        );
+      if (validationResult.maxAttemptsExceeded) {
         // Reset counter for next request
-        this.validationAttemptCount = 0;
+        this.messageValidator.reset();
 
-        const errorDetails = response.validation_errors?.join('; ') || 'Unknown validation errors';
-        return `I attempted to call tools but encountered persistent validation errors after ${this.MAX_VALIDATION_ATTEMPTS} attempts: ${errorDetails}`;
+        // Return error message to user
+        return this.messageValidator.createMaxAttemptsError(validationResult.errors);
       }
 
       // Add the assistant's response with malformed tool calls to conversation history
@@ -745,12 +718,7 @@ export class Agent {
       this.messages.push(assistantMessage);
 
       // Add continuation prompt with validation error details
-      const errorDetails = response.validation_errors?.join('\n- ') || 'Unknown validation errors';
-      const continuationPrompt: Message = {
-        role: 'user',
-        content: `<system-reminder>\nYour previous response contained tool call validation errors:\n- ${errorDetails}\n\nPlease try again with properly formatted tool calls.\n</system-reminder>`,
-        timestamp: Date.now(),
-      };
+      const continuationPrompt = this.messageValidator.createValidationRetryMessage(validationResult.errors);
       this.messages.push(continuationPrompt);
 
       // Get continuation from LLM
@@ -815,16 +783,16 @@ export class Agent {
 
     if (toolCalls.length > 0) {
       // Check for interruption before processing tools
-      if (this.interrupted) {
+      if (this.interruptionManager.isInterrupted()) {
         return '[Request interrupted by user]';
       }
       // Reset validation counter on successful response with tool calls
-      this.validationAttemptCount = 0;
+      this.messageValidator.reset();
       // Response contains tool calls
       return await this.processToolResponse(response, toolCalls);
     } else {
       // Reset validation counter on successful text-only response
-      this.validationAttemptCount = 0;
+      this.messageValidator.reset();
       // Text-only response
       return await this.processTextResponse(response, isRetry);
     }
@@ -926,15 +894,13 @@ export class Agent {
     this.clearCycleHistoryIfBroken();
 
     // Track required tool calls
-    if (this.config.requiredToolCalls && this.config.requiredToolCalls.length > 0) {
+    if (this.requiredToolTracker.hasRequiredTools()) {
       console.log(`[REQUIRED_TOOLS_DEBUG] Checking ${unwrappedToolCalls.length} tool calls for required tools`);
       unwrappedToolCalls.forEach(tc => {
         console.log(`[REQUIRED_TOOLS_DEBUG] Tool executed: ${tc.function.name}`);
-        if (this.config.requiredToolCalls?.includes(tc.function.name)) {
-          this.calledRequiredTools.add(tc.function.name);
+        if (this.requiredToolTracker.markCalled(tc.function.name)) {
           console.log(`[REQUIRED_TOOLS_DEBUG] ✓ Tracked required tool call: ${tc.function.name}`);
-          console.log(`[REQUIRED_TOOLS_DEBUG] Called so far:`, Array.from(this.calledRequiredTools));
-          logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, `Tracked required tool call: ${tc.function.name}`);
+          console.log(`[REQUIRED_TOOLS_DEBUG] Called so far:`, this.requiredToolTracker.getCalledTools());
         }
       });
     }
@@ -1055,50 +1021,39 @@ export class Agent {
     }
 
     // Check if all required tool calls have been executed before allowing agent to exit
-    if (this.config.requiredToolCalls && this.config.requiredToolCalls.length > 0 && !this.interrupted) {
+    if (this.requiredToolTracker.hasRequiredTools() && !this.interruptionManager.isInterrupted()) {
       console.log(`[REQUIRED_TOOLS_DEBUG] Agent attempting to exit with text response`);
-      console.log(`[REQUIRED_TOOLS_DEBUG] Required tools:`, this.config.requiredToolCalls);
-      console.log(`[REQUIRED_TOOLS_DEBUG] Called tools:`, Array.from(this.calledRequiredTools));
+      console.log(`[REQUIRED_TOOLS_DEBUG] Required tools:`, this.requiredToolTracker.getRequiredTools());
+      console.log(`[REQUIRED_TOOLS_DEBUG] Called tools:`, this.requiredToolTracker.getCalledTools());
 
-      const missingTools = this.config.requiredToolCalls.filter(tool => !this.calledRequiredTools.has(tool));
-      console.log(`[REQUIRED_TOOLS_DEBUG] Missing tools:`, missingTools);
+      const result = this.requiredToolTracker.checkAndWarn();
+      console.log(`[REQUIRED_TOOLS_DEBUG] Missing tools:`, result.missingTools);
 
-      if (missingTools.length > 0) {
-        // Not all required tools have been called
-        if (this.requiredToolWarningCount >= BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS) {
-          // Exceeded max warnings - fail the operation
-          const errorMessage = `Agent failed to call required tools after ${BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS} warnings. Missing tools: ${missingTools.join(', ')}`;
-          console.log(`[REQUIRED_TOOLS_DEBUG] ✗ FAILING - exceeded max warnings (${this.requiredToolWarningCount}/${BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS})`);
-          console.log(`[REQUIRED_TOOLS_DEBUG] Error message:`, errorMessage);
-          logger.error('[AGENT_REQUIRED_TOOLS]', this.instanceId, errorMessage);
+      if (result.shouldFail) {
+        // Exceeded max warnings - fail the operation
+        const errorMessage = this.requiredToolTracker.createFailureMessage(result.missingTools);
+        console.log(`[REQUIRED_TOOLS_DEBUG] ✗ FAILING - exceeded max warnings (${result.warningCount}/${result.maxWarnings})`);
+        console.log(`[REQUIRED_TOOLS_DEBUG] Error message:`, errorMessage);
+        logger.error('[AGENT_REQUIRED_TOOLS]', this.instanceId, errorMessage);
 
-          const assistantMessage: Message = {
-            role: 'assistant',
-            content: `[Error: ${errorMessage}]`,
-            timestamp: Date.now(),
-          };
-          this.messages.push(assistantMessage);
-          this.autoSaveSession();
-
-          return `[Error: ${errorMessage}]`;
-        }
-
-        // Send reminder to call required tools
-        this.requiredToolWarningCount++;
-        console.log(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${this.requiredToolWarningCount}/${BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS}`);
-        console.log(`[REQUIRED_TOOLS_DEBUG] Sending reminder to call: ${missingTools.join(', ')}`);
-        logger.warn('[AGENT_REQUIRED_TOOLS]', this.instanceId,
-          `Agent attempting to exit without calling required tools (warning ${this.requiredToolWarningCount}/${BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS}). Missing: ${missingTools.join(', ')}`);
-
-        const reminderMessage: Message = {
-          role: 'system',
-          content: '<system-reminder>\n' +
-            `You must call the following required tool(s) before completing your task: ${missingTools.join(', ')}\n` +
-            `Please call ${missingTools.length === 1 ? 'this tool' : 'these tools'} now.\n` +
-            '</system-reminder>',
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: `[Error: ${errorMessage}]`,
           timestamp: Date.now(),
         };
-        this.requiredToolWarningMessageIndex = this.messages.length; // Track index before push
+        this.messages.push(assistantMessage);
+        this.autoSaveSession();
+
+        return `[Error: ${errorMessage}]`;
+      }
+
+      if (result.shouldWarn) {
+        // Send reminder to call required tools
+        console.log(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${result.warningCount}/${result.maxWarnings}`);
+        console.log(`[REQUIRED_TOOLS_DEBUG] Sending reminder to call: ${result.missingTools.join(', ')}`);
+
+        const reminderMessage = this.requiredToolTracker.createWarningMessage(result.missingTools);
+        this.requiredToolTracker.setWarningMessageIndex(this.messages.length); // Track index before push
         this.messages.push(reminderMessage);
 
         // Get new response from LLM
@@ -1107,18 +1062,21 @@ export class Agent {
 
         // Recursively process the response
         return await this.processLLMResponse(retryResponse);
-      } else {
-        // All required tools have been called
+      }
+
+      // All required tools have been called
+      if (this.requiredToolTracker.areAllCalled()) {
         console.log(`[REQUIRED_TOOLS_DEBUG] ✓ SUCCESS - All required tools have been called`);
-        logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, 'All required tools have been called:', Array.from(this.calledRequiredTools));
+        logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, 'All required tools have been called:', this.requiredToolTracker.getCalledTools());
 
         // Remove the warning message from history if it exists
-        if (this.requiredToolWarningMessageIndex >= 0 && this.requiredToolWarningMessageIndex < this.messages.length) {
-          const warningMessage = this.messages[this.requiredToolWarningMessageIndex];
+        const warningIndex = this.requiredToolTracker.getWarningMessageIndex();
+        if (warningIndex >= 0 && warningIndex < this.messages.length) {
+          const warningMessage = this.messages[warningIndex];
           if (warningMessage && warningMessage.role === 'system' && warningMessage.content.includes('must call the following required tool')) {
-            console.log(`[REQUIRED_TOOLS_DEBUG] Removing satisfied warning from conversation history at index ${this.requiredToolWarningMessageIndex}`);
-            this.messages.splice(this.requiredToolWarningMessageIndex, 1);
-            this.requiredToolWarningMessageIndex = -1; // Reset
+            console.log(`[REQUIRED_TOOLS_DEBUG] Removing satisfied warning from conversation history at index ${warningIndex}`);
+            this.messages.splice(warningIndex, 1);
+            this.requiredToolTracker.clearWarningMessageIndex();
           }
         }
       }
@@ -1817,8 +1775,8 @@ export class Agent {
   async cleanup(): Promise<void> {
     logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Cleanup started');
 
-    // Stop activity watchdog
-    this.stopActivityWatchdog();
+    // Stop activity monitoring
+    this.stopActivityMonitoring();
 
     // Only close the model client if this is NOT a specialized subagent
     // Subagents share the client and shouldn't close it

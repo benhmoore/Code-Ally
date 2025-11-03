@@ -275,10 +275,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             configSchema={modal.pluginConfigRequest.schema}
             existingConfig={modal.pluginConfigRequest.existingConfig}
             onComplete={async (config) => {
-              // Capture the request early to avoid null safety issues
-              const request = modal.pluginConfigRequest;
-              if (!request) return;
-
               const serviceRegistry = ServiceRegistry.getInstance();
               const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
 
@@ -287,17 +283,17 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                   role: 'assistant',
                   content: 'Error: Plugin configuration manager not available',
                 });
-                modal.setPluginConfigRequest(undefined);
+                setPluginConfigRequest(undefined);
                 return;
               }
 
               try {
                 // Save the configuration
                 await pluginConfigManager.saveConfig(
-                  request.pluginName,
-                  request.pluginPath,
+                  modal.pluginConfigRequest.pluginName,
+                  modal.pluginConfigRequest.pluginPath,
                   config,
-                  request.schema
+                  modal.pluginConfigRequest.schema
                 );
 
                 // Reload the plugin immediately
@@ -309,16 +305,16 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                   try {
                     // Reload plugin to get the tools
                     const newTools = await pluginLoader.reloadPlugin(
-                      request.pluginName,
-                      request.pluginPath
+                      modal.pluginConfigRequest.pluginName,
+                      modal.pluginConfigRequest.pluginPath
                     );
 
                     // Register the new tools
                     toolManager.registerTools(newTools);
 
-                    logger.info(`Plugin '${request.pluginName}' reloaded successfully`);
+                    logger.info(`Plugin '${modal.pluginConfigRequest.pluginName}' reloaded successfully`);
                   } catch (reloadError) {
-                    logger.error(`Error reloading plugin '${request.pluginName}':`, reloadError);
+                    logger.error(`Error reloading plugin '${modal.pluginConfigRequest.pluginName}':`, reloadError);
                     // Continue - config was saved, just the reload failed
                   }
                 }
@@ -330,8 +326,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                     type: ActivityEventType.PLUGIN_CONFIG_COMPLETE,
                     timestamp: Date.now(),
                     data: {
-                      pluginName: request.pluginName,
-                      pluginPath: request.pluginPath,
+                      pluginName: modal.pluginConfigRequest.pluginName,
+                      pluginPath: modal.pluginConfigRequest.pluginPath,
                     },
                   });
                 }
@@ -342,7 +338,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                 // Add success message
                 actions.addMessage({
                   role: 'assistant',
-                  content: `✓ Plugin '${request.pluginName}' configured and activated!`,
+                  content: `✓ Plugin '${modal.pluginConfigRequest.pluginName}' configured and activated!`,
                 });
               } catch (error) {
                 actions.addMessage({
@@ -353,10 +349,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               }
             }}
             onCancel={() => {
-              // Capture the request early to avoid null safety issues
-              const request = modal.pluginConfigRequest;
-              if (!request) return;
-
               // Emit cancel event
               if (activityStream) {
                 activityStream.emit({
@@ -364,7 +356,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                   type: ActivityEventType.PLUGIN_CONFIG_CANCEL,
                   timestamp: Date.now(),
                   data: {
-                    pluginName: request.pluginName,
+                    pluginName: modal.pluginConfigRequest.pluginName,
                   },
                 });
               }
@@ -374,7 +366,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
               actions.addMessage({
                 role: 'assistant',
-                content: `Plugin configuration cancelled. Plugin '${request.pluginName}' remains inactive.`,
+                content: `Plugin configuration cancelled. Plugin '${modal.pluginConfigRequest.pluginName}' remains inactive.`,
               });
             }}
           />
@@ -402,11 +394,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               commandHistory={commandHistory || undefined}
               completionProvider={completionProvider || undefined}
               sessionSelectRequest={modal.sessionSelectRequest}
-              onSessionNavigate={(newIndex) => {
-                if (modal.sessionSelectRequest) {
-                  modal.setSessionSelectRequest({ ...modal.sessionSelectRequest, selectedIndex: newIndex });
-                }
-              }}
+              onSessionNavigate={(newIndex) => modal.setSessionSelectRequest(prev => prev ? { ...prev, selectedIndex: newIndex } : undefined)}
               activityStream={activityStream}
               agent={agent}
               prefillText={modal.inputPrefillText}
@@ -426,10 +414,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <ModelSelector
-            models={modal.modelSelectRequest.models}
-            selectedIndex={modal.modelSelectedIndex}
-            currentModel={modal.modelSelectRequest.currentModel}
-            typeName={modal.modelSelectRequest.typeName}
+            models={modelSelectRequest.models}
+            selectedIndex={modelSelectedIndex}
+            currentModel={modelSelectRequest.currentModel}
+            typeName={modelSelectRequest.typeName}
             visible={true}
           />
           {/* Hidden InputPrompt for keyboard handling only */}
@@ -438,21 +426,21 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               onSubmit={handleInput}
               onInterjection={handleInterjection}
               isActive={true}
-              commandHistory={commandHistory || undefined}
+              commandHistory={commandHistory.current || undefined}
               completionProvider={completionProvider || undefined}
-              modelSelectRequest={modal.modelSelectRequest}
-              modelSelectedIndex={modal.modelSelectedIndex}
-              onModelNavigate={modal.setModelSelectedIndex}
+              modelSelectRequest={modelSelectRequest}
+              modelSelectedIndex={modelSelectedIndex}
+              onModelNavigate={setModelSelectedIndex}
               activityStream={activityStream}
               agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
             />
           </Box>
         </Box>
-      ) : modal.rewindRequest ? (
+      ) : rewindRequest ? (
         /* Rewind Selector (replaces input when active) */
         (() => {
           const userMessages = state.messages.filter(m => m.role === 'user');
@@ -466,7 +454,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
               <RewindSelector
                 messages={userMessages}
-                selectedIndex={modal.rewindRequest.selectedIndex}
+                selectedIndex={rewindRequest.selectedIndex}
                 visible={true}
               />
               {/* Hidden InputPrompt for keyboard handling only */}
@@ -475,26 +463,22 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                   onSubmit={handleInput}
                   onInterjection={handleInterjection}
                   isActive={true}
-                  commandHistory={commandHistory || undefined}
+                  commandHistory={commandHistory.current || undefined}
                   completionProvider={completionProvider || undefined}
-                  rewindRequest={modal.rewindRequest}
-                  onRewindNavigate={(newIndex) => {
-                    if (modal.rewindRequest) {
-                      modal.setRewindRequest({ ...modal.rewindRequest, selectedIndex: newIndex });
-                    }
-                  }}
+                  rewindRequest={rewindRequest}
+                  onRewindNavigate={(newIndex) => setRewindRequest(prev => prev ? { ...prev, selectedIndex: newIndex } : undefined)}
                   activityStream={activityStream}
                   agent={agent}
-                  prefillText={modal.inputPrefillText}
-                  onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-                  bufferValue={modal.inputBuffer}
-                  onBufferChange={modal.setInputBuffer}
+                  prefillText={inputPrefillText}
+                  onPrefillConsumed={() => setInputPrefillText(undefined)}
+                  bufferValue={inputBuffer}
+                  onBufferChange={setInputBuffer}
                 />
               </Box>
             </Box>
           );
         })()
-      ) : modal.undoFileListRequest && !modal.undoRequest ? (
+      ) : undoFileListRequest && !undoRequest ? (
         /* Undo File List (two-stage flow - stage 1) */
         <Box marginTop={1} flexDirection="column">
           {/* Reasoning Stream - shows thinking tokens */}
@@ -504,7 +488,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <UndoFileList
-            request={modal.undoFileListRequest}
+            request={undoFileListRequest}
             visible={true}
           />
           {/* Hidden InputPrompt for keyboard handling only */}
@@ -513,24 +497,20 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               onSubmit={handleInput}
               onInterjection={handleInterjection}
               isActive={true}
-              commandHistory={commandHistory || undefined}
+              commandHistory={commandHistory.current || undefined}
               completionProvider={completionProvider || undefined}
-              undoFileListRequest={modal.undoFileListRequest}
-              onUndoFileListNavigate={(newIndex) => {
-                if (modal.undoFileListRequest) {
-                  modal.setUndoFileListRequest({ ...modal.undoFileListRequest, selectedIndex: newIndex });
-                }
-              }}
+              undoFileListRequest={undoFileListRequest}
+              onUndoFileListNavigate={(newIndex) => setUndoFileListRequest(prev => prev ? { ...prev, selectedIndex: newIndex } : undefined)}
               activityStream={activityStream}
               agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
             />
           </Box>
         </Box>
-      ) : modal.undoRequest ? (
+      ) : undoRequest ? (
         /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
         <Box marginTop={1} flexDirection="column">
           {/* Reasoning Stream - shows thinking tokens */}
@@ -540,8 +520,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <UndoPrompt
-            request={modal.undoRequest}
-            selectedIndex={modal.undoSelectedIndex}
+            request={undoRequest}
+            selectedIndex={undoSelectedIndex}
             visible={true}
           />
           {/* Hidden InputPrompt for keyboard handling only */}
@@ -550,21 +530,21 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               onSubmit={handleInput}
               onInterjection={handleInterjection}
               isActive={true}
-              commandHistory={commandHistory || undefined}
+              commandHistory={commandHistory.current || undefined}
               completionProvider={completionProvider || undefined}
-              undoRequest={modal.undoRequest}
-              undoSelectedIndex={modal.undoSelectedIndex}
-              onUndoNavigate={modal.setUndoSelectedIndex}
+              undoRequest={undoRequest}
+              undoSelectedIndex={undoSelectedIndex}
+              onUndoNavigate={setUndoSelectedIndex}
               activityStream={activityStream}
               agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
             />
           </Box>
         </Box>
-      ) : modal.permissionRequest ? (
+      ) : permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
           {/* Reasoning Stream - shows thinking tokens */}
@@ -574,8 +554,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
           <PermissionPrompt
-            request={modal.permissionRequest}
-            selectedIndex={modal.permissionSelectedIndex}
+            request={permissionRequest}
+            selectedIndex={permissionSelectedIndex}
             visible={true}
           />
           {/* Hidden InputPrompt for keyboard handling only */}
@@ -584,17 +564,17 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               onSubmit={handleInput}
               onInterjection={handleInterjection}
               isActive={true}
-              commandHistory={commandHistory || undefined}
+              commandHistory={commandHistory.current || undefined}
               completionProvider={completionProvider || undefined}
-              permissionRequest={modal.permissionRequest}
-              permissionSelectedIndex={modal.permissionSelectedIndex}
-              onPermissionNavigate={modal.setPermissionSelectedIndex}
+              permissionRequest={permissionRequest}
+              permissionSelectedIndex={permissionSelectedIndex}
+              onPermissionNavigate={setPermissionSelectedIndex}
               activityStream={activityStream}
               agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
             />
           </Box>
         </Box>
@@ -612,16 +592,16 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             onSubmit={handleInput}
             onInterjection={handleInterjection}
             isActive={true}
-            commandHistory={commandHistory || undefined}
+            commandHistory={commandHistory.current || undefined}
             completionProvider={completionProvider || undefined}
-            configViewerOpen={modal.configViewerOpen}
+            configViewerOpen={configViewerOpen}
             activityStream={activityStream}
             agent={agent}
-            prefillText={modal.inputPrefillText}
-            onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-            onExitConfirmationChange={modal.setIsWaitingForExitConfirmation}
-            bufferValue={modal.inputBuffer}
-            onBufferChange={modal.setInputBuffer}
+            prefillText={inputPrefillText}
+            onPrefillConsumed={() => setInputPrefillText(undefined)}
+            onExitConfirmationChange={setIsWaitingForExitConfirmation}
+            bufferValue={inputBuffer}
+            onBufferChange={setInputBuffer}
           />
         </Box>
       )}
@@ -629,7 +609,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       {/* Footer / Help */}
       <Box marginTop={1}>
         <Text dimColor>
-          <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'}{currentFocus && <Text> | Focus: <Text color="magenta">{currentFocus}</Text></Text>} |{' '}
+          <Text color={isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'}{currentFocus && <Text> | Focus: <Text color="magenta">{currentFocus}</Text></Text>} |{' '}
           {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
             <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
           ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (

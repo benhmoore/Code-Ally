@@ -1,0 +1,191 @@
+/**
+ * ActivityMonitor - Detects agents stuck generating tokens without making tool calls
+ *
+ * Purpose:
+ * Specialized agents (subagents) can sometimes get stuck in infinite loops where they
+ * generate tokens continuously without making tool calls. This monitor detects such
+ * scenarios by tracking the time since the last tool call and interrupting the agent
+ * if it exceeds a configured timeout.
+ *
+ * Key Features:
+ * - Watchdog timer that periodically checks for activity
+ * - Tracks time since last tool call
+ * - Callback mechanism for timeout handling
+ * - Clean start/stop interface for lifecycle management
+ * - Only monitors specialized agents (disabled for main agent)
+ *
+ * Usage:
+ * ```typescript
+ * const monitor = new ActivityMonitor({
+ *   timeoutMs: 60000, // 60 second timeout
+ *   checkIntervalMs: 10000, // Check every 10 seconds
+ *   enabled: true, // Enable monitoring
+ *   onTimeout: (elapsedMs) => {
+ *     console.log(`Timeout after ${elapsedMs}ms`);
+ *     // Handle timeout (e.g., interrupt agent)
+ *   }
+ * });
+ *
+ * monitor.start();
+ * monitor.recordActivity(); // Call when tool is executed
+ * monitor.stop();
+ * ```
+ */
+
+import { logger } from '../services/Logger.js';
+
+/**
+ * Configuration options for ActivityMonitor
+ */
+export interface ActivityMonitorConfig {
+  /** Timeout threshold in milliseconds - agent is interrupted if no tool calls occur within this period */
+  timeoutMs: number;
+
+  /** Interval in milliseconds for checking activity (default: 10000ms / 10 seconds) */
+  checkIntervalMs?: number;
+
+  /** Whether monitoring is enabled (typically disabled for main agent, enabled for specialized agents) */
+  enabled: boolean;
+
+  /** Callback invoked when activity timeout is detected */
+  onTimeout: (elapsedMs: number) => void;
+
+  /** Instance identifier for logging (optional) */
+  instanceId?: string;
+}
+
+/**
+ * ActivityMonitor monitors agent activity and detects timeout scenarios
+ *
+ * This class implements a watchdog timer pattern that:
+ * 1. Tracks when the last tool call occurred
+ * 2. Periodically checks if too much time has elapsed without tool calls
+ * 3. Invokes a callback when timeout is detected
+ * 4. Provides clean start/stop lifecycle management
+ */
+export class ActivityMonitor {
+  private config: Required<ActivityMonitorConfig>;
+  private lastActivityTime: number = Date.now();
+  private watchdogInterval: NodeJS.Timeout | null = null;
+  private isRunning: boolean = false;
+
+  /**
+   * Create a new ActivityMonitor
+   *
+   * @param config - Configuration options
+   */
+  constructor(config: ActivityMonitorConfig) {
+    // Apply defaults for optional parameters
+    this.config = {
+      ...config,
+      checkIntervalMs: config.checkIntervalMs ?? 10000,
+      instanceId: config.instanceId ?? 'unknown',
+    };
+  }
+
+  /**
+   * Start monitoring agent activity
+   *
+   * Initializes the watchdog timer that periodically checks for timeout.
+   * If monitoring is disabled (config.enabled = false), this is a no-op.
+   * Safe to call multiple times - subsequent calls are ignored if already running.
+   */
+  start(): void {
+    // Skip if monitoring is disabled
+    if (!this.config.enabled) {
+      return;
+    }
+
+    // Skip if already running
+    if (this.isRunning) {
+      logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Already running, ignoring start()');
+      return;
+    }
+
+    // Reset activity time at start
+    this.lastActivityTime = Date.now();
+    this.isRunning = true;
+
+    // Start watchdog interval
+    this.watchdogInterval = setInterval(() => {
+      this.checkTimeout();
+    }, this.config.checkIntervalMs);
+
+    logger.debug(
+      '[ACTIVITY_MONITOR]',
+      this.config.instanceId,
+      `Started - timeout: ${this.config.timeoutMs}ms, check interval: ${this.config.checkIntervalMs}ms`
+    );
+  }
+
+  /**
+   * Stop monitoring agent activity
+   *
+   * Clears the watchdog timer and resets state.
+   * Safe to call multiple times - subsequent calls are ignored if already stopped.
+   */
+  stop(): void {
+    if (this.watchdogInterval) {
+      clearInterval(this.watchdogInterval);
+      this.watchdogInterval = null;
+      this.isRunning = false;
+      logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Stopped');
+    }
+  }
+
+  /**
+   * Record agent activity (typically a tool call)
+   *
+   * Resets the activity timer. Call this whenever the agent executes a tool
+   * to indicate that it's making progress and not stuck.
+   */
+  recordActivity(): void {
+    this.lastActivityTime = Date.now();
+    logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Activity recorded');
+  }
+
+  /**
+   * Check if timeout has occurred
+   *
+   * Called periodically by the watchdog timer. If elapsed time since last
+   * activity exceeds the timeout threshold, invokes the timeout callback.
+   * This method is exposed for testing purposes but is primarily used internally.
+   */
+  checkTimeout(): void {
+    const elapsedMs = Date.now() - this.lastActivityTime;
+
+    if (elapsedMs > this.config.timeoutMs) {
+      const elapsedSeconds = Math.round(elapsedMs / 1000);
+      const timeoutSeconds = this.config.timeoutMs / 1000;
+
+      logger.warn(
+        '[ACTIVITY_MONITOR]',
+        this.config.instanceId,
+        `Timeout detected: ${elapsedSeconds}s since last activity (limit: ${timeoutSeconds}s)`
+      );
+
+      // Invoke timeout callback
+      this.config.onTimeout(elapsedMs);
+    }
+  }
+
+  /**
+   * Check if monitoring is currently active
+   *
+   * @returns True if the watchdog is running, false otherwise
+   */
+  isActive(): boolean {
+    return this.isRunning;
+  }
+
+  /**
+   * Get time elapsed since last activity
+   *
+   * Useful for debugging or displaying current activity state.
+   *
+   * @returns Milliseconds since last recorded activity
+   */
+  getElapsedTime(): number {
+    return Date.now() - this.lastActivityTime;
+  }
+}
