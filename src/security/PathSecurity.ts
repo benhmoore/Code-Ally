@@ -10,6 +10,7 @@
 import path from 'path';
 import { cwd } from 'process';
 import { logger } from '../services/Logger.js';
+import { PERMISSION_MESSAGES } from '../config/constants.js';
 
 /**
  * Check if a path is within the current working directory
@@ -231,8 +232,18 @@ export class DirectoryTraversalError extends Error {
  * Custom error for permission denied
  */
 export class PermissionDeniedError extends Error {
-  constructor(message: string) {
+  constructor(message: string = PERMISSION_MESSAGES.GENERIC_DENIAL) {
     super(message);
     this.name = 'PermissionDeniedError';
   }
+}
+
+/**
+ * Type guard to check if an error is a PermissionDeniedError
+ *
+ * @param error Error to check
+ * @returns true if error is a PermissionDeniedError
+ */
+export function isPermissionDeniedError(error: unknown): error is PermissionDeniedError {
+  return error instanceof PermissionDeniedError;
 }

@@ -97,13 +97,17 @@ export const TOOL_OUTPUT_ESTIMATES = {
  *
  * Thresholds based on empirical testing:
  * - 70%: Enough headroom for normal tool execution
+ * - 75%: Add moderate reminder to system prompt
  * - 85%: Start conserving tokens for critical operations
+ * - 90%: Add strong warning to system prompt
  * - 95%: Emergency mode - minimal results only
  */
 export const CONTEXT_THRESHOLDS = {
   VISIBILITY: 50,
   NORMAL: 70,
+  MODERATE_REMINDER: 75,
   WARNING: 85,
+  STRONG_REMINDER: 90,
   CRITICAL: 95,
   MAX_PERCENT: 100,
 
@@ -111,6 +115,12 @@ export const CONTEXT_THRESHOLDS = {
     70: 'Context filling: Prioritize essential operations',
     85: 'Approaching limit: Complete current task then wrap up',
     95: 'CRITICAL: Stop tool use after current operation and summarize immediately',
+  },
+
+  // System prompt reminders (injected at 75% and 90%)
+  SYSTEM_REMINDERS: {
+    75: 'Context budget is filling up. Be more selective with tool use - prioritize essential operations and avoid exploratory tasks.',
+    90: 'WARNING: Context budget nearly exhausted. Minimize tool use. Focus on completing your current task efficiently, then wrap up your response.',
   },
 } as const;
 

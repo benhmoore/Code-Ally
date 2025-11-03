@@ -136,13 +136,17 @@ function getContextUsageInfo(tokenManager?: any, toolResultManager?: any): strin
     }
 
     const contextPct = tm.getContextUsagePercentage();
+    const remainingTokens = tm.getRemainingTokens ? tm.getRemainingTokens() : 0;
     let remainingCalls = 0;
 
     if (trm && typeof trm.estimateRemainingToolCalls === 'function') {
       remainingCalls = trm.estimateRemainingToolCalls();
     }
 
-    let contextLine = `- Context Usage: ${contextPct}% (~${remainingCalls} tool calls remaining)`;
+    // Format remaining tokens in a human-readable way (KB)
+    const remainingKB = Math.round(remainingTokens / 250); // ~250 tokens per KB of text
+
+    let contextLine = `- Context Usage: ${contextPct}% (~${remainingCalls} tool calls, ${remainingKB}KB remaining)`;
 
     // Add graduated warnings based on usage level
     if (contextPct >= CONTEXT_THRESHOLDS.CRITICAL) {
@@ -157,6 +161,49 @@ function getContextUsageInfo(tokenManager?: any, toolResultManager?: any): strin
   } catch (error) {
     // Context usage determination failed - continue without warning
     logger.warn('Failed to determine context usage:', formatError(error));
+    return '';
+  }
+}
+
+/**
+ * Get context budget reminder for system prompt
+ * Returns a warning message to inject into the system prompt at 75% and 90% usage
+ */
+function getContextBudgetReminder(tokenManager?: any): string {
+  try {
+    // Use provided instance or fall back to ServiceRegistry
+    let tm = tokenManager;
+
+    if (!tm) {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      if (!serviceRegistry) return '';
+      tm = serviceRegistry.get<any>('token_manager');
+    }
+
+    if (!tm || typeof tm.getContextUsagePercentage !== 'function') {
+      return '';
+    }
+
+    const contextPct = tm.getContextUsagePercentage();
+
+    // Don't add reminders below 75% (not overzealous)
+    if (contextPct < CONTEXT_THRESHOLDS.MODERATE_REMINDER) {
+      return '';
+    }
+
+    // Strong warning at 90%
+    if (contextPct >= CONTEXT_THRESHOLDS.STRONG_REMINDER) {
+      return `\n\n**CONTEXT BUDGET WARNING:**\n${CONTEXT_THRESHOLDS.SYSTEM_REMINDERS[90]}`;
+    }
+
+    // Moderate reminder at 75%
+    if (contextPct >= CONTEXT_THRESHOLDS.MODERATE_REMINDER) {
+      return `\n\n**Context Budget Notice:**\n${CONTEXT_THRESHOLDS.SYSTEM_REMINDERS[75]}`;
+    }
+
+    return '';
+  } catch (error) {
+    logger.warn('Failed to get context budget reminder:', formatError(error));
     return '';
   }
 }
@@ -321,8 +368,11 @@ ${guidances.join('\n\n')}`;
 This is a non-interactive, single-turn conversation. Your response will be final and the conversation will end immediately after you respond. There is no opportunity for follow-up questions or clarification. Make your response complete, clear, and self-contained.`
     : '';
 
+  // Get context budget reminder (only shown at 75%+)
+  const contextBudgetReminder = getContextBudgetReminder(tokenManager);
+
   // Combine core directives with context
-  return `${CORE_DIRECTIVES}${onceModeInstructions}${toolGuidanceContext}
+  return `${CORE_DIRECTIVES}${onceModeInstructions}${toolGuidanceContext}${contextBudgetReminder}
 
 **Context:**
 ${context}${todoContext}`;
@@ -340,6 +390,9 @@ export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt
     toolResultManager,
   });
 
+  // Get context budget reminder (only shown at 75%+)
+  const contextBudgetReminder = getContextBudgetReminder(tokenManager);
+
   return `**Primary Identity:**
 ${agentSystemPrompt}
 
@@ -351,7 +404,7 @@ ${GENERAL_GUIDELINES}
 ${taskPrompt}
 
 **Context:**
-${context}
+${context}${contextBudgetReminder}
 
 **Final Response Requirement**
 As a specialized agent, you must conclude with a comprehensive final response. Your final message will be returned as the tool result to the parent agent.

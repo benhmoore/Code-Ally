@@ -10,8 +10,8 @@ export {
   TrustManager,
   TrustScope,
   SensitivityTier,
-  PermissionDeniedError,
   type CommandPath,
   PermissionChoice,
 } from './TrustManager.js';
+export { PermissionDeniedError } from '../security/PathSecurity.js';
 export { CommandHandler, CommandResult } from './CommandHandler.js';

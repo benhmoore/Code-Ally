@@ -132,15 +132,19 @@ export class ToolResultManager {
       return rawResult;
     }
 
-    // Generate tool-specific truncation notice
-    const notice = this.getTruncationNotice(toolName, truncationLevel);
+    // Calculate percentage kept for the warning
+    const percentageKept = Math.round((maxTokens / actualTokens) * 100);
+
+    // Generate tool-specific truncation notice with percentage
+    const notice = this.getTruncationNotice(toolName, truncationLevel, percentageKept);
     const noticeTokens = this.tokenManager.estimateTokens(notice);
     let contentTokens = maxTokens - noticeTokens;
 
     // Ensure we don't go negative
     if (contentTokens < BUFFER_SIZES.MIN_CONTENT_TOKENS) {
       contentTokens = Math.floor(maxTokens / 2);
-      const minimalNotice = '\n\n[Truncated - output too long]';
+      const percentKept = Math.round((contentTokens / actualTokens) * 100);
+      const minimalNotice = `\n\n⚠️ WARNING: Output truncated to ${percentKept}% due to context limits`;
       const minimalTokens = this.tokenManager.estimateTokens(minimalNotice);
       contentTokens = maxTokens - minimalTokens;
 
@@ -148,14 +152,14 @@ export class ToolResultManager {
         rawResult,
         contentTokens
       );
-      return truncatedResult + minimalNotice;
+      return minimalNotice + '\n' + truncatedResult;
     }
 
     const truncatedResult = this.tokenManager.truncateContentToTokens(
       rawResult,
       contentTokens
     );
-    return truncatedResult + notice;
+    return notice + '\n' + truncatedResult;
   }
 
   /**
@@ -163,21 +167,25 @@ export class ToolResultManager {
    *
    * @param toolName Name of the tool
    * @param truncationLevel Current truncation level
+   * @param percentageKept Percentage of original result kept (1-100)
    * @returns Formatted truncation notice
    */
-  private getTruncationNotice(toolName: string, truncationLevel: TruncationLevel): string {
+  private getTruncationNotice(toolName: string, truncationLevel: TruncationLevel, percentageKept: number): string {
     const toolGuidance = this.getToolSpecificGuidance(toolName);
 
-    let contextReason = '';
+    // Create clear, prominent warning at the top
+    let warning = '';
     if (truncationLevel === 'critical') {
-      contextReason = 'critical context usage';
+      warning = `⚠️ CRITICAL: Output truncated to ${percentageKept}% (context nearly full)`;
     } else if (truncationLevel === 'aggressive') {
-      contextReason = 'high context usage';
+      warning = `⚠️ WARNING: Output truncated to ${percentageKept}% (high context usage)`;
+    } else if (truncationLevel === 'moderate') {
+      warning = `⚠️ Output truncated to ${percentageKept}% (context limit)`;
     } else {
-      contextReason = 'length';
+      warning = `⚠️ Output truncated to ${percentageKept}%`;
     }
 
-    return `\n\n[Output truncated due to ${contextReason}. ${toolGuidance}]`;
+    return `${warning}\n${toolGuidance ? `Tip: ${toolGuidance}` : ''}`;
   }
 
   /**

@@ -257,12 +257,18 @@ export const useActivitySubscriptions = (
   // Agent end
   useActivityEvent(ActivityEventType.AGENT_END, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
+    const wasInterrupted = event.data?.interrupted || false;
 
     if (isSpecialized) {
       setActiveAgentsCount((prev) => Math.max(0, prev - 1));
     } else {
       streamingContentRef.current = '';
       actions.setStreamingContent(undefined);
+
+      // Clear active tool calls when main agent ends (especially if interrupted)
+      if (wasInterrupted) {
+        actions.clearToolCalls();
+      }
     }
 
     setIsCancelling(false);

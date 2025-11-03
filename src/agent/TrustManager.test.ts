@@ -4,7 +4,9 @@
  * Basic test suite demonstrating TrustManager functionality
  */
 
-import { TrustManager, TrustScope, SensitivityTier, PermissionDeniedError } from './TrustManager';
+import { describe, it, expect } from 'vitest';
+import { TrustManager, TrustScope, SensitivityTier } from './TrustManager';
+import { PermissionDeniedError } from '../security/PathSecurity.js';
 
 describe('TrustManager', () => {
   describe('Auto-confirm mode', () => {

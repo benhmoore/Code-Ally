@@ -25,10 +25,11 @@ import { MessageValidator } from './MessageValidator.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { ConfigManager } from '../services/ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
+import { isPermissionDeniedError } from '../security/PathSecurity.js';
 import { Message, ActivityEventType, Config } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -208,6 +209,13 @@ export class Agent {
     return this.toolOrchestrator;
   }
 
+  /**
+   * Get the interruption manager (used by ToolOrchestrator for permission denial handling)
+   */
+  getInterruptionManager(): InterruptionManager {
+    return this.interruptionManager;
+  }
+
 
   /**
    * Reset the tool call activity timer
@@ -367,14 +375,26 @@ export class Agent {
 
       return finalResponse;
     } catch (error) {
-      // Import PermissionDeniedError locally to check instance
-      const { PermissionDeniedError } = await import('../security/PathSecurity.js');
+      // Treat permission denial as critical interruption
+      if (isPermissionDeniedError(error)) {
+        // Ensure interruption is marked
+        this.interruptionManager.markRequestAsInterrupted();
 
-      // Treat permission denial as user interruption
-      if (error instanceof PermissionDeniedError) {
-        console.log('[PERMISSION] Permission denied - treating as interrupt');
-        this.interruptionManager.interrupt();
-        return this.handleInterruption();
+        // Emit agent end event with interruption
+        this.emitEvent({
+          id: this.generateId(),
+          type: ActivityEventType.AGENT_END,
+          timestamp: Date.now(),
+          data: {
+            interrupted: true,
+            isSpecializedAgent: this.config.isSpecializedAgent || false,
+            instanceId: this.instanceId,
+            agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
+          },
+        });
+
+        // Return concise message to user
+        return PERMISSION_MESSAGES.USER_FACING_DENIAL;
       }
 
       if (this.interruptionManager.isInterrupted() || (error instanceof Error && error.message.includes('interrupted'))) {
@@ -884,8 +904,37 @@ export class Agent {
     // Start tool execution and create abort controller
     this.startToolExecution();
 
-    await this.toolOrchestrator.executeToolCalls(toolCalls, cycles);
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.messages.length);
+    try {
+      await this.toolOrchestrator.executeToolCalls(toolCalls, cycles);
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.messages.length);
+    } catch (error) {
+      // Check if this is a permission denied error that triggered interruption
+      if (isPermissionDeniedError(error)) {
+        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Permission denied during tool execution - adding tool results before interruption');
+
+        // Add tool result messages to conversation history so model knows what happened
+        // This ensures the conversation is complete before we interrupt
+        for (const toolCall of unwrappedToolCalls) {
+          const toolResultMessage: Message = {
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: toolCall.function.name,
+            content: JSON.stringify(PERMISSION_DENIED_TOOL_RESULT),
+            timestamp: Date.now(),
+          };
+          this.messages.push(toolResultMessage);
+        }
+
+        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added permission denial tool results. Total messages now:', this.messages.length);
+
+        // Save session with permission denial context
+        this.autoSaveSession();
+
+        throw error; // Re-throw to be caught by sendMessage's error handler
+      }
+      // Re-throw any other errors
+      throw error;
+    }
 
     // Add tool calls to history for cycle detection (AFTER execution)
     this.addToolCallsToHistory(unwrappedToolCalls);

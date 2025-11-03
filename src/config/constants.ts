@@ -551,3 +551,32 @@ export const AGENT_POOL = {
   /** Default cleanup interval for idle agent eviction (1 minute) */
   DEFAULT_CLEANUP_INTERVAL_MS: 60 * 1000,
 } as const;
+
+// ===========================================
+// PERMISSION DENIAL MESSAGES
+// ===========================================
+
+/**
+ * Permission denial error messages and tool result formats
+ * Used when user denies permission for operations requiring confirmation
+ */
+export const PERMISSION_MESSAGES = {
+  /** Generic permission denial message for tool results */
+  GENERIC_DENIAL: 'Permission denied by user',
+
+  /** User-facing permission denial message shown in chat */
+  USER_FACING_DENIAL: 'Permission denied. Tell Ally what to do instead.',
+
+  /** Generate tool-specific denial message */
+  toolSpecificDenial: (toolName: string) => `Permission denied for ${toolName} by user`,
+} as const;
+
+/**
+ * Standard tool result object for permission denials
+ * Ensures consistent error format across all denied operations
+ */
+export const PERMISSION_DENIED_TOOL_RESULT = {
+  success: false,
+  error: PERMISSION_MESSAGES.GENERIC_DENIAL,
+  error_type: 'permission_denied' as const,
+} as const;

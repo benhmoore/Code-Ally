@@ -19,7 +19,7 @@ import { ActivityEventType, ToolResult } from '../types/index.js';
 import { AgentConfig } from './Agent.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
-import { DirectoryTraversalError, PermissionDeniedError } from '../security/PathSecurity.js';
+import { DirectoryTraversalError, isPermissionDeniedError } from '../security/PathSecurity.js';
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
@@ -256,14 +256,37 @@ export class ToolOrchestrator {
 
     try {
       // Execute all tools in parallel
-      const results = await Promise.all(
+      // Use Promise.allSettled to handle permission denials gracefully
+      const results = await Promise.allSettled(
         toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId))
       );
 
-      // Process results (add to conversation)
+      // Check if any tool was denied permission
+      const successfulResults: (ToolResult | null)[] = [];
+
+      for (const settledResult of results) {
+        if (settledResult.status === 'rejected') {
+          // Check if this is a permission denial
+          if (isPermissionDeniedError(settledResult.reason)) {
+            logger.debug('[TOOL_ORCHESTRATOR] Permission denied in concurrent execution, stopping group');
+            // Re-throw to stop agent
+            throw settledResult.reason;
+          }
+          // Other errors: create error result
+          successfulResults.push({
+            success: false,
+            error: formatError(settledResult.reason),
+            error_type: 'system_error',
+          });
+        } else {
+          successfulResults.push(settledResult.value);
+        }
+      }
+
+      // If we got here, no permission was denied - process all results
       for (let i = 0; i < toolCalls.length; i++) {
         const toolCall = toolCalls[i];
-        const result = results[i];
+        const result = successfulResults[i];
         if (toolCall && result) {
           await this.processToolResult(toolCall, result);
         }
@@ -278,7 +301,7 @@ export class ToolOrchestrator {
         data: {
           groupExecution: true,
           toolCount: toolCalls.length,
-          success: results.every(r => r.success),
+          success: successfulResults.every(r => r?.success),
         },
       });
     } catch (error) {
@@ -405,6 +428,7 @@ export class ToolOrchestrator {
       error: 'Tool execution failed unexpectedly',
       error_type: 'system_error',
     };
+    let permissionDenied = false; // Track if permission was denied to skip TOOL_CALL_END
 
     try {
       // Preview changes (e.g., diffs) BEFORE permission check
@@ -473,9 +497,10 @@ export class ToolOrchestrator {
         });
       }
     } catch (error) {
-      // Handle permission denied as interrupt - don't catch, let it bubble up
-      if (error instanceof PermissionDeniedError) {
-        console.log('[PERMISSION] Permission denied - interrupting agent execution');
+      // Permission denied errors should propagate to Agent for handling
+      // Mark that permission was denied so we can skip TOOL_CALL_END emission
+      if (isPermissionDeniedError(error)) {
+        permissionDenied = true;
         throw error;
       }
 
@@ -500,27 +525,31 @@ export class ToolOrchestrator {
         };
       }
     } finally {
-      // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START
-      // Show silent tools in chat if they error (for debugging)
-      const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
+      // Skip TOOL_CALL_END when permission is denied since agent is being fully interrupted
+      // Don't return here - let the exception propagate!
+      if (!permissionDenied) {
+        // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START (except permission denial)
+        // Show silent tools in chat if they error (for debugging)
+        const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
 
-      this.emitEvent({
-        id,
-        type: ActivityEventType.TOOL_CALL_END,
-        timestamp: Date.now(),
-        parentId: effectiveParentId,
-        data: {
-          toolName,
-          result,
-          success: result.success,
-          error: result.success ? undefined : result.error,
-          visibleInChat: shouldShowInChat,
-          isTransparent: tool?.isTransparentWrapper || false,
-          collapsed: isCollapsed, // Use same collapsed state as TOOL_CALL_START
-          shouldCollapse, // Pass through for completion-triggered collapse
-          hideOutput, // Pass through for output visibility control
-        },
-      });
+        this.emitEvent({
+          id,
+          type: ActivityEventType.TOOL_CALL_END,
+          timestamp: Date.now(),
+          parentId: effectiveParentId,
+          data: {
+            toolName,
+            result,
+            success: result.success,
+            error: result.success ? undefined : result.error,
+            visibleInChat: shouldShowInChat,
+            isTransparent: tool?.isTransparentWrapper || false,
+            collapsed: isCollapsed, // Use same collapsed state as TOOL_CALL_START
+            shouldCollapse, // Pass through for completion-triggered collapse
+            hideOutput, // Pass through for output visibility control
+          },
+        });
+      }
     }
 
     return result;

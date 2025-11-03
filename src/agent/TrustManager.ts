@@ -17,7 +17,8 @@
 
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ActivityEvent } from '../types/index.js';
-import { TEXT_LIMITS } from '../config/constants.js';
+import { TEXT_LIMITS, PERMISSION_MESSAGES } from '../config/constants.js';
+import { PermissionDeniedError } from '../security/PathSecurity.js';
 
 /**
  * Trust scope levels for permission management
@@ -60,16 +61,6 @@ export enum PermissionChoice {
   ALLOW = 'Allow',
   DENY = 'Deny',
   ALWAYS_ALLOW = 'Always Allow',
-}
-
-/**
- * Exception raised when user denies permission
- */
-export class PermissionDeniedError extends Error {
-  constructor(message: string = 'Permission denied by user') {
-    super(message);
-    this.name = 'PermissionDeniedError';
-  }
 }
 
 /**
@@ -202,7 +193,7 @@ export class TrustManager {
 
       case PermissionChoice.DENY:
         throw new PermissionDeniedError(
-          `Permission denied for ${toolName} by user`
+          PERMISSION_MESSAGES.toolSpecificDenial(toolName)
         );
 
       default:
