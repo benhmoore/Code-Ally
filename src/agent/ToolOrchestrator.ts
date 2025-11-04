@@ -264,13 +264,90 @@ export class ToolOrchestrator {
       // Check if any tool was denied permission
       const successfulResults: (ToolResult | null)[] = [];
 
-      for (const settledResult of results) {
+      for (let i = 0; i < results.length; i++) {
+        const settledResult = results[i];
+        if (!settledResult) continue;
+
         if (settledResult.status === 'rejected') {
           // Check if this is a permission denial
           if (isPermissionDeniedError(settledResult.reason)) {
             logger.debug('[TOOL_ORCHESTRATOR] Permission denied in concurrent execution, stopping group');
+
+            const deniedError = settledResult.reason;
+
+            // Emit TOOL_CALL_END for all tools in the batch before stopping
+            for (let j = 0; j < toolCalls.length; j++) {
+              const toolCall = toolCalls[j];
+              if (!toolCall) continue;
+
+              const toolResult = results[j];
+              const tool = this.toolManager.getTool(toolCall.function.name);
+              const isCollapsed = this.config.isSpecializedAgent === true;
+              const shouldCollapse = (tool as any)?.shouldCollapse || false;
+              const hideOutput = (tool as any)?.hideOutput || false;
+
+              let resultData: ToolResult;
+              if (j === i) {
+                // This is the tool that was denied
+                resultData = {
+                  success: false,
+                  error: deniedError.message || 'Permission denied',
+                  error_type: 'permission_denied',
+                };
+              } else if (toolResult && toolResult.status === 'rejected') {
+                // Other error
+                resultData = {
+                  success: false,
+                  error: formatError(toolResult.reason),
+                  error_type: 'system_error',
+                };
+              } else if (toolResult && toolResult.status === 'fulfilled') {
+                // Successful result
+                resultData = toolResult.value;
+              } else {
+                // Fallback for missing result
+                resultData = {
+                  success: false,
+                  error: 'Unknown error',
+                  error_type: 'system_error',
+                };
+              }
+
+              this.emitEvent({
+                id: toolCall.id,
+                type: ActivityEventType.TOOL_CALL_END,
+                timestamp: Date.now(),
+                parentId: effectiveParentId,
+                data: {
+                  toolName: toolCall.function.name,
+                  result: resultData,
+                  success: resultData.success,
+                  error: resultData.success ? undefined : resultData.error,
+                  visibleInChat: true, // Always show in group with permission denial
+                  isTransparent: tool?.isTransparentWrapper || false,
+                  collapsed: isCollapsed,
+                  shouldCollapse,
+                  hideOutput,
+                },
+              });
+            }
+
+            // Emit group end event
+            this.emitEvent({
+              id: groupId,
+              type: ActivityEventType.TOOL_CALL_END,
+              timestamp: Date.now(),
+              parentId: this.parentCallId,
+              data: {
+                groupExecution: true,
+                toolCount: toolCalls.length,
+                success: false,
+                error: 'Permission denied',
+              },
+            });
+
             // Re-throw to stop agent
-            throw settledResult.reason;
+            throw deniedError;
           }
           // Other errors: create error result
           successfulResults.push({
@@ -498,9 +575,33 @@ export class ToolOrchestrator {
       }
     } catch (error) {
       // Permission denied errors should propagate to Agent for handling
-      // Mark that permission was denied so we can skip TOOL_CALL_END emission
+      // Emit TOOL_CALL_END before re-throwing so UI shows the failed tool call
       if (isPermissionDeniedError(error)) {
         permissionDenied = true;
+
+        // Emit TOOL_CALL_END event for this failed tool call
+        this.emitEvent({
+          id,
+          type: ActivityEventType.TOOL_CALL_END,
+          timestamp: Date.now(),
+          parentId: effectiveParentId,
+          data: {
+            toolName,
+            result: {
+              success: false,
+              error: error.message || 'Permission denied',
+              error_type: 'permission_denied' as const,
+            },
+            success: false,
+            error: error.message || 'Permission denied',
+            visibleInChat: true, // Always show permission denials
+            isTransparent: tool?.isTransparentWrapper || false,
+            collapsed: isCollapsed,
+            shouldCollapse,
+            hideOutput,
+          },
+        });
+
         throw error;
       }
 

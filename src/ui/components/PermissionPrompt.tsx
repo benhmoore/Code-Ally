@@ -83,7 +83,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
 
       {/* Header */}
       <Box marginY={1}>
-        <Text color={color} bold>Permission Required for </Text>
+        <Text color={color} bold>Permission required for </Text>
         <Text bold color="cyan">{toolName}</Text>
       </Box>
 
