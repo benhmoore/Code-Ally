@@ -9,7 +9,7 @@
  * - Displays user interjections nested under running tool calls
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { ToolCallState, ActivityEventType } from '../../types/index.js';
 import { DiffDisplay } from './DiffDisplay.js';
@@ -92,6 +92,23 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Track interjections for this tool call
   const [interjections, setInterjections] = useState<Array<{ message: string; timestamp: number }>>([]);
 
+  // Flashing arrow for in-progress tool calls
+  const [arrowVisible, setArrowVisible] = useState(true);
+
+  useEffect(() => {
+    if (!isRunning) {
+      setArrowVisible(true);
+      return;
+    }
+
+    // Flash the arrow every 500ms
+    const interval = setInterval(() => {
+      setArrowVisible(prev => !prev);
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [isRunning]);
+
   // Subscribe to USER_INTERJECTION events to capture interjections for this tool call
   useActivityEvent(ActivityEventType.USER_INTERJECTION, (event) => {
     // Only add interjections that belong to this tool call
@@ -138,8 +155,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const statusColor = getStatusColor(toolCall.status);
   const statusIcon = getStatusIcon(toolCall.status);
 
-  // Prefix icon: arrow for running, status icon for completed
-  const prefixIcon = isRunning ? '→' : statusIcon;
+  // Prefix icon: arrow for running (flashing), status icon for completed
+  const prefixIcon = isRunning ? (arrowVisible ? '→' : ' ') : statusIcon;
 
   const toolCallCount = toolCall.totalChildCount || 0;
 

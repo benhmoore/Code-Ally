@@ -12,7 +12,7 @@
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { PermissionChoice, SensitivityTier } from '../../agent/TrustManager.js';
-import { BUFFER_SIZES, TEXT_LIMITS } from '../../config/constants.js';
+import { TEXT_LIMITS } from '../../config/constants.js';
 
 export interface PermissionRequest {
   /** Tool or command requesting permission */
@@ -54,31 +54,6 @@ function getSensitivityColor(tier: SensitivityTier): string {
 }
 
 /**
- * Format tool call arguments as a single line preview
- */
-function formatToolCallPreview(toolName: string, args?: Record<string, any>): string {
-  if (!args || Object.keys(args).length === 0) {
-    return `${toolName}()`;
-  }
-
-  const argPairs = Object.entries(args)
-    .slice(0, BUFFER_SIZES.TOP_ITEMS_PREVIEW)
-    .map(([key, value]) => {
-      const valueStr = String(value).slice(0, TEXT_LIMITS.TOOL_PARAM_VALUE_MAX);
-      // Add ellipsis if truncated
-      const truncated = String(value).length > TEXT_LIMITS.TOOL_PARAM_VALUE_MAX;
-      return `${key}=${JSON.stringify(truncated ? valueStr + '...' : valueStr)}`;
-    });
-
-  const moreCount = Object.keys(args).length - BUFFER_SIZES.TOP_ITEMS_PREVIEW;
-  if (moreCount > 0) {
-    argPairs.push(`...+${moreCount} more`);
-  }
-
-  return `${toolName}(${argPairs.join(', ')})`;
-}
-
-/**
  * PermissionPrompt Component
  */
 export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
@@ -90,7 +65,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
     return null;
   }
 
-  const { toolName, arguments: args, sensitivity, options } = request;
+  const { toolName, sensitivity, options } = request;
   const color = getSensitivityColor(sensitivity);
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
@@ -99,9 +74,6 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
   const dividerWidth = Math.max(60, terminalWidth - 4);
   const divider = '─'.repeat(dividerWidth);
 
-  // Format tool call preview
-  const toolPreview = formatToolCallPreview(toolName, args);
-
   return (
     <Box flexDirection="column">
       {/* Top divider */}
@@ -109,10 +81,10 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
         <Text dimColor>{divider}</Text>
       </Box>
 
-      {/* Tool call preview */}
+      {/* Header */}
       <Box marginY={1}>
-        <Text color={color} bold>Permission Required: </Text>
-        <Text bold color="cyan">{toolPreview}</Text>
+        <Text color={color} bold>Permission Required for </Text>
+        <Text bold color="cyan">{toolName}</Text>
       </Box>
 
       {/* Options */}
