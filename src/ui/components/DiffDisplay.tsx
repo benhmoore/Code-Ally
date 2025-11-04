@@ -46,15 +46,28 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
 }) => {
   const diffLines = generateDiffLines(oldContent, newContent, filePath);
 
+  // Filter out header lines (@@) for display
+  const contentLines = diffLines.filter(line => line.type !== 'header');
+
+  // Count additions and deletions
+  const additions = contentLines.filter(l => l.type === 'add').length;
+  const deletions = contentLines.filter(l => l.type === 'remove').length;
+
   // Limit display if maxLines is set
-  const displayLines = maxLines > 0 ? diffLines.slice(0, maxLines) : diffLines;
-  const hasMore = maxLines > 0 && diffLines.length > maxLines;
+  const displayLines = maxLines > 0 ? contentLines.slice(0, maxLines) : contentLines;
+  const hasMore = maxLines > 0 && contentLines.length > maxLines;
+
+  // Build summary text
+  const parts: string[] = [];
+  if (additions > 0) parts.push(`${additions} addition${additions !== 1 ? 's' : ''}`);
+  if (deletions > 0) parts.push(`${deletions} deletion${deletions !== 1 ? 's' : ''}`);
+  const summary = parts.length > 0 ? parts.join(', ') : 'no changes';
 
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor="yellow" paddingX={1}>
+    <Box flexDirection="column">
       <Box>
-        <Text bold color="yellow">
-          File Changes: {filePath}
+        <Text dimColor>
+          Changes ({summary}):
         </Text>
       </Box>
 
@@ -64,7 +77,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
         ))}
         {hasMore && (
           <Text dimColor>
-            ... {diffLines.length - maxLines} more lines
+            ... {contentLines.length - maxLines} more lines
           </Text>
         )}
       </Box>
