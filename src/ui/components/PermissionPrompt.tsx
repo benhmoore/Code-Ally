@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useStdout } from 'ink';
 import { PermissionChoice, SensitivityTier } from '../../agent/TrustManager.js';
 import { BUFFER_SIZES, TEXT_LIMITS } from '../../config/constants.js';
 
@@ -54,6 +54,31 @@ function getSensitivityColor(tier: SensitivityTier): string {
 }
 
 /**
+ * Format tool call arguments as a single line preview
+ */
+function formatToolCallPreview(toolName: string, args?: Record<string, any>): string {
+  if (!args || Object.keys(args).length === 0) {
+    return `${toolName}()`;
+  }
+
+  const argPairs = Object.entries(args)
+    .slice(0, BUFFER_SIZES.TOP_ITEMS_PREVIEW)
+    .map(([key, value]) => {
+      const valueStr = String(value).slice(0, TEXT_LIMITS.TOOL_PARAM_VALUE_MAX);
+      // Add ellipsis if truncated
+      const truncated = String(value).length > TEXT_LIMITS.TOOL_PARAM_VALUE_MAX;
+      return `${key}=${JSON.stringify(truncated ? valueStr + '...' : valueStr)}`;
+    });
+
+  const moreCount = Object.keys(args).length - BUFFER_SIZES.TOP_ITEMS_PREVIEW;
+  if (moreCount > 0) {
+    argPairs.push(`...+${moreCount} more`);
+  }
+
+  return `${toolName}(${argPairs.join(', ')})`;
+}
+
+/**
  * PermissionPrompt Component
  */
 export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
@@ -67,73 +92,50 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
 
   const { toolName, arguments: args, sensitivity, options } = request;
   const color = getSensitivityColor(sensitivity);
+  const { stdout } = useStdout();
+  const terminalWidth = stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
+
+  // Create divider line
+  const dividerWidth = Math.max(60, terminalWidth - 4);
+  const divider = '─'.repeat(dividerWidth);
+
+  // Format tool call preview
+  const toolPreview = formatToolCallPreview(toolName, args);
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Box
-        borderStyle="round"
-        borderColor={color}
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-      >
-        {/* Header */}
-        <Box marginBottom={1}>
-          <Text color={color} bold>
-            Permission Required
-          </Text>
-        </Box>
+    <Box flexDirection="column">
+      {/* Top divider */}
+      <Box>
+        <Text dimColor>{divider}</Text>
+      </Box>
 
-        {/* Tool */}
-        <Box marginBottom={1}>
-          <Text dimColor>Tool: </Text>
-          <Text bold color="cyan">{toolName}</Text>
-        </Box>
+      {/* Tool call preview */}
+      <Box marginY={1}>
+        <Text color={color} bold>Permission Required: </Text>
+        <Text bold color="cyan">{toolPreview}</Text>
+      </Box>
 
-        {/* Arguments */}
-        {args && Object.keys(args).length > 0 && (
-          <Box marginBottom={1} flexDirection="column">
-            <Text dimColor>Arguments:</Text>
-            {Object.entries(args).slice(0, BUFFER_SIZES.TOP_ITEMS_PREVIEW).map(([key, value]) => (
-              <Box key={key} marginLeft={2}>
-                <Text dimColor>{key}: </Text>
-                <Text>{String(value).slice(0, TEXT_LIMITS.TOOL_PARAM_VALUE_MAX)}</Text>
-              </Box>
-            ))}
-            {Object.keys(args).length > BUFFER_SIZES.TOP_ITEMS_PREVIEW && (
-              <Box marginLeft={2}>
-                <Text dimColor>...+{Object.keys(args).length - BUFFER_SIZES.TOP_ITEMS_PREVIEW} more</Text>
-              </Box>
-            )}
+      {/* Options */}
+      {options.map((option, idx) => {
+        const isSelected = idx === selectedIndex;
+
+        return (
+          <Box key={idx}>
+            <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
+              {isSelected ? '> ' : '  '}
+            </Text>
+            <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
+              {option}
+            </Text>
           </Box>
-        )}
+        );
+      })}
 
-        {/* Select Action */}
-        <Box marginBottom={1}>
-          <Text dimColor>Select action:</Text>
-        </Box>
-
-        {options.map((option, idx) => {
-          const isSelected = idx === selectedIndex;
-
-          return (
-            <Box key={idx}>
-              <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                {isSelected ? '> ' : '  '}
-              </Text>
-              <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                {option}
-              </Text>
-            </Box>
-          );
-        })}
-
-        {/* Footer */}
-        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-          <Text dimColor>
-            ↑↓ navigate  •  Enter confirm  •  Esc/Ctrl+C deny
-          </Text>
-        </Box>
+      {/* Footer */}
+      <Box marginTop={1}>
+        <Text dimColor>
+          ↑↓ navigate  •  Enter confirm  •  Esc/Ctrl+C deny
+        </Text>
       </Box>
     </Box>
   );
