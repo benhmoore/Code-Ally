@@ -179,6 +179,11 @@ export const useActivitySubscriptions = (
       error: event.data.error,
     };
 
+    // Clear diff preview on failure (operation didn't complete)
+    if (!event.data.success) {
+      updates.diffPreview = undefined;
+    }
+
     const toolCall = state.activeToolCalls.find((tc: ToolCallState) => tc.id === event.id);
     if (toolCall && !toolCall.executionStartTime) {
       updates.executionStartTime = event.timestamp;
@@ -309,6 +314,7 @@ export const useActivitySubscriptions = (
       status: 'error',
       error: event.data?.error || 'Unknown error',
       endTime: event.timestamp,
+      diffPreview: undefined, // Clear diff preview on error (operation didn't complete)
     }, true);
   });
 
