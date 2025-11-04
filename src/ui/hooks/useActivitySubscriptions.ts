@@ -177,7 +177,6 @@ export const useActivitySubscriptions = (
       status: event.data.success ? 'success' : 'error',
       endTime: event.timestamp,
       error: event.data.error,
-      diffPreview: undefined,
     };
 
     const toolCall = state.activeToolCalls.find((tc: ToolCallState) => tc.id === event.id);
@@ -310,7 +309,6 @@ export const useActivitySubscriptions = (
       status: 'error',
       error: event.data?.error || 'Unknown error',
       endTime: event.timestamp,
-      diffPreview: undefined,
     }, true);
   });
 
