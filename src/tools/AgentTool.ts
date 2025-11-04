@@ -21,6 +21,7 @@ import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
+import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 
 export class AgentTool extends BaseTool {
   readonly name = 'agent';
@@ -64,6 +65,10 @@ export class AgentTool extends BaseTool {
               type: 'string',
               description: 'Name of agent to use (default: "general")',
             },
+            thoroughness: {
+              type: 'string',
+              description: 'Level of thoroughness: "quick" (~1 min), "medium" (~5 min), "very thorough" (~10 min), "uncapped" (no time limit, default). Controls time budget.',
+            },
             persist: {
               type: 'boolean',
               description: 'Whether to persist the agent for reuse. If true, returns agent_id for tracking. Set to false for one-time ephemeral agents. Default: true.',
@@ -80,6 +85,7 @@ export class AgentTool extends BaseTool {
 
     const agentName = args.agent_name || 'general';
     const taskPrompt = args.task_prompt;
+    const thoroughness = args.thoroughness ?? 'uncapped';
     const persist = args.persist ?? true;
 
     // Validate task_prompt parameter
@@ -96,6 +102,16 @@ export class AgentTool extends BaseTool {
       return this.formatErrorResponse(
         'agent_name must be a string',
         'validation_error'
+      );
+    }
+
+    // Validate thoroughness parameter
+    const validThoroughness = ['quick', 'medium', 'very thorough', 'uncapped'];
+    if (!validThoroughness.includes(thoroughness)) {
+      return this.formatErrorResponse(
+        `thoroughness must be one of: ${validThoroughness.join(', ')}`,
+        'validation_error',
+        'Example: agent(task_prompt="...", thoroughness="uncapped")'
       );
     }
 
@@ -119,7 +135,7 @@ export class AgentTool extends BaseTool {
       );
     }
 
-    return await this.executeSingleAgentWrapper(agentName, taskPrompt, persist, callId);
+    return await this.executeSingleAgentWrapper(agentName, taskPrompt, thoroughness, persist, callId);
   }
 
   /**
@@ -128,13 +144,14 @@ export class AgentTool extends BaseTool {
   private async executeSingleAgentWrapper(
     agentName: string,
     taskPrompt: string,
+    thoroughness: string,
     persist: boolean,
     callId: string
   ): Promise<ToolResult> {
-    logger.debug('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId, 'persist:', persist);
+    logger.debug('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId, 'thoroughness:', thoroughness, 'persist:', persist);
 
     try {
-      const result = await this.executeSingleAgent(agentName, taskPrompt, persist, callId);
+      const result = await this.executeSingleAgent(agentName, taskPrompt, thoroughness, persist, callId);
 
       if (result.success) {
         const successResponse: Record<string, any> = {
@@ -169,10 +186,11 @@ export class AgentTool extends BaseTool {
   private async executeSingleAgent(
     agentName: string,
     taskPrompt: string,
+    thoroughness: string,
     persist: boolean,
     callId: string
   ): Promise<any> {
-    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId, 'persist:', persist);
+    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId, 'thoroughness:', thoroughness, 'persist:', persist);
     const startTime = Date.now();
 
     try {
@@ -210,7 +228,7 @@ export class AgentTool extends BaseTool {
 
       // Execute the agent task
       logger.debug('[AGENT_TOOL] Executing agent task...');
-      const taskResult = await this.executeAgentTask(agentData, taskPrompt, persist, callId);
+      const taskResult = await this.executeAgentTask(agentData, taskPrompt, thoroughness, persist, callId);
       logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
 
       const duration = (Date.now() - startTime) / 1000;
@@ -255,10 +273,11 @@ export class AgentTool extends BaseTool {
   private async executeAgentTask(
     agentData: any,
     taskPrompt: string,
+    thoroughness: string,
     persist: boolean,
     callId: string
   ): Promise<{ result: string; agent_id?: string }> {
-    logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'persist:', persist);
+    logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness, 'persist:', persist);
     const registry = ServiceRegistry.getInstance();
 
     // Get required services - STRICT: no fallbacks
@@ -288,6 +307,10 @@ export class AgentTool extends BaseTool {
     }
 
     logger.debug('[AGENT_TOOL] All required services available');
+
+    // Map thoroughness to max duration
+    const maxDuration = getThoroughnessDuration(thoroughness as any);
+    logger.debug('[AGENT_TOOL] Set maxDuration to', maxDuration, 'minutes for thoroughness:', thoroughness);
 
     // Create specialized system prompt
     logger.debug('[AGENT_TOOL] Creating specialized prompt...');
@@ -344,6 +367,7 @@ export class AgentTool extends BaseTool {
           taskPrompt: taskPrompt,
           config: config,
           parentCallId: callId,
+          maxDuration,
         };
 
         subAgent = new Agent(
@@ -369,6 +393,7 @@ export class AgentTool extends BaseTool {
           config: config,
           parentCallId: callId,
           _poolKey: poolKey, // CRITICAL: Add this for pool matching
+          maxDuration,
         };
 
         // Acquire agent from pool
@@ -390,6 +415,7 @@ export class AgentTool extends BaseTool {
         taskPrompt: taskPrompt,
         config: config,
         parentCallId: callId,
+        maxDuration,
       };
 
       subAgent = new Agent(

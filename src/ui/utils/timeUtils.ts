@@ -1,8 +1,41 @@
 /**
- * Time formatting utilities for UI display
+ * Time formatting utilities for UI display and agent duration management
  */
 
 import { TIME_UNITS } from '../../config/constants.js';
+
+/**
+ * Valid thoroughness levels for agent execution
+ */
+export type ThoroughnessLevel = 'quick' | 'medium' | 'very thorough' | 'uncapped';
+
+/**
+ * Duration constants for thoroughness levels (in minutes)
+ */
+export const THOROUGHNESS_DURATIONS = {
+  QUICK_MINUTES: 1,
+  MEDIUM_MINUTES: 5,
+  VERY_THOROUGH_MINUTES: 10,
+} as const;
+
+/**
+ * Map thoroughness level to maximum duration in minutes
+ *
+ * @param thoroughness - Thoroughness level
+ * @returns Duration in minutes, or undefined for uncapped
+ */
+export function getThoroughnessDuration(thoroughness: ThoroughnessLevel): number | undefined {
+  switch (thoroughness) {
+    case 'quick':
+      return THOROUGHNESS_DURATIONS.QUICK_MINUTES;
+    case 'medium':
+      return THOROUGHNESS_DURATIONS.MEDIUM_MINUTES;
+    case 'very thorough':
+      return THOROUGHNESS_DURATIONS.VERY_THOROUGH_MINUTES;
+    case 'uncapped':
+      return undefined;
+  }
+}
 
 /**
  * Format a duration in milliseconds to a human-readable string
@@ -31,6 +64,26 @@ export function formatElapsed(seconds: number): string {
   const mins = Math.floor(seconds / TIME_UNITS.SECONDS_PER_MINUTE);
   const secs = seconds % TIME_UNITS.SECONDS_PER_MINUTE;
   return `${mins}m ${secs}s`;
+}
+
+/**
+ * Format minutes (as decimal) to human-readable full words
+ *
+ * @param minutes - Duration in minutes (can be fractional)
+ * @returns Formatted string (e.g., "2 minutes 30 seconds", "45 seconds")
+ */
+export function formatMinutesSeconds(minutes: number): string {
+  const mins = Math.floor(Math.abs(minutes));
+  const secs = Math.round((Math.abs(minutes) - mins) * 60);
+
+  if (mins > 0) {
+    const minStr = `${mins} minute${mins !== 1 ? 's' : ''}`;
+    if (secs > 0) {
+      return `${minStr} ${secs} second${secs !== 1 ? 's' : ''}`;
+    }
+    return minStr;
+  }
+  return `${secs} second${secs !== 1 ? 's' : ''}`;
 }
 
 /**

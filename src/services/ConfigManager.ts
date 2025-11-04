@@ -45,6 +45,7 @@ export class ConfigManager implements IService {
    * 2. Default values
    *
    * Validates and coerces types during loading.
+   * Automatically removes unknown config keys and saves cleaned config.
    */
   private async loadConfig(): Promise<void> {
     try {
@@ -54,6 +55,8 @@ export class ConfigManager implements IService {
       // Read and parse config file
       const content = await fs.readFile(this._configPath, 'utf-8');
       const fileConfig = JSON.parse(content);
+
+      const unknownKeys: string[] = [];
 
       // Merge with defaults, validating each value
       for (const [key, value] of Object.entries(fileConfig)) {
@@ -68,8 +71,14 @@ export class ConfigManager implements IService {
             );
           }
         } else {
-          console.warn(`Unknown config key '${key}' - ignoring.`);
+          unknownKeys.push(key);
         }
+      }
+
+      // If unknown keys were found, clean the config file
+      if (unknownKeys.length > 0) {
+        await this.saveConfig();
+        console.log(`\nConfig cleanup: Removed unknown keys: ${unknownKeys.join(', ')}\n`);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {

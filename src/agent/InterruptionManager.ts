@@ -26,6 +26,8 @@ export interface InterruptionContext {
   reason: string;
   /** Whether this was triggered by a timeout */
   isTimeout: boolean;
+  /** Whether this timeout is eligible for continuation (vs fatal) */
+  canContinueAfterTimeout?: boolean;
 }
 
 /**

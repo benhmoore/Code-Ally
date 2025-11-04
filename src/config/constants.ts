@@ -331,6 +331,9 @@ export const BUFFER_SIZES = {
   /** Maximum warnings before required tool call failure */
   AGENT_REQUIRED_TOOL_MAX_WARNINGS: 2,
 
+  /** Maximum continuation attempts after activity timeout before failing */
+  AGENT_TIMEOUT_MAX_CONTINUATIONS: 3,
+
   /** Maximum file paths to display in todo items */
   TODO_FILE_PATHS_DISPLAY: 2,
 

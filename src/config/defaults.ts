@@ -72,10 +72,8 @@ export const DEFAULT_CONFIG: Config = {
   // ==========================================
   // TOOL RESULT TRUNCATION (CONTEXT-AWARE)
   // ==========================================
-  tool_result_max_tokens_normal: 1000, // 0-70% context usage
-  tool_result_max_tokens_moderate: 750, // 70-85% context usage
-  tool_result_max_tokens_aggressive: 500, // 85-95% context usage
-  tool_result_max_tokens_critical: 200, // 95%+ context usage
+  tool_result_max_context_percent: 0.2, // Maximum percentage of remaining context per tool result (20%)
+  tool_result_min_tokens: 200, // Minimum tokens allowed even when context is very full
 
   // ==========================================
   // READ TOOL SETTINGS
@@ -138,10 +136,8 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   diff_display_color_modified: 'string',
 
   // Tool Result Truncation
-  tool_result_max_tokens_normal: 'number',
-  tool_result_max_tokens_moderate: 'number',
-  tool_result_max_tokens_aggressive: 'number',
-  tool_result_max_tokens_critical: 'number',
+  tool_result_max_context_percent: 'number',
+  tool_result_min_tokens: 'number',
 
   // Read Tool
   read_max_tokens: 'number',

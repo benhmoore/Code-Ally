@@ -78,10 +78,8 @@ describe('AgentTool', () => {
       diff_display_color_removed: 'red',
       diff_display_color_added: 'green',
       diff_display_color_modified: 'yellow',
-      tool_result_max_tokens_normal: 1000,
-      tool_result_max_tokens_moderate: 750,
-      tool_result_max_tokens_aggressive: 500,
-      tool_result_max_tokens_critical: 200,
+      tool_result_max_context_percent: 0.2,
+      tool_result_min_tokens: 200,
       setup_completed: true,
     };
 

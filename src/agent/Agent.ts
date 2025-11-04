@@ -53,6 +53,8 @@ export interface AgentConfig {
   parentCallId?: string;
   /** Required tool calls that must be executed before agent can exit */
   requiredToolCalls?: string[];
+  /** Maximum duration in minutes the agent should run before wrapping up (optional) */
+  maxDuration?: number;
   /** Internal: Unique key for pool matching (used by AgentTool to distinguish custom agents) */
   _poolKey?: string;
 }
@@ -81,6 +83,12 @@ export class Agent {
   // Agent instance ID for debugging
   private readonly instanceId: string;
 
+  // Turn start time for specialized agents - tracks when agent execution began
+  private turnStartTime?: number;
+
+  // Maximum duration for this agent in minutes (optional, can be updated per turn)
+  private maxDuration?: number;
+
   // Activity monitoring - detects agents stuck generating tokens without tool calls
   private activityMonitor: ActivityMonitor;
 
@@ -100,6 +108,9 @@ export class Agent {
   private readonly MAX_TOOL_HISTORY = 15;
   private readonly CYCLE_THRESHOLD = 3; // Same signature 3 times = warning
 
+  // Timeout continuation tracking - counts attempts to continue after activity timeout
+  private timeoutContinuationAttempts: number = 0;
+
   constructor(
     modelClient: ModelClient,
     toolManager: ToolManager,
@@ -116,6 +127,16 @@ export class Agent {
     // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
+
+    // Initialize turn start time for specialized agents
+    if (config.isSpecializedAgent) {
+      (this as any).turnStartTime = Date.now();
+    }
+
+    // Store maximum duration if provided
+    if (config.maxDuration !== undefined) {
+      (this as any).maxDuration = config.maxDuration;
+    }
 
     // Create interruption manager
     this.interruptionManager = new InterruptionManager();
@@ -252,15 +273,26 @@ export class Agent {
   private handleActivityTimeout(elapsedMs: number): void {
     const elapsedSeconds = Math.round(elapsedMs / 1000);
 
+    // Check if we should attempt continuation or fail completely
+    const canContinue = this.timeoutContinuationAttempts < BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS;
+
     // Set interruption context
     this.interruptionManager.setInterruptionContext({
-      reason: `Agent stuck: no tool calls for ${elapsedSeconds} seconds`,
+      reason: canContinue
+        ? `Activity timeout: no tool calls for ${elapsedSeconds} seconds (attempt ${this.timeoutContinuationAttempts + 1}/${BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS})`
+        : `Agent stuck: no tool calls for ${elapsedSeconds} seconds (max continuation attempts exceeded)`,
       isTimeout: true,
+      canContinueAfterTimeout: canContinue,
     });
 
-    // Interrupt and stop monitoring
+    // Interrupt current request (cancels LLM streaming)
     this.interrupt();
-    this.stopActivityMonitoring();
+
+    // Only stop monitoring if we're failing completely
+    // Otherwise, monitoring will restart when we retry
+    if (!canContinue) {
+      this.stopActivityMonitoring();
+    }
   }
 
   /**
@@ -282,6 +314,15 @@ export class Agent {
     // Clear tool call cycle history on new user input
     this.toolCallHistory = [];
     logger.debug('[AGENT_CYCLE_DETECTION]', this.instanceId, 'Cleared cycle history on new user message');
+
+    // Reset timeout continuation counter on new user input
+    this.timeoutContinuationAttempts = 0;
+
+    // Reset turn start time for specialized agents on each new turn
+    if (this.config.isSpecializedAgent && this.maxDuration !== undefined) {
+      this.turnStartTime = Date.now();
+      logger.debug('[AGENT_TURN]', this.instanceId, 'Reset turn start time for new turn');
+    }
 
     // Add user message
     const userMessage: Message = {
@@ -398,6 +439,40 @@ export class Agent {
       }
 
       if (this.interruptionManager.isInterrupted() || (error instanceof Error && error.message.includes('interrupted'))) {
+        // Check if this is a continuation-eligible timeout
+        const context = this.interruptionManager.getInterruptionContext();
+        const canContinueAfterTimeout = (context as any).canContinueAfterTimeout === true;
+
+        if (canContinueAfterTimeout) {
+          // Increment continuation counter
+          this.timeoutContinuationAttempts++;
+          logger.warn('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId,
+            `Attempting continuation ${this.timeoutContinuationAttempts}/${BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS}`);
+
+          // Add continuation prompt to conversation
+          const continuationPrompt: Message = {
+            role: 'user',
+            content: '<system-reminder>\nYou exceeded the activity timeout without making tool calls. Please continue your work and make progress by calling tools or providing a response.\n</system-reminder>',
+            timestamp: Date.now(),
+          };
+          this.messages.push(continuationPrompt);
+
+          // Reset interruption state and retry
+          this.interruptionManager.reset();
+          this.requestInProgress = true;
+
+          // Restart activity monitoring
+          this.startActivityMonitoring();
+
+          // Get new response from LLM
+          logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId, 'Requesting continuation after timeout...');
+          const continuationResponse = await this.getLLMResponse();
+
+          // Process continuation
+          return await this.processLLMResponse(continuationResponse);
+        }
+
+        // Not a continuation-eligible timeout, handle normally
         return this.handleInterruption();
       }
       throw error;
@@ -511,6 +586,34 @@ export class Agent {
    */
   getToolAbortSignal(): AbortSignal | undefined {
     return this.interruptionManager.getToolAbortSignal();
+  }
+
+  /**
+   * Get the turn start time for specialized agents
+   * Used by ToolOrchestrator to calculate elapsed turn duration
+   * @returns Turn start timestamp (ms since epoch) if specialized agent, undefined otherwise
+   */
+  getTurnStartTime(): number | undefined {
+    return this.turnStartTime;
+  }
+
+  /**
+   * Get the maximum duration for this agent in minutes
+   * Used by ToolOrchestrator to inject time reminder system messages
+   * @returns Maximum duration in minutes if set, undefined otherwise
+   */
+  getMaxDuration(): number | undefined {
+    return this.maxDuration;
+  }
+
+  /**
+   * Set the maximum duration for this agent in minutes
+   * Allows updating the time budget for individual turns (e.g., in agent_ask)
+   * @param minutes - Maximum duration in minutes
+   */
+  setMaxDuration(minutes: number | undefined): void {
+    this.maxDuration = minutes;
+    logger.debug('[AGENT_DURATION]', this.instanceId, 'Updated maxDuration to', minutes, 'minutes');
   }
 
   /**

@@ -47,7 +47,7 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
       'Execution Settings': ['bash_timeout', 'auto_confirm', 'parallel_tools'],
       'UI Preferences': ['theme', 'compact_threshold', 'show_context_in_prompt', 'show_thinking_in_chat', 'show_full_tool_output'],
       'Diff Display': ['diff_display_enabled', 'diff_display_max_file_size', 'diff_display_context_lines', 'diff_display_theme', 'diff_display_color_removed', 'diff_display_color_added', 'diff_display_color_modified'],
-      'Tool Result Truncation': ['tool_result_max_tokens_normal', 'tool_result_max_tokens_moderate', 'tool_result_max_tokens_aggressive', 'tool_result_max_tokens_critical'],
+      'Tool Result Truncation': ['tool_result_max_context_percent', 'tool_result_min_tokens'],
     };
 
     // Build categories

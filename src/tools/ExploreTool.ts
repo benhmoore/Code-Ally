@@ -22,12 +22,13 @@ import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
+import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 
 // Hardcoded read-only tools for exploration
 const READ_ONLY_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch'];
 
-// Hardcoded system prompt optimized for exploration
-const EXPLORATION_SYSTEM_PROMPT = `You are a specialized code exploration assistant. Your role is to analyze codebases, understand architecture, find patterns, and answer questions about code structure and implementation.
+// Base prompt for exploration (without thoroughness-specific guidelines)
+const EXPLORATION_BASE_PROMPT = `You are a specialized code exploration assistant. Your role is to analyze codebases, understand architecture, find patterns, and answer questions about code structure and implementation.
 
 **Your Capabilities:**
 - View directory tree structures (tree) - preferred for understanding hierarchy
@@ -42,7 +43,10 @@ const EXPLORATION_SYSTEM_PROMPT = `You are a specialized code exploration assist
 - Read for details: Use read() to examine specific file contents
 - Be systematic: Trace dependencies, identify relationships, understand flow
 - Use batch() for parallel operations when appropriate
-- Build comprehensive understanding before summarizing
+- Build comprehensive understanding before summarizing`;
+
+// Hardcoded system prompt optimized for exploration (for backward compatibility with baseAgentPrompt)
+const EXPLORATION_SYSTEM_PROMPT = EXPLORATION_BASE_PROMPT + `
 
 **Important Guidelines:**
 - You have READ-ONLY access - you cannot modify files
@@ -96,7 +100,7 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
             },
             thoroughness: {
               type: 'string',
-              description: 'Level of thoroughness for exploration: "quick" (2-5 tool calls, basic search), "medium" (5-10 tool calls, systematic exploration, default), "very thorough" (10-20 tool calls, comprehensive analysis across multiple locations).',
+              description: 'Level of thoroughness for exploration: "quick" (~1 min, 2-5 tool calls), "medium" (~5 min, 5-10 tool calls), "very thorough" (~10 min, 10-20 tool calls), "uncapped" (no time limit, default). Controls time budget and depth.',
             },
             persist: {
               type: 'boolean',
@@ -113,7 +117,7 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
     this.captureParams(args);
 
     const taskDescription = args.task_description;
-    const thoroughness = args.thoroughness ?? 'medium';
+    const thoroughness = args.thoroughness ?? 'uncapped';
     const persist = args.persist ?? true;
 
     // Validate task_description parameter
@@ -126,11 +130,12 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
     }
 
     // Validate thoroughness parameter
-    if (thoroughness !== 'quick' && thoroughness !== 'medium' && thoroughness !== 'very thorough') {
+    const validThoroughness = ['quick', 'medium', 'very thorough', 'uncapped'];
+    if (!validThoroughness.includes(thoroughness)) {
       return this.formatErrorResponse(
-        'thoroughness parameter must be one of: "quick", "medium", "very thorough"',
+        `thoroughness parameter must be one of: ${validThoroughness.join(', ')}`,
         'validation_error',
-        'Example: explore(task_description="...", thoroughness="medium")'
+        'Example: explore(task_description="...", thoroughness="uncapped")'
       );
     }
 
@@ -221,6 +226,9 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
         },
       });
 
+      // Map thoroughness to max duration
+      const maxDuration = getThoroughnessDuration(thoroughness as any);
+
       // Create agent configuration
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
@@ -230,6 +238,7 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
         taskPrompt: taskDescription,
         config: config,
         parentCallId: callId,
+        maxDuration,
       };
 
       // Choose between pooled or ephemeral agent
@@ -362,7 +371,7 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
     logger.debug('[EXPLORE_TOOL] Creating exploration system prompt with thoroughness:', thoroughness);
     try {
       // Adjust the base prompt based on thoroughness level
-      const adjustedPrompt = this.adjustPromptForThoroughness(EXPLORATION_SYSTEM_PROMPT, thoroughness);
+      const adjustedPrompt = this.adjustPromptForThoroughness(thoroughness);
 
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
       const result = await getAgentSystemPrompt(adjustedPrompt, taskDescription);
@@ -377,22 +386,14 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
   /**
    * Adjust exploration system prompt based on thoroughness level
    */
-  private adjustPromptForThoroughness(basePrompt: string, thoroughness: string): string {
-    // Extract the guidelines section and replace the tool call guidance
-    const guidelinesMatch = basePrompt.match(/(\*\*Important Guidelines:\*\*\n(?:.*\n)*)/);
-
-    if (!guidelinesMatch) {
-      // Fallback if pattern doesn't match
-      logger.error('[EXPLORE_TOOL] Guidelines section not found in base prompt, returning unmodified prompt');
-      return basePrompt;
-    }
-
-    let thoroughnessGuidance: string;
+  private adjustPromptForThoroughness(thoroughness: string): string {
+    let thoroughnessGuidelines: string;
 
     switch (thoroughness) {
       case 'quick':
-        thoroughnessGuidance = `**Important Guidelines:**
+        thoroughnessGuidelines = `**Important Guidelines:**
 - You have READ-ONLY access - you cannot modify files
+- **Time limit: ~1 minute maximum** - System reminders will notify you of remaining time
 - Be efficient and focused (aim for 2-5 tool calls)
 - Prioritize grep/glob over extensive file reading
 - Provide quick, concise summaries of findings
@@ -400,9 +401,20 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
 - If you can't find something quickly, explain what you searched`;
         break;
 
-      case 'very thorough':
-        thoroughnessGuidance = `**Important Guidelines:**
+      case 'medium':
+        thoroughnessGuidelines = `**Important Guidelines:**
 - You have READ-ONLY access - you cannot modify files
+- **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
+- Be thorough but efficient with tool usage (aim for 5-10 tool calls)
+- Always provide clear, structured summaries of findings
+- Highlight key files, patterns, and architectural decisions
+- If you can't find something, explain what you searched and what was missing`;
+        break;
+
+      case 'very thorough':
+        thoroughnessGuidelines = `**Important Guidelines:**
+- You have READ-ONLY access - you cannot modify files
+- **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
 - Be comprehensive and meticulous (aim for 10-20 tool calls)
 - Check multiple locations and consider various naming conventions
 - Trace dependencies deeply and understand complete call chains
@@ -413,19 +425,20 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
 - Document all patterns, architectural decisions, and relationships found`;
         break;
 
-      case 'medium':
+      case 'uncapped':
       default:
-        thoroughnessGuidance = `**Important Guidelines:**
+        thoroughnessGuidelines = `**Important Guidelines:**
 - You have READ-ONLY access - you cannot modify files
-- Be thorough but efficient with tool usage (aim for 5-10 tool calls)
+- **No time limit imposed** - Take the time needed to do a thorough job
+- Be comprehensive and systematic with tool usage
 - Always provide clear, structured summaries of findings
 - Highlight key files, patterns, and architectural decisions
 - If you can't find something, explain what you searched and what was missing`;
         break;
     }
 
-    // Replace the guidelines section
-    return basePrompt.replace(/\*\*Important Guidelines:\*\*\n(?:.*\n)*?(?=\n\w|\n$|$)/s, thoroughnessGuidance + '\n\n');
+    // Compose the full prompt with thoroughness-specific guidelines
+    return EXPLORATION_BASE_PROMPT + '\n\n' + thoroughnessGuidelines + '\n\nExecute your exploration systematically and provide comprehensive results.';
   }
 
   /**

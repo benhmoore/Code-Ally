@@ -24,6 +24,7 @@ import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
+import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
 import { BUFFER_SIZES } from '../config/constants.js';
 import { TOOL_NAMES } from '../config/toolDefaults.js';
 
@@ -551,6 +552,13 @@ export class ToolOrchestrator {
         this.agent.getToolAbortSignal()
       );
 
+      // For specialized agents: report elapsed turn duration in minutes
+      const turnStartTime = this.agent.getTurnStartTime();
+      if (turnStartTime !== undefined) {
+        const elapsedMinutes = (Date.now() - turnStartTime) / 1000 / 60;
+        (result as any).total_turn_duration = elapsedMinutes;
+      }
+
       // Record successful tool call for in-progress todo tracking (main agent only)
       if (result.success && !this.config.isSpecializedAgent && !(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(toolName)) {
         const registry = ServiceRegistry.getInstance();
@@ -624,6 +632,13 @@ export class ToolOrchestrator {
           error: formatError(error),
           error_type: 'system_error',
         };
+      }
+
+      // For specialized agents: report elapsed turn duration in minutes (error case)
+      const turnStartTime = this.agent.getTurnStartTime();
+      if (turnStartTime !== undefined) {
+        const elapsedMinutes = (Date.now() - turnStartTime) / 1000 / 60;
+        (result as any).total_turn_duration = elapsedMinutes;
       }
     } finally {
       // Skip TOOL_CALL_END when permission is denied since agent is being fully interrupted
@@ -724,12 +739,15 @@ export class ToolOrchestrator {
       return (result as any).result || 'Internal operation completed';
     }
 
-    // Extract warning and system_reminder before serialization to ensure they're not lost during truncation
+    // Extract warning, system_reminder, and total_turn_duration before serialization
+    // to ensure they're not lost during truncation
     const warning = result.warning;
     const systemReminder = (result as any).system_reminder;
+    const totalTurnDuration = (result as any).total_turn_duration;
     const resultWithoutExtras = { ...result };
     delete resultWithoutExtras.warning;
     delete (resultWithoutExtras as any).system_reminder;
+    delete (resultWithoutExtras as any).total_turn_duration;
 
     // Serialize result object to JSON (includes all metadata like file_check)
     // This matches Python CodeAlly's behavior in response_processor.py
@@ -751,10 +769,25 @@ export class ToolOrchestrator {
       resultStr += `\n\n⚠️  ${warning}`;
     }
 
+    // Helper to inject and log system reminders
+    const injectSystemReminder = (reminder: string, source: string) => {
+      resultStr += `\n\n<system-reminder>${reminder}</system-reminder>`;
+      logger.debug('[SYSTEM_REMINDER]', `${source} for ${toolName}:`, reminder.substring(0, 100) + (reminder.length > 100 ? '...' : ''));
+    };
+
     // Inject system_reminder from tool result (if provided)
     // This allows tools to inject contextual reminders directly into their results
     if (systemReminder) {
-      resultStr += `\n\n<system-reminder>${systemReminder}</system-reminder>`;
+      injectSystemReminder(systemReminder, 'Tool result');
+    }
+
+    // Inject time reminder if agent has max duration set
+    const maxDuration = this.agent.getMaxDuration();
+    if (maxDuration !== undefined && totalTurnDuration !== undefined) {
+      const timeReminder = this.generateTimeReminder(maxDuration, totalTurnDuration);
+      if (timeReminder) {
+        injectSystemReminder(timeReminder, `Time (${totalTurnDuration.toFixed(2)}/${maxDuration}min)`);
+      }
     }
 
     // Inject cycle detection warning if this tool call is part of a cycle
@@ -762,8 +795,7 @@ export class ToolOrchestrator {
       const cycleInfo = this.cycleDetectionResults.get(toolCallId)!;
       if (!cycleInfo.isValidRepeat) {
         const cycleWarning = `You've called "${cycleInfo.toolName}" with identical arguments ${cycleInfo.count} times recently, getting the same results. This suggests you're stuck in a loop. Consider trying a different approach or re-reading previous results.`;
-        resultStr += `\n\n<system-reminder>${cycleWarning}</system-reminder>`;
-        logger.debug('[TOOL_ORCHESTRATOR] Injected cycle warning for', toolName, 'call', toolCallId);
+        injectSystemReminder(cycleWarning, 'Cycle detection');
       }
     }
 
@@ -771,11 +803,46 @@ export class ToolOrchestrator {
     if (!this.config.isSpecializedAgent) {
       const focusReminder = this.generateFocusReminder();
       if (focusReminder) {
-        resultStr += `\n\n<system-reminder>${focusReminder}</system-reminder>`;
+        injectSystemReminder(focusReminder, 'Focus (todo)');
       }
     }
 
     return resultStr;
+  }
+
+  /**
+   * Generate a time reminder for agents with max duration
+   *
+   * Uses escalating urgency at multiple thresholds:
+   * - 50%: Gentle reminder that time is half gone
+   * - 75%: Warning to start wrapping up
+   * - 90%: Urgent - finish current work
+   * - 100%+: Critical - time exceeded, wrap up immediately
+   *
+   * @param maxDuration - Maximum duration in minutes
+   * @param currentDuration - Current elapsed duration in minutes
+   * @returns Time reminder string or null if no reminder needed
+   */
+  private generateTimeReminder(maxDuration: number, currentDuration: number): string | null {
+    const percentUsed = (currentDuration / maxDuration) * 100;
+    const remainingMinutes = maxDuration - currentDuration;
+
+    if (percentUsed >= 100) {
+      // Critical: Time exceeded
+      return `⏰ TIME EXCEEDED! You have surpassed your allotted time. Wrap up your work immediately and summarize what is left, if any.`;
+    } else if (percentUsed >= 90) {
+      // Urgent: 90% time used
+      return `⏰ URGENT: You have ${formatMinutesSeconds(remainingMinutes)} left (${Math.round(100 - percentUsed)}% remaining). Finish your current work and prepare to wrap up.`;
+    } else if (percentUsed >= 75) {
+      // Warning: 75% time used
+      return `⏰ You have ${formatMinutesSeconds(remainingMinutes)} left (${Math.round(100 - percentUsed)}% remaining). Start wrapping up your exploration.`;
+    } else if (percentUsed >= 50) {
+      // Gentle reminder: 50% time used
+      return `You're halfway through your allotted time (${formatMinutesSeconds(remainingMinutes)} remaining). Keep your exploration focused and efficient.`;
+    }
+
+    // Below 50% - no reminder needed
+    return null;
   }
 
   /**

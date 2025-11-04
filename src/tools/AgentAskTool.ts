@@ -21,6 +21,7 @@ import { AgentPoolService, AgentMetadata, PooledAgent } from '../services/AgentP
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
+import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 
 export class AgentAskTool extends BaseTool {
   readonly name = 'agent_ask';
@@ -60,6 +61,10 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
               type: 'string',
               description: 'Question or request to send to the agent. Be specific about what you want.',
             },
+            thoroughness: {
+              type: 'string',
+              description: 'Level of thoroughness for this interaction: "quick" (~1 min, 2-5 tool calls), "medium" (~5 min, 5-10 tool calls), "very thorough" (~10 min, 10-20 tool calls), "uncapped" (no time limit, default). Controls time budget and depth.',
+            },
           },
           required: ['agent_id', 'message'],
         },
@@ -72,6 +77,7 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
 
     const agentId = args.agent_id;
     const message = args.message;
+    const thoroughness = args.thoroughness ?? 'uncapped';
 
     // Validate agent_id parameter
     if (!agentId || typeof agentId !== 'string') {
@@ -91,6 +97,16 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
       );
     }
 
+    // Validate thoroughness parameter
+    const validThoroughness = ['quick', 'medium', 'very thorough', 'uncapped'];
+    if (!validThoroughness.includes(thoroughness)) {
+      return this.formatErrorResponse(
+        `thoroughness must be one of: ${validThoroughness.join(', ')}`,
+        'validation_error',
+        'Example: agent_ask(agent_id="...", message="...", thoroughness="uncapped")'
+      );
+    }
+
     // Execute ask agent - pass currentCallId to avoid race conditions
     const callId = this.currentCallId;
     if (!callId) {
@@ -100,7 +116,7 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
       );
     }
 
-    return await this.askAgent(agentId, message, callId);
+    return await this.askAgent(agentId, message, thoroughness, callId);
   }
 
   /**
@@ -108,14 +124,16 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
    *
    * @param agentId - ID of the agent from pool
    * @param message - Message to send to the agent
+   * @param thoroughness - Level of thoroughness for this interaction
    * @param callId - Unique call identifier for tracking
    */
   private async askAgent(
     agentId: string,
     message: string,
+    thoroughness: string,
     callId: string
   ): Promise<ToolResult> {
-    logger.debug('[ASK_AGENT_TOOL] Sending message to agent, callId:', callId, 'agentId:', agentId);
+    logger.debug('[ASK_AGENT_TOOL] Sending message to agent, callId:', callId, 'agentId:', agentId, 'thoroughness:', thoroughness);
     const startTime = Date.now();
 
     try {
@@ -168,6 +186,11 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
         agentId,
         release: () => {} // No-op since we're using an existing pooled agent
       };
+
+      // Map thoroughness to max duration for this turn
+      const maxDuration = getThoroughnessDuration(thoroughness as any);
+      agent.setMaxDuration(maxDuration);
+      logger.debug('[ASK_AGENT_TOOL] Set agent maxDuration to', maxDuration, 'minutes for thoroughness:', thoroughness);
 
       // Save original parent call ID and temporarily update to current call ID
       // This ensures tool calls made by the agent nest under the current agent_ask call

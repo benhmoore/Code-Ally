@@ -63,12 +63,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       // Fall through to thinking animation
     }
 
-    // Start with thinking animation while messages generate
-    return '.';
+    // Start with empty message while messages generate
+    return '';
   });
-
-  // Thinking animation state
-  const [thinkingDots, setThinkingDots] = useState<number>(1);
 
   // Use ref to track previous task for comparison without triggering effect re-runs
   const previousTaskRef = useRef<string | null>(null);
@@ -85,20 +82,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   const [allTodos, setAllTodos] = useState<TodoItem[]>([]);
 
-  // Animate thinking dots while waiting for messages
-  useEffect(() => {
-    // Only animate if showing thinking animation
-    if (idleMessage === '.' || idleMessage === '..' || idleMessage === '...') {
-      const interval = setInterval(() => {
-        setThinkingDots(prev => (prev % 3) + 1);
-        setIdleMessage('.'.repeat((thinkingDots % 3) + 1));
-      }, ANIMATION_TIMING.THINKING_SPEED);
-
-      return () => clearInterval(interval);
-    }
-    return undefined;
-  }, [idleMessage, thinkingDots]);
-
   // Generate idle message on startup
   useEffect(() => {
     // Don't generate if session hasn't loaded yet
@@ -114,7 +97,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           const message = idleMessageGenerator.getCurrentMessage();
 
           // If we have real cached messages, use them
-          if (queueSize > 0 && message !== 'Idle' && message !== '.' && message !== '..' && message !== '...') {
+          if (queueSize > 0 && message !== 'Idle') {
             setIdleMessage(message);
             logger.debug(`[MASCOT] Displaying cached message on resume: "${message}"`);
             return; // Don't generate
@@ -203,7 +186,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
                   logger.debug(`[MASCOT] Fast polling check - message: "${message}", queueSize: ${queueSize}`);
 
                   // Update immediately when first non-default message is available
-                  if (message !== 'Idle' && message !== '.' && message !== '..' && message !== '...') {
+                  if (message !== 'Idle') {
                     const queue = idleMessageGenerator.getQueue();
                     const queuePreview = queue.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
                     logger.debug(`[MASCOT] Displaying message from queue (${queueSize} messages available): "${message}"\n  Queue:\n  ${queuePreview}`);

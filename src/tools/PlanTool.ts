@@ -23,12 +23,13 @@ import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
+import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 
 // Planning tools: read-only tools + explore for nested research + todo_add for proposals
 const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo_add'];
 
-// Hardcoded system prompt optimized for implementation planning
-const PLANNING_SYSTEM_PROMPT = `You are an expert implementation planner. Your role is to create detailed, actionable implementation plans by researching existing patterns, understanding architecture, and considering all necessary context.
+// Base prompt for planning (without thoroughness-specific guidelines)
+const PLANNING_BASE_PROMPT = `You are an expert implementation planner. Your role is to create detailed, actionable implementation plans by researching existing patterns, understanding architecture, and considering all necessary context.
 
 **Your Capabilities:**
 - View directory tree structures (tree) - understand project organization
@@ -87,7 +88,17 @@ After providing the plan above, call todo_add() with proposed todos (status="pro
 - **Use dependencies** when tasks must complete in order (specify array of todo IDs that must finish first)
 - **Use subtasks** for hierarchical breakdown (nested array, max depth 1) when a task has clear sub-steps
 - Order logically with dependencies enforcing critical sequences
-- Make actionable and represent meaningful milestones
+- Make actionable and represent meaningful milestones`;
+
+const PLANNING_CLOSING = `**Handling Different Scenarios:**
+- **Empty directory/new project**: Recommend project structure, tech stack, and modern conventions
+- **Existing project, new feature**: Research similar features and follow existing patterns
+- **Existing project, novel feature**: Blend existing patterns with new best practices
+
+Create comprehensive, actionable plans that enable confident implementation.`;
+
+// Hardcoded system prompt optimized for implementation planning (for backward compatibility with baseAgentPrompt)
+const PLANNING_SYSTEM_PROMPT = PLANNING_BASE_PROMPT + `
 
 **Important Guidelines:**
 - Be efficient in research (use 5-15 tool calls depending on codebase complexity)
@@ -100,12 +111,7 @@ After providing the plan above, call todo_add() with proposed todos (status="pro
 - Ensure plan is complete but not over-engineered
 - Focus on artful implementation that fits the existing architecture (or establishes good architecture)
 
-**Handling Different Scenarios:**
-- **Empty directory/new project**: Recommend project structure, tech stack, and modern conventions
-- **Existing project, new feature**: Research similar features and follow existing patterns
-- **Existing project, novel feature**: Blend existing patterns with new best practices
-
-Create comprehensive, actionable plans that enable confident implementation.`;
+` + PLANNING_CLOSING;
 
 export class PlanTool extends BaseTool {
   readonly name = 'plan';
@@ -148,6 +154,10 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
               type: 'string',
               description: 'Task or feature requirements. Can be minimal - planning agent will research and fill in details.',
             },
+            thoroughness: {
+              type: 'string',
+              description: 'Planning thoroughness level: "quick" (~1 min, 5-10 tool calls), "medium" (~5 min, 10-15 tool calls), "very thorough" (~10 min, 15-20+ tool calls), "uncapped" (no time limit, default). Controls time budget and depth.',
+            },
             persist: {
               type: 'boolean',
               description: 'Whether to persist the agent for reuse. If true, returns agent_id for tracking. Set to false for one-time ephemeral agents. Default: true.',
@@ -163,6 +173,7 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
     this.captureParams(args);
 
     const requirements = args.requirements;
+    const thoroughness = args.thoroughness ?? 'uncapped';
     const persist = args.persist ?? true;
 
     // Validate requirements parameter
@@ -171,6 +182,16 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
         'requirements parameter is required and must be a string',
         'validation_error',
         'Example: plan(requirements="Add user authentication with JWT")'
+      );
+    }
+
+    // Validate thoroughness parameter
+    const validThoroughness = ['quick', 'medium', 'very thorough', 'uncapped'];
+    if (!validThoroughness.includes(thoroughness)) {
+      return this.formatErrorResponse(
+        `thoroughness must be one of: ${validThoroughness.join(', ')}`,
+        'validation_error',
+        'Example: plan(requirements="...", thoroughness="uncapped")'
       );
     }
 
@@ -192,22 +213,24 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
       );
     }
 
-    return await this.executePlanning(requirements, persist, callId);
+    return await this.executePlanning(requirements, thoroughness, persist, callId);
   }
 
   /**
    * Execute planning with specialized agent
    *
    * @param requirements - The requirements for the implementation plan
+   * @param thoroughness - Planning thoroughness level (quick/medium/very thorough)
    * @param persist - Whether to use AgentPoolService for agent persistence
    * @param callId - Unique call identifier for tracking
    */
   private async executePlanning(
     requirements: string,
+    thoroughness: string,
     persist: boolean,
     callId: string
   ): Promise<ToolResult> {
-    logger.debug('[PLAN_TOOL] Starting planning, callId:', callId, 'persist:', persist);
+    logger.debug('[PLAN_TOOL] Starting planning, callId:', callId, 'thoroughness:', thoroughness, 'persist:', persist);
     const startTime = Date.now();
 
     try {
@@ -246,7 +269,10 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
       logger.debug('[PLAN_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
 
       // Create specialized system prompt
-      const specializedPrompt = await this.createPlanningSystemPrompt(requirements);
+      const specializedPrompt = await this.createPlanningSystemPrompt(requirements, thoroughness);
+
+      // Map thoroughness to max duration
+      const maxDuration = getThoroughnessDuration(thoroughness as any);
 
       // Emit planning start event
       this.emitEvent({
@@ -270,6 +296,7 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
         config: config,
         parentCallId: callId,
         requiredToolCalls: ['todo_add'], // Planning agent MUST call todo_add before exiting
+        maxDuration,
       };
 
       // Choose between pooled or ephemeral agent
@@ -408,11 +435,71 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
   /**
    * Create specialized system prompt for planning
    */
-  private async createPlanningSystemPrompt(requirements: string): Promise<string> {
-    logger.debug('[PLAN_TOOL] Creating planning system prompt');
+  private async createPlanningSystemPrompt(requirements: string, thoroughness: string): Promise<string> {
+    logger.debug('[PLAN_TOOL] Creating planning system prompt with thoroughness:', thoroughness);
     try {
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-      const result = await getAgentSystemPrompt(PLANNING_SYSTEM_PROMPT, requirements);
+
+      // Create thoroughness-specific guidelines
+      let thoroughnessGuidelines: string;
+      switch (thoroughness) {
+        case 'quick':
+          thoroughnessGuidelines = `**Important Guidelines:**
+- **Time limit: ~1 minute maximum** - System reminders will notify you of remaining time
+- Be efficient in research (use 5-10 tool calls depending on codebase complexity)
+- **For existing codebases**: Ground recommendations in existing patterns, provide file references
+- **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
+- **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly
+- Provide specific file references with line numbers when applicable
+- Use explore() for complex multi-file pattern analysis (skip if empty project)
+- Focus on speed and efficiency`;
+          break;
+        case 'medium':
+          thoroughnessGuidelines = `**Important Guidelines:**
+- **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
+- Be efficient in research (use 10-15 tool calls depending on codebase complexity)
+- **For existing codebases**: Ground recommendations in existing patterns, provide file references
+- **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
+- **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly
+- Provide specific file references with line numbers when applicable
+- Include code examples from codebase when relevant (or from best practices if starting fresh)
+- Use explore() for complex multi-file pattern analysis (skip if empty project)
+- Ensure plan is complete but not over-engineered
+- Focus on artful implementation that fits the existing architecture (or establishes good architecture)`;
+          break;
+        case 'very thorough':
+          thoroughnessGuidelines = `**Important Guidelines:**
+- **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
+- Be thorough in research (use 15-20+ tool calls for comprehensive analysis)
+- **For existing codebases**: Ground recommendations in existing patterns, provide file references
+- **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
+- **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly
+- Provide specific file references with line numbers when applicable
+- Include code examples from codebase when relevant (or from best practices if starting fresh)
+- Use explore() for complex multi-file pattern analysis (skip if empty project)
+- Ensure plan is complete and comprehensive
+- Focus on artful implementation that fits the existing architecture (or establishes good architecture)`;
+          break;
+        case 'uncapped':
+        default:
+          thoroughnessGuidelines = `**Important Guidelines:**
+- **No time limit imposed** - Take the time needed to create a comprehensive plan
+- Be thorough in research (use as many tool calls as needed for complete analysis)
+- **For existing codebases**: Ground recommendations in existing patterns, provide file references
+- **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
+- **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly
+- Provide specific file references with line numbers when applicable
+- Include code examples from codebase when relevant (or from best practices if starting fresh)
+- Use explore() for complex multi-file pattern analysis (skip if empty project)
+- Ensure plan is complete and comprehensive
+- Focus on artful implementation that fits the existing architecture (or establishes good architecture)`;
+          break;
+      }
+
+      // Compose the full prompt with thoroughness-specific guidelines
+      const modifiedPrompt = PLANNING_BASE_PROMPT + '\n\n' + thoroughnessGuidelines + '\n\n' + PLANNING_CLOSING;
+
+      const result = await getAgentSystemPrompt(modifiedPrompt, requirements);
       logger.debug('[PLAN_TOOL] System prompt created, length:', result?.length || 0);
       return result;
     } catch (error) {

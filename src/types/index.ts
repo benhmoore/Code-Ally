@@ -248,10 +248,8 @@ export interface Config {
   diff_display_color_modified: string;
 
   // Tool Result Truncation (Context-Aware)
-  tool_result_max_tokens_normal: number;
-  tool_result_max_tokens_moderate: number;
-  tool_result_max_tokens_aggressive: number;
-  tool_result_max_tokens_critical: number;
+  tool_result_max_context_percent: number;
+  tool_result_min_tokens: number;
 
   // Read Tool Settings
   read_max_tokens: number;

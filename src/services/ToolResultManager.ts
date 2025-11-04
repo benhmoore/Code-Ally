@@ -19,7 +19,7 @@ import { BUFFER_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 
 /**
- * Truncation level definitions
+ * Truncation level definitions (for warning messages)
  */
 type TruncationLevel = 'normal' | 'moderate' | 'aggressive' | 'critical';
 
@@ -28,16 +28,6 @@ type TruncationLevel = 'normal' | 'moderate' | 'aggressive' | 'critical';
  */
 interface TruncationLevels {
   [key: string]: { min: number; max: number };
-}
-
-/**
- * Maximum token limits for tool results at each level
- */
-interface MaxTokenLimits {
-  normal: number;
-  moderate: number;
-  aggressive: number;
-  critical: number;
 }
 
 /**
@@ -52,7 +42,7 @@ interface ToolStats {
  * ToolResultManager provides context-aware tool result processing
  */
 export class ToolResultManager {
-  // Progressive truncation based on context usage percentage
+  // Truncation levels for warning severity (context usage percentage)
   private static readonly TRUNCATION_LEVELS: TruncationLevels = {
     normal: { min: 0, max: CONTEXT_THRESHOLDS.NORMAL },
     moderate: { min: CONTEXT_THRESHOLDS.NORMAL, max: CONTEXT_THRESHOLDS.WARNING },
@@ -60,17 +50,10 @@ export class ToolResultManager {
     critical: { min: CONTEXT_THRESHOLDS.CRITICAL, max: CONTEXT_THRESHOLDS.MAX_PERCENT },
   };
 
-  // Default maximum tokens for tool results at each level
-  private static readonly DEFAULT_MAX_TOKENS: MaxTokenLimits = {
-    normal: DEFAULT_CONFIG.tool_result_max_tokens_normal,
-    moderate: DEFAULT_CONFIG.tool_result_max_tokens_moderate,
-    aggressive: DEFAULT_CONFIG.tool_result_max_tokens_aggressive,
-    critical: DEFAULT_CONFIG.tool_result_max_tokens_critical,
-  };
-
   private tokenManager: TokenManager;
   private toolManager?: ToolManager;
-  private maxTokens: MaxTokenLimits;
+  private maxContextPercent: number; // Maximum percentage of remaining context per tool result
+  private minTokens: number; // Minimum tokens even when context is very full
   private toolUsageStats: Map<string, ToolStats> = new Map();
 
   /**
@@ -84,25 +67,17 @@ export class ToolResultManager {
     this.tokenManager = tokenManager;
     this.toolManager = toolManager;
 
-    // Load configurable token limits from config
+    // Load configurable limits from config
     if (configManager) {
-      this.maxTokens = {
-        normal:
-          (configManager.getValue('tool_result_max_tokens_normal') as number) ||
-          ToolResultManager.DEFAULT_MAX_TOKENS.normal,
-        moderate:
-          (configManager.getValue('tool_result_max_tokens_moderate') as number) ||
-          ToolResultManager.DEFAULT_MAX_TOKENS.moderate,
-        aggressive:
-          (configManager.getValue(
-            'tool_result_max_tokens_aggressive'
-          ) as number) || ToolResultManager.DEFAULT_MAX_TOKENS.aggressive,
-        critical:
-          (configManager.getValue('tool_result_max_tokens_critical') as number) ||
-          ToolResultManager.DEFAULT_MAX_TOKENS.critical,
-      };
+      this.maxContextPercent =
+        (configManager.getValue('tool_result_max_context_percent') as number) ||
+        DEFAULT_CONFIG.tool_result_max_context_percent;
+      this.minTokens =
+        (configManager.getValue('tool_result_min_tokens') as number) ||
+        DEFAULT_CONFIG.tool_result_min_tokens;
     } else {
-      this.maxTokens = { ...ToolResultManager.DEFAULT_MAX_TOKENS };
+      this.maxContextPercent = DEFAULT_CONFIG.tool_result_max_context_percent;
+      this.minTokens = DEFAULT_CONFIG.tool_result_min_tokens;
     }
   }
 
@@ -118,10 +93,14 @@ export class ToolResultManager {
       return rawResult;
     }
 
-    // Get current context level
+    // Calculate dynamic max tokens based on remaining context
+    const remainingTokens = this.getRemainingContextBudget();
+    const dynamicMaxTokens = Math.floor(remainingTokens * this.maxContextPercent);
+    const maxTokens = Math.max(dynamicMaxTokens, this.minTokens);
+
+    // Get current context level for warning severity
     const contextPct = this.tokenManager.getContextUsagePercentage();
     const truncationLevel = this.getTruncationLevel(contextPct);
-    const maxTokens = this.maxTokens[truncationLevel];
 
     // Update tool usage statistics
     const actualTokens = this.tokenManager.estimateTokens(rawResult);
@@ -241,6 +220,13 @@ export class ToolResultManager {
     const remainingCalls = this.estimateRemainingToolCalls();
     const truncationLevel = this.getTruncationLevel(contextPct);
 
+    // Calculate current max tokens per tool result
+    const remainingTokens = this.getRemainingContextBudget();
+    const currentMaxTokens = Math.max(
+      Math.floor(remainingTokens * this.maxContextPercent),
+      this.minTokens
+    );
+
     // Provide forceful, actionable guidance based on context level
     if (truncationLevel === 'critical') {
       return (
@@ -258,7 +244,7 @@ export class ToolResultManager {
         `   1. Complete ONLY your current task\n` +
         `   2. Avoid starting new investigations\n` +
         `   3. Provide a summary soon\n` +
-        `Tool results are heavily truncated (${this.maxTokens.aggressive} tokens max).`
+        `Tool results are heavily truncated (~${currentMaxTokens} tokens max per result).`
       );
     } else if (truncationLevel === 'moderate') {
       return (
@@ -266,7 +252,7 @@ export class ToolResultManager {
         `💡 Context filling up. Consider:\n` +
         `   1. Prioritizing essential operations\n` +
         `   2. Wrapping up non-critical work\n` +
-        `Tool results now limited to ${this.maxTokens.moderate} tokens.`
+        `Tool results limited to ~${currentMaxTokens} tokens per result.`
       );
     } else {
       return `✅ ${contextPct}% context used | ~${remainingCalls} tools available | Normal operation`;

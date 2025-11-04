@@ -455,10 +455,8 @@ export class CompletionProvider {
       'diff_display_color_modified': 'Modified line color',
 
       // Tool Result Truncation
-      'tool_result_max_tokens_normal': 'Max tokens (0-70% usage)',
-      'tool_result_max_tokens_moderate': 'Max tokens (70-85% usage)',
-      'tool_result_max_tokens_aggressive': 'Max tokens (85-95% usage)',
-      'tool_result_max_tokens_critical': 'Max tokens (95%+ usage)',
+      'tool_result_max_context_percent': 'Max context % per tool result',
+      'tool_result_min_tokens': 'Minimum tokens per result',
     };
 
     return configKeys
