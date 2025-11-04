@@ -119,7 +119,7 @@ export class AgentPoolService implements IService {
     };
 
     if (this.config.verbose) {
-      logger.info('[AGENT_POOL] Service created with config:', this.config);
+      logger.debug('[AGENT_POOL] Service created with config:', this.config);
     }
   }
 
@@ -137,7 +137,7 @@ export class AgentPoolService implements IService {
       this.evictIdleAgents();
     }, this.config.cleanupIntervalMs);
 
-    logger.info('[AGENT_POOL] Service initialized');
+    logger.debug('[AGENT_POOL] Service initialized');
   }
 
   /**
@@ -168,7 +168,7 @@ export class AgentPoolService implements IService {
     await Promise.all(cleanupPromises);
     this.pool.clear();
 
-    logger.info('[AGENT_POOL] Cleanup completed');
+    logger.debug('[AGENT_POOL] Cleanup completed');
   }
 
   /**
@@ -367,7 +367,7 @@ export class AgentPoolService implements IService {
     }
 
     if (idsToEvict.length > 0) {
-      logger.info(`[AGENT_POOL] Evicted ${idsToEvict.length} idle agent(s)`);
+      logger.debug(`[AGENT_POOL] Evicted ${idsToEvict.length} idle agent(s)`);
     }
   }
 
@@ -458,7 +458,7 @@ export class AgentPoolService implements IService {
    * Use with caution - may interrupt active operations.
    */
   async clearPool(): Promise<void> {
-    logger.info('[AGENT_POOL] Clearing pool');
+    logger.debug('[AGENT_POOL] Clearing pool');
 
     const cleanupPromises: Promise<void>[] = [];
     for (const [agentId, metadata] of this.pool.entries()) {
@@ -473,7 +473,7 @@ export class AgentPoolService implements IService {
     this.pool.clear();
     this.nextAgentId = 0;
 
-    logger.info('[AGENT_POOL] Pool cleared');
+    logger.debug('[AGENT_POOL] Pool cleared');
   }
 
   /**
@@ -528,7 +528,7 @@ export class AgentPoolService implements IService {
     }
 
     this.evictAgent(agentId);
-    logger.info(`[AGENT_POOL] Manually removed agent ${agentId}`);
+    logger.debug(`[AGENT_POOL] Manually removed agent ${agentId}`);
     return true;
   }
 }

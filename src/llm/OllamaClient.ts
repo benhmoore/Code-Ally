@@ -20,7 +20,7 @@ import {
 import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
-import { API_TIMEOUTS, TIME_UNITS } from '../config/constants.js';
+import { API_TIMEOUTS, TIME_UNITS, PERMISSION_MESSAGES } from '../config/constants.js';
 
 /**
  * Ollama API payload structure
@@ -489,7 +489,7 @@ export class OllamaClient extends ModelClient {
         logger.debug('[OLLAMA_CLIENT] Streaming interrupted for request:', requestId);
         return {
           role: 'assistant',
-          content: aggregatedContent || '[Request interrupted by user]',
+          content: aggregatedContent || PERMISSION_MESSAGES.USER_FACING_INTERRUPTION,
           interrupted: true,
           _content_was_streamed: contentWasStreamed,
         };

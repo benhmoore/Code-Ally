@@ -444,7 +444,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
         // Force quit on 3rd press
         if (newCount >= 3) {
-          console.log('[InputPrompt] Force quit - 3x Ctrl+C');
+          logger.debug('[InputPrompt] Force quit - 3x Ctrl+C');
           exit();
           return;
         }

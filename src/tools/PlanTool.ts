@@ -538,9 +538,8 @@ Creates proposed todos as drafts; use deny_proposal if misaligned.`;
       // Update TodoManager with new todo list
       todoManager.setTodos(newTodoList);
 
-      console.log('[PLAN_TOOL] Auto-accepted', proposedTodos.length, 'proposed todos. New total:', newTodoList.length);
-      console.log('[PLAN_TOOL] First 3 activated todos:', activatedTodos.slice(0, 3).map(t => ({ task: t.task, status: t.status })));
-      logger.debug('[PLAN_TOOL] Auto-accepted', proposedTodos.length, 'proposed todos');
+      logger.debug('[PLAN_TOOL] Auto-accepted', proposedTodos.length, 'proposed todos. New total:', newTodoList.length);
+      logger.debug('[PLAN_TOOL] First 3 activated todos:', activatedTodos.slice(0, 3).map(t => ({ task: t.task, status: t.status })));
     } catch (error) {
       logger.debug('[PLAN_TOOL] Error auto-accepting proposed todos:', error);
       // Don't throw - this is non-critical, plan can still succeed

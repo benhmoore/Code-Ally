@@ -567,6 +567,9 @@ export const PERMISSION_MESSAGES = {
   /** User-facing permission denial message shown in chat */
   USER_FACING_DENIAL: 'Permission denied. Tell Ally what to do instead.',
 
+  /** User-facing interruption message shown in chat */
+  USER_FACING_INTERRUPTION: 'Interrupted. Tell Ally what to do instead.',
+
   /** Generate tool-specific denial message */
   toolSpecificDenial: (toolName: string) => `Permission denied for ${toolName} by user`,
 } as const;

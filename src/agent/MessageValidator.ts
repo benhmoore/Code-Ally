@@ -213,9 +213,9 @@ export class MessageValidator {
    * @param errors - Validation error messages
    */
   logAttempt(errors?: string[]): void {
-    console.log(
+    logger.debug(
       `[CONTINUATION] Gap 3: Tool call validation failed - prodding model to fix (attempt ${this.attemptCount}/${this.maxAttempts})`
     );
-    console.log(`[CONTINUATION] Validation errors:`, errors?.join('; '));
+    logger.debug(`[CONTINUATION] Validation errors:`, errors?.join('; '));
   }
 }

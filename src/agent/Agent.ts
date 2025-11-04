@@ -125,7 +125,7 @@ export class Agent {
     this.requiredToolTracker = new RequiredToolTracker(this.instanceId);
     if (config.requiredToolCalls && config.requiredToolCalls.length > 0) {
       this.requiredToolTracker.setRequired(config.requiredToolCalls);
-      console.log(`[REQUIRED_TOOLS_DEBUG] Agent ${this.instanceId} configured with required tools:`, config.requiredToolCalls);
+      logger.debug(`[REQUIRED_TOOLS_DEBUG] Agent ${this.instanceId} configured with required tools:`, config.requiredToolCalls);
     }
 
     // Create message validator
@@ -416,7 +416,7 @@ export class Agent {
     this.interruptionManager.markRequestAsInterrupted();
 
     const context = this.interruptionManager.getInterruptionContext();
-    const message = context.reason || '[Request interrupted by user]';
+    const message = context.reason || PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
     const wasTimeout = context.isTimeout;
 
     // Clear interruption state
@@ -561,7 +561,7 @@ export class Agent {
         const preview = msg.content.length > TEXT_LIMITS.MESSAGE_PREVIEW_MAX ? msg.content.slice(0, TEXT_LIMITS.MESSAGE_PREVIEW_MAX - 3) + '...' : msg.content;
         const toolInfo = msg.tool_calls ? ` toolCalls:${msg.tool_calls.length}` : '';
         const toolCallId = msg.tool_call_id ? ` toolCallId:${msg.tool_call_id}` : '';
-        console.log(`  [${idx}] ${msg.role}${toolInfo}${toolCallId} - ${preview}`);
+        logger.debug(`  [${idx}] ${msg.role}${toolInfo}${toolCallId} - ${preview}`);
       });
     }
 
@@ -652,7 +652,7 @@ export class Agent {
       } else {
         // Regular cancel - mark as interrupted for next request
         this.interruptionManager.markRequestAsInterrupted();
-        return '[Request interrupted by user]';
+        return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
     }
 
@@ -664,7 +664,7 @@ export class Agent {
       const hasToolCalls = response.tool_calls && response.tool_calls.length > 0;
 
       if (hasContent || hasToolCalls) {
-        console.log(`[CONTINUATION] Gap 2: Partial response due to HTTP error - prodding model to continue (content=${hasContent}, toolCalls=${hasToolCalls})`);
+        logger.debug(`[CONTINUATION] Gap 2: Partial response due to HTTP error - prodding model to continue (content=${hasContent}, toolCalls=${hasToolCalls})`);
         logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Partial response due to HTTP error - attempting continuation');
         logger.debug(`[AGENT_RESPONSE] Partial response details: content=${hasContent}, toolCalls=${hasToolCalls}`);
 
@@ -771,7 +771,7 @@ export class Agent {
     // Detect when the model provides neither text nor tool calls
     // Note: Empty content WITH tool calls is valid - the model can directly call tools
     if (!content.trim() && toolCalls.length === 0 && !isRetry) {
-      console.log('[CONTINUATION] Gap 1: Truly empty response (no content, no tools) - prodding model to continue');
+      logger.debug('[CONTINUATION] Gap 1: Truly empty response (no content, no tools) - prodding model to continue');
       logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Truly empty response (no content, no tools) - attempting continuation');
 
       // First, add the assistant's empty response to conversation history
@@ -804,7 +804,7 @@ export class Agent {
     if (toolCalls.length > 0) {
       // Check for interruption before processing tools
       if (this.interruptionManager.isInterrupted()) {
-        return '[Request interrupted by user]';
+        return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
       // Reset validation counter on successful response with tool calls
       this.messageValidator.reset();
@@ -944,12 +944,12 @@ export class Agent {
 
     // Track required tool calls
     if (this.requiredToolTracker.hasRequiredTools()) {
-      console.log(`[REQUIRED_TOOLS_DEBUG] Checking ${unwrappedToolCalls.length} tool calls for required tools`);
+      logger.debug(`[REQUIRED_TOOLS_DEBUG] Checking ${unwrappedToolCalls.length} tool calls for required tools`);
       unwrappedToolCalls.forEach(tc => {
-        console.log(`[REQUIRED_TOOLS_DEBUG] Tool executed: ${tc.function.name}`);
+        logger.debug(`[REQUIRED_TOOLS_DEBUG] Tool executed: ${tc.function.name}`);
         if (this.requiredToolTracker.markCalled(tc.function.name)) {
-          console.log(`[REQUIRED_TOOLS_DEBUG] ✓ Tracked required tool call: ${tc.function.name}`);
-          console.log(`[REQUIRED_TOOLS_DEBUG] Called so far:`, this.requiredToolTracker.getCalledTools());
+          logger.debug(`[REQUIRED_TOOLS_DEBUG] ✓ Tracked required tool call: ${tc.function.name}`);
+          logger.debug(`[REQUIRED_TOOLS_DEBUG] Called so far:`, this.requiredToolTracker.getCalledTools());
         }
       });
     }
@@ -1071,18 +1071,18 @@ export class Agent {
 
     // Check if all required tool calls have been executed before allowing agent to exit
     if (this.requiredToolTracker.hasRequiredTools() && !this.interruptionManager.isInterrupted()) {
-      console.log(`[REQUIRED_TOOLS_DEBUG] Agent attempting to exit with text response`);
-      console.log(`[REQUIRED_TOOLS_DEBUG] Required tools:`, this.requiredToolTracker.getRequiredTools());
-      console.log(`[REQUIRED_TOOLS_DEBUG] Called tools:`, this.requiredToolTracker.getCalledTools());
+      logger.debug(`[REQUIRED_TOOLS_DEBUG] Agent attempting to exit with text response`);
+      logger.debug(`[REQUIRED_TOOLS_DEBUG] Required tools:`, this.requiredToolTracker.getRequiredTools());
+      logger.debug(`[REQUIRED_TOOLS_DEBUG] Called tools:`, this.requiredToolTracker.getCalledTools());
 
       const result = this.requiredToolTracker.checkAndWarn();
-      console.log(`[REQUIRED_TOOLS_DEBUG] Missing tools:`, result.missingTools);
+      logger.debug(`[REQUIRED_TOOLS_DEBUG] Missing tools:`, result.missingTools);
 
       if (result.shouldFail) {
         // Exceeded max warnings - fail the operation
         const errorMessage = this.requiredToolTracker.createFailureMessage(result.missingTools);
-        console.log(`[REQUIRED_TOOLS_DEBUG] ✗ FAILING - exceeded max warnings (${result.warningCount}/${result.maxWarnings})`);
-        console.log(`[REQUIRED_TOOLS_DEBUG] Error message:`, errorMessage);
+        logger.debug(`[REQUIRED_TOOLS_DEBUG] ✗ FAILING - exceeded max warnings (${result.warningCount}/${result.maxWarnings})`);
+        logger.debug(`[REQUIRED_TOOLS_DEBUG] Error message:`, errorMessage);
         logger.error('[AGENT_REQUIRED_TOOLS]', this.instanceId, errorMessage);
 
         const assistantMessage: Message = {
@@ -1098,8 +1098,8 @@ export class Agent {
 
       if (result.shouldWarn) {
         // Send reminder to call required tools
-        console.log(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${result.warningCount}/${result.maxWarnings}`);
-        console.log(`[REQUIRED_TOOLS_DEBUG] Sending reminder to call: ${result.missingTools.join(', ')}`);
+        logger.debug(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${result.warningCount}/${result.maxWarnings}`);
+        logger.debug(`[REQUIRED_TOOLS_DEBUG] Sending reminder to call: ${result.missingTools.join(', ')}`);
 
         const reminderMessage = this.requiredToolTracker.createWarningMessage(result.missingTools);
         this.requiredToolTracker.setWarningMessageIndex(this.messages.length); // Track index before push
@@ -1115,7 +1115,7 @@ export class Agent {
 
       // All required tools have been called
       if (this.requiredToolTracker.areAllCalled()) {
-        console.log(`[REQUIRED_TOOLS_DEBUG] ✓ SUCCESS - All required tools have been called`);
+        logger.debug(`[REQUIRED_TOOLS_DEBUG] ✓ SUCCESS - All required tools have been called`);
         logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, 'All required tools have been called:', this.requiredToolTracker.getCalledTools());
 
         // Remove the warning message from history if it exists
@@ -1123,7 +1123,7 @@ export class Agent {
         if (warningIndex >= 0 && warningIndex < this.messages.length) {
           const warningMessage = this.messages[warningIndex];
           if (warningMessage && warningMessage.role === 'system' && warningMessage.content.includes('must call the following required tool')) {
-            console.log(`[REQUIRED_TOOLS_DEBUG] Removing satisfied warning from conversation history at index ${warningIndex}`);
+            logger.debug(`[REQUIRED_TOOLS_DEBUG] Removing satisfied warning from conversation history at index ${warningIndex}`);
             this.messages.splice(warningIndex, 1);
             this.requiredToolTracker.clearWarningMessageIndex();
           }

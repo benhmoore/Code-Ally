@@ -16,6 +16,7 @@ import { Agent } from './Agent.js';
 import { ConfigManager } from '../services/ConfigManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TokenManager } from './TokenManager.js';
+import { logger } from '../services/Logger.js';
 import { Message, ActivityEventType } from '../types/index.js';
 import {
   BUFFER_SIZES,
@@ -492,9 +493,9 @@ Plugin Commands:
    */
   private async debugChat(messages: Message[]): Promise<CommandResult> {
     try {
-      console.log('\n=== FULL CHAT HISTORY (JSON) ===\n');
-      console.log(JSON.stringify(messages, null, 2));
-      console.log('\n=== END CHAT HISTORY ===\n');
+      logger.debug('\n=== FULL CHAT HISTORY (JSON) ===\n');
+      logger.debug(JSON.stringify(messages, null, 2));
+      logger.debug('\n=== END CHAT HISTORY ===\n');
 
       return {
         handled: true,

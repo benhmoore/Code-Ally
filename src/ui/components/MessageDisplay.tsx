@@ -54,6 +54,8 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
 
     // Check if this is a command response that should be styled in yellow
     const isCommandResponse = message.metadata?.isCommandResponse === true;
+    // Check if this is an error message that should be styled in red
+    const isError = message.metadata?.isError === true;
 
     return (
       <Box flexDirection="column">
@@ -65,7 +67,9 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
           </Box>
         )}
         {safeContent && (
-          isCommandResponse ? (
+          isError ? (
+            <Text color="red">{safeContent}</Text>
+          ) : isCommandResponse ? (
             <Text color="yellow">{safeContent}</Text>
           ) : (
             <MarkdownText content={safeContent} />

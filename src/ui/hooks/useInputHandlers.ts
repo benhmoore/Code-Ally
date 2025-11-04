@@ -17,6 +17,7 @@ import { ToolManager } from '../../tools/ToolManager.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ActivityEventType } from '../../types/index.js';
 import { logger } from '../../services/Logger.js';
+import { PERMISSION_MESSAGES } from '../../config/constants.js';
 
 /**
  * Input handler functions
@@ -310,10 +311,15 @@ export const useInputHandlers = (
       try {
         const response = await agent.sendMessage(trimmed);
 
+        // Check if response is an error message that should be styled in red
+        const isError = response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
+                       response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
+
         // Add assistant response
         actions.addMessage({
           role: 'assistant',
           content: response,
+          metadata: isError ? { isError: true } : undefined,
         });
 
         // Update TokenManager and context usage

@@ -25,6 +25,8 @@ export interface Message {
 export interface MessageMetadata {
   /** Whether this is a command response that should be styled in yellow */
   isCommandResponse?: boolean;
+  /** Whether this is an error message that should be styled in red */
+  isError?: boolean;
   /** Whether this message should be removed after the current turn */
   ephemeral?: boolean;
   /** Whether this is a user interjection mid-response */

@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { TEXT_LIMITS, BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
 import { ActivityStream } from './ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
+import { logger } from './Logger.js';
 
 export type TodoStatus = 'proposed' | 'pending' | 'in_progress' | 'completed';
 
@@ -472,7 +473,7 @@ export class TodoManager {
 
     // Only log if context changed since last log
     if (contextString !== this.lastLoggedContext) {
-      console.log('[TODO_CONTEXT]', contextString.substring(0, 150) + (contextString.length > 150 ? '...' : ''));
+      logger.debug('[TODO_CONTEXT]', contextString.substring(0, 150) + (contextString.length > 150 ? '...' : ''));
       this.lastLoggedContext = contextString;
     }
   }
