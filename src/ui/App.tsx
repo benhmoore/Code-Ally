@@ -27,7 +27,6 @@ import { StatusIndicator } from './components/StatusIndicator.js';
 import { UndoPrompt } from './components/UndoPrompt.js';
 import { UndoFileList } from './components/UndoFileList.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
-import { ReasoningStream } from './components/ReasoningStream.js';
 import { Agent } from '../agent/Agent.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ToolManager } from '../tools/ToolManager.js';
@@ -382,9 +381,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : /* Session Selector (replaces input when active) */
       modal.sessionSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
-          {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream config={state.config} />
-
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
@@ -419,9 +415,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : /* Model Selector (replaces input when active) */
       modal.modelSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
-          {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream config={state.config} />
-
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
@@ -458,9 +451,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           const userMessages = state.messages.filter(m => m.role === 'user');
           return (
             <Box marginTop={1} flexDirection="column">
-              {/* Reasoning Stream - shows thinking tokens */}
-              <ReasoningStream config={state.config} />
-
               {/* Status Indicator - always visible to show todos */}
               <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
@@ -497,9 +487,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : modal.undoFileListRequest && !modal.undoRequest ? (
         /* Undo File List (two-stage flow - stage 1) */
         <Box marginTop={1} flexDirection="column">
-          {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream config={state.config} />
-
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
@@ -533,9 +520,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : modal.undoRequest ? (
         /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
         <Box marginTop={1} flexDirection="column">
-          {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream config={state.config} />
-
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
@@ -567,9 +551,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : modal.permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
-          {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream config={state.config} />
-
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
@@ -601,9 +582,6 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       ) : (
         /* Input Group - Status Indicator + Input Prompt */
         <Box marginTop={1} flexDirection="column">
-          {/* Reasoning Stream - shows thinking tokens */}
-          <ReasoningStream config={state.config} />
-
           {/* Status Indicator - always visible to show todos */}
           <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
 
@@ -629,7 +607,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       {/* Footer / Help */}
       <Box marginTop={1}>
         <Text dimColor>
-          <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'}{currentFocus && <Text> | Focus: <Text color="magenta">{currentFocus}</Text></Text>} |{' '}
+          <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> · <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} · Model: {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
           {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
             <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
           ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (

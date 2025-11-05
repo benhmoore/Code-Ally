@@ -446,8 +446,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
             <ProgressIndicator type="dots2" color="yellow" />
             <Text> </Text>
             <Text>{allTodos.length === 0 ? 'Thinking' : currentTask || 'Processing'}</Text>
-            <Text dimColor> (esc to interrupt) </Text>
-            <Text dimColor>[{formatElapsed(elapsed)}]</Text>
+            <Text dimColor> (esc to interrupt · {formatElapsed(elapsed)})</Text>
           </>
         ) : (
           <Text color="yellow">{idleMessage}</Text>
