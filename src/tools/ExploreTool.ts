@@ -68,9 +68,10 @@ export class ExploreTool extends BaseTool {
   readonly hideOutput = true; // Hide detailed output
 
   readonly usageGuidance = `**When to use explore:**
-User asks "How/Why/Where does X work?", bug investigation, architecture understanding.
-Delegates to read-only agent. Prefer over manual grep/read sequences.
-NOT for specific file paths or known locations—use read/glob directly.`;
+Architectural/flow questions requiring synthesis: "Where is X displayed?", "How does Y work?"
+Bug investigation, understanding unknown implementations.
+PREFER over manual grep→analyze workflows—explore does this systematically.
+NOT for: known file paths, simple counting, literal searches (use read/glob/grep).`;
 
   private activeDelegations: Map<string, any> = new Map();
   private currentPooledAgent: PooledAgent | null = null;
@@ -312,6 +313,7 @@ NOT for specific file paths or known locations—use read/glob directly.`;
         // Always include agent_id when available
         if (agentId) {
           successResponse.agent_id = agentId;
+          successResponse.system_reminder = `Agent persists as ${agentId}. For follow-up questions, PREFER agent_ask(agent_id="${agentId}", message="...") over direct tools—agent has context for richer answers.`;
         }
 
         return this.formatSuccessResponse(successResponse);

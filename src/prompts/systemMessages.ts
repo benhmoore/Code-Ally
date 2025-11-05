@@ -54,29 +54,37 @@ const AGENT_DELEGATION_GUIDELINES = `## Tool Selection
 
 Recognize these patterns to choose effective approaches (improvise as needed):
 
-- **Understanding questions** ("How does X work?", "Why is Y broken?") → explore
-- **Follow-up questions** to exploration/planning → agent_ask with persistent agent (richer context than direct tools)
+- **Understanding/architectural questions** → explore (NOT manual grep→analyze)
+  - "How/Where/Why does X work?", "Where is X displayed/handled/processed?"
+  - These need synthesis and tracing, not just text matching
+  - Even if grep seems viable, explore provides richer understanding
+- **Follow-up after explore/plan** → PREFER agent_ask over direct tools
+  - Agent has context and provides richer answers than mechanical tools
+  - Examples: "How many X?", "What about Y?", "Show me Z" after exploration
+  - Only use direct tools if truly independent from prior context
 - **Implementation requests** ("Add feature X", "Build Y") → explore (if context needed) → plan → implement
 - **Bug investigation** ("X is broken", "Debug Y") → explore to trace issue → diagnose → fix
 - **Refactoring** ("Improve X", "Refactor Y") → explore current state → plan safe approach → execute
-- **Specific queries** ("Read file X", "Find class Y") → direct tools (read, glob, grep)
+- **Simple lookups** ("Show me file X", "Count files matching Y") → direct tools (read, glob, grep)
 
 Structure helps with complexity, but skip steps that don't add value.
 
 ## Exploration and Analysis
 
 **When to use explore:**
-- Understanding codebase structure and architecture: "What is the codebase structure?"
-- Finding implementations when you don't know the specific location: "Where are errors from the client handled?"
-- Tracing feature implementations across files: "How does the authentication system work?"
-- Analyzing dependencies and relationships between components
-- Answering "how does X work?" questions (not "where is X?")
+- Architectural questions: "How does X work?", "Where is X displayed/rendered/stored?"
+- Flow tracing: "Where are errors handled?", "How does data flow through Y?"
+- Understanding implementations when location/structure is unknown
+- Any question requiring synthesis, not just text matching
+- When the answer spans multiple files or requires understanding relationships
 
 **When NOT to use explore (use direct tools instead):**
-- Reading a specific file path → use \`read\` tool: "Read the file at src/utils/helper.ts"
-- Searching for a specific class definition → use \`glob\` tool: "Find the class Foo definition"
-- Searching code within a specific file or 2-3 files → use \`read\` tool: "Check for TODO comments in src/app.ts"
-- Needle-in-haystack queries where you know exactly what you're looking for → use \`glob\` or \`grep\` tools
+- Known file path: "Read src/utils/helper.ts" → use \`read\`
+- Specific symbol search: "Find class Foo" → use \`glob\`
+- Simple counting: "How many files match X?" → use \`glob\` or \`grep\`
+- Literal text search: "List all TODO comments" → use \`grep\`
+
+**Key insight:** If you'd need to grep→analyze→synthesize, use explore instead.
 
 ## Planning
 - **Use plan for**: New features, complex fixes, significant changes
@@ -90,7 +98,7 @@ Structure helps with complexity, but skip steps that don't add value.
 - @agent_name syntax → delegate using agent tool
 
 ## Agent Persistence
-All agents automatically persist in a pool (holds 5 most recent agents for 5 minutes each).
+All agents automatically persist in a pool (holds 5 most recent agents).
 No persist parameter needed—agents are always reusable via agent_ask.
 
 ## Creative Agent Usage

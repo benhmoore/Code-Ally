@@ -27,7 +27,5 @@ export { TodoClearTool } from './TodoClearTool.js';
 export { TodoListTool } from './TodoListTool.js';
 export { DenyProposalTool } from './DenyProposalTool.js';
 export { AgentAskTool } from './AgentAskTool.js';
-export { AgentKillTool } from './AgentKillTool.js';
-export { AgentListActiveTool } from './AgentListActiveTool.js';
 export { ExploreTool } from './ExploreTool.js';
 export { PlanTool } from './PlanTool.js';

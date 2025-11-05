@@ -3,14 +3,13 @@
  *
  * Provides resource pooling for agent instances with:
  * - Pool size management with configurable limits
- * - LRU (Least Recently Used) eviction policy
- * - Idle timeout eviction for inactive agents
+ * - LRU (Least Recently Used) eviction policy when at capacity
  * - Agent metadata tracking and lifecycle management
  * - Thread-safe operations with proper cleanup
  *
  * The service maintains a pool of reusable agent instances to reduce initialization
  * overhead and enable efficient concurrent agent execution. Agents are evicted from
- * the pool when idle for too long or when the pool reaches capacity using LRU policy.
+ * the pool when the pool reaches capacity using LRU policy.
  */
 
 import { IService } from '../types/index.js';
@@ -29,10 +28,6 @@ import { AGENT_POOL } from '../config/constants.js';
 export interface AgentPoolConfig {
   /** Maximum number of agents to keep in the pool (default: 5) */
   maxPoolSize?: number;
-  /** Idle timeout in milliseconds before evicting an agent (default: 5 minutes) */
-  idleTimeoutMs?: number;
-  /** Cleanup interval in milliseconds for eviction checks (default: 1 minute) */
-  cleanupIntervalMs?: number;
   /** Enable verbose logging for pool operations (default: false) */
   verbose?: boolean;
 }
@@ -83,7 +78,6 @@ export class AgentPoolService implements IService {
   private configManager?: ConfigManager;
   private permissionManager?: PermissionManager;
   private config: Required<AgentPoolConfig>;
-  private cleanupInterval: NodeJS.Timeout | null = null;
   private nextAgentId: number = 0;
 
   /**
@@ -113,8 +107,6 @@ export class AgentPoolService implements IService {
     // Apply defaults to configuration
     this.config = {
       maxPoolSize: config.maxPoolSize ?? AGENT_POOL.DEFAULT_MAX_SIZE,
-      idleTimeoutMs: config.idleTimeoutMs ?? AGENT_POOL.DEFAULT_IDLE_TIMEOUT_MS,
-      cleanupIntervalMs: config.cleanupIntervalMs ?? AGENT_POOL.DEFAULT_CLEANUP_INTERVAL_MS,
       verbose: config.verbose ?? false,
     };
 
@@ -126,34 +118,21 @@ export class AgentPoolService implements IService {
   /**
    * Initialize the service
    *
-   * Starts the cleanup interval for idle agent eviction.
    * Called automatically by ServiceRegistry after construction.
    */
   async initialize(): Promise<void> {
     logger.debug('[AGENT_POOL] Initializing service');
-
-    // Start cleanup interval for idle timeout eviction
-    this.cleanupInterval = setInterval(() => {
-      this.evictIdleAgents();
-    }, this.config.cleanupIntervalMs);
-
     logger.debug('[AGENT_POOL] Service initialized');
   }
 
   /**
    * Cleanup resources and shutdown the service
    *
-   * Stops the cleanup interval and cleans up all pooled agents.
+   * Cleans up all pooled agents.
    * Called automatically by ServiceRegistry during shutdown.
    */
   async cleanup(): Promise<void> {
     logger.debug('[AGENT_POOL] Cleanup started');
-
-    // Stop cleanup interval
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-    }
 
     // Cleanup all agents in the pool
     const cleanupPromises: Promise<void>[] = [];
@@ -337,37 +316,6 @@ export class AgentPoolService implements IService {
       logger.warn(
         '[AGENT_POOL] Cannot evict - all agents are in use. Pool may temporarily exceed maxPoolSize.'
       );
-    }
-  }
-
-  /**
-   * Evict idle agents that have exceeded the idle timeout
-   *
-   * Called periodically by the cleanup interval. Removes agents that have
-   * been idle for longer than idleTimeoutMs.
-   */
-  private evictIdleAgents(): void {
-    const now = Date.now();
-    const idsToEvict: string[] = [];
-
-    for (const [agentId, metadata] of this.pool.entries()) {
-      if (metadata.inUse) {
-        continue;
-      }
-
-      const idleTime = now - metadata.lastAccessedAt;
-      if (idleTime > this.config.idleTimeoutMs) {
-        idsToEvict.push(agentId);
-      }
-    }
-
-    for (const agentId of idsToEvict) {
-      this.evictAgent(agentId);
-      logger.debug(`[AGENT_POOL] Evicted idle agent ${agentId}`);
-    }
-
-    if (idsToEvict.length > 0) {
-      logger.debug(`[AGENT_POOL] Evicted ${idsToEvict.length} idle agent(s)`);
     }
   }
 

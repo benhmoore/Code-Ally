@@ -543,16 +543,11 @@ export const TOKEN_MANAGEMENT = {
 
 /**
  * Agent pool configuration for persistent specialized agents
+ * Pool uses LRU (Least Recently Used) eviction policy when at capacity
  */
 export const AGENT_POOL = {
-  /** Default maximum pool size (5 agents, auto-evict oldest when full) */
+  /** Default maximum pool size (5 agents, auto-evict least recently used when full) */
   DEFAULT_MAX_SIZE: 5,
-
-  /** Default idle timeout before agent eviction (5 minutes) */
-  DEFAULT_IDLE_TIMEOUT_MS: 5 * 60 * 1000,
-
-  /** Default cleanup interval for idle agent eviction (1 minute) */
-  DEFAULT_CLEANUP_INTERVAL_MS: 60 * 1000,
 } as const;
 
 // ===========================================

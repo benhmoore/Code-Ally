@@ -216,8 +216,6 @@ Tool selection guidance:
 
 #### Other
 - `deny_proposal` - Deny a proposed todo plan
-- `agent_kill` - Stop a running agent
-- `agent_list_active` - List active agents
 
 ### 3.2 Tool Usage Guidance Strings
 

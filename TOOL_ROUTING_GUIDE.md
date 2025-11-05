@@ -75,8 +75,6 @@ explore       - Codebase investigation (read-only agent)
 plan          - Implementation planning (planning agent)
 agent         - Generic task delegation (any agent)
 agent_ask     - Follow-up questions (persistent agent)
-agent_kill    - Stop running agent
-agent_list_active - List active agents
 ```
 
 **Characteristics:**
@@ -84,6 +82,7 @@ agent_list_active - List active agents
 - Agent handles its own tool execution
 - Returns summarized result
 - Can persist agent for reuse (`persist=true`)
+- Agent lifecycle is managed automatically (auto-cleanup on idle)
 
 ### Todo Management Tools
 ```

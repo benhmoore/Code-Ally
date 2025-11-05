@@ -34,8 +34,9 @@ export class AgentAskTool extends BaseTool {
   readonly hideOutput = true; // Hide detailed output
 
   readonly usageGuidance = `**When to use agent_ask:**
-Follow-up questions after explore/plan/agent—leverages agent's existing context for richer answers.
-Prefer over direct tools for questions that benefit from prior understanding.
+PREFER for any follow-up after explore/plan/agent. Agent has context → richer answers than direct tools.
+Examples: "How many?", "What about?", "Where is?" after exploration.
+Use direct tools only if question is truly independent from prior context.
 Requires agent_id from previous explore/plan/agent call (agents automatically persist).`;
 
   constructor(activityStream: ActivityStream) {

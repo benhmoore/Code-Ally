@@ -450,8 +450,6 @@ async function main() {
     const { ExploreTool } = await import('./tools/ExploreTool.js');
     const { PlanTool } = await import('./tools/PlanTool.js');
     const { AgentAskTool } = await import('./tools/AgentAskTool.js');
-    const { AgentKillTool } = await import('./tools/AgentKillTool.js');
-    const { AgentListActiveTool } = await import('./tools/AgentListActiveTool.js');
     const { BatchTool } = await import('./tools/BatchTool.js');
     const { TodoAddTool } = await import('./tools/TodoAddTool.js');
     const { TodoRemoveTool } = await import('./tools/TodoRemoveTool.js');
@@ -481,8 +479,6 @@ async function main() {
       new ExploreTool(activityStream),
       new PlanTool(activityStream),
       new AgentAskTool(activityStream),
-      new AgentKillTool(activityStream),
-      new AgentListActiveTool(activityStream),
       new BatchTool(activityStream),
       new TodoAddTool(activityStream),
       new TodoRemoveTool(activityStream),
@@ -571,9 +567,7 @@ async function main() {
       configManager,
       permissionManager,
       {
-        maxPoolSize: AGENT_POOL.DEFAULT_MAX_SIZE, // Keep up to 5 agents in pool (auto-evict oldest when full)
-        idleTimeoutMs: AGENT_POOL.DEFAULT_IDLE_TIMEOUT_MS, // Evict after 5 minutes idle
-        cleanupIntervalMs: AGENT_POOL.DEFAULT_CLEANUP_INTERVAL_MS, // Check for idle agents every minute
+        maxPoolSize: AGENT_POOL.DEFAULT_MAX_SIZE, // Keep up to 5 agents in pool (auto-evict least recently used when full)
         verbose: options.debug || false, // Enable verbose logging in debug mode
       }
     );

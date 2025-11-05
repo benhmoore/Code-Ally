@@ -379,6 +379,8 @@ Skip for quick fixes or when continuing existing plans.`;
         // Always include agent_id when available
         if (agentId) {
           successResponse.agent_id = agentId;
+          // Append agent_ask reminder to existing system_reminder
+          successResponse.system_reminder += `\n\nAgent persists as ${agentId}. For follow-up questions, PREFER agent_ask(agent_id="${agentId}", message="...") over direct tools—agent has context for richer answers.`;
         }
 
         return this.formatSuccessResponse(successResponse);
