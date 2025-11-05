@@ -21,8 +21,8 @@ describe('SessionManager', () => {
     tempDir = join(tmpdir(), `code-ally-sessions-test-${Date.now()}`);
     await fs.mkdir(tempDir, { recursive: true });
 
-    // Mock the SESSIONS_DIR constant by modifying the path
-    // Note: In production, you'd use dependency injection or config
+    // Create a new SessionManager instance
+    // Note: SessionManager uses process.cwd()/.ally-sessions by default
     const SessionManagerModule = await import('../SessionManager.js');
     sessionManager = new SessionManagerModule.SessionManager({ maxSessions: 3 });
 

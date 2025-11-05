@@ -210,9 +210,7 @@ Tool selection guidance:
 
 #### Session Management
 - `list_sessions` - List previous sessions
-- `session_lookup` - Find session by description
-- `session_read` - Read previous session
-- `ask_session` - Ask question about session
+- `sessions` - Agent-based tool to analyze past conversation sessions
 
 #### Other
 - `deny_proposal` - Deny a proposed todo plan

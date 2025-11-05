@@ -7,6 +7,8 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { FocusManager } from '../services/FocusManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
@@ -104,6 +106,20 @@ export class WriteTool extends BaseTool {
 
     // Resolve absolute path
     const absolutePath = resolvePath(filePath);
+
+    // Validate focus constraint if active
+    const registry = ServiceRegistry.getInstance();
+    const focusManager = registry.get<FocusManager>('focus_manager');
+
+    if (focusManager && focusManager.isFocused()) {
+      const validation = await focusManager.validatePathInFocus(absolutePath);
+      if (!validation.success) {
+        return this.formatErrorResponse(
+          validation.message,
+          'permission_error'
+        );
+      }
+    }
 
     try {
       // Check if file exists

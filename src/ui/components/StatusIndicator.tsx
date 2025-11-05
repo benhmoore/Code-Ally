@@ -14,6 +14,7 @@ import { IdleMessageGenerator } from '../../services/IdleMessageGenerator.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ActivityEventType } from '../../types/index.js';
 import { ChickAnimation } from './ChickAnimation.js';
+import { ProgressIndicator } from './ProgressIndicator.js';
 import { formatElapsed } from '../utils/timeUtils.js';
 import { getGitBranch } from '../../utils/gitUtils.js';
 import { logger } from '../../services/Logger.js';
@@ -405,7 +406,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       <Box>
         <ChickAnimation color="red" speed={2000} />
         <Text> </Text>
-        <Text color="red">Cancelling...</Text>
+        <ProgressIndicator type="dots2" color="red" />
+        <Text> </Text>
+        <Text color="red">Cancelling</Text>
       </Box>
     );
   }
@@ -416,7 +419,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       <Box>
         <ChickAnimation color="cyan" speed={4000} />
         <Text> </Text>
-        <Text color="cyan">Compacting conversation...</Text>
+        <ProgressIndicator type="dots2" color="cyan" />
+        <Text> </Text>
+        <Text color="cyan">Compacting conversation</Text>
         <Text dimColor> ({formatElapsed(elapsed)})</Text>
       </Box>
     );
@@ -438,7 +443,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         <Text> </Text>
         {isProcessing || isCompacting ? (
           <>
-            <Text>{allTodos.length === 0 ? 'Thinking...' : currentTask || 'Processing...'}</Text>
+            <ProgressIndicator type="dots2" color="yellow" />
+            <Text> </Text>
+            <Text>{allTodos.length === 0 ? 'Thinking' : currentTask || 'Processing'}</Text>
             <Text dimColor> (esc to interrupt) </Text>
             <Text dimColor>[{formatElapsed(elapsed)}]</Text>
           </>

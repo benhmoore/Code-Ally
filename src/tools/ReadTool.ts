@@ -7,6 +7,8 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { FocusManager } from '../services/FocusManager.js';
 import { tokenCounter } from '../services/TokenCounter.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
@@ -219,6 +221,17 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
   ): Promise<string> {
     // Resolve absolute path
     const absolutePath = resolvePath(filePath);
+
+    // Validate focus constraint if active
+    const registry = ServiceRegistry.getInstance();
+    const focusManager = registry.get<FocusManager>('focus_manager');
+
+    if (focusManager && focusManager.isFocused()) {
+      const validation = await focusManager.validatePathInFocus(absolutePath);
+      if (!validation.success) {
+        throw new Error(validation.message);
+      }
+    }
 
     // Validate file exists and is a file
     const validation = await validateIsFile(absolutePath);

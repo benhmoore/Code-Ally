@@ -167,21 +167,22 @@ Add to queue or log error (non-blocking)
 Trigger auto-save on queue update
 
 
-Flow C: AskSessionTool
-──────────────────────
-User calls ask_session(session_id, question)
+Flow C: SessionsTool (Agent-based Session Analysis)
+───────────────────────────────────────────────────
+User calls sessions(request)
        |
        v
-Load session content
+Create specialized session analysis agent
        |
        v
-service_model_client.send(messages, { stream: false })
-       |
-       └──> [Standard OllamaClient retry logic]
-            [No tool calls allowed - pure text response]
+Agent operates in .ally-sessions/ directory
+(read-only tools: read, glob, grep)
        |
        v
-Return answer to user
+Agent analyzes session history and returns findings
+       |
+       v
+Return synthesized answer to user
 
 
 ================================================================================

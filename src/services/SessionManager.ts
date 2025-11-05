@@ -2,7 +2,7 @@
  * SessionManager - Manages conversation session persistence
  *
  * Handles creating, loading, saving, and cleaning up conversation sessions.
- * Sessions are stored as JSON files in ~/.ally/sessions/
+ * Sessions are stored as JSON files in .ally-sessions/ within each project directory.
  *
  * Features:
  * - Session CRUD operations
@@ -13,7 +13,6 @@
 
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { SESSIONS_DIR } from '../config/paths.js';
 import { Session, SessionInfo, Message, IService } from '../types/index.js';
 import { generateShortId } from '../utils/id.js';
 import type { TodoItem } from './TodoManager.js';
@@ -44,7 +43,8 @@ export class SessionManager implements IService {
   private writeQueue: Map<string, Promise<void>> = new Map();
 
   constructor(config: SessionManagerConfig = {}) {
-    this.sessionsDir = SESSIONS_DIR;
+    // Sessions are stored in .ally-sessions/ within the current working directory
+    this.sessionsDir = join(process.cwd(), '.ally-sessions');
     this.maxSessions = config.maxSessions ?? BUFFER_SIZES.MAX_SESSIONS_DEFAULT;
     this.titleGenerator = config.modelClient
       ? new SessionTitleGenerator(config.modelClient)

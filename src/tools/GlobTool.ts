@@ -8,6 +8,8 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { FocusManager } from '../services/FocusManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { FILE_EXCLUSIONS, TOOL_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -103,6 +105,20 @@ export class GlobTool extends BaseTool {
     try {
       // Resolve search path
       const absolutePath = resolvePath(searchPath);
+
+      // Validate focus constraint if active
+      const registry = ServiceRegistry.getInstance();
+      const focusManager = registry.get<FocusManager>('focus_manager');
+
+      if (focusManager && focusManager.isFocused()) {
+        const validation = await focusManager.validatePathInFocus(absolutePath);
+        if (!validation.success) {
+          return this.formatErrorResponse(
+            validation.message,
+            'permission_error'
+          );
+        }
+      }
 
       // Check if path exists
       try {

@@ -14,11 +14,6 @@ import { join } from 'path';
 export const ALLY_HOME = join(homedir(), '.ally');
 
 /**
- * Directory for conversation session storage
- */
-export const SESSIONS_DIR = join(ALLY_HOME, 'sessions');
-
-/**
  * Directory for custom agent definitions
  */
 export const AGENTS_DIR = join(ALLY_HOME, 'agents');
@@ -59,7 +54,6 @@ export const COMMAND_HISTORY_FILE = join(ALLY_HOME, 'command_history');
  */
 export const STANDARD_DIRECTORIES = [
   ALLY_HOME,
-  SESSIONS_DIR,
   AGENTS_DIR,
   PLUGINS_DIR,
   PLUGIN_ENVS_DIR,

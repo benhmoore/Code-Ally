@@ -343,11 +343,14 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     return items;
   }, [completedTimeline, terminalWidth]);
 
+  // Calculate divider for header
+  const headerDivider = '─'.repeat(Math.max(TEXT_LIMITS.DIVIDER_MIN_WIDTH, terminalWidth - TEXT_LIMITS.DIVIDER_PADDING));
+
   return (
     <Box flexDirection="column">
       {/* Header - only show when no messages */}
       {messages.length === 0 && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} marginBottom={1}>
+        <Box flexDirection="column" marginBottom={1}>
           <Box flexDirection="row">
             <Box flexDirection="column" marginRight={2}>
               <Text color="yellow" bold>      __</Text>
@@ -366,6 +369,9 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
                 <Text dimColor color="yellow">branch: {gitBranch}</Text>
               )}
             </Box>
+          </Box>
+          <Box marginTop={1}>
+            <Text dimColor>{headerDivider}</Text>
           </Box>
         </Box>
       )}

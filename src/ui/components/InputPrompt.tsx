@@ -1187,11 +1187,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const isAgentMode = buffer.startsWith('@');
 
   let promptText = '> ';
-  let promptColor = 'yellow';
+  let promptColor = 'gray';
 
   if (isCommandMode) {
     promptText = 'Command > ';
-    promptColor = 'yellow';
+    promptColor = 'gray';
   } else if (isBashMode) {
     promptText = 'Bash > ';
     promptColor = 'green';

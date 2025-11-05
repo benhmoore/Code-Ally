@@ -457,10 +457,7 @@ async function main() {
     const { TodoClearTool } = await import('./tools/TodoClearTool.js');
     const { TodoListTool } = await import('./tools/TodoListTool.js');
     const { DenyProposalTool } = await import('./tools/DenyProposalTool.js');
-    const { SessionLookupTool } = await import('./tools/SessionLookupTool.js');
-    const { SessionReadTool } = await import('./tools/SessionReadTool.js');
-    const { AskSessionTool } = await import('./tools/AskSessionTool.js');
-    const { ListSessionsTool } = await import('./tools/ListSessionsTool.js');
+    const { SessionsTool } = await import('./tools/SessionsTool.js');
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
 
@@ -486,10 +483,7 @@ async function main() {
       new TodoClearTool(activityStream),
       new TodoListTool(activityStream),
       new DenyProposalTool(activityStream), // Always available
-      new ListSessionsTool(activityStream),
-      new SessionLookupTool(activityStream),
-      new SessionReadTool(activityStream),
-      new AskSessionTool(activityStream),
+      new SessionsTool(activityStream),
       new LintTool(activityStream),
       new FormatTool(activityStream),
     ];

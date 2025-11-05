@@ -76,6 +76,15 @@ Skip unnecessary steps.
 
 **Rule:** If you'd grep→analyze→synthesize, use explore instead.
 
+## Session History
+
+**When to use sessions:**
+- Questions about previous conversations: "What did we discuss?", "What files did we modify?"
+- Finding past solutions: "How did we solve X before?", "What approach did we take?"
+- Reviewing history: "What features have we built?", "What was our last conversation about?"
+
+**Rule:** Any question about "previous", "last time", "earlier", or past work → use sessions first, then answer.
+
 ## Planning
 - **Use plan for**: New features, complex fixes, significant changes
 - **Skip planning for**: Quick fixes, simple adjustments, continuing existing plans

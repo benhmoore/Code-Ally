@@ -69,8 +69,8 @@ function compressToolResult(content: string, toolName: string): string {
     // Not JSON, treat as plain text
   }
 
-  // For session_lookup results
-  if (toolName === 'session_lookup' && content.includes('Found')) {
+  // For sessions tool results
+  if (toolName === 'sessions' && content.includes('Found')) {
     return content.split('\n')[0] || content;
   }
 

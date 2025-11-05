@@ -49,7 +49,7 @@ CORE_DIRECTIVES
 - todo_add, todo_update, todo_remove, todo_list, todo_clear, deny_proposal
 
 **Sessions**
-- list_sessions, session_lookup, session_read, ask_session
+- list_sessions, sessions
 
 ### 4. Prompting Principles (10 Core)
 

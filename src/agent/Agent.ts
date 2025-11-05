@@ -16,6 +16,7 @@ import { ModelClient, LLMResponse } from '../llm/ModelClient.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { FocusManager } from '../services/FocusManager.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
 import { TokenManager } from './TokenManager.js';
 import { InterruptionManager } from './InterruptionManager.js';
@@ -57,6 +58,8 @@ export interface AgentConfig {
   maxDuration?: number;
   /** Internal: Unique key for pool matching (used by AgentTool to distinguish custom agents) */
   _poolKey?: string;
+  /** Directory to restrict this agent's file operations to (optional) */
+  focusDirectory?: string;
 }
 
 /**
@@ -110,6 +113,11 @@ export class Agent {
 
   // Timeout continuation tracking - counts attempts to continue after activity timeout
   private timeoutContinuationAttempts: number = 0;
+
+  // Focus management - tracks if this agent set focus and needs to restore it
+  private previousFocus: string | null = null;
+  private didSetFocus: boolean = false;
+  private focusReady: Promise<void> | null = null;
 
   constructor(
     modelClient: ModelClient,
@@ -192,6 +200,14 @@ export class Agent {
       this.toolResultManager,
       permissionManager
     );
+
+    // Setup focus if focusDirectory is provided
+    if (config.focusDirectory) {
+      // Store the promise so tool execution can wait for focus to be ready
+      this.focusReady = this.setupFocus(config.focusDirectory).catch(error => {
+        logger.warn('[AGENT_FOCUS]', this.instanceId, 'Async focus setup failed:', error);
+      });
+    }
 
     // Initialize with system prompt if provided
     if (config.systemPrompt) {
@@ -308,6 +324,12 @@ export class Agent {
    * @returns Promise resolving to the assistant's final response
    */
   async sendMessage(message: string): Promise<string> {
+    // Wait for focus to be ready if it was set during construction
+    if (this.focusReady) {
+      await this.focusReady;
+      this.focusReady = null; // Clear after first use
+    }
+
     // Start activity monitoring for specialized agents
     this.startActivityMonitoring();
 
@@ -1919,6 +1941,66 @@ export class Agent {
   }
 
   /**
+   * Setup focus for this agent
+   * Called during constructor if focusDirectory is provided
+   */
+  private async setupFocus(focusDirectory: string): Promise<void> {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const focusManager = registry.get<FocusManager>('focus_manager');
+
+      if (!focusManager) {
+        logger.warn('[AGENT_FOCUS]', this.instanceId, 'FocusManager not available, skipping focus setup');
+        return;
+      }
+
+      // Save previous focus state
+      this.previousFocus = focusManager.getFocusDirectory();
+
+      // Set new focus
+      const result = await focusManager.setFocus(focusDirectory);
+
+      if (result.success) {
+        this.didSetFocus = true;
+        logger.debug('[AGENT_FOCUS]', this.instanceId, 'Focus set to:', focusDirectory);
+      } else {
+        logger.warn('[AGENT_FOCUS]', this.instanceId, 'Failed to set focus:', result.message);
+      }
+    } catch (error) {
+      logger.warn('[AGENT_FOCUS]', this.instanceId, 'Error setting up focus:', error);
+    }
+  }
+
+  /**
+   * Restore focus without full cleanup
+   *
+   * Used for pooled agents that need focus restored but shouldn't be fully cleaned up.
+   * This is called before releasing agents back to the pool.
+   */
+  async restoreFocus(): Promise<void> {
+    if (!this.didSetFocus) {
+      return; // Nothing to restore
+    }
+
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const focusManager = registry.get<FocusManager>('focus_manager');
+
+      if (focusManager) {
+        if (this.previousFocus) {
+          await focusManager.setFocus(this.previousFocus);
+          logger.debug('[AGENT_FOCUS]', this.instanceId, 'Restored previous focus:', this.previousFocus);
+        } else {
+          focusManager.clearFocus();
+          logger.debug('[AGENT_FOCUS]', this.instanceId, 'Cleared focus');
+        }
+      }
+    } catch (error) {
+      logger.warn('[AGENT_FOCUS]', this.instanceId, 'Error restoring focus:', error);
+    }
+  }
+
+  /**
    * Cleanup resources
    *
    * NOTE: Subagents share the ModelClient with the main agent, so they should
@@ -1929,6 +2011,9 @@ export class Agent {
 
     // Stop activity monitoring
     this.stopActivityMonitoring();
+
+    // Restore focus
+    await this.restoreFocus();
 
     // Only close the model client if this is NOT a specialized subagent
     // Subagents share the client and shouldn't close it

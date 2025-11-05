@@ -178,14 +178,13 @@ Located in `/src/config/paths.ts`:
 import {
   ALLY_HOME,
   CONFIG_FILE,
-  SESSIONS_DIR,
   AGENTS_DIR,
   ensureDirectories,
 } from '../config';
 
 // Use path constants
 console.log('Config file:', CONFIG_FILE); // ~/.ally/config.json
-console.log('Sessions:', SESSIONS_DIR); // ~/.ally/sessions
+console.log('Agents:', AGENTS_DIR); // ~/.ally/agents
 
 // Ensure all directories exist
 await ensureDirectories();

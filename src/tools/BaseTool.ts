@@ -50,6 +50,14 @@ export abstract class BaseTool {
   readonly isTransparentWrapper: boolean = false;
 
   /**
+   * Whether this tool's agent should persist in the pool (if applicable)
+   * Set to true for agent-based tools that should keep agents alive for follow-up questions
+   * Set to false for tools that should fully cleanup agents after execution
+   * Default: false (full cleanup)
+   */
+  readonly persistAgent: boolean = false;
+
+  /**
    * Whether this tool should collapse its children when complete
    * Set to true for tools that should hide their output/children after completion
    * (e.g., subagents that should show only their summary line)

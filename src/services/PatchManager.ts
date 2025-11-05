@@ -140,7 +140,7 @@ export class PatchManager implements IService {
 
   constructor(config: PatchManagerConfig) {
     this.getSessionId = config.getSessionId;
-    this.sessionsDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.code-ally', 'sessions');
+    this.sessionsDir = path.join(process.cwd(), '.ally-sessions');
     this.maxPatchesPerSession = config.maxPatchesPerSession ?? 100;
     this.maxPatchesSizeBytes = config.maxPatchesSizeBytes ?? 10 * 1024 * 1024; // 10MB default
     this.patchIndex = {
