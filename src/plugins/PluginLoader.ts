@@ -190,6 +190,7 @@ export class PluginLoader {
     pluginName?: string;
     tools?: BaseTool[];
     error?: string;
+    hadExistingConfig?: boolean;
   }> {
     try {
       // Validate source path exists
@@ -227,13 +228,28 @@ export class PluginLoader {
         return { success: false, error: 'Plugin manifest missing or empty tools array' };
       }
 
-      // Check if plugin already exists - if so, remove it (update scenario)
+      // Check if plugin already exists - if so, preserve config before removing
       const targetPath = join(pluginsDir, manifest.name);
       let isUpdate = false;
+      let savedConfig: string | null = null;
+      let hadExistingConfig = false;
+
       try {
         await fs.access(targetPath);
         isUpdate = true;
         logger.info(`[PluginLoader] Updating existing plugin '${manifest.name}'`);
+
+        // Check if there's an existing config file to preserve
+        const configPath = join(targetPath, PLUGIN_FILES.CONFIG);
+        try {
+          savedConfig = await fs.readFile(configPath, 'utf-8');
+          hadExistingConfig = true;
+          logger.info(`[PluginLoader] Preserving existing configuration for '${manifest.name}'`);
+        } catch {
+          // No config file exists - that's okay
+          logger.debug(`[PluginLoader] No existing config to preserve for '${manifest.name}'`);
+        }
+
         await fs.rm(targetPath, { recursive: true, force: true });
       } catch {
         // Target doesn't exist - fresh install
@@ -244,6 +260,13 @@ export class PluginLoader {
         `[PluginLoader] ${isUpdate ? 'Updating' : 'Installing'} plugin '${manifest.name}' from ${sourcePath}`
       );
       await this.copyDirectory(sourcePath, targetPath);
+
+      // Restore the saved config if it existed
+      if (savedConfig) {
+        const configPath = join(targetPath, PLUGIN_FILES.CONFIG);
+        await fs.writeFile(configPath, savedConfig, 'utf-8');
+        logger.info(`[PluginLoader] Restored existing configuration for '${manifest.name}'`);
+      }
 
       // Load the plugin (this triggers dependency installation)
       const tools = await this.loadPlugin(targetPath);
@@ -267,6 +290,7 @@ export class PluginLoader {
               success: true,
               pluginName: manifest.name,
               tools: [],
+              hadExistingConfig,
             };
           }
         }
@@ -286,6 +310,7 @@ export class PluginLoader {
         success: true,
         pluginName: manifest.name,
         tools,
+        hadExistingConfig,
       };
     } catch (error) {
       return {

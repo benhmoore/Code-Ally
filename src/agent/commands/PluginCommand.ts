@@ -177,18 +177,30 @@ export class PluginCommand extends Command {
         toolManager.registerTools(result.tools);
       }
 
-      // Return success message with appropriate details
+      // Build success message
+      let successMessage = '';
       if (result.tools && result.tools.length > 0) {
-        return {
-          handled: true,
-          response: `✓ Plugin '${result.pluginName}' installed successfully with ${result.tools.length} tool(s)`,
-        };
+        successMessage = `✓ Plugin '${result.pluginName}' installed successfully with ${result.tools.length} tool(s)`;
+
+        // If this was a reinstall with existing config, offer to reconfigure
+        if (result.hadExistingConfig) {
+          successMessage += `\nYour existing configuration has been preserved. To reconfigure, run:\n  /plugin config ${result.pluginName}`;
+        }
       } else {
-        return {
-          handled: true,
-          response: `✓ Plugin '${result.pluginName}' installed successfully. Use /plugin config ${result.pluginName} to configure it.`,
-        };
+        successMessage = `✓ Plugin '${result.pluginName}' installed successfully`;
+
+        // If config was preserved, let them know
+        if (result.hadExistingConfig) {
+          successMessage += ' (existing configuration preserved)';
+        }
+
+        successMessage += `. Use /plugin config ${result.pluginName} to configure it.`;
       }
+
+      return {
+        handled: true,
+        response: successMessage,
+      };
     } catch (error) {
       return this.createError(`Failed to install plugin: ${formatError(error)}`);
     }

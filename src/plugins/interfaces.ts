@@ -48,6 +48,7 @@ export interface PluginInstallResult {
   pluginName?: string;
   tools?: BaseTool[];
   error?: string;
+  hadExistingConfig?: boolean;
 }
 
 /**
