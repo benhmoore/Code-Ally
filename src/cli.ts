@@ -25,6 +25,7 @@ import { App } from './ui/App.js';
 import { ArgumentParser, type CLIOptions } from './cli/ArgumentParser.js';
 import { logger } from './services/Logger.js';
 import { formatRelativeTime } from './ui/utils/timeUtils.js';
+import { AGENT_POOL } from './config/constants.js';
 
 /**
  * Comprehensive terminal state reset
@@ -570,9 +571,9 @@ async function main() {
       configManager,
       permissionManager,
       {
-        maxPoolSize: 10, // Keep up to 10 agents in pool
-        idleTimeoutMs: 5 * 60 * 1000, // Evict after 5 minutes idle
-        cleanupIntervalMs: 60 * 1000, // Check for idle agents every minute
+        maxPoolSize: AGENT_POOL.DEFAULT_MAX_SIZE, // Keep up to 5 agents in pool (auto-evict oldest when full)
+        idleTimeoutMs: AGENT_POOL.DEFAULT_IDLE_TIMEOUT_MS, // Evict after 5 minutes idle
+        cleanupIntervalMs: AGENT_POOL.DEFAULT_CLEANUP_INTERVAL_MS, // Check for idle agents every minute
         verbose: options.debug || false, // Enable verbose logging in debug mode
       }
     );

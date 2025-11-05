@@ -9,6 +9,7 @@
  * - Single purpose: codebase exploration
  * - Guaranteed read-only access
  * - Zero configuration needed
+ * - Agents always persist in the pool for reuse
  */
 
 import { BaseTool } from './BaseTool.js';
@@ -67,8 +68,9 @@ export class ExploreTool extends BaseTool {
   readonly hideOutput = true; // Hide detailed output
 
   readonly usageGuidance = `**When to use explore:**
-Understand structure, find implementations, trace features, analyze dependencies.
-Delegates to read-only agent. Prefer over manual grep/read sequences.`;
+User asks "How/Why/Where does X work?", bug investigation, architecture understanding.
+Delegates to read-only agent. Prefer over manual grep/read sequences.
+NOT for specific file paths or known locations—use read/glob directly.`;
 
   private activeDelegations: Map<string, any> = new Map();
   private currentPooledAgent: PooledAgent | null = null;
@@ -102,10 +104,6 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
               type: 'string',
               description: 'Level of thoroughness for exploration: "quick" (~1 min, 2-5 tool calls), "medium" (~5 min, 5-10 tool calls), "very thorough" (~10 min, 10-20 tool calls), "uncapped" (no time limit, default). Controls time budget and depth.',
             },
-            persist: {
-              type: 'boolean',
-              description: 'Whether to persist the agent for reuse. If true, returns agent_id for tracking. Set to false for one-time ephemeral agents. Default: true.',
-            },
           },
           required: ['task_description'],
         },
@@ -118,7 +116,6 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
 
     const taskDescription = args.task_description;
     const thoroughness = args.thoroughness ?? 'uncapped';
-    const persist = args.persist ?? true;
 
     // Validate task_description parameter
     if (!taskDescription || typeof taskDescription !== 'string') {
@@ -139,15 +136,6 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
       );
     }
 
-    // Validate persist parameter
-    if (persist !== undefined && typeof persist !== 'boolean') {
-      return this.formatErrorResponse(
-        'persist parameter must be a boolean',
-        'validation_error',
-        'Example: explore(task_description="...", persist=true)'
-      );
-    }
-
     // Execute exploration - pass currentCallId to avoid race conditions
     const callId = this.currentCallId;
     if (!callId) {
@@ -157,24 +145,24 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
       );
     }
 
-    return await this.executeExploration(taskDescription, thoroughness, persist, callId);
+    return await this.executeExploration(taskDescription, thoroughness, callId);
   }
 
   /**
    * Execute exploration with read-only agent
    *
+   * All exploration agents are persisted in the agent pool for reuse.
+   *
    * @param taskDescription - The exploration task to execute
    * @param thoroughness - Level of thoroughness: "quick", "medium", or "very thorough"
-   * @param persist - Whether to use AgentPoolService for agent persistence
    * @param callId - Unique call identifier for tracking
    */
   private async executeExploration(
     taskDescription: string,
     thoroughness: string,
-    persist: boolean,
     callId: string
   ): Promise<ToolResult> {
-    logger.debug('[EXPLORE_TOOL] Starting exploration, callId:', callId, 'persist:', persist);
+    logger.debug('[EXPLORE_TOOL] Starting exploration, callId:', callId);
     const startTime = Date.now();
 
     try {
@@ -241,38 +229,17 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
         maxDuration,
       };
 
-      // Choose between pooled or ephemeral agent
+      // Always use pooled agent for persistence
       let explorationAgent: Agent;
       let pooledAgent: PooledAgent | null = null;
       let agentId: string | null = null;
 
-      if (persist) {
-        // Use AgentPoolService for persistent agent
-        const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+      // Use AgentPoolService for persistent agent
+      const agentPoolService = registry.get<AgentPoolService>('agent_pool');
 
-        if (!agentPoolService) {
-          // Graceful fallback: AgentPoolService not available
-          logger.warn('[EXPLORE_TOOL] AgentPoolService not available, falling back to ephemeral agent');
-          explorationAgent = new Agent(
-            mainModelClient,
-            filteredToolManager,
-            this.activityStream,
-            agentConfig,
-            configManager,
-            permissionManager
-          );
-        } else {
-          // Acquire agent from pool with filtered ToolManager
-          logger.debug('[EXPLORE_TOOL] Acquiring agent from pool with filtered ToolManager');
-          pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
-          explorationAgent = pooledAgent.agent;
-          agentId = pooledAgent.agentId;
-          this.currentPooledAgent = pooledAgent; // Track for interjection routing
-          logger.debug('[EXPLORE_TOOL] Acquired pooled agent:', agentId);
-        }
-      } else {
-        // Create ephemeral agent
-        logger.debug('[EXPLORE_TOOL] Creating ephemeral exploration agent with parentCallId:', callId);
+      if (!agentPoolService) {
+        // Graceful fallback: AgentPoolService not available
+        logger.warn('[EXPLORE_TOOL] AgentPoolService not available, falling back to ephemeral agent');
         explorationAgent = new Agent(
           mainModelClient,
           filteredToolManager,
@@ -281,6 +248,14 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
           configManager,
           permissionManager
         );
+      } else {
+        // Acquire agent from pool with filtered ToolManager
+        logger.debug('[EXPLORE_TOOL] Acquiring agent from pool with filtered ToolManager');
+        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
+        explorationAgent = pooledAgent.agent;
+        agentId = pooledAgent.agentId;
+        this.currentPooledAgent = pooledAgent; // Track for interjection routing
+        logger.debug('[EXPLORE_TOOL] Acquired pooled agent:', agentId);
       }
 
       // Track active delegation
@@ -328,13 +303,13 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
         // Append note that user cannot see this
         const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this output! You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
 
-        // Build response with optional agent_id
+        // Build response with agent_id (always returned since agents always persist)
         const successResponse: Record<string, any> = {
           content: result,
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
         };
 
-        // Include agent_id if agent was persisted
+        // Always include agent_id when available
         if (agentId) {
           successResponse.agent_id = agentId;
         }
@@ -345,14 +320,14 @@ Delegates to read-only agent. Prefer over manual grep/read sequences.`;
         logger.debug('[EXPLORE_TOOL] Cleaning up exploration agent...');
         this.activeDelegations.delete(callId);
 
-        // Only cleanup if not using pooled agent
+        // Release agent back to pool or cleanup ephemeral agent
         if (pooledAgent) {
           // Release agent back to pool
           logger.debug('[EXPLORE_TOOL] Releasing agent back to pool');
           pooledAgent.release();
           this.currentPooledAgent = null; // Clear tracked pooled agent
         } else {
-          // Cleanup ephemeral agent
+          // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
           await explorationAgent.cleanup();
         }
       }

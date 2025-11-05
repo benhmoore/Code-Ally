@@ -35,7 +35,7 @@ export class AgentKillTool extends BaseTool {
           properties: {
             agent_id: {
               type: 'string',
-              description: 'ID of the agent to remove (from explore/plan/agent with persist=true)',
+              description: 'ID of the agent to remove (from explore/plan/agent, which automatically persist)',
             },
           },
           required: ['agent_id'],

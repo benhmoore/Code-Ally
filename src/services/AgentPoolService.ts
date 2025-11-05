@@ -27,7 +27,7 @@ import { AGENT_POOL } from '../config/constants.js';
  * Configuration for AgentPoolService
  */
 export interface AgentPoolConfig {
-  /** Maximum number of agents to keep in the pool (default: 10) */
+  /** Maximum number of agents to keep in the pool (default: 5) */
   maxPoolSize?: number;
   /** Idle timeout in milliseconds before evicting an agent (default: 5 minutes) */
   idleTimeoutMs?: number;

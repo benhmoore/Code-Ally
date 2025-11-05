@@ -3,7 +3,7 @@
  *
  * Enables the main agent to continue conversations with previously created
  * persistent agents by sending additional messages to them. Works in conjunction
- * with ExploreTool/PlanTool when persist=true is used.
+ * with ExploreTool/PlanTool/AgentTool (which automatically persist agents).
  *
  * Key features:
  * - Retrieve agent from pool by ID
@@ -27,15 +27,16 @@ export class AgentAskTool extends BaseTool {
   readonly name = 'agent_ask';
   private currentPooledAgent: PooledAgent | null = null;
   readonly description =
-    'Continue conversation with a persistent agent created by explore/plan. Send additional messages to the same agent instance. Use when you need follow-up questions or iterative refinement.';
+    'Continue conversation with a persistent agent created by explore/plan/agent. Send additional messages to the same agent instance. All agents automatically persist and can be queried later. Use when you need follow-up questions or iterative refinement.';
   readonly requiresConfirmation = false; // Read-only operation (for explore agents) or planning operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = true; // Hide detailed output
 
   readonly usageGuidance = `**When to use agent_ask:**
-Follow-up questions to persistent agents, iterative exploration, refining plans.
-Requires agent_id from previous explore(persist=true) or plan(persist=true) call.`;
+Follow-up questions after explore/plan/agent—leverages agent's existing context for richer answers.
+Prefer over direct tools for questions that benefit from prior understanding.
+Requires agent_id from previous explore/plan/agent call (agents automatically persist).`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -55,7 +56,7 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
           properties: {
             agent_id: {
               type: 'string',
-              description: 'Agent ID from previous explore/plan call with persist=true',
+              description: 'Agent ID from previous explore/plan/agent call (agents automatically persist)',
             },
             message: {
               type: 'string',
@@ -154,7 +155,7 @@ Requires agent_id from previous explore(persist=true) or plan(persist=true) call
         return this.formatErrorResponse(
           `Agent not found: ${agentId}. Agent may have been evicted from pool or ID is invalid.`,
           'validation_error',
-          'Use explore(persist=true) or plan(persist=true) to create a persistent agent and get an agent_id'
+          'Use explore/plan/agent to create a persistent agent and get an agent_id (agents automatically persist)'
         );
       }
 

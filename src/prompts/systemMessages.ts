@@ -50,6 +50,19 @@ const AGENT_DELEGATION_GUIDELINES = `## Tool Selection
 - \`agent\`: Complex tasks requiring specialized expertise or multiple steps
 - Manual tools: Simple single-file operations and targeted searches
 
+## Common Patterns
+
+Recognize these patterns to choose effective approaches (improvise as needed):
+
+- **Understanding questions** ("How does X work?", "Why is Y broken?") → explore
+- **Follow-up questions** to exploration/planning → agent_ask with persistent agent (richer context than direct tools)
+- **Implementation requests** ("Add feature X", "Build Y") → explore (if context needed) → plan → implement
+- **Bug investigation** ("X is broken", "Debug Y") → explore to trace issue → diagnose → fix
+- **Refactoring** ("Improve X", "Refactor Y") → explore current state → plan safe approach → execute
+- **Specific queries** ("Read file X", "Find class Y") → direct tools (read, glob, grep)
+
+Structure helps with complexity, but skip steps that don't add value.
+
 ## Exploration and Analysis
 
 **When to use explore:**
@@ -76,8 +89,12 @@ const AGENT_DELEGATION_GUIDELINES = `## Tool Selection
 ## Agent Tagging
 - @agent_name syntax → delegate using agent tool
 
+## Agent Persistence
+All agents automatically persist in a pool (holds 5 most recent agents for 5 minutes each).
+No persist parameter needed—agents are always reusable via agent_ask.
+
 ## Creative Agent Usage
-Agents persist in memory (persist=true, default) and can be queried later with agent_ask:
+Use agent_ask to continue conversations with persistent agents:
 - **File muse**: explore(task="Understand auth.ts architecture") → agent_ask(agent_id="...", message="How does token refresh work?")
 - **Implement + validate**: agent(task="Add OAuth", agent_name="implementor") → agent(task="Review OAuth implementation", agent_name="validator")
 - **Iterative refinement**: plan(requirements="Add feature X") → agent_ask(agent_id="...", message="How would we handle edge case Y?")
