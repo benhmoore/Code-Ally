@@ -36,6 +36,8 @@ export interface MessageMetadata {
   parentId?: string;
   /** Whether this is a partial assistant response (interrupted mid-stream) */
   partial?: boolean;
+  /** Whether this is a conversation summary that should be displayed in UI */
+  isConversationSummary?: boolean;
   // Future: Add more presentation hints as needed
 }
 

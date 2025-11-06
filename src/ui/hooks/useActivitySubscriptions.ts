@@ -618,7 +618,12 @@ export const useActivitySubscriptions = (
     actions.clearToolCalls();
 
     if (compactedMessages) {
-      const uiMessages = compactedMessages.filter((m: Message) => m.role !== 'system');
+      // Filter out system messages EXCEPT for conversation summaries
+      const uiMessages = compactedMessages.filter((m: Message) => {
+        if (m.role !== 'system') return true;
+        // Keep system messages that are conversation summaries
+        return m.metadata?.isConversationSummary === true;
+      });
       // Atomically reset conversation view (sets messages + increments remount key)
       actions.resetConversationView(uiMessages);
     }
@@ -890,12 +895,64 @@ export const useActivitySubscriptions = (
 
   // Rewind response
   useActivityEvent(ActivityEventType.REWIND_RESPONSE, async (event) => {
-    const { selectedIndex, cancelled } = event.data;
+    const { selectedIndex, cancelled, options } = event.data;
 
     modal.setRewindRequest(undefined);
 
     if (!cancelled && selectedIndex !== undefined) {
       try {
+        // Get the target message BEFORE rewinding to extract its timestamp
+        const userMessages = agent.getMessages().filter(m => m.role === 'user');
+        const targetMessage = userMessages[selectedIndex];
+        const targetTimestamp = targetMessage?.timestamp;
+
+        // Initialize file restoration tracking
+        let restoredFiles: string[] = [];
+        let failedRestorations: string[] = [];
+
+        // Attempt to restore file changes ONLY if options.restoreFiles is true
+        const shouldRestoreFiles = options?.restoreFiles ?? true; // Default to true for backwards compatibility
+
+        if (shouldRestoreFiles && targetTimestamp !== undefined) {
+          const serviceRegistry = ServiceRegistry.getInstance();
+          const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+
+          if (patchManager) {
+            try {
+              // Check if there are patches to undo
+              const patchesToUndo = await patchManager.getPatchesSinceTimestamp(targetTimestamp);
+
+              if (patchesToUndo.length > 0) {
+                logger.info(`Restoring ${patchesToUndo.length} file changes during rewind`);
+
+                // Restore file changes
+                const undoResult = await patchManager.undoOperationsSinceTimestamp(targetTimestamp);
+
+                if (undoResult.success) {
+                  restoredFiles = undoResult.reverted_files;
+                  logger.info(`Successfully restored ${restoredFiles.length} files`);
+                } else {
+                  // Partial success
+                  restoredFiles = undoResult.reverted_files;
+                  failedRestorations = undoResult.failed_operations;
+                  logger.warn(`Partial file restoration: ${restoredFiles.length} succeeded, ${failedRestorations.length} failed`);
+                }
+              } else {
+                logger.debug('No file changes to restore');
+              }
+            } catch (error) {
+              // Log but don't fail the entire rewind if patch restoration fails
+              logger.error('Error restoring file changes during rewind:', error);
+              failedRestorations = [`Patch restoration error: ${error instanceof Error ? error.message : 'Unknown error'}`];
+            }
+          }
+        } else if (!shouldRestoreFiles) {
+          logger.info('File restoration skipped (user opted out)');
+        } else {
+          logger.debug('Target message has no timestamp, skipping file restoration');
+        }
+
+        // Proceed with conversation rewind
         const targetMessageContent = await agent.rewindToMessage(selectedIndex);
 
         const rewindedMessages = agent.getMessages().filter(m => m.role !== 'system');
@@ -924,6 +981,8 @@ export const useActivitySubscriptions = (
           id: `rewind_${Date.now()}`,
           timestamp: Date.now(),
           targetMessageIndex: selectedIndex,
+          restoredFiles: restoredFiles.length > 0 ? restoredFiles : undefined,
+          failedRestorations: failedRestorations.length > 0 ? failedRestorations : undefined,
         });
 
         modal.setInputPrefillText(targetMessageContent);

@@ -605,6 +605,211 @@ export class PatchManager implements IService {
     return previewData.length > 0 ? previewData : null;
   }
 
+  // ========== Timestamp-Based Operations ==========
+
+  /**
+   * Get all patches created after a specific timestamp
+   *
+   * @param timestamp - Unix timestamp in milliseconds
+   * @returns Array of patches in chronological order (oldest first), empty array if none found
+   */
+  async getPatchesSinceTimestamp(timestamp: number): Promise<PatchMetadata[]> {
+    // Validate timestamp parameter
+    if (typeof timestamp !== 'number' || isNaN(timestamp) || timestamp < 0) {
+      logger.warn(`Invalid timestamp provided: ${timestamp}`);
+      return [];
+    }
+
+    // Check if we have an active session
+    if (!this.getSessionId()) {
+      logger.debug('No active session - returning empty patch list');
+      return [];
+    }
+
+    // No patches available
+    if (this.patchIndex.patches.length === 0) {
+      return [];
+    }
+
+    try {
+      // Filter patches where patch timestamp >= provided timestamp
+      // Timestamps in metadata are ISO format strings, need to parse them
+      const filteredPatches = this.patchIndex.patches.filter(patch => {
+        try {
+          const patchTime = new Date(patch.timestamp).getTime();
+          return patchTime >= timestamp;
+        } catch (error) {
+          logger.warn(`Failed to parse timestamp for patch ${patch.patch_number}: ${patch.timestamp}`);
+          return false;
+        }
+      });
+
+      // Return in chronological order (oldest first) - they should already be in this order
+      logger.debug(`Found ${filteredPatches.length} patches since timestamp ${timestamp}`);
+      return filteredPatches;
+    } catch (error) {
+      logger.error('Failed to get patches since timestamp:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Undo all operations since a specific timestamp
+   *
+   * This method undoes the specific patches that were created after the given timestamp,
+   * not just the last N patches. This ensures correct behavior even if patches are added
+   * concurrently or if the patch order doesn't perfectly match timestamp order.
+   *
+   * @param timestamp - Unix timestamp in milliseconds
+   * @returns Result with success status and affected files
+   */
+  async undoOperationsSinceTimestamp(timestamp: number): Promise<UndoResult> {
+    // Validate timestamp parameter
+    if (typeof timestamp !== 'number' || isNaN(timestamp) || timestamp < 0) {
+      return {
+        success: false,
+        reverted_files: [],
+        failed_operations: ['Invalid timestamp: must be a non-negative number'],
+      };
+    }
+
+    try {
+      // Get the specific patches to undo based on timestamp
+      const patchesToUndo = await this.getPatchesSinceTimestamp(timestamp);
+
+      if (patchesToUndo.length === 0) {
+        return {
+          success: false,
+          reverted_files: [],
+          failed_operations: ['No operations found since the specified timestamp'],
+        };
+      }
+
+      logger.info(`Undoing ${patchesToUndo.length} operations since timestamp ${timestamp}`);
+
+      const revertedFiles: string[] = [];
+      const failedOperations: string[] = [];
+
+      // Apply patches in reverse order (newest first)
+      for (let i = patchesToUndo.length - 1; i >= 0; i--) {
+        const patchEntry = patchesToUndo[i]!;
+        try {
+          const success = await this.applyReversePatch(patchEntry);
+          if (success) {
+            revertedFiles.push(patchEntry.file_path);
+            logger.info(`Reverted ${patchEntry.operation_type} on ${patchEntry.file_path}`);
+          } else {
+            const msg = `Failed to revert ${patchEntry.operation_type} on ${patchEntry.file_path}`;
+            failedOperations.push(msg);
+            logger.error(`${msg} (patch #${patchEntry.patch_number})`);
+          }
+        } catch (error) {
+          const msg = `Error reverting ${patchEntry.file_path}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          failedOperations.push(msg);
+          logger.error(`Exception while reverting ${patchEntry.file_path} (patch #${patchEntry.patch_number}):`, error);
+        }
+      }
+
+      // If all succeeded, remove the specific patches from index and delete files
+      if (failedOperations.length === 0) {
+        const patchNumbersToRemove = new Set(patchesToUndo.map(p => p.patch_number));
+        this.patchIndex.patches = this.patchIndex.patches.filter(
+          p => !patchNumbersToRemove.has(p.patch_number)
+        );
+        await this.savePatchIndex();
+
+        const patchesDir = this.getPatchesDir();
+        if (patchesDir) {
+          for (const patchEntry of patchesToUndo) {
+            try {
+              const patchFile = path.join(patchesDir, patchEntry.patch_file);
+              await fs.unlink(patchFile).catch(() => {});
+            } catch (error) {
+              logger.warn(`Failed to delete patch file ${patchEntry.patch_file}:`, error);
+            }
+          }
+        }
+      }
+
+      const overallSuccess = revertedFiles.length > 0 && failedOperations.length === 0;
+      const result: UndoResult = {
+        success: overallSuccess,
+        reverted_files: revertedFiles,
+        failed_operations: failedOperations,
+      };
+
+      // Validate result structure before returning
+      if (!validateUndoResult(result)) {
+        logger.error('Generated invalid UndoResult structure');
+        return {
+          success: false,
+          reverted_files: [],
+          failed_operations: ['Internal error: invalid result structure'],
+        };
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to undo operations since timestamp:', error);
+      return {
+        success: false,
+        reverted_files: [],
+        failed_operations: [`Error: ${error instanceof Error ? error.message : 'Unknown error'}`],
+      };
+    }
+  }
+
+  /**
+   * Preview what would be undone if we undo all operations since a specific timestamp
+   *
+   * This method generates preview data for the specific patches that were created after
+   * the given timestamp, showing what files would be restored without actually applying changes.
+   *
+   * @param timestamp - Unix timestamp in milliseconds
+   * @returns Array of preview data showing what would be undone, or null if no operations
+   */
+  async previewUndoSinceTimestamp(timestamp: number): Promise<UndoPreview[] | null> {
+    // Validate timestamp parameter
+    if (typeof timestamp !== 'number' || isNaN(timestamp) || timestamp < 0) {
+      logger.warn(`Invalid timestamp provided for preview: ${timestamp}`);
+      return null;
+    }
+
+    // Check if we have an active session
+    if (!this.getSessionId()) {
+      logger.debug('No active session - cannot preview undo');
+      return null;
+    }
+
+    try {
+      // Get the specific patches to preview based on timestamp
+      const patchesToPreview = await this.getPatchesSinceTimestamp(timestamp);
+
+      if (patchesToPreview.length === 0) {
+        logger.debug('No patches found to preview');
+        return null;
+      }
+
+      logger.debug(`Generating preview for ${patchesToPreview.length} patches since timestamp ${timestamp}`);
+
+      // Generate preview for each patch
+      const previews: UndoPreview[] = [];
+      for (const patchEntry of patchesToPreview) {
+        const preview = await this.previewSinglePatch(patchEntry.patch_number);
+        if (preview) {
+          previews.push(preview);
+        } else {
+          logger.warn(`Failed to generate preview for patch ${patchEntry.patch_number}`);
+        }
+      }
+
+      return previews.length > 0 ? previews : null;
+    } catch (error) {
+      logger.error('Failed to preview undo since timestamp:', error);
+      return null;
+    }
+  }
+
   /**
    * Simulate undo result for a patch
    *

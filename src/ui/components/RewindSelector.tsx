@@ -8,6 +8,8 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { Message } from '../../types/index.js';
 import { TEXT_LIMITS } from '../../config/constants.js';
+import { PatchMetadata } from '../../services/PatchManager.js';
+import { logger } from '../../services/Logger.js';
 
 export interface RewindSelectorProps {
   /** User messages only (pre-filtered) */
@@ -18,6 +20,16 @@ export interface RewindSelectorProps {
   visible?: boolean;
   /** Maximum visible items before windowing */
   maxVisible?: number;
+  /** All patches from the current session */
+  patches?: PatchMetadata[];
+}
+
+/**
+ * File change statistics for a time window
+ */
+interface FileChangeStats {
+  fileCount: number;
+  files: Array<{ path: string }>;
 }
 
 /**
@@ -41,6 +53,94 @@ function truncateContent(content: string, maxLength: number = TEXT_LIMITS.DESCRI
 }
 
 /**
+ * Calculate file changes that occurred after a message timestamp
+ *
+ * IMPORTANT: Assumes messages array is ordered chronologically (oldest first).
+ * The last message in the array is the most recent one.
+ */
+function calculateFileChanges(
+  messageTimestamp: number,
+  nextMessageTimestamp: number | undefined,
+  patches: PatchMetadata[]
+): FileChangeStats {
+  // Filter patches in the time window
+  const relevantPatches = patches.filter(patch => {
+    try {
+      const patchTime = new Date(patch.timestamp).getTime();
+      if (nextMessageTimestamp === undefined) {
+        // For the last (most recent) message, include all patches after it
+        return patchTime > messageTimestamp;
+      } else {
+        // For other messages, include patches between this message and the next
+        return patchTime > messageTimestamp && patchTime <= nextMessageTimestamp;
+      }
+    } catch (error) {
+      logger.debug(`Malformed patch timestamp: ${patch.timestamp}`);
+      return false;
+    }
+  });
+
+  if (relevantPatches.length === 0) {
+    return { fileCount: 0, files: [] };
+  }
+
+  // Track unique file paths (multiple patches to same file count as 1)
+  const uniqueFiles = new Set<string>();
+  for (const patch of relevantPatches) {
+    uniqueFiles.add(patch.file_path);
+  }
+
+  const files = Array.from(uniqueFiles).map(path => ({ path }));
+
+  return {
+    fileCount: files.length,
+    files,
+  };
+}
+
+/**
+ * Component to display file changes for a message in the rewind selector
+ *
+ * Shows either:
+ * - "No code changes" if fileCount is 0
+ * - Single filename if exactly 1 file changed
+ * - "N files changed" summary if multiple files changed
+ *
+ * Color adapts based on selection state (green for selected, gray otherwise)
+ */
+const FileChangesDisplay: React.FC<{
+  changes: FileChangeStats;
+  isSelected: boolean;
+}> = ({ changes, isSelected }) => {
+  const color = isSelected ? 'green' : 'gray';
+
+  if (changes.fileCount === 0) {
+    return (
+      <Box marginLeft={2}>
+        <Text dimColor>  └─ No code changes</Text>
+      </Box>
+    );
+  }
+
+  if (changes.fileCount === 1 && changes.files[0]) {
+    const file = changes.files[0];
+    const filename = file.path.split('/').pop() || file.path;
+    return (
+      <Box marginLeft={2}>
+        <Text color={color}>  └─ {filename}</Text>
+      </Box>
+    );
+  }
+
+  // Multiple files
+  return (
+    <Box marginLeft={2}>
+      <Text color={color}>  └─ {changes.fileCount} files changed</Text>
+    </Box>
+  );
+};
+
+/**
  * RewindSelector Component
  */
 export const RewindSelector: React.FC<RewindSelectorProps> = ({
@@ -48,15 +148,39 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
   selectedIndex,
   visible = true,
   maxVisible = 10,
+  patches = [],
 }) => {
   if (!visible) {
     return null;
   }
 
-  // Messages are already pre-filtered to user messages only
-  const userMessages = messages;
+  // Calculate file changes for each message (memoized)
+  const fileChangesMap = React.useMemo(() => {
+    const map = new Map<number, FileChangeStats>();
 
-  if (userMessages.length === 0) {
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (!msg) continue;
+
+      const msgTimestamp = msg.timestamp;
+
+      if (!msgTimestamp) {
+        map.set(i, { fileCount: 0, files: [] });
+        continue;
+      }
+
+      // Get next message timestamp (undefined for last message)
+      const nextMsg = messages[i + 1];
+      const nextTimestamp = nextMsg?.timestamp;
+
+      const changes = calculateFileChanges(msgTimestamp, nextTimestamp, patches);
+      map.set(i, changes);
+    }
+
+    return map;
+  }, [messages, patches]);
+
+  if (messages.length === 0) {
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box
@@ -73,7 +197,7 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
   }
 
   // Calculate windowing
-  const totalMessages = userMessages.length;
+  const totalMessages = messages.length;
   const showScrollIndicators = totalMessages > maxVisible;
 
   let startIdx = 0;
@@ -91,7 +215,7 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
     }
   }
 
-  const visibleMessages = userMessages.slice(startIdx, endIdx);
+  const visibleMessages = messages.slice(startIdx, endIdx);
   const hasMoreAbove = startIdx > 0;
   const hasMoreBelow = endIdx < totalMessages;
 
@@ -128,19 +252,28 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
           const isSelected = actualIndex === selectedIndex;
           const time = formatTime((msg as any).timestamp);
           const content = truncateContent(msg.content);
+          const changes = fileChangesMap.get(actualIndex) || {
+            fileCount: 0,
+            additions: 0,
+            deletions: 0,
+            files: [],
+          };
 
           return (
-            <Box key={actualIndex}>
-              <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                {isSelected ? '> ' : '  '}
-              </Text>
-              <Text color={isSelected ? 'green' : 'gray'} bold={isSelected}>
-                {time}
-              </Text>
-              <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                {' - '}
-                {content}
-              </Text>
+            <Box key={actualIndex} flexDirection="column">
+              <Box>
+                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
+                  {isSelected ? '> ' : '  '}
+                </Text>
+                <Text color={isSelected ? 'green' : 'gray'} bold={isSelected}>
+                  {time}
+                </Text>
+                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
+                  {' - '}
+                  {content}
+                </Text>
+              </Box>
+              <FileChangesDisplay changes={changes} isSelected={isSelected} />
             </Box>
           );
         })}

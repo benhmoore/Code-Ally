@@ -555,7 +555,8 @@ Plugin Commands:
         : 0;
 
       // Perform compaction (delegate to Agent's unified method)
-      const compactedMessages = await this.agent.compactConversation(messages, {
+      // Use agent's internal messages (includes system prompt) rather than command parameter
+      const compactedMessages = await this.agent.compactConversation(this.agent.getMessages(), {
         customInstructions,
         preserveLastUserMessage: false,
         timestampLabel: undefined,

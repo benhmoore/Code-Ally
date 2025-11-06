@@ -58,6 +58,8 @@ interface InputPromptProps {
   rewindRequest?: { requestId: string; userMessagesCount: number; selectedIndex: number };
   /** Callback when rewind selection changes */
   onRewindNavigate?: (newIndex: number) => void;
+  /** Callback when rewind Enter pressed (to show options) */
+  onRewindEnter?: (selectedIndex: number) => void;
   /** Undo prompt data (if active) */
   undoRequest?: { requestId: string; count: number; patches: any[]; previewData: any[] };
   /** Selected undo option index */
@@ -105,6 +107,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   configViewerOpen = false,
   rewindRequest,
   onRewindNavigate,
+  onRewindEnter,
   undoRequest,
   undoSelectedIndex = 0,
   onUndoNavigate,
@@ -605,7 +608,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Rewind Selector Navigation =====
-      if (rewindRequest && onRewindNavigate && activityStream) {
+      if (rewindRequest && onRewindNavigate) {
         const messagesCount = rewindRequest.userMessagesCount;
         const currentIndex = rewindRequest.selectedIndex;
 
@@ -623,21 +626,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - submit selection (rewind to this message)
+        // Enter - show options modal (don't submit yet)
         if (key.return) {
-          try {
-            activityStream.emit({
-              id: `response_${rewindRequest.requestId}`,
-              type: ActivityEventType.REWIND_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: rewindRequest.requestId,
-                selectedIndex: currentIndex,
-                cancelled: false,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit rewind response:', error);
+          if (onRewindEnter) {
+            onRewindEnter(currentIndex);
           }
           return;
         }
@@ -648,18 +640,20 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           if (lastCancelledIdRef.current === rewindRequest.requestId) return;
           lastCancelledIdRef.current = rewindRequest.requestId;
 
-          try {
-            activityStream.emit({
-              id: `response_${rewindRequest.requestId}_cancel`,
-              type: ActivityEventType.REWIND_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: rewindRequest.requestId,
-                cancelled: true,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit rewind cancellation:', error);
+          if (activityStream) {
+            try {
+              activityStream.emit({
+                id: `response_${rewindRequest.requestId}_cancel`,
+                type: ActivityEventType.REWIND_RESPONSE,
+                timestamp: Date.now(),
+                data: {
+                  requestId: rewindRequest.requestId,
+                  cancelled: true,
+                },
+              });
+            } catch (error) {
+              console.error('[InputPrompt] Failed to emit rewind cancellation:', error);
+            }
           }
           return;
         }

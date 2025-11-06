@@ -17,7 +17,8 @@
 import { useState } from 'react';
 import { ModelOption } from '../components/ModelSelector.js';
 import { PermissionRequest } from '../components/PermissionPrompt.js';
-import type { SessionInfo } from '../../types/index.js';
+import type { SessionInfo, Message } from '../../types/index.js';
+import type { FileChangeStats } from '../components/RewindOptionsSelector.js';
 
 /**
  * Permission request with ID
@@ -61,6 +62,15 @@ export interface RewindRequest {
   requestId: string;
   userMessagesCount: number;
   selectedIndex: number;
+}
+
+/**
+ * Rewind options request
+ */
+export interface RewindOptionsRequest {
+  selectedIndex: number;
+  targetMessage: Message;
+  fileChanges: FileChangeStats;
 }
 
 /**
@@ -132,6 +142,10 @@ export interface ModalState {
   // Rewind selector
   rewindRequest?: RewindRequest;
   setRewindRequest: (request?: RewindRequest) => void;
+
+  // Rewind options selector
+  rewindOptionsRequest?: RewindOptionsRequest;
+  setRewindOptionsRequest: (request?: RewindOptionsRequest) => void;
 
   // Input prefill (from rewind)
   inputPrefillText?: string;
@@ -207,6 +221,7 @@ export const useModalState = (): ModalState => {
 
   // Rewind selector
   const [rewindRequest, setRewindRequest] = useState<RewindRequest | undefined>(undefined);
+  const [rewindOptionsRequest, setRewindOptionsRequest] = useState<RewindOptionsRequest | undefined>(undefined);
   const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
 
   // Undo prompt
@@ -263,6 +278,10 @@ export const useModalState = (): ModalState => {
     // Rewind selector
     rewindRequest,
     setRewindRequest,
+
+    // Rewind options selector
+    rewindOptionsRequest,
+    setRewindOptionsRequest,
 
     // Input prefill
     inputPrefillText,

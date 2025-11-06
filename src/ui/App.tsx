@@ -6,7 +6,7 @@
  * application structure.
  */
 
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { Box, Text } from 'ink';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityProvider, useActivityStreamContext } from './contexts/ActivityContext.js';
@@ -22,12 +22,14 @@ import { ProjectWizardView } from './components/ProjectWizardView.js';
 import { AgentWizardView } from './components/AgentWizardView.js';
 import { PluginConfigView } from './components/PluginConfigView.js';
 import { RewindSelector } from './components/RewindSelector.js';
+import { RewindOptionsSelector } from './components/RewindOptionsSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
 import { UndoPrompt } from './components/UndoPrompt.js';
 import { UndoFileList } from './components/UndoFileList.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { Agent } from '../agent/Agent.js';
+import { PatchManager, PatchMetadata } from '../services/PatchManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { FocusManager } from '../services/FocusManager.js';
@@ -114,6 +116,32 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modal.setSetupWizardOpen(true);
     }
   }, [shouldShowSetupWizard]);
+
+  // State for patches to pass to RewindSelector
+  const [patches, setPatches] = useState<PatchMetadata[]>([]);
+
+  // Fetch patches when rewind request is shown
+  useEffect(() => {
+    if (modal.rewindRequest) {
+      const fetchPatches = async () => {
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+
+        if (patchManager) {
+          // Get all patches from the beginning of the session (timestamp 0)
+          const allPatches = await patchManager.getPatchesSinceTimestamp(0);
+          setPatches(allPatches);
+        } else {
+          setPatches([]);
+        }
+      };
+
+      fetchPatches();
+    } else {
+      // Clear patches when rewind request is closed
+      setPatches([]);
+    }
+  }, [modal.rewindRequest]);
 
   // Check for pending plugin config requests on mount
   useEffect(() => {
@@ -445,6 +473,50 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             />
           </Box>
         </Box>
+      ) : modal.rewindOptionsRequest ? (
+        /* Rewind Options Selector (shown after selecting message in rewind) */
+        <Box marginTop={1} flexDirection="column">
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+          <RewindOptionsSelector
+            targetMessage={modal.rewindOptionsRequest.targetMessage}
+            fileChanges={modal.rewindOptionsRequest.fileChanges}
+            visible={true}
+            onConfirm={(choice) => {
+              // Handle cancel choice
+              if (choice === 'cancel') {
+                // Go back to rewind selector
+                modal.setRewindOptionsRequest(undefined);
+                return;
+              }
+
+              // Emit REWIND_RESPONSE event with selected options
+              if (activityStream && modal.rewindRequest && modal.rewindOptionsRequest) {
+                try {
+                  activityStream.emit({
+                    id: `response_${modal.rewindRequest.requestId}`,
+                    type: ActivityEventType.REWIND_RESPONSE,
+                    timestamp: Date.now(),
+                    data: {
+                      requestId: modal.rewindRequest.requestId,
+                      selectedIndex: modal.rewindOptionsRequest.selectedIndex,
+                      cancelled: false,
+                      options: {
+                        restoreFiles: choice === 'conversation-and-files',
+                      },
+                    },
+                  });
+                } catch (error) {
+                  console.error('[App] Failed to emit rewind response:', error);
+                }
+              }
+              // Clear both rewind request and options request
+              modal.setRewindOptionsRequest(undefined);
+              modal.setRewindRequest(undefined);
+            }}
+          />
+        </Box>
       ) : modal.rewindRequest ? (
         /* Rewind Selector (replaces input when active) */
         (() => {
@@ -458,6 +530,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                 messages={userMessages}
                 selectedIndex={modal.rewindRequest.selectedIndex}
                 visible={true}
+                patches={patches}
               />
               {/* Hidden InputPrompt for keyboard handling only */}
               <Box height={0} overflow="hidden">
@@ -471,6 +544,40 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                   onRewindNavigate={(newIndex) => {
                     if (modal.rewindRequest) {
                       modal.setRewindRequest({ ...modal.rewindRequest, selectedIndex: newIndex });
+                    }
+                  }}
+                  onRewindEnter={(selectedIndex) => {
+                    // Show options selector when Enter is pressed
+                    const userMessages = state.messages.filter(m => m.role === 'user');
+                    const targetMessage = userMessages[selectedIndex];
+
+                    if (targetMessage) {
+                      // Calculate file changes for this message
+                      const serviceRegistry = ServiceRegistry.getInstance();
+                      const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+
+                      const calculateFileChanges = async () => {
+                        if (!patchManager || !targetMessage.timestamp) {
+                          return { fileCount: 0, files: [] };
+                        }
+
+                        const patchesSince = await patchManager.getPatchesSinceTimestamp(targetMessage.timestamp);
+                        const uniqueFiles = new Set<string>();
+                        patchesSince.forEach(p => uniqueFiles.add(p.file_path));
+
+                        return {
+                          fileCount: uniqueFiles.size,
+                          files: Array.from(uniqueFiles).map(path => ({ path })),
+                        };
+                      };
+
+                      calculateFileChanges().then(fileChanges => {
+                        modal.setRewindOptionsRequest({
+                          selectedIndex,
+                          targetMessage,
+                          fileChanges,
+                        });
+                      });
                     }
                   }}
                   activityStream={activityStream}

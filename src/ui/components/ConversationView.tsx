@@ -244,7 +244,8 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       }
 
       // Skip system messages - they're internal prompts
-      if (message.role === 'system') {
+      // EXCEPT for conversation summaries which should be displayed
+      if (message.role === 'system' && !message.metadata?.isConversationSummary) {
         return;
       }
 
@@ -327,6 +328,9 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         );
       } else if (item.type === 'rewindNotice') {
         // Rewind notice
+        const hasRestoredFiles = item.notice.restoredFiles && item.notice.restoredFiles.length > 0;
+        const hasFailedRestorations = item.notice.failedRestorations && item.notice.failedRestorations.length > 0;
+
         items.push(
           <Box key={`rewind-${item.notice.id}`} flexDirection="column" marginY={1}>
             <Box><Text dimColor>{divider}</Text></Box>
@@ -334,6 +338,26 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
               <Text color="yellow" bold>Conversation rewound</Text>
               <Text dimColor> - Returned to message #{item.notice.targetMessageIndex + 1}</Text>
             </Box>
+            {hasRestoredFiles && (
+              <Box marginLeft={2}>
+                <Text color="green">Restored {item.notice.restoredFiles!.length} file{item.notice.restoredFiles!.length !== 1 ? 's' : ''}:</Text>
+                {item.notice.restoredFiles!.map((file, idx) => (
+                  <Box key={`restored-${idx}`} marginLeft={2}>
+                    <Text dimColor>• {file}</Text>
+                  </Box>
+                ))}
+              </Box>
+            )}
+            {hasFailedRestorations && (
+              <Box marginLeft={2}>
+                <Text color="red">Failed restorations:</Text>
+                {item.notice.failedRestorations!.map((failure, idx) => (
+                  <Box key={`failed-${idx}`} marginLeft={2}>
+                    <Text dimColor>• {failure}</Text>
+                  </Box>
+                ))}
+              </Box>
+            )}
             <Box><Text dimColor>{divider}</Text></Box>
           </Box>
         );

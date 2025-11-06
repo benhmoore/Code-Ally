@@ -28,6 +28,8 @@ export interface RewindNotice {
   id: string;
   timestamp: number;
   targetMessageIndex: number;
+  restoredFiles?: string[];
+  failedRestorations?: string[];
 }
 
 /**

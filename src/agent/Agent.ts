@@ -1742,6 +1742,9 @@ export class Agent {
       compacted.push({
         role: 'system',
         content: `${summaryLabel}: ${summary}`,
+        metadata: {
+          isConversationSummary: true,
+        },
       });
     }
 

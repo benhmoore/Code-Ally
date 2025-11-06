@@ -404,9 +404,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   if (isCancelling) {
     return (
       <Box>
-        <ChickAnimation color="red" speed={2000} />
-        <Text> </Text>
-        <ProgressIndicator type="dots2" color="red" />
+        <ProgressIndicator type="arc" color="red" />
         <Text> </Text>
         <Text color="red">Cancelling</Text>
       </Box>
@@ -417,9 +415,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   if (isCompacting) {
     return (
       <Box>
-        <ChickAnimation color="cyan" speed={4000} />
-        <Text> </Text>
-        <ProgressIndicator type="dots2" color="cyan" />
+        <ProgressIndicator type="arc" color="cyan" />
         <Text> </Text>
         <Text color="cyan">Compacting conversation</Text>
         <Text dimColor> ({formatElapsed(elapsed)})</Text>
@@ -437,13 +433,18 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   return (
     <Box flexDirection="column">
-      {/* Status line - always show mascot */}
+      {/* Status line */}
       <Box>
-        <ChickAnimation color="yellow" speed={4000} />
-        <Text> </Text>
+        {/* Show mascot only when idle */}
+        {!(isProcessing || isCompacting) && (
+          <>
+            <ChickAnimation color="yellow" speed={4000} />
+            <Text> </Text>
+          </>
+        )}
         {isProcessing || isCompacting ? (
           <>
-            <ProgressIndicator type="dots2" color="yellow" />
+            <ProgressIndicator type="arc" color="yellow" />
             <Text> </Text>
             <Text>{allTodos.length === 0 ? 'Thinking' : currentTask || 'Processing'}</Text>
             <Text dimColor> (esc to interrupt · {formatElapsed(elapsed)})</Text>
