@@ -521,11 +521,11 @@ Plugin Commands:
       };
     }
 
-    // Check if we have enough messages to compact
-    if (messages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_COMPACT) {
+    // Check if we have enough messages to attempt compaction (Level 1: attempt threshold)
+    if (messages.length < BUFFER_SIZES.MIN_MESSAGES_TO_ATTEMPT_COMPACTION) {
       return {
         handled: true,
-        response: `Not enough messages to compact (only ${messages.length} messages). Need at least ${BUFFER_SIZES.MIN_MESSAGES_FOR_COMPACT} messages.`,
+        response: `Not enough messages to compact (only ${messages.length} messages). Need at least ${BUFFER_SIZES.MIN_MESSAGES_TO_ATTEMPT_COMPACTION} messages.`,
       };
     }
 
@@ -539,10 +539,10 @@ Plugin Commands:
         throw new Error('Activity stream not available');
       }
 
-      // Emit compaction start event (same as auto-compaction)
+      // Emit compaction start event
       (activityStream as any).emit({
         id: this.generateRandomId(),
-        type: ActivityEventType.AUTO_COMPACTION_START,
+        type: ActivityEventType.COMPACTION_START,
         timestamp: Date.now(),
         data: {},
       });
@@ -554,11 +554,12 @@ Plugin Commands:
         ? (tokenManager as any).getContextUsagePercentage()
         : 0;
 
-      // Perform compaction
-      const compactedMessages = await this.compactConversation(
-        messages,
-        customInstructions
-      );
+      // Perform compaction (delegate to Agent's unified method)
+      const compactedMessages = await this.agent.compactConversation(messages, {
+        customInstructions,
+        preserveLastUserMessage: false,
+        timestampLabel: undefined,
+      });
 
       // Update agent's internal messages
       this.agent.updateMessagesAfterCompaction(compactedMessages);
@@ -572,10 +573,10 @@ Plugin Commands:
         ? (tokenManager as any).getContextUsagePercentage()
         : 0;
 
-      // Emit compaction complete event (same as auto-compaction)
+      // Emit compaction complete event
       (activityStream as any).emit({
         id: this.generateRandomId(),
-        type: ActivityEventType.AUTO_COMPACTION_COMPLETE,
+        type: ActivityEventType.COMPACTION_COMPLETE,
         timestamp: Date.now(),
         data: {
           oldContextUsage,
@@ -597,116 +598,6 @@ Plugin Commands:
     }
   }
 
-  /**
-   * Compact the conversation by generating a summary
-   *
-   * Based on Python implementation in command_handler.py:708-862
-   */
-  private async compactConversation(
-    messages: Message[],
-    customInstructions?: string
-  ): Promise<Message[]> {
-    // Extract system message and other messages
-    const { systemMessage, otherMessages } = this.extractSystemMessage(messages);
-
-    // If we have fewer than 2 messages to summarize, nothing to compact
-    if (otherMessages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_HISTORY) {
-      return messages;
-    }
-
-    // Start building compacted message list
-    const compacted: Message[] = [];
-    if (systemMessage) {
-      compacted.push(systemMessage);
-    }
-
-    // Create summarization request
-    const summarizationRequest: Message[] = [];
-
-    // Add system message for summarization
-    summarizationRequest.push({
-      role: 'system',
-      content:
-        'You are an AI assistant helping to summarize a conversation while preserving critical context for ongoing work. ' +
-        'Focus heavily on:\n' +
-        '• UNRESOLVED ISSUES: Any bugs, errors, or problems currently being investigated or fixed\n' +
-        '• DEBUGGING CONTEXT: Error messages, stack traces, failed attempts, and partial solutions\n' +
-        '• CURRENT INVESTIGATION: What is being analyzed, hypotheses being tested, next steps planned\n' +
-        '• TECHNICAL STATE: File paths, function names, variable values, configuration details relevant to ongoing work\n' +
-        '• ATTEMPTED SOLUTIONS: What has been tried and why it didn\'t work\n' +
-        '• BREAKTHROUGH FINDINGS: Recent discoveries or insights that advance the investigation\n\n' +
-        'Be extremely detailed about ongoing problems but brief about completed/resolved topics. ' +
-        'Use bullet points and preserve specific technical details (file paths, error messages, code snippets).',
-    });
-
-    // Add messages to be summarized
-    summarizationRequest.push(...otherMessages);
-
-    // Add final user request
-    const baseRequest =
-      'Summarize this conversation with special attention to any ongoing debugging, ' +
-      'problem-solving, or issue resolution. Prioritize unresolved problems, current ' +
-      'investigations, and technical context needed to continue work seamlessly. ' +
-      'Include specific error messages, file paths, and attempted solutions.';
-
-    const finalRequest = customInstructions
-      ? `${baseRequest} Additional instructions: ${customInstructions}`
-      : baseRequest;
-
-    summarizationRequest.push({
-      role: 'user',
-      content: finalRequest,
-    });
-
-    // Get model client and generate summary
-    if (!this.agent) {
-      throw new Error('Agent not available');
-    }
-
-    const modelClient = this.agent.getModelClient();
-    const response = await modelClient.send(summarizationRequest, {
-      stream: false,
-    });
-
-    const summary = response.content.trim();
-
-    // Add summary as system message if we got one
-    if (summary && summary !== 'Conversation history has been compacted to save context space.') {
-      compacted.push({
-        role: 'system',
-        content: `CONVERSATION SUMMARY: ${summary}`,
-      });
-    }
-
-    return compacted;
-  }
-
-  /**
-   * Extract system message from message list
-   *
-   * Based on Python implementation in command_handler.py:864-874
-   */
-  private extractSystemMessage(messages: Message[]): {
-    systemMessage: Message | null;
-    otherMessages: Message[];
-  } {
-    if (messages.length === 0) {
-      return { systemMessage: null, otherMessages: [] };
-    }
-
-    // Check if first message is a system message
-    if (messages[0]?.role === 'system') {
-      return {
-        systemMessage: messages[0],
-        otherMessages: messages.slice(1),
-      };
-    }
-
-    return {
-      systemMessage: null,
-      otherMessages: messages,
-    };
-  }
 
   private async handleExit(): Promise<CommandResult> {
     process.exit(0);

@@ -337,14 +337,24 @@ export const BUFFER_SIZES = {
   /** Maximum file paths to display in todo items */
   TODO_FILE_PATHS_DISPLAY: 2,
 
-  /** Minimum message count before auto-compaction */
-  MIN_MESSAGES_FOR_COMPACTION: 5,
+  /**
+   * Message count thresholds for history compaction (two-level validation)
+   *
+   * Level 1 - Attempt threshold: Check if we have enough total messages to justify compaction
+   * Level 2 - Summarization threshold: Check if we have enough non-system messages to summarize
+   *
+   * Example: With 5 messages (1 system + 4 others), we pass attempt threshold (5 >= 5)
+   * and summarization threshold (4 >= 2), so compaction proceeds.
+   *
+   * Example: With 3 messages (1 system + 2 others), we fail attempt threshold (3 < 5),
+   * so compaction is skipped even though we'd have enough to summarize.
+   */
 
-  /** Minimum other messages for history operations */
-  MIN_MESSAGES_FOR_HISTORY: 2,
+  /** Minimum total messages required before attempting compaction (UI validation) */
+  MIN_MESSAGES_TO_ATTEMPT_COMPACTION: 5,
 
-  /** Minimum messages required for compact operation */
-  MIN_MESSAGES_FOR_COMPACT: 3,
+  /** Minimum non-system messages required to generate a meaningful summary (internal check) */
+  MIN_MESSAGES_TO_SUMMARIZE: 2,
 
   /** Statistics call count reset threshold */
   STATS_RESET_THRESHOLD: 100,

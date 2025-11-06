@@ -1565,18 +1565,28 @@ export class Agent {
     const contextUsage = this.tokenManager.getContextUsagePercentage();
     const threshold = this.config.config.compact_threshold || CONTEXT_THRESHOLDS.CRITICAL;
 
-    // Only compact if we exceed threshold and have enough messages
-    if (contextUsage < threshold || this.messages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_COMPACTION) {
+    // Check if context usage exceeds threshold (primary concern - do we need to compact?)
+    if (contextUsage < threshold) {
+      return; // Context not full, no need to compact
+    }
+
+    // Context is full - validate we have enough messages for meaningful summarization (quality gate)
+    if (this.messages.length < BUFFER_SIZES.MIN_MESSAGES_TO_ATTEMPT_COMPACTION) {
+      logger.debug('[AGENT_AUTO_COMPACT]', this.instanceId,
+        `Context at ${contextUsage}% (threshold: ${threshold}%) but only ${this.messages.length} messages - ` +
+        `too few to compact meaningfully. Consider increasing context_size if this occurs frequently.`);
       return;
     }
 
-    logger.info('[AGENT_AUTO_COMPACT]', this.instanceId, `Context at ${contextUsage}%, threshold ${threshold}% - triggering auto-compaction`);
+    // Both conditions met: context is full AND we have enough messages
+    logger.info('[AGENT_AUTO_COMPACT]', this.instanceId,
+      `Context at ${contextUsage}%, threshold ${threshold}% - triggering compaction`);
 
     try {
       // Emit compaction start event
       this.emitEvent({
         id: this.generateId(),
-        type: ActivityEventType.AUTO_COMPACTION_START,
+        type: ActivityEventType.COMPACTION_START,
         timestamp: Date.now(),
         data: {},
       });
@@ -1595,7 +1605,7 @@ export class Agent {
       // Emit compaction complete event with notice data and compacted messages
       this.emitEvent({
         id: this.generateId(),
-        type: ActivityEventType.AUTO_COMPACTION_COMPLETE,
+        type: ActivityEventType.COMPACTION_COMPLETE,
         timestamp: Date.now(),
         data: {
           oldContextUsage: contextUsage,
@@ -1605,34 +1615,61 @@ export class Agent {
         },
       });
 
-      logger.info('[AGENT_AUTO_COMPACT]', this.instanceId, `Auto-compaction complete - Context now at ${newContextUsage}%`);
+      logger.info('[AGENT_AUTO_COMPACT]', this.instanceId, `Compaction complete - Context now at ${newContextUsage}%`);
     } catch (error) {
-      logger.error('[AGENT_AUTO_COMPACT]', this.instanceId, 'Auto-compaction failed:', error);
+      logger.error('[AGENT_AUTO_COMPACT]', this.instanceId, 'Compaction failed:', error);
     }
   }
 
   /**
-   * Perform conversation compaction
-   * Similar to CommandHandler's compactConversation but simplified
+   * Compact conversation messages with summarization
+   *
+   * This is the single source of truth for compaction logic, used by both:
+   * - Auto-compaction (when context reaches threshold)
+   * - Manual /compact command (with optional custom instructions)
+   *
+   * @param messages - Messages to compact (defaults to this.messages)
+   * @param options - Compaction options
+   * @param options.customInstructions - Optional additional instructions for summarization
+   * @param options.preserveLastUserMessage - Whether to preserve the last user message (default: true for auto-compact)
+   * @param options.timestampLabel - Label for the summary timestamp (e.g., "auto-compacted" or none for manual)
+   * @returns Compacted message array
    */
-  private async performCompaction(): Promise<Message[]> {
+  async compactConversation(
+    messages: Message[] = this.messages,
+    options: {
+      customInstructions?: string;
+      preserveLastUserMessage?: boolean;
+      timestampLabel?: string;
+    } = {}
+  ): Promise<Message[]> {
+    const {
+      customInstructions,
+      preserveLastUserMessage = true,
+      timestampLabel = undefined,
+    } = options;
+
     // Extract system message and other messages
-    const systemMessage = this.messages[0]?.role === 'system' ? this.messages[0] : null;
-    let otherMessages = systemMessage ? this.messages.slice(1) : this.messages;
+    const systemMessage = messages[0]?.role === 'system' ? messages[0] : null;
+    let otherMessages = systemMessage ? messages.slice(1) : messages;
 
     // Filter out ephemeral messages before compaction
-    // They should have been cleaned up already, but this is a safety net
+    // Cleanup happens at end-of-turn (processTextResponse), but compaction can trigger
+    // mid-turn (during getLLMResponse after tool execution). This ensures ephemeral
+    // content is never summarized into conversation history, regardless of timing.
     otherMessages = otherMessages.filter(msg => !msg.metadata?.ephemeral);
 
-    // If we have fewer than 2 messages to summarize, nothing to compact
-    if (otherMessages.length < BUFFER_SIZES.MIN_MESSAGES_FOR_HISTORY) {
-      return this.messages;
+    // If we have fewer than 2 non-system messages to summarize, nothing to compact (Level 2: summarization threshold)
+    if (otherMessages.length < BUFFER_SIZES.MIN_MESSAGES_TO_SUMMARIZE) {
+      return messages;
     }
 
-    // Find the last user message (the one that triggered compaction)
-    const lastUserMessage = [...otherMessages].reverse().find(m => m.role === 'user');
+    // Find the last user message (the one that triggered compaction or current user request)
+    const lastUserMessage = preserveLastUserMessage
+      ? [...otherMessages].reverse().find(m => m.role === 'user')
+      : undefined;
 
-    // Messages to summarize: everything except the last user message
+    // Messages to summarize: everything except the last user message (if preserving it)
     const messagesToSummarize = lastUserMessage
       ? otherMessages.slice(0, otherMessages.lastIndexOf(lastUserMessage))
       : otherMessages;
@@ -1644,30 +1681,26 @@ export class Agent {
     summarizationRequest.push({
       role: 'system',
       content:
-        'You are an AI assistant helping to summarize a conversation while preserving critical context for ongoing work. ' +
-        'Focus heavily on:\n' +
-        '• UNRESOLVED ISSUES: Any bugs, errors, or problems currently being investigated or fixed\n' +
-        '• DEBUGGING CONTEXT: Error messages, stack traces, failed attempts, and partial solutions\n' +
-        '• CURRENT INVESTIGATION: What is being analyzed, hypotheses being tested, next steps planned\n' +
-        '• TECHNICAL STATE: File paths, function names, variable values, configuration details relevant to ongoing work\n' +
-        '• ATTEMPTED SOLUTIONS: What has been tried and why it didn\'t work\n' +
-        '• BREAKTHROUGH FINDINGS: Recent discoveries or insights that advance the investigation\n\n' +
-        'Be extremely detailed about ongoing problems but brief about completed/resolved topics. ' +
-        'Use bullet points and preserve specific technical details (file paths, error messages, code snippets).',
+        'You are an AI assistant summarizing a conversation to save context space. ' +
+        'Preserve specific details about: (1) unresolved problems with error messages, stack traces, and file paths, ' +
+        '(2) current investigation state, attempted solutions that failed, and next steps, (3) decisions made. ' +
+        'Be extremely detailed about ongoing problems but brief about completed work. Use bullet points.',
     });
 
-    // Add messages to be summarized (excluding the last user message)
+    // Add messages to be summarized
     summarizationRequest.push(...messagesToSummarize);
 
-    // Build summarization request, including the user's current request if present
-    let finalRequest =
-      'Summarize this conversation with special attention to any ongoing debugging, ' +
-      'problem-solving, or issue resolution. Prioritize unresolved problems, current ' +
-      'investigations, and technical context needed to continue work seamlessly. ' +
-      'Include specific error messages, file paths, and attempted solutions.';
+    // Build summarization request
+    let finalRequest = 'Summarize this conversation, preserving technical details needed to continue work.';
 
+    // Add custom instructions if provided (used by manual /compact command)
+    if (customInstructions) {
+      finalRequest += ` Additional instructions: ${customInstructions}`;
+    }
+
+    // Add context about the current user request if we're preserving it
     if (lastUserMessage) {
-      finalRequest += `\n\nThe user's current request that needs a response is: "${lastUserMessage.content}"`;
+      finalRequest += `\n\nThe user's current request is: "${lastUserMessage.content}"`;
     }
 
     summarizationRequest.push({
@@ -1688,20 +1721,37 @@ export class Agent {
       compacted.push(systemMessage);
     }
 
-    // Add summary as system message if we got one
-    if (summary && summary !== 'Conversation history has been compacted to save context space.') {
+    // Add summary as system message if we got a meaningful one
+    // Simple truthy check: if LLM returns empty/whitespace, we skip it;
+    // if it returns any real content, we include it. No magic strings needed.
+    if (summary) {
+      const summaryLabel = timestampLabel
+        ? `CONVERSATION SUMMARY (${timestampLabel} at ${new Date().toLocaleTimeString()})`
+        : 'CONVERSATION SUMMARY';
+
       compacted.push({
         role: 'system',
-        content: `CONVERSATION SUMMARY (auto-compacted at ${new Date().toLocaleTimeString()}): ${summary}`,
+        content: `${summaryLabel}: ${summary}`,
       });
     }
 
-    // Add the last user message (the one that triggered compaction) so the model can respond to it
+    // Add the last user message if we're preserving it
     if (lastUserMessage) {
       compacted.push(lastUserMessage);
     }
 
     return compacted;
+  }
+
+  /**
+   * Perform conversation compaction (internal auto-compaction)
+   * Delegates to compactConversation with auto-compact specific options
+   */
+  private async performCompaction(): Promise<Message[]> {
+    return this.compactConversation(this.messages, {
+      preserveLastUserMessage: true,
+      timestampLabel: 'auto-compacted',
+    });
   }
 
   /**

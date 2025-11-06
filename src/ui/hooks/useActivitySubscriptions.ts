@@ -605,13 +605,13 @@ export const useActivitySubscriptions = (
     }
   });
 
-  // Auto-compaction start
-  useActivityEvent(ActivityEventType.AUTO_COMPACTION_START, () => {
+  // Compaction start
+  useActivityEvent(ActivityEventType.COMPACTION_START, () => {
     actions.setIsCompacting(true);
   });
 
-  // Auto-compaction complete
-  useActivityEvent(ActivityEventType.AUTO_COMPACTION_COMPLETE, (event) => {
+  // Compaction complete
+  useActivityEvent(ActivityEventType.COMPACTION_COMPLETE, (event) => {
     const { oldContextUsage, newContextUsage, threshold, compactedMessages } = event.data;
 
     if (compactedMessages) {
