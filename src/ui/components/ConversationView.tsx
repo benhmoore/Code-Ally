@@ -244,8 +244,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       }
 
       // Skip system messages - they're internal prompts
-      // EXCEPT for conversation summaries which should be displayed
-      if (message.role === 'system' && !message.metadata?.isConversationSummary) {
+      if (message.role === 'system') {
         return;
       }
 
@@ -319,9 +318,8 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         items.push(
           <Box key={`compaction-${item.notice.id}`} flexDirection="column" marginY={1}>
             <Box><Text dimColor>{divider}</Text></Box>
-            <Box>
-              <Text color="cyan" bold>Context compacted</Text>
-              <Text dimColor> - Previous conversation summarized (was at {item.notice.oldContextUsage}%, threshold {item.notice.threshold}%)</Text>
+            <Box justifyContent="center">
+              <Text color="cyan" dimColor>Conversation Compacted</Text>
             </Box>
             <Box><Text dimColor>{divider}</Text></Box>
           </Box>

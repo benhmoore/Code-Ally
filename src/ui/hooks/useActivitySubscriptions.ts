@@ -614,6 +614,8 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.COMPACTION_COMPLETE, (event) => {
     const { oldContextUsage, newContextUsage, threshold, compactedMessages } = event.data;
 
+    console.log('[COMPACTION] COMPACTION_COMPLETE event received, compactedMessages:', compactedMessages?.length);
+
     // Clear tool calls first
     actions.clearToolCalls();
 
@@ -624,6 +626,7 @@ export const useActivitySubscriptions = (
         // Keep system messages that are conversation summaries
         return m.metadata?.isConversationSummary === true;
       });
+      console.log('[COMPACTION] Calling resetConversationView with', uiMessages.length, 'messages');
       // Atomically reset conversation view (sets messages + increments remount key)
       actions.resetConversationView(uiMessages);
     }

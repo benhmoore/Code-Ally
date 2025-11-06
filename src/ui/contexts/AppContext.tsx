@@ -314,6 +314,12 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   }, []);
 
   const resetConversationView = useCallback((newMessages: Message[]) => {
+    console.log('[AppContext] resetConversationView called with', newMessages.length, 'messages');
+
+    // Clear the terminal output to prevent Static component accumulation
+    // ANSI escape codes: \x1Bc = reset terminal, \x1B[2J = clear screen, \x1B[H = move cursor to home
+    process.stdout.write('\x1B[2J\x1B[H');
+
     // Atomically update both messages and remount key to prevent Static component accumulation
     // This is critical for resume/compact/rewind operations
     const messagesWithMetadata = newMessages.map((msg, idx) => ({
@@ -331,8 +337,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       return true;
     });
 
+    console.log('[AppContext] After dedup:', deduplicated.length, 'messages, incrementing remount key');
+
     // Update both in sequence - React will batch these together
-    setStaticRemountKey((prev) => prev + 1);
+    setStaticRemountKey((prev) => {
+      console.log('[AppContext] Remount key:', prev, '→', prev + 1);
+      return prev + 1;
+    });
     setMessages(deduplicated);
   }, []);
 
