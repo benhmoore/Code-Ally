@@ -123,7 +123,7 @@ export class ToolResultManager {
     if (contentTokens < BUFFER_SIZES.MIN_CONTENT_TOKENS) {
       contentTokens = Math.floor(maxTokens / 2);
       const percentKept = Math.round((contentTokens / actualTokens) * 100);
-      const minimalNotice = `\n\n⚠️ WARNING: Output truncated to ${percentKept}% due to context limits`;
+      const minimalNotice = `\n\n⚠️ WARNING: Output truncated to ${percentKept}% - CONTENT BELOW IS INCOMPLETE due to context limits`;
       const minimalTokens = this.tokenManager.estimateTokens(minimalNotice);
       contentTokens = maxTokens - minimalTokens;
 
@@ -155,16 +155,16 @@ export class ToolResultManager {
     // Create clear, prominent warning at the top
     let warning = '';
     if (truncationLevel === 'critical') {
-      warning = `⚠️ CRITICAL: Output truncated to ${percentageKept}% (context nearly full)`;
+      warning = `⚠️ CRITICAL: Output truncated to ${percentageKept}% - CONTENT BELOW IS INCOMPLETE (context nearly full)`;
     } else if (truncationLevel === 'aggressive') {
-      warning = `⚠️ WARNING: Output truncated to ${percentageKept}% (high context usage)`;
+      warning = `⚠️ WARNING: Output truncated to ${percentageKept}% - CONTENT BELOW IS INCOMPLETE (high context usage)`;
     } else if (truncationLevel === 'moderate') {
-      warning = `⚠️ Output truncated to ${percentageKept}% (context limit)`;
+      warning = `⚠️ Output truncated to ${percentageKept}% - CONTENT BELOW IS INCOMPLETE (context limit)`;
     } else {
-      warning = `⚠️ Output truncated to ${percentageKept}%`;
+      warning = `⚠️ Output truncated to ${percentageKept}% - CONTENT BELOW IS INCOMPLETE`;
     }
 
-    return `${warning}\n${toolGuidance ? `Tip: ${toolGuidance}` : ''}`;
+    return `${warning}\n${toolGuidance ? `Next step: ${toolGuidance}` : ''}`;
   }
 
   /**

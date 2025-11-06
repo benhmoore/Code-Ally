@@ -614,8 +614,6 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.COMPACTION_COMPLETE, (event) => {
     const { oldContextUsage, newContextUsage, threshold, compactedMessages } = event.data;
 
-    console.log('[COMPACTION] COMPACTION_COMPLETE event received, compactedMessages:', compactedMessages?.length);
-
     // Clear tool calls first
     actions.clearToolCalls();
 
@@ -626,7 +624,6 @@ export const useActivitySubscriptions = (
         // Keep system messages that are conversation summaries
         return m.metadata?.isConversationSummary === true;
       });
-      console.log('[COMPACTION] Calling resetConversationView with', uiMessages.length, 'messages');
       // Atomically reset conversation view (sets messages + increments remount key)
       actions.resetConversationView(uiMessages);
     }
@@ -962,7 +959,7 @@ export const useActivitySubscriptions = (
 
         const serviceRegistry = ServiceRegistry.getInstance();
 
-        // Clear tool calls and rewind notices first
+        // Clear all state
         actions.clearToolCalls();
         actions.clearRewindNotices();
 
@@ -971,7 +968,7 @@ export const useActivitySubscriptions = (
           (todoManager as any).setTodos([]);
         }
 
-        // Atomically reset conversation view (sets messages + increments remount key)
+        // Reset conversation view (this will clear terminal and set new messages)
         actions.resetConversationView(rewindedMessages);
 
         // Reconstruct tool calls and interjections after view is reset
@@ -980,9 +977,21 @@ export const useActivitySubscriptions = (
 
         reconstructInterjectionsFromMessages(rewindedMessages, activityStream);
 
+        // Update context usage after rewind (same as session resumption)
+        const tokenManager = serviceRegistry.get('token_manager');
+        if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
+          (tokenManager as any).updateTokenCount(agent.getMessages());
+          const contextUsage = (tokenManager as any).getContextUsagePercentage();
+          actions.setContextUsage(contextUsage);
+        }
+
+        // Add rewind notice at the target message timestamp (or slightly after if no timestamp)
+        // This ensures the notice appears at the rewind point in the timeline, not at the end
+        const noticeTimestamp = targetTimestamp ? targetTimestamp + 1 : Date.now();
+
         actions.addRewindNotice({
           id: `rewind_${Date.now()}`,
-          timestamp: Date.now(),
+          timestamp: noticeTimestamp,
           targetMessageIndex: selectedIndex,
           restoredFiles: restoredFiles.length > 0 ? restoredFiles : undefined,
           failedRestorations: failedRestorations.length > 0 ? failedRestorations : undefined,

@@ -23,6 +23,7 @@ export interface Completion {
   description?: string;
   type: CompletionType;
   insertText?: string; // Text to insert (if different from value)
+  currentValue?: string; // Current value for config options (displayed dimly)
 }
 
 export interface CompletionContext {
@@ -105,14 +106,16 @@ const TODO_SUBCOMMANDS = [
  */
 export class CompletionProvider {
   private agentManager: AgentManager | null = null;
+  private configManager: any = null; // ConfigManager - using any to avoid circular deps
   private agentNamesCache: string[] = [];
   private agentsCacheTime: number = 0;
   private commandNamesCache: string[] = [];
   private commandsCacheTime: number = 0;
   private readonly cacheTTL = CACHE_TIMEOUTS.COMPLETION_CACHE_TTL;
 
-  constructor(agentManager?: AgentManager) {
+  constructor(agentManager?: AgentManager, configManager?: any) {
     this.agentManager = agentManager || null;
+    this.configManager = configManager || null;
   }
 
   /**
@@ -120,6 +123,13 @@ export class CompletionProvider {
    */
   setAgentManager(agentManager: AgentManager): void {
     this.agentManager = agentManager;
+  }
+
+  /**
+   * Set the config manager (for late binding)
+   */
+  setConfigManager(configManager: any): void {
+    this.configManager = configManager;
   }
 
   /**
@@ -284,6 +294,15 @@ export class CompletionProvider {
       return await this.getConfigKeyCompletions(context.currentWord);
     }
 
+    // Complete config values for /config set key (user typed "/config set key ")
+    if (command === '/config' && subcommand === 'set' && wordCount >= 4) {
+      // Extract the config key (3rd word)
+      const configKey = parts[2];
+      if (configKey) {
+        return await this.getConfigValueCompletions(configKey, context.currentWord);
+      }
+    }
+
     // Complete subcommands for /debug (user typed "/debug ")
     if (command === '/debug' && wordCount === 2) {
       const debugSubcommands = [
@@ -416,6 +435,152 @@ export class CompletionProvider {
   }
 
   /**
+   * Get configuration value completions for a given key
+   */
+  private async getConfigValueCompletions(key: string, prefix: string): Promise<Completion[]> {
+    // Import config types dynamically
+    const { DEFAULT_CONFIG, CONFIG_TYPES } = await import('../config/defaults.js');
+
+    // Check if this is a valid config key
+    if (!(key in DEFAULT_CONFIG)) {
+      return [];
+    }
+
+    const type = CONFIG_TYPES[key as keyof typeof CONFIG_TYPES];
+    const completions: Completion[] = [];
+
+    // Boolean values
+    if (type === 'boolean') {
+      const boolValues = ['true', 'false'];
+      return boolValues
+        .filter(val => val.startsWith(prefix))
+        .map(val => ({
+          value: val,
+          description: val === 'true' ? 'Enable' : 'Disable',
+          type: 'option' as const,
+        }));
+    }
+
+    // Model field - fetch from Ollama
+    if (key === 'model' || key === 'service_model') {
+      const models = await this.getOllamaModels();
+      return models
+        .filter(model => model.toLowerCase().includes(prefix.toLowerCase()))
+        .map(model => ({
+          value: model,
+          description: 'Ollama model',
+          type: 'option' as const,
+        }));
+    }
+
+    // Reasoning effort - predefined values
+    if (key === 'reasoning_effort') {
+      const efforts = ['low', 'medium', 'high'];
+      return efforts
+        .filter(val => val.startsWith(prefix))
+        .map(val => ({
+          value: val,
+          description: `${val.charAt(0).toUpperCase() + val.slice(1)} reasoning effort`,
+          type: 'option' as const,
+        }));
+    }
+
+    // Theme field - predefined values
+    if (key === 'theme' || key === 'diff_display_theme') {
+      const themes = key === 'theme'
+        ? ['default', 'dark', 'light', 'minimal']
+        : ['auto', 'dark', 'light', 'minimal'];
+      return themes
+        .filter(val => val.startsWith(prefix))
+        .map(val => ({
+          value: val,
+          description: `${val.charAt(0).toUpperCase() + val.slice(1)} theme`,
+          type: 'option' as const,
+        }));
+    }
+
+    // For numbers, suggest the current value and some common alternatives
+    if (type === 'number' && this.configManager) {
+      try {
+        const currentValue = this.configManager.getValue(key);
+        if (typeof currentValue === 'number') {
+          const suggestions: number[] = [currentValue];
+
+          // Add contextual suggestions based on the key
+          if (key === 'temperature') {
+            suggestions.push(0.0, 0.3, 0.5, 0.7, 1.0);
+          } else if (key === 'context_size') {
+            suggestions.push(8192, 16384, 32768, 65536, 131072);
+          } else if (key === 'max_tokens') {
+            suggestions.push(2000, 4000, 7000, 10000, 16000);
+          } else if (key === 'compact_threshold') {
+            suggestions.push(80, 85, 90, 95, 99);
+          }
+
+          // Remove duplicates and filter by prefix
+          const uniqueValues = [...new Set(suggestions)]
+            .map(String)
+            .filter(val => val.startsWith(prefix));
+
+          return uniqueValues.map(val => ({
+            value: val,
+            description: val === String(currentValue) ? 'Current value' : 'Suggested value',
+            type: 'option' as const,
+          }));
+        }
+      } catch {
+        // Fall through if we can't get current value
+      }
+    }
+
+    return completions;
+  }
+
+  /**
+   * Get available models from Ollama endpoint
+   */
+  private async getOllamaModels(): Promise<string[]> {
+    try {
+      // Get endpoint from config
+      if (!this.configManager || typeof this.configManager.getValue !== 'function') {
+        return [];
+      }
+
+      const endpoint = this.configManager.getValue('endpoint');
+      if (!endpoint) {
+        return [];
+      }
+
+      const url = `${endpoint}/api/tags`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const data = await response.json() as any;
+      if (data?.models && Array.isArray(data.models)) {
+        return data.models.map((m: any) => m.name || m.model).filter(Boolean);
+      }
+
+      return [];
+    } catch (error) {
+      // Failed to fetch models - this is expected if Ollama isn't running
+      logger.debug(`Unable to fetch Ollama models: ${formatError(error)}`);
+      return [];
+    }
+  }
+
+  /**
    * Get configuration key completions
    */
   private async getConfigKeyCompletions(prefix: string): Promise<Completion[]> {
@@ -461,11 +626,32 @@ export class CompletionProvider {
 
     return configKeys
       .filter(key => key.startsWith(prefix) && key !== 'setup_completed') // Hide internal keys
-      .map(key => ({
-        value: key,
-        description: keyDescriptions[key] || `${CONFIG_TYPES[key]} setting`,
-        type: 'option' as const,
-      }));
+      .map(key => {
+        const baseDescription = keyDescriptions[key] || `${CONFIG_TYPES[key]} setting`;
+
+        // Get current value if config manager is available
+        let currentValue: string | undefined;
+        if (this.configManager && typeof this.configManager.getValue === 'function') {
+          try {
+            const value = this.configManager.getValue(key);
+            // Format value without quotes for strings, just the raw value
+            if (typeof value === 'string') {
+              currentValue = value;
+            } else {
+              currentValue = JSON.stringify(value);
+            }
+          } catch {
+            // If we can't get the value, leave it undefined
+          }
+        }
+
+        return {
+          value: key,
+          description: baseDescription,
+          type: 'option' as const,
+          currentValue,
+        };
+      });
   }
 
   /**

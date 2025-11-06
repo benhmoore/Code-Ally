@@ -85,7 +85,7 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
             },
             offset: {
               type: 'integer',
-              description: 'Start reading from this line number (1-based)',
+              description: 'Start reading from this line number (1-based). Negative values count from end (e.g., offset=-20 starts 20 lines from end)',
             },
             ephemeral: {
               type: 'boolean',
@@ -119,7 +119,7 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
 
     if (estimatedTokens > maxTokens) {
       const examples = filePaths.length === 1
-        ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=50, limit=100)`
+        ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=-100, limit=100) for last 100 lines`
         : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
 
       const ephemeralHint = !ephemeral
@@ -251,26 +251,40 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
     const lines = content.split('\n');
     const totalLines = lines.length;
 
-    // Validate offset against file size
-    if (offset > 0 && offset > totalLines) {
-      // Calculate helpful suggestions
-      const lastPageStart = Math.max(1, totalLines - (limit || 50));
+    // Calculate actual start line
+    // Negative offset: count from end (e.g., -20 = start 20 lines from end)
+    // Positive offset: 1-based line number (offset=1 is first line)
+    // Zero offset: start from beginning
+    let startLine: number;
+    if (offset < 0) {
+      // Negative offset: count from end
+      // -1 = last line, -20 = 20 lines from end
+      startLine = Math.max(0, totalLines + offset);
+    } else if (offset > 0) {
+      // Positive offset: 1-based line number
+      startLine = offset - 1;
 
-      return `=== ${absolutePath} ===\n` +
-        `[Cannot read from offset ${offset}: file only has ${totalLines} line${totalLines !== 1 ? 's' : ''}. ` +
-        `Try reading from the beginning (offset=1)` +
-        (limit ? `, or offset=${lastPageStart} to read the last ${Math.min(limit, totalLines)} lines.` : '.') +
-        `]`;
+      // Validate positive offset isn't beyond file
+      if (startLine >= totalLines) {
+        const lastPageStart = Math.max(1, totalLines - (limit || 50));
+        return `=== ${absolutePath} ===\n` +
+          `[Cannot read from offset ${offset}: file only has ${totalLines} line${totalLines !== 1 ? 's' : ''}. ` +
+          `Try reading from the beginning (offset=1)` +
+          (limit ? `, or offset=${lastPageStart} to read the last ${Math.min(limit, totalLines)} lines.` : '.') +
+          `]`;
+      }
+    } else {
+      // Zero offset: start from beginning
+      startLine = 0;
     }
 
-    // Apply offset and limit
-    const startLine = offset > 0 ? offset - 1 : 0;
+    // Apply limit
     const endLine = limit > 0 ? startLine + limit : lines.length;
     const selectedLines = lines.slice(startLine, endLine);
 
     // Add informational header if only showing a slice
     let header = `=== ${absolutePath} ===`;
-    if (offset > 1 || (limit > 0 && endLine < totalLines)) {
+    if (offset !== 0 || (limit > 0 && endLine < totalLines)) {
       header += `\n[Showing lines ${startLine + 1}-${Math.min(endLine, totalLines)} of ${totalLines} total lines]`;
     }
 
@@ -288,7 +302,7 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
    * Get truncation guidance for read output
    */
   getTruncationGuidance(): string {
-    return 'Use limit and offset parameters for targeted reading of specific line ranges';
+    return 'The file has MORE content that was cut off. Use offset=-50 and limit=50 to read the last 50 lines, or use grep to search for specific content';
   }
 
   /**

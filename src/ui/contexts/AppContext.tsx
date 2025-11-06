@@ -314,14 +314,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   }, []);
 
   const resetConversationView = useCallback((newMessages: Message[]) => {
-    console.log('[AppContext] resetConversationView called with', newMessages.length, 'messages');
+    // Clear terminal using ANSI escape sequence that actually works
+    // \x1B[2J = Clear entire screen
+    // \x1B[3J = Clear scrollback buffer
+    // \x1B[H = Move cursor to home (0,0)
+    process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
 
-    // Clear the terminal output to prevent Static component accumulation
-    // ANSI escape codes: \x1Bc = reset terminal, \x1B[2J = clear screen, \x1B[H = move cursor to home
-    process.stdout.write('\x1B[2J\x1B[H');
-
-    // Atomically update both messages and remount key to prevent Static component accumulation
-    // This is critical for resume/compact/rewind operations
+    // Atomically update messages first, THEN increment remount key
+    // This ensures the Static component remounts with the new message set
     const messagesWithMetadata = newMessages.map((msg, idx) => ({
       ...msg,
       id: msg.id || generateMessageId(),
@@ -337,14 +337,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       return true;
     });
 
-    console.log('[AppContext] After dedup:', deduplicated.length, 'messages, incrementing remount key');
-
-    // Update both in sequence - React will batch these together
-    setStaticRemountKey((prev) => {
-      console.log('[AppContext] Remount key:', prev, '→', prev + 1);
-      return prev + 1;
-    });
+    // Update messages FIRST, then remount key
+    // React will batch these together but the order matters
     setMessages(deduplicated);
+    setStaticRemountKey((prev) => prev + 1);
   }, []);
 
   // Memoize state object to prevent unnecessary context updates

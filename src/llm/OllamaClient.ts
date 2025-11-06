@@ -511,7 +511,7 @@ export class OllamaClient extends ModelClient {
       const hasPartialResponse = aggregatedContent.trim().length > 0 || (aggregatedMessage.tool_calls && aggregatedMessage.tool_calls.length > 0);
 
       if (hasPartialResponse) {
-        logger.warn('[OLLAMA_CLIENT] HTTP error during streaming with partial response - returning partial data');
+        logger.debug('[OLLAMA_CLIENT] HTTP error during streaming with partial response - returning partial data');
         logger.debug('[OLLAMA_CLIENT] Partial content length:', aggregatedContent.length, 'Tool calls:', aggregatedMessage.tool_calls?.length || 0);
 
         return {

@@ -318,8 +318,9 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         items.push(
           <Box key={`compaction-${item.notice.id}`} flexDirection="column" marginY={1}>
             <Box><Text dimColor>{divider}</Text></Box>
-            <Box justifyContent="center">
-              <Text color="cyan" dimColor>Conversation Compacted</Text>
+            <Box>
+              <Text color="cyan" bold>Conversation compacted</Text>
+              <Text dimColor> - Removed earlier messages to free context</Text>
             </Box>
             <Box><Text dimColor>{divider}</Text></Box>
           </Box>

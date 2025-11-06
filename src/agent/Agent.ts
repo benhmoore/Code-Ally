@@ -1612,11 +1612,20 @@ export class Agent {
 
       const newContextUsage = this.tokenManager.getContextUsagePercentage();
 
+      // Get the last message's timestamp to place notice before it
+      // Find the last non-system message timestamp
+      const lastMessageTimestamp = this.messages
+        .filter(m => m.role !== 'system')
+        .reduce((latest, msg) => Math.max(latest, msg.timestamp || 0), 0);
+
+      // Place compaction notice right before the last message (timestamp - 1)
+      const noticeTimestamp = lastMessageTimestamp > 0 ? lastMessageTimestamp - 1 : Date.now();
+
       // Emit compaction complete event with notice data and compacted messages
       this.emitEvent({
         id: this.generateId(),
         type: ActivityEventType.COMPACTION_COMPLETE,
-        timestamp: Date.now(),
+        timestamp: noticeTimestamp,
         data: {
           oldContextUsage: contextUsage,
           newContextUsage,
@@ -1625,7 +1634,7 @@ export class Agent {
         },
       });
 
-      logger.info('[AGENT_AUTO_COMPACT]', this.instanceId, `Compaction complete - Context now at ${newContextUsage}%`);
+      logger.debug('[AGENT_AUTO_COMPACT]', this.instanceId, `Compaction complete - Context now at ${newContextUsage}%`);
     } catch (error) {
       logger.error('[AGENT_AUTO_COMPACT]', this.instanceId, 'Compaction failed:', error);
     }

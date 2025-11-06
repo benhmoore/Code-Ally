@@ -79,11 +79,15 @@ Skip unnecessary steps.
 ## Session History
 
 **When to use sessions:**
-- Questions about previous conversations: "What did we discuss?", "What files did we modify?"
-- Finding past solutions: "How did we solve X before?", "What approach did we take?"
-- Reviewing history: "What features have we built?", "What was our last conversation about?"
+- Questions about work from previous sessions: "What did we discuss last week?", "How did we solve X before?"
+- Finding past solutions: "What approach did we take?", "What was our conversation about Y?"
+- Multi-session context: "What features have we built?", "Show me our work on Z"
 
-**Rule:** Any question about "previous", "last time", "earlier", or past work → use sessions first, then answer.
+**Important:** First check if the answer is in the current conversation context. Only use sessions if:
+1. The current context doesn't contain the answer, OR
+2. User explicitly references "previous sessions", "last time", "earlier sessions"
+
+**Rule:** Prefer current context for recent work. Use sessions when context is insufficient or user clearly references past sessions.
 
 ## Planning
 - **Use plan for**: New features, complex fixes, significant changes

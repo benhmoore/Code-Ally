@@ -140,6 +140,11 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
                 <Text dimColor={!isSelected} wrap="truncate">
                   {completion.description}
                 </Text>
+                {completion.currentValue && (
+                  <Text dimColor wrap="truncate">
+                    {' '}({completion.currentValue})
+                  </Text>
+                )}
               </Box>
             )}
           </Box>

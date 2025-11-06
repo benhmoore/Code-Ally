@@ -180,7 +180,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         )}
 
         {/* Duration */}
-        <Text dimColor> [{durationStr}]</Text>
+        <Text dimColor> · {durationStr}</Text>
       </Box>
 
       {/* Diff preview (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
