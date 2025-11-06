@@ -28,6 +28,7 @@ import { ConfigManager } from '../services/ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
 import { isPermissionDeniedError } from '../security/PathSecurity.js';
 import { Message, ActivityEventType, Config } from '../types/index.js';
+import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT } from '../config/constants.js';
@@ -1435,12 +1436,13 @@ export class Agent {
    * @param message - Message to add
    */
   addMessage(message: Message): void {
-    // Ensure message has a timestamp
-    const messageWithTimestamp = {
+    // Ensure message has ID and timestamp
+    const messageWithMetadata = {
       ...message,
+      id: message.id || generateMessageId(),
       timestamp: message.timestamp || Date.now(),
     };
-    this.messages.push(messageWithTimestamp);
+    this.messages.push(messageWithMetadata);
 
     // Update TokenManager with new message count
     this.tokenManager.updateTokenCount(this.messages);
@@ -1481,7 +1483,11 @@ export class Agent {
    * @param messages - New message array to replace current messages
    */
   setMessages(messages: Message[]): void {
-    this.messages = [...messages];
+    // Ensure all messages have IDs
+    this.messages = messages.map(msg => ({
+      ...msg,
+      id: msg.id || generateMessageId(),
+    }));
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages set, count:', this.messages.length);
   }
 
@@ -1491,7 +1497,11 @@ export class Agent {
    * @param compactedMessages - Compacted message array
    */
   updateMessagesAfterCompaction(compactedMessages: Message[]): void {
-    this.messages = [...compactedMessages];
+    // Ensure all messages have IDs
+    this.messages = compactedMessages.map(msg => ({
+      ...msg,
+      id: msg.id || generateMessageId(),
+    }));
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages updated after compaction, count:', this.messages.length);
   }
 

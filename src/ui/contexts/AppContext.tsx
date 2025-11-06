@@ -9,6 +9,7 @@
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import type { Message, Config, ToolCallState } from '../../types/index.js';
 import { UI_DELAYS } from '../../config/constants.js';
+import { generateMessageId } from '../../utils/id.js';
 
 /**
  * Compaction notice for UI display
@@ -115,6 +116,9 @@ export interface AppActions {
 
   /** Force Static component to remount (for rewind/compaction) */
   forceStaticRemount: () => void;
+
+  /** Atomically reset conversation view with new messages (for resume/compact/rewind) */
+  resetConversationView: (messages: Message[]) => void;
 }
 
 /**
@@ -172,21 +176,41 @@ export const AppProvider: React.FC<AppProviderProps> = ({
 
   // Actions
   const addMessage = useCallback((message: Message) => {
-    // Add timestamp if not present
-    const messageWithTimestamp = {
+    // Add ID and timestamp if not present
+    const messageWithMetadata = {
       ...message,
+      id: message.id || generateMessageId(),
       timestamp: message.timestamp || Date.now(),
     };
-    setMessages((prev) => [...prev, messageWithTimestamp]);
+
+    setMessages((prev) => {
+      // Check for duplicate by ID
+      if (prev.some(m => m.id === messageWithMetadata.id)) {
+        return prev;
+      }
+      return [...prev, messageWithMetadata];
+    });
   }, []);
 
   const setMessagesWithTimestamps = useCallback((newMessages: Message[]) => {
-    // Add timestamps to messages that don't have them
-    const messagesWithTimestamps = newMessages.map((msg, idx) => ({
+    // Add IDs and timestamps to messages that don't have them
+    const messagesWithMetadata = newMessages.map((msg, idx) => ({
       ...msg,
+      id: msg.id || generateMessageId(),
       timestamp: msg.timestamp || Date.now() + idx, // Add small offset for ordering
     }));
-    setMessages(messagesWithTimestamps);
+
+    // Deduplicate by ID - keep first occurrence of each unique ID
+    const seen = new Set<string>();
+    const deduplicated = messagesWithMetadata.filter(msg => {
+      if (!msg.id || seen.has(msg.id)) {
+        return false;
+      }
+      seen.add(msg.id);
+      return true;
+    });
+
+    setMessages(deduplicated);
   }, []);
 
   const updateConfig = useCallback((updates: Partial<Config>) => {
@@ -287,6 +311,29 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setStaticRemountKey((prev) => prev + 1);
   }, []);
 
+  const resetConversationView = useCallback((newMessages: Message[]) => {
+    // Atomically update both messages and remount key to prevent Static component accumulation
+    // This is critical for resume/compact/rewind operations
+    const messagesWithMetadata = newMessages.map((msg, idx) => ({
+      ...msg,
+      id: msg.id || generateMessageId(),
+      timestamp: msg.timestamp || Date.now() + idx,
+    }));
+
+    const seen = new Set<string>();
+    const deduplicated = messagesWithMetadata.filter(msg => {
+      if (!msg.id || seen.has(msg.id)) {
+        return false;
+      }
+      seen.add(msg.id);
+      return true;
+    });
+
+    // Update both in sequence - React will batch these together
+    setStaticRemountKey((prev) => prev + 1);
+    setMessages(deduplicated);
+  }, []);
+
   // Memoize state object to prevent unnecessary context updates
   const state = React.useMemo(() => ({
     messages,
@@ -319,7 +366,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     addRewindNotice,
     clearRewindNotices,
     forceStaticRemount,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, addRewindNotice, clearRewindNotices, forceStaticRemount]);
+    resetConversationView,
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

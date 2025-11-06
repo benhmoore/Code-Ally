@@ -129,6 +129,69 @@ export interface SessionResumeResult {
 }
 
 /**
+ * Core session loading logic shared between direct resume and interactive selection
+ * This consolidates the duplicated logic between useSessionResume and SESSION_SELECT_RESPONSE
+ */
+export async function loadSessionData(
+  sessionData: any,
+  agent: Agent,
+  actions: AppActions,
+  activityStream: ActivityStream
+): Promise<void> {
+  const serviceRegistry = ServiceRegistry.getInstance();
+
+  // Filter out system messages for UI
+  const userMessages = sessionData.messages.filter((m: Message) => m.role !== 'system');
+
+  // Load todos if present
+  const todoManager = serviceRegistry.get('todo_manager');
+  if (todoManager) {
+    if (sessionData.todos?.length > 0) {
+      (todoManager as any).setTodos(sessionData.todos);
+    } else {
+      (todoManager as any).setTodos([]);
+    }
+  }
+
+  // Load idle messages if present
+  const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
+  if (idleMessageGenerator && sessionData.idleMessages?.length > 0) {
+    (idleMessageGenerator as any).setQueue(sessionData.idleMessages);
+  }
+
+  // Load project context if present
+  const projectContextDetector = serviceRegistry.get('project_context_detector');
+  if (projectContextDetector && sessionData.projectContext) {
+    (projectContextDetector as any).setCached(sessionData.projectContext);
+  }
+
+  // Clear tool calls first
+  actions.clearToolCalls();
+
+  // Bulk load messages into agent (doesn't trigger auto-save)
+  agent.setMessages(userMessages);
+
+  // Atomically update UI with new messages AND increment remount key
+  // This prevents Static component from accumulating renders
+  actions.resetConversationView(userMessages);
+
+  // Reconstruct tool call states from message history for proper rendering
+  const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
+  reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
+
+  // Reconstruct interjection events from message history
+  reconstructInterjectionsFromMessages(userMessages, activityStream);
+
+  // Update context usage
+  const tokenManager = serviceRegistry.get('token_manager');
+  if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
+    (tokenManager as any).updateTokenCount(agent.getMessages());
+    const contextUsage = (tokenManager as any).getContextUsagePercentage();
+    actions.setContextUsage(contextUsage);
+  }
+}
+
+/**
  * Handle session resumption on mount
  *
  * @param resumeSession - Session to resume (session ID, 'interactive' for selector, or null)
@@ -162,11 +225,12 @@ export const useSessionResume = (
   useEffect(() => {
     const handleSessionResume = async () => {
       // Only run once
-      if (sessionResumed.current) return;
+      if (sessionResumed.current) {
+        return;
+      }
 
       const serviceRegistry = ServiceRegistry.getInstance();
       const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
-      const todoManager = serviceRegistry.get('todo_manager');
 
       if (!sessionManager) {
         setSessionLoaded(true);
@@ -201,57 +265,11 @@ export const useSessionResume = (
         // Load all session data in a single read (optimization)
         const sessionData = await sessionManager.getSessionData(resumeSession);
 
-        // Filter out system messages to avoid duplication
-        const userMessages = sessionData.messages.filter(m => m.role !== 'system');
-
-        // Load idle messages into IdleMessageGenerator
-        const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
-        if (idleMessageGenerator && sessionData.idleMessages.length > 0) {
-          (idleMessageGenerator as any).setQueue(sessionData.idleMessages);
-        }
-
-        // Load todos into TodoManager (or clear if session has no todos)
-        if (todoManager) {
-          if (sessionData.todos.length > 0) {
-            (todoManager as any).setTodos(sessionData.todos);
-          } else {
-            (todoManager as any).setTodos([]);
-          }
-        }
-
-        // Bulk load messages (setMessages doesn't trigger auto-save)
-        agent.setMessages(userMessages);
-
-        // Load project context into ProjectContextDetector
-        const projectContextDetector = serviceRegistry.get('project_context_detector');
-        if (projectContextDetector && sessionData.projectContext) {
-          (projectContextDetector as any).setCached(sessionData.projectContext);
-        }
-
-        // Reconstruct tool call states from message history for proper rendering
-        const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
-        reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
-
-        // Reconstruct interjection events from message history
-        reconstructInterjectionsFromMessages(userMessages, activityStream);
+        // Use shared session loading logic
+        await loadSessionData(sessionData, agent, actions, activityStream);
 
         // Mark session as loaded
         setSessionLoaded(true);
-
-        // Update UI state
-        actions.setMessages(userMessages);
-
-        // Force Static to remount with loaded session messages
-        actions.forceStaticRemount();
-
-        // Update context usage
-        const tokenManager = serviceRegistry.get('token_manager');
-        if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
-          (tokenManager as any).updateTokenCount(agent.getMessages());
-          const contextUsage = (tokenManager as any).getContextUsagePercentage();
-          actions.setContextUsage(contextUsage);
-        }
-
         sessionResumed.current = true;
       }
     };

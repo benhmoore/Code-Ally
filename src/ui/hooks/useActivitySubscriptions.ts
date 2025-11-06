@@ -11,7 +11,7 @@ import { ActivityEventType, Message, ToolCallState } from '../../types/index.js'
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
-import { reconstructInterjectionsFromMessages, reconstructToolCallsFromMessages } from './useSessionResume.js';
+import { reconstructInterjectionsFromMessages, reconstructToolCallsFromMessages, loadSessionData } from './useSessionResume.js';
 import { Agent } from '../../agent/Agent.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
@@ -614,13 +614,14 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.COMPACTION_COMPLETE, (event) => {
     const { oldContextUsage, newContextUsage, threshold, compactedMessages } = event.data;
 
+    // Clear tool calls first
+    actions.clearToolCalls();
+
     if (compactedMessages) {
       const uiMessages = compactedMessages.filter((m: Message) => m.role !== 'system');
-      actions.setMessages(uiMessages);
+      // Atomically reset conversation view (sets messages + increments remount key)
+      actions.resetConversationView(uiMessages);
     }
-
-    actions.forceStaticRemount();
-    actions.clearToolCalls();
 
     actions.addCompactionNotice({
       id: event.id,
@@ -866,8 +867,6 @@ export const useActivitySubscriptions = (
     if (!cancelled && sessionId) {
       const serviceRegistry = ServiceRegistry.getInstance();
       const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
-      const todoManager = serviceRegistry.get('todo_manager');
-      const tokenManager = serviceRegistry.get('token_manager');
 
       if (!sessionManager) return;
 
@@ -881,43 +880,8 @@ export const useActivitySubscriptions = (
 
         const sessionData = await sessionManager.getSessionData(sessionId);
 
-        const userMessages = sessionData.messages.filter(m => m.role !== 'system');
-
-        agent.setMessages(userMessages);
-
-        if (todoManager) {
-          if (sessionData.todos.length > 0) {
-            (todoManager as any).setTodos(sessionData.todos);
-          } else {
-            (todoManager as any).setTodos([]);
-          }
-        }
-
-        const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
-        if (idleMessageGenerator && sessionData.idleMessages.length > 0) {
-          (idleMessageGenerator as any).setQueue(sessionData.idleMessages);
-        }
-
-        const projectContextDetector = serviceRegistry.get('project_context_detector');
-        if (projectContextDetector && sessionData.projectContext) {
-          (projectContextDetector as any).setCached(sessionData.projectContext);
-        }
-
-        actions.clearToolCalls();
-        const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
-        reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
-
-        reconstructInterjectionsFromMessages(userMessages, activityStream);
-
-        actions.setMessages(userMessages);
-
-        actions.forceStaticRemount();
-
-        if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
-          (tokenManager as any).updateTokenCount(agent.getMessages());
-          const contextUsage = (tokenManager as any).getContextUsagePercentage();
-          actions.setContextUsage(contextUsage);
-        }
+        // Use shared session loading logic
+        await loadSessionData(sessionData, agent, actions, activityStream);
       } catch (error) {
         console.error('Failed to load session:', error);
       }
@@ -938,22 +902,23 @@ export const useActivitySubscriptions = (
 
         const serviceRegistry = ServiceRegistry.getInstance();
 
+        // Clear tool calls and rewind notices first
         actions.clearToolCalls();
-        const reconstructedToolCalls = reconstructToolCallsFromMessages(rewindedMessages, serviceRegistry);
-        reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
-
-        reconstructInterjectionsFromMessages(rewindedMessages, activityStream);
+        actions.clearRewindNotices();
 
         const todoManager = serviceRegistry.get('todo_manager');
         if (todoManager && typeof (todoManager as any).setTodos === 'function') {
           (todoManager as any).setTodos([]);
         }
 
-        actions.forceStaticRemount();
+        // Atomically reset conversation view (sets messages + increments remount key)
+        actions.resetConversationView(rewindedMessages);
 
-        actions.setMessages(rewindedMessages);
+        // Reconstruct tool calls and interjections after view is reset
+        const reconstructedToolCalls = reconstructToolCallsFromMessages(rewindedMessages, serviceRegistry);
+        reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
 
-        actions.clearRewindNotices();
+        reconstructInterjectionsFromMessages(rewindedMessages, activityStream);
 
         actions.addRewindNotice({
           id: `rewind_${Date.now()}`,

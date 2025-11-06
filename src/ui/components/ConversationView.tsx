@@ -306,7 +306,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
     completedTimeline.forEach((item) => {
       if (item.type === 'message') {
-        items.push(<MessageDisplay key={`msg-${item.index}`} message={item.message} config={config} />);
+        items.push(<MessageDisplay key={`msg-${item.message.id || item.index}`} message={item.message} config={config} />);
       } else if (item.type === 'toolCall') {
         items.push(
           <Box key={`tool-${item.toolCall.id}`}>

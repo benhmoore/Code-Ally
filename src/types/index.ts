@@ -9,6 +9,7 @@
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface Message {
+  id?: string; // Unique identifier for deduplication
   role: MessageRole;
   content: string;
   name?: string;
