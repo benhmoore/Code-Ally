@@ -99,7 +99,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           {' '}
           {elapsedSeconds}s
         </Text>
-        {toolCall.status === 'error' && toolCall.error && (
+        {toolCall.status === 'error' && toolCall.error && toolCall.error_type !== 'validation_error' && (
           <Text color="red" dimColor>
             {' '}
             - {toolCall.error.split('\n')[0]?.slice(0, TEXT_LIMITS.ERROR_DISPLAY_MAX) || 'Unknown error'}

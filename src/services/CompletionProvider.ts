@@ -17,7 +17,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { CACHE_TIMEOUTS, BUFFER_SIZES } from '../config/constants.js';
 import { FuzzyFilePathMatcher, FuzzyMatchResult } from './FuzzyFilePathMatcher.js';
 
-export type CompletionType = 'command' | 'file' | 'option';
+export type CompletionType = 'command' | 'file' | 'directory' | 'option';
 
 export interface Completion {
   value: string;
@@ -159,8 +159,6 @@ export class CompletionProvider {
       return await this.getBashCompletions(context);
     } else if (context.currentWord.startsWith('@')) {
       return await this.getFuzzyFilePathCompletions(context);
-    } else if (this.looksLikeFilePath(context.currentWord)) {
-      return await this.getFileCompletions(context);
     }
 
     // No completions
@@ -731,7 +729,7 @@ export class CompletionProvider {
       return results.map(result => ({
         value: result.filename, // Show just the filename in left label
         description: dirname(result.relativePath), // Show directory in right label
-        type: 'file' as const,
+        type: result.isDirectory ? ('directory' as const) : ('file' as const),
         insertText: result.relativePath, // Insert full path when selected
       }));
     } catch (error) {

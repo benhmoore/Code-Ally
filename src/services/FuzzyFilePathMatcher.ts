@@ -48,6 +48,8 @@ export interface FuzzyMatchResult {
   score: number;
   /** Type of match that was found */
   matchType: MatchType;
+  /** Whether this is a directory (vs a file) */
+  isDirectory: boolean;
 }
 
 /**
@@ -219,11 +221,16 @@ export class FuzzyFilePathMatcher {
         }
 
         if (entry.isDirectory()) {
+          // Check if directory itself matches query
+          const match = await this.matchFile(entryPath, entryName, query, true);
+          if (match) {
+            matches.push(match);
+          }
           // Recursively search subdirectory
           await this.searchDirectory(entryPath, query, matches, depth + 1);
         } else if (entry.isFile()) {
           // Check if file matches query
-          const match = await this.matchFile(entryPath, entryName, query);
+          const match = await this.matchFile(entryPath, entryName, query, false);
           if (match) {
             matches.push(match);
           }
@@ -241,12 +248,14 @@ export class FuzzyFilePathMatcher {
    * @param filePath - Absolute file path
    * @param filename - File basename
    * @param query - Normalized search query
+   * @param isDirectory - Whether this is a directory
    * @returns Match result or null if no match
    */
   private async matchFile(
     filePath: string,
     filename: string,
-    query: string
+    query: string,
+    isDirectory: boolean
   ): Promise<FuzzyMatchResult | null> {
     const normalizedFilename = filename.toLowerCase();
     const relativePath = relative(this.rootDir, filePath);
@@ -295,6 +304,7 @@ export class FuzzyFilePathMatcher {
       filename,
       score,
       matchType,
+      isDirectory,
     };
   }
 
@@ -344,8 +354,15 @@ export class FuzzyFilePathMatcher {
    * @returns True if any path component contains query
    */
   private matchesPathComponent(relativePath: string, query: string): boolean {
-    const components = relativePath.split(sep);
+    const normalizedPath = relativePath.toLowerCase();
 
+    // First check if the query (which may contain slashes) matches the path
+    if (normalizedPath.includes(query)) {
+      return true;
+    }
+
+    // Also check individual path components
+    const components = relativePath.split(sep);
     for (const component of components) {
       const normalized = component.toLowerCase();
       if (normalized.includes(query)) {

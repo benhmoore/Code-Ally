@@ -186,6 +186,7 @@ export interface ToolCallState {
   arguments: any;
   output?: string;
   error?: string;
+  error_type?: ErrorType; // Type of error for filtering display
   startTime: number;
   executionStartTime?: number; // When actual execution starts (after permission granted)
   endTime?: number;

@@ -177,6 +177,7 @@ export const useActivitySubscriptions = (
       status: event.data.success ? 'success' : 'error',
       endTime: event.timestamp,
       error: event.data.error,
+      error_type: event.data.result?.error_type,
     };
 
     // Clear diff preview on failure (operation didn't complete)

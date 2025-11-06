@@ -117,12 +117,12 @@ export class ToolValidator {
     // Validate offset parameter
     if (args.offset !== undefined && args.offset !== null) {
       const offset = Number(args.offset);
-      if (isNaN(offset) || offset < 0) {
+      if (isNaN(offset)) {
         return {
           valid: false,
-          error: 'offset must be a non-negative number (1-based line number)',
+          error: 'offset must be a number (positive: 1-based line number, negative: count from end)',
           error_type: 'validation_error',
-          suggestion: 'Example: offset=1 (starts at line 1)',
+          suggestion: 'Example: offset=1 (starts at line 1) or offset=-20 (last 20 lines with limit=20)',
         };
       }
     }

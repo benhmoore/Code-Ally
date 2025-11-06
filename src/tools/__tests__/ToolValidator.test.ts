@@ -60,16 +60,14 @@ describe('ToolValidator', () => {
       expect(result.suggestion).toContain('limit=100');
     });
 
-    it('should reject negative offset', () => {
+    it('should accept negative offset', () => {
       mockTool.name = 'read';
       const result = validator.validateArguments(mockTool, readFunctionDef, {
         file_paths: ['test.txt'],
-        offset: -1,
+        offset: -20,
       });
 
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('offset must be a non-negative number');
-      expect(result.suggestion).toContain('offset=1');
+      expect(result.valid).toBe(true);
     });
 
     it('should accept valid limit and offset', () => {

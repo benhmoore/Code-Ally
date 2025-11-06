@@ -196,7 +196,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       )}
 
       {/* Error output as threaded child (hidden if collapsed, but always show errors even with hideOutput) */}
-      {!toolCall.collapsed && toolCall.error && (
+      {/* Hide validation_error type - these are model-directed messages, not user errors */}
+      {!toolCall.collapsed && toolCall.error && toolCall.error_type !== 'validation_error' && (
         <Box flexDirection="column">
           <Box>
             <Text>{indent}    </Text>

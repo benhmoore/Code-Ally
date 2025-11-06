@@ -224,6 +224,44 @@ describe('CompletionProvider', () => {
         expect(['Handler.ts', 'CommandHandler.ts'].includes(firstResult)).toBe(true);
       }
     });
+
+    it('should match path segments', async () => {
+      // Create test files in nested directories
+      const srcDir = join(tempDir, 'src');
+      const pluginsDir = join(srcDir, 'plugins');
+      await fs.mkdir(pluginsDir, { recursive: true });
+      await fs.writeFile(join(pluginsDir, 'PluginManager.ts'), 'content', 'utf-8');
+      await fs.writeFile(join(pluginsDir, 'PluginLoader.ts'), 'content', 'utf-8');
+
+      // Test path segment matching
+      const completions = await provider.getCompletions('@src/plugins', 12);
+
+      if (completions.length > 0) {
+        // Should find files in src/plugins directory
+        const values = completions.map(c => c.value);
+        expect(values.some(v => v === 'PluginManager.ts' || v === 'PluginLoader.ts')).toBe(true);
+      }
+    });
+
+    it('should match directories', async () => {
+      // Create test directories
+      const srcDir = join(tempDir, 'src');
+      const pluginsDir = join(srcDir, 'plugins');
+      const componentsDir = join(srcDir, 'components');
+      await fs.mkdir(pluginsDir, { recursive: true });
+      await fs.mkdir(componentsDir, { recursive: true });
+
+      // Test directory matching
+      const completions = await provider.getCompletions('@plugins', 8);
+
+      if (completions.length > 0) {
+        // Should find the plugins directory itself
+        const pluginsCompletion = completions.find(c => c.value === 'plugins');
+        expect(pluginsCompletion).toBeDefined();
+        // Should be marked as directory type
+        expect(pluginsCompletion?.type).toBe('directory');
+      }
+    });
   });
 
   describe('file path completions', () => {

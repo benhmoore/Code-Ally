@@ -32,6 +32,8 @@ function getCompletionIcon(type: Completion['type']): string {
       return '/';
     case 'file':
       return 'f';
+    case 'directory':
+      return 'd';
     case 'option':
       return '*';
     default:
@@ -48,6 +50,8 @@ function getCompletionColor(type: Completion['type']): string {
       return 'yellow';
     case 'file':
       return 'cyan';
+    case 'directory':
+      return 'magenta';
     case 'option':
       return 'blue';
     default:
