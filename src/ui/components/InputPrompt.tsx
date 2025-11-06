@@ -1175,10 +1175,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     charCount += lineLength + 1; // +1 for newline character
   }
 
-  // Determine prompt style based on first character (command mode) or agent state
+  // Determine prompt style based on first character
   const isCommandMode = buffer.startsWith('/');
   const isBashMode = buffer.startsWith('!');
-  const isAgentMode = buffer.startsWith('@');
 
   let promptText = '> ';
   let promptColor = 'gray';
@@ -1189,9 +1188,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   } else if (isBashMode) {
     promptText = 'Bash > ';
     promptColor = 'green';
-  } else if (isAgentMode) {
-    promptText = 'Agent > ';
-    promptColor = 'magenta';
   }
 
   return (
@@ -1227,7 +1223,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
           return (
             <Box key={`line-${index}`}>
-              <Text color={promptColor} bold={isCommandMode || isBashMode || isAgentMode}>
+              <Text color={promptColor} bold={isCommandMode || isBashMode}>
                 {prompt}
               </Text>
               {!isCursorLine && (

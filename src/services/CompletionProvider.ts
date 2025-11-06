@@ -4,7 +4,7 @@
  * Features:
  * - Command completions for slash commands
  * - File path completions
- * - Agent name completions
+ * - Fuzzy file path completions (@ syntax)
  * - Context-aware suggestions based on cursor position
  */
 
@@ -15,8 +15,9 @@ import { AgentManager } from './AgentManager.js';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { CACHE_TIMEOUTS, BUFFER_SIZES } from '../config/constants.js';
+import { FuzzyFilePathMatcher, FuzzyMatchResult } from './FuzzyFilePathMatcher.js';
 
-export type CompletionType = 'command' | 'file' | 'agent' | 'option';
+export type CompletionType = 'command' | 'file' | 'option';
 
 export interface Completion {
   value: string;
@@ -112,10 +113,12 @@ export class CompletionProvider {
   private commandNamesCache: string[] = [];
   private commandsCacheTime: number = 0;
   private readonly cacheTTL = CACHE_TIMEOUTS.COMPLETION_CACHE_TTL;
+  private fuzzyMatcher: FuzzyFilePathMatcher;
 
   constructor(agentManager?: AgentManager, configManager?: any) {
     this.agentManager = agentManager || null;
     this.configManager = configManager || null;
+    this.fuzzyMatcher = new FuzzyFilePathMatcher(process.cwd());
   }
 
   /**
@@ -123,6 +126,13 @@ export class CompletionProvider {
    */
   setAgentManager(agentManager: AgentManager): void {
     this.agentManager = agentManager;
+  }
+
+  /**
+   * Set the working directory for fuzzy file path matching (for testing)
+   */
+  setWorkingDirectory(workingDir: string): void {
+    this.fuzzyMatcher.setRootDir(workingDir);
   }
 
   /**
@@ -148,7 +158,7 @@ export class CompletionProvider {
     } else if (context.lineStart.startsWith('!')) {
       return await this.getBashCompletions(context);
     } else if (context.currentWord.startsWith('@')) {
-      return await this.getAgentCompletions(context);
+      return await this.getFuzzyFilePathCompletions(context);
     } else if (this.looksLikeFilePath(context.currentWord)) {
       return await this.getFileCompletions(context);
     }
@@ -398,7 +408,7 @@ export class CompletionProvider {
       .map(name => ({
         value: name,
         description: 'Specialized agent',
-        type: 'agent' as const,
+        type: 'option' as const,
       }));
   }
 
@@ -696,19 +706,38 @@ export class CompletionProvider {
   }
 
   /**
-   * Get agent completions (for @agent syntax)
+   * Get fuzzy file path completions (for @filepath syntax)
+   *
+   * Uses fuzzy matching to find files that match the query string after the @ symbol.
+   * Results are sorted by relevance score, with bonuses for recent files and proximity.
+   *
+   * @param context - Completion context containing the current word and cursor position
+   * @returns Array of file path completions sorted by relevance
    */
-  private async getAgentCompletions(context: CompletionContext): Promise<Completion[]> {
-    const prefix = context.currentWord.slice(1); // Remove @
-    const agentNames = await this.getAgentNames();
+  private async getFuzzyFilePathCompletions(context: CompletionContext): Promise<Completion[]> {
+    try {
+      // Strip the @ prefix from the query
+      const query = context.currentWord.slice(1);
 
-    return agentNames
-      .filter(name => name.startsWith(prefix))
-      .map(name => ({
-        value: `@${name}`,
-        description: 'Specialized agent',
-        type: 'agent' as const,
+      // If query is empty, return empty results
+      if (!query || query.trim().length === 0) {
+        return [];
+      }
+
+      // Search for matching files using fuzzy matcher
+      const results: FuzzyMatchResult[] = await this.fuzzyMatcher.search(query);
+
+      // Map results to Completion format
+      return results.map(result => ({
+        value: result.filename, // Show just the filename in left label
+        description: dirname(result.relativePath), // Show directory in right label
+        type: 'file' as const,
+        insertText: result.relativePath, // Insert full path when selected
       }));
+    } catch (error) {
+      logger.debug(`Fuzzy file path completion failed: ${formatError(error)}`);
+      return [];
+    }
   }
 
   /**

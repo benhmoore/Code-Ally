@@ -32,8 +32,6 @@ function getCompletionIcon(type: Completion['type']): string {
       return '/';
     case 'file':
       return 'f';
-    case 'agent':
-      return '@';
     case 'option':
       return '*';
     default:
@@ -50,8 +48,6 @@ function getCompletionColor(type: Completion['type']): string {
       return 'yellow';
     case 'file':
       return 'cyan';
-    case 'agent':
-      return 'magenta';
     case 'option':
       return 'blue';
     default:
