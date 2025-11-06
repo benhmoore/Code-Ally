@@ -59,29 +59,51 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
   onConfirm,
   visible = true,
 }) => {
-  // Default to "conversation-and-files" (index 1) for backward compatibility
+  // Default selection:
+  // - If files exist: "conversation-and-files" (index 1) for backward compatibility
+  // - If no files: "conversation-only" (index 0) since restoring files has no effect
   // Options: 0 = conversation-only, 1 = conversation-and-files, 2 = cancel
-  const [selectedOption, setSelectedOption] = useState(1);
+  const [selectedOption, setSelectedOption] = useState(
+    fileChanges.fileCount > 0 ? 1 : 0
+  );
 
   // Handle keyboard input
   useInput(
     (_input, key) => {
-      // Up arrow - navigate to previous option
+      const hasFiles = fileChanges.fileCount > 0;
+
+      // Up arrow - navigate to previous option (skip disabled options)
       if (key.upArrow) {
-        setSelectedOption(Math.max(0, selectedOption - 1));
+        let newIndex = selectedOption - 1;
+        // If no files and trying to move to index 1 (disabled option), skip to index 0
+        if (!hasFiles && newIndex === 1) {
+          newIndex = 0;
+        }
+        setSelectedOption(Math.max(0, newIndex));
         return;
       }
 
-      // Down arrow - navigate to next option
+      // Down arrow - navigate to next option (skip disabled options)
       if (key.downArrow) {
-        setSelectedOption(Math.min(2, selectedOption + 1));
+        let newIndex = selectedOption + 1;
+        // If no files and trying to move to index 1 (disabled option), skip to index 2
+        if (!hasFiles && newIndex === 1) {
+          newIndex = 2;
+        }
+        setSelectedOption(Math.min(2, newIndex));
         return;
       }
 
-      // Enter - confirm selection
+      // Enter - confirm selection (prevent selecting disabled options)
       if (key.return) {
         const choices: RewindChoice[] = ['conversation-only', 'conversation-and-files', 'cancel'];
         const choice = choices[selectedOption];
+
+        // Prevent confirming disabled "conversation-and-files" option when no files
+        if (choice === 'conversation-and-files' && !hasFiles) {
+          return;
+        }
+
         if (choice) {
           onConfirm(choice);
         }
