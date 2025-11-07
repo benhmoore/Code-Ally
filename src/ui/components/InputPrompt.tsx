@@ -25,7 +25,7 @@ import { UI_DELAYS } from '../../config/constants.js';
 
 interface InputPromptProps {
   /** Callback when user submits input */
-  onSubmit: (input: string) => void;
+  onSubmit: (input: string, mentions?: { files?: string[] }) => void;
   /** Callback when user interjections (submits mid-response) */
   onInterjection?: (message: string) => void;
   /** Whether input is currently active/enabled */
@@ -124,6 +124,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const { exit } = useApp();
   const [buffer, setBuffer] = useState(bufferValue || '');
   const [cursorPosition, setCursorPosition] = useState(0);
+  const [mentionedFiles, setMentionedFiles] = useState<string[]>([]);
 
   // Handle prefill text
   useEffect(() => {
@@ -280,6 +281,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     setCursorPosition(newCursor);
     setShowCompletions(false);
     setCompletions([]);
+
+    // Track file mentions (avoid duplicates)
+    if (completion.type === 'file' && !mentionedFiles.includes(insertText)) {
+      setMentionedFiles([...mentionedFiles, insertText]);
+    }
   };
 
   /**
@@ -343,6 +349,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
     }
 
+    // Call callback with mentions if any
+    onSubmit(trimmed, mentionedFiles.length > 0 ? { files: mentionedFiles } : undefined);
+
     // Reset state
     setBuffer('');
     setCursorPosition(0);
@@ -350,9 +359,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     setHistoryBuffer('');
     setShowCompletions(false);
     setCompletions([]);
-
-    // Call callback
-    onSubmit(trimmed);
+    setMentionedFiles([]);
   };
 
   /**
@@ -1008,6 +1015,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
               setHistoryBuffer('');
               setShowCompletions(false);
               setCompletions([]);
+              setMentionedFiles([]);
             }
           } else {
             // Normal submission

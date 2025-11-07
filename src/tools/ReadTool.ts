@@ -61,6 +61,16 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
   }
 
   /**
+   * Get the maximum allowed tokens for user-initiated reads via file mentions
+   * Uses full context size since user is explicitly requesting the file
+   */
+  private getUserInitiatedMaxTokens(): number {
+    const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
+    // Use 95% of context to leave room for user's message and response
+    return Math.floor(contextSize * 0.95);
+  }
+
+  /**
    * Provide custom function definition
    */
   getFunctionDefinition(): FunctionDefinition {
@@ -98,7 +108,7 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
     };
   }
 
-  protected async executeImpl(args: any): Promise<ToolResult> {
+  protected async executeImpl(args: any, _toolCallId?: string, isUserInitiated: boolean = false): Promise<ToolResult> {
     this.captureParams(args);
 
     const filePaths = args.file_paths;
@@ -115,14 +125,21 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
     }
 
     const estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
-    const maxTokens = ephemeral ? this.getEphemeralMaxTokens() : this.getMaxTokens();
+
+    // Determine max tokens based on whether this is user-initiated
+    let maxTokens: number;
+    if (isUserInitiated) {
+      maxTokens = this.getUserInitiatedMaxTokens();
+    } else {
+      maxTokens = ephemeral ? this.getEphemeralMaxTokens() : this.getMaxTokens();
+    }
 
     if (estimatedTokens > maxTokens) {
       const examples = filePaths.length === 1
         ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=-100, limit=100) for last 100 lines`
         : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
 
-      const ephemeralHint = !ephemeral
+      const ephemeralHint = !ephemeral && !isUserInitiated
         ? ' As a LAST RESORT for one-time inspection only: ephemeral=true (WARNING: content removed after one turn, you will lose access).'
         : '';
 

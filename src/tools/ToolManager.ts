@@ -233,6 +233,7 @@ export class ToolManager {
    * @param callId - Tool call ID from orchestrator (for streaming output)
    * @param _preApproved - Whether permission has been pre-approved
    * @param abortSignal - Optional AbortSignal for interrupting tool execution
+   * @param isUserInitiated - Internal flag for user-initiated execution (not visible to model)
    * @returns Tool result
    */
   async executeTool(
@@ -240,7 +241,8 @@ export class ToolManager {
     args: Record<string, any>,
     callId?: string,
     _preApproved: boolean = false,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    isUserInitiated: boolean = false
   ): Promise<ToolResult> {
     const tool = this.tools.get(toolName);
     if (!tool) {
@@ -274,7 +276,7 @@ export class ToolManager {
     }
 
     try {
-      const result = await tool.execute(args, callId, abortSignal);
+      const result = await tool.execute(args, callId, abortSignal, isUserInitiated);
 
       this.trackFileOperation(toolName, args, result);
 

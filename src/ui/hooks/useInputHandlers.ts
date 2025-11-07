@@ -132,7 +132,7 @@ export const useInputHandlers = (
   /**
    * Handle user input (messages, commands, bash shortcuts)
    */
-  const handleInput = useCallback(async (input: string) => {
+  const handleInput = useCallback(async (input: string, mentions?: { files?: string[] }) => {
     const trimmed = input.trim();
 
     // Check for bash shortcuts (! prefix)
@@ -281,10 +281,187 @@ export const useInputHandlers = (
 
     // Add user message
     if (trimmed) {
+      // Filter mentions to only include files still present in the input text
+      // This handles cases where user completed a file but then deleted it
+      const filteredMentions = mentions?.files
+        ? { files: mentions.files.filter(filePath => trimmed.includes(filePath)) }
+        : undefined;
+
+      // Add user message to UI (separate from Agent's internal message history)
+      // This displays the message to the user immediately
       actions.addMessage({
         role: 'user',
         content: trimmed,
+        metadata: filteredMentions ? { mentions: filteredMentions } : undefined,
       });
+
+      // Handle file mentions - execute read tool before sending user message
+      if (filteredMentions?.files && filteredMentions.files.length > 0) {
+        // Declare variables outside try block so they're accessible in catch
+        let toolCallId: string | undefined;
+        let readTool: any | undefined;
+
+        try {
+          // Get ToolManager from ServiceRegistry
+          const serviceRegistry = ServiceRegistry.getInstance();
+          const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+          if (!toolManager) {
+            actions.addMessage({
+              role: 'assistant',
+              content: 'Error: Tool manager not available',
+            });
+            return;
+          }
+
+          // Get ReadTool
+          readTool = toolManager.getTool('read');
+
+          if (!readTool) {
+            actions.addMessage({
+              role: 'assistant',
+              content: 'Error: Read tool not available',
+            });
+            return;
+          }
+
+          // Generate unique tool call ID
+          toolCallId = `read-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+          // Create assistant message that describes the read execution
+          const assistantMessage = {
+            role: 'assistant' as const,
+            content: '',
+            tool_calls: [{
+              id: toolCallId,
+              type: 'function' as const,
+              function: {
+                name: 'read',
+                arguments: { file_paths: filteredMentions.files },
+              },
+            }],
+          };
+
+          // Add assistant message to Agent's conversation history
+          agent.addMessage(assistantMessage);
+
+          // Emit TOOL_CALL_START event to create UI element
+          activityStream.emit({
+            id: toolCallId,
+            type: ActivityEventType.TOOL_CALL_START,
+            timestamp: Date.now(),
+            data: {
+              toolName: 'read',
+              arguments: { file_paths: filteredMentions.files },
+              visibleInChat: readTool.visibleInChat ?? true,
+              isTransparent: readTool.isTransparentWrapper || false,
+            },
+          });
+
+          // Reset tool call activity timer to prevent timeout
+          if (typeof agent.resetToolCallActivity === 'function') {
+            agent.resetToolCallActivity();
+          }
+
+          // Auto-promote first pending todo to in_progress
+          // This helps the agent track progress through the todo list
+          const todoManager = serviceRegistry.get<any>('todo_manager');
+
+          if (todoManager) {
+            const inProgress = todoManager.getInProgressTodo?.();
+            if (!inProgress) {
+              const nextPending = todoManager.getNextPendingTodo?.();
+              if (nextPending) {
+                // Find and update the todo
+                const todos = todoManager.getTodos();
+                const updated = todos.map((t: any) =>
+                  t.id === nextPending.id ? { ...t, status: 'in_progress' as const } : t
+                );
+                todoManager.setTodos(updated);
+              }
+            }
+          }
+
+          // Execute read tool via ToolManager.executeTool() for proper integration
+          const result = await toolManager.executeTool(
+            'read',
+            { file_paths: filteredMentions.files },
+            toolCallId,
+            false, // isRetry
+            agent.getToolAbortSignal?.(),
+            true   // isUserInitiated - NOT visible to model
+          );
+
+          // Emit TOOL_CALL_END event to complete the tool call
+          activityStream.emit({
+            id: toolCallId,
+            type: ActivityEventType.TOOL_CALL_END,
+            timestamp: Date.now(),
+            data: {
+              toolName: 'read',
+              result,
+              success: result.success,
+              error: result.success ? undefined : result.error,
+              visibleInChat: readTool.visibleInChat ?? true,
+              isTransparent: readTool.isTransparentWrapper || false,
+              collapsed: readTool.shouldCollapse || false,
+            },
+          });
+
+          // Format tool result message for Agent
+          const toolResultMessage = {
+            role: 'tool' as const,
+            content: JSON.stringify(result),
+            tool_call_id: toolCallId,
+            name: 'read',
+          };
+
+          // Add tool result to Agent's conversation history
+          agent.addMessage(toolResultMessage);
+        } catch (error) {
+          // Emit TOOL_CALL_END event with error to prevent stuck UI
+          if (toolCallId) {
+            activityStream.emit({
+              id: toolCallId,
+              type: ActivityEventType.TOOL_CALL_END,
+              timestamp: Date.now(),
+              data: {
+                toolName: 'read',
+                result: {
+                  success: false,
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                  error_type: 'system_error',
+                },
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                visibleInChat: readTool?.visibleInChat ?? true,
+                isTransparent: readTool?.isTransparentWrapper || false,
+                collapsed: readTool?.shouldCollapse || false,
+              },
+            });
+
+            // Add error tool result to Agent's conversation history
+            const errorToolResultMessage = {
+              role: 'tool' as const,
+              content: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                error_type: 'system_error',
+              }),
+              tool_call_id: toolCallId,
+              name: 'read',
+            };
+            agent.addMessage(errorToolResultMessage);
+          }
+
+          // Show error to user
+          actions.addMessage({
+            role: 'assistant',
+            content: `Error reading mentioned files: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          });
+          return;
+        }
+      }
 
       // Set thinking state
       actions.setIsThinking(true);

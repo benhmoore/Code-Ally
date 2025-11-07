@@ -1589,7 +1589,7 @@ export class Agent {
     }
 
     // Both conditions met: context is full AND we have enough messages
-    logger.info('[AGENT_AUTO_COMPACT]', this.instanceId,
+    logger.debug('[AGENT_AUTO_COMPACT]', this.instanceId,
       `Context at ${contextUsage}%, threshold ${threshold}% - triggering compaction`);
 
     try {

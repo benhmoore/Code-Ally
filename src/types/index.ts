@@ -38,6 +38,10 @@ export interface MessageMetadata {
   partial?: boolean;
   /** Whether this is a conversation summary that should be displayed in UI */
   isConversationSummary?: boolean;
+  /** File paths that were mentioned using '@' completion in this message */
+  mentions?: {
+    files?: string[];
+  };
   // Future: Add more presentation hints as needed
 }
 
