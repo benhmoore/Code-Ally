@@ -5,6 +5,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { TIMEOUT_LIMITS, TOOL_LIMITS } from '../config/toolDefaults.js';
 import type { ToolDefinition, PluginManifest } from './PluginLoader.js';
 import type { PluginEnvironmentManager } from './PluginEnvironmentManager.js';
+import { logger } from '../services/Logger.js';
 
 /**
  * Wraps external executable plugins (Python scripts, shell scripts, etc.)
@@ -194,6 +195,7 @@ export class ExecutableToolWrapper extends BaseTool {
 
 			// Resolve the actual command (with venv injection if needed)
 			const resolvedCommand = this.getResolvedCommand();
+			logger.debug(`[ExecutableToolWrapper] Executing plugin '${this.name}': ${resolvedCommand} ${this.commandArgs.join(' ')}`);
 
 			// Spawn the child process
 			const child = spawn(resolvedCommand, this.commandArgs, {
@@ -245,9 +247,9 @@ Arguments: ${JSON.stringify(args, null, 2)}`
 			child.on('error', (error) => {
 				clearTimeout(timeoutId);
 				reject(new Error(
-					`Failed to spawn process '${this.command}': ${error.message}
+					`Failed to spawn process '${resolvedCommand}': ${error.message}
 Working directory: ${this.workingDir}
-Command: ${this.command} ${this.commandArgs.join(' ')}`
+Command: ${resolvedCommand} ${this.commandArgs.join(' ')}`
 				));
 			});
 
@@ -293,7 +295,7 @@ Command: ${this.command} ${this.commandArgs.join(' ')}`
 				if (timedOut) {
 					reject(new Error(
 						`Plugin execution timed out after ${this.timeout}ms
-Command: ${this.command} ${this.commandArgs.join(' ')}
+Command: ${resolvedCommand} ${this.commandArgs.join(' ')}
 Stderr: ${stderr || '(none)'}`
 					));
 					return;
@@ -302,7 +304,7 @@ Stderr: ${stderr || '(none)'}`
 				if (code !== 0) {
 					reject(new Error(
 						`Plugin exited with code ${code}
-Command: ${this.command} ${this.commandArgs.join(' ')}
+Command: ${resolvedCommand} ${this.commandArgs.join(' ')}
 Stdout: ${stdout || '(none)'}
 Stderr: ${stderr || '(none)'}`
 					));
@@ -379,6 +381,7 @@ Stderr: ${stderr || '(none)'}`,
 
 		} catch (error) {
 			// JSON parse failed - return raw output with enhanced error context
+			// Note: We can't access resolvedCommand here, but this.command is sufficient for debugging
 			return this.formatErrorResponse(
 				`Failed to parse plugin output as JSON: ${error instanceof Error ? error.message : String(error)}
 Plugin: ${this.name}

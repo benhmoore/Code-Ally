@@ -1198,6 +1198,54 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     promptColor = 'green';
   }
 
+  /**
+   * Parse text and identify mentioned file paths for highlighting
+   * Returns array of segments with styling information
+   */
+  const parseTextWithMentions = (text: string): Array<{ text: string; isHighlighted: boolean }> => {
+    if (mentionedFiles.length === 0 || !text) {
+      return [{ text, isHighlighted: false }];
+    }
+
+    const segments: Array<{ text: string; isHighlighted: boolean }> = [];
+    let remaining = text;
+    let searchIndex = 0;
+
+    while (remaining.length > 0) {
+      // Find the earliest mentioned file in the remaining text
+      let earliestIndex = -1;
+      let earliestFile = '';
+
+      for (const filePath of mentionedFiles) {
+        const index = remaining.indexOf(filePath, searchIndex - (text.length - remaining.length));
+        if (index !== -1 && (earliestIndex === -1 || index < earliestIndex)) {
+          earliestIndex = index;
+          earliestFile = filePath;
+        }
+      }
+
+      if (earliestIndex === -1) {
+        // No more mentions found
+        segments.push({ text: remaining, isHighlighted: false });
+        break;
+      }
+
+      // Add text before mention
+      if (earliestIndex > 0) {
+        segments.push({ text: remaining.slice(0, earliestIndex), isHighlighted: false });
+      }
+
+      // Add the mention
+      segments.push({ text: earliestFile, isHighlighted: true });
+
+      // Continue with text after mention
+      remaining = remaining.slice(earliestIndex + earliestFile.length);
+      searchIndex = 0;
+    }
+
+    return segments.length > 0 ? segments : [{ text, isHighlighted: false }];
+  };
+
   return (
     <Box flexDirection="column" width="100%">
       {/* Input area */}
@@ -1215,47 +1263,79 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           const textColor = isEmpty && isFirstLine ? 'gray' : 'white';
           const isCursorLine = index === cursorLine;
 
-          // Split line into before cursor, at cursor, and after cursor
-          let beforeCursor = '';
-          let atCursor = ' ';
-          let afterCursor = '';
-
-          if (isCursorLine && displayText) {
-            beforeCursor = displayText.slice(0, cursorPosInLine);
-            atCursor = displayText[cursorPosInLine] || ' ';
-            afterCursor = displayText.slice(cursorPosInLine + 1);
-          } else if (isCursorLine) {
-            // Empty line with cursor
-            atCursor = ' ';
-          }
+          // Parse line into segments with mentions
+          const segments = parseTextWithMentions(displayText);
 
           return (
             <Box key={`line-${index}`}>
               <Text color={promptColor} bold={isCommandMode || isBashMode}>
                 {prompt}
               </Text>
-              {!isCursorLine && (
-                <Text color={textColor} dimColor={isEmpty && isFirstLine}>
-                  {displayText}
-                </Text>
-              )}
-              {isCursorLine && isActive && (
+
+              {/* Non-cursor line or inactive - simple rendering */}
+              {(!isCursorLine || !isActive) && (
                 <>
-                  <Text color={textColor} dimColor={isEmpty && isFirstLine}>
-                    {beforeCursor}
-                  </Text>
-                  <Text color="black" backgroundColor="yellow">
-                    {atCursor}
-                  </Text>
-                  <Text color={textColor} dimColor={isEmpty && isFirstLine}>
-                    {afterCursor}
-                  </Text>
+                  {segments.map((segment, segIdx) => (
+                    <Text
+                      key={segIdx}
+                      color={segment.isHighlighted ? 'yellow' : textColor}
+                      dimColor={isEmpty && isFirstLine && !segment.isHighlighted}
+                    >
+                      {segment.text}
+                    </Text>
+                  ))}
                 </>
               )}
-              {isCursorLine && !isActive && (
-                <Text color={textColor} dimColor={isEmpty && isFirstLine}>
-                  {displayText}
-                </Text>
+
+              {/* Cursor line with active input - handle cursor within segments */}
+              {isCursorLine && isActive && (
+                <>
+                  {segments.map((segment, segIdx) => {
+                    // Calculate character range for this segment
+                    const segmentStart = segments.slice(0, segIdx).reduce((sum, s) => sum + s.text.length, 0);
+                    const segmentEnd = segmentStart + segment.text.length;
+                    const segmentColor = segment.isHighlighted ? 'yellow' : textColor;
+
+                    // Check if cursor is in this segment
+                    if (cursorPosInLine >= segmentStart && cursorPosInLine < segmentEnd) {
+                      const localCursorPos = cursorPosInLine - segmentStart;
+                      const before = segment.text.slice(0, localCursorPos);
+                      const at = segment.text[localCursorPos] || ' ';
+                      const after = segment.text.slice(localCursorPos + 1);
+
+                      return (
+                        <React.Fragment key={segIdx}>
+                          <Text color={segmentColor} dimColor={isEmpty && isFirstLine && !segment.isHighlighted}>
+                            {before}
+                          </Text>
+                          <Text color="black" backgroundColor="yellow">
+                            {at}
+                          </Text>
+                          <Text color={segmentColor} dimColor={isEmpty && isFirstLine && !segment.isHighlighted}>
+                            {after}
+                          </Text>
+                        </React.Fragment>
+                      );
+                    }
+
+                    // Cursor not in this segment
+                    return (
+                      <Text
+                        key={segIdx}
+                        color={segmentColor}
+                        dimColor={isEmpty && isFirstLine && !segment.isHighlighted}
+                      >
+                        {segment.text}
+                      </Text>
+                    );
+                  })}
+                  {/* Handle cursor at end of line */}
+                  {cursorPosInLine >= displayText.length && (
+                    <Text color="black" backgroundColor="yellow">
+                      {' '}
+                    </Text>
+                  )}
+                </>
               )}
             </Box>
           );

@@ -501,40 +501,9 @@ export class Agent {
       }
 
       if (this.interruptionManager.isInterrupted() || (error instanceof Error && error.message.includes('interrupted'))) {
-        // Check if this is a continuation-eligible timeout
-        const context = this.interruptionManager.getInterruptionContext();
-        const canContinueAfterTimeout = (context as any).canContinueAfterTimeout === true;
-
-        if (canContinueAfterTimeout) {
-          // Increment continuation counter
-          this.timeoutContinuationAttempts++;
-          logger.warn('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId,
-            `Attempting continuation ${this.timeoutContinuationAttempts}/${BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS}`);
-
-          // Add continuation prompt to conversation
-          const continuationPrompt: Message = {
-            role: 'user',
-            content: '<system-reminder>\nYou exceeded the activity timeout without making tool calls. Please continue your work and make progress by calling tools or providing a response.\n</system-reminder>',
-            timestamp: Date.now(),
-          };
-          this.messages.push(continuationPrompt);
-
-          // Reset interruption state and retry
-          this.interruptionManager.reset();
-          this.requestInProgress = true;
-
-          // Restart activity monitoring
-          this.startActivityMonitoring();
-
-          // Get new response from LLM
-          logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId, 'Requesting continuation after timeout...');
-          const continuationResponse = await this.getLLMResponse();
-
-          // Process continuation
-          return await this.processLLMResponse(continuationResponse);
-        }
-
-        // Not a continuation-eligible timeout, handle normally
+        // Handle interruption (user cancel or unexpected interruption during error)
+        // Note: Activity timeouts are handled in processLLMResponse, not here,
+        // because they return successfully with interrupted:true rather than throwing
         return this.handleInterruption();
       }
       throw error;
@@ -820,6 +789,39 @@ export class Agent {
         const continuationResponse = await this.getLLMResponse();
         return await this.processLLMResponse(continuationResponse);
       } else {
+        // Check if this is a continuation-eligible timeout
+        const context = this.interruptionManager.getInterruptionContext();
+        const canContinueAfterTimeout = (context as any).canContinueAfterTimeout === true;
+
+        if (canContinueAfterTimeout) {
+          // Increment continuation counter
+          this.timeoutContinuationAttempts++;
+          logger.warn('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId,
+            `Attempting continuation ${this.timeoutContinuationAttempts}/${BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS}`);
+
+          // Add continuation prompt to conversation
+          const continuationPrompt: Message = {
+            role: 'user',
+            content: '<system-reminder>\nYou exceeded the activity timeout without making tool calls. Please continue your work and make progress by calling tools or providing a response.\n</system-reminder>',
+            timestamp: Date.now(),
+          };
+          this.messages.push(continuationPrompt);
+
+          // Reset interruption state and retry
+          this.interruptionManager.reset();
+          this.requestInProgress = true;
+
+          // Restart activity monitoring
+          this.startActivityMonitoring();
+
+          // Get new response from LLM
+          logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId, 'Requesting continuation after timeout...');
+          const continuationResponse = await this.getLLMResponse();
+
+          // Process continuation
+          return await this.processLLMResponse(continuationResponse);
+        }
+
         // Regular cancel - mark as interrupted for next request
         this.interruptionManager.markRequestAsInterrupted();
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
