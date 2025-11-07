@@ -500,12 +500,40 @@ async function main() {
     // Load user plugins from ~/.ally/plugins
     const { PluginLoader } = await import('./plugins/PluginLoader.js');
     const { PluginConfigManager } = await import('./plugins/PluginConfigManager.js');
+    const { SocketClient } = await import('./plugins/SocketClient.js');
+    const { BackgroundProcessManager } = await import('./plugins/BackgroundProcessManager.js');
     const { PLUGINS_DIR } = await import('./config/paths.js');
     const pluginConfigManager = new PluginConfigManager();
     registry.registerInstance('plugin_config_manager', pluginConfigManager);
-    const pluginLoader = new PluginLoader(activityStream, pluginConfigManager);
+    const socketClient = new SocketClient();
+    registry.registerInstance('socket_client', socketClient);
+    const backgroundProcessManager = new BackgroundProcessManager();
+    registry.registerInstance('background_process_manager', backgroundProcessManager);
+    const pluginLoader = new PluginLoader(
+      activityStream,
+      pluginConfigManager,
+      socketClient,
+      backgroundProcessManager
+    );
     registry.registerInstance('plugin_loader', pluginLoader);
     const { tools: pluginTools, pluginCount } = await pluginLoader.loadPlugins(PLUGINS_DIR);
+    logger.debug('[CLI] Plugins loaded successfully');
+
+    // Start background plugin daemons
+    await pluginLoader.startBackgroundPlugins();
+    logger.debug('[CLI] Background plugins started');
+
+    // Add graceful shutdown for background plugins
+    const shutdownHandler = async (signal: string) => {
+      logger.info(`[CLI] Received ${signal}, shutting down background plugins...`);
+      try {
+        await backgroundProcessManager.stopAllProcesses();
+        logger.info('[CLI] Background plugins stopped successfully');
+      } catch (error) {
+        logger.error(`[CLI] Error stopping background plugins: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      process.exit(0);
+    };
 
     // Merge built-in tools with plugin tools
     const allTools = [...tools, ...pluginTools];
@@ -575,6 +603,19 @@ async function main() {
     );
     await agentPoolService.initialize();
     registry.registerInstance('agent_pool', agentPoolService);
+
+    // Install signal handlers for graceful background plugin shutdown
+    // Override the global handlers with plugin-aware versions
+    process.removeAllListeners('SIGINT');
+    process.removeAllListeners('SIGTERM');
+
+    process.on('SIGINT', async () => {
+      await shutdownHandler('SIGINT');
+    });
+
+    process.on('SIGTERM', async () => {
+      await shutdownHandler('SIGTERM');
+    });
 
     // Set up callback to save session when idle messages are generated
     // (Must be after agent is registered)

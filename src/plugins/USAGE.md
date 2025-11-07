@@ -9,6 +9,8 @@ The `PluginLoader` class provides a dynamic plugin loading system for the Ally c
 ```typescript
 import { PluginLoader } from './plugins/PluginLoader.js';
 import { PluginConfigManager } from './plugins/PluginConfigManager.js';
+import { SocketClient } from './plugins/SocketClient.js';
+import { BackgroundProcessManager } from './plugins/BackgroundProcessManager.js';
 import { ActivityStream } from './services/ActivityStream.js';
 import { PLUGINS_DIR } from './config/paths.js';
 
@@ -17,10 +19,17 @@ const activityStream = new ActivityStream();
 
 // Initialize plugin config manager and loader
 const pluginConfigManager = new PluginConfigManager();
-const loader = new PluginLoader(activityStream, pluginConfigManager);
+const socketClient = new SocketClient();
+const backgroundProcessManager = new BackgroundProcessManager();
+const loader = new PluginLoader(
+  activityStream,
+  pluginConfigManager,
+  socketClient,
+  backgroundProcessManager
+);
 
 // Load all plugins
-const pluginTools = await loader.loadPlugins(PLUGINS_DIR);
+const { tools: pluginTools } = await loader.loadPlugins(PLUGINS_DIR);
 
 // Register with tool orchestrator
 for (const tool of pluginTools) {
@@ -56,19 +65,27 @@ The loader is designed for resilience:
 
 ```typescript
 class PluginLoader {
-  constructor(activityStream: ActivityStream)
+  constructor(
+    activityStream: ActivityStream,
+    configManager: PluginConfigManager,
+    socketClient: SocketClient,
+    processManager: BackgroundProcessManager
+  )
 
-  async loadPlugins(pluginDir: string): Promise<BaseTool[]>
+  async loadPlugins(pluginDir: string): Promise<{ tools: BaseTool[], pluginCount: number }>
 }
 ```
 
 #### Constructor
 
 - **activityStream**: `ActivityStream` - Event stream for tool communication
+- **configManager**: `PluginConfigManager` - Manager for plugin configuration
+- **socketClient**: `SocketClient` - Client for JSON-RPC communication with background processes
+- **processManager**: `BackgroundProcessManager` - Manager for background daemon lifecycle
 
 #### Methods
 
-##### `loadPlugins(pluginDir: string): Promise<BaseTool[]>`
+##### `loadPlugins(pluginDir: string): Promise<{ tools: BaseTool[], pluginCount: number }>`
 
 Loads all plugins from the specified directory.
 
@@ -76,7 +93,9 @@ Loads all plugins from the specified directory.
 - `pluginDir`: Path to plugins directory (created if doesn't exist)
 
 **Returns:**
-- Array of loaded `BaseTool` instances
+- Object containing:
+  - `tools`: Array of loaded `BaseTool` instances
+  - `pluginCount`: Number of successfully loaded plugins
 
 **Behavior:**
 - Creates plugin directory if missing

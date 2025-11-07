@@ -26,10 +26,12 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
 import { PluginConfigManager } from './PluginConfigManager.js';
 import { PluginEnvironmentManager } from './PluginEnvironmentManager.js';
-import { PLUGIN_FILES } from './constants.js';
+import { PLUGIN_FILES, PLUGIN_CONSTRAINTS, PLUGIN_TIMEOUTS } from './constants.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { logger } from '../services/Logger.js';
+import type { SocketClient } from './SocketClient.js';
+import type { BackgroundProcessManager, BackgroundProcessConfig } from './BackgroundProcessManager.js';
 
 /**
  * Plugin manifest schema
@@ -67,6 +69,36 @@ export interface PluginManifest {
     install_command?: string;
   };
 
+  /** Background daemon configuration (for background_rpc tools) */
+  background?: {
+    /** Enable background daemon for this plugin */
+    enabled?: boolean;
+    /** Command to start the daemon */
+    command: string;
+    /** Command arguments */
+    args: string[];
+    /** Communication configuration */
+    communication: {
+      /** Communication type (only 'socket' supported currently) */
+      type?: string;
+      /** Unix socket path for JSON-RPC communication */
+      path: string;
+    };
+    /** Health check configuration */
+    healthcheck?: {
+      /** Milliseconds between health checks */
+      interval: number;
+      /** Milliseconds to wait for health response */
+      timeout: number;
+      /** Failed checks before marking unhealthy */
+      retries: number;
+    };
+    /** Milliseconds to wait for daemon to start */
+    startup_timeout?: number;
+    /** Milliseconds to wait after SIGTERM before SIGKILL */
+    shutdown_grace_period?: number;
+  };
+
   // Backward compatibility fields (deprecated)
   /** @deprecated Use tools array instead */
   command?: string;
@@ -88,16 +120,22 @@ export interface ToolDefinition {
   /** Tool description for LLM */
   description: string;
 
-  /** Command to execute */
-  command: string;
+  /** Tool type - 'executable' spawns a process, 'background_rpc' calls a daemon via RPC */
+  type?: 'executable' | 'background_rpc';
 
-  /** Command arguments */
+  /** Command to execute (for executable type) */
+  command?: string;
+
+  /** Command arguments (for executable type) */
   args?: string[];
+
+  /** RPC method name (for background_rpc type) */
+  method?: string;
 
   /** Requires user confirmation before execution */
   requiresConfirmation?: boolean;
 
-  /** Timeout in milliseconds (default: 120000) */
+  /** Timeout in milliseconds (default: 120000 for executable, 30000 for RPC) */
   timeout?: number;
 
   /** JSON Schema for tool parameters */
@@ -129,6 +167,18 @@ export interface ConfigProperty {
 }
 
 /**
+ * Result of plugin manifest validation
+ */
+interface ValidationResult {
+  /** Whether validation passed (no errors) */
+  valid: boolean;
+  /** Fatal validation errors that prevent plugin loading */
+  errors: string[];
+  /** Non-fatal warnings about plugin configuration */
+  warnings: string[];
+}
+
+/**
  * Pending plugin config requests (stored at module level for UI to check on mount)
  */
 let pendingConfigRequests: Array<{
@@ -136,6 +186,15 @@ let pendingConfigRequests: Array<{
   pluginPath: string;
   schema: PluginConfigSchema;
 }> = [];
+
+/**
+ * Loaded plugin information
+ */
+interface LoadedPluginInfo {
+  manifest: PluginManifest;
+  pluginPath: string;
+  config?: any;
+}
 
 /**
  * PluginLoader - Discovers and loads plugins from the plugins directory
@@ -147,11 +206,136 @@ export class PluginLoader {
   private activityStream: ActivityStream;
   private configManager: PluginConfigManager;
   private envManager: PluginEnvironmentManager;
+  private socketClient: SocketClient;
+  private processManager: BackgroundProcessManager;
+  private loadedPlugins: Map<string, LoadedPluginInfo> = new Map();
 
-  constructor(activityStream: ActivityStream, configManager: PluginConfigManager) {
+  constructor(
+    activityStream: ActivityStream,
+    configManager: PluginConfigManager,
+    socketClient: SocketClient,
+    processManager: BackgroundProcessManager
+  ) {
     this.activityStream = activityStream;
     this.configManager = configManager;
     this.envManager = new PluginEnvironmentManager();
+    this.socketClient = socketClient;
+    this.processManager = processManager;
+  }
+
+  /**
+   * Validates a plugin manifest for completeness and correctness
+   *
+   * Performs comprehensive validation of plugin configuration including:
+   * - Required fields for all plugins (name, version, tools)
+   * - Background daemon configuration (if enabled)
+   * - Tool definitions and type-specific requirements
+   * - Socket path length constraints
+   * - Timeout and health check values
+   *
+   * @param manifest - Plugin manifest to validate
+   * @returns ValidationResult with errors and warnings
+   */
+  private validatePluginManifest(manifest: PluginManifest): ValidationResult {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    // Required fields for all plugins
+    if (!manifest.name || typeof manifest.name !== 'string') {
+      errors.push("Missing required field 'name'");
+    }
+    if (!manifest.version || typeof manifest.version !== 'string') {
+      errors.push("Missing required field 'version'");
+    }
+    if (!Array.isArray(manifest.tools) || manifest.tools.length === 0) {
+      errors.push("Plugin must define at least one tool");
+    }
+
+    // Validate background configuration if enabled
+    if (manifest.background?.enabled) {
+      // Required background fields
+      if (!manifest.background.command) {
+        errors.push("Background plugin missing 'background.command'");
+      }
+      if (!Array.isArray(manifest.background.args)) {
+        errors.push("Background plugin 'background.args' must be an array");
+      }
+      if (!manifest.background.communication?.type) {
+        errors.push("Background plugin missing 'background.communication.type'");
+      } else if (manifest.background.communication.type !== 'socket') {
+        errors.push(`Unsupported communication type: ${manifest.background.communication.type}`);
+      }
+      if (!manifest.background.communication?.path) {
+        errors.push("Background plugin missing 'background.communication.path'");
+      } else {
+        // Validate socket path length
+        if (manifest.background.communication.path.length > PLUGIN_CONSTRAINTS.MAX_SOCKET_PATH_LENGTH) {
+          errors.push(
+            `Socket path exceeds maximum length (${manifest.background.communication.path.length} > ${PLUGIN_CONSTRAINTS.MAX_SOCKET_PATH_LENGTH})`
+          );
+        }
+      }
+
+      // Validate timeouts
+      if (manifest.background.startup_timeout !== undefined) {
+        if (typeof manifest.background.startup_timeout !== 'number' || manifest.background.startup_timeout <= 0) {
+          errors.push("'background.startup_timeout' must be a positive number");
+        }
+      }
+      if (manifest.background.shutdown_grace_period !== undefined) {
+        if (typeof manifest.background.shutdown_grace_period !== 'number' || manifest.background.shutdown_grace_period <= 0) {
+          errors.push("'background.shutdown_grace_period' must be a positive number");
+        }
+      }
+
+      // Validate health check config if provided
+      if (manifest.background.healthcheck) {
+        const hc = manifest.background.healthcheck;
+        if (hc.interval !== undefined && (typeof hc.interval !== 'number' || hc.interval <= 0)) {
+          errors.push("'background.healthcheck.interval' must be a positive number");
+        }
+        if (hc.timeout !== undefined && (typeof hc.timeout !== 'number' || hc.timeout <= 0)) {
+          errors.push("'background.healthcheck.timeout' must be a positive number");
+        }
+        if (hc.retries !== undefined && (typeof hc.retries !== 'number' || hc.retries < 0)) {
+          errors.push("'background.healthcheck.retries' must be a non-negative number");
+        }
+      }
+    }
+
+    // Validate tools
+    manifest.tools?.forEach((tool, index) => {
+      const toolType = tool.type || 'executable';
+
+      if (toolType === 'background_rpc') {
+        // Background RPC tool validation
+        if (!manifest.background?.enabled) {
+          errors.push(
+            `Tool '${tool.name}' has type 'background_rpc' but plugin does not have background.enabled = true`
+          );
+        }
+        if (!tool.method) {
+          errors.push(`Tool '${tool.name}' has type 'background_rpc' but missing 'method' field`);
+        }
+      } else if (toolType === 'executable') {
+        // Executable tool validation
+        if (!tool.command) {
+          errors.push(`Tool '${tool.name}' has type 'executable' but missing 'command' field`);
+        }
+      } else {
+        warnings.push(`Tool '${tool.name}' has unknown type: ${toolType}`);
+      }
+
+      // Common tool validations
+      if (!tool.name) {
+        errors.push(`Tool at index ${index} missing required 'name' field`);
+      }
+      if (!tool.description) {
+        warnings.push(`Tool '${tool.name}' missing recommended 'description' field`);
+      }
+    });
+
+    return { valid: errors.length === 0, errors, warnings };
   }
 
   /**
@@ -491,6 +675,84 @@ export class PluginLoader {
   }
 
   /**
+   * Start background processes for all enabled plugins
+   *
+   * This should be called after loadPlugins() completes. It iterates through
+   * all loaded plugins and starts background daemons for those with
+   * background.enabled === true.
+   */
+  async startBackgroundPlugins(): Promise<void> {
+    const pluginsWithBackground: string[] = [];
+
+    // Find all plugins with background enabled
+    for (const [pluginName, plugin] of this.loadedPlugins.entries()) {
+      if (plugin.manifest.background?.enabled) {
+        pluginsWithBackground.push(pluginName);
+      }
+    }
+
+    if (pluginsWithBackground.length === 0) {
+      logger.debug('[PluginLoader] No background plugins to start');
+      return;
+    }
+
+    logger.info(`[PluginLoader] Starting ${pluginsWithBackground.length} background plugin(s)...`);
+
+    // Start each background plugin sequentially
+    for (const pluginName of pluginsWithBackground) {
+      try {
+        const plugin = this.loadedPlugins.get(pluginName)!;
+        const manifest = plugin.manifest;
+        const pluginPath = plugin.pluginPath;
+
+        // Build process configuration from manifest
+        const config: BackgroundProcessConfig = {
+          pluginName: manifest.name,
+          pluginPath: pluginPath,
+          command: this.envManager.getPythonPath(manifest.name), // Use venv Python
+          args: manifest.background!.args,
+          socketPath: manifest.background!.communication.path,
+          envVars: this.buildEnvVars(manifest, pluginName, plugin.config),
+          healthcheck: manifest.background!.healthcheck,
+          startupTimeout: manifest.background!.startup_timeout || PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_STARTUP,
+          shutdownGracePeriod: manifest.background!.shutdown_grace_period || PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_SHUTDOWN_GRACE_PERIOD,
+        };
+
+        // Start the daemon
+        await this.processManager.startProcess(config);
+        logger.info(`[PluginLoader] ✓ Started background process for '${pluginName}'`);
+      } catch (error) {
+        // Log error but continue with other plugins
+        logger.error(
+          `[PluginLoader] Failed to start background process for '${pluginName}': ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+        logger.warn(`[PluginLoader] Plugin '${pluginName}' tools will fail until daemon is started`);
+      }
+    }
+
+    logger.info('[PluginLoader] Background plugin startup complete');
+  }
+
+  /**
+   * Build environment variables for background process
+   */
+  private buildEnvVars(_manifest: PluginManifest, _pluginName: string, config?: any): Record<string, string> {
+    const envVars: Record<string, string> = {};
+
+    // Add plugin config as environment variables
+    if (config) {
+      for (const [key, value] of Object.entries(config)) {
+        const envKey = `PLUGIN_CONFIG_${key.toUpperCase()}`;
+        envVars[envKey] = String(value);
+      }
+    }
+
+    return envVars;
+  }
+
+  /**
    * Reload a single plugin after configuration
    *
    * Used to reload a plugin after its configuration has been provided.
@@ -586,13 +848,23 @@ export class PluginLoader {
       ];
     }
 
-    // Validate tools array
-    if (!manifest.tools || manifest.tools.length === 0) {
-      logger.error(
-        `[PluginLoader] Invalid manifest in ${pluginPath}: Missing or empty 'tools' array`
-      );
-      return [];
+    // Validate manifest
+    const validation = this.validatePluginManifest(manifest);
+
+    if (!validation.valid) {
+      const errorMsg = `Invalid plugin manifest for '${manifest.name}':\n${validation.errors.join('\n')}`;
+      logger.error(`[PluginLoader] ${errorMsg}`);
+      throw new Error(errorMsg);
     }
+
+    // Log warnings (non-fatal)
+    if (validation.warnings.length > 0) {
+      validation.warnings.forEach(warning => {
+        logger.warn(`[PluginLoader] Plugin '${manifest.name}': ${warning}`);
+      });
+    }
+
+    logger.debug(`[PluginLoader] Manifest validation passed for '${manifest.name}'`);
 
     // Check if plugin requires configuration
     let pluginConfig: any = null;
@@ -686,14 +958,23 @@ export class PluginLoader {
       }
     }
 
+    // Store loaded plugin info for background process management
+    if (tools.length > 0) {
+      this.loadedPlugins.set(manifest.name, {
+        manifest,
+        pluginPath,
+        config: pluginConfig,
+      });
+    }
+
     return tools;
   }
 
   /**
    * Load a single tool from its definition
    *
-   * Creates an ExecutableToolWrapper instance that handles communication
-   * with the external process via stdio.
+   * Creates either an ExecutableToolWrapper (for executable tools) or
+   * BackgroundToolWrapper (for background_rpc tools) depending on the tool type.
    *
    * @param toolDef - Tool definition from plugin manifest
    * @param manifest - Complete plugin manifest (for runtime info)
@@ -707,30 +988,60 @@ export class PluginLoader {
     pluginPath: string,
     config?: any
   ): Promise<BaseTool> {
-    // Import ExecutableToolWrapper dynamically to avoid circular dependencies
-    let ExecutableToolWrapper: any;
-    try {
-      const wrapperModule = await import('./ExecutableToolWrapper.js');
-      ExecutableToolWrapper = wrapperModule.ExecutableToolWrapper;
-    } catch (error) {
-      throw new Error(
-        `ExecutableToolWrapper not found. Error: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+    // Determine tool type (default to 'executable' for backward compatibility)
+    const toolType = toolDef.type || 'executable';
+
+    if (toolType === 'background_rpc') {
+      // Validate required fields for background RPC tools
+      if (!toolDef.method) {
+        throw new Error(
+          `Background RPC tool '${toolDef.name}' missing required 'method' field`
+        );
+      }
+      if (!manifest.background?.communication?.path) {
+        throw new Error(
+          `Plugin '${manifest.name}' missing background.communication.path configuration`
+        );
+      }
+
+      // Import and create BackgroundToolWrapper
+      const { BackgroundToolWrapper } = await import('./BackgroundToolWrapper.js');
+
+      return new BackgroundToolWrapper(
+        toolDef,
+        manifest,
+        this.activityStream,
+        this.socketClient,
+        this.processManager,
+        toolDef.timeout
       );
+    } else {
+      // Default: executable tool
+      // Import ExecutableToolWrapper dynamically to avoid circular dependencies
+      let ExecutableToolWrapper: any;
+      try {
+        const wrapperModule = await import('./ExecutableToolWrapper.js');
+        ExecutableToolWrapper = wrapperModule.ExecutableToolWrapper;
+      } catch (error) {
+        throw new Error(
+          `ExecutableToolWrapper not found. Error: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+
+      // Create the wrapper instance
+      const tool = new ExecutableToolWrapper(
+        toolDef,
+        manifest,
+        pluginPath,
+        this.activityStream,
+        this.envManager,
+        toolDef.timeout,
+        config
+      );
+
+      return tool;
     }
-
-    // Create the wrapper instance
-    const tool = new ExecutableToolWrapper(
-      toolDef,
-      manifest,
-      pluginPath,
-      this.activityStream,
-      this.envManager,
-      toolDef.timeout,
-      config
-    );
-
-    return tool;
   }
 }
