@@ -116,6 +116,7 @@ export enum ActivityEventType {
   THOUGHT_CHUNK = 'thought_chunk',
   THOUGHT_COMPLETE = 'thought_complete',
   ASSISTANT_CHUNK = 'assistant_chunk',
+  SYSTEM_PROMPT_DISPLAY = 'system_prompt_display',
   AGENT_START = 'agent_start',
   AGENT_END = 'agent_end',
   ERROR = 'error',
@@ -235,6 +236,7 @@ export interface Config {
   compact_threshold: number;
   show_context_in_prompt: boolean;
   show_thinking_in_chat: boolean;
+  show_system_prompt_in_chat: boolean;
   show_full_tool_output: boolean;
 
   // Tool Call Retry Settings

@@ -247,6 +247,20 @@ export const useActivitySubscriptions = (
     }
   });
 
+  // System prompt display
+  useActivityEvent(ActivityEventType.SYSTEM_PROMPT_DISPLAY, (event) => {
+    const agentType = event.data?.agentType || 'Agent';
+    const systemPrompt = event.data?.systemPrompt || '';
+
+    if (state.config?.show_system_prompt_in_chat && systemPrompt) {
+      actions.addMessage({
+        role: 'assistant',
+        content: `**System Prompt for ${agentType}:**\n\n\`\`\`\n${systemPrompt}\n\`\`\``,
+        timestamp: Date.now(),
+      });
+    }
+  });
+
   // Agent start
   useActivityEvent(ActivityEventType.AGENT_START, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;

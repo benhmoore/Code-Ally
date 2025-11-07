@@ -44,6 +44,7 @@ export const DEFAULT_CONFIG: Config = {
   compact_threshold: 95, // Context % threshold for auto-compact
   show_context_in_prompt: false, // Show context % in input prompt
   show_thinking_in_chat: false, // Show model thinking content in chat conversation
+  show_system_prompt_in_chat: false, // Show system prompts when agents are created
   show_full_tool_output: false, // Show full tool output without truncation in UI
 
   // ==========================================
@@ -118,6 +119,7 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   compact_threshold: 'number',
   show_context_in_prompt: 'boolean',
   show_thinking_in_chat: 'boolean',
+  show_system_prompt_in_chat: 'boolean',
   show_full_tool_output: 'boolean',
 
   // Tool Call Retry

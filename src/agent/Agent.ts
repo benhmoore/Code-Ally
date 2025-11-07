@@ -221,6 +221,30 @@ export class Agent {
       this.messages.push(systemMessage);
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt added, length:', config.systemPrompt.length);
 
+      // Emit system prompt event if configured
+      // Use setImmediate to ensure UI listeners are attached first
+      if (config.config.show_system_prompt_in_chat) {
+        const agentType = config.isSpecializedAgent
+          ? (config.baseAgentPrompt?.includes('Explore') ? 'Explore Agent'
+             : config.baseAgentPrompt?.includes('Plan') ? 'Plan Agent'
+             : 'Specialized Agent')
+          : 'Main Agent (Ally)';
+
+        setImmediate(() => {
+          activityStream.emit({
+            id: crypto.randomUUID(),
+            type: ActivityEventType.SYSTEM_PROMPT_DISPLAY,
+            timestamp: Date.now(),
+            data: {
+              agentType,
+              systemPrompt: config.systemPrompt,
+              instanceId: this.instanceId,
+            },
+          });
+          logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt event emitted');
+        });
+      }
+
       // Update token count with initial system message
       this.tokenManager.updateTokenCount(this.messages);
       const initialUsage = this.tokenManager.getContextUsagePercentage();
