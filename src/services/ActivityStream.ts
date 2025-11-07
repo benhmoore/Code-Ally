@@ -6,14 +6,17 @@
  */
 
 import { ActivityEvent, ActivityEventType, ActivityCallback } from '../types/index.js';
+import type { EventSubscriptionManager } from '../plugins/EventSubscriptionManager.js';
 
 export class ActivityStream {
   private listeners: Map<ActivityEventType | string, Set<ActivityCallback>>;
   private parentId?: string;
+  private eventSubscriptionManager?: EventSubscriptionManager;
 
-  constructor(parentId?: string) {
+  constructor(parentId?: string, eventSubscriptionManager?: EventSubscriptionManager) {
     this.listeners = new Map();
     this.parentId = parentId;
+    this.eventSubscriptionManager = eventSubscriptionManager;
   }
 
   /**
@@ -48,6 +51,38 @@ export class ActivityStream {
         }
       });
     }
+
+    // Forward approved events to background plugins via EventSubscriptionManager
+    if (this.eventSubscriptionManager && !this.parentId) {
+      // Only forward from root ActivityStream, not scoped streams
+      const pluginEventType = this.mapToPluginEventType(event.type);
+      if (pluginEventType) {
+        this.eventSubscriptionManager.dispatch(pluginEventType, event.data);
+      }
+    }
+  }
+
+  /**
+   * Map ActivityEventType to plugin event type (approved events only)
+   * Converts snake_case to UPPER_CASE for plugin event names
+   */
+  private mapToPluginEventType(activityEventType: ActivityEventType): string | null {
+    const mapping: Record<string, string> = {
+      [ActivityEventType.TOOL_CALL_START]: 'TOOL_CALL_START',
+      [ActivityEventType.TOOL_CALL_END]: 'TOOL_CALL_END',
+      [ActivityEventType.AGENT_START]: 'AGENT_START',
+      [ActivityEventType.AGENT_END]: 'AGENT_END',
+      [ActivityEventType.PERMISSION_REQUEST]: 'PERMISSION_REQUEST',
+      [ActivityEventType.PERMISSION_RESPONSE]: 'PERMISSION_RESPONSE',
+      [ActivityEventType.COMPACTION_START]: 'COMPACTION_START',
+      [ActivityEventType.COMPACTION_COMPLETE]: 'COMPACTION_COMPLETE',
+      [ActivityEventType.CONTEXT_USAGE_UPDATE]: 'CONTEXT_USAGE_UPDATE',
+      [ActivityEventType.TODO_UPDATE]: 'TODO_UPDATE',
+      [ActivityEventType.THOUGHT_COMPLETE]: 'THOUGHT_COMPLETE',
+      [ActivityEventType.DIFF_PREVIEW]: 'DIFF_PREVIEW',
+    };
+
+    return mapping[activityEventType] ?? null;
   }
 
   /**
@@ -83,11 +118,14 @@ export class ActivityStream {
    * Events emitted from the scoped stream will automatically include the parent ID,
    * allowing parent components to filter events from specific child contexts.
    *
+   * Note: Scoped streams do NOT forward events to EventSubscriptionManager to avoid
+   * duplicate events. Only the root ActivityStream forwards to plugins.
+   *
    * @param parentId - The parent context identifier
    * @returns A new scoped ActivityStream
    */
   createScoped(parentId: string): ActivityStream {
-    return new ActivityStream(parentId);
+    return new ActivityStream(parentId, this.eventSubscriptionManager);
   }
 
   /**

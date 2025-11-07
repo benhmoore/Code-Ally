@@ -369,8 +369,19 @@ async function main() {
     registry.registerInstance('config_manager', configManager);
     registry.registerInstance('session_manager', sessionManager);
 
-    // Create activity stream
-    const activityStream = new ActivityStream();
+    // Initialize background plugin services (must be before ActivityStream)
+    const { SocketClient } = await import('./plugins/SocketClient.js');
+    const { BackgroundProcessManager } = await import('./plugins/BackgroundProcessManager.js');
+    const { EventSubscriptionManager } = await import('./plugins/EventSubscriptionManager.js');
+    const socketClient = new SocketClient();
+    registry.registerInstance('socket_client', socketClient);
+    const backgroundProcessManager = new BackgroundProcessManager();
+    registry.registerInstance('background_process_manager', backgroundProcessManager);
+    const eventSubscriptionManager = new EventSubscriptionManager(socketClient, backgroundProcessManager);
+    registry.registerInstance('event_subscription_manager', eventSubscriptionManager);
+
+    // Create activity stream with event subscription manager for plugin events
+    const activityStream = new ActivityStream(undefined, eventSubscriptionManager);
     registry.registerInstance('activity_stream', activityStream);
 
     // Create todo manager
@@ -500,20 +511,15 @@ async function main() {
     // Load user plugins from ~/.ally/plugins
     const { PluginLoader } = await import('./plugins/PluginLoader.js');
     const { PluginConfigManager } = await import('./plugins/PluginConfigManager.js');
-    const { SocketClient } = await import('./plugins/SocketClient.js');
-    const { BackgroundProcessManager } = await import('./plugins/BackgroundProcessManager.js');
     const { PLUGINS_DIR } = await import('./config/paths.js');
     const pluginConfigManager = new PluginConfigManager();
     registry.registerInstance('plugin_config_manager', pluginConfigManager);
-    const socketClient = new SocketClient();
-    registry.registerInstance('socket_client', socketClient);
-    const backgroundProcessManager = new BackgroundProcessManager();
-    registry.registerInstance('background_process_manager', backgroundProcessManager);
     const pluginLoader = new PluginLoader(
       activityStream,
       pluginConfigManager,
       socketClient,
-      backgroundProcessManager
+      backgroundProcessManager,
+      eventSubscriptionManager
     );
     registry.registerInstance('plugin_loader', pluginLoader);
     const { tools: pluginTools, pluginCount } = await pluginLoader.loadPlugins(PLUGINS_DIR);

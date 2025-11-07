@@ -32,6 +32,7 @@ import { join } from 'path';
 import { logger } from '../services/Logger.js';
 import type { SocketClient } from './SocketClient.js';
 import type { BackgroundProcessManager, BackgroundProcessConfig } from './BackgroundProcessManager.js';
+import type { EventSubscriptionManager } from './EventSubscriptionManager.js';
 
 /**
  * Plugin manifest schema
@@ -84,6 +85,8 @@ export interface PluginManifest {
       /** Unix socket path for JSON-RPC communication */
       path: string;
     };
+    /** Event subscriptions - events this plugin wants to receive */
+    events?: string[];
     /** Health check configuration */
     healthcheck?: {
       /** Milliseconds between health checks */
@@ -208,19 +211,22 @@ export class PluginLoader {
   private envManager: PluginEnvironmentManager;
   private socketClient: SocketClient;
   private processManager: BackgroundProcessManager;
+  private eventSubscriptionManager: EventSubscriptionManager;
   private loadedPlugins: Map<string, LoadedPluginInfo> = new Map();
 
   constructor(
     activityStream: ActivityStream,
     configManager: PluginConfigManager,
     socketClient: SocketClient,
-    processManager: BackgroundProcessManager
+    processManager: BackgroundProcessManager,
+    eventSubscriptionManager: EventSubscriptionManager
   ) {
     this.activityStream = activityStream;
     this.configManager = configManager;
     this.envManager = new PluginEnvironmentManager();
     this.socketClient = socketClient;
     this.processManager = processManager;
+    this.eventSubscriptionManager = eventSubscriptionManager;
   }
 
   /**
@@ -721,6 +727,26 @@ export class PluginLoader {
         // Start the daemon
         await this.processManager.startProcess(config);
         logger.info(`[PluginLoader] ✓ Started background process for '${pluginName}'`);
+
+        // Subscribe to events if specified in manifest
+        const events = manifest.background!.events;
+        if (events && events.length > 0) {
+          try {
+            this.eventSubscriptionManager.subscribe(
+              pluginName,
+              manifest.background!.communication.path,
+              events
+            );
+            logger.info(`[PluginLoader] ✓ Subscribed '${pluginName}' to ${events.length} event(s): ${events.join(', ')}`);
+          } catch (error) {
+            logger.error(
+              `[PluginLoader] Failed to subscribe '${pluginName}' to events: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+            // Continue - plugin is still running, just won't receive events
+          }
+        }
       } catch (error) {
         // Log error but continue with other plugins
         logger.error(

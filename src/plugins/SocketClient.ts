@@ -328,6 +328,120 @@ export class SocketClient {
   }
 
   /**
+   * Send a JSON-RPC notification to a Unix socket (fire-and-forget)
+   *
+   * Notifications are different from requests:
+   * - No "id" field (JSON-RPC 2.0 spec for notifications)
+   * - No response expected
+   * - Fire-and-forget delivery
+   * - Errors are not thrown, but logged
+   *
+   * This is ideal for event dispatching where we don't need acknowledgment
+   * and don't want to block on delivery.
+   *
+   * @param socketPath - Path to Unix domain socket
+   * @param method - RPC method name
+   * @param params - RPC method parameters (optional)
+   * @returns Promise that resolves when notification is sent (or fails silently)
+   */
+  async sendNotification(
+    socketPath: string,
+    method: string,
+    params?: any
+  ): Promise<void> {
+    // Issue #10: Validate socket path length
+    if (socketPath.length > PLUGIN_CONSTRAINTS.MAX_SOCKET_PATH_LENGTH) {
+      logger.debug(
+        `[SocketClient] Socket path exceeds maximum length, skipping notification: ${socketPath}`
+      );
+      return;
+    }
+
+    logger.debug(
+      `[SocketClient] Sending notification: socket=${socketPath}, method=${method}`
+    );
+
+    // Build JSON-RPC 2.0 notification (no id field)
+    const notification = {
+      jsonrpc: '2.0' as const,
+      method,
+      params,
+    };
+
+    return new Promise((resolve) => {
+      // Create socket connection
+      const socket = net.createConnection({ path: socketPath });
+      let timeoutId: NodeJS.Timeout;
+
+      /**
+       * Cleanup function - ensures socket is destroyed and timeout is cleared
+       */
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        if (!socket.destroyed) {
+          socket.destroy();
+        }
+      };
+
+      /**
+       * Timeout handler - notifications should be fast, 5 second timeout
+       */
+      timeoutId = setTimeout(() => {
+        cleanup();
+        logger.debug(
+          `[SocketClient] Notification timeout (non-fatal): socket=${socketPath}, method=${method}`
+        );
+        resolve(); // Resolve anyway, fire-and-forget
+      }, 5000);
+
+      /**
+       * Connection established - send the notification
+       */
+      socket.on('connect', () => {
+        try {
+          const notificationJson = JSON.stringify(notification) + '\n';
+          socket.write(notificationJson, (error) => {
+            cleanup();
+            if (error) {
+              logger.debug(
+                `[SocketClient] Notification write error (non-fatal): ${error.message}`
+              );
+            } else {
+              logger.debug(`[SocketClient] Notification sent: ${method}`);
+            }
+            resolve(); // Always resolve, fire-and-forget
+          });
+        } catch (error) {
+          cleanup();
+          logger.debug(
+            `[SocketClient] Failed to send notification (non-fatal): ${error instanceof Error ? error.message : String(error)}`
+          );
+          resolve(); // Always resolve, fire-and-forget
+        }
+      });
+
+      /**
+       * Socket error handler - log but don't throw
+       */
+      socket.on('error', (error: NodeJS.ErrnoException) => {
+        cleanup();
+        let errorMsg = `Notification delivery failed (non-fatal): ${error.message}`;
+
+        if (error.code === 'ENOENT') {
+          errorMsg = `Socket not found for notification (daemon may not be running): ${socketPath}`;
+        } else if (error.code === 'EACCES') {
+          errorMsg = `Permission denied for notification: ${socketPath}`;
+        } else if (error.code === 'ECONNREFUSED') {
+          errorMsg = `Connection refused for notification: ${socketPath}`;
+        }
+
+        logger.debug(`[SocketClient] ${errorMsg}`);
+        resolve(); // Always resolve, fire-and-forget
+      });
+    });
+  }
+
+  /**
    * Check if a socket is accessible (for health checks)
    *
    * Attempts to connect to the socket and immediately disconnect.
