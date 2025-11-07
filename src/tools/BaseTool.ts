@@ -128,9 +128,10 @@ export abstract class BaseTool {
    * @param callId - Tool call ID from ToolOrchestrator (for streaming output)
    * @param abortSignal - Optional AbortSignal for interrupting tool execution
    * @param isUserInitiated - Internal flag indicating user-initiated execution (not visible to model)
+   * @param isContextFile - Internal flag indicating context file read (not visible to model)
    * @returns Tool result dictionary
    */
-  async execute(args: any, callId?: string, abortSignal?: AbortSignal, isUserInitiated: boolean = false): Promise<ToolResult> {
+  async execute(args: any, callId?: string, abortSignal?: AbortSignal, isUserInitiated: boolean = false, isContextFile: boolean = false): Promise<ToolResult> {
     this.currentCallId = callId;
     this.currentAbortSignal = abortSignal;
 
@@ -140,7 +141,7 @@ export abstract class BaseTool {
         throw new Error('AbortError: Tool execution was interrupted');
       }
 
-      const result = await this.executeImpl(args, callId, isUserInitiated);
+      const result = await this.executeImpl(args, callId, isUserInitiated, isContextFile);
 
       return result;
     } catch (error) {
@@ -169,8 +170,9 @@ export abstract class BaseTool {
    * @param args - Tool-specific parameters
    * @param toolCallId - Tool call ID (optional)
    * @param isUserInitiated - Internal flag for user-initiated execution (optional, defaults to false)
+   * @param isContextFile - Internal flag for context file read (optional, defaults to false)
    */
-  protected abstract executeImpl(args: any, toolCallId?: string, isUserInitiated?: boolean): Promise<ToolResult>;
+  protected abstract executeImpl(args: any, toolCallId?: string, isUserInitiated?: boolean, isContextFile?: boolean): Promise<ToolResult>;
 
   /**
    * Emit an event to the activity stream

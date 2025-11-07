@@ -162,8 +162,11 @@ export class AgentPoolService implements IService {
    * @returns PooledAgent with release function
    */
   async acquire(agentConfig: AgentConfig, customToolManager?: ToolManager, customModelClient?: ModelClient): Promise<PooledAgent> {
-    // Try to find an available agent with matching configuration
-    const availableAgent = this.findAvailableAgent(agentConfig);
+    // If requesting initial messages (context files), always create a fresh agent
+    // to avoid context pollution from previous tasks
+    const availableAgent = agentConfig.initialMessages && agentConfig.initialMessages.length > 0
+      ? null
+      : this.findAvailableAgent(agentConfig);
 
     if (availableAgent) {
       // Reuse existing agent

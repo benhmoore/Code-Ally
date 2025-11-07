@@ -71,6 +71,16 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
   }
 
   /**
+   * Get the maximum allowed tokens for context file reads
+   * Middle ground between user (95%) and agent (20%) initiated reads
+   */
+  private getContextFileMaxTokens(): number {
+    const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
+    // Use 40% of context for context files
+    return Math.floor(contextSize * 0.4);
+  }
+
+  /**
    * Provide custom function definition
    */
   getFunctionDefinition(): FunctionDefinition {
@@ -108,7 +118,7 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
     };
   }
 
-  protected async executeImpl(args: any, _toolCallId?: string, isUserInitiated: boolean = false): Promise<ToolResult> {
+  protected async executeImpl(args: any, _toolCallId?: string, isUserInitiated: boolean = false, isContextFile: boolean = false): Promise<ToolResult> {
     this.captureParams(args);
 
     const filePaths = args.file_paths;
@@ -126,12 +136,14 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
 
     const estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
 
-    // Determine max tokens based on whether this is user-initiated
+    // Determine max tokens based on read type
     let maxTokens: number;
-    if (isUserInitiated) {
-      maxTokens = this.getUserInitiatedMaxTokens();
+    if (isContextFile) {
+      maxTokens = this.getContextFileMaxTokens(); // 40% for context files
+    } else if (isUserInitiated) {
+      maxTokens = this.getUserInitiatedMaxTokens(); // 95% for user mentions
     } else {
-      maxTokens = ephemeral ? this.getEphemeralMaxTokens() : this.getMaxTokens();
+      maxTokens = ephemeral ? this.getEphemeralMaxTokens() : this.getMaxTokens(); // 20% or 90% for agents
     }
 
     if (estimatedTokens > maxTokens) {
@@ -139,12 +151,21 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
         ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=-100, limit=100) for last 100 lines`
         : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
 
-      const ephemeralHint = !ephemeral && !isUserInitiated
+      const ephemeralHint = !ephemeral && !isUserInitiated && !isContextFile
         ? ' As a LAST RESORT for one-time inspection only: ephemeral=true (WARNING: content removed after one turn, you will lose access).'
         : '';
 
+      // Customize error message based on context
+      const limitDescription = isContextFile
+        ? '40% of context'
+        : isUserInitiated
+          ? '95% of context'
+          : ephemeral
+            ? '90% of context'
+            : '20% of context';
+
       return this.formatErrorResponse(
-        `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds limit of ${maxTokens}. ` +
+        `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds limit of ${maxTokens} (${limitDescription}). ` +
         `FIRST try: Use grep/glob to search for specific content, or use limit/offset for targeted reading. ` +
         `Example: ${examples}.${ephemeralHint}`,
         'validation_error',

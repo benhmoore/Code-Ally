@@ -7,6 +7,7 @@
 
 import type { Config } from '../types/index.js';
 import { formatError } from '../utils/errorUtils.js';
+import { REASONING_EFFORT, REASONING_EFFORT_API_VALUES } from './constants.js';
 
 /**
  * Default configuration object
@@ -20,11 +21,13 @@ export const DEFAULT_CONFIG: Config = {
   // ==========================================
   model: null, // Auto-selected from available models
   service_model: null, // Model for background services (defaults to main model)
+  explore_model: null, // Model for Explore agent (defaults to global model)
+  plan_model: null, // Model for Plan agent (defaults to global model)
   endpoint: 'http://localhost:11434', // Ollama API endpoint
   context_size: 16384, // Context window size in tokens
   temperature: 0.3, // Generation temperature (0.0-1.0)
   max_tokens: 7000, // Max tokens to generate per response
-  reasoning_effort: 'low', // Reasoning level for gpt-oss and reasoning models: "low", "medium", "high"
+  reasoning_effort: REASONING_EFFORT.LOW, // Reasoning level for gpt-oss and reasoning models
 
   // ==========================================
   // EXECUTION SETTINGS
@@ -96,6 +99,8 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   // LLM Settings
   model: 'string',
   service_model: 'string',
+  explore_model: 'string',
+  plan_model: 'string',
   endpoint: 'string',
   context_size: 'number',
   temperature: 'number',
@@ -172,6 +177,16 @@ export function validateConfigValue(
     return { valid: true, coercedValue: value };
   }
 
+  // Handle null/undefined explore_model (defaults to global model)
+  if (key === 'explore_model' && (value === null || value === undefined)) {
+    return { valid: true, coercedValue: value };
+  }
+
+  // Handle null/undefined plan_model (defaults to global model)
+  if (key === 'plan_model' && (value === null || value === undefined)) {
+    return { valid: true, coercedValue: value };
+  }
+
   // Handle undefined reasoning_effort
   if (key === 'reasoning_effort' && (value === undefined || value === null)) {
     return { valid: true, coercedValue: undefined };
@@ -179,11 +194,11 @@ export function validateConfigValue(
 
   // Validate reasoning_effort values
   if (key === 'reasoning_effort' && typeof value === 'string') {
-    const validValues = ['low', 'medium', 'high'];
-    if (validValues.includes(value.toLowerCase())) {
-      return { valid: true, coercedValue: value.toLowerCase() };
+    const lowerValue = value.toLowerCase();
+    if (REASONING_EFFORT_API_VALUES.includes(lowerValue as any)) {
+      return { valid: true, coercedValue: lowerValue };
     }
-    return { valid: false, error: `reasoning_effort must be one of: ${validValues.join(', ')}` };
+    return { valid: false, error: `reasoning_effort must be one of: ${REASONING_EFFORT_API_VALUES.join(', ')}` };
   }
 
   try {

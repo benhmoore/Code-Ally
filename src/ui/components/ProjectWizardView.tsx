@@ -219,10 +219,10 @@ This file provides project-specific guidance to Code Ally when working with this
   };
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" padding={1} width="100%">
       {step === WizardStep.WELCOME && (
-        <Box flexDirection="column">
-          <Box borderStyle="double" borderColor="cyan" padding={1} marginBottom={1}>
+        <Box flexDirection="column" width="100%">
+          <Box borderStyle="double" borderColor="cyan" padding={1} marginBottom={1} width="100%">
             <Text bold color="cyan">
               Welcome to Project Configuration!
             </Text>

@@ -389,7 +389,8 @@ export const useInputHandlers = (
             toolCallId,
             false, // isRetry
             agent.getToolAbortSignal?.(),
-            true   // isUserInitiated - NOT visible to model
+            true,  // isUserInitiated (95% limit)
+            false  // isContextFile (not applicable)
           );
 
           // Emit TOOL_CALL_END event to complete the tool call

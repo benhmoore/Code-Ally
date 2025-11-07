@@ -61,6 +61,8 @@ export interface AgentConfig {
   _poolKey?: string;
   /** Directory to restrict this agent's file operations to (optional) */
   focusDirectory?: string;
+  /** Initial messages to add to agent's conversation history (optional) */
+  initialMessages?: Message[];
 }
 
 /**
@@ -223,6 +225,19 @@ export class Agent {
       this.tokenManager.updateTokenCount(this.messages);
       const initialUsage = this.tokenManager.getContextUsagePercentage();
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Initial context usage:', initialUsage + '%');
+    }
+
+    // Add initial messages if provided (e.g., context files for agents)
+    if (config.initialMessages && config.initialMessages.length > 0) {
+      for (const message of config.initialMessages) {
+        this.addMessage(message);
+      }
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added', config.initialMessages.length, 'initial messages');
+
+      // Update token count after adding initial messages
+      this.tokenManager.updateTokenCount(this.messages);
+      const contextUsage = this.tokenManager.getContextUsagePercentage();
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Context usage after initial messages:', contextUsage + '%');
     }
   }
 
@@ -670,7 +685,12 @@ export class Agent {
       } else {
         // Regenerate main agent prompt with current context
         const { getMainSystemPrompt } = await import('../prompts/systemMessages.js');
-        updatedSystemPrompt = await getMainSystemPrompt(this.tokenManager, this.toolResultManager);
+        updatedSystemPrompt = await getMainSystemPrompt(
+          this.tokenManager,
+          this.toolResultManager,
+          false,
+          this.config.config.reasoning_effort
+        );
         logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Main agent prompt regenerated with current context');
       }
 

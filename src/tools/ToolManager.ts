@@ -234,6 +234,7 @@ export class ToolManager {
    * @param _preApproved - Whether permission has been pre-approved
    * @param abortSignal - Optional AbortSignal for interrupting tool execution
    * @param isUserInitiated - Internal flag for user-initiated execution (not visible to model)
+   * @param isContextFile - Internal flag for context file read (not visible to model)
    * @returns Tool result
    */
   async executeTool(
@@ -242,7 +243,8 @@ export class ToolManager {
     callId?: string,
     _preApproved: boolean = false,
     abortSignal?: AbortSignal,
-    isUserInitiated: boolean = false
+    isUserInitiated: boolean = false,
+    isContextFile: boolean = false
   ): Promise<ToolResult> {
     const tool = this.tools.get(toolName);
     if (!tool) {
@@ -276,7 +278,7 @@ export class ToolManager {
     }
 
     try {
-      const result = await tool.execute(args, callId, abortSignal, isUserInitiated);
+      const result = await tool.execute(args, callId, abortSignal, isUserInitiated, isContextFile);
 
       this.trackFileOperation(toolName, args, result);
 

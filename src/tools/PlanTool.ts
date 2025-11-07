@@ -21,7 +21,7 @@ import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
+import { TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 
@@ -247,6 +247,36 @@ Skip for quick fixes or when continuing existing plans.`;
         throw new Error('ConfigManager.getConfig() returned null/undefined');
       }
 
+      // Determine target model
+      const targetModel = config.plan_model || config.model;
+
+      // Plan agent ALWAYS uses HIGH reasoning effort
+      const resolvedReasoningEffort = REASONING_EFFORT.HIGH;
+      logger.debug(`[PLAN_TOOL] Using hardcoded HIGH reasoning_effort: ${resolvedReasoningEffort}`);
+
+      // Create appropriate model client
+      let modelClient: ModelClient;
+
+      if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort) {
+        // Use shared global client only if both model and reasoning_effort match
+        logger.debug(`[PLAN_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
+        modelClient = mainModelClient;
+      } else {
+        // Plan specifies different model OR different reasoning_effort - create dedicated client
+        logger.debug(`[PLAN_TOOL] Creating dedicated client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
+
+        const { OllamaClient } = await import('../llm/OllamaClient.js');
+        modelClient = new OllamaClient({
+          endpoint: config.endpoint,
+          modelName: targetModel,
+          temperature: config.temperature,
+          contextSize: config.context_size,
+          maxTokens: config.max_tokens,
+          activityStream: this.activityStream,
+          reasoningEffort: resolvedReasoningEffort,
+        });
+      }
+
       // Filter to planning tools (read-only + explore)
       logger.debug('[PLAN_TOOL] Filtering to planning tools:', PLANNING_TOOLS);
       const allowedToolNames = new Set(PLANNING_TOOLS);
@@ -256,7 +286,7 @@ Skip for quick fixes or when continuing existing plans.`;
       logger.debug('[PLAN_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
 
       // Create specialized system prompt
-      const specializedPrompt = await this.createPlanningSystemPrompt(requirements, thoroughness);
+      const specializedPrompt = await this.createPlanningSystemPrompt(requirements, thoroughness, resolvedReasoningEffort);
 
       // Map thoroughness to max duration
       const maxDuration = getThoroughnessDuration(thoroughness as any);
@@ -298,7 +328,7 @@ Skip for quick fixes or when continuing existing plans.`;
         // Graceful fallback: AgentPoolService not available
         logger.warn('[PLAN_TOOL] AgentPoolService not available, falling back to ephemeral agent');
         planningAgent = new Agent(
-          mainModelClient,
+          modelClient,
           filteredToolManager,
           this.activityStream,
           agentConfig,
@@ -308,7 +338,9 @@ Skip for quick fixes or when continuing existing plans.`;
       } else {
         // Acquire agent from pool with filtered ToolManager
         logger.debug('[PLAN_TOOL] Acquiring agent from pool with filtered ToolManager');
-        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
+        // Pass custom modelClient only if plan uses a different model than global
+        const customModelClient = targetModel !== config.model ? modelClient : undefined;
+        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager, customModelClient);
         planningAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
         this.currentPooledAgent = pooledAgent; // Track for interjection routing
@@ -411,7 +443,7 @@ Skip for quick fixes or when continuing existing plans.`;
   /**
    * Create specialized system prompt for planning
    */
-  private async createPlanningSystemPrompt(requirements: string, thoroughness: string): Promise<string> {
+  private async createPlanningSystemPrompt(requirements: string, thoroughness: string, reasoningEffort?: string): Promise<string> {
     logger.debug('[PLAN_TOOL] Creating planning system prompt with thoroughness:', thoroughness);
     try {
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
@@ -475,7 +507,7 @@ Skip for quick fixes or when continuing existing plans.`;
       // Compose the full prompt with thoroughness-specific guidelines
       const modifiedPrompt = PLANNING_BASE_PROMPT + '\n\n' + thoroughnessGuidelines + '\n\n' + PLANNING_CLOSING;
 
-      const result = await getAgentSystemPrompt(modifiedPrompt, requirements);
+      const result = await getAgentSystemPrompt(modifiedPrompt, requirements, undefined, undefined, reasoningEffort);
       logger.debug('[PLAN_TOOL] System prompt created, length:', result?.length || 0);
       return result;
     } catch (error) {

@@ -242,8 +242,9 @@ export async function getContextInfo(options: {
   includeProjectInstructions?: boolean;
   tokenManager?: any;
   toolResultManager?: any;
+  reasoningEffort?: string;
 } = {}): Promise<string> {
-  const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager } = options;
+  const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager, reasoningEffort } = options;
 
   const currentDate = new Date().toISOString().replace('T', ' ').slice(0, TEXT_LIMITS.ISO_DATETIME_LENGTH);
   const workingDir = process.cwd();
@@ -298,6 +299,9 @@ ${agentsSection}`;
   // Build git info section
   const gitInfo = gitBranch ? ` (git repository, branch: ${gitBranch})` : '';
 
+  // Build reasoning effort info
+  const reasoningInfo = reasoningEffort ? `\n- Reasoning: ${reasoningEffort}` : '';
+
   // Get project context
   let projectInfo = '';
   try {
@@ -329,15 +333,15 @@ ${agentsSection}`;
 - Current Date: ${currentDate}
 - Working Directory: ${workingDir}${gitInfo}
 - Operating System: ${osInfo}
-- Node Version: ${nodeVersion}${projectInfo}${contextUsageSection}${allyMdContent}${agentsInfo}`;
+- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${allyMdContent}${agentsInfo}`;
 }
 
 /**
  * Generate the main system prompt dynamically
  */
-export async function getMainSystemPrompt(tokenManager?: any, toolResultManager?: any, isOnceMode: boolean = false): Promise<string> {
+export async function getMainSystemPrompt(tokenManager?: any, toolResultManager?: any, isOnceMode: boolean = false, reasoningEffort?: string): Promise<string> {
   // Tool definitions are provided separately by the LLM client as function definitions
-  const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager });
+  const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager, reasoningEffort });
 
   // Get todo context
   let todoContext = '';
@@ -407,13 +411,14 @@ ${context}${todoContext}`;
 /**
  * Generate a system prompt for specialized agents
  */
-export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: any, toolResultManager?: any): Promise<string> {
+export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: any, toolResultManager?: any, reasoningEffort?: string): Promise<string> {
   // Get context without agent information and project instructions to avoid recursion
   const context = await getContextInfo({
     includeAgents: false,
     includeProjectInstructions: false,
     tokenManager,
     toolResultManager,
+    reasoningEffort,
   });
 
   // Get context budget reminder (only shown at 75%+)

@@ -216,6 +216,8 @@ export interface Config {
   // LLM Settings
   model: string | null;
   service_model?: string | null; // Model for background services (titles, idle messages). Defaults to main model.
+  explore_model?: string | null; // Model for Explore agent. Defaults to global model.
+  plan_model?: string | null; // Model for Plan agent. Defaults to global model.
   endpoint: string;
   context_size: number;
   temperature: number;

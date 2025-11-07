@@ -10,7 +10,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/index.js';
+import { ToolResult, FunctionDefinition, ActivityEventType, Message } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { AgentManager } from '../services/AgentManager.js';
@@ -19,7 +19,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING } from '../config/constants.js';
+import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 
@@ -69,6 +69,13 @@ export class AgentTool extends BaseTool {
               type: 'string',
               description: 'Level of thoroughness: "quick" (~1 min), "medium" (~5 min), "very thorough" (~10 min), "uncapped" (no time limit, default). Controls time budget.',
             },
+            context_files: {
+              type: 'array',
+              description: 'Optional list of files to read into agent context before starting. Files are automatically read by the system (works even for models without tool support). Limited to 40% of context size. Use sparingly - only include files the agent will definitely need. Format: ["src/file1.ts", "src/file2.ts"]',
+              items: {
+                type: 'string',
+              },
+            },
           },
           required: ['task_prompt'],
         },
@@ -82,6 +89,7 @@ export class AgentTool extends BaseTool {
     const agentName = args.agent_name || 'general';
     const taskPrompt = args.task_prompt;
     const thoroughness = args.thoroughness ?? 'uncapped';
+    const contextFiles = args.context_files;
 
     // Validate task_prompt parameter
     if (!taskPrompt || typeof taskPrompt !== 'string') {
@@ -110,6 +118,25 @@ export class AgentTool extends BaseTool {
       );
     }
 
+    // Validate context_files parameter if provided
+    if (contextFiles !== undefined) {
+      if (!Array.isArray(contextFiles)) {
+        return this.formatErrorResponse(
+          'context_files must be an array of file paths',
+          'validation_error',
+          'Example: agent(task_prompt="...", context_files=["src/file1.ts", "src/file2.ts"])'
+        );
+      }
+      // Validate each item is a string
+      if (!contextFiles.every((f: any) => typeof f === 'string')) {
+        return this.formatErrorResponse(
+          'context_files must contain only strings',
+          'validation_error',
+          'Example: agent(task_prompt="...", context_files=["src/file1.ts", "src/file2.ts"])'
+        );
+      }
+    }
+
     // Execute single agent - pass currentCallId to avoid race conditions
     // IMPORTANT: this.currentCallId is set by BaseTool.execute() before executeImpl is called
     // We capture it here to avoid it being overwritten by concurrent executions
@@ -121,7 +148,95 @@ export class AgentTool extends BaseTool {
       );
     }
 
-    return await this.executeSingleAgentWrapper(agentName, taskPrompt, thoroughness, callId);
+    // Handle context_files: Read files before creating agent
+    let initialMessages: Message[] | undefined;
+
+    if (contextFiles && contextFiles.length > 0) {
+      try {
+        // Get ToolManager and ReadTool from ServiceRegistry
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+        if (!toolManager) {
+          return this.formatErrorResponse(
+            'Tool manager not available for context file reading',
+            'system_error'
+          );
+        }
+
+        const readTool = toolManager.getTool('read');
+        if (!readTool) {
+          return this.formatErrorResponse(
+            'Read tool not available for context file reading',
+            'system_error'
+          );
+        }
+
+        // Generate tool call ID
+        const toolCallId = `read-context-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+        // Create assistant message with tool_calls
+        const assistantMessage: Message = {
+          role: 'assistant' as const,
+          content: '',
+          tool_calls: [{
+            id: toolCallId,
+            type: 'function' as const,
+            function: {
+              name: 'read',
+              arguments: { file_paths: contextFiles },
+            },
+          }],
+        };
+
+        // Execute read tool
+        const result = await toolManager.executeTool(
+          'read',
+          { file_paths: contextFiles },
+          toolCallId,
+          false, // isRetry
+          undefined, // abort signal (agent doesn't exist yet)
+          false, // isUserInitiated
+          true   // isContextFile - enables 40% limit
+        );
+
+        // Validate read result before adding to conversation
+        if (!result || (!result.success && !result.error)) {
+          return this.formatErrorResponse(
+            'Failed to read context files: Invalid result from ReadTool',
+            'execution_error'
+          );
+        }
+
+        // If read failed, return the error
+        if (!result.success) {
+          return this.formatErrorResponse(
+            `Failed to read context files: ${result.error || 'Unknown error'}`,
+            result.error_type || 'execution_error'
+          );
+        }
+
+        // Create tool result message
+        const toolResultMessage: Message = {
+          role: 'tool' as const,
+          content: JSON.stringify(result),
+          tool_call_id: toolCallId,
+          name: 'read',
+        };
+
+        // Store messages to pass to agent creation
+        initialMessages = [assistantMessage, toolResultMessage];
+
+      } catch (error) {
+        // If file reading fails, return error
+        return this.formatErrorResponse(
+          `Failed to read context files: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'execution_error'
+        );
+      }
+    }
+
+    return await this.executeSingleAgentWrapper(agentName, taskPrompt, thoroughness, callId, initialMessages);
   }
 
   /**
@@ -131,12 +246,13 @@ export class AgentTool extends BaseTool {
     agentName: string,
     taskPrompt: string,
     thoroughness: string,
-    callId: string
+    callId: string,
+    initialMessages?: Message[]
   ): Promise<ToolResult> {
     logger.debug('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId, 'thoroughness:', thoroughness);
 
     try {
-      const result = await this.executeSingleAgent(agentName, taskPrompt, thoroughness, callId);
+      const result = await this.executeSingleAgent(agentName, taskPrompt, thoroughness, callId, initialMessages);
 
       if (result.success) {
         // Build response with agent_id (always returned since agents always persist)
@@ -176,7 +292,8 @@ export class AgentTool extends BaseTool {
     agentName: string,
     taskPrompt: string,
     thoroughness: string,
-    callId: string
+    callId: string,
+    initialMessages?: Message[]
   ): Promise<any> {
     logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId, 'thoroughness:', thoroughness);
     const startTime = Date.now();
@@ -212,7 +329,7 @@ export class AgentTool extends BaseTool {
 
       // Execute the agent task
       logger.debug('[AGENT_TOOL] Executing agent task...');
-      const taskResult = await this.executeAgentTask(agentData, taskPrompt, thoroughness, callId);
+      const taskResult = await this.executeAgentTask(agentData, taskPrompt, thoroughness, callId, initialMessages);
       logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
 
       const duration = (Date.now() - startTime) / 1000;
@@ -260,7 +377,8 @@ export class AgentTool extends BaseTool {
     agentData: any,
     taskPrompt: string,
     thoroughness: string,
-    callId: string
+    callId: string,
+    initialMessages?: Message[]
   ): Promise<{ result: string; agent_id?: string }> {
     logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
     const registry = ServiceRegistry.getInstance();
@@ -296,20 +414,29 @@ export class AgentTool extends BaseTool {
     // Determine target model
     const targetModel = agentData.model || config.model;
 
+    // Resolve reasoning_effort: use agent's value if set and not "inherit", otherwise use config
+    let resolvedReasoningEffort: string | undefined;
+    if (agentData.reasoning_effort && agentData.reasoning_effort !== REASONING_EFFORT.INHERIT) {
+      resolvedReasoningEffort = agentData.reasoning_effort;
+      logger.debug(`[AGENT_TOOL] Using agent reasoning_effort: ${resolvedReasoningEffort}`);
+    } else {
+      resolvedReasoningEffort = config.reasoning_effort;
+      logger.debug(`[AGENT_TOOL] Using config reasoning_effort: ${resolvedReasoningEffort}`);
+    }
+
     // Create appropriate model client
     let modelClient: ModelClient;
 
-    if (targetModel === config.model) {
-      // Use shared global client
-      logger.debug(`[AGENT_TOOL] Using shared model client for global model: ${targetModel}`);
+    if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort) {
+      // Use shared global client only if both model and reasoning_effort match
+      logger.debug(`[AGENT_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
       modelClient = mainModelClient;
     } else {
-      // Agent specifies different model - create dedicated client
-      logger.debug(`[AGENT_TOOL] Agent specifies custom model: ${targetModel} (global: ${config.model})`);
+      // Agent specifies different model OR different reasoning_effort - create dedicated client
+      logger.debug(`[AGENT_TOOL] Creating dedicated client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
 
       // Create dedicated client for this model
       // Note: Model tool support was validated during agent creation
-      logger.debug('[AGENT_TOOL] Creating dedicated OllamaClient for custom model');
       const { OllamaClient } = await import('../llm/OllamaClient.js');
       modelClient = new OllamaClient({
         endpoint: config.endpoint,
@@ -318,6 +445,7 @@ export class AgentTool extends BaseTool {
         contextSize: config.context_size,
         maxTokens: config.max_tokens,
         activityStream: this.activityStream,
+        reasoningEffort: resolvedReasoningEffort,
       });
     }
 
@@ -331,7 +459,8 @@ export class AgentTool extends BaseTool {
     try {
       specializedPrompt = await this.createAgentSystemPrompt(
         agentData.system_prompt,
-        taskPrompt
+        taskPrompt,
+        resolvedReasoningEffort
       );
       logger.debug('[AGENT_TOOL] Specialized prompt created, length:', specializedPrompt?.length || 0);
     } catch (error) {
@@ -380,6 +509,7 @@ export class AgentTool extends BaseTool {
         config: config,
         parentCallId: callId,
         maxDuration,
+        initialMessages,
       };
 
       subAgent = new Agent(
@@ -406,6 +536,7 @@ export class AgentTool extends BaseTool {
         parentCallId: callId,
         _poolKey: poolKey, // CRITICAL: Add this for pool matching
         maxDuration,
+        initialMessages,
       };
 
       // Acquire agent from pool
@@ -505,12 +636,12 @@ export class AgentTool extends BaseTool {
   /**
    * Create specialized system prompt for agent
    */
-  private async createAgentSystemPrompt(agentPrompt: string, taskPrompt: string): Promise<string> {
+  private async createAgentSystemPrompt(agentPrompt: string, taskPrompt: string, reasoningEffort?: string): Promise<string> {
     logger.debug('[AGENT_TOOL] Importing systemMessages module...');
     try {
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
       logger.debug('[AGENT_TOOL] Calling getAgentSystemPrompt...');
-      const result = await getAgentSystemPrompt(agentPrompt, taskPrompt);
+      const result = await getAgentSystemPrompt(agentPrompt, taskPrompt, undefined, undefined, reasoningEffort);
       logger.debug('[AGENT_TOOL] getAgentSystemPrompt returned, length:', result?.length || 0);
       return result;
     } catch (error) {

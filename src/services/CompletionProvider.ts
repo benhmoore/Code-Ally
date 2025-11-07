@@ -14,7 +14,7 @@ import * as os from 'os';
 import { AgentManager } from './AgentManager.js';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { CACHE_TIMEOUTS, BUFFER_SIZES } from '../config/constants.js';
+import { CACHE_TIMEOUTS, BUFFER_SIZES, REASONING_EFFORT_API_VALUES } from '../config/constants.js';
 import { FuzzyFilePathMatcher, FuzzyMatchResult } from './FuzzyFilePathMatcher.js';
 
 export type CompletionType = 'command' | 'file' | 'directory' | 'option';
@@ -485,8 +485,7 @@ export class CompletionProvider {
 
     // Reasoning effort - predefined values
     if (key === 'reasoning_effort') {
-      const efforts = ['low', 'medium', 'high'];
-      return efforts
+      return [...REASONING_EFFORT_API_VALUES]
         .filter(val => val.startsWith(prefix))
         .map(val => ({
           value: val,

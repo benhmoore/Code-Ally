@@ -19,6 +19,7 @@ export interface AgentData {
   system_prompt: string;
   model?: string;
   temperature?: number;
+  reasoning_effort?: string; // Reasoning effort: "inherit", "low", "medium", "high". Defaults to "inherit"
   tools?: string[]; // Tool names this agent can use. Empty array = all tools, undefined = all tools
   created_at?: string;
   updated_at?: string;
@@ -262,6 +263,7 @@ export class AgentManager {
         system_prompt: body.trim(),
         model: metadata.model,
         temperature: metadata.temperature ? parseFloat(metadata.temperature) : undefined,
+        reasoning_effort: metadata.reasoning_effort,
         tools: metadata.tools, // Array of tool names or undefined
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
@@ -289,6 +291,10 @@ export class AgentManager {
 
     if (agent.temperature !== undefined) {
       lines.push(`temperature: ${agent.temperature}`);
+    }
+
+    if (agent.reasoning_effort) {
+      lines.push(`reasoning_effort: "${agent.reasoning_effort}"`);
     }
 
     if (agent.tools !== undefined) {

@@ -591,3 +591,48 @@ export const PERMISSION_DENIED_TOOL_RESULT = {
   error: PERMISSION_MESSAGES.GENERIC_DENIAL,
   error_type: 'permission_denied' as const,
 } as const;
+
+// ===========================================
+// REASONING EFFORT
+// ===========================================
+
+/**
+ * Reasoning effort levels for models that support it (e.g., gpt-oss)
+ *
+ * These values map to the Ollama API's reasoning_effort parameter.
+ * Higher effort levels may produce better results but take longer.
+ */
+export const REASONING_EFFORT = {
+  /** Inherit reasoning effort from global config */
+  INHERIT: 'inherit',
+  /** Low reasoning effort - faster, less thorough */
+  LOW: 'low',
+  /** Medium reasoning effort - balanced */
+  MEDIUM: 'medium',
+  /** High reasoning effort - slower, more thorough */
+  HIGH: 'high',
+} as const;
+
+/**
+ * Type for reasoning effort values
+ */
+export type ReasoningEffort = typeof REASONING_EFFORT[keyof typeof REASONING_EFFORT];
+
+/**
+ * Valid reasoning effort values for API (excludes INHERIT)
+ */
+export const REASONING_EFFORT_API_VALUES = [
+  REASONING_EFFORT.LOW,
+  REASONING_EFFORT.MEDIUM,
+  REASONING_EFFORT.HIGH,
+] as const;
+
+/**
+ * All valid reasoning effort values including INHERIT (for agent configuration)
+ */
+export const REASONING_EFFORT_ALL_VALUES = [
+  REASONING_EFFORT.INHERIT,
+  REASONING_EFFORT.LOW,
+  REASONING_EFFORT.MEDIUM,
+  REASONING_EFFORT.HIGH,
+] as const;

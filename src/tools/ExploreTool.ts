@@ -193,6 +193,36 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
         throw new Error('ConfigManager.getConfig() returned null/undefined');
       }
 
+      // Determine target model
+      const targetModel = config.explore_model || config.model;
+
+      // Explore agent uses INHERIT - get reasoning_effort from config
+      const resolvedReasoningEffort = config.reasoning_effort;
+      logger.debug(`[EXPLORE_TOOL] Using config reasoning_effort: ${resolvedReasoningEffort}`);
+
+      // Create appropriate model client
+      let modelClient: ModelClient;
+
+      if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort) {
+        // Use shared global client only if both model and reasoning_effort match
+        logger.debug(`[EXPLORE_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
+        modelClient = mainModelClient;
+      } else {
+        // Explore specifies different model OR different reasoning_effort - create dedicated client
+        logger.debug(`[EXPLORE_TOOL] Creating dedicated client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
+
+        const { OllamaClient } = await import('../llm/OllamaClient.js');
+        modelClient = new OllamaClient({
+          endpoint: config.endpoint,
+          modelName: targetModel,
+          temperature: config.temperature,
+          contextSize: config.context_size,
+          maxTokens: config.max_tokens,
+          activityStream: this.activityStream,
+          reasoningEffort: resolvedReasoningEffort,
+        });
+      }
+
       // Filter to read-only tools
       logger.debug('[EXPLORE_TOOL] Filtering to read-only tools:', READ_ONLY_TOOLS);
       const allowedToolNames = new Set(READ_ONLY_TOOLS);
@@ -202,7 +232,7 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
       logger.debug('[EXPLORE_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
 
       // Create specialized system prompt
-      const specializedPrompt = await this.createExplorationSystemPrompt(taskDescription, thoroughness);
+      const specializedPrompt = await this.createExplorationSystemPrompt(taskDescription, thoroughness, resolvedReasoningEffort);
 
       // Emit exploration start event
       this.emitEvent({
@@ -242,7 +272,7 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
         // Graceful fallback: AgentPoolService not available
         logger.warn('[EXPLORE_TOOL] AgentPoolService not available, falling back to ephemeral agent');
         explorationAgent = new Agent(
-          mainModelClient,
+          modelClient,
           filteredToolManager,
           this.activityStream,
           agentConfig,
@@ -252,7 +282,9 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
       } else {
         // Acquire agent from pool with filtered ToolManager
         logger.debug('[EXPLORE_TOOL] Acquiring agent from pool with filtered ToolManager');
-        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
+        // Pass custom modelClient only if explore uses a different model than global
+        const customModelClient = targetModel !== config.model ? modelClient : undefined;
+        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager, customModelClient);
         explorationAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
         this.currentPooledAgent = pooledAgent; // Track for interjection routing
@@ -344,14 +376,14 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
   /**
    * Create specialized system prompt for exploration
    */
-  private async createExplorationSystemPrompt(taskDescription: string, thoroughness: string): Promise<string> {
+  private async createExplorationSystemPrompt(taskDescription: string, thoroughness: string, reasoningEffort?: string): Promise<string> {
     logger.debug('[EXPLORE_TOOL] Creating exploration system prompt with thoroughness:', thoroughness);
     try {
       // Adjust the base prompt based on thoroughness level
       const adjustedPrompt = this.adjustPromptForThoroughness(thoroughness);
 
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-      const result = await getAgentSystemPrompt(adjustedPrompt, taskDescription);
+      const result = await getAgentSystemPrompt(adjustedPrompt, taskDescription, undefined, undefined, reasoningEffort);
       logger.debug('[EXPLORE_TOOL] System prompt created, length:', result?.length || 0);
       return result;
     } catch (error) {
