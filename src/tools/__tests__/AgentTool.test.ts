@@ -28,14 +28,11 @@ describe('AgentTool', () => {
     process.env.HOME = testDir;
 
     // Create agents directory
-    await mkdir(join(testDir, '.code_ally', 'agents'), { recursive: true });
+    await mkdir(join(testDir, '.ally', 'agents'), { recursive: true });
 
     activityStream = new ActivityStream();
     registry = ServiceRegistry.getInstance();
     agentManager = new AgentManager();
-
-    // Ensure default agent exists
-    await agentManager.ensureDefaultAgent();
 
     registry.registerInstance('agent_manager', agentManager);
 

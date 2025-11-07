@@ -51,7 +51,6 @@ export class TodoCommand extends Command {
         return this.handleTodoAdd(todoManager, parts.slice(1).join(' '));
 
       case 'complete':
-      case 'done':
         return this.handleTodoComplete(todoManager, parts.length > 1 ? parts[1] : undefined);
 
       case 'clear':

@@ -6,7 +6,8 @@
  */
 
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 /**
  * Base directory for all Code Ally data
@@ -14,9 +15,21 @@ import { join } from 'path';
 export const ALLY_HOME = join(homedir(), '.ally');
 
 /**
- * Directory for custom agent definitions
+ * Directory for custom agent definitions (user-created)
  */
 export const AGENTS_DIR = join(ALLY_HOME, 'agents');
+
+/**
+ * Built-in agent definitions shipped with the application
+ * Located in dist/agents/ after build
+ */
+export const BUILTIN_AGENTS_DIR = (() => {
+  const currentFileUrl = import.meta.url;
+  const currentFilePath = fileURLToPath(currentFileUrl);
+  const currentDir = dirname(currentFilePath);
+  // Navigate from dist/config/paths.js to dist/agents/
+  return join(currentDir, '..', 'agents');
+})();
 
 /**
  * Plugins directory for custom tools

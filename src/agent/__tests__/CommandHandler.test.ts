@@ -117,8 +117,8 @@ describe('CommandHandler', () => {
   });
 
   describe('Agent Commands', () => {
-    it('should handle /agent ls', async () => {
-      const result = await commandHandler.handleCommand('/agent ls', []);
+    it('should handle /agent list', async () => {
+      const result = await commandHandler.handleCommand('/agent list', []);
       expect(result.handled).toBe(true);
       expect(result.response).toMatch(/No agents|Available Agents/);
     });

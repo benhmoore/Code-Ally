@@ -2,7 +2,7 @@
  * AgentTool - Delegate tasks to specialized agents
  *
  * Creates and manages sub-agents with specialized system prompts.
- * Agents can be loaded from ~/.code_ally/agents/ directory.
+ * Agents can be loaded from built-in library (dist/agents/) or user directory (~/.ally/agents/).
  * Sub-agents run in isolated contexts with their own tools and message history.
  *
  * IMPORTANT: Sub-agents inherit the same permission screening as the main agent.
@@ -186,11 +186,7 @@ export class AgentTool extends BaseTool {
       logger.debug('[AGENT_TOOL] Getting agent manager...');
       const agentManager = this.getAgentManager();
 
-      // Ensure default agent exists
-      logger.debug('[AGENT_TOOL] Ensuring default agent exists...');
-      await agentManager.ensureDefaultAgent();
-
-      // Load agent data
+      // Load agent data (from built-in or user directory)
       logger.debug('[AGENT_TOOL] Loading agent:', agentName);
       const agentData = await agentManager.loadAgent(agentName);
       logger.debug('[AGENT_TOOL] Agent data loaded:', agentData ? 'success' : 'null');

@@ -195,7 +195,7 @@ Core Commands:
 
 Agent Commands:
   /agent create <desc>     - Create a new specialized agent
-  /agent ls                - List available agents
+  /agent list              - List available agents
   /agent show <name>       - Show agent details
   /agent use <name> <task> - Use specific agent for a task
   /agent delete <name>     - Delete an agent

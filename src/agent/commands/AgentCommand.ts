@@ -38,13 +38,11 @@ export class AgentCommand extends Command {
       // User-created agent management
       case 'create':
         return this.handleCreate(restArgs.join(' '), serviceRegistry);
-      case 'ls':
       case 'list':
         return this.handleList(serviceRegistry);
       case 'show':
         return this.handleShow(restArgs.join(' '), serviceRegistry);
       case 'delete':
-      case 'rm':
         return this.handleDelete(restArgs.join(' '), serviceRegistry);
       case 'use':
         return this.handleUse(restArgs.join(' '), serviceRegistry);
@@ -72,7 +70,7 @@ export class AgentCommand extends Command {
 
 Specialized Agent Management:
   /agent create <description> - Create new specialized agent
-  /agent ls                   - List available agents
+  /agent list                 - List available agents
   /agent show <name>          - Show agent details
   /agent use <name> <task>    - Use specific agent
   /agent delete <name>        - Delete agent

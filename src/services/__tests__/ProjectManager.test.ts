@@ -10,7 +10,7 @@ import { homedir } from 'os';
 
 describe('ProjectManager', () => {
   let projectManager: ProjectManager;
-  const testStoragePath = join(homedir(), '.code_ally', 'project.test.json');
+  const testStoragePath = join(homedir(), '.ally', 'project.test.json');
 
   beforeEach(async () => {
     projectManager = new ProjectManager();

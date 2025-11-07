@@ -1,17 +1,17 @@
 /**
  * AgentManager - Agent storage and retrieval
  *
- * Manages specialized agent definitions stored as markdown files in ~/.code_ally/agents/
- * This is a simplified version focusing on storage/retrieval - agent generation
- * will be added in a future iteration.
+ * Manages specialized agent definitions stored as markdown files.
+ * Loads from both built-in agents (dist/agents/) and user agents (~/.ally/agents/).
+ * User agents can override built-in agents by using the same name.
  */
 
 import { readFile, writeFile, readdir, unlink, access } from 'fs/promises';
 import { join } from 'path';
-import { homedir } from 'os';
 import { constants } from 'fs';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
+import { AGENTS_DIR, BUILTIN_AGENTS_DIR } from '../config/paths.js';
 
 export interface AgentData {
   name: string;
@@ -31,48 +31,70 @@ export interface AgentInfo {
 }
 
 export class AgentManager {
-  private readonly agentsDir: string;
+  private readonly userAgentsDir: string;
+  private readonly builtinAgentsDir: string;
 
   constructor() {
-    this.agentsDir = join(homedir(), '.code_ally', 'agents');
+    this.userAgentsDir = AGENTS_DIR;
+    this.builtinAgentsDir = BUILTIN_AGENTS_DIR;
   }
 
   /**
-   * Get the agents directory path
+   * Get the user agents directory path
    *
-   * @returns Agents directory path
+   * @returns User agents directory path
    */
   getAgentsDir(): string {
-    return this.agentsDir;
+    return this.userAgentsDir;
   }
 
   /**
-   * Check if an agent exists
+   * Check if an agent exists (in either user or built-in directories)
    *
    * @param agentName - Agent name
    * @returns True if agent exists
    */
   async agentExists(agentName: string): Promise<boolean> {
-    const filePath = join(this.agentsDir, `${agentName}.md`);
+    // Check user directory first
+    const userPath = join(this.userAgentsDir, `${agentName}.md`);
     try {
-      await access(filePath, constants.F_OK);
+      await access(userPath, constants.F_OK);
       return true;
     } catch {
-      return false;
+      // Fall back to built-in
+      const builtinPath = join(this.builtinAgentsDir, `${agentName}.md`);
+      try {
+        await access(builtinPath, constants.F_OK);
+        return true;
+      } catch {
+        return false;
+      }
     }
   }
 
   /**
    * Load an agent by name
+   * Priority: user agents (~/.ally/agents/) > built-in agents (dist/agents/)
    *
    * @param agentName - Agent name
    * @returns Agent data or null if not found
    */
   async loadAgent(agentName: string): Promise<AgentData | null> {
-    const filePath = join(this.agentsDir, `${agentName}.md`);
-
+    // Try user directory first
+    const userPath = join(this.userAgentsDir, `${agentName}.md`);
     try {
-      const content = await readFile(filePath, 'utf-8');
+      const content = await readFile(userPath, 'utf-8');
+      logger.debug(`Loaded user agent '${agentName}'`);
+      return this.parseAgentFile(content, agentName);
+    } catch (error) {
+      logger.debug(`Agent '${agentName}' not found in user directory`);
+    }
+
+    // Fall back to built-in agents
+    const builtinPath = join(this.builtinAgentsDir, `${agentName}.md`);
+    try {
+      const content = await readFile(builtinPath, 'utf-8');
+      logger.debug(`Loaded built-in agent '${agentName}'`);
       return this.parseAgentFile(content, agentName);
     } catch (error) {
       logger.debug(`Failed to load agent '${agentName}':`, formatError(error));
@@ -81,7 +103,7 @@ export class AgentManager {
   }
 
   /**
-   * Save an agent to storage
+   * Save an agent to user storage
    *
    * @param agent - Agent data
    * @returns True if saved successfully
@@ -90,9 +112,9 @@ export class AgentManager {
     try {
       // Ensure directory exists
       const { mkdir } = await import('fs/promises');
-      await mkdir(this.agentsDir, { recursive: true });
+      await mkdir(this.userAgentsDir, { recursive: true });
 
-      const filePath = join(this.agentsDir, `${agent.name}.md`);
+      const filePath = join(this.userAgentsDir, `${agent.name}.md`);
       const content = this.formatAgentFile(agent);
 
       await writeFile(filePath, content, 'utf-8');
@@ -104,18 +126,14 @@ export class AgentManager {
   }
 
   /**
-   * Delete an agent
+   * Delete a user agent (cannot delete built-in agents)
    *
    * @param agentName - Agent name
    * @returns True if deleted successfully
    */
   async deleteAgent(agentName: string): Promise<boolean> {
-    // Prevent deletion of default agent
-    if (agentName === 'general') {
-      return false;
-    }
-
-    const filePath = join(this.agentsDir, `${agentName}.md`);
+    // Only delete from user directory (built-ins cannot be deleted)
+    const filePath = join(this.userAgentsDir, `${agentName}.md`);
 
     try {
       await unlink(filePath);
@@ -126,90 +144,69 @@ export class AgentManager {
   }
 
   /**
-   * List all available agents
+   * List all available agents (user + built-in)
+   * User agents override built-ins with the same name
    *
    * @returns Array of agent info
    */
   async listAgents(): Promise<AgentInfo[]> {
-    try {
-      const files = await readdir(this.agentsDir);
-      const agentFiles = files.filter(f => f.endsWith('.md'));
+    const agentMap = new Map<string, AgentInfo>();
 
-      const agents: AgentInfo[] = [];
-      for (const file of agentFiles) {
+    // Load built-in agents first
+    try {
+      const builtinFiles = await readdir(this.builtinAgentsDir);
+      for (const file of builtinFiles.filter(f => f.endsWith('.md'))) {
         const agentName = file.replace('.md', '');
-        const filePath = join(this.agentsDir, file);
+        const filePath = join(this.builtinAgentsDir, file);
 
         try {
           const content = await readFile(filePath, 'utf-8');
           const agent = this.parseAgentFile(content, agentName);
 
           if (agent) {
-            agents.push({
+            agentMap.set(agentName, {
               name: agent.name,
               description: agent.description,
               file_path: filePath,
             });
           }
         } catch {
-          // Skip files that can't be parsed
           continue;
         }
       }
-
-      return agents;
-    } catch {
-      return [];
+    } catch (error) {
+      logger.debug('Could not load built-in agents:', formatError(error));
     }
-  }
 
-  /**
-   * Ensure the default general agent exists
-   */
-  async ensureDefaultAgent(): Promise<void> {
-    if (!(await this.agentExists('general'))) {
-      await this.saveAgent({
-        name: 'general',
-        description: 'General-purpose agent for complex multi-step tasks and codebase exploration',
-        system_prompt: this.getDefaultAgentPrompt(),
-        created_at: new Date().toISOString(),
-      });
+    // Load user agents (override built-ins)
+    try {
+      const userFiles = await readdir(this.userAgentsDir);
+      for (const file of userFiles.filter(f => f.endsWith('.md'))) {
+        const agentName = file.replace('.md', '');
+        const filePath = join(this.userAgentsDir, file);
+
+        try {
+          const content = await readFile(filePath, 'utf-8');
+          const agent = this.parseAgentFile(content, agentName);
+
+          if (agent) {
+            agentMap.set(agentName, {
+              name: agent.name,
+              description: agent.description,
+              file_path: filePath,
+            });
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch (error) {
+      logger.debug('Could not load user agents:', formatError(error));
     }
+
+    return Array.from(agentMap.values());
   }
 
-  /**
-   * Get the default agent system prompt
-   *
-   * @returns Default system prompt
-   */
-  private getDefaultAgentPrompt(): string {
-    return `You are a general-purpose AI assistant specialized in software development tasks. You excel at:
-
-**Core Capabilities:**
-- Complex multi-step analysis and implementation
-- Codebase exploration and understanding
-- Problem-solving across multiple domains
-- Thorough research and investigation
-
-**Working Style:**
-- Use multiple tools systematically (aim for 5+ tools minimum per task)
-- Be thorough and methodical in your analysis
-- Provide detailed explanations of findings and approaches
-- Always complete tasks fully rather than stopping prematurely
-
-**Tool Usage:**
-- Extensively use search tools (grep, glob) to understand codebases
-- Read multiple files to build comprehensive understanding
-- Execute tests and verify solutions when applicable
-- Make necessary file changes and implementations
-
-**Communication:**
-- Summarize your findings and approach clearly
-- Explain what was accomplished and any important discoveries
-- Provide actionable next steps or recommendations
-
-Continue working until you have thoroughly addressed the task through comprehensive analysis and implementation.`;
-  }
 
   /**
    * Parse agent markdown file

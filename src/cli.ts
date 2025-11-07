@@ -26,6 +26,7 @@ import { ArgumentParser, type CLIOptions } from './cli/ArgumentParser.js';
 import { logger } from './services/Logger.js';
 import { formatRelativeTime } from './ui/utils/timeUtils.js';
 import { AGENT_POOL } from './config/constants.js';
+import { runStartupValidation, needsSetup } from './cli/validation.js';
 
 /**
  * Comprehensive terminal state reset
@@ -355,6 +356,14 @@ async function main() {
     // Use full config type
     const config = configOverrides as import('./types/index.js').Config;
 
+    // Check if critical config is missing - force setup wizard if so
+    const forceSetup = needsSetup(config);
+
+    // Validate Ollama connectivity and model availability (skip if needs setup or in --once mode)
+    if (!options.once && !forceSetup) {
+      await runStartupValidation(config);
+    }
+
     // Initialize service registry
     const registry = ServiceRegistry.getInstance();
     registry.registerInstance('config_manager', configManager);
@@ -516,7 +525,6 @@ async function main() {
     // Create agent manager for specialized agents
     const { AgentManager } = await import('./services/AgentManager.js');
     const agentManager = new AgentManager();
-    await agentManager.ensureDefaultAgent();
     registry.registerInstance('agent_manager', agentManager);
 
     // Create agent generation service for LLM-assisted agent creation
@@ -601,7 +609,7 @@ async function main() {
         activityStream,
         agent,
         resumeSession,
-        showSetupWizard: options.init, // Show setup wizard if --init flag was passed
+        showSetupWizard: options.init || forceSetup, // Show setup wizard if --init flag or missing critical config
         pluginCount,
       }),
       {

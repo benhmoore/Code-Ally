@@ -2,14 +2,14 @@
  * ProjectManager - Project context management
  *
  * Manages project-specific context and metadata.
- * Stores project context as JSON in ~/.code_ally/project.json
+ * Stores project context as JSON in ~/.ally/project.json
  */
 
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import type { IService } from '../types/index.js';
 import { BUFFER_SIZES } from '../config/constants.js';
+import { ALLY_HOME } from '../config/paths.js';
 
 export interface ProjectContext {
   name: string;
@@ -26,7 +26,7 @@ export class ProjectManager implements IService {
   private initialized: boolean = false;
 
   constructor() {
-    this.storagePath = join(homedir(), '.code_ally', 'project.json');
+    this.storagePath = join(ALLY_HOME, 'project.json');
   }
 
   /**
@@ -86,8 +86,7 @@ export class ProjectManager implements IService {
 
     try {
       // Ensure directory exists
-      const dir = join(homedir(), '.code_ally');
-      await fs.mkdir(dir, { recursive: true });
+      await fs.mkdir(ALLY_HOME, { recursive: true });
 
       const data = {
         version: 1,
