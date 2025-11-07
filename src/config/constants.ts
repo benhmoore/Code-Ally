@@ -561,6 +561,22 @@ export const AGENT_POOL = {
 } as const;
 
 // ===========================================
+// THOROUGHNESS LEVELS
+// ===========================================
+
+/**
+ * Max token limits for thoroughness levels
+ * Controls output verbosity based on agent thoroughness parameter
+ */
+export const THOROUGHNESS_MAX_TOKENS = {
+  /** Quick agents: concise responses (3000 tokens) */
+  QUICK: 3000,
+  /** Medium agents: normal responses (6000 tokens) */
+  MEDIUM: 6000,
+  // Very thorough and uncapped agents use global config default (10000 tokens)
+} as const;
+
+// ===========================================
 // PERMISSION DENIAL MESSAGES
 // ===========================================
 

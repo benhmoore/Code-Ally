@@ -2,7 +2,7 @@
  * Time formatting utilities for UI display and agent duration management
  */
 
-import { TIME_UNITS } from '../../config/constants.js';
+import { TIME_UNITS, THOROUGHNESS_MAX_TOKENS } from '../../config/constants.js';
 
 /**
  * Valid thoroughness levels for agent execution
@@ -34,6 +34,25 @@ export function getThoroughnessDuration(thoroughness: ThoroughnessLevel): number
       return THOROUGHNESS_DURATIONS.VERY_THOROUGH_MINUTES;
     case 'uncapped':
       return undefined;
+  }
+}
+
+/**
+ * Calculate max tokens based on thoroughness level and config default
+ *
+ * @param thoroughness - Thoroughness level
+ * @param configMaxTokens - Default max tokens from config
+ * @returns Max tokens for the agent based on thoroughness level
+ */
+export function getThoroughnessMaxTokens(thoroughness: ThoroughnessLevel, configMaxTokens: number): number {
+  switch (thoroughness) {
+    case 'quick':
+      return THOROUGHNESS_MAX_TOKENS.QUICK;
+    case 'medium':
+      return THOROUGHNESS_MAX_TOKENS.MEDIUM;
+    case 'very thorough':
+    case 'uncapped':
+      return configMaxTokens; // Use global default (10000)
   }
 }
 

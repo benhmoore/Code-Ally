@@ -1191,69 +1191,8 @@ export class Agent {
     // Validate that we have actual content
     const content = response.content || '';
 
-    // Check if empty AND we just executed tools AND this is not already a retry
-    if (!content.trim() && !isRetry) {
-      // Check if previous message had tool calls (indicates we're in follow-up after tools)
-      const lastMessage = this.messages[this.messages.length - 1];
-      const isAfterToolExecution = lastMessage?.role === 'assistant' && lastMessage?.tool_calls && lastMessage.tool_calls.length > 0;
-
-      if (isAfterToolExecution) {
-        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Empty response after tool execution - attempting continuation');
-        logger.debug(`[AGENT_RESPONSE] Empty response after ${lastMessage.tool_calls?.length || 0} tool calls`);
-
-        // Add continuation prompt
-        const continuationPrompt: Message = {
-          role: 'user',
-          content: '<system-reminder>\nYou just executed tool calls but did not provide any response. Please provide your response now based on the tool results.\n</system-reminder>',
-          timestamp: Date.now(),
-        };
-        this.messages.push(continuationPrompt);
-
-        // Get continuation from LLM
-        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after empty response...');
-        const retryResponse = await this.getLLMResponse();
-
-        // Process retry (mark as retry to prevent infinite loop)
-        return await this.processLLMResponse(retryResponse, true);
-      } else {
-        // Empty response but not after tool execution - just log debug
-        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Model returned empty content');
-      }
-    } else if (!content.trim() && isRetry) {
-      // Still empty after continuation attempt - use fallback
-      logger.error('[AGENT_RESPONSE]', this.instanceId, 'Still empty after continuation attempt - using fallback message');
-      const fallbackContent = this.config.isSpecializedAgent
-        ? 'Task completed. Tool results are available in the conversation history.'
-        : 'I apologize, but I encountered an issue generating a response. The requested operations have been completed.';
-
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: fallbackContent,
-        timestamp: Date.now(),
-      };
-      this.messages.push(assistantMessage);
-
-      // Clean up ephemeral messages BEFORE auto-save
-      this.cleanupEphemeralMessages();
-
-      this.autoSaveSession();
-
-      this.emitEvent({
-        id: this.generateId(),
-        type: ActivityEventType.AGENT_END,
-        timestamp: Date.now(),
-        data: {
-          content: fallbackContent,
-          isSpecializedAgent: this.config.isSpecializedAgent || false,
-          instanceId: this.instanceId,
-          agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
-        },
-      });
-
-      return fallbackContent;
-    }
-
     // Check if all required tool calls have been executed before allowing agent to exit
+    // IMPORTANT: This check must happen BEFORE any fallback/retry logic to ensure required tools are always enforced
     if (this.requiredToolTracker.hasRequiredTools() && !this.interruptionManager.isInterrupted()) {
       logger.debug(`[REQUIRED_TOOLS_DEBUG] Agent attempting to exit with text response`);
       logger.debug(`[REQUIRED_TOOLS_DEBUG] Required tools:`, this.requiredToolTracker.getRequiredTools());
@@ -1313,6 +1252,68 @@ export class Agent {
           }
         }
       }
+    }
+
+    // Handle empty content - attempt continuation if appropriate
+    if (!content.trim() && !isRetry) {
+      // Check if previous message had tool calls (indicates we're in follow-up after tools)
+      const lastMessage = this.messages[this.messages.length - 1];
+      const isAfterToolExecution = lastMessage?.role === 'assistant' && lastMessage?.tool_calls && lastMessage.tool_calls.length > 0;
+
+      if (isAfterToolExecution) {
+        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Empty response after tool execution - attempting continuation');
+        logger.debug(`[AGENT_RESPONSE] Empty response after ${lastMessage.tool_calls?.length || 0} tool calls`);
+
+        // Add continuation prompt
+        const continuationPrompt: Message = {
+          role: 'user',
+          content: '<system-reminder>\nYou just executed tool calls but did not provide any response. Please provide your response now based on the tool results.\n</system-reminder>',
+          timestamp: Date.now(),
+        };
+        this.messages.push(continuationPrompt);
+
+        // Get continuation from LLM
+        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after empty response...');
+        const retryResponse = await this.getLLMResponse();
+
+        // Process retry (mark as retry to prevent infinite loop)
+        return await this.processLLMResponse(retryResponse, true);
+      } else {
+        // Empty response but not after tool execution - just log debug
+        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Model returned empty content');
+      }
+    } else if (!content.trim() && isRetry) {
+      // Still empty after continuation attempt - use fallback
+      logger.error('[AGENT_RESPONSE]', this.instanceId, 'Still empty after continuation attempt - using fallback message');
+      const fallbackContent = this.config.isSpecializedAgent
+        ? 'Task completed. Tool results are available in the conversation history.'
+        : 'I apologize, but I encountered an issue generating a response. The requested operations have been completed.';
+
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: fallbackContent,
+        timestamp: Date.now(),
+      };
+      this.messages.push(assistantMessage);
+
+      // Clean up ephemeral messages BEFORE auto-save
+      this.cleanupEphemeralMessages();
+
+      this.autoSaveSession();
+
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.AGENT_END,
+        timestamp: Date.now(),
+        data: {
+          content: fallbackContent,
+          isSpecializedAgent: this.config.isSpecializedAgent || false,
+          instanceId: this.instanceId,
+          agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
+        },
+      });
+
+      return fallbackContent;
     }
 
     // Normal path - we have content and all required tools (if any) have been called

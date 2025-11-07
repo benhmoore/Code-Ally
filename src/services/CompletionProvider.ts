@@ -472,7 +472,7 @@ export class CompletionProvider {
     }
 
     // Model field - fetch from Ollama
-    if (key === 'model' || key === 'service_model') {
+    if (key === 'model' || key === 'service_model' || key === 'explore_model' || key === 'plan_model') {
       const models = await this.getOllamaModels();
       return models
         .filter(model => model.toLowerCase().includes(prefix.toLowerCase()))
@@ -602,10 +602,14 @@ export class CompletionProvider {
     const keyDescriptions: Record<string, string> = {
       // LLM Model Settings
       'model': 'LLM model name',
+      'service_model': 'Model for background services (titles, idle messages)',
+      'explore_model': 'Model for Explore agent',
+      'plan_model': 'Model for Plan agent',
       'endpoint': 'Ollama API endpoint',
       'context_size': 'Context window size (tokens)',
       'temperature': 'Generation temperature (0.0-1.0)',
       'max_tokens': 'Max tokens per response',
+      'reasoning_effort': 'Reasoning effort level (low/medium/high)',
 
       // Execution Settings
       'bash_timeout': 'Bash command timeout (seconds)',
@@ -617,6 +621,7 @@ export class CompletionProvider {
       'compact_threshold': 'Auto-compact threshold (%)',
       'show_context_in_prompt': 'Show context % in prompt',
       'show_thinking_in_chat': 'Show model thinking in chat',
+      'show_system_prompt_in_chat': 'Show system prompts in chat',
       'show_full_tool_output': 'Show full tool output without truncation',
 
       // Diff Display

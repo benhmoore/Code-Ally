@@ -169,7 +169,7 @@ export class RequiredToolTracker {
 
     // Issue warning and increment counter
     this.warningCount++;
-    logger.warn(
+    logger.debug(
       '[REQUIRED_TOOLS]',
       this.instanceId,
       `Agent attempting to exit without calling required tools (warning ${this.warningCount}/${this.maxWarnings}). Missing: ${missingTools.join(', ')}`

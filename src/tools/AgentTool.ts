@@ -21,7 +21,7 @@ import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
-import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
+import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 
 export class AgentTool extends BaseTool {
   readonly name = 'agent';
@@ -424,12 +424,17 @@ export class AgentTool extends BaseTool {
       logger.debug(`[AGENT_TOOL] Using config reasoning_effort: ${resolvedReasoningEffort}`);
     }
 
+    // Calculate max tokens based on thoroughness
+    const maxTokens = getThoroughnessMaxTokens(thoroughness as any, config.max_tokens);
+    logger.debug(`[AGENT_TOOL] Set maxTokens to ${maxTokens} for thoroughness: ${thoroughness}`);
+
     // Create appropriate model client
     let modelClient: ModelClient;
 
-    if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort) {
-      // Use shared global client only if both model and reasoning_effort match
-      logger.debug(`[AGENT_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
+    // Use shared client only if model, reasoning_effort, AND max_tokens all match config
+    if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort && maxTokens === config.max_tokens) {
+      // Use shared global client
+      logger.debug(`[AGENT_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort}, maxTokens: ${maxTokens})`);
       modelClient = mainModelClient;
     } else {
       // Agent specifies different model OR different reasoning_effort - create dedicated client
@@ -443,7 +448,7 @@ export class AgentTool extends BaseTool {
         modelName: targetModel,
         temperature: agentData.temperature ?? config.temperature,
         contextSize: config.context_size,
-        maxTokens: config.max_tokens,
+        maxTokens: maxTokens,
         activityStream: this.activityStream,
         reasoningEffort: resolvedReasoningEffort,
       });

@@ -23,7 +23,7 @@ import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
-import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
+import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 
 // Planning tools: read-only tools + explore for nested research + todo_add for proposals
 const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo_add'];
@@ -254,14 +254,19 @@ Skip for quick fixes or when continuing existing plans.`;
       const resolvedReasoningEffort = REASONING_EFFORT.HIGH;
       logger.debug(`[PLAN_TOOL] Using hardcoded HIGH reasoning_effort: ${resolvedReasoningEffort}`);
 
+      // Calculate max tokens based on thoroughness
+      const maxTokens = getThoroughnessMaxTokens(thoroughness as any, config.max_tokens);
+      logger.debug(`[PLAN_TOOL] Set maxTokens to ${maxTokens} for thoroughness: ${thoroughness}`);
+
       // Create appropriate model client
       let modelClient: ModelClient;
 
-      if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort) {
-        // Use shared global client only if both model and reasoning_effort match
-        logger.debug(`[PLAN_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
+      // Use shared client only if model, reasoning_effort, AND max_tokens all match config
+      if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort && maxTokens === config.max_tokens) {
+        // Use shared global client
+        logger.debug(`[PLAN_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort}, maxTokens: ${maxTokens})`);
         modelClient = mainModelClient;
-      } else {
+      } else{
         // Plan specifies different model OR different reasoning_effort - create dedicated client
         logger.debug(`[PLAN_TOOL] Creating dedicated client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
 
@@ -271,7 +276,7 @@ Skip for quick fixes or when continuing existing plans.`;
           modelName: targetModel,
           temperature: config.temperature,
           contextSize: config.context_size,
-          maxTokens: config.max_tokens,
+          maxTokens: maxTokens,
           activityStream: this.activityStream,
           reasoningEffort: resolvedReasoningEffort,
         });

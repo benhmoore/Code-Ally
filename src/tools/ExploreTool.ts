@@ -23,7 +23,7 @@ import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
-import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
+import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 
 // Hardcoded read-only tools for exploration
 const READ_ONLY_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch'];
@@ -200,12 +200,17 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
       const resolvedReasoningEffort = config.reasoning_effort;
       logger.debug(`[EXPLORE_TOOL] Using config reasoning_effort: ${resolvedReasoningEffort}`);
 
+      // Calculate max tokens based on thoroughness
+      const maxTokens = getThoroughnessMaxTokens(thoroughness as any, config.max_tokens);
+      logger.debug(`[EXPLORE_TOOL] Set maxTokens to ${maxTokens} for thoroughness: ${thoroughness}`);
+
       // Create appropriate model client
       let modelClient: ModelClient;
 
-      if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort) {
-        // Use shared global client only if both model and reasoning_effort match
-        logger.debug(`[EXPLORE_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
+      // Use shared client only if model, reasoning_effort, AND max_tokens all match config
+      if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort && maxTokens === config.max_tokens) {
+        // Use shared global client
+        logger.debug(`[EXPLORE_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort}, maxTokens: ${maxTokens})`);
         modelClient = mainModelClient;
       } else {
         // Explore specifies different model OR different reasoning_effort - create dedicated client
@@ -217,7 +222,7 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
           modelName: targetModel,
           temperature: config.temperature,
           contextSize: config.context_size,
-          maxTokens: config.max_tokens,
+          maxTokens: maxTokens,
           activityStream: this.activityStream,
           reasoningEffort: resolvedReasoningEffort,
         });
