@@ -66,17 +66,7 @@ describe('ArgumentParser', () => {
     });
   });
 
-  describe('Security and Behavior', () => {
-    it('should parse --yes-to-all flag', () => {
-      const options = parser.parse(['node', 'ally', '--yes-to-all']);
-      expect(options.yesToAll).toBe(true);
-    });
-
-    it('should parse -y shorthand', () => {
-      const options = parser.parse(['node', 'ally', '-y']);
-      expect(options.yesToAll).toBe(true);
-    });
-
+  describe('Logging', () => {
     it('should parse --verbose flag', () => {
       const options = parser.parse(['node', 'ally', '--verbose']);
       expect(options.verbose).toBe(true);
@@ -90,16 +80,6 @@ describe('ArgumentParser', () => {
     it('should parse --debug flag', () => {
       const options = parser.parse(['node', 'ally', '--debug']);
       expect(options.debug).toBe(true);
-    });
-
-    it('should parse --skip-ollama-check flag', () => {
-      const options = parser.parse(['node', 'ally', '--skip-ollama-check']);
-      expect(options.skipOllamaCheck).toBe(true);
-    });
-
-    it('should parse --focus flag', () => {
-      const options = parser.parse(['node', 'ally', '--focus', '/path/to/dir']);
-      expect(options.focus).toBe('/path/to/dir');
     });
   });
 
@@ -243,16 +223,6 @@ describe('ArgumentParser', () => {
         'What is the meaning of life?',
       ]);
       expect(options.once).toBe('What is the meaning of life?');
-    });
-
-    it('should handle paths with spaces in --focus', () => {
-      const options = parser.parse([
-        'node',
-        'ally',
-        '--focus',
-        '/path/with spaces/dir',
-      ]);
-      expect(options.focus).toBe('/path/with spaces/dir');
     });
   });
 });

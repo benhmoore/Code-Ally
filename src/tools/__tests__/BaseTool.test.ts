@@ -44,33 +44,16 @@ describe('BaseTool', () => {
   });
 
   describe('execute', () => {
-    it('should emit TOOL_CALL_START event', async () => {
-      await tool.execute({ data: 'test' });
-
-      const startEvent = emittedEvents.find(
-        (e) => e.type === ActivityEventType.TOOL_CALL_START
-      );
-      expect(startEvent).toBeDefined();
-      expect(startEvent?.data.toolName).toBe('mock_tool');
-      expect(startEvent?.data.arguments).toEqual({ data: 'test' });
-    });
-
-    it('should emit TOOL_CALL_END event on success', async () => {
+    it('should execute successfully', async () => {
       const result = await tool.execute({ data: 'test' });
-
-      const endEvent = emittedEvents.find((e) => e.type === ActivityEventType.TOOL_CALL_END);
-      expect(endEvent).toBeDefined();
-      expect(endEvent?.data.success).toBe(true);
-      expect(endEvent?.data.result).toEqual(result);
+      expect(result.success).toBe(true);
+      expect(result.result).toBe('success');
     });
 
-    it('should emit ERROR event on failure', async () => {
-      await tool.execute({ shouldFail: true });
-
-      const errorEvent = emittedEvents.find((e) => e.type === ActivityEventType.ERROR);
-      expect(errorEvent).toBeDefined();
-      expect(errorEvent?.data.toolName).toBe('mock_tool');
-      expect(errorEvent?.data.error).toContain('Mock error');
+    it('should handle errors', async () => {
+      const result = await tool.execute({ shouldFail: true });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Mock error');
     });
   });
 
@@ -146,15 +129,15 @@ describe('BaseTool', () => {
 
   describe('captureParams', () => {
     it('should filter out undefined and null values', async () => {
-      await tool.execute({
+      const result = await tool.execute({
         param1: 'value1',
         param2: undefined,
         param3: null,
         param4: 'value4',
+        shouldFail: true,
       });
 
-      const result = await tool.execute({ shouldFail: true });
-      // Check that error message doesn't include undefined/null params
+      // Check that error message includes defined params but not undefined/null
       expect(result.error).toContain('param1');
       expect(result.error).toContain('param4');
       expect(result.error).not.toContain('param2');

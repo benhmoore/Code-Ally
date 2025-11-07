@@ -19,6 +19,9 @@ enum ConfigStep {
   CUSTOMIZE_PROMPT,
   CUSTOMIZE_DESCRIPTION,
   CUSTOMIZE_NAME,
+  MODEL_CHOICE,
+  MODEL_SELECTION,
+  MODEL_VALIDATING,
   TOOL_SELECTION,
   TOOL_SELECTION_CUSTOM,
   CONFIRM,
@@ -31,6 +34,7 @@ interface AgentWizardViewProps {
     description: string;
     systemPrompt: string;
     tools?: string[]; // undefined = all tools
+    model?: string; // optional custom model
   }) => void;
   onCancel: () => void;
 }
@@ -56,6 +60,12 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
   const [customToolsSelected, setCustomToolsSelected] = useState<Set<string>>(new Set());
   const [customToolIndex, setCustomToolIndex] = useState(0);
 
+  // Model selection
+  const [selectedModel, setSelectedModel] = useState<string | undefined>();
+  const [availableModels, setAvailableModels] = useState<Array<{ name: string; size?: string }>>([]);
+  const [modelIndex, setModelIndex] = useState(0);
+  const [_modelSupportsTools, setModelSupportsTools] = useState(true);
+
   // Scroll offset for viewing long prompts
   const [promptScrollOffset, setPromptScrollOffset] = useState(0);
 
@@ -69,6 +79,83 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
       setAvailableTools(toolNames);
       setCustomToolsSelected(new Set(toolNames)); // Start with all selected
       setCustomToolIndex(0);
+    }
+  };
+
+  // Format bytes into human-readable size
+  const formatSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+  };
+
+  // Fetch available models from Ollama
+  const fetchModels = async () => {
+    setError(null);
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const configManager = registry.get<any>('config_manager');
+      const config = configManager?.getConfig();
+      const endpoint = config?.endpoint || 'http://localhost:11434';
+
+      const response = await fetch(`${endpoint}/api/tags`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as { models?: Array<{ name: string; size?: number }> };
+      const models = (data.models || []).map((m) => ({
+        name: m.name,
+        size: m.size ? formatSize(m.size) : undefined,
+      }));
+
+      if (models.length === 0) {
+        setError('No models available. Install models with: ollama pull <model>');
+        setStep(ConfigStep.MODEL_CHOICE);
+        return;
+      }
+
+      setAvailableModels(models);
+      setModelIndex(0);
+      setStep(ConfigStep.MODEL_SELECTION);
+    } catch (err) {
+      setError(`Failed to fetch models: ${err instanceof Error ? err.message : String(err)}`);
+      setStep(ConfigStep.MODEL_CHOICE);
+    }
+  };
+
+  // Validate model supports tool calling
+  const validateModel = async () => {
+    setStep(ConfigStep.MODEL_VALIDATING);
+    setError(null);
+
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const configManager = registry.get<any>('config_manager');
+      const config = configManager?.getConfig();
+      const endpoint = config?.endpoint || 'http://localhost:11434';
+
+      const { testModelToolCalling } = await import('../../llm/ModelValidation.js');
+      const result = await testModelToolCalling(endpoint, selectedModel!);
+
+      setModelSupportsTools(result.supportsTools);
+
+      if (!result.supportsTools) {
+        // Model doesn't support tools - skip tool selection, set to no tools
+        setSelectedTools([]);
+        setStep(ConfigStep.CONFIRM);
+      } else {
+        // Model supports tools - show tool selection
+        setStep(ConfigStep.TOOL_SELECTION);
+      }
+    } catch (err) {
+      setError(`Validation failed: ${err instanceof Error ? err.message : String(err)}`);
+      setStep(ConfigStep.MODEL_SELECTION);
     }
   };
 
@@ -186,14 +273,34 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         }
         setError(null);
         setCustomName(name);
-        setToolSelectionIndex(0); // Reset to first option
-        setStep(ConfigStep.TOOL_SELECTION);
+        setStep(ConfigStep.MODEL_CHOICE);
       } else if (key.backspace || key.delete) {
         setCurrentInput((prev) => prev.slice(0, -1));
         setError(null);
       } else if (input && !key.ctrl && !key.meta) {
         setCurrentInput((prev) => prev + input);
         setError(null);
+      }
+    } else if (step === ConfigStep.MODEL_CHOICE) {
+      if (input === 'y' || input === 'Y') {
+        fetchModels();
+      } else if (input === 'n' || input === 'N') {
+        setSelectedModel(undefined);
+        setModelSupportsTools(true);
+        setToolSelectionIndex(0); // Reset to first option
+        setStep(ConfigStep.TOOL_SELECTION);
+      }
+    } else if (step === ConfigStep.MODEL_SELECTION) {
+      if (key.upArrow) {
+        setModelIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setModelIndex((prev) => Math.min(availableModels.length - 1, prev + 1));
+      } else if (key.return) {
+        const selected = availableModels[modelIndex];
+        if (selected) {
+          setSelectedModel(selected.name);
+          validateModel();
+        }
       }
     } else if (step === ConfigStep.TOOL_SELECTION) {
       // Arrow key navigation
@@ -260,6 +367,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
           description: customDescription,
           systemPrompt: customPromptLines.join('\n'),
           tools: selectedTools, // undefined = all tools
+          model: selectedModel, // optional custom model
         });
       } else if (input === 'n' || input === 'N') {
         onCancel();
@@ -400,6 +508,69 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
           </Box>
         )}
 
+        {step === ConfigStep.MODEL_CHOICE && (
+          <Box flexDirection="column">
+            <Box marginBottom={1}>
+              <Text dimColor>Customize model for this agent?</Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text dimColor>Default: Uses global model configuration</Text>
+            </Box>
+            <Box marginTop={1}>
+              <Text>
+                <Text color="green" bold>Y</Text>/<Text color="red" bold>N</Text>
+              </Text>
+            </Box>
+            {error && (
+              <Box marginTop={1}>
+                <Text color="red">{error}</Text>
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {step === ConfigStep.MODEL_SELECTION && (
+          <Box flexDirection="column">
+            <Box marginBottom={1}>
+              <Text dimColor>Select Model</Text>
+            </Box>
+            <Box marginBottom={1} flexDirection="column">
+              {availableModels.map((model, idx) => {
+                const isSelected = idx === modelIndex;
+                return (
+                  <Text key={model.name} color={isSelected ? 'green' : undefined}>
+                    {isSelected ? '> ' : '  '}
+                    {model.name}
+                    {model.size && <Text dimColor> - {model.size}</Text>}
+                  </Text>
+                );
+              })}
+            </Box>
+            <Box marginTop={1}>
+              <Text dimColor>↑↓ navigate, Enter select, Esc cancel</Text>
+            </Box>
+            {error && (
+              <Box marginTop={1}>
+                <Text color="red">{error}</Text>
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {step === ConfigStep.MODEL_VALIDATING && (
+          <Box flexDirection="column">
+            <Text color="yellow">Validating model capabilities...</Text>
+            <Box marginTop={1}>
+              <Text dimColor>Testing tool-calling support for {selectedModel}</Text>
+            </Box>
+            {error && (
+              <Box marginTop={1}>
+                <Text color="red">{error}</Text>
+              </Box>
+            )}
+          </Box>
+        )}
+
         {step === ConfigStep.TOOL_SELECTION && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
@@ -469,6 +640,14 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               <Text>
                 <Text bold>System Prompt: </Text>
                 <Text dimColor>{customPromptLines.length} lines</Text>
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>
+                <Text bold>Model: </Text>
+                <Text dimColor>
+                  {selectedModel || 'Global default'}
+                </Text>
               </Text>
             </Box>
             <Box marginBottom={1}>

@@ -49,10 +49,16 @@ export function applyUnifiedDiff(
     }
 
     // Apply the patch
-    const result = applyPatch(currentContent, patchToApply);
+    let result = applyPatch(currentContent, patchToApply);
 
     if (result === false || result === undefined) {
       return { success: false, error: 'Failed to apply patch - content mismatch or invalid patch' };
+    }
+
+    // Fix a bug in the diff library where applying patches to empty strings adds a leading newline
+    // When reversing a deletion (currentContent is empty, result should not start with newline)
+    if (currentContent === '' && result.startsWith('\n')) {
+      result = result.substring(1) + '\n';
     }
 
     return { success: true, content: result };
@@ -102,7 +108,8 @@ function reverseDiff(parsed: StructuredPatch): string {
     }
   }
 
-  return lines.join('\n');
+  // Ensure we end with a newline for proper patch format
+  return lines.join('\n') + '\n';
 }
 
 /**

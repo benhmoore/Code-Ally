@@ -472,7 +472,7 @@ export const useActivitySubscriptions = (
 
   // Agent wizard completion events
   useActivityEvent(ActivityEventType.AGENT_WIZARD_COMPLETE, async (event) => {
-    const { name, description, systemPrompt, tools } = event.data || {};
+    const { name, description, systemPrompt, tools, model } = event.data || {};
     modal.setAgentWizardOpen(false);
 
     const serviceRegistry = ServiceRegistry.getInstance();
@@ -485,6 +485,7 @@ export const useActivitySubscriptions = (
           description,
           system_prompt: systemPrompt,
           tools,
+          model,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         });

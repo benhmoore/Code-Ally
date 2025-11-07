@@ -212,12 +212,12 @@ describe('patchApplier', () => {
       // Forward application
       const forward = applyUnifiedDiff(diff, original, false);
       expect(forward.success).toBe(true);
-      expect(forward.patched).toBe(modified);
+      expect(forward.content).toBe(modified);
 
       // Reverse application
-      const reverse = applyUnifiedDiff(diff, forward.patched!, true);
+      const reverse = applyUnifiedDiff(diff, forward.content!, true);
       expect(reverse.success).toBe(true);
-      expect(reverse.patched).toBe(original);
+      expect(reverse.content).toBe(original);
     });
 
     it('should handle complex multiline round-trip', () => {
@@ -237,9 +237,9 @@ describe('patchApplier', () => {
       const forward = applyUnifiedDiff(diff, original, false);
       expect(forward.success).toBe(true);
 
-      const reverse = applyUnifiedDiff(diff, forward.patched!, true);
+      const reverse = applyUnifiedDiff(diff, forward.content!, true);
       expect(reverse.success).toBe(true);
-      expect(reverse.patched).toBe(original);
+      expect(reverse.content).toBe(original);
     });
 
     it('should handle empty file round-trip', () => {
@@ -250,9 +250,9 @@ describe('patchApplier', () => {
       const forward = applyUnifiedDiff(diff, original, false);
       expect(forward.success).toBe(true);
 
-      const reverse = applyUnifiedDiff(diff, forward.patched!, true);
+      const reverse = applyUnifiedDiff(diff, forward.content!, true);
       expect(reverse.success).toBe(true);
-      expect(reverse.patched).toBe(original);
+      expect(reverse.content).toBe(original);
     });
   });
 

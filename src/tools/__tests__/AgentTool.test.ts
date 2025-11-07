@@ -112,137 +112,84 @@ describe('AgentTool', () => {
   });
 
   describe('validation', () => {
-    it('should reject missing agents parameter', async () => {
-      const result = await tool.execute({});
+    it('should reject missing task_prompt parameter', async () => {
+      const result = await tool.execute({}, 'test-call-id');
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('agents parameter is required');
-    });
-
-    it('should reject empty agents array', async () => {
-      const result = await tool.execute({ agents: [] });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('at least one agent spec');
-    });
-
-    it('should reject non-array agents parameter', async () => {
-      const result = await tool.execute({ agents: 'not an array' });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('at least one agent spec');
-    });
-
-    it('should reject agent spec without task_prompt', async () => {
-      const result = await tool.execute({
-        agents: [{ agent_name: 'general' }],
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('missing required field: task_prompt');
+      expect(result.error).toContain('task_prompt');
     });
 
     it('should reject non-string task_prompt', async () => {
       const result = await tool.execute({
-        agents: [{ task_prompt: 123 }],
-      });
+        task_prompt: 123,
+      }, 'test-call-id');
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('task_prompt must be a string');
+      expect(result.error).toContain('must be a string');
     });
 
     it('should reject non-string agent_name', async () => {
       const result = await tool.execute({
-        agents: [{ agent_name: 123, task_prompt: 'Test task' }],
-      });
+        agent_name: 123,
+        task_prompt: 'Test task',
+      }, 'test-call-id');
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('agent_name must be a string');
+    });
+
+    it('should reject invalid thoroughness value', async () => {
+      const result = await tool.execute({
+        task_prompt: 'Test task',
+        thoroughness: 'invalid',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('thoroughness must be one of');
     });
   });
 
   describe('execution', () => {
     it('should execute single agent delegation', async () => {
       const result = await tool.execute({
-        agents: [
-          {
-            agent_name: 'general',
-            task_prompt: 'Test task for agent',
-          },
-        ],
-      });
+        agent_name: 'general',
+        task_prompt: 'Test task for agent',
+      }, 'test-call-id');
 
       expect(result.success).toBe(true);
-      expect(result.agents_completed).toBe(1);
-      expect(result.agents_failed).toBe(0);
-      expect(result.results).toHaveLength(1);
-      expect(result.results[0].success).toBe(true);
+      expect(result.agent_name).toBeDefined();
+      expect(result.content).toBeDefined();
     });
 
     it('should use default agent when agent_name not specified', async () => {
       const result = await tool.execute({
-        agents: [
-          {
-            task_prompt: 'Test task without agent name',
-          },
-        ],
-      });
+        task_prompt: 'Test task without agent name',
+      }, 'test-call-id');
 
       expect(result.success).toBe(true);
-      expect(result.agents_completed).toBe(1);
-      expect(result.results[0].agent_name).toBe('general');
+      expect(result.agent_name).toBe('general');
     });
 
     it('should fail when agent does not exist', async () => {
       const result = await tool.execute({
-        agents: [
-          {
-            agent_name: 'nonexistent',
-            task_prompt: 'Test task',
-          },
-        ],
-      });
+        agent_name: 'nonexistent',
+        task_prompt: 'Test task',
+      }, 'test-call-id');
 
-      expect(result.success).toBe(true); // Overall success
-      expect(result.agents_completed).toBe(0);
-      expect(result.agents_failed).toBe(1);
-      expect(result.results[0].success).toBe(false);
-      expect(result.results[0].error).toContain('not found');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not found');
     });
 
-    it('should execute multiple agents concurrently', async () => {
-      const result = await tool.execute({
-        agents: [
-          {
-            agent_name: 'general',
-            task_prompt: 'First task',
-          },
-          {
-            agent_name: 'general',
-            task_prompt: 'Second task',
-          },
-        ],
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.agents_completed).toBe(2);
-      expect(result.agents_failed).toBe(0);
-      expect(result.results).toHaveLength(2);
-    });
 
     it('should include duration in results', async () => {
       const result = await tool.execute({
-        agents: [
-          {
-            agent_name: 'general',
-            task_prompt: 'Test task',
-          },
-        ],
-      });
+        agent_name: 'general',
+        task_prompt: 'Test task',
+      }, 'test-call-id');
 
       expect(result.success).toBe(true);
-      expect(result.results[0].duration_seconds).toBeDefined();
-      expect(typeof result.results[0].duration_seconds).toBe('number');
+      expect(result.duration_seconds).toBeDefined();
+      expect(typeof result.duration_seconds).toBe('number');
     });
   });
 
@@ -254,13 +201,9 @@ describe('AgentTool', () => {
       });
 
       await tool.execute({
-        agents: [
-          {
-            agent_name: 'general',
-            task_prompt: 'Test task',
-          },
-        ],
-      });
+        agent_name: 'general',
+        task_prompt: 'Test task',
+      }, 'test-call-id');
 
       const startEvents = events.filter((e) => e.type === 'agent_start');
       const endEvents = events.filter((e) => e.type === 'agent_end');

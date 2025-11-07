@@ -120,6 +120,7 @@ export function createPatchFileContent(
     '# ',
     '# To apply this patch in reverse: patch -R -p1 < this_file',
     '#',
+    '===================================================================',
   ].join('\n');
 
   return header + '\n' + diffContent;

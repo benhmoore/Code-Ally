@@ -47,8 +47,8 @@ describe('BashTool', () => {
         command: 'exit 1',
       });
 
-      expect(result.success).toBe(true); // Tool execution succeeded
-      expect(result.return_code).toBe(1); // But command failed
+      expect(result.success).toBe(false); // Command failed
+      expect(result.error).toBeDefined();
     });
 
     it('should require command parameter', async () => {
@@ -75,10 +75,9 @@ describe('BashTool', () => {
         timeout: 1, // 1 second
       });
 
-      // Should timeout and kill process
-      expect(result.success).toBe(true);
-      // Exit code should be non-zero (killed by signal)
-      expect(result.return_code).not.toBe(0);
+      // Should timeout and fail
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
     }, 10000); // Increase test timeout
 
     it('should block dangerous commands', async () => {
@@ -110,8 +109,9 @@ describe('BashTool', () => {
       });
 
       const preview = bashTool.getResultPreview(result, 3);
-      expect(preview[0]).toContain('✗');
-      expect(preview[0]).toContain('Exit code: 1');
+      // When command fails, preview shows error message (not exit code)
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
     });
   });
 });

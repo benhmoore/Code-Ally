@@ -112,9 +112,9 @@ describe('ReadTool', () => {
         file_paths: [path.join(tempDir, 'nonexistent.txt')],
       });
 
-      expect(result.success).toBe(true); // Tool succeeds
-      expect(result.content).toContain('Error');
-      expect(result.content).toContain('not found');
+      expect(result.success).toBe(false); // Tool fails when ALL files fail
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain('Failed to read');
     });
 
     it('should require file_paths parameter', async () => {

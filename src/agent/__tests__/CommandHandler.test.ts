@@ -32,11 +32,11 @@ describe('CommandHandler', () => {
     const projectManager = new ProjectManager();
     await projectManager.initialize();
 
-    // Register services
-    serviceRegistry.registerInstance('configManager', configManager);
-    serviceRegistry.registerInstance('agentManager', agentManager);
-    serviceRegistry.registerInstance('focusManager', focusManager);
-    serviceRegistry.registerInstance('projectManager', projectManager);
+    // Register services with snake_case keys that CommandHandler expects
+    serviceRegistry.registerInstance('config_manager', configManager);
+    serviceRegistry.registerInstance('agent_manager', agentManager);
+    serviceRegistry.registerInstance('focus_manager', focusManager);
+    serviceRegistry.registerInstance('project_manager', projectManager);
 
     // Mock agent
     mockAgent = {

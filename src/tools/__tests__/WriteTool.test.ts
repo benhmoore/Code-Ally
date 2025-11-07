@@ -54,24 +54,22 @@ describe('WriteTool', () => {
       expect(fileContent).toBe(content);
     });
 
-    it('should overwrite existing file', async () => {
+    it('should fail when trying to overwrite existing file', async () => {
       const filePath = join(tempDir, 'existing.txt');
 
       // Create initial file
       await fs.writeFile(filePath, 'Original content');
 
-      // Overwrite
+      // Try to overwrite - should fail
       const newContent = 'New content';
       const result = await writeTool.execute({
         file_path: filePath,
         content: newContent,
       });
 
-      expect(result.success).toBe(true);
-
-      // Verify file was overwritten
-      const fileContent = await fs.readFile(filePath, 'utf-8');
-      expect(fileContent).toBe(newContent);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('already exists');
+      expect(result.suggestion).toContain('edit or line_edit');
     });
 
     it('should write multi-line content', async () => {
@@ -107,74 +105,6 @@ describe('WriteTool', () => {
     });
   });
 
-  describe('backup creation', () => {
-    it('should create backup when requested for existing file', async () => {
-      const filePath = join(tempDir, 'backup-test.txt');
-      const originalContent = 'Original';
-      const newContent = 'New';
-
-      // Create initial file
-      await fs.writeFile(filePath, originalContent);
-
-      // Write with backup
-      const result = await writeTool.execute({
-        file_path: filePath,
-        content: newContent,
-        create_backup: true,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.backup_created).toBe(true);
-
-      // Verify backup exists
-      const backupPath = `${filePath}.bak`;
-      const backupContent = await fs.readFile(backupPath, 'utf-8');
-      expect(backupContent).toBe(originalContent);
-
-      // Verify main file has new content
-      const fileContent = await fs.readFile(filePath, 'utf-8');
-      expect(fileContent).toBe(newContent);
-    });
-
-    it('should not create backup for new file', async () => {
-      const filePath = join(tempDir, 'new-file.txt');
-      const content = 'Content';
-
-      const result = await writeTool.execute({
-        file_path: filePath,
-        content,
-        create_backup: true,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.backup_created).toBe(false);
-
-      // Verify no backup file
-      const backupPath = `${filePath}.bak`;
-      await expect(fs.access(backupPath)).rejects.toThrow();
-    });
-
-    it('should not create backup when not requested', async () => {
-      const filePath = join(tempDir, 'no-backup.txt');
-
-      // Create initial file
-      await fs.writeFile(filePath, 'Original');
-
-      // Write without backup
-      const result = await writeTool.execute({
-        file_path: filePath,
-        content: 'New',
-        create_backup: false,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.backup_created).toBe(false);
-
-      // Verify no backup file
-      const backupPath = `${filePath}.bak`;
-      await expect(fs.access(backupPath)).rejects.toThrow();
-    });
-  });
 
   describe('path handling', () => {
     it('should create parent directories if they do not exist', async () => {
@@ -313,7 +243,6 @@ describe('WriteTool', () => {
       expect(def.function.name).toBe('write');
       expect(def.function.parameters.required).toContain('file_path');
       expect(def.function.parameters.required).toContain('content');
-      expect(def.function.parameters.properties.create_backup).toBeDefined();
     });
 
     it('should provide custom result preview', () => {

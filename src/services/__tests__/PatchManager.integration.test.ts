@@ -13,20 +13,27 @@ import * as os from 'os';
 
 describe('PatchManager Integration Tests', () => {
   let patchManager: PatchManager;
-  let testPatchesDir: string;
+  let testSessionId: string;
   let testFilesDir: string;
+
+  // Helper to get the actual patches directory
+  const getPatchesDir = () => path.join(process.cwd(), '.ally-sessions', testSessionId, 'patches');
 
   beforeEach(async () => {
     // Create temporary directories for testing
     const timestamp = Date.now();
-    testPatchesDir = path.join(os.tmpdir(), `code-ally-test-patches-${timestamp}`);
-    testFilesDir = path.join(os.tmpdir(), `code-ally-test-files-${timestamp}`);
+    const random = Math.random().toString(36).substring(7);
+    testSessionId = `test-session-${timestamp}-${random}`;
+    testFilesDir = path.join(os.tmpdir(), `code-ally-test-files-${timestamp}-${random}`);
 
-    await fs.mkdir(testPatchesDir, { recursive: true });
     await fs.mkdir(testFilesDir, { recursive: true });
 
-    // Create PatchManager with test directory
-    patchManager = new PatchManager(testPatchesDir);
+    // Create PatchManager with test config
+    patchManager = new PatchManager({
+      getSessionId: () => testSessionId,
+      maxPatchesPerSession: 100,
+      maxPatchesSizeBytes: 10 * 1024 * 1024
+    });
     await patchManager.initialize();
   });
 
@@ -34,7 +41,7 @@ describe('PatchManager Integration Tests', () => {
     // Cleanup
     await patchManager.cleanup();
     try {
-      await fs.rm(testPatchesDir, { recursive: true, force: true });
+      await fs.rm(path.join(process.cwd(), '.ally-sessions', testSessionId), { recursive: true, force: true });
       await fs.rm(testFilesDir, { recursive: true, force: true });
     } catch (error) {
       // Ignore cleanup errors
@@ -179,7 +186,7 @@ describe('PatchManager Integration Tests', () => {
       await patchManager.captureOperation('write', testFile, '', 'Test\n');
 
       // Delete the patch file manually
-      const patchFile = path.join(testPatchesDir, 'patch_001.diff');
+      const patchFile = path.join(getPatchesDir(), 'patch_001.diff');
       await fs.unlink(patchFile);
 
       const result = await patchManager.undoOperations(1);
@@ -245,7 +252,7 @@ describe('PatchManager Integration Tests', () => {
       await patchManager.captureOperation('write', testFile, '', 'Content\n');
       await fs.writeFile(testFile, 'Content\n', 'utf-8');
 
-      const patchFile = path.join(testPatchesDir, 'patch_001.diff');
+      const patchFile = path.join(getPatchesDir(), 'patch_001.diff');
 
       // Verify patch file exists
       const existsBefore = await fs.access(patchFile).then(() => true).catch(() => false);

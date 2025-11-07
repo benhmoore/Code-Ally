@@ -7,6 +7,7 @@
  */
 
 import { promises as fs } from 'fs';
+import path from 'path';
 import type { Config, IService } from '../types/index.js';
 import { DEFAULT_CONFIG, validateConfigValue } from '../config/defaults.js';
 import { CONFIG_FILE, ensureDirectories } from '../config/paths.js';
@@ -99,6 +100,9 @@ export class ConfigManager implements IService {
    */
   async saveConfig(): Promise<void> {
     try {
+      // Ensure parent directory exists
+      await fs.mkdir(path.dirname(this._configPath), { recursive: true });
+
       const content = JSON.stringify(this._config, null, 2);
       await fs.writeFile(this._configPath, content, 'utf-8');
     } catch (error) {

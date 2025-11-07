@@ -18,7 +18,7 @@ import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { ConfigManager } from '../../services/ConfigManager.js';
 import { logger } from '../../services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
-import { API_TIMEOUTS } from '../../config/constants.js';
+import { testModelToolCalling } from '../../llm/ModelValidation.js';
 
 enum SetupStep {
   WELCOME,
@@ -187,53 +187,16 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
 
     try {
-      // Test the model with a simple tool call to verify tool support
-      const testPayload = {
-        model: selectedModel,
-        messages: [{ role: 'user', content: 'Hi there' }],
-        stream: false,
-        tools: [
-          {
-            type: 'function',
-            function: {
-              name: 'test_tool',
-              description: 'A test tool',
-              parameters: {
-                type: 'object',
-                properties: {},
-              },
-            },
-          },
-        ],
-      };
+      // Test model tool calling support using extracted utility
+      const result = await testModelToolCalling(endpoint, selectedModel);
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_MODEL_VALIDATION);
-
-      const response = await fetch(`${endpoint}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(testPayload),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
-
-        // Check for the specific "does not support tools" error
-        if (errorData.error && errorData.error.includes('does not support tools')) {
-          setError(`Model '${selectedModel}' does not support tools. Please select a different model.`);
-          setStep(SetupStep.MODEL);
-          return;
-        }
-
-        // Other errors - might be transient, allow user to continue
-        logger.warn('[SetupWizardView] Model validation warning:', errorData.error);
+      if (!result.supportsTools) {
+        setError(`Model '${selectedModel}' does not support tools. Please select a different model.`);
+        setStep(SetupStep.MODEL);
+        return;
       }
 
-      // Model supports tools (or test was inconclusive), continue
+      // Model supports tools, continue
       setStep(SetupStep.SERVICE_MODEL_CHOICE);
     } catch (error) {
       // Network errors or timeouts - allow user to continue
