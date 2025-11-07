@@ -1106,6 +1106,13 @@ export class Agent {
       throw error;
     }
 
+    // Check if agent was interrupted during tool execution
+    if (this.interruptionManager.isInterrupted()) {
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Agent interrupted during tool execution - stopping follow-up');
+      this.interruptionManager.markRequestAsInterrupted();
+      return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
+    }
+
     // Add tool calls to history for cycle detection (AFTER execution)
     this.addToolCallsToHistory(unwrappedToolCalls);
 
@@ -1126,6 +1133,13 @@ export class Agent {
 
     // Clear current turn (for redundancy detection)
     this.toolManager.clearCurrentTurn();
+
+    // Check if agent was interrupted before requesting follow-up
+    if (this.interruptionManager.isInterrupted()) {
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Agent interrupted before follow-up LLM call - stopping');
+      this.interruptionManager.markRequestAsInterrupted();
+      return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
+    }
 
     // Get follow-up response from LLM
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Getting follow-up response from LLM...');
