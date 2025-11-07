@@ -66,10 +66,12 @@ const SLASH_COMMANDS = [
 const AGENT_SUBCOMMANDS = [
   { name: 'create', description: 'Create a new agent' },
   { name: 'list', description: 'List available agents' },
-  { name: 'ls', description: 'List available agents (short)' },
   { name: 'show', description: 'Show agent details' },
   { name: 'delete', description: 'Delete an agent' },
   { name: 'use', description: 'Use a specialized agent' },
+  { name: 'active', description: 'Show active pooled agents' },
+  { name: 'stats', description: 'Show pool statistics' },
+  { name: 'clear', description: 'Clear agent from pool' },
 ];
 
 /**

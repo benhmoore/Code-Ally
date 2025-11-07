@@ -293,9 +293,8 @@ export class AgentTool extends BaseTool {
 
     logger.debug('[AGENT_TOOL] All required services available');
 
-    // Determine target model and whether agent needs tools
+    // Determine target model
     const targetModel = agentData.model || config.model;
-    const usesTools = !agentData.tools || agentData.tools.length > 0;
 
     // Create appropriate model client
     let modelClient: ModelClient;
@@ -305,25 +304,11 @@ export class AgentTool extends BaseTool {
       logger.debug(`[AGENT_TOOL] Using shared model client for global model: ${targetModel}`);
       modelClient = mainModelClient;
     } else {
-      // Agent specifies different model - validate and create dedicated client
+      // Agent specifies different model - create dedicated client
       logger.debug(`[AGENT_TOOL] Agent specifies custom model: ${targetModel} (global: ${config.model})`);
 
-      // If agent needs tools, verify model supports them
-      if (usesTools) {
-        logger.debug('[AGENT_TOOL] Validating tool-calling support for custom model...');
-        const { testModelToolCalling } = await import('../llm/ModelValidation.js');
-        const validationResult = await testModelToolCalling(config.endpoint, targetModel);
-
-        if (!validationResult.supportsTools) {
-          const error = `Agent '${agentData.name}' requires tools but model '${targetModel}' doesn't support function calling`;
-          const suggestion = `Use a tool-capable model (e.g., qwen2.5-coder) or remove tools from agent config`;
-          logger.error(`[AGENT_TOOL] ${error}`);
-          throw new Error(`${error}. ${suggestion}`);
-        }
-        logger.debug('[AGENT_TOOL] Model supports tool calling');
-      }
-
       // Create dedicated client for this model
+      // Note: Model tool support was validated during agent creation
       logger.debug('[AGENT_TOOL] Creating dedicated OllamaClient for custom model');
       const { OllamaClient } = await import('../llm/OllamaClient.js');
       modelClient = new OllamaClient({
