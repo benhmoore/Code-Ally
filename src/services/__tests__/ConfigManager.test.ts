@@ -18,7 +18,7 @@ describe('ConfigManager', () => {
 
   beforeEach(async () => {
     // Create a temporary directory for test config
-    tempDir = join(tmpdir(), `code-ally-test-${Date.now()}`);
+    tempDir = join(tmpdir(), `code-ally-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
     await fs.mkdir(tempDir, { recursive: true });
     configPath = join(tempDir, 'config.json');
   });

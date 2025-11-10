@@ -1,0 +1,60 @@
+{
+  "name": "conversation-monitor",
+  "version": "1.0.0",
+  "description": "Example background plugin demonstrating event subscription and stateful monitoring",
+  "author": "Ally Examples",
+  "runtime": "python3",
+  "dependencies": {
+    "file": "requirements.txt"
+  },
+  "tools": [
+    {
+      "name": "get-conversation-stats",
+      "description": "Get statistics about the current conversation (tool calls, agents, events)",
+      "type": "background_rpc",
+      "method": "get_stats",
+      "requiresConfirmation": false,
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "reset-conversation-stats",
+      "description": "Reset conversation statistics to zero",
+      "type": "background_rpc",
+      "method": "reset_stats",
+      "requiresConfirmation": false,
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  ],
+  "background": {
+    "enabled": true,
+    "command": "python3",
+    "args": ["daemon.py"],
+    "communication": {
+      "type": "socket",
+      "path": "/tmp/ally-conversation-monitor.sock"
+    },
+    "events": [
+      "TOOL_CALL_START",
+      "TOOL_CALL_END",
+      "AGENT_START",
+      "AGENT_END",
+      "TODO_UPDATE",
+      "CONTEXT_USAGE_UPDATE"
+    ],
+    "healthcheck": {
+      "interval": 30000,
+      "timeout": 5000,
+      "retries": 3
+    },
+    "startup_timeout": 10000,
+    "shutdown_grace_period": 5000
+  }
+}

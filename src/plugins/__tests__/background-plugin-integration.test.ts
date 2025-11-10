@@ -67,13 +67,16 @@ describe('Background Plugin Integration', () => {
     // Initialize services
     processManager = new BackgroundProcessManager();
     socketClient = new SocketClient();
-    activityStream = new ActivityStream();
+    const { EventSubscriptionManager } = await import('../EventSubscriptionManager.js');
+    const eventSubscriptionManager = new EventSubscriptionManager(socketClient, processManager);
+    activityStream = new ActivityStream(undefined, eventSubscriptionManager);
     configManager = new PluginConfigManager();
     pluginLoader = new PluginLoader(
       activityStream,
       configManager,
       socketClient,
-      processManager
+      processManager,
+      eventSubscriptionManager
     );
   });
 

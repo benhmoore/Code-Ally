@@ -39,6 +39,7 @@ export class AgentCommand extends Command {
       case 'create':
         return this.handleCreate(restArgs.join(' '), serviceRegistry);
       case 'list':
+      case 'ls':
         return this.handleList(serviceRegistry);
       case 'show':
         return this.handleShow(restArgs.join(' '), serviceRegistry);

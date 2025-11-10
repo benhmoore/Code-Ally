@@ -40,6 +40,8 @@ export class SessionManager implements IService {
   private titleGenerator: any | null = null;
 
   // Write queue to serialize file operations and prevent race conditions
+  // Uses pure promise chaining - each new write waits for the previous one to complete
+  // This creates a serial queue without explicit locks or busy-wait loops
   private writeQueue: Map<string, Promise<void>> = new Map();
 
   constructor(config: SessionManagerConfig = {}) {
@@ -208,24 +210,33 @@ export class SessionManager implements IService {
   /**
    * Save session data to disk atomically with write serialization
    *
-   * Uses atomic write (temp file + rename) and queues writes per session
-   * to prevent race conditions and file corruption.
+   * Uses atomic write (temp file + rename) and pure promise chaining to serialize writes.
+   * This approach is truly atomic because:
+   * 1. We capture the existing write promise synchronously (no race window)
+   * 2. We chain our write to complete AFTER the previous one
+   * 3. We update the queue with our promise before any async operations begin
+   *
+   * No locks or busy-wait loops needed - just pure promise chaining.
    *
    * @param sessionName - Name of the session
    * @param session - Complete session object
    */
   private async saveSessionData(sessionName: string, session: Session): Promise<void> {
-    // Serialize writes per session to prevent concurrent writes to same file
+    // Capture the existing write promise synchronously (before any async operations)
+    // This ensures we see the current queue state atomically
     const existingWrite = this.writeQueue.get(sessionName);
 
+    // Create our write promise that chains after the existing one
     const writePromise = (async () => {
-      // Wait for any existing write to this session to complete
+      // Wait for the previous write to complete (if there was one)
+      // We ignore errors from previous writes - we'll try our write regardless
       if (existingWrite) {
         await existingWrite.catch(() => {
-          // Ignore errors from previous writes, we'll try again
+          // Ignore errors from previous writes
         });
       }
 
+      // Now perform our atomic file write
       const sessionPath = this.getSessionPath(sessionName);
       // Generate temp file with timestamp and random suffix (base-36 string starting at index 7)
       const tempPath = `${sessionPath}.tmp.${Date.now()}.${Math.random().toString(36).substring(7)}`;
@@ -250,13 +261,15 @@ export class SessionManager implements IService {
       }
     })();
 
-    // Track this write
+    // Update the queue with our promise BEFORE we await it
+    // This ensures the next caller will chain after us
     this.writeQueue.set(sessionName, writePromise);
 
-    // Wait for write to complete
+    // Wait for our write to complete
     await writePromise;
 
-    // Clean up completed write from queue
+    // Clean up our promise from the queue if we're still the current one
+    // Another write may have already started and replaced us in the queue
     if (this.writeQueue.get(sessionName) === writePromise) {
       this.writeQueue.delete(sessionName);
     }

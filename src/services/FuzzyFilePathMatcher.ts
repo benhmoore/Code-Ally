@@ -128,6 +128,17 @@ const TIME_CONSTANTS = {
 } as const;
 
 /**
+ * File metadata cached in the index
+ */
+interface FileIndexEntry {
+  path: string;
+  relativePath: string;
+  filename: string;
+  mtime: number;
+  isDirectory: boolean;
+}
+
+/**
  * FuzzyFilePathMatcher - Search files with fuzzy matching
  */
 export class FuzzyFilePathMatcher {
@@ -137,6 +148,9 @@ export class FuzzyFilePathMatcher {
   private excludePatterns: Set<string>;
   private respectGitignore: boolean;
   private gitignorePatterns: Set<string> = new Set();
+  private fileIndex: Map<string, FileIndexEntry> = new Map();
+  private indexValid = false;
+  private lastIndexedCwd: string | null = null;
 
   /**
    * Create a new FuzzyFilePathMatcher
@@ -171,14 +185,19 @@ export class FuzzyFilePathMatcher {
     const normalizedQuery = query.toLowerCase().trim();
 
     try {
-      // Load .gitignore patterns if enabled
-      if (this.respectGitignore) {
-        await this.loadGitignorePatterns();
+      // Build or rebuild index if needed
+      if (!this.indexValid || this.lastIndexedCwd !== this.rootDir) {
+        await this.buildIndex();
       }
 
-      // Collect all matches
+      // Search the in-memory index instead of filesystem
       const matches: FuzzyMatchResult[] = [];
-      await this.searchDirectory(this.rootDir, normalizedQuery, matches, 0);
+      for (const entry of this.fileIndex.values()) {
+        const match = this.matchFileFromIndex(entry, normalizedQuery);
+        if (match) {
+          matches.push(match);
+        }
+      }
 
       // Sort by score (descending) and limit results
       matches.sort((a, b) => b.score - a.score);
@@ -187,6 +206,175 @@ export class FuzzyFilePathMatcher {
       logger.warn(`Fuzzy search failed: ${formatError(error)}`);
       return [];
     }
+  }
+
+  /**
+   * Build the file index by traversing the directory tree
+   * Caches file paths and metadata for O(1) lookup during search
+   */
+  private async buildIndex(): Promise<void> {
+    const startTime = Date.now();
+    this.fileIndex.clear();
+
+    try {
+      // Load .gitignore patterns if enabled
+      if (this.respectGitignore) {
+        await this.loadGitignorePatterns();
+      }
+
+      // Traverse directory and build index
+      await this.indexDirectory(this.rootDir, 0);
+
+      this.indexValid = true;
+      this.lastIndexedCwd = this.rootDir;
+
+      const elapsed = Date.now() - startTime;
+      logger.debug(
+        `Built file index: ${this.fileIndex.size} files in ${elapsed}ms (${this.rootDir})`
+      );
+    } catch (error) {
+      logger.warn(`Failed to build file index: ${formatError(error)}`);
+      this.indexValid = false;
+    }
+  }
+
+  /**
+   * Recursively index a directory
+   *
+   * @param dirPath - Directory to index
+   * @param depth - Current recursion depth
+   */
+  private async indexDirectory(dirPath: string, depth: number): Promise<void> {
+    // Check depth limit
+    if (depth > this.maxDepth) {
+      return;
+    }
+
+    try {
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const entryPath = join(dirPath, entry.name);
+        const entryName = entry.name;
+
+        // Skip excluded files/directories
+        if (this.shouldExclude(entryName, entryPath)) {
+          continue;
+        }
+
+        try {
+          const stats = await fs.stat(entryPath);
+          const relativePath = relative(this.rootDir, entryPath);
+
+          // Add to index
+          this.fileIndex.set(entryPath, {
+            path: entryPath,
+            relativePath,
+            filename: entryName,
+            mtime: stats.mtimeMs,
+            isDirectory: entry.isDirectory(),
+          });
+
+          // Recursively index subdirectories
+          if (entry.isDirectory()) {
+            await this.indexDirectory(entryPath, depth + 1);
+          }
+        } catch (error) {
+          // Skip files that can't be stat'd
+          logger.debug(`Unable to stat ${entryPath}: ${formatError(error)}`);
+        }
+      }
+    } catch (error) {
+      // Skip directories we can't read
+      logger.debug(`Unable to read directory ${dirPath}: ${formatError(error)}`);
+    }
+  }
+
+  /**
+   * Match a file from the index against the query
+   *
+   * @param entry - File index entry
+   * @param query - Normalized search query
+   * @returns Match result or null if no match
+   */
+  private matchFileFromIndex(
+    entry: FileIndexEntry,
+    query: string
+  ): FuzzyMatchResult | null {
+    const normalizedFilename = entry.filename.toLowerCase();
+
+    // Try different matching strategies
+    let score = 0;
+    let matchType: MatchType | null = null;
+
+    // 1. Exact filename match (highest priority)
+    if (normalizedFilename === query) {
+      score = MATCH_SCORES.EXACT;
+      matchType = 'exact';
+    }
+    // 2. Starts with query
+    else if (normalizedFilename.startsWith(query)) {
+      score = MATCH_SCORES.STARTS_WITH;
+      matchType = 'starts-with';
+    }
+    // 3. Substring match
+    else if (normalizedFilename.includes(query)) {
+      score = MATCH_SCORES.SUBSTRING;
+      matchType = 'substring';
+    }
+    // 4. Acronym match
+    else if (this.matchesAcronym(normalizedFilename, query)) {
+      score = MATCH_SCORES.ACRONYM;
+      matchType = 'acronym';
+    }
+    // 5. Path component match
+    else if (this.matchesPathComponent(entry.relativePath, query)) {
+      score = MATCH_SCORES.PATH_COMPONENT;
+      matchType = 'path';
+    }
+
+    // No match found
+    if (matchType === null) {
+      return null;
+    }
+
+    // Apply bonuses using cached metadata
+    score += this.calculateBonusesFromIndex(entry);
+
+    return {
+      path: entry.path,
+      relativePath: entry.relativePath,
+      filename: entry.filename,
+      score,
+      matchType,
+      isDirectory: entry.isDirectory,
+    };
+  }
+
+  /**
+   * Calculate bonus scores using cached file metadata
+   *
+   * @param entry - File index entry
+   * @returns Total bonus score
+   */
+  private calculateBonusesFromIndex(entry: FileIndexEntry): number {
+    let bonus = 0;
+
+    // Bonus for files in current directory (shallow paths)
+    const depth = entry.relativePath.split(sep).length;
+    if (depth === 1) {
+      bonus += BONUS_SCORES.CURRENT_DIR;
+    }
+
+    // Bonus for recently modified files (using cached mtime)
+    const now = Date.now();
+    const daysSinceModified = (now - entry.mtime) / TIME_CONSTANTS.MS_PER_DAY;
+
+    if (daysSinceModified <= TIME_CONSTANTS.DAYS_FOR_RECENT) {
+      bonus += BONUS_SCORES.RECENT_FILE;
+    }
+
+    return bonus;
   }
 
   /**
@@ -537,14 +725,18 @@ export class FuzzyFilePathMatcher {
     this.rootDir = rootDir;
     // Clear cached gitignore patterns since we changed directory
     this.gitignorePatterns.clear();
+    // Invalidate file index since directory changed
+    this.indexValid = false;
   }
 
   /**
-   * Clear cached gitignore patterns
+   * Clear all caches (gitignore patterns and file index)
    *
-   * Useful if .gitignore file has been modified
+   * Useful if .gitignore file has been modified or files have changed
    */
   clearCache(): void {
     this.gitignorePatterns.clear();
+    this.fileIndex.clear();
+    this.indexValid = false;
   }
 }

@@ -79,6 +79,8 @@ export class AgentPoolService implements IService {
   private permissionManager?: PermissionManager;
   private config: Required<AgentPoolConfig>;
   private nextAgentId: number = 0;
+  // Track agents currently being acquired to prevent race conditions
+  private acquiringAgents: Set<string> = new Set();
 
   /**
    * Create a new AgentPoolService
@@ -156,6 +158,12 @@ export class AgentPoolService implements IService {
    * Implements LRU eviction when pool is at capacity. Returns a PooledAgent
    * object with a release() method to return the agent to the pool.
    *
+   * Uses atomic reservation to prevent race conditions:
+   * - findAndReserveAgent() marks the agent as acquiring BEFORE returning it
+   * - This happens synchronously in a single function, making it atomic
+   * - Only one caller can acquire a given agent at a time
+   * - Cleanup in finally block ensures acquiring set is properly maintained
+   *
    * @param agentConfig - Configuration for the agent
    * @param customToolManager - Optional custom ToolManager (e.g., filtered tools for read-only agents)
    * @param customModelClient - Optional custom ModelClient (e.g., for agents with different models)
@@ -164,25 +172,30 @@ export class AgentPoolService implements IService {
   async acquire(agentConfig: AgentConfig, customToolManager?: ToolManager, customModelClient?: ModelClient): Promise<PooledAgent> {
     // If requesting initial messages (context files), always create a fresh agent
     // to avoid context pollution from previous tasks
-    const availableAgent = agentConfig.initialMessages && agentConfig.initialMessages.length > 0
-      ? null
-      : this.findAvailableAgent(agentConfig);
+    const shouldCreateFresh = agentConfig.initialMessages && agentConfig.initialMessages.length > 0;
 
-    if (availableAgent) {
-      // Reuse existing agent
-      availableAgent.inUse = true;
-      availableAgent.lastAccessedAt = Date.now();
-      availableAgent.useCount++;
+    const reserved = shouldCreateFresh ? null : this.findAndReserveAgent(agentConfig);
 
-      logger.debug(
-        `[AGENT_POOL] Reusing agent ${availableAgent.agentId} (uses: ${availableAgent.useCount})`
-      );
+    if (reserved) {
+      try {
+        // Mark as in use and update metadata
+        reserved.metadata.inUse = true;
+        reserved.metadata.lastAccessedAt = Date.now();
+        reserved.metadata.useCount++;
 
-      return {
-        agent: availableAgent.agent,
-        agentId: availableAgent.agentId,
-        release: () => this.release(availableAgent.agentId),
-      };
+        logger.debug(
+          `[AGENT_POOL] Reusing agent ${reserved.metadata.agentId} (uses: ${reserved.metadata.useCount})`
+        );
+
+        return {
+          agent: reserved.metadata.agent,
+          agentId: reserved.metadata.agentId,
+          release: () => this.release(reserved.metadata.agentId),
+        };
+      } finally {
+        // Remove from acquiring set now that acquisition is complete
+        this.acquiringAgents.delete(reserved.metadata.agentId);
+      }
     }
 
     // No available agent - create new one
@@ -269,30 +282,47 @@ export class AgentPoolService implements IService {
   }
 
   /**
-   * Find an available agent with matching configuration
+   * Find an available agent with matching configuration and atomically reserve it
    *
-   * Searches for an agent that is not in use and has compatible configuration.
-   * Uses _poolKey for strict matching when available (for AgentTool custom agents),
-   * otherwise falls back to isSpecializedAgent matching (for ExploreTool/PlanTool).
+   * This method is atomic because it marks the agent as acquiring BEFORE returning it.
+   * Since this runs synchronously in a single function, there's no race window where
+   * two callers could get the same agent.
+   *
+   * The agent is added to acquiringAgents before the metadata is returned, ensuring
+   * that any subsequent call to this method will skip this agent.
    *
    * @param agentConfig - Desired agent configuration
-   * @returns Available agent metadata or null
+   * @returns Object with reserved agent metadata, or null if no agent available
    */
-  private findAvailableAgent(agentConfig: AgentConfig): AgentMetadata | null {
+  private findAndReserveAgent(agentConfig: AgentConfig): { metadata: AgentMetadata } | null {
     for (const metadata of this.pool.values()) {
-      if (metadata.inUse) {
+      // Skip if agent is in use or currently being acquired
+      if (metadata.inUse || this.acquiringAgents.has(metadata.agentId)) {
         continue;
       }
 
+      // Check if configuration matches
+      let matches = false;
+
       // If _poolKey exists, use strict matching
       if (agentConfig._poolKey && metadata.config._poolKey) {
-        if (metadata.config._poolKey === agentConfig._poolKey) {
-          return metadata;
-        }
-      } else if (metadata.config.isSpecializedAgent === agentConfig.isSpecializedAgent) {
+        matches = metadata.config._poolKey === agentConfig._poolKey;
+      } else {
         // Fallback to old logic for ExploreTool/PlanTool
-        return metadata;
+        matches = metadata.config.isSpecializedAgent === agentConfig.isSpecializedAgent;
       }
+
+      if (!matches) {
+        continue;
+      }
+
+      // ATOMICALLY reserve this agent before returning
+      // This is the critical operation that prevents race conditions
+      this.acquiringAgents.add(metadata.agentId);
+
+      logger.debug(`[AGENT_POOL] Reserved agent ${metadata.agentId} for acquisition`);
+
+      return { metadata };
     }
 
     return null;
@@ -308,9 +338,9 @@ export class AgentPoolService implements IService {
     let lruAgent: AgentMetadata | null = null;
     let lruTime: number = Infinity;
 
-    // Find least recently used agent that is not in use
+    // Find least recently used agent that is not in use or being acquired
     for (const metadata of this.pool.values()) {
-      if (metadata.inUse) {
+      if (metadata.inUse || this.acquiringAgents.has(metadata.agentId)) {
         continue;
       }
 

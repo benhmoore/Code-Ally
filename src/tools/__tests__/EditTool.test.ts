@@ -18,7 +18,7 @@ describe('EditTool', () => {
 
   beforeEach(async () => {
     // Create a temporary directory for test files
-    tempDir = join(tmpdir(), `code-ally-edit-test-${Date.now()}`);
+    tempDir = join(tmpdir(), `code-ally-edit-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
     await fs.mkdir(tempDir, { recursive: true });
 
     // Initialize tool

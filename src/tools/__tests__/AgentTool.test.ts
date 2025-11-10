@@ -52,6 +52,7 @@ describe('AgentTool', () => {
       getTools: vi.fn().mockReturnValue([]),
       getFunctionDefinitions: vi.fn().mockReturnValue([]),
       clearCurrentTurn: vi.fn(),
+      getAllTools: vi.fn().mockReturnValue([]),
     };
 
     const mockConfig = {
@@ -78,11 +79,25 @@ describe('AgentTool', () => {
       tool_result_max_context_percent: 0.2,
       tool_result_min_tokens: 200,
       setup_completed: true,
+      reasoning_effort: undefined,
     };
 
-    registry.registerInstance('llm_client', mockModelClient);
+    const mockConfigManager = {
+      getConfig: vi.fn().mockReturnValue(mockConfig),
+      getValue: vi.fn().mockImplementation((key: string, defaultValue?: any) => {
+        return mockConfig[key as keyof typeof mockConfig] ?? defaultValue;
+      }),
+    };
+
+    const mockPermissionManager = {
+      checkPermission: vi.fn().mockResolvedValue(true),
+    };
+
+    // Register with correct service names
+    registry.registerInstance('model_client', mockModelClient);
     registry.registerInstance('tool_manager', mockToolManager);
-    registry.registerInstance('config', mockConfig);
+    registry.registerInstance('config_manager', mockConfigManager);
+    registry.registerInstance('permission_manager', mockPermissionManager);
 
     tool = new AgentTool(activityStream);
   });

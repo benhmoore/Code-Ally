@@ -16,7 +16,7 @@ describe('CommandHistory', () => {
 
   beforeEach(async () => {
     // Create a temporary directory for test history
-    tempDir = join(tmpdir(), `code-ally-test-${Date.now()}`);
+    tempDir = join(tmpdir(), `code-ally-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
     await fs.mkdir(tempDir, { recursive: true });
     historyPath = join(tempDir, 'history.json');
   });

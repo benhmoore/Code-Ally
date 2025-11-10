@@ -18,7 +18,7 @@ describe('WriteTool', () => {
 
   beforeEach(async () => {
     // Create a temporary directory for test files
-    tempDir = join(tmpdir(), `code-ally-write-test-${Date.now()}`);
+    tempDir = join(tmpdir(), `code-ally-write-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
     await fs.mkdir(tempDir, { recursive: true });
 
     // Initialize tool

@@ -18,7 +18,7 @@ describe('CompletionProvider', () => {
 
   beforeEach(async () => {
     // Create a temporary directory for tests
-    tempDir = join(tmpdir(), `code-ally-test-${Date.now()}`);
+    tempDir = join(tmpdir(), `code-ally-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
     await fs.mkdir(tempDir, { recursive: true });
 
     // Mock AgentManager

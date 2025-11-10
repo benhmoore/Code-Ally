@@ -36,7 +36,7 @@ describe('BackgroundProcessManager', () => {
 
   beforeEach(async () => {
     // Create temporary directory for test environment
-    tempDir = join(tmpdir(), `bg-process-test-${Date.now()}`);
+    tempDir = join(tmpdir(), `bg-process-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
     await fs.mkdir(tempDir, { recursive: true });
 
     mockPluginPath = tempDir;

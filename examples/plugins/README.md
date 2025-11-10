@@ -15,7 +15,7 @@ cp -r examples/plugins/example ~/.ally/plugins/reverse-string
 
 ---
 
-## Example: Executable Plugin (Python)
+## Example 1: Executable Plugin (Python)
 
 **Location:** `example/`
 
@@ -35,6 +35,60 @@ A string reversal plugin that demonstrates executable plugins (Python, shell scr
 ### Usage in Ally:
 ```
 User: Use the reverse_string tool to reverse "Hello World"
+```
+
+---
+
+## Example 2: Background Plugin with Event Subscription
+
+**Location:** `conversation-monitor/`
+
+A conversation monitoring plugin that demonstrates background plugins with event subscription.
+
+### Files:
+- `plugin.json` - Plugin manifest with background daemon and event configuration
+- `daemon.py` - Persistent daemon process with JSON-RPC server
+- `requirements.txt` - Python dependencies (none needed for this example)
+
+### Features:
+- **Background daemon mode** - Runs persistently alongside Ally
+- **Event subscription** - Receives read-only events from Ally (tool calls, agents, todos)
+- **Stateful tracking** - Maintains conversation statistics across tool invocations
+- **JSON-RPC communication** - Tools communicate via Unix socket instead of stdin/stdout
+- **Real-time monitoring** - Tracks metrics as conversation progresses
+
+### Event Types Subscribed:
+- `TOOL_CALL_START` / `TOOL_CALL_END` - Track tool usage
+- `AGENT_START` / `AGENT_END` - Monitor agent invocations
+- `TODO_UPDATE` - Count todo list changes
+- `CONTEXT_USAGE_UPDATE` - Track current context usage
+
+### Tracked Metrics:
+- Total tool calls (success/failed breakdown)
+- Agent invocations (main agent vs subagents)
+- Per-tool usage breakdown
+- Todo update count
+- Current context usage percentage
+- Tool success rate
+
+### Usage in Ally:
+```
+User: What are the current conversation statistics?
+Assistant: [Uses get-conversation-stats tool]
+
+User: How many tools have been called so far?
+Assistant: [Uses get-conversation-stats to show tool breakdown]
+
+User: Reset the statistics
+Assistant: [Uses reset-conversation-stats tool]
+```
+
+### Installation:
+```bash
+# Copy to plugins directory
+cp -r examples/plugins/conversation-monitor ~/.ally/plugins/
+
+# Restart Ally - the daemon starts automatically!
 ```
 
 ---

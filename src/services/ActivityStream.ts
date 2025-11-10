@@ -7,11 +7,18 @@
 
 import { ActivityEvent, ActivityEventType, ActivityCallback } from '../types/index.js';
 import type { EventSubscriptionManager } from '../plugins/EventSubscriptionManager.js';
+import { logger } from './Logger.js';
 
 export class ActivityStream {
   private listeners: Map<ActivityEventType | string, Set<ActivityCallback>>;
   private parentId?: string;
   private eventSubscriptionManager?: EventSubscriptionManager;
+
+  /**
+   * Maximum listeners allowed per event type before warning about potential memory leak
+   * This threshold helps detect scenarios where listeners accumulate without cleanup
+   */
+  private readonly MAX_LISTENERS_PER_TYPE = 50;
 
   constructor(parentId?: string, eventSubscriptionManager?: EventSubscriptionManager) {
     this.listeners = new Map();
@@ -23,9 +30,13 @@ export class ActivityStream {
    * Emit an event to all registered listeners
    */
   emit(event: ActivityEvent): void {
+    // Capture references to avoid race conditions
+    const manager = this.eventSubscriptionManager;
+    const parent = this.parentId;
+
     // If this is a scoped stream, ensure the event has the parent ID
-    if (this.parentId && !event.parentId) {
-      event.parentId = this.parentId;
+    if (parent && !event.parentId) {
+      event.parentId = parent;
     }
 
     // Notify listeners for this specific event type
@@ -53,11 +64,12 @@ export class ActivityStream {
     }
 
     // Forward approved events to background plugins via EventSubscriptionManager
-    if (this.eventSubscriptionManager && !this.parentId) {
+    if (manager && !parent && event.data !== undefined && event.data !== null) {
       // Only forward from root ActivityStream, not scoped streams
+      // Only forward events with valid data (not null or undefined)
       const pluginEventType = this.mapToPluginEventType(event.type);
       if (pluginEventType) {
-        this.eventSubscriptionManager.dispatch(pluginEventType, event.data);
+        manager.dispatch(pluginEventType, event.data);
       }
     }
   }
@@ -88,9 +100,25 @@ export class ActivityStream {
   /**
    * Subscribe to a specific event type
    *
+   * IMPORTANT: Always call the returned unsubscribe function when done listening!
+   * Failure to unsubscribe will cause memory leaks in long-running sessions.
+   *
+   * React components should use useActivityEvent hook which handles cleanup automatically.
+   * For other contexts, ensure you call unsubscribe in cleanup/destructor methods.
+   *
    * @param eventType - The event type to listen for, or '*' for all events
    * @param callback - The callback to invoke when the event is emitted
-   * @returns Unsubscribe function
+   * @returns Unsubscribe function - MUST be called to prevent memory leaks
+   *
+   * @example
+   * ```typescript
+   * const unsubscribe = stream.subscribe(ActivityEventType.TOOL_CALL_START, (event) => {
+   *   console.log('Tool started:', event);
+   * });
+   *
+   * // Later, when done listening:
+   * unsubscribe();
+   * ```
    */
   subscribe(
     eventType: ActivityEventType | '*',
@@ -102,6 +130,14 @@ export class ActivityStream {
 
     const callbacks = this.listeners.get(eventType)!;
     callbacks.add(callback);
+
+    // Warn if listener count exceeds threshold (potential memory leak)
+    if (callbacks.size > this.MAX_LISTENERS_PER_TYPE) {
+      logger.warn(
+        `[ACTIVITY_STREAM] High listener count (${callbacks.size}) for event type '${String(eventType)}'. ` +
+        `This may indicate a memory leak. Ensure all subscribers call unsubscribe() when done.`
+      );
+    }
 
     // Return unsubscribe function
     return () => {
@@ -137,13 +173,41 @@ export class ActivityStream {
 
   /**
    * Clear all listeners (useful for cleanup)
+   *
+   * @deprecated Use cleanup() instead for better logging and monitoring
    */
   clear(): void {
     this.listeners.clear();
   }
 
   /**
-   * Get the number of active listeners
+   * Clean up all event listeners and release resources
+   *
+   * This method should be called when:
+   * - An Agent is destroyed (in Agent.cleanup())
+   * - A scoped ActivityStream is no longer needed
+   * - The application is shutting down
+   *
+   * IMPORTANT: After calling cleanup(), this ActivityStream should not be used again.
+   * Create a new instance if you need to listen to events after cleanup.
+   */
+  cleanup(): void {
+    const totalListeners = Array.from(this.listeners.values())
+      .reduce((sum, set) => sum + set.size, 0);
+
+    if (totalListeners > 0) {
+      logger.debug(
+        `[ACTIVITY_STREAM] Cleaning up ActivityStream` +
+        (this.parentId ? ` (scoped: ${this.parentId})` : ' (root)') +
+        ` - removing ${totalListeners} listeners across ${this.listeners.size} event types`
+      );
+    }
+
+    this.listeners.clear();
+  }
+
+  /**
+   * Get the total number of active listeners across all event types
    */
   getListenerCount(): number {
     let count = 0;
@@ -151,6 +215,25 @@ export class ActivityStream {
       count += callbacks.size;
     });
     return count;
+  }
+
+  /**
+   * Get detailed listener statistics for monitoring and debugging
+   *
+   * Useful for:
+   * - Detecting memory leaks (high listener counts)
+   * - Monitoring event system health
+   * - Debugging event subscription issues
+   *
+   * @returns Array of event types with their listener counts, sorted by count (descending)
+   */
+  getListenerStats(): Array<{ eventType: string; count: number }> {
+    return Array.from(this.listeners.entries())
+      .map(([eventType, callbacks]) => ({
+        eventType: String(eventType),
+        count: callbacks.size,
+      }))
+      .sort((a, b) => b.count - a.count); // Sort by count descending
   }
 }
 

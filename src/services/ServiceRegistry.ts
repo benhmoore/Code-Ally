@@ -9,6 +9,8 @@ import { ServiceLifecycle, IService } from '../types/index.js';
 
 export class ServiceDescriptor<T> {
   private _instance?: T;
+  private _initPromise?: Promise<void>;
+  private _initializing: boolean = false;
 
   constructor(
     public readonly serviceType: new (...args: any[]) => T,
@@ -19,6 +21,10 @@ export class ServiceDescriptor<T> {
 
   /**
    * Create an instance of the service with dependency injection
+   *
+   * For services implementing IService, initialization is started but not awaited
+   * to maintain backward compatibility. Callers who need to ensure initialization
+   * is complete should call ensureInitialized() after getting the instance.
    */
   createInstance(registry: ServiceRegistry): T {
     // Return cached instance if singleton
@@ -46,10 +52,18 @@ export class ServiceDescriptor<T> {
       : new this.serviceType(...resolvedDeps);
 
     // Call initialize if service implements IService
+    // Track initialization promise to prevent race conditions
     if (this.isIService(instance)) {
-      instance.initialize().catch(error => {
-        console.error(`Error initializing service ${this.serviceType.name}:`, error);
-      });
+      if (!this._initializing && !this._initPromise) {
+        this._initializing = true;
+        this._initPromise = instance.initialize()
+          .catch(error => {
+            console.error(`Error initializing service ${this.serviceType.name}:`, error);
+          })
+          .finally(() => {
+            this._initializing = false;
+          });
+      }
     }
 
     // Cache if singleton
@@ -58,6 +72,16 @@ export class ServiceDescriptor<T> {
     }
 
     return instance;
+  }
+
+  /**
+   * Ensure initialization is complete for this service instance
+   * This should be called by consumers who need to ensure the service is ready
+   */
+  async ensureInitialized(): Promise<void> {
+    if (this._initPromise) {
+      await this._initPromise;
+    }
   }
 
   private isIService(obj: any): obj is IService {
@@ -139,6 +163,10 @@ export class ServiceRegistry {
 
   /**
    * Get a service by name with optional type checking
+   *
+   * Note: For services implementing IService, initialization starts but is not awaited
+   * to maintain backward compatibility. If you need to ensure initialization is complete,
+   * use getRequired() or manually call ensureServiceInitialized() after getting the instance.
    */
   get<T>(name: string, _serviceType?: new (...args: any[]) => T): T | null {
     // Check direct instances first
@@ -154,6 +182,17 @@ export class ServiceRegistry {
     }
 
     return null;
+  }
+
+  /**
+   * Ensure a service is fully initialized
+   * Call this after get() if you need to guarantee initialization is complete
+   */
+  async ensureServiceInitialized(name: string): Promise<void> {
+    const descriptor = this._descriptors.get(name);
+    if (descriptor) {
+      await descriptor.ensureInitialized();
+    }
   }
 
   /**

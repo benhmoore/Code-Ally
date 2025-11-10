@@ -47,3 +47,6 @@ logs/
 # Build artifacts
 *.js.map
 *.d.ts.map
+
+# Project-specific files
+ALLY.md

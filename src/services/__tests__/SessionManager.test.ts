@@ -18,7 +18,7 @@ describe('SessionManager', () => {
 
   beforeEach(async () => {
     // Create a temporary directory for test sessions
-    tempDir = join(tmpdir(), `code-ally-sessions-test-${Date.now()}`);
+    tempDir = join(tmpdir(), `code-ally-sessions-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
     await fs.mkdir(tempDir, { recursive: true });
 
     // Create a new SessionManager instance

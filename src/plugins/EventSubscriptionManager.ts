@@ -38,6 +38,18 @@ import { SocketClient } from './SocketClient.js';
 import { BackgroundProcessManager } from './BackgroundProcessManager.js';
 
 /**
+ * Maximum size for event data payloads (1MB)
+ * Prevents large payloads from blocking socket writes or consuming excessive resources
+ */
+const MAX_EVENT_DATA_SIZE = 1024 * 1024;
+
+/**
+ * Maximum length for Unix domain socket paths (104 characters on most systems)
+ * This is a hard limit imposed by the OS
+ */
+const UNIX_SOCKET_PATH_MAX_LENGTH = 104;
+
+/**
  * Approved event types for Phase 1
  *
  * These are the only events plugins can subscribe to. Each event provides
@@ -132,10 +144,9 @@ export class EventSubscriptionManager {
       throw new Error(errorMsg);
     }
 
-    // Validate socket path length (Unix domain socket path limit is 104 characters on most systems)
-    const MAX_SOCKET_PATH_LENGTH = 104;
-    if (socketPath.length > MAX_SOCKET_PATH_LENGTH) {
-      const errorMsg = `Plugin '${pluginName}' socket path exceeds maximum length of ${MAX_SOCKET_PATH_LENGTH} characters: ${socketPath}`;
+    // Validate socket path length (Unix domain socket path limit)
+    if (socketPath.length > UNIX_SOCKET_PATH_MAX_LENGTH) {
+      const errorMsg = `Plugin '${pluginName}' socket path exceeds maximum length of ${UNIX_SOCKET_PATH_MAX_LENGTH} characters: ${socketPath}`;
       logger.error(`[EventSubscriptionManager] ${errorMsg}`);
       throw new Error(errorMsg);
     }
@@ -220,83 +231,111 @@ export class EventSubscriptionManager {
    * @param eventData - Event data payload
    */
   async dispatch(eventType: string, eventData: any): Promise<void> {
-    // Run asynchronously to avoid blocking the caller
-    // Wrap in IIFE with catch to prevent unhandled promise rejections
-    setImmediate(() => {
-      (async () => {
-        try {
-          logger.debug(`[EventSubscriptionManager] Dispatching event: ${eventType}`);
+    // Fire-and-forget: dispatch asynchronously without blocking caller
+    // Use void operator to explicitly discard the promise
+    void (async () => {
+      try {
+        logger.debug(`[EventSubscriptionManager] Dispatching event: ${eventType}`);
 
-          // Find all plugins subscribed to this event type
-          const subscribers = this.getSubscribers(eventType);
-          if (subscribers.length === 0) {
+        // Find all plugins subscribed to this event type
+        const subscribers = this.getSubscribers(eventType);
+        if (subscribers.length === 0) {
+          logger.debug(
+            `[EventSubscriptionManager] No subscribers for event '${eventType}', skipping dispatch`
+          );
+          return;
+        }
+
+        logger.debug(
+          `[EventSubscriptionManager] Dispatching '${eventType}' to ${subscribers.length} subscriber(s): ${subscribers.join(', ')}`
+        );
+
+        // Validate event data can be serialized (catch circular references, BigInt, etc.)
+        let eventDataJson: string;
+        try {
+          eventDataJson = JSON.stringify(eventData);
+        } catch (error) {
+          logger.warn(
+            `[EventSubscriptionManager] Failed to serialize event data for '${eventType}': ${
+              error instanceof Error ? error.message : String(error)
+            }. Skipping event dispatch.`
+          );
+          return;
+        }
+
+        // Validate event data size before dispatch
+        if (eventDataJson.length > MAX_EVENT_DATA_SIZE) {
+          logger.warn(
+            `[EventSubscriptionManager] Event data exceeds maximum size (${eventDataJson.length} > ${MAX_EVENT_DATA_SIZE}), truncating event`
+          );
+          // Skip this event to avoid blocking
+          return;
+        }
+
+        // Build notification params with timestamp
+        const params = {
+          event_type: eventType,
+          event_data: eventData,
+          timestamp: Date.now(),
+        };
+
+        // Track dead plugins for cleanup after dispatch
+        const deadPlugins: string[] = [];
+
+        // Dispatch to all subscribed plugins in parallel (fire-and-forget)
+        const dispatchPromises = subscribers.map(async (pluginName) => {
+          const subscription = this.subscriptions.get(pluginName);
+          if (!subscription) {
+            // Shouldn't happen, but defensive check
             logger.debug(
-              `[EventSubscriptionManager] No subscribers for event '${eventType}', skipping dispatch`
+              `[EventSubscriptionManager] Subscription not found for '${pluginName}', skipping`
             );
             return;
           }
 
+          // Check if daemon is running
+          if (!this.processManager.isRunning(pluginName)) {
+            logger.debug(
+              `[EventSubscriptionManager] Daemon for '${pluginName}' is not running, marking for auto-unsubscribe`
+            );
+            deadPlugins.push(pluginName);
+            return;
+          }
+
+          try {
+            // Send JSON-RPC notification (fire-and-forget, no response expected)
+            await this.socketClient.sendNotification(subscription.socketPath, 'on_event', params);
+            logger.debug(
+              `[EventSubscriptionManager] Event '${eventType}' dispatched to '${pluginName}'`
+            );
+          } catch (error) {
+            // Log errors but don't throw - we don't want plugin failures to affect Ally
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            logger.debug(
+              `[EventSubscriptionManager] Failed to dispatch event '${eventType}' to '${pluginName}': ${errorMsg}`
+            );
+          }
+        });
+
+        // Use allSettled to ensure all dispatches complete independently
+        await Promise.allSettled(dispatchPromises);
+
+        // Clean up dead plugins after dispatch completes
+        if (deadPlugins.length > 0) {
+          deadPlugins.forEach(pluginName => this.unsubscribe(pluginName));
           logger.debug(
-            `[EventSubscriptionManager] Dispatching '${eventType}' to ${subscribers.length} subscriber(s): ${subscribers.join(', ')}`
+            `[EventSubscriptionManager] Auto-unsubscribed ${deadPlugins.length} dead plugin(s): ${deadPlugins.join(', ')}`
           );
-
-          // Build notification params with timestamp
-          const params = {
-            event_type: eventType,
-            event_data: eventData,
-            timestamp: Date.now(),
-          };
-
-          // Dispatch to all subscribed plugins in parallel (fire-and-forget)
-          const dispatchPromises = subscribers.map(async (pluginName) => {
-            const subscription = this.subscriptions.get(pluginName);
-            if (!subscription) {
-              // Shouldn't happen, but defensive check
-              logger.debug(
-                `[EventSubscriptionManager] Subscription not found for '${pluginName}', skipping`
-              );
-              return;
-            }
-
-            // Check if daemon is running
-            if (!this.processManager.isRunning(pluginName)) {
-              logger.debug(
-                `[EventSubscriptionManager] Daemon for '${pluginName}' is not running, skipping event dispatch`
-              );
-              return;
-            }
-
-            try {
-              // Send JSON-RPC notification (fire-and-forget, no response expected)
-              await this.socketClient.sendNotification(subscription.socketPath, 'on_event', params);
-              logger.debug(
-                `[EventSubscriptionManager] Event '${eventType}' dispatched to '${pluginName}'`
-              );
-            } catch (error) {
-              // Log errors but don't throw - we don't want plugin failures to affect Ally
-              const errorMsg = error instanceof Error ? error.message : String(error);
-              logger.debug(
-                `[EventSubscriptionManager] Failed to dispatch event '${eventType}' to '${pluginName}': ${errorMsg}`
-              );
-            }
-          });
-
-          // Wait for all dispatches to complete (or fail)
-          await Promise.all(dispatchPromises);
-          logger.debug(
-            `[EventSubscriptionManager] Finished dispatching event '${eventType}' to all subscribers`
-          );
-        } catch (error) {
-          // Top-level error handler - should rarely be reached since we catch errors per-plugin
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          logger.error(`[EventSubscriptionManager] Error in event dispatch: ${errorMsg}`);
         }
-      })().catch((error) => {
-        // Last resort: catch any unhandled errors from the async IIFE
+        logger.debug(
+          `[EventSubscriptionManager] Finished dispatching event '${eventType}' to all subscribers`
+        );
+      } catch (error) {
+        // Top-level error handler - should rarely be reached since we catch errors per-plugin
         const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.error(`[EventSubscriptionManager] Unhandled error in event dispatch: ${errorMsg}`);
-      });
-    });
+        logger.error(`[EventSubscriptionManager] Error in event dispatch: ${errorMsg}`);
+      }
+    })();
   }
 
   /**

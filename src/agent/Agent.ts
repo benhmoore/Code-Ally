@@ -2145,6 +2145,17 @@ export class Agent {
     // Stop activity monitoring
     this.stopActivityMonitoring();
 
+    // Clean up ActivityStream listeners to prevent memory leaks
+    // This is critical for long-running sessions with many agents
+    //
+    // WARNING: If this agent shares an ActivityStream with other components
+    // (e.g., via AgentPoolService), this will clear ALL listeners from the
+    // shared stream. Ensure this agent is the last user of the stream, or
+    // use scoped streams (ActivityStream.createScoped()) for isolation.
+    if (this.activityStream && typeof this.activityStream.cleanup === 'function') {
+      this.activityStream.cleanup();
+    }
+
     // Restore focus
     await this.restoreFocus();
 

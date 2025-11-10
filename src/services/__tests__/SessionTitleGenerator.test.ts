@@ -161,7 +161,7 @@ describe('SessionTitleGenerator', () => {
     let tempDir: string;
 
     beforeEach(async () => {
-      tempDir = join(tmpdir(), `title-test-${Date.now()}`);
+      tempDir = join(tmpdir(), `title-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
       await fs.mkdir(tempDir, { recursive: true });
     });
 
@@ -335,7 +335,7 @@ describe('SessionTitleGenerator', () => {
       const slowGenerator = new SessionTitleGenerator(slowClient);
 
       // Create temp dir and session
-      const tempDir = join(tmpdir(), `cleanup-test-${Date.now()}`);
+      const tempDir = join(tmpdir(), `cleanup-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
       await fs.mkdir(tempDir, { recursive: true });
 
       const sessionPath = join(tempDir, 'test.json');
@@ -376,7 +376,7 @@ describe('SessionTitleGenerator', () => {
       const verySlowGenerator = new SessionTitleGenerator(verySlowClient);
 
       // Create temp dir and session
-      const tempDir = join(tmpdir(), `timeout-test-${Date.now()}`);
+      const tempDir = join(tmpdir(), `timeout-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
       await fs.mkdir(tempDir, { recursive: true });
 
       const sessionPath = join(tempDir, 'test.json');

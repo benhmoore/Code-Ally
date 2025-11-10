@@ -66,6 +66,7 @@ const SLASH_COMMANDS = [
 const AGENT_SUBCOMMANDS = [
   { name: 'create', description: 'Create a new agent' },
   { name: 'list', description: 'List available agents' },
+  { name: 'ls', description: 'List available agents (alias)' },
   { name: 'show', description: 'Show agent details' },
   { name: 'delete', description: 'Delete an agent' },
   { name: 'use', description: 'Use a specialized agent' },

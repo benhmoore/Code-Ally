@@ -27,6 +27,7 @@ export class MessageHistory {
   private messages: Message[] = [];
   private readonly maxMessages: number;
   private readonly maxTokens: number;
+  private cachedTokenCount = 0;
 
   /**
    * Initialize message history
@@ -61,6 +62,7 @@ export class MessageHistory {
    */
   addMessage(message: Message): void {
     this.messages.push(message);
+    this.cachedTokenCount += this.estimateSingleMessage(message);
     this.enforceConstraints();
   }
 
@@ -70,6 +72,9 @@ export class MessageHistory {
    * @param messages - Messages to add
    */
   addMessages(messages: Message[]): void {
+    for (const message of messages) {
+      this.cachedTokenCount += this.estimateSingleMessage(message);
+    }
     this.messages.push(...messages);
     this.enforceConstraints();
   }
@@ -99,6 +104,7 @@ export class MessageHistory {
   clearConversation(): void {
     const systemMessage = this.messages.find(m => m.role === 'system');
     this.messages = systemMessage ? [systemMessage] : [];
+    this.recalculateTokens();
   }
 
   /**
@@ -106,6 +112,7 @@ export class MessageHistory {
    */
   clearAll(): void {
     this.messages = [];
+    this.cachedTokenCount = 0;
   }
 
   /**
@@ -119,29 +126,49 @@ export class MessageHistory {
    * Estimate token count for the current history
    *
    * Uses a simple heuristic: ~4 characters per token
+   * Returns cached value for O(1) performance
    *
    * @returns Estimated token count
    */
   estimateTokenCount(): number {
+    return this.cachedTokenCount;
+  }
+
+  /**
+   * Estimate token count for a single message
+   *
+   * @param message - Message to estimate
+   * @returns Estimated token count
+   */
+  private estimateSingleMessage(message: Message): number {
     let totalChars = 0;
 
-    for (const message of this.messages) {
-      // Count content characters
-      if (message.content) {
-        totalChars += message.content.length;
-      }
-
-      // Count tool call characters
-      if (message.tool_calls) {
-        totalChars += JSON.stringify(message.tool_calls).length;
-      }
-
-      // Add overhead for role and structure (~20 chars)
-      totalChars += TOKEN_MANAGEMENT.MESSAGE_OVERHEAD_CHARS;
+    // Count content characters
+    if (message.content) {
+      totalChars += message.content.length;
     }
+
+    // Count tool call characters
+    if (message.tool_calls) {
+      totalChars += JSON.stringify(message.tool_calls).length;
+    }
+
+    // Add overhead for role and structure (~20 chars)
+    totalChars += TOKEN_MANAGEMENT.MESSAGE_OVERHEAD_CHARS;
 
     // Estimate: ~4 chars per token
     return Math.ceil(totalChars / TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE);
+  }
+
+  /**
+   * Recalculate token count from scratch
+   * Used when messages array is modified directly
+   */
+  private recalculateTokens(): void {
+    this.cachedTokenCount = 0;
+    for (const message of this.messages) {
+      this.cachedTokenCount += this.estimateSingleMessage(message);
+    }
   }
 
   /**
@@ -175,13 +202,18 @@ export class MessageHistory {
     if (systemIndex !== -1) {
       const message = this.messages[systemIndex];
       if (message) {
+        // Subtract old token count, add new token count
+        this.cachedTokenCount -= this.estimateSingleMessage(message);
         message.content = content;
+        this.cachedTokenCount += this.estimateSingleMessage(message);
       }
     } else {
-      this.messages.unshift({
+      const newMessage: Message = {
         role: 'system',
         content,
-      });
+      };
+      this.messages.unshift(newMessage);
+      this.cachedTokenCount += this.estimateSingleMessage(newMessage);
     }
   }
 
@@ -206,17 +238,22 @@ export class MessageHistory {
     // Enforce message count limit
     if (otherMessages.length > this.maxMessages - 1) {
       const excess = otherMessages.length - (this.maxMessages - 1);
+      // Subtract removed messages from cached count
+      for (let i = 0; i < excess; i++) {
+        const removed = otherMessages[i];
+        if (removed) {
+          this.cachedTokenCount -= this.estimateSingleMessage(removed);
+        }
+      }
       otherMessages = otherMessages.slice(excess);
     }
 
-    // Enforce token limit
-    while (this.estimateTokenCountForMessages(otherMessages) > this.maxTokens) {
+    // Enforce token limit using cached count
+    while (this.cachedTokenCount > this.maxTokens && otherMessages.length > 0) {
       // Remove oldest message
-      otherMessages.shift();
-
-      // Safety check
-      if (otherMessages.length === 0) {
-        break;
+      const removed = otherMessages.shift();
+      if (removed) {
+        this.cachedTokenCount -= this.estimateSingleMessage(removed);
       }
     }
 
@@ -224,24 +261,6 @@ export class MessageHistory {
     this.messages = systemMessage ? [systemMessage, ...otherMessages] : otherMessages;
   }
 
-  /**
-   * Estimate token count for a specific set of messages
-   */
-  private estimateTokenCountForMessages(messages: Message[]): number {
-    let totalChars = 0;
-
-    for (const message of messages) {
-      if (message.content) {
-        totalChars += message.content.length;
-      }
-      if (message.tool_calls) {
-        totalChars += JSON.stringify(message.tool_calls).length;
-      }
-      totalChars += TOKEN_MANAGEMENT.MESSAGE_OVERHEAD_CHARS; // Overhead
-    }
-
-    return Math.ceil(totalChars / TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE);
-  }
 
   /**
    * Export messages to JSON
@@ -255,6 +274,7 @@ export class MessageHistory {
    */
   fromJSON(messages: Message[]): void {
     this.messages = messages;
+    this.recalculateTokens();
     this.enforceConstraints();
   }
 
