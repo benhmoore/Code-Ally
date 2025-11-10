@@ -65,60 +65,47 @@ Set output_mode="files_with_matches" for file lists (default), "content" for sni
           properties: {
             pattern: {
               type: 'string',
-              description: 'The regular expression pattern to search for in file contents',
+              description: 'Regex pattern to search',
             },
             path: {
               type: 'string',
-              description: 'File or directory to search in (rg PATH). Defaults to current working directory.',
+              description: 'File or directory to search (default: cwd)',
             },
             glob: {
               type: 'string',
-              description: 'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") - maps to rg --glob',
+              description: 'Glob pattern to filter files (e.g. "*.js")',
             },
             type: {
               type: 'string',
-              description: 'File type to search (rg --type). Common types: js, py, rust, go, java, ts, tsx, etc. More efficient than glob for standard file types.',
+              description: 'File type: js|py|rust|go|java|ts|tsx',
             },
             '-i': {
               type: 'boolean',
-              description: 'Case insensitive search (rg -i)',
+              description: 'Case insensitive search',
             },
             output_mode: {
               type: 'string',
-              description: 'Output mode: "content" shows matching lines (supports -A/-B/-C context, -n line numbers), "files_with_matches" shows file paths (default), "count" shows match counts.',
+              description: 'Output: content|files_with_matches (default)|count',
             },
             '-A': {
               type: 'number',
-              description: 'Number of lines to show after each match (rg -A). Requires output_mode: "content", ignored otherwise.',
+              description: 'Lines after match (content mode only)',
             },
             '-B': {
               type: 'number',
-              description: 'Number of lines to show before each match (rg -B). Requires output_mode: "content", ignored otherwise.',
+              description: 'Lines before match (content mode only)',
             },
             '-C': {
               type: 'number',
-              description: 'Number of lines to show before and after each match (rg -C). Requires output_mode: "content", ignored otherwise.',
+              description: 'Lines before+after match (content mode only)',
             },
             multiline: {
               type: 'boolean',
-              description: 'Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false.',
+              description: 'Enable multiline mode where . matches newlines',
             },
             max_results: {
               type: 'integer',
-              description: `Maximum number of results to return (default: ${GrepTool.MAX_RESULTS})`,
-            },
-            // Backward compatibility parameters (deprecated but still supported)
-            file_type: {
-              type: 'string',
-              description: '[Deprecated: use "type" instead] File type shortcut',
-            },
-            case_insensitive: {
-              type: 'boolean',
-              description: '[Deprecated: use "-i" instead] Case-insensitive search',
-            },
-            context_lines: {
-              type: 'integer',
-              description: '[Deprecated: use -A/-B/-C instead] Context lines',
+              description: `Max results (default: ${GrepTool.MAX_RESULTS})`,
             },
           },
           required: ['pattern'],
@@ -135,8 +122,7 @@ Set output_mode="files_with_matches" for file lists (default), "content" for sni
     const pattern = args.pattern as string;
     const searchPath = (args.path as string) || '.';
 
-    // Support both new 'type' and legacy 'file_type' parameters
-    const fileType = (args.type as string | undefined) || (args.file_type as string | undefined);
+    const fileType = args.type as string | undefined;
     let filePattern = (args.glob as string) || '*';
 
     // Apply file type shortcuts (overrides glob if provided)
@@ -157,17 +143,14 @@ Set output_mode="files_with_matches" for file lists (default), "content" for sni
       filePattern = typeMap[fileType] || filePattern;
     }
 
-    // Support both new '-i' and legacy 'case_insensitive' parameters
-    const caseInsensitive = Boolean(args['-i'] ?? args.case_insensitive);
+    const caseInsensitive = Boolean(args['-i']);
 
-    // Support both new -A/-B/-C and legacy context_lines parameters
-    const legacyContextLines = args.context_lines as number | undefined;
     const linesAfter = Math.min(
-      Math.max(0, Number(args['-A']) || legacyContextLines || 0),
+      Math.max(0, Number(args['-A']) || 0),
       GrepTool.MAX_CONTEXT_LINES
     );
     const linesBefore = Math.min(
-      Math.max(0, Number(args['-B']) || legacyContextLines || 0),
+      Math.max(0, Number(args['-B']) || 0),
       GrepTool.MAX_CONTEXT_LINES
     );
     const linesContext = Math.min(

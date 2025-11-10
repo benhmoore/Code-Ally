@@ -19,7 +19,7 @@ interface TodoInput {
 export class TodoAddTool extends BaseTool {
   readonly name = 'todo_add';
   readonly description =
-    'Add new todos to the existing list without replacing it. Validates "at most ONE in_progress" rule against the complete combined list (0 or 1 allowed). Use this when adding tasks to ongoing work.';
+    'Add new todos to existing list. Validates at most ONE in_progress task.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = true;
 
@@ -38,46 +38,46 @@ export class TodoAddTool extends BaseTool {
           properties: {
             todos: {
               type: 'array',
-              description: 'Array of new todos to add',
+              description: 'Array of new todos',
               items: {
                 type: 'object',
                 properties: {
                   content: {
                     type: 'string',
-                    description: 'Task description in imperative form (e.g., "Run tests")',
+                    description: 'Task (imperative, e.g. "Run tests")',
                   },
                   status: {
                     type: 'string',
-                    description: 'Task status: proposed, pending, in_progress, or completed',
+                    description: 'Status: proposed|pending|in_progress|completed',
                   },
                   activeForm: {
                     type: 'string',
-                    description: 'Present continuous form (e.g., "Running tests")',
+                    description: 'Active form (e.g. "Running tests")',
                   },
                   dependencies: {
                     type: 'array',
-                    description: 'Optional array of todo IDs that must complete before this task can start',
+                    description: 'Todo IDs that must complete first',
                     items: {
                       type: 'string',
                     },
                   },
                   subtasks: {
                     type: 'array',
-                    description: 'Optional nested subtasks for hierarchical breakdown (max depth 1)',
+                    description: 'Optional subtasks (max depth 1)',
                     items: {
                       type: 'object',
                       properties: {
                         content: {
                           type: 'string',
-                          description: 'Subtask description in imperative form',
+                          description: 'Task (imperative)',
                         },
                         status: {
                           type: 'string',
-                          description: 'Subtask status: proposed, pending, in_progress, or completed',
+                          description: 'Status',
                         },
                         activeForm: {
                           type: 'string',
-                          description: 'Present continuous form of subtask',
+                          description: 'Active form',
                         },
                       },
                       required: ['content', 'status', 'activeForm'],

@@ -17,7 +17,7 @@ import { autoSaveTodos } from '../utils/todoUtils.js';
 export class TodoUpdateTool extends BaseTool {
   readonly name = 'todo_update';
   readonly description =
-    'Update status of one or more todos in a single call. Accepts an array of updates to safely change todo status (pending/in_progress/completed) by finding todos by id or content. Can update multiple todos at once. Use this instead of reading and rewriting the entire list to prevent accidentally overwriting recent changes from other tools (e.g., after plan or todo_add).';
+    'Update todo status by id or content. Safer than rewriting entire list.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = true;
 
@@ -36,21 +36,21 @@ export class TodoUpdateTool extends BaseTool {
           properties: {
             updates: {
               type: 'array',
-              description: 'Array of todo updates. Each update identifies a todo by id or content and specifies the new status.',
+              description: 'Array of updates (id or content + new status)',
               items: {
                 type: 'object',
                 properties: {
                   id: {
                     type: 'string',
-                    description: 'Todo ID (preferred for exact matching)',
+                    description: 'Todo ID (preferred)',
                   },
                   content: {
                     type: 'string',
-                    description: 'Todo content to match (used if id not provided)',
+                    description: 'Content to match (if no id)',
                   },
                   status: {
                     type: 'string',
-                    description: 'New status for the todo: pending, in_progress, or completed',
+                    description: 'New status: pending|in_progress|completed',
                   },
                 },
                 required: ['status'],

@@ -664,7 +664,6 @@ export class Agent {
     // Exclude todo management tools from specialized agents (only main agent can manage todos)
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
     const excludeTools = allowTodoManagement ? undefined : ([...TOOL_NAMES.TODO_MANAGEMENT_TOOLS] as string[]);
-
     const functions = this.toolManager.getFunctionDefinitions(excludeTools);
 
     // Regenerate system prompt with current context (todos, etc.) before each LLM call
@@ -724,6 +723,44 @@ export class Agent {
       const llmRequestTimestamp = Date.now();
       const preprocessingTime = this.userPromptTimestamp ? llmRequestTimestamp - this.userPromptTimestamp : 0;
       logger.info('[PERF_LLM_REQUEST]', this.instanceId, 'Sending request to LLM at', llmRequestTimestamp, 'preprocessing took:', preprocessingTime + 'ms');
+
+      // === DEBUG: Print system prompt and tool context ===
+      const systemPrompt = this.messages[0]?.role === 'system' ? this.messages[0].content : 'No system prompt';
+      const systemPromptTokens = Math.ceil(systemPrompt.length / 4); // Rough estimate: 1 token ≈ 4 chars
+      console.log('\n========== SYSTEM PROMPT ==========');
+      console.log(`Length: ${systemPrompt.length} characters (~${systemPromptTokens} tokens)`);
+      console.log(systemPrompt);
+      console.log('\n========== TOOLS ==========');
+      const toolFunctions = functions as any;
+      if (toolFunctions && Array.isArray(toolFunctions) && toolFunctions.length > 0) {
+        console.log(`Sending ${toolFunctions.length} tools:\n`);
+
+        // Calculate per-tool stats
+        const toolStats: Array<{name: string, chars: number, tokens: number}> = [];
+        toolFunctions.forEach((fn: any, idx: number) => {
+          const name = fn.name || fn.function?.name || 'unknown';
+          const toolJson = JSON.stringify(fn);
+          const chars = toolJson.length;
+          const tokens = Math.ceil(chars / 4);
+          toolStats.push({ name, chars, tokens });
+          console.log(`  ${idx + 1}. ${name.padEnd(25)} ${chars.toString().padStart(5)} chars (~${tokens.toString().padStart(4)} tokens)`);
+        });
+
+        // Sort by token count and show top offenders
+        const sorted = [...toolStats].sort((a, b) => b.tokens - a.tokens);
+        const schemaJson = JSON.stringify(toolFunctions);
+        const totalTokens = Math.ceil(schemaJson.length / 4);
+
+        console.log(`\n--- Summary ---`);
+        console.log(`Total tool schema: ${schemaJson.length} characters (~${totalTokens} tokens)`);
+        console.log(`\nTop 5 largest tools by token count:`);
+        sorted.slice(0, 5).forEach((tool, idx) => {
+          console.log(`  ${idx + 1}. ${tool.name.padEnd(25)} ~${tool.tokens} tokens`);
+        });
+      } else {
+        console.log('No tools being sent');
+      }
+      console.log('===================================\n');
 
       // Send to model (includes system-reminder if present)
       const response = await this.modelClient.send(this.messages, {

@@ -94,22 +94,22 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
           properties: {
             file_paths: {
               type: 'array',
-              description: 'Array of file paths to read',
+              description: 'File paths to read',
               items: {
                 type: 'string',
               },
             },
             limit: {
               type: 'integer',
-              description: 'Maximum lines to read per file (0 = all lines)',
+              description: 'Max lines per file (0=all)',
             },
             offset: {
               type: 'integer',
-              description: 'Start reading from this line number (1-based). Negative values count from end (e.g., offset=-20 starts 20 lines from end)',
+              description: 'Start line (1-based). Negative = from end (e.g. -20)',
             },
             ephemeral: {
               type: 'boolean',
-              description: 'ONLY use when file exceeds normal token limit. Allows reading up to 90% of context (vs normal 20% limit). WARNING: Content is automatically removed after one turn - you will lose access to it. Do NOT use for files within normal limits. Prefer regular reads to keep content available for reference.',
+              description: 'Allow large files (90% context). WARNING: Content removed after one turn.',
             },
           },
           required: ['file_paths'],

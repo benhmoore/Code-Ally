@@ -59,19 +59,19 @@ export class AgentTool extends BaseTool {
           properties: {
             task_prompt: {
               type: 'string',
-              description: 'Task instructions for the agent. NOTE: Each agent() call runs ONE agent. For concurrent execution, make multiple calls.',
+              description: 'Task instructions. For concurrent tasks, make multiple agent() calls.',
             },
             agent_name: {
               type: 'string',
-              description: 'Name of agent to use (default: "general")',
+              description: 'Agent name (default: general)',
             },
             thoroughness: {
               type: 'string',
-              description: 'Level of thoroughness: "quick" (~1 min), "medium" (~5 min), "very thorough" (~10 min), "uncapped" (no time limit, default). Controls time budget.',
+              description: 'Thoroughness: quick|medium|very thorough|uncapped (default)',
             },
             context_files: {
               type: 'array',
-              description: 'Optional list of files to read into agent context before starting. Files are automatically read by the system (works even for models without tool support). Limited to 40% of context size. Use sparingly - only include files the agent will definitely need. Format: ["src/file1.ts", "src/file2.ts"]',
+              description: 'Optional files to load into agent context (limit: 40% of context). Use sparingly.',
               items: {
                 type: 'string',
               },

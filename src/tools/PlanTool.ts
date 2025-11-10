@@ -97,7 +97,7 @@ const PLANNING_CLOSING = `**Handling Different Scenarios:**
 
 Create comprehensive, actionable plans that enable confident implementation.`;
 
-// Hardcoded system prompt optimized for implementation planning (for backward compatibility with baseAgentPrompt)
+// System prompt optimized for implementation planning
 const PLANNING_SYSTEM_PROMPT = PLANNING_BASE_PROMPT + `
 
 **Important Guidelines:**

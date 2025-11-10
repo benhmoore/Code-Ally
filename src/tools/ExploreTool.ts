@@ -46,7 +46,7 @@ const EXPLORATION_BASE_PROMPT = `You are a specialized code exploration assistan
 - Use batch() for parallel operations when appropriate
 - Build comprehensive understanding before summarizing`;
 
-// Hardcoded system prompt optimized for exploration (for backward compatibility with baseAgentPrompt)
+// System prompt optimized for exploration
 const EXPLORATION_SYSTEM_PROMPT = EXPLORATION_BASE_PROMPT + `
 
 **Important Guidelines:**
