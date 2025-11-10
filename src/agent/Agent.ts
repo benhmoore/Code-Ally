@@ -95,6 +95,9 @@ export class Agent {
   // Maximum duration for this agent in minutes (optional, can be updated per turn)
   private maxDuration?: number;
 
+  // Performance tracking: timestamp when user prompt was received
+  private userPromptTimestamp?: number;
+
   // Activity monitoring - detects agents stuck generating tokens without tool calls
   private activityMonitor: ActivityMonitor;
 
@@ -393,6 +396,10 @@ export class Agent {
       timestamp: Date.now(),
     };
     this.messages.push(userMessage);
+
+    // === PERF: User prompt received ===
+    this.userPromptTimestamp = Date.now();
+    logger.info('[PERF_USER_PROMPT]', this.instanceId, 'User prompt received at', this.userPromptTimestamp);
 
     // If the previous request was interrupted, add a system reminder
     if (this.interruptionManager.wasRequestInterrupted()) {
@@ -713,12 +720,22 @@ export class Agent {
     });
 
     try {
+      // === PERF: About to send request to LLM ===
+      const llmRequestTimestamp = Date.now();
+      const preprocessingTime = this.userPromptTimestamp ? llmRequestTimestamp - this.userPromptTimestamp : 0;
+      logger.info('[PERF_LLM_REQUEST]', this.instanceId, 'Sending request to LLM at', llmRequestTimestamp, 'preprocessing took:', preprocessingTime + 'ms');
+
       // Send to model (includes system-reminder if present)
       const response = await this.modelClient.send(this.messages, {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
         stream: !this.config.isSpecializedAgent && this.config.config.parallel_tools,
       });
+
+      // === PERF: LLM response received ===
+      const llmResponseTimestamp = Date.now();
+      const llmDuration = llmResponseTimestamp - llmRequestTimestamp;
+      logger.info('[PERF_LLM_RESPONSE]', this.instanceId, 'LLM response received at', llmResponseTimestamp, 'duration:', llmDuration + 'ms');
 
       // Remove system-reminder messages after receiving response
       // These are temporary context hints that should not persist
@@ -787,6 +804,25 @@ export class Agent {
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection, continuing...');
         const continuationResponse = await this.getLLMResponse();
+
+        // Emit the full response from the continuation if present
+        // This ensures the response is visible even for subagents with hideOutput=true
+        const responseContent = continuationResponse.content?.trim();
+        if (responseContent) {
+          logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Interjection response:', responseContent.substring(0, 100));
+
+          this.emitEvent({
+            id: this.generateId(),
+            type: ActivityEventType.INTERJECTION_ACKNOWLEDGMENT,
+            timestamp: Date.now(),
+            parentId: this.config.parentCallId, // Set for subagents, undefined for main agent
+            data: {
+              acknowledgment: responseContent,
+              agentType: this.config.isSpecializedAgent ? 'specialized' : 'main',
+            },
+          });
+        }
+
         return await this.processLLMResponse(continuationResponse);
       } else {
         // Check if this is a continuation-eligible timeout

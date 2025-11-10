@@ -224,7 +224,7 @@ export class OllamaClient extends ModelClient {
             logger.debug('[OLLAMA_CLIENT] Request aborted:', requestId);
             return {
               role: 'assistant',
-              content: '[Request cancelled by user]',
+              content: '', // Empty content - don't pollute conversation history
               interrupted: true,
             };
           }

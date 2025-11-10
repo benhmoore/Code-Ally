@@ -92,6 +92,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Track interjections for this tool call
   const [interjections, setInterjections] = useState<Array<{ message: string; timestamp: number }>>([]);
 
+  // Track acknowledgments for this tool call
+  const [acknowledgments, setAcknowledgments] = useState<Array<{ message: string; timestamp: number }>>([]);
+
   // Flashing arrow for in-progress tool calls
   const [arrowVisible, setArrowVisible] = useState(true);
 
@@ -124,6 +127,29 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         if (exists) return prev;
 
         // Add new interjection, sorted by timestamp
+        return [...prev, { message, timestamp }].sort((a, b) => a.timestamp - b.timestamp);
+      });
+    }
+  }, [toolCall.id]);
+
+  // Subscribe to INTERJECTION_ACKNOWLEDGMENT events to capture acknowledgments for this tool call
+  useActivityEvent(ActivityEventType.INTERJECTION_ACKNOWLEDGMENT, (event) => {
+    // Only add acknowledgments that belong to this tool call
+    if (event.parentId === toolCall.id) {
+      const message = event.data?.acknowledgment || '';
+      const timestamp = event.timestamp || Date.now();
+
+      // Skip empty acknowledgments
+      if (!message.trim()) return;
+
+      setAcknowledgments((prev) => {
+        // Avoid duplicates by checking if we already have this exact acknowledgment
+        const exists = prev.some(
+          (a) => a.message === message && Math.abs(a.timestamp - timestamp) < 100
+        );
+        if (exists) return prev;
+
+        // Add new acknowledgment, sorted by timestamp
         return [...prev, { message, timestamp }].sort((a, b) => a.timestamp - b.timestamp);
       });
     }
@@ -241,7 +267,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       )}
 
       {/* Nested content: interleaved tool calls and interjections sorted by timestamp */}
-      {(!toolCall.collapsed || config?.show_full_tool_output) && (!toolCall.hideOutput || config?.show_full_tool_output) && (() => {
+      {/* Always render if we have interjections, even if hideOutput is true */}
+      {(interjections.length > 0 || ((!toolCall.collapsed || config?.show_full_tool_output) && (!toolCall.hideOutput || config?.show_full_tool_output))) && (() => {
         // Build combined list of children and interjections
         type NestedItem =
           | { type: 'toolCall'; data: ToolCallState; timestamp: number }
@@ -249,8 +276,12 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
         const items: NestedItem[] = [];
 
-        // Add nested tool calls
-        if (toolCall.children) {
+        // Check if we should show tool calls (respects hideOutput and collapsed flags)
+        const shouldShowToolCalls = (!toolCall.collapsed || config?.show_full_tool_output) &&
+                                     (!toolCall.hideOutput || config?.show_full_tool_output);
+
+        // Add nested tool calls (only if not hidden)
+        if (shouldShowToolCalls && toolCall.children) {
           toolCall.children.forEach(child => {
             items.push({
               type: 'toolCall',
@@ -260,7 +291,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           });
         }
 
-        // Add interjections
+        // Always add interjections (even if hideOutput is true)
         interjections.forEach(interjection => {
           items.push({
             type: 'interjection',
@@ -277,12 +308,32 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           <>
             {items.map((item, idx) => {
               if (item.type === 'interjection') {
+                // Find matching acknowledgment for this interjection
+                // Match by finding the acknowledgment with timestamp > interjection timestamp
+                // and before the next item's timestamp (or now if this is the last item)
+                const nextItemTimestamp = items[idx + 1]?.timestamp || Date.now();
+                const matchingAck = acknowledgments.find(ack =>
+                  ack.timestamp > item.timestamp &&
+                  ack.timestamp < nextItemTimestamp
+                );
+
                 return (
-                  <Box key={`interjection-${idx}-${item.timestamp}`}>
-                    <Text>{indent}    </Text>
-                    <Text color="yellow" bold>{'> '}</Text>
-                    <Text color="yellow" bold>{item.data.message}</Text>
-                  </Box>
+                  <React.Fragment key={`interjection-${idx}-${item.timestamp}`}>
+                    {/* Interjection */}
+                    <Box>
+                      <Text>{indent}    </Text>
+                      <Text color="yellow" bold>{'> '}</Text>
+                      <Text color="yellow" bold>{item.data.message}</Text>
+                    </Box>
+
+                    {/* Acknowledgment (if exists) */}
+                    {matchingAck && (
+                      <Box>
+                        <Text>{indent}    </Text>
+                        <Text>{matchingAck.message}</Text>
+                      </Box>
+                    )}
+                  </React.Fragment>
                 );
               } else {
                 // Recursively render nested tool call

@@ -61,6 +61,12 @@ export interface AppProps {
   /** Force show setup wizard (e.g., from --init flag) */
   showSetupWizard?: boolean;
 
+  /** Force show model selector (e.g., when model not found during startup) */
+  showModelSelector?: boolean;
+
+  /** Available models from startup validation */
+  availableModels?: any[];
+
   /** Number of loaded plugins */
   pluginCount?: number;
 }
@@ -72,7 +78,7 @@ export interface AppProps {
  * It subscribes to activity events and updates the app state accordingly.
  * Memoized to prevent unnecessary re-renders when children update.
  */
-const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null; showSetupWizard?: boolean; pluginCount?: number }> = ({ agent, resumeSession, showSetupWizard, pluginCount }) => {
+const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null; showSetupWizard?: boolean; showModelSelector?: boolean; availableModels?: any[]; pluginCount?: number }> = ({ agent, resumeSession, showSetupWizard, showModelSelector, availableModels, pluginCount }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
 
@@ -116,6 +122,38 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modal.setSetupWizardOpen(true);
     }
   }, [shouldShowSetupWizard]);
+
+  // Track whether we've already shown the model selector (to prevent showing it twice)
+  const modelSelectorShownRef = useRef(false);
+
+  // Show model selector if model not found during startup (but NOT if setup wizard is shown)
+  useEffect(() => {
+    if (showModelSelector && activityStream && !shouldShowSetupWizard && !modelSelectorShownRef.current) {
+      modelSelectorShownRef.current = true;
+      const requestId = `model_select_${Date.now()}`;
+      const config = state.config;
+
+      // Format available models for the selector
+      const models = (availableModels || []).map(m => ({
+        name: m.name,
+        size: m.size ? `${(m.size / (1024 * 1024 * 1024)).toFixed(2)}GB` : undefined,
+        modified: m.modified_at,
+      }));
+
+      activityStream.emit({
+        id: requestId,
+        type: ActivityEventType.MODEL_SELECT_REQUEST,
+        timestamp: Date.now(),
+        data: {
+          requestId,
+          models,
+          currentModel: config.model,
+          modelType: 'ally',
+          typeName: 'ally model',
+        },
+      });
+    }
+  }, [showModelSelector, activityStream, availableModels, shouldShowSetupWizard]);
 
   // State for patches to pass to RewindSelector
   const [patches, setPatches] = useState<PatchMetadata[]>([]);
@@ -735,7 +773,9 @@ const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
   const agentSame = prevProps.agent === nextProps.agent;
   const resumeSame = prevProps.resumeSession === nextProps.resumeSession;
   const setupSame = prevProps.showSetupWizard === nextProps.showSetupWizard;
-  return agentSame && resumeSame && setupSame;
+  const modelSelectorSame = prevProps.showModelSelector === nextProps.showModelSelector;
+  const modelsSame = prevProps.availableModels === nextProps.availableModels;
+  return agentSame && resumeSame && setupSame && modelSelectorSame && modelsSame;
 });
 
 /**
@@ -753,14 +793,14 @@ const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
  * const { unmount } = render(<App config={config} />);
  * ```
  */
-export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession, showSetupWizard, pluginCount }) => {
+export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession, showSetupWizard, showModelSelector, availableModels, pluginCount }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
   return (
     <ActivityProvider activityStream={streamRef.current}>
       <AppProvider initialConfig={config}>
-        <AppContent agent={agent} resumeSession={resumeSession} showSetupWizard={showSetupWizard} pluginCount={pluginCount} />
+        <AppContent agent={agent} resumeSession={resumeSession} showSetupWizard={showSetupWizard} showModelSelector={showModelSelector} availableModels={availableModels} pluginCount={pluginCount} />
       </AppProvider>
     </ActivityProvider>
   );

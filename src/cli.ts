@@ -360,8 +360,21 @@ async function main() {
     const forceSetup = needsSetup(config);
 
     // Validate Ollama connectivity and model availability (skip if needs setup or in --once mode)
+    let forceModelSelector = false;
+    let availableModels: any[] | undefined;
     if (!options.once && !forceSetup) {
-      await runStartupValidation(config);
+      const validationResult = await runStartupValidation(config);
+
+      // Critical error: Ollama not connected - exit immediately
+      if (!validationResult.ollamaConnected) {
+        process.exit(1);
+      }
+
+      // Model not found but Ollama is running - continue and show model selector
+      if (!validationResult.modelFound) {
+        forceModelSelector = true;
+        availableModels = validationResult.availableModels;
+      }
     }
 
     // Initialize service registry
@@ -657,6 +670,8 @@ async function main() {
         agent,
         resumeSession,
         showSetupWizard: options.init || forceSetup, // Show setup wizard if --init flag or missing critical config
+        showModelSelector: forceModelSelector, // Show model selector if model not found
+        availableModels, // Pass available models from validation
         pluginCount,
       }),
       {

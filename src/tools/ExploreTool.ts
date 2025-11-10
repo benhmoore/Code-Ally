@@ -65,7 +65,7 @@ export class ExploreTool extends BaseTool {
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
-  readonly hideOutput = true; // Hide detailed output
+  readonly hideOutput = false; // Show detailed output
 
   readonly usageGuidance = `**When to use explore:**
 Architectural/flow questions requiring synthesis: "Where is X displayed?", "How does Y work?"

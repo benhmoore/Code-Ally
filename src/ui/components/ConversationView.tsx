@@ -249,8 +249,10 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       }
 
       // Skip interjection messages that are nested under tool calls (non-root parentId)
-      // Interjections to main agent (parentId: 'root') should still appear in main conversation
-      if (message.metadata?.isInterjection === true && message.metadata?.parentId !== 'root') {
+      // Interjections to main agent (parentId: 'root' or undefined) should appear in main conversation
+      if (message.metadata?.isInterjection === true
+          && message.metadata?.parentId
+          && message.metadata?.parentId !== 'root') {
         return;
       }
 

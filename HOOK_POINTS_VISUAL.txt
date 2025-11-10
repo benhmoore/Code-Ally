@@ -1,0 +1,305 @@
+================================================================================
+                    ALLY INFERENCE PIPELINE - VISUAL MAP
+================================================================================
+
+PHASE 1: USER INPUT → SYSTEM PROMPT
+================================================================================
+
+User sends: "Help me debug this"
+                    ↓
+        [Hook 1: PRE-USER-MESSAGE-ADD]
+                    ↓
+        Message added to conversation
+                    ↓
+        [Hook 2: PRE-SYSTEM-REMINDER-ADD] ← Can inject interruption context
+                    ↓
+        [Hook 2: PRE-SYSTEM-REMINDER-ADD] ← Can inject todo context
+                    ↓
+        System reminders appended
+                    ↓
+        [Hook 3: POST-FOCUS-SET] ← Directory scope set
+                    ↓
+        Session auto-saved (non-blocking)
+                    ↓
+        AGENT_START event emitted
+                    ↓
+        [Hook 4: PRE-SYSTEM-PROMPT-GEN]
+                    ↓
+        Assembling system prompt:
+        ├── CORE_DIRECTIVES (static)
+        │
+        ├── [Hook 37: PRE-CONTEXT-FETCH]
+        │   └── Add context providers
+        │       • Date/time, git branch
+        │       • Project context
+        │       • Available agents
+        │       • Context usage %
+        │
+        ├── [Hook 38: PRE-TODO-FETCH]
+        │   └── Modify todo display
+        │       • Current todos
+        │       • Active tasks
+        │
+        ├── [Hook 39: PRE-TOOL-GUIDANCE]
+        │   └── Add tool guidance
+        │       • Tool descriptions
+        │       • Selection rules
+        │
+        └── Once-mode instructions (if applicable)
+                    ↓
+        [Hook 5: POST-SYSTEM-PROMPT-GEN]
+                    ↓
+        [Hook 6: PRE-SYSTEM-PROMPT-ASSIGN]
+                    ↓
+        System prompt assigned to messages[0]
+                    ↓
+
+PHASE 2: LLM EXECUTION
+================================================================================
+
+        [Hook 7: PRE-FUNCTION-DEFS-FETCH]
+                    ↓
+        Function definitions loaded from ToolManager
+                    ↓
+        [Hook 8: PRE-LLM-SEND]
+                    ↓
+        THOUGHT_CHUNK event: "Thinking..."
+                    ↓
+        [Hook 9: POST-THINKING-EMIT]
+                    ↓
+        ┌─────────────────────────────────────────┐
+        │  Send to LLM (modelClient.send)         │
+        ├─────────────────────────────────────────┤
+        │  Streaming Response:                    │
+        │  ├─ Accumulate content chunks          │
+        │  ├─ Emit ASSISTANT_CHUNK events        │
+        │  ├─ Accumulate thinking chunks         │
+        │  ├─ Emit THOUGHT_CHUNK events          │
+        │  ├─ Parse tool calls                   │
+        │  └─ Return aggregated response         │
+        │                                         │
+        │  OR Non-streaming Response:            │
+        │  ├─ Parse complete JSON                │
+        │  └─ Return full response               │
+        └─────────────────────────────────────────┘
+                    ↓
+        [Hook 10: POST-LLM-RESPONSE]
+                    ↓
+        System reminders cleaned up
+                    ↓
+        [Hook 11: POST-REMINDER-CLEANUP]
+                    ↓
+
+PHASE 3: RESPONSE VALIDATION
+================================================================================
+
+        [Hook 12: PRE-TOOL-VALIDATION]
+                    ↓
+        Tool call validation (OllamaClient)
+                    ↓
+        [Hook 13: POST-TOOL-VALIDATION]
+                    ↓
+        [Hook 14: POST-INTERRUPTION-CHECK]
+                    ↓
+        [Hook 15: POST-PARTIAL-RESPONSE-HANDLING]
+                    ↓
+        [Hook 16: POST-VALIDATION-ERROR-CHECK]
+                    ↓
+        [Hook 17: POST-TOOL-CALL-EXTRACTION]
+                    ↓
+        [Hook 18: POST-EMPTY-RESPONSE-DETECTION]
+                    ↓
+        Check: Does response have tool calls?
+                    ↓
+                    ├─ YES → Go to PHASE 4
+                    │
+                    └─ NO → Go to PHASE 5
+                    ↓
+
+PHASE 4: TOOL EXECUTION (if toolCalls.length > 0)
+================================================================================
+
+        [Hook 19: PRE-BATCH-UNWRAP]
+                    ↓
+        Unwrap batch tool calls into individual calls
+                    ↓
+        [Hook 20: POST-BATCH-UNWRAP]
+                    ↓
+        Add assistant message with tool calls to conversation
+                    ↓
+        [Hook 21: PRE-CYCLE-DETECT]
+                    ↓
+        Detect tool call cycles (with file hash tracking)
+                    ↓
+        [Hook 22: POST-CYCLE-DETECT]
+                    ↓
+        TOOL_CALL_START event
+                    ↓
+        [Hook 23: PRE-TOOL-EXEC]
+                    ↓
+        Execute tools (concurrent or sequential):
+        ├─ Concurrent: safe read-only tools
+        ├─ Sequential: destructive tools
+        ├─ Emit individual tool events
+        └─ Collect results
+                    ↓
+        TOOL_CALL_END event
+                    ↓
+        [Hook 24: POST-TOOL-EXEC]
+                    ↓
+        Add tool result messages to conversation
+                    ↓
+        Auto-save session
+                    ↓
+        Request follow-up from LLM (recursive)
+                    ↓
+        Go back to PHASE 2 (getLLMResponse)
+                    ↓
+
+PHASE 5: TEXT RESPONSE PROCESSING (if no toolCalls)
+================================================================================
+
+        [Hook 25: PRE-REQUIRED-TOOLS-CHECK]
+                    ↓
+        Verify all required tools have been called
+        (If not, request LLM to call them, then go back to PHASE 2)
+                    ↓
+        [Hook 26: POST-REQUIRED-TOOLS-CHECK]
+                    ↓
+        Add assistant message with text content to conversation
+                    ↓
+        [Hook 27: PRE-EPHEMERAL-CLEANUP]
+                    ↓
+        Remove ephemeral messages (temporary tool context)
+                    ↓
+        [Hook 28: POST-EPHEMERAL-CLEANUP]
+                    ↓
+        [Hook 29: PRE-SESSION-SAVE]
+                    ↓
+        Auto-save session with final state
+                    ↓
+        [Hook 30: POST-SESSION-SAVE]
+                    ↓
+        AGENT_END event with final response
+                    ↓
+        [Hook 31: POST-AGENT-END]
+                    ↓
+        Return final content to user
+                    ↓
+        Conversation complete
+                    ↓
+
+PARALLEL PROCESS: BACKGROUND IDLE MESSAGES (non-blocking)
+================================================================================
+
+        Background thread:
+        ├─ Check if idle message queue is running low
+        │
+        ├─ [Hook 32: PRE-IDLE-GEN]
+        │
+        ├─ Send generation request to LLM (fire-and-forget)
+        │
+        ├─ Parse response into message array
+        │
+        ├─ [Hook 33: POST-IDLE-GEN]
+        │
+        ├─ [Hook 34: PRE-QUEUE-UPDATE]
+        │
+        ├─ Update message queue with new idle messages
+        │
+        ├─ [Hook 35: POST-QUEUE-UPDATE] (onQueueUpdated callback)
+        │
+        └─ Session manager auto-saves queue
+
+        Available context for idle generation:
+        ├─ Working directory
+        ├─ Active todos
+        ├─ Git branch
+        ├─ Project context (languages, frameworks, etc.)
+        └─ Home directory
+
+        User sees idle messages cycle while waiting
+                    ↓
+
+PARALLEL PROCESS: EVENT SUBSCRIPTION (async notifications to plugins)
+================================================================================
+
+        Throughout execution:
+        ├─ [Hook 36: EVENT-SUBSCRIPTION]
+        │
+        ├─ ActivityStream.emit() → EventSubscriptionManager.dispatch()
+        │
+        └─ For each subscribed plugin, send JSON-RPC notification
+           containing approved event:
+           ├─ TOOL_CALL_START
+           ├─ TOOL_CALL_END
+           ├─ AGENT_START
+           ├─ AGENT_END
+           ├─ PERMISSION_REQUEST
+           ├─ PERMISSION_RESPONSE
+           ├─ COMPACTION_START
+           ├─ COMPACTION_COMPLETE
+           ├─ CONTEXT_USAGE_UPDATE
+           ├─ TODO_UPDATE
+           ├─ THOUGHT_COMPLETE
+           └─ DIFF_PREVIEW
+
+        Plugins receive notifications asynchronously
+        (doesn't block main Ally pipeline)
+                    ↓
+
+
+LEGEND & QUICK REFERENCE
+================================================================================
+
+[Hook N: NAME]          = Insertion point for plugin logic
+├─ PHASE 1-5             = Primary pipeline phases
+├─ PARALLEL              = Background/async processes
+│
+PRE-*                    = Before operation (can modify)
+POST-*                   = After operation (observe/validate)
+EVENT                    = Async notification (read-only)
+
+SAFE MODIFICATIONS:
+└─ Adding content        (Hooks 4, 37-39)
+└─ Reading data          (Hooks 10, 17, 24, 36)
+└─ Logging               (Any POST-* hook)
+
+CAUTION MODIFICATIONS:
+└─ Message content       (Hooks 1, 2, 6)
+└─ Tool definitions      (Hook 7)
+└─ Message queue         (Hook 34)
+
+AVOID MODIFYING:
+└─ Core directives       (Hooks 4, 5, 6)
+└─ Tool call structure   (Hooks 23-24)
+└─ Event suppression     (Hook 36)
+
+
+CRITICAL STATS
+================================================================================
+
+Total Hooks:                39
+├─ Synchronous Hooks:      23
+├─ Event Subscriptions:    12
+├─ Prompt Assembly Hooks:   4
+
+Phases:
+├─ Input Phase:            9 hooks
+├─ Output Phase:           9 hooks
+├─ Execution Phase:        6 hooks
+├─ Response Phase:         7 hooks
+├─ Idle Message Phase:     4 hooks
+└─ Event Phase:            1 hook (12 events)
+
+Most Important Hooks:
+1. Hook 4  - System prompt generation
+2. Hook 8  - Pre-LLM send
+3. Hook 10 - Post-LLM response
+4. Hook 23 - Pre-tool execution
+5. Hook 36 - Event subscription
+
+Safest Starting Point:
+└─ Hook 36 (Event subscription) - Read-only, no modification risk
+
+================================================================================

@@ -95,18 +95,32 @@ export function needsSetup(config: any): boolean {
   return !config.model || !config.endpoint;
 }
 
+export interface StartupValidationResult {
+  ok: boolean;
+  ollamaConnected: boolean;
+  modelFound: boolean;
+  availableModels?: any[];
+  error?: string;
+  similarModels?: string[];
+}
+
 /**
  * Run all startup validation checks
- * Silent on success, logs errors and exits on failure
+ * Returns validation result instead of exiting on failure
  */
-export async function runStartupValidation(config: any): Promise<void> {
+export async function runStartupValidation(config: any): Promise<StartupValidationResult> {
   // Check Ollama connectivity
   const ollamaCheck = await validateOllamaConnection(config.endpoint);
 
   if (!ollamaCheck.ok) {
     logger.error(`Cannot connect to Ollama at ${config.endpoint}: ${ollamaCheck.error}`);
     logger.error('Fix: Start Ollama with "ollama serve"');
-    process.exit(1);
+    return {
+      ok: false,
+      ollamaConnected: false,
+      modelFound: false,
+      error: ollamaCheck.error,
+    };
   }
 
   // Check model availability
@@ -119,7 +133,23 @@ export async function runStartupValidation(config: any): Promise<void> {
       logger.error(`Similar models: ${modelCheck.data.similar.join(', ')}`);
     }
 
-    logger.error(`Fix: Pull the model with "ollama pull ${config.model}"`);
-    process.exit(1);
+    logger.error(`Fix: Select a model from the list, or pull it with "ollama pull ${config.model}"`);
+
+    // Fetch available models for the selector
+    const availableModels = ollamaCheck.data?.models || [];
+
+    return {
+      ok: false,
+      ollamaConnected: true,
+      modelFound: false,
+      availableModels,
+      similarModels: modelCheck.data?.similar,
+    };
   }
+
+  return {
+    ok: true,
+    ollamaConnected: true,
+    modelFound: true,
+  };
 }

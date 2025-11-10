@@ -159,6 +159,7 @@ export enum ActivityEventType {
   PLUGIN_CONFIG_COMPLETE = 'plugin_config_complete',
   PLUGIN_CONFIG_CANCEL = 'plugin_config_cancel',
   USER_INTERJECTION = 'user_interjection',
+  INTERJECTION_ACKNOWLEDGMENT = 'interjection_acknowledgment',
 }
 
 export interface ActivityEvent {

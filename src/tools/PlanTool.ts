@@ -120,7 +120,7 @@ export class PlanTool extends BaseTool {
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
-  readonly hideOutput = true; // Hide detailed output
+  readonly hideOutput = false; // Show detailed output
 
   readonly usageGuidance = `**When to use plan:**
 User requests implementation/refactoring (>3 steps), needs structured approach.

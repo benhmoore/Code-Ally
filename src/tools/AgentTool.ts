@@ -30,7 +30,7 @@ export class AgentTool extends BaseTool {
   readonly requiresConfirmation = false; // Non-destructive: task delegation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion - hide output and nested tools
-  readonly hideOutput = true; // Never show agent tool output in chat
+  readonly hideOutput = false; // Show agent tool output in chat
 
   private agentManager: AgentManager | null = null;
   private activeDelegations: Map<string, any> = new Map();
