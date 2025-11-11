@@ -10,6 +10,7 @@ import { join } from 'path';
 import type { IService } from '../types/index.js';
 import { BUFFER_SIZES } from '../config/constants.js';
 import { ALLY_HOME } from '../config/paths.js';
+import { logger } from './Logger.js';
 
 export interface ProjectContext {
   name: string;
@@ -71,7 +72,7 @@ export class ProjectManager implements IService {
         // File doesn't exist yet - that's fine
         this.context = null;
       } else {
-        console.error('Error loading project context:', error);
+        logger.error('Error loading project context:', error);
       }
     }
   }
@@ -101,7 +102,7 @@ export class ProjectManager implements IService {
       const content = JSON.stringify(data, null, 2);
       await fs.writeFile(this.storagePath, content, 'utf-8');
     } catch (error) {
-      console.error('Error saving project context:', error);
+      logger.error('Error saving project context:', error);
       throw error;
     }
   }
@@ -181,7 +182,7 @@ export class ProjectManager implements IService {
       await fs.unlink(this.storagePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error('Error deleting project context:', error);
+        logger.error('Error deleting project context:', error);
       }
     }
   }

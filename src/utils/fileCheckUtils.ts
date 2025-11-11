@@ -7,6 +7,7 @@
 import * as fs from 'fs/promises';
 import { ensureRegistryInitialized, getDefaultRegistry } from '../checkers/CheckerRegistry.js';
 import { BUFFER_SIZES } from '../config/constants.js';
+import { logger } from '../services/Logger.js';
 
 /**
  * Result of checking a file after modification
@@ -112,7 +113,7 @@ export async function checkFileAfterModification(
 
     return checkResult;
   } catch (error) {
-    console.warn('[fileCheckUtils] Error checking file after modification:', error);
+    logger.warn('[fileCheckUtils] Error checking file after modification:', error);
     return null;
   }
 }

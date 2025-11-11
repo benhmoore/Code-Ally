@@ -16,6 +16,8 @@ import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { logger } from '../services/Logger.js';
 import { getGitBranch } from '../utils/gitUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
+import type { TokenManager } from '../agent/TokenManager.js';
+import type { ToolResultManager } from '../services/ToolResultManager.js';
 
 // --- Core Agent Identity and Directives ---
 
@@ -73,7 +75,7 @@ ${GENERAL_GUIDELINES}`;
 /**
  * Get context usage information with warnings
  */
-function getContextUsageInfo(tokenManager?: any, toolResultManager?: any): string {
+function getContextUsageInfo(tokenManager?: TokenManager, toolResultManager?: ToolResultManager): string {
   try {
     // Use provided instances or fall back to ServiceRegistry
     let tm = tokenManager;
@@ -83,6 +85,8 @@ function getContextUsageInfo(tokenManager?: any, toolResultManager?: any): strin
       const serviceRegistry = ServiceRegistry.getInstance();
       if (!serviceRegistry) return '';
 
+      // Note: Using ServiceRegistry.get<any>() is intentional to avoid circular dependencies.
+      // Services are optional/lazy-loaded and duck-typed at runtime via method checks below.
       if (!tm) tm = serviceRegistry.get<any>('token_manager');
       if (!trm) trm = serviceRegistry.get<any>('tool_result_manager');
     }
@@ -125,7 +129,7 @@ function getContextUsageInfo(tokenManager?: any, toolResultManager?: any): strin
  * Get context budget reminder for system prompt
  * Returns a warning message to inject into the system prompt at 75% and 90% usage
  */
-function getContextBudgetReminder(tokenManager?: any): string {
+function getContextBudgetReminder(tokenManager?: TokenManager): string {
   try {
     // Use provided instance or fall back to ServiceRegistry
     let tm = tokenManager;
@@ -170,8 +174,8 @@ function getContextBudgetReminder(tokenManager?: any): string {
 export async function getContextInfo(options: {
   includeAgents?: boolean;
   includeProjectInstructions?: boolean;
-  tokenManager?: any;
-  toolResultManager?: any;
+  tokenManager?: TokenManager;
+  toolResultManager?: ToolResultManager;
   reasoningEffort?: string;
 } = {}): Promise<string> {
   const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager, reasoningEffort } = options;
@@ -269,7 +273,7 @@ ${agentsSection}`;
 /**
  * Generate the main system prompt dynamically
  */
-export async function getMainSystemPrompt(tokenManager?: any, toolResultManager?: any, isOnceMode: boolean = false, reasoningEffort?: string): Promise<string> {
+export async function getMainSystemPrompt(tokenManager?: TokenManager, toolResultManager?: ToolResultManager, isOnceMode: boolean = false, reasoningEffort?: string): Promise<string> {
   // Tool definitions are provided separately by the LLM client as function definitions
   const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager, reasoningEffort });
 
@@ -341,7 +345,7 @@ ${context}${todoContext}`;
 /**
  * Generate a system prompt for specialized agents
  */
-export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: any, toolResultManager?: any, reasoningEffort?: string): Promise<string> {
+export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string): Promise<string> {
   // Get context without agent information and project instructions to avoid recursion
   const context = await getContextInfo({
     includeAgents: false,

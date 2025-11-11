@@ -84,7 +84,7 @@ export class Agent {
 
   // Context tracking (isolated per agent)
   private tokenManager: TokenManager;
-  private toolResultManager: any; // ToolResultManager instance
+  private toolResultManager: ToolResultManager; // ToolResultManager instance
 
   // Agent instance ID for debugging
   private readonly instanceId: string;

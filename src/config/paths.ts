@@ -8,6 +8,7 @@
 import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { logger } from '../services/Logger.js';
 
 /**
  * Base directory for all Code Ally data
@@ -86,7 +87,7 @@ export async function ensureDirectories(): Promise<void> {
     } catch (error) {
       // Ignore errors if directory already exists
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        console.error(`Failed to create directory ${dir}:`, error);
+        logger.error(`Failed to create directory ${dir}:`, error);
       }
     }
   }

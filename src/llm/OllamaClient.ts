@@ -480,7 +480,7 @@ export class OllamaClient extends ModelClient {
             }
           } catch (parseError) {
             // Skip malformed chunks
-            console.warn('Failed to parse stream chunk:', parseError);
+            logger.warn('Failed to parse stream chunk:', parseError);
           }
         }
       }
@@ -587,7 +587,7 @@ export class OllamaClient extends ModelClient {
         },
       ];
     } catch (error) {
-      console.warn('Failed to convert function_call to tool_calls:', error);
+      logger.warn('Failed to convert function_call to tool_calls:', error);
     }
   }
 

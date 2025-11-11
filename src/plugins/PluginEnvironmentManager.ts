@@ -7,7 +7,7 @@
  *
  * Supported runtimes:
  * - python3: Creates venv and installs from requirements.txt
- * - Future: node, ruby, etc.
+ * - node: Creates node_modules and installs from package.json
  */
 
 import { promises as fs } from 'fs';
@@ -88,6 +88,8 @@ export class PluginEnvironmentManager {
 
       if (runtime === 'python3') {
         await this.setupPythonEnv(pluginName, pluginPath, envPath, dependencies);
+      } else if (runtime === 'node') {
+        await this.setupNodeEnv(pluginName, pluginPath, envPath, dependencies);
       } else {
         logger.warn(
           `[PluginEnvironmentManager] Unsupported runtime '${runtime}' for plugin '${pluginName}'`
@@ -189,6 +191,65 @@ export class PluginEnvironmentManager {
   }
 
   /**
+   * Setup Node.js environment and install dependencies
+   */
+  private async setupNodeEnv(
+    pluginName: string,
+    pluginPath: string,
+    envPath: string,
+    dependencies: PluginDependencies
+  ): Promise<void> {
+    // Create environment directory
+    await fs.mkdir(envPath, { recursive: true });
+
+    // Check for node availability
+    logger.info(`[PluginEnvironmentManager]   → Checking Node.js availability for '${pluginName}'`);
+    try {
+      await execAsync('node --version', {
+        timeout: PLUGIN_TIMEOUTS.VENV_CREATION,
+      });
+    } catch (error) {
+      throw new Error(
+        `Failed to find node binary: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    // Check if dependencies file exists
+    const depsFilePath = join(pluginPath, dependencies.file);
+    try {
+      await fs.access(depsFilePath);
+    } catch {
+      // No dependencies file - that's okay, environment is ready
+      logger.info(`[PluginEnvironmentManager]   → No dependencies file found, environment ready`);
+      return;
+    }
+
+    // Install dependencies
+    logger.info(`[PluginEnvironmentManager]   → Installing packages from ${dependencies.file}`);
+
+    try {
+      // Use custom install command if provided, otherwise default to npm install
+      const installCmd = dependencies.install_command
+        ? dependencies.install_command.replace(/\{envPath\}/g, envPath)
+        : `npm install --prefix "${envPath}"`;
+
+      const { stderr } = await execAsync(installCmd, {
+        cwd: pluginPath,
+        timeout: PLUGIN_TIMEOUTS.DEPENDENCY_INSTALL,
+      });
+
+      // Log output for debugging (only if there are warnings/errors)
+      if (stderr && stderr.trim()) {
+        logger.debug(`[PluginEnvironmentManager] npm stderr: ${stderr.trim()}`);
+      }
+    } catch (error) {
+      throw new Error(
+        `Failed to install dependencies: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  /**
    * Get the path to the Python interpreter in the plugin's venv
    *
    * @param pluginName - Name of the plugin
@@ -196,6 +257,16 @@ export class PluginEnvironmentManager {
    */
   getPythonPath(pluginName: string): string {
     return join(PLUGIN_ENVS_DIR, pluginName, 'bin', 'python3');
+  }
+
+  /**
+   * Get the path to the node_modules directory in the plugin's environment
+   *
+   * @param pluginName - Name of the plugin
+   * @returns Absolute path to the node_modules directory
+   */
+  getNodeModulesPath(pluginName: string): string {
+    return join(PLUGIN_ENVS_DIR, pluginName, 'node_modules');
   }
 
   /**

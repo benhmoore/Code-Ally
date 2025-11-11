@@ -46,7 +46,7 @@ export class ActivityStream {
         try {
           callback(event);
         } catch (error) {
-          console.error(`Error in activity stream listener:`, error);
+          logger.error(`Error in activity stream listener:`, error);
         }
       });
     }
@@ -58,7 +58,7 @@ export class ActivityStream {
         try {
           callback(event);
         } catch (error) {
-          console.error(`Error in wildcard activity stream listener:`, error);
+          logger.error(`Error in wildcard activity stream listener:`, error);
         }
       });
     }

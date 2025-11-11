@@ -1,11 +1,11 @@
 {
-  "name": "example-plugin",
+  "name": "example-py-plugin",
   "version": "1.0.0",
   "description": "Example plugin demonstrating the toolset format with configuration",
   "author": "Ally Examples",
   "tools": [
     {
-      "name": "reverse-string",
+      "name": "reverse-string-py",
       "description": "Reverse a string using Python",
       "command": "python3",
       "args": ["reverse.py"],

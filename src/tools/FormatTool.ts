@@ -14,6 +14,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ensureRegistryInitialized, getDefaultRegistry } from '../checkers/CheckerRegistry.js';
 import { formatError } from '../utils/errorUtils.js';
 import { API_TIMEOUTS, BUFFER_SIZES, FORMATTING } from '../config/constants.js';
+import { logger } from '../services/Logger.js';
 
 interface FormatResult {
   file_path: string;
@@ -343,7 +344,9 @@ export class FormatTool extends BaseTool {
       const fixed = await fs.readFile(tmpPath, 'utf-8');
       return fixed;
     } finally {
-      await fs.unlink(tmpPath).catch(() => {});
+      await fs.unlink(tmpPath).catch((error) => {
+        logger.debug(`Failed to delete temporary file ${tmpPath}:`, error);
+      });
     }
   }
 

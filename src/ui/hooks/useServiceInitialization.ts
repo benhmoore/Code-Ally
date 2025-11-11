@@ -97,7 +97,7 @@ export const useServiceInitialization = (
 
         // Create completion provider with agent manager and config manager
         const agentManager = new AgentManager();
-        const provider = new CompletionProvider(agentManager, configManager);
+        const provider = new CompletionProvider(agentManager, configManager || undefined);
         setCompletionProvider(provider);
 
         // Create command handler with service registry and config manager

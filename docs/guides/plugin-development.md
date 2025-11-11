@@ -15,12 +15,14 @@ cd ~/.ally/plugins/my-plugin
 
 **File:** `plugin.json`
 
+**Python example:**
 ```json
 {
   "name": "my-plugin",
   "version": "1.0.0",
   "description": "Brief description visible to LLM",
   "author": "Your Name",
+  "runtime": "python3",
   "activationMode": "tagged",
   "tools": [
     {
@@ -43,9 +45,39 @@ cd ~/.ally/plugins/my-plugin
 }
 ```
 
+**Node.js example:**
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "Brief description visible to LLM",
+  "author": "Your Name",
+  "runtime": "node",
+  "activationMode": "tagged",
+  "tools": [
+    {
+      "name": "my_tool",
+      "type": "executable",
+      "command": "npx",
+      "args": ["tsx", "tool.ts"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "Input parameter"
+          }
+        },
+        "required": ["input"]
+      }
+    }
+  ]
+}
+```
+
 ### 3. Create Tool Implementation
 
-**File:** `tool.py`
+**Python (tool.py):**
 
 ```python
 #!/usr/bin/env python3
@@ -74,6 +106,54 @@ def process_input(input_value):
 
 if __name__ == '__main__':
     main()
+```
+
+**Node.js/TypeScript (tool.ts):**
+
+```typescript
+#!/usr/bin/env node
+
+interface InputData {
+  input: string;
+}
+
+async function main(): Promise<void> {
+  try {
+    // Read request from stdin
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(chunk as Buffer);
+    }
+
+    const request: InputData = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    const inputValue = request.input || '';
+
+    // Process
+    const result = processInput(inputValue);
+
+    // Write response to stdout
+    const response = {
+      success: true,
+      error: '',
+      result: result
+    };
+    console.log(JSON.stringify(response));
+
+  } catch (e) {
+    console.log(JSON.stringify({
+      success: false,
+      error: `Error: ${(e as Error).message}`
+    }));
+    process.exit(1);
+  }
+}
+
+function processInput(inputValue: string): string {
+  // Your logic here
+  return `Processed: ${inputValue}`;
+}
+
+main();
 ```
 
 ### 4. Test Plugin
@@ -236,6 +316,8 @@ Define parameters using JSON Schema:
 
 ### Dependencies
 
+#### Python Dependencies
+
 **With requirements.txt:**
 
 ```json
@@ -260,6 +342,40 @@ Code Ally automatically:
 - Uses venv Python when executing tool
 
 **First load:** ~10-15 seconds (one-time setup)
+**Subsequent loads:** Instant (cached)
+
+#### Node.js Dependencies
+
+**With package.json:**
+
+```json
+{
+  "runtime": "node",
+  "dependencies": {
+    "file": "package.json"
+  }
+}
+```
+
+**File:** `package.json`
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+```
+
+Code Ally automatically:
+- Creates node_modules in `~/.ally/plugin-envs/my-plugin/`
+- Runs `npm install`
+- Sets NODE_PATH environment variable
+
+**First load:** ~10-20 seconds (one-time setup)
 **Subsequent loads:** Instant (cached)
 
 ### Multiple Tools
@@ -686,11 +802,18 @@ Use for destructive operations.
 
 ### Manual Testing
 
+**Python executable:**
 ```bash
-# Test executable plugin
 echo '{"input": "test"}' | python3 tool.py
+```
 
-# Test daemon
+**Node.js executable:**
+```bash
+echo '{"input": "test"}' | npx tsx tool.ts
+```
+
+**Python daemon:**
+```bash
 python3 daemon.py &
 DAEMON_PID=$!
 echo '{"jsonrpc":"2.0","id":"1","method":"ping"}' | nc -U /tmp/my-plugin.sock
@@ -753,12 +876,26 @@ ally --debug
 
 ### Test Dependencies
 
+**Python:**
 ```bash
 # Check venv
 ls ~/.ally/plugin-envs/my-plugin/
 
 # List installed packages
 ~/.ally/plugin-envs/my-plugin/bin/pip list
+
+# Force reinstall
+rm -rf ~/.ally/plugin-envs/my-plugin/
+# Restart ally
+```
+
+**Node.js:**
+```bash
+# Check node_modules
+ls ~/.ally/plugin-envs/my-plugin/node_modules/
+
+# List installed packages
+cd ~/.ally/plugin-envs/my-plugin && npm list
 
 # Force reinstall
 rm -rf ~/.ally/plugin-envs/my-plugin/
@@ -773,13 +910,16 @@ rm -rf ~/.ally/plugin-envs/my-plugin/
 - Check logs: `ally --debug`
 
 **Tool not executing:**
-- Test manually: `echo '{}' | python3 tool.py`
-- Check Python path: `which python3`
+- Test manually (Python): `echo '{}' | python3 tool.py`
+- Test manually (Node.js): `echo '{}' | npx tsx tool.ts`
+- Check runtime: `which python3` or `which node`
 - Verify script has execute permissions
 
 **Dependencies not installing:**
-- Check Python version: `python3 --version` (need 3.8+)
-- Test manual install: `python3 -m venv test && test/bin/pip install -r requirements.txt`
+- Python: Check version `python3 --version` (need 3.8+)
+- Python: Test manual install `python3 -m venv test && test/bin/pip install -r requirements.txt`
+- Node.js: Check version `node --version` (need 16+)
+- Node.js: Test manual install `npm install` in plugin directory
 - Check network connection
 
 **Daemon not starting:**
@@ -789,7 +929,7 @@ rm -rf ~/.ally/plugin-envs/my-plugin/
 
 ## Examples
 
-### Weather Plugin (Executable)
+### Weather Plugin (Python Executable)
 
 ```python
 #!/usr/bin/env python3
@@ -833,6 +973,102 @@ def main():
 
 if __name__ == '__main__':
     main()
+```
+
+### String Reverser (Node.js Executable)
+
+```typescript
+#!/usr/bin/env node
+import { stdin, stdout } from 'process';
+
+interface InputData {
+  text: string;
+  preserve_case?: boolean;
+}
+
+interface Result {
+  success: boolean;
+  error?: string;
+  reversed?: string;
+  original?: string;
+}
+
+async function main(): Promise<void> {
+  try {
+    // Read JSON from stdin
+    const chunks: Buffer[] = [];
+    for await (const chunk of stdin) {
+      chunks.push(chunk as Buffer);
+    }
+
+    const input: InputData = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    const text = input.text || '';
+    const preserveCase = input.preserve_case !== false;
+
+    if (!text) {
+      const error: Result = {
+        success: false,
+        error: 'Missing required parameter: text'
+      };
+      console.log(JSON.stringify(error));
+      return;
+    }
+
+    // Reverse the string
+    let reversed = text.split('').reverse().join('');
+    if (!preserveCase) {
+      reversed = reversed.toLowerCase();
+    }
+
+    const result: Result = {
+      success: true,
+      original: text,
+      reversed: reversed
+    };
+    console.log(JSON.stringify(result));
+
+  } catch (e) {
+    const error: Result = {
+      success: false,
+      error: `Unexpected error: ${(e as Error).message}`
+    };
+    console.log(JSON.stringify(error));
+    process.exit(1);
+  }
+}
+
+main();
+```
+
+**plugin.json for Node.js example:**
+```json
+{
+  "name": "string-reverser",
+  "version": "1.0.0",
+  "runtime": "node",
+  "dependencies": {
+    "file": "package.json"
+  },
+  "tools": [{
+    "name": "reverse_string",
+    "command": "npx",
+    "args": ["tsx", "reverse.ts"],
+    "schema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Text to reverse"
+        },
+        "preserve_case": {
+          "type": "boolean",
+          "description": "Preserve case (default: true)"
+        }
+      },
+      "required": ["text"]
+    }
+  }]
+}
 ```
 
 ### Database Plugin (Background RPC)

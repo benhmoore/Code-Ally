@@ -138,7 +138,7 @@ export class PermissionManager {
               throw error;
             }
             // If we can't parse it as a path, log and continue
-            console.debug(
+            logger.debug(
               `Could not validate potential path in ${toolName} argument ${argName}: ${error}`
             );
           }

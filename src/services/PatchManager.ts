@@ -442,7 +442,9 @@ export class PatchManager implements IService {
         for (const patchEntry of patchesToUndo) {
           try {
             const patchFile = path.join(patchesDir, patchEntry.patch_file);
-            await fs.unlink(patchFile).catch(() => {});
+            await fs.unlink(patchFile).catch((error) => {
+              logger.debug(`Failed to delete patch file ${patchFile}:`, error);
+            });
           } catch (error) {
             logger.warn(`Failed to delete patch file ${patchEntry.patch_file}:`, error);
           }
@@ -723,7 +725,9 @@ export class PatchManager implements IService {
           for (const patchEntry of patchesToUndo) {
             try {
               const patchFile = path.join(patchesDir, patchEntry.patch_file);
-              await fs.unlink(patchFile).catch(() => {});
+              await fs.unlink(patchFile).catch((error) => {
+                logger.debug(`Failed to delete patch file ${patchFile}:`, error);
+              });
             } catch (error) {
               logger.warn(`Failed to delete patch file ${patchEntry.patch_file}:`, error);
             }
@@ -1067,7 +1071,9 @@ export class PatchManager implements IService {
         const patchesDir = this.getPatchesDir();
         if (patchesDir) {
           const patchFile = path.join(patchesDir, patchEntry.patch_file);
-          await fs.unlink(patchFile).catch(() => {});
+          await fs.unlink(patchFile).catch((error) => {
+            logger.debug(`Failed to delete patch file ${patchFile}:`, error);
+          });
         }
 
         const result: UndoResult = {
@@ -1178,7 +1184,9 @@ export class PatchManager implements IService {
         // Delete patch files
         for (const patch of removedPatches) {
           const patchFilePath = path.join(patchesDir, patch.patch_file);
-          await fs.unlink(patchFilePath).catch(() => {});
+          await fs.unlink(patchFilePath).catch((error) => {
+            logger.debug(`Failed to delete old patch file ${patchFilePath}:`, error);
+          });
         }
 
         await this.savePatchIndex();
@@ -1224,7 +1232,9 @@ export class PatchManager implements IService {
             totalSize -= stats.size;
           }
 
-          await fs.unlink(patchFilePath).catch(() => {});
+          await fs.unlink(patchFilePath).catch((error) => {
+            logger.debug(`Failed to delete patch file ${patchFilePath}:`, error);
+          });
           removedCount++;
         }
 

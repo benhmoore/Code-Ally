@@ -8,7 +8,7 @@ To use these examples:
 
 ```bash
 # Copy an example to your plugins directory
-cp -r examples/plugins/example ~/.ally/plugins/reverse-string
+cp -r examples/plugins/example-py ~/.ally/plugins/reverse-string
 
 # Restart Ally - plugins load automatically!
 ```
@@ -17,7 +17,7 @@ cp -r examples/plugins/example ~/.ally/plugins/reverse-string
 
 ## Example 1: Executable Plugin (Python)
 
-**Location:** `example/`
+**Location:** `example-py/`
 
 A string reversal plugin that demonstrates executable plugins (Python, shell scripts, etc.).
 
@@ -34,12 +34,51 @@ A string reversal plugin that demonstrates executable plugins (Python, shell scr
 
 ### Usage in Ally:
 ```
-User: Use the reverse_string tool to reverse "Hello World"
+User: Use the reverse-string-py tool to reverse "Hello World"
 ```
 
 ---
 
-## Example 2: Background Plugin with Event Subscription
+## Example 2: Executable Plugin (Node.js/TypeScript)
+
+**Location:** `example-node/`
+
+A string reversal plugin that demonstrates executable plugins using TypeScript and Node.js.
+
+### Files:
+- `plugin.json` - Plugin manifest with runtime: "node"
+- `package.json` - Minimal Node.js dependencies
+- `reverse.ts` - TypeScript implementation with JSON I/O
+- `tsconfig.json` - TypeScript configuration
+- `README.md` - Setup and usage instructions
+
+### Features:
+- TypeScript with strict typing
+- JSON-based input/output via stdin/stdout
+- No build step required (uses tsx)
+- Configuration via environment variables
+- Signal handling (SIGTERM/SIGINT)
+- Matches Python example functionality exactly
+
+### Usage in Ally:
+```
+User: Use the reverse-string-node tool to reverse "Hello World"
+```
+
+### Installation:
+```bash
+# Copy to plugins directory
+cp -r examples/plugins/example-node ~/.ally/plugins/
+
+# Install dependencies
+cd ~/.ally/plugins/example-node && npm install
+
+# Restart Ally - plugin loads automatically!
+```
+
+---
+
+## Example 3: Background Plugin with Event Subscription
 
 **Location:** `conversation-monitor/`
 

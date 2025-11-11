@@ -6,6 +6,7 @@
  */
 
 import { FileChecker, CheckResult } from './types.js';
+import { logger } from '../services/Logger.js';
 
 export class CheckerRegistry {
   private checkers: FileChecker[] = [];
@@ -50,7 +51,7 @@ export class CheckerRegistry {
     try {
       return await checker.check(filePath, content);
     } catch (error) {
-      console.warn(`[CheckerRegistry] Checker ${checker.name} failed for ${filePath}:`, error);
+      logger.warn(`[CheckerRegistry] Checker ${checker.name} failed for ${filePath}:`, error);
       return null;
     }
   }

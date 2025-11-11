@@ -10,6 +10,7 @@ import * as os from 'os';
 import { spawn } from 'child_process';
 import { FileChecker, CheckResult, CheckIssue } from './types.js';
 import { API_TIMEOUTS } from '../config/constants.js';
+import { logger } from '../services/Logger.js';
 
 export class JavaScriptChecker implements FileChecker {
   readonly name = 'javascript';
@@ -61,10 +62,12 @@ export class JavaScriptChecker implements FileChecker {
         }
       }
     } catch (error) {
-      console.warn(`[JavaScriptChecker] Check failed for ${filePath}:`, error);
+      logger.warn(`[JavaScriptChecker] Check failed for ${filePath}:`, error);
     } finally {
       // Clean up temporary directory
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch((error) => {
+        logger.debug(`Failed to clean up temporary directory ${tmpDir}:`, error);
+      });
     }
 
     const elapsed = performance.now() - start;
@@ -118,7 +121,7 @@ export class JavaScriptChecker implements FileChecker {
         code: 'syntax-error',
       };
     } catch (error) {
-      console.warn('[JavaScriptChecker] Failed to parse error:', error);
+      logger.warn('[JavaScriptChecker] Failed to parse error:', error);
       return null;
     }
   }

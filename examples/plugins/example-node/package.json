@@ -1,0 +1,15 @@
+{
+  "name": "example-node-plugin",
+  "version": "1.0.0",
+  "description": "Example Node.js plugin for Ally",
+  "author": "Ally Examples",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Test with: echo '{\\\"text\\\":\\\"Hello World\\\"}' | npx tsx reverse.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

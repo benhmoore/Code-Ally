@@ -481,7 +481,7 @@ async sendMessage(message: string): Promise<string> {
 
 **Solution:** Automatic isolated environments per plugin
 
-### Current: Python Support
+### Python Support
 
 **Implementation:** PluginEnvironmentManager creates venvs
 
@@ -502,9 +502,11 @@ async sendMessage(message: string): Promise<string> {
 
 No wrapper scripts required.
 
-### Future: Node.js Support
+### Node.js Support
 
-Planned implementation:
+**Implementation:** PluginEnvironmentManager creates node_modules
+
+**Plugin manifest:**
 ```json
 {
   "runtime": "node",
@@ -514,7 +516,24 @@ Planned implementation:
 }
 ```
 
-Would create `~/.ally/plugin-envs/plugin-name/node_modules/`
+**What happens:**
+1. First load: Create node_modules, run npm install (~10-20s)
+2. Subsequent loads: Use cached modules (instant)
+3. NODE_PATH environment variable set to plugin's node_modules
+4. Use `npx tsx` for TypeScript execution
+
+**Example package.json:**
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+```
 
 ## Performance Considerations
 
@@ -639,7 +658,8 @@ ally
 ## Examples
 
 See `examples/plugins/` for:
-- Executable plugin template
+- Python executable plugin template
+- Node.js executable plugin template (example-node)
 - Background RPC plugin template
 - Event subscription example
 

@@ -13,6 +13,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { ALLY_HOME } from '../config/paths.js';
 import { BUFFER_SIZES, UI_DELAYS } from '../config/constants.js';
+import { logger } from './Logger.js';
 
 export interface CommandHistoryEntry {
   command: string;
@@ -75,7 +76,7 @@ export class CommandHistory {
     } catch (error) {
       // File doesn't exist or is invalid - start with empty history
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error('Error loading command history:', error);
+        logger.error('Error loading command history:', error);
       }
       this.history = [];
       this.loaded = true;
@@ -117,7 +118,7 @@ export class CommandHistory {
       // Write directly (atomic operation not strictly necessary for history)
       await fs.writeFile(this.storagePath, JSON.stringify(this.history, null, 2), 'utf-8');
     } catch (error) {
-      console.error('Error saving command history:', error);
+      logger.error('Error saving command history:', error);
       throw error;
     }
   }
@@ -155,7 +156,7 @@ export class CommandHistory {
 
     // Save to disk (debounced)
     this.save().catch(err => {
-      console.error('Failed to save command history:', err);
+      logger.error('Failed to save command history:', err);
     });
   }
 
@@ -299,7 +300,7 @@ export class CommandHistory {
         }
 
         this.save().catch(err => {
-          console.error('Failed to save imported history:', err);
+          logger.error('Failed to save imported history:', err);
         });
       }
     } catch (error) {

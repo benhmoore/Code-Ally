@@ -8,7 +8,7 @@ Code Ally's plugin system enables extending functionality through custom tools w
 
 **Key features:**
 - Two plugin types: executable and background RPC
-- Automatic dependency management (Python venvs)
+- Automatic dependency management (Python venvs, Node.js node_modules)
 - Session-scoped activation (always or tagged)
 - Event subscriptions for background plugins
 - Isolated execution environments
@@ -89,7 +89,7 @@ PluginLoader
     ├─ Discovers plugins in ~/.ally/plugins/
     ├─ Validates plugin.json manifests
     ├─ Calls PluginEnvironmentManager
-    │   └─ Creates venv, installs dependencies
+    │   └─ Creates venv/node_modules, installs dependencies
     ├─ Creates tool wrappers
     │   ├─ ExecutableToolWrapper (stdio)
     │   └─ BackgroundToolWrapper (RPC)
@@ -208,7 +208,7 @@ SocketClient
 3. Use venv Python: `~/.ally/plugin-envs/plugin-name/bin/python3`
 4. Subsequent loads use cached venv (instant)
 
-**Plugin manifest:**
+**Python manifest:**
 ```json
 {
   "runtime": "python3",
@@ -229,9 +229,19 @@ requests==2.31.0
 beautifulsoup4==4.12.0
 ```
 
-### Future: Node.js Support
+### Node.js Plugins
 
-Planned for future:
+**Implementation:** PluginEnvironmentManager
+
+**Process:**
+1. Check if `~/.ally/plugin-envs/plugin-name/node_modules/` exists
+2. If not:
+   - Install: `npm install` (reads package.json)
+   - Mark as installed: `.installed` file
+3. Set NODE_PATH: `~/.ally/plugin-envs/plugin-name/node_modules`
+4. Subsequent loads use cached modules (instant)
+
+**Node.js manifest:**
 ```json
 {
   "runtime": "node",
@@ -241,7 +251,23 @@ Planned for future:
 }
 ```
 
-Would create `~/.ally/plugin-envs/plugin-name/node_modules/`
+Code Ally automatically:
+- Creates node_modules directory
+- Installs dependencies
+- Sets NODE_PATH environment variable
+
+**Example package.json:**
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+```
 
 ## Plugin Activation
 
@@ -739,7 +765,8 @@ cat ~/.ally/plugins/my-plugin/plugin.json | jq .activationMode
 ## Plugin Examples
 
 See `examples/plugins/` for:
-- Executable plugin template
+- Python executable plugin template
+- Node.js executable plugin template (example-node)
 - Background RPC plugin template
 - Event subscription example
 - Configuration example

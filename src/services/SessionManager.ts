@@ -21,13 +21,30 @@ import { logger } from './Logger.js';
 import { TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
 
 /**
+ * Interface for ModelClient methods used by SessionManager
+ */
+export interface IModelClientForSessionManager {
+  send(messages: any[], options?: any): Promise<any>;
+  modelName: string;
+  endpoint: string;
+}
+
+/**
+ * Interface for SessionTitleGenerator
+ */
+export interface ISessionTitleGenerator {
+  generateTitleBackground(sessionName: string, firstUserMessage: string, sessionsDir: string): void;
+  cleanup?(): Promise<void>;
+}
+
+/**
  * Configuration for SessionManager
  */
 export interface SessionManagerConfig {
   /** Maximum number of sessions to keep before auto-cleanup */
   maxSessions?: number;
   /** Model client for title generation (optional) */
-  modelClient?: any;
+  modelClient?: IModelClientForSessionManager;
 }
 
 /**
@@ -37,7 +54,7 @@ export class SessionManager implements IService {
   private currentSession: string | null = null;
   private sessionsDir: string;
   private maxSessions: number;
-  private titleGenerator: any | null = null;
+  private titleGenerator: ISessionTitleGenerator | null = null;
 
   // Write queue to serialize file operations and prevent race conditions
   // Uses pure promise chaining - each new write waits for the previous one to complete
@@ -95,7 +112,7 @@ export class SessionManager implements IService {
    * Set the model client for title generation
    * Call this after service model client is created
    */
-  setModelClient(modelClient: any): void {
+  setModelClient(modelClient: IModelClientForSessionManager): void {
     this.titleGenerator = new SessionTitleGenerator(modelClient);
   }
 
@@ -203,7 +220,7 @@ export class SessionManager implements IService {
         return null;
       }
 
-      console.error(`Failed to load session ${sessionName}:`, error);
+      logger.error(`Failed to load session ${sessionName}:`, error);
       return null;
     }
   }
@@ -310,7 +327,7 @@ export class SessionManager implements IService {
 
       return true;
     } catch (error) {
-      console.error(`Failed to save session ${sessionName}:`, error);
+      logger.error(`Failed to save session ${sessionName}:`, error);
       return false;
     }
   }
@@ -383,7 +400,7 @@ export class SessionManager implements IService {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return false; // Already deleted
       }
-      console.error(`Failed to delete session ${sessionName}:`, error);
+      logger.error(`Failed to delete session ${sessionName}:`, error);
       return false;
     }
   }
@@ -542,11 +559,11 @@ export class SessionManager implements IService {
         try {
           await fs.unlink(path);
         } catch (error) {
-          console.error(`Failed to delete old session ${path}:`, error);
+          logger.error(`Failed to delete old session ${path}:`, error);
         }
       }
     } catch (error) {
-      console.error('Failed to cleanup old sessions:', error);
+      logger.error('Failed to cleanup old sessions:', error);
     }
   }
 
@@ -574,7 +591,7 @@ export class SessionManager implements IService {
       await this.saveSessionData(sessionName, session);
       return true;
     } catch (error) {
-      console.error(`Failed to update metadata for ${sessionName}:`, error);
+      logger.error(`Failed to update metadata for ${sessionName}:`, error);
       return false;
     }
   }
@@ -604,7 +621,7 @@ export class SessionManager implements IService {
       await this.saveSessionData(sessionName, session);
       return true;
     } catch (error) {
-      console.error(`Failed to update session ${sessionName}:`, error);
+      logger.error(`Failed to update session ${sessionName}:`, error);
       return false;
     }
   }
@@ -691,7 +708,7 @@ export class SessionManager implements IService {
       await this.saveSessionData(name, session);
       return true;
     } catch (error) {
-      console.error(`Failed to save todos for ${name}:`, error);
+      logger.error(`Failed to save todos for ${name}:`, error);
       return false;
     }
   }
@@ -774,7 +791,7 @@ export class SessionManager implements IService {
 
       return true;
     } catch (error) {
-      console.error(`Failed to auto-save session ${name}:`, error);
+      logger.error(`Failed to auto-save session ${name}:`, error);
       return false;
     }
   }

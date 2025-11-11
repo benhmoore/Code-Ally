@@ -121,7 +121,7 @@ export class AgentManager {
       await writeFile(filePath, content, 'utf-8');
       return true;
     } catch (error) {
-      console.error(`Error saving agent ${agent.name}:`, error);
+      logger.error(`Error saving agent ${agent.name}:`, error);
       return false;
     }
   }

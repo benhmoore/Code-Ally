@@ -58,12 +58,28 @@ const SAFE_CONCURRENT_TOOLS = new Set([
 ]);
 
 /**
+ * Interface for Agent methods used by ToolOrchestrator
+ * This breaks the circular dependency while maintaining type safety
+ */
+export interface IAgentForOrchestrator {
+  resetToolCallActivity(): void;
+  addMessage(message: any): void;
+  getToolAbortSignal(): AbortSignal | undefined;
+  getTurnStartTime(): number | undefined;
+  getMaxDuration(): number | undefined;
+  getTokenManager(): {
+    getContextUsagePercentage(): number;
+    trackToolResult(toolCallId: string, content: string): string | null;
+  };
+}
+
+/**
  * ToolOrchestrator coordinates tool execution
  */
 export class ToolOrchestrator {
   private toolManager: ToolManager;
   private activityStream: ActivityStream;
-  private agent: any; // Reference to parent agent (for adding messages)
+  private agent: IAgentForOrchestrator; // Reference to parent agent (for adding messages)
   private config: AgentConfig;
   private toolResultManager: ToolResultManager | null = null;
   private permissionManager: PermissionManager | null = null;
@@ -73,7 +89,7 @@ export class ToolOrchestrator {
   constructor(
     toolManager: ToolManager,
     activityStream: ActivityStream,
-    agent: any,
+    agent: IAgentForOrchestrator,
     config: AgentConfig,
     toolResultManager?: ToolResultManager,
     permissionManager?: PermissionManager

@@ -130,7 +130,7 @@ export class PathResolver {
       const resolvedPath = this.resolvePath(filePath);
       return focusManager.isPathInFocus(resolvedPath);
     } catch (error) {
-      console.warn(`Error checking focus for path: ${error}`);
+      logger.warn(`Error checking focus for path: ${error}`);
       return false;
     }
   }

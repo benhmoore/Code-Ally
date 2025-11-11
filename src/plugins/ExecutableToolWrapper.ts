@@ -132,15 +132,21 @@ export class ExecutableToolWrapper extends BaseTool {
 	 * @returns Object containing environment variables
 	 */
 	private getConfigEnvVars(): Record<string, string> {
-		if (!this.config || typeof this.config !== 'object') {
-			return {};
+		const envVars: Record<string, string> = {};
+
+		// Add config vars
+		if (this.config && typeof this.config === 'object') {
+			for (const [key, value] of Object.entries(this.config)) {
+				const envKey = `PLUGIN_CONFIG_${key.toUpperCase()}`;
+				envVars[envKey] = String(value);
+			}
 		}
 
-		const envVars: Record<string, string> = {};
-		for (const [key, value] of Object.entries(this.config)) {
-			const envKey = `PLUGIN_CONFIG_${key.toUpperCase()}`;
-			envVars[envKey] = String(value);
+		// Add NODE_PATH for Node.js plugins
+		if (this.manifest.runtime === 'node') {
+			envVars['NODE_PATH'] = this.envManager.getNodeModulesPath(this.manifest.name);
 		}
+
 		return envVars;
 	}
 

@@ -16,6 +16,16 @@ import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { CACHE_TIMEOUTS, BUFFER_SIZES, REASONING_EFFORT_API_VALUES } from '../config/constants.js';
 import { FuzzyFilePathMatcher, FuzzyMatchResult } from './FuzzyFilePathMatcher.js';
+import type { Config } from '../types/index.js';
+
+/**
+ * Interface for ConfigManager methods used by CompletionProvider
+ * This breaks the circular dependency between ConfigManager and CompletionProvider
+ */
+export interface IConfigManagerForCompletions {
+  getValue<K extends keyof Config>(key: K): Config[K];
+  getValue<K extends keyof Config>(key: K, defaultValue: Config[K]): Config[K];
+}
 
 export type CompletionType = 'command' | 'file' | 'directory' | 'option' | 'plugin';
 
@@ -114,7 +124,7 @@ const TODO_SUBCOMMANDS = [
  */
 export class CompletionProvider {
   private agentManager: AgentManager | null = null;
-  private configManager: any = null; // ConfigManager - using any to avoid circular deps
+  private configManager: IConfigManagerForCompletions | null = null;
   private agentNamesCache: string[] = [];
   private agentsCacheTime: number = 0;
   private commandNamesCache: string[] = [];
@@ -122,7 +132,7 @@ export class CompletionProvider {
   private readonly cacheTTL = CACHE_TIMEOUTS.COMPLETION_CACHE_TTL;
   private fuzzyMatcher: FuzzyFilePathMatcher;
 
-  constructor(agentManager?: AgentManager, configManager?: any) {
+  constructor(agentManager?: AgentManager, configManager?: IConfigManagerForCompletions) {
     this.agentManager = agentManager || null;
     this.configManager = configManager || null;
     this.fuzzyMatcher = new FuzzyFilePathMatcher(process.cwd());
@@ -145,7 +155,7 @@ export class CompletionProvider {
   /**
    * Set the config manager (for late binding)
    */
-  setConfigManager(configManager: any): void {
+  setConfigManager(configManager: IConfigManagerForCompletions): void {
     this.configManager = configManager;
   }
 
@@ -551,7 +561,7 @@ export class CompletionProvider {
     // For numbers, suggest the current value and some common alternatives
     if (type === 'number' && this.configManager) {
       try {
-        const currentValue = this.configManager.getValue(key);
+        const currentValue = this.configManager.getValue(key as keyof Config);
         if (typeof currentValue === 'number') {
           const suggestions: number[] = [currentValue];
 

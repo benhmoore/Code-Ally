@@ -4,6 +4,7 @@
 
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoItem } from '../services/TodoManager.js';
+import { logger } from '../services/Logger.js';
 
 /**
  * Auto-save todos to session
@@ -15,7 +16,7 @@ export async function autoSaveTodos(todos: TodoItem[]): Promise<void> {
     const sessionManager = registry.get('session_manager');
 
     if (!sessionManager || typeof (sessionManager as any).autoSave !== 'function') {
-      console.debug('[autoSaveTodos] SessionManager not available or autoSave not implemented');
+      logger.debug('[autoSaveTodos] SessionManager not available or autoSave not implemented');
       return;
     }
 
@@ -40,6 +41,6 @@ export async function autoSaveTodos(todos: TodoItem[]): Promise<void> {
 
     await (sessionManager as any).autoSave(messages, todos, idleMessages, projectContext);
   } catch (error) {
-    console.error('[autoSaveTodos] Failed to auto-save session:', error);
+    logger.error('[autoSaveTodos] Failed to auto-save session:', error);
   }
 }

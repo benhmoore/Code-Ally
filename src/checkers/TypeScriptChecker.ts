@@ -11,6 +11,7 @@ import * as os from 'os';
 import { spawn } from 'child_process';
 import { FileChecker, CheckResult, CheckIssue } from './types.js';
 import { API_TIMEOUTS } from '../config/constants.js';
+import { logger } from '../services/Logger.js';
 
 export class TypeScriptChecker implements FileChecker {
   readonly name = 'typescript';
@@ -57,7 +58,7 @@ export class TypeScriptChecker implements FileChecker {
         errors.push(...standaloneErrors);
       }
     } catch (error) {
-      console.warn(`[TypeScriptChecker] Check failed for ${filePath}:`, error);
+      logger.warn(`[TypeScriptChecker] Check failed for ${filePath}:`, error);
     }
 
     const elapsed = performance.now() - start;
@@ -186,7 +187,9 @@ export class TypeScriptChecker implements FileChecker {
       return errors;
     } finally {
       // Clean up temporary directory
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch((error) => {
+        logger.debug(`Failed to clean up temporary directory ${tmpDir}:`, error);
+      });
     }
   }
 
@@ -220,7 +223,7 @@ export class TypeScriptChecker implements FileChecker {
         severity: 'error',
       };
     } catch (error) {
-      console.warn('[TypeScriptChecker] Failed to parse error line:', line, error);
+      logger.warn('[TypeScriptChecker] Failed to parse error line:', line, error);
       return null;
     }
   }

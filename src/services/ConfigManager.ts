@@ -11,6 +11,7 @@ import path from 'path';
 import type { Config, IService } from '../types/index.js';
 import { DEFAULT_CONFIG, validateConfigValue } from '../config/defaults.js';
 import { CONFIG_FILE, ensureDirectories } from '../config/paths.js';
+import { logger } from './Logger.js';
 
 export class ConfigManager implements IService {
   private _config: Config;
@@ -67,7 +68,7 @@ export class ConfigManager implements IService {
           if (validation.valid) {
             (this._config as any)[key] = validation.coercedValue;
           } else {
-            console.warn(
+            logger.warn(
               `Invalid config value for '${key}': ${validation.error}. Using default.`
             );
           }
@@ -79,16 +80,16 @@ export class ConfigManager implements IService {
       // If unknown keys were found, clean the config file
       if (unknownKeys.length > 0) {
         await this.saveConfig();
-        console.log(`\nConfig cleanup: Removed unknown keys: ${unknownKeys.join(', ')}\n`);
+        logger.info(`\nConfig cleanup: Removed unknown keys: ${unknownKeys.join(', ')}\n`);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         // Config file doesn't exist - use defaults and create it
         await this.saveConfig();
       } else if (error instanceof SyntaxError) {
-        console.error('Error parsing config file - using defaults:', error.message);
+        logger.error('Error parsing config file - using defaults:', error.message);
       } else {
-        console.error('Error loading config - using defaults:', error);
+        logger.error('Error loading config - using defaults:', error);
       }
     }
   }
@@ -106,7 +107,7 @@ export class ConfigManager implements IService {
       const content = JSON.stringify(this._config, null, 2);
       await fs.writeFile(this._configPath, content, 'utf-8');
     } catch (error) {
-      console.error('Error saving config:', error);
+      logger.error('Error saving config:', error);
       throw error;
     }
   }

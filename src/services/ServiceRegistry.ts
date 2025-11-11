@@ -7,14 +7,15 @@
 
 import { ServiceLifecycle, IService } from '../types/index.js';
 import type { PluginActivationManager } from '../plugins/PluginActivationManager.js';
+import { logger } from './Logger.js';
 
-export class ServiceDescriptor<T> {
+export class ServiceDescriptor<T = unknown> {
   private _instance?: T;
   private _initPromise?: Promise<void>;
   private _initializing: boolean = false;
 
   constructor(
-    public readonly serviceType: new (...args: any[]) => T,
+    public readonly serviceType: new (...args: unknown[]) => T,
     public readonly factory?: () => T,
     public readonly lifecycle: ServiceLifecycle = ServiceLifecycle.SINGLETON,
     public readonly dependencies?: Record<string, string>
@@ -34,7 +35,7 @@ export class ServiceDescriptor<T> {
     }
 
     // Resolve dependencies
-    const resolvedDeps: any[] = [];
+    const resolvedDeps: unknown[] = [];
     if (this.dependencies) {
       for (const [_paramName, serviceName] of Object.entries(this.dependencies)) {
         const dependency = registry.get(serviceName);
@@ -59,7 +60,7 @@ export class ServiceDescriptor<T> {
         this._initializing = true;
         this._initPromise = instance.initialize()
           .catch(error => {
-            console.error(`Error initializing service ${this.serviceType.name}:`, error);
+            logger.error(`Error initializing service ${this.serviceType.name}:`, error);
           })
           .finally(() => {
             this._initializing = false;
@@ -85,12 +86,12 @@ export class ServiceDescriptor<T> {
     }
   }
 
-  private isIService(obj: any): obj is IService {
+  private isIService(obj: unknown): obj is IService {
     return (
       typeof obj === 'object' &&
       obj !== null &&
-      typeof obj.initialize === 'function' &&
-      typeof obj.cleanup === 'function'
+      typeof (obj as IService).initialize === 'function' &&
+      typeof (obj as IService).cleanup === 'function'
     );
   }
 }
@@ -98,8 +99,8 @@ export class ServiceDescriptor<T> {
 export class ServiceRegistry {
   private static _instance?: ServiceRegistry;
 
-  private _services: Map<string, any>;
-  private _descriptors: Map<string, ServiceDescriptor<any>>;
+  private _services: Map<string, unknown>;
+  private _descriptors: Map<string, ServiceDescriptor<unknown>>;
 
   private constructor() {
     this._services = new Map();
@@ -119,9 +120,9 @@ export class ServiceRegistry {
   /**
    * Register a singleton service (single instance, cached after creation)
    */
-  registerSingleton<T>(
+  registerSingleton<T = unknown>(
     name: string,
-    serviceType: new (...args: any[]) => T,
+    serviceType: new (...args: unknown[]) => T,
     factory?: () => T,
     dependencies?: Record<string, string>
   ): this {
@@ -138,9 +139,9 @@ export class ServiceRegistry {
   /**
    * Register a transient service (new instance each time)
    */
-  registerTransient<T>(
+  registerTransient<T = unknown>(
     name: string,
-    serviceType: new (...args: any[]) => T,
+    serviceType: new (...args: unknown[]) => T,
     factory?: () => T,
     dependencies?: Record<string, string>
   ): this {
@@ -169,7 +170,7 @@ export class ServiceRegistry {
    * to maintain backward compatibility. If you need to ensure initialization is complete,
    * use getRequired() or manually call ensureServiceInitialized() after getting the instance.
    */
-  get<T>(name: string, _serviceType?: new (...args: any[]) => T): T | null {
+  get<T = unknown>(name: string, _serviceType?: new (...args: unknown[]) => T): T | null {
     // Check direct instances first
     if (this._services.has(name)) {
       return this._services.get(name) as T;
@@ -199,7 +200,7 @@ export class ServiceRegistry {
   /**
    * Get a required service (throws if not found)
    */
-  getRequired<T>(name: string, _serviceType?: new (...args: any[]) => T): T {
+  getRequired<T = unknown>(name: string, _serviceType?: new (...args: unknown[]) => T): T {
     const service = this.get<T>(name);
     if (!service) {
       throw new Error(`Required service '${name}' not found in registry`);
@@ -225,7 +226,7 @@ export class ServiceRegistry {
       if (this.isIService(instance)) {
         cleanupPromises.push(
           instance.cleanup().catch(error => {
-            console.error(`Error cleaning up service ${name}:`, error);
+            logger.error(`Error cleaning up service ${name}:`, error);
           })
         );
       }
@@ -235,7 +236,7 @@ export class ServiceRegistry {
       if (descriptor['_instance'] && this.isIService(descriptor['_instance'])) {
         cleanupPromises.push(
           descriptor['_instance'].cleanup().catch(error => {
-            console.error(`Error cleaning up service ${name}:`, error);
+            logger.error(`Error cleaning up service ${name}:`, error);
           })
         );
       }
@@ -248,12 +249,12 @@ export class ServiceRegistry {
     this._descriptors.clear();
   }
 
-  private isIService(obj: any): obj is IService {
+  private isIService(obj: unknown): obj is IService {
     return (
       typeof obj === 'object' &&
       obj !== null &&
-      typeof obj.initialize === 'function' &&
-      typeof obj.cleanup === 'function'
+      typeof (obj as IService).initialize === 'function' &&
+      typeof (obj as IService).cleanup === 'function'
     );
   }
 
@@ -284,7 +285,7 @@ export class ServiceRegistry {
  * Reads fall back to the base registry when no local override exists.
  */
 export class ScopedServiceRegistryProxy {
-  private _overrides: Map<string, any>;
+  private _overrides: Map<string, unknown>;
 
   constructor(private _base: ServiceRegistry) {
     this._overrides = new Map();
@@ -301,7 +302,7 @@ export class ScopedServiceRegistryProxy {
   /**
    * Get a service (checks overrides first, then base registry)
    */
-  get<T>(name: string, _serviceType?: new (...args: any[]) => T): T | null {
+  get<T = unknown>(name: string, _serviceType?: new (...args: unknown[]) => T): T | null {
     if (this._overrides.has(name)) {
       return this._overrides.get(name) as T;
     }
@@ -311,7 +312,7 @@ export class ScopedServiceRegistryProxy {
   /**
    * Get a required service
    */
-  getRequired<T>(name: string, _serviceType?: new (...args: any[]) => T): T {
+  getRequired<T = unknown>(name: string, _serviceType?: new (...args: unknown[]) => T): T {
     const service = this.get<T>(name);
     if (!service) {
       throw new Error(`Required service '${name}' not found in scoped registry`);

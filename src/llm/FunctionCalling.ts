@@ -11,6 +11,7 @@
 
 import { FunctionDefinition, ParameterSchema } from '../types/index.js';
 import { TEXT_LIMITS } from '../config/constants.js';
+import { logger } from '../services/Logger.js';
 
 /**
  * Tool schema definition (simplified)
@@ -111,8 +112,8 @@ export function parseToolCallArguments(args: string | Record<string, any>): Reco
     try {
       return JSON.parse(args);
     } catch (error) {
-      console.warn('Failed to parse tool call arguments:', error);
-      console.warn('Invalid JSON string:', args.substring(0, TEXT_LIMITS.MESSAGE_PREVIEW_MAX) + (args.length > TEXT_LIMITS.MESSAGE_PREVIEW_MAX ? '...' : ''));
+      logger.warn('Failed to parse tool call arguments:', error);
+      logger.warn('Invalid JSON string:', args.substring(0, TEXT_LIMITS.MESSAGE_PREVIEW_MAX) + (args.length > TEXT_LIMITS.MESSAGE_PREVIEW_MAX ? '...' : ''));
       return {};
     }
   }
