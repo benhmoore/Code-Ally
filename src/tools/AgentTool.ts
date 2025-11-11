@@ -19,7 +19,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.js';
+import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT, ID_GENERATION } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 
@@ -173,7 +173,7 @@ export class AgentTool extends BaseTool {
         }
 
         // Generate tool call ID
-        const toolCallId = `read-context-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        const toolCallId = `read-context-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
 
         // Create assistant message with tool_calls
         const assistantMessage: Message = {

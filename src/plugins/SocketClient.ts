@@ -318,7 +318,7 @@ export class SocketClient {
           cleanup();
           reject(
             new Error(
-              `Socket closed with incomplete response: ${dataBuffer.substring(0, 200)}`
+              `Socket closed with incomplete response: ${dataBuffer.substring(0, PLUGIN_CONSTRAINTS.MAX_ERROR_MESSAGE_PREVIEW_LENGTH)}`
             )
           );
         }
@@ -392,7 +392,7 @@ export class SocketClient {
           `[SocketClient] Notification timeout (non-fatal): socket=${socketPath}, method=${method}`
         );
         resolve(); // Resolve anyway, fire-and-forget
-      }, 5000);
+      }, PLUGIN_TIMEOUTS.NOTIFICATION_TIMEOUT);
 
       /**
        * Connection established - send the notification

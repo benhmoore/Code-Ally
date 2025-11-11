@@ -7,7 +7,7 @@
  */
 
 import React, { createContext, useContext } from 'react';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 
 /**
  * Context for ActivityStream

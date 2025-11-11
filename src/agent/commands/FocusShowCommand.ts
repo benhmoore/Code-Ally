@@ -5,10 +5,10 @@
  */
 
 import { Command } from './Command.js';
-import type { Message } from '../../types/index.js';
-import type { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import type { Message } from '@shared/index.js';
+import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { FocusManager } from '../../services/FocusManager.js';
+import type { FocusManager } from '@services/FocusManager.js';
 
 export class FocusShowCommand extends Command {
   readonly name = '/focus-show';

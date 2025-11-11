@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { LsTool } from '../LsTool.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';

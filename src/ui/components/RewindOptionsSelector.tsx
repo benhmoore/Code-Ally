@@ -15,7 +15,7 @@
 
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { Message } from '../../types/index.js';
+import { Message } from '@shared/index.js';
 
 /**
  * File change statistics

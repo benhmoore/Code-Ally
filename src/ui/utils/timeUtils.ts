@@ -2,7 +2,7 @@
  * Time formatting utilities for UI display and agent duration management
  */
 
-import { TIME_UNITS, THOROUGHNESS_MAX_TOKENS } from '../../config/constants.js';
+import { TIME_UNITS, THOROUGHNESS_MAX_TOKENS } from '@config/constants.js';
 
 /**
  * Valid thoroughness levels for agent execution

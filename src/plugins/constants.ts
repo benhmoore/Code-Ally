@@ -40,6 +40,12 @@ export const PLUGIN_TIMEOUTS = {
   BACKGROUND_PROCESS_RESTART_DELAY: 5000,
   /** JSON-RPC request timeout (30 seconds) */
   RPC_REQUEST_TIMEOUT: 30000,
+  /** Notification timeout for fire-and-forget delivery (5 seconds) */
+  NOTIFICATION_TIMEOUT: 5000,
+  /** Socket polling interval during startup verification (500 ms) */
+  SOCKET_POLL_INTERVAL: 500,
+  /** Socket connection check timeout (1 second) */
+  SOCKET_CONNECTION_CHECK_TIMEOUT: 1000,
 } as const;
 
 /**
@@ -50,6 +56,10 @@ export const PLUGIN_CONSTRAINTS = {
   MAX_SOCKET_PATH_LENGTH: 104,
   /** Maximum RPC response size in bytes (10 MB) */
   MAX_RPC_RESPONSE_SIZE: 10 * 1024 * 1024,
+  /** Maximum event data size in bytes (1 MB) */
+  MAX_EVENT_DATA_SIZE: 1024 * 1024,
+  /** Maximum length for error message preview in logs (200 chars) */
+  MAX_ERROR_MESSAGE_PREVIEW_LENGTH: 200,
 } as const;
 
 /**

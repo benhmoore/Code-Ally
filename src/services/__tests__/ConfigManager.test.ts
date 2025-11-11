@@ -9,7 +9,7 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { ConfigManager } from '../ConfigManager.js';
-import { DEFAULT_CONFIG } from '../../config/defaults.js';
+import { DEFAULT_CONFIG } from '@config/defaults.js';
 
 describe('ConfigManager', () => {
   let tempDir: string;

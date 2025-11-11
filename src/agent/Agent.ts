@@ -23,6 +23,9 @@ import { InterruptionManager } from './InterruptionManager.js';
 import { ActivityMonitor } from './ActivityMonitor.js';
 import { RequiredToolTracker } from './RequiredToolTracker.js';
 import { MessageValidator } from './MessageValidator.js';
+import { ConversationManager } from './ConversationManager.js';
+import { CycleDetector } from './CycleDetector.js';
+import { TurnManager } from './TurnManager.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { ConfigManager } from '../services/ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
@@ -31,10 +34,9 @@ import { Message, ActivityEventType, Config } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT } from '../config/constants.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 import * as crypto from 'crypto';
-import * as fs from 'fs';
 
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
@@ -75,8 +77,7 @@ export class Agent {
   private toolOrchestrator: ToolOrchestrator;
   private config: AgentConfig;
 
-  // Conversation state
-  private messages: Message[] = [];
+  // Request state
   private requestInProgress: boolean = false;
 
   // Interruption management - delegated to InterruptionManager
@@ -89,15 +90,6 @@ export class Agent {
   // Agent instance ID for debugging
   private readonly instanceId: string;
 
-  // Turn start time for specialized agents - tracks when agent execution began
-  private turnStartTime?: number;
-
-  // Maximum duration for this agent in minutes (optional, can be updated per turn)
-  private maxDuration?: number;
-
-  // Performance tracking: timestamp when user prompt was received
-  // private userPromptTimestamp?: number;
-
   // Activity monitoring - detects agents stuck generating tokens without tool calls
   private activityMonitor: ActivityMonitor;
 
@@ -107,15 +99,14 @@ export class Agent {
   // Message validation - delegated to MessageValidator
   private messageValidator: MessageValidator;
 
-  // Tool call cycle detection - tracks recent tool calls to detect repetitive patterns
-  private toolCallHistory: Array<{
-    signature: string;
-    toolName: string;
-    timestamp: number;
-    fileHashes?: Map<string, string>; // For read ops, track file content hashes
-  }> = [];
-  private readonly MAX_TOOL_HISTORY = 15;
-  private readonly CYCLE_THRESHOLD = 3; // Same signature 3 times = warning
+  // Conversation management - delegated to ConversationManager
+  private conversationManager: ConversationManager;
+
+  // Cycle detection - delegated to CycleDetector
+  private cycleDetector: CycleDetector;
+
+  // Turn management - delegated to TurnManager
+  private turnManager: TurnManager;
 
   // Timeout continuation tracking - counts attempts to continue after activity timeout
   private timeoutContinuationAttempts: number = 0;
@@ -139,17 +130,33 @@ export class Agent {
     this.config = config;
 
     // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
-    this.instanceId = `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    this.instanceId = `agent-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
+
+    // Create conversation manager
+    this.conversationManager = new ConversationManager({
+      instanceId: this.instanceId,
+      initialMessages: [], // Will add system prompt and initial messages below
+    });
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'ConversationManager created');
+
+    // Create cycle detector
+    this.cycleDetector = new CycleDetector({
+      maxHistory: AGENT_CONFIG.MAX_TOOL_HISTORY,
+      cycleThreshold: AGENT_CONFIG.CYCLE_THRESHOLD,
+      instanceId: this.instanceId,
+    });
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'CycleDetector created');
+
+    // Create turn manager
+    this.turnManager = new TurnManager({
+      maxDuration: config.maxDuration,
+      instanceId: this.instanceId,
+    });
 
     // Initialize turn start time for specialized agents
     if (config.isSpecializedAgent) {
-      (this as any).turnStartTime = Date.now();
-    }
-
-    // Store maximum duration if provided
-    if (config.maxDuration !== undefined) {
-      (this as any).maxDuration = config.maxDuration;
+      this.turnManager.startTurn();
     }
 
     // Create interruption manager
@@ -165,7 +172,7 @@ export class Agent {
 
     // Create message validator
     this.messageValidator = new MessageValidator({
-      maxAttempts: 2,
+      maxAttempts: AGENT_CONFIG.MAX_VALIDATION_ATTEMPTS,
       instanceId: this.instanceId,
     });
 
@@ -221,7 +228,7 @@ export class Agent {
         role: 'system' as const,
         content: config.systemPrompt,
       };
-      this.messages.push(systemMessage);
+      this.conversationManager.addMessage(systemMessage);
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt added, length:', config.systemPrompt.length);
 
       // Emit system prompt event if configured
@@ -249,20 +256,18 @@ export class Agent {
       }
 
       // Update token count with initial system message
-      this.tokenManager.updateTokenCount(this.messages);
+      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
       const initialUsage = this.tokenManager.getContextUsagePercentage();
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Initial context usage:', initialUsage + '%');
     }
 
     // Add initial messages if provided (e.g., context files for agents)
     if (config.initialMessages && config.initialMessages.length > 0) {
-      for (const message of config.initialMessages) {
-        this.addMessage(message);
-      }
+      this.conversationManager.addMessages(config.initialMessages);
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added', config.initialMessages.length, 'initial messages');
 
       // Update token count after adding initial messages
-      this.tokenManager.updateTokenCount(this.messages);
+      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
       const contextUsage = this.tokenManager.getContextUsagePercentage();
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Context usage after initial messages:', contextUsage + '%');
     }
@@ -377,16 +382,14 @@ export class Agent {
     this.startActivityMonitoring();
 
     // Clear tool call cycle history on new user input
-    this.toolCallHistory = [];
-    logger.debug('[AGENT_CYCLE_DETECTION]', this.instanceId, 'Cleared cycle history on new user message');
+    this.cycleDetector.clearHistory();
 
     // Reset timeout continuation counter on new user input
     this.timeoutContinuationAttempts = 0;
 
     // Reset turn start time for specialized agents on each new turn
-    if (this.config.isSpecializedAgent && this.maxDuration !== undefined) {
-      this.turnStartTime = Date.now();
-      logger.debug('[AGENT_TURN]', this.instanceId, 'Reset turn start time for new turn');
+    if (this.config.isSpecializedAgent && this.turnManager.getMaxDuration() !== undefined) {
+      this.turnManager.resetTurn();
     }
 
     // Parse and activate/deactivate plugins from the message
@@ -410,7 +413,7 @@ export class Agent {
           content: `[System: ${messageParts.join('. ')}. Tools from active plugins are now available.]`,
           timestamp: Date.now(),
         };
-        this.messages.push(systemMessage);
+        this.conversationManager.addMessage(systemMessage);
       } else {
         logger.debug('[AGENT_PLUGIN_ACTIVATION] No plugins activated or deactivated from tags');
       }
@@ -430,7 +433,7 @@ export class Agent {
       content: message,
       timestamp: Date.now(),
     };
-    this.messages.push(userMessage);
+    this.conversationManager.addMessage(userMessage);
 
     // === PERF: User prompt received ===
     // this.userPromptTimestamp = Date.now();
@@ -443,7 +446,7 @@ export class Agent {
         content: '<system-reminder>\nUser interrupted. Prioritize answering their new prompt over continuing your todo list. After responding, reassess if the todo list is still relevant. Do not blindly continue with pending todos.\n</system-reminder>',
         timestamp: Date.now(),
       };
-      this.messages.push(systemReminder);
+      this.conversationManager.addMessage(systemReminder);
       logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Injected system reminder after interruption');
 
       // Reset the flag after injecting the reminder
@@ -488,7 +491,7 @@ export class Agent {
           content: reminderContent,
           timestamp: Date.now(),
         };
-        this.messages.push(systemReminder);
+        this.conversationManager.addMessage(systemReminder);
         logger.debug('[AGENT_TODO_REMINDER]', this.instanceId, 'Injected todo reminder system message');
       }
     }
@@ -633,7 +636,7 @@ export class Agent {
    * Called when user submits message mid-response
    */
   addUserInterjection(message: string): void {
-    this.messages.push({
+    this.conversationManager.addMessage({
       role: 'user',
       content: message,
       timestamp: Date.now(),
@@ -667,7 +670,7 @@ export class Agent {
    * @returns Turn start timestamp (ms since epoch) if specialized agent, undefined otherwise
    */
   getTurnStartTime(): number | undefined {
-    return this.turnStartTime;
+    return this.turnManager.getTurnStartTime();
   }
 
   /**
@@ -676,7 +679,7 @@ export class Agent {
    * @returns Maximum duration in minutes if set, undefined otherwise
    */
   getMaxDuration(): number | undefined {
-    return this.maxDuration;
+    return this.turnManager.getMaxDuration();
   }
 
   /**
@@ -685,8 +688,7 @@ export class Agent {
    * @param minutes - Maximum duration in minutes
    */
   setMaxDuration(minutes: number | undefined): void {
-    this.maxDuration = minutes;
-    logger.debug('[AGENT_DURATION]', this.instanceId, 'Updated maxDuration to', minutes, 'minutes');
+    this.turnManager.setMaxDuration(minutes);
   }
 
   /**
@@ -703,7 +705,7 @@ export class Agent {
 
     // Regenerate system prompt with current context (todos, etc.) before each LLM call
     // Works for both main agent and specialized agents
-    if (this.messages[0]?.role === 'system') {
+    if (this.conversationManager.getSystemMessage()?.role === 'system') {
       let updatedSystemPrompt: string;
 
       if (this.config.isSpecializedAgent && this.config.baseAgentPrompt && this.config.taskPrompt) {
@@ -728,16 +730,16 @@ export class Agent {
         logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Main agent prompt regenerated with current context');
       }
 
-      this.messages[0].content = updatedSystemPrompt;
+      this.conversationManager.getSystemMessage()!.content = updatedSystemPrompt;
     }
 
     // Auto-compaction: check if context usage exceeds threshold
     await this.checkAutoCompaction();
 
     // Log conversation state before sending to LLM
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Sending', this.messages.length, 'messages to LLM');
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Sending', this.conversationManager.getMessageCount(), 'messages to LLM');
     if (logger.isDebugEnabled()) {
-      this.messages.forEach((msg, idx) => {
+      this.conversationManager.getMessages().forEach((msg, idx) => {
         const preview = msg.content.length > TEXT_LIMITS.MESSAGE_PREVIEW_MAX ? msg.content.slice(0, TEXT_LIMITS.MESSAGE_PREVIEW_MAX - 3) + '...' : msg.content;
         const toolInfo = msg.tool_calls ? ` toolCalls:${msg.tool_calls.length}` : '';
         const toolCallId = msg.tool_call_id ? ` toolCallId:${msg.tool_call_id}` : '';
@@ -760,45 +762,11 @@ export class Agent {
       // logger.info('[PERF_LLM_REQUEST]', this.instanceId, 'Sending request to LLM at', llmRequestTimestamp, 'preprocessing took:', preprocessingTime + 'ms');
 
       // === DEBUG: Print system prompt and tool context ===
-      // const systemPrompt = this.messages[0]?.role === 'system' ? this.messages[0].content : 'No system prompt';
+      // const systemPrompt = this.conversationManager.getSystemMessage()?.role === 'system' ? this.conversationManager.getSystemMessage()!.content : 'No system prompt';
       // const systemPromptTokens = Math.ceil(systemPrompt.length / 4); // Rough estimate: 1 token ≈ 4 chars
-      // console.log('\n========== SYSTEM PROMPT ==========');
-      // console.log(`Length: ${systemPrompt.length} characters (~${systemPromptTokens} tokens)`);
-      // console.log(systemPrompt);
-      // console.log('\n========== TOOLS ==========');
-      // const toolFunctions = functions as any;
-      // if (toolFunctions && Array.isArray(toolFunctions) && toolFunctions.length > 0) {
-      //   console.log(`Sending ${toolFunctions.length} tools:\n`);
-
-      //   // Calculate per-tool stats
-      //   const toolStats: Array<{name: string, chars: number, tokens: number}> = [];
-      //   toolFunctions.forEach((fn: any, idx: number) => {
-      //     const name = fn.name || fn.function?.name || 'unknown';
-      //     const toolJson = JSON.stringify(fn);
-      //     const chars = toolJson.length;
-      //     const tokens = Math.ceil(chars / 4);
-      //     toolStats.push({ name, chars, tokens });
-      //     console.log(`  ${idx + 1}. ${name.padEnd(25)} ${chars.toString().padStart(5)} chars (~${tokens.toString().padStart(4)} tokens)`);
-      //   });
-
-      //   // Sort by token count and show top offenders
-      //   const sorted = [...toolStats].sort((a, b) => b.tokens - a.tokens);
-      //   const schemaJson = JSON.stringify(toolFunctions);
-      //   const totalTokens = Math.ceil(schemaJson.length / 4);
-
-      //   console.log(`\n--- Summary ---`);
-      //   console.log(`Total tool schema: ${schemaJson.length} characters (~${totalTokens} tokens)`);
-      //   console.log(`\nTop 5 largest tools by token count:`);
-      //   sorted.slice(0, 5).forEach((tool, idx) => {
-      //     console.log(`  ${idx + 1}. ${tool.name.padEnd(25)} ~${tool.tokens} tokens`);
-      //   });
-      // } else {
-      //   console.log('No tools being sent');
-      // }
-      // console.log('===================================\n');
 
       // Send to model (includes system-reminder if present)
-      const response = await this.modelClient.send(this.messages, {
+      const response = await this.modelClient.send(this.conversationManager.getMessages(), {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
         stream: !this.config.isSpecializedAgent && this.config.config.parallel_tools,
@@ -811,11 +779,8 @@ export class Agent {
 
       // Remove system-reminder messages after receiving response
       // These are temporary context hints that should not persist
-      const originalLength = this.messages.length;
-      this.messages = this.messages.filter(msg =>
-        !(msg.role === 'system' && msg.content.includes('<system-reminder>'))
-      );
-      if (this.messages.length !== originalLength) {
+      const removedCount = this.conversationManager.removeSystemReminders();
+      if (removedCount > 0) {
         logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Removed system reminder after LLM response');
       }
 
@@ -823,9 +788,7 @@ export class Agent {
     } catch (error) {
       // Remove system-reminder messages even on error
       // These should not persist in conversation history
-      this.messages = this.messages.filter(msg =>
-        !(msg.role === 'system' && msg.content.includes('<system-reminder>'))
-      );
+      this.conversationManager.removeSystemReminders();
 
       // Emit error event
       this.emitEvent({
@@ -853,7 +816,7 @@ export class Agent {
       if (this.interruptionManager.getInterruptionType() === 'interjection') {
         // Preserve partial response if we have content
         if (response.content || response.tool_calls) {
-          this.messages.push({
+          this.conversationManager.addMessage({
             role: 'assistant',
             content: response.content || '',
             tool_calls: response.tool_calls?.map(tc => ({
@@ -913,7 +876,7 @@ export class Agent {
             content: '<system-reminder>\nYou exceeded the activity timeout without making tool calls. Please continue your work and make progress by calling tools or providing a response.\n</system-reminder>',
             timestamp: Date.now(),
           };
-          this.messages.push(continuationPrompt);
+          this.conversationManager.addMessage(continuationPrompt);
 
           // Reset interruption state and retry
           this.interruptionManager.reset();
@@ -963,7 +926,7 @@ export class Agent {
           thinking: response.thinking,
           timestamp: Date.now(),
         };
-        this.messages.push(assistantMessage);
+        this.conversationManager.addMessage(assistantMessage);
 
         // Add continuation prompt mentioning the error
         const continuationPrompt: Message = {
@@ -971,7 +934,7 @@ export class Agent {
           content: `<system-reminder>\nYour previous response encountered an error and was interrupted: ${response.error_message || 'Unknown error'}. Please continue where you left off.\n</system-reminder>`,
           timestamp: Date.now(),
         };
-        this.messages.push(continuationPrompt);
+        this.conversationManager.addMessage(continuationPrompt);
 
         // Get continuation from LLM
         logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after partial HTTP error response...');
@@ -1015,11 +978,11 @@ export class Agent {
         thinking: response.thinking,
         timestamp: Date.now(),
       };
-      this.messages.push(assistantMessage);
+      this.conversationManager.addMessage(assistantMessage);
 
       // Add continuation prompt with validation error details
       const continuationPrompt = this.messageValidator.createValidationRetryMessage(validationResult.errors);
-      this.messages.push(continuationPrompt);
+      this.conversationManager.addMessage(continuationPrompt);
 
       // Get continuation from LLM
       logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after validation errors...');
@@ -1063,7 +1026,7 @@ export class Agent {
         thinking: response.thinking,
         timestamp: Date.now(),
       };
-      this.messages.push(assistantMessage);
+      this.conversationManager.addMessage(assistantMessage);
 
       // Add generic continuation prompt
       const continuationPrompt: Message = {
@@ -1071,7 +1034,7 @@ export class Agent {
         content: '<system-reminder>\nYour response appears incomplete. Please continue where you left off.\n</system-reminder>',
         timestamp: Date.now(),
       };
-      this.messages.push(continuationPrompt);
+      this.conversationManager.addMessage(continuationPrompt);
 
       // Get continuation from LLM
       logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after truly empty response...');
@@ -1137,12 +1100,12 @@ export class Agent {
       thinking: response.thinking,
       timestamp: Date.now(),
     };
-    this.messages.push(assistantMessage);
+    this.conversationManager.addMessage(assistantMessage);
 
     // Auto-save after assistant message with tool calls
     this.autoSaveSession();
 
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.messages.length);
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.conversationManager.getMessageCount());
 
     // Check context usage for specialized agents (subagents)
     // Enforce stricter limit (WARNING threshold) to ensure room for final summary
@@ -1151,7 +1114,7 @@ export class Agent {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent at', contextUsage + '% context - blocking tool execution to preserve space for summary');
 
       // Remove the assistant message with tool calls we just added
-      this.messages.pop();
+      this.conversationManager.getMessages().slice(0, -1); this.conversationManager.setMessages(this.conversationManager.getMessages().slice(0, -1));
 
       // Add a system reminder instructing the agent to provide final summary
       const systemReminder: Message = {
@@ -1163,7 +1126,7 @@ export class Agent {
           '</system-reminder>',
         timestamp: Date.now(),
       };
-      this.messages.push(systemReminder);
+      this.conversationManager.addMessage(systemReminder);
 
       // Get final response from LLM (without executing tools)
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Requesting final summary from specialized agent...');
@@ -1173,7 +1136,7 @@ export class Agent {
     }
 
     // Detect cycles BEFORE executing tools
-    const cycles = this.detectToolCallCycles(unwrappedToolCalls);
+    const cycles = this.cycleDetector.detectCycles(unwrappedToolCalls);
     if (cycles.size > 0) {
       logger.debug('[AGENT_CYCLE_DETECTION]', this.instanceId, `Detected ${cycles.size} potential cycles`);
     }
@@ -1186,7 +1149,7 @@ export class Agent {
 
     try {
       await this.toolOrchestrator.executeToolCalls(toolCalls, cycles);
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.messages.length);
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.conversationManager.getMessageCount());
     } catch (error) {
       // Check if this is a permission denied error that triggered interruption
       if (isPermissionDeniedError(error)) {
@@ -1202,10 +1165,10 @@ export class Agent {
             content: JSON.stringify(PERMISSION_DENIED_TOOL_RESULT),
             timestamp: Date.now(),
           };
-          this.messages.push(toolResultMessage);
+          this.conversationManager.addMessage(toolResultMessage);
         }
 
-        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added permission denial tool results. Total messages now:', this.messages.length);
+        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added permission denial tool results. Total messages now:', this.conversationManager.getMessageCount());
 
         // Save session with permission denial context
         this.autoSaveSession();
@@ -1224,10 +1187,10 @@ export class Agent {
     }
 
     // Add tool calls to history for cycle detection (AFTER execution)
-    this.addToolCallsToHistory(unwrappedToolCalls);
+    this.cycleDetector.recordToolCalls(unwrappedToolCalls);
 
     // Check if cycle pattern is broken (3 consecutive different calls)
-    this.clearCycleHistoryIfBroken();
+    this.cycleDetector.clearIfBroken();
 
     // Track required tool calls
     if (this.requiredToolTracker.hasRequiredTools()) {
@@ -1265,25 +1228,14 @@ export class Agent {
    * Removes all messages marked as ephemeral
    */
   private cleanupEphemeralMessages(): void {
-    const originalLength = this.messages.length;
+    const removedCount = this.conversationManager.cleanupEphemeralMessages();
 
-    // Filter out ephemeral messages
-    this.messages = this.messages.filter(msg => {
-      const isEphemeral = msg.metadata?.ephemeral === true;
-      if (isEphemeral) {
-        logger.debug('[AGENT_EPHEMERAL]', this.instanceId,
-          `Removing ephemeral message: role=${msg.role}, tool_call_id=${msg.tool_call_id || 'n/a'}`);
-      }
-      return !isEphemeral;
-    });
-
-    const removedCount = originalLength - this.messages.length;
     if (removedCount > 0) {
       logger.debug('[AGENT_EPHEMERAL]', this.instanceId,
         `Cleaned up ${removedCount} ephemeral message(s)`);
 
       // Update token count after cleanup
-      this.tokenManager.updateTokenCount(this.messages);
+      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
 
       // Auto-save after cleanup
       this.autoSaveSession();
@@ -1323,7 +1275,7 @@ export class Agent {
           content: `[Error: ${errorMessage}]`,
           timestamp: Date.now(),
         };
-        this.messages.push(assistantMessage);
+        this.conversationManager.addMessage(assistantMessage);
         this.autoSaveSession();
 
         return `[Error: ${errorMessage}]`;
@@ -1335,8 +1287,8 @@ export class Agent {
         logger.debug(`[REQUIRED_TOOLS_DEBUG] Sending reminder to call: ${result.missingTools.join(', ')}`);
 
         const reminderMessage = this.requiredToolTracker.createWarningMessage(result.missingTools);
-        this.requiredToolTracker.setWarningMessageIndex(this.messages.length); // Track index before push
-        this.messages.push(reminderMessage);
+        this.requiredToolTracker.setWarningMessageIndex(this.conversationManager.getMessageCount()); // Track index before push
+        this.conversationManager.addMessage(reminderMessage);
 
         // Get new response from LLM
         logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, 'Requesting LLM to call required tools...');
@@ -1353,11 +1305,13 @@ export class Agent {
 
         // Remove the warning message from history if it exists
         const warningIndex = this.requiredToolTracker.getWarningMessageIndex();
-        if (warningIndex >= 0 && warningIndex < this.messages.length) {
-          const warningMessage = this.messages[warningIndex];
+        if (warningIndex >= 0 && warningIndex < this.conversationManager.getMessageCount()) {
+          const messages = this.conversationManager.getMessages();
+          const warningMessage = messages[warningIndex];
           if (warningMessage && warningMessage.role === 'system' && warningMessage.content.includes('must call the following required tool')) {
             logger.debug(`[REQUIRED_TOOLS_DEBUG] Removing satisfied warning from conversation history at index ${warningIndex}`);
-            this.messages.splice(warningIndex, 1);
+            messages.splice(warningIndex, 1);
+            this.conversationManager.setMessages(messages);
             this.requiredToolTracker.clearWarningMessageIndex();
           }
         }
@@ -1367,7 +1321,7 @@ export class Agent {
     // Handle empty content - attempt continuation if appropriate
     if (!content.trim() && !isRetry) {
       // Check if previous message had tool calls (indicates we're in follow-up after tools)
-      const lastMessage = this.messages[this.messages.length - 1];
+      const lastMessage = this.conversationManager.getLastMessage();
       const isAfterToolExecution = lastMessage?.role === 'assistant' && lastMessage?.tool_calls && lastMessage.tool_calls.length > 0;
 
       if (isAfterToolExecution) {
@@ -1380,7 +1334,7 @@ export class Agent {
           content: '<system-reminder>\nYou just executed tool calls but did not provide any response. Please provide your response now based on the tool results.\n</system-reminder>',
           timestamp: Date.now(),
         };
-        this.messages.push(continuationPrompt);
+        this.conversationManager.addMessage(continuationPrompt);
 
         // Get continuation from LLM
         logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after empty response...');
@@ -1404,7 +1358,7 @@ export class Agent {
         content: fallbackContent,
         timestamp: Date.now(),
       };
-      this.messages.push(assistantMessage);
+      this.conversationManager.addMessage(assistantMessage);
 
       // Clean up ephemeral messages BEFORE auto-save
       this.cleanupEphemeralMessages();
@@ -1432,7 +1386,7 @@ export class Agent {
       content: content,
       timestamp: Date.now(),
     };
-    this.messages.push(assistantMessage);
+    this.conversationManager.addMessage(assistantMessage);
 
     // Clean up ephemeral messages BEFORE auto-save
     // This ensures ephemeral content doesn't persist in session files
@@ -1562,7 +1516,7 @@ export class Agent {
 
     // Create a new session if none exists and we have user messages
     if (!currentSession) {
-      const hasUserMessages = this.messages.some(m => m.role === 'user');
+      const hasUserMessages = this.conversationManager.getMessages().some(m => m.role === 'user');
       if (hasUserMessages && typeof (sessionManager as any).generateSessionName === 'function') {
         const sessionName = (sessionManager as any).generateSessionName();
         await (sessionManager as any).createSession(sessionName);
@@ -1594,7 +1548,7 @@ export class Agent {
     }
 
     // Auto-save (non-blocking, fire and forget)
-    (sessionManager as any).autoSave(this.messages, todos, idleMessages, projectContext).catch((error: Error) => {
+    (sessionManager as any).autoSave(this.conversationManager.getMessages(), todos, idleMessages, projectContext).catch((error: Error) => {
       logger.error('[AGENT_SESSION]', this.instanceId, 'Failed to auto-save session:', error);
     });
   }
@@ -1611,10 +1565,10 @@ export class Agent {
       id: message.id || generateMessageId(),
       timestamp: message.timestamp || Date.now(),
     };
-    this.messages.push(messageWithMetadata);
+    this.conversationManager.addMessage(messageWithMetadata);
 
     // Update TokenManager with new message count
-    this.tokenManager.updateTokenCount(this.messages);
+    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
 
     // Emit context usage update event for real-time UI updates
     // Only emit for main agent, not specialized agents (subagents)
@@ -1632,7 +1586,7 @@ export class Agent {
     const toolInfo = message.tool_calls ? ` toolCalls:${message.tool_calls.length}` : '';
     const toolCallId = message.tool_call_id ? ` toolCallId:${message.tool_call_id}` : '';
     const toolName = message.name ? ` name:${message.name}` : '';
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Message added:', message.role, toolInfo, toolCallId, toolName, '- Total messages:', this.messages.length);
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Message added:', message.role, toolInfo, toolCallId, toolName, '- Total messages:', this.conversationManager.getMessageCount());
 
     // Auto-save session after adding message
     this.autoSaveSession();
@@ -1644,7 +1598,7 @@ export class Agent {
    * @returns Array of messages
    */
   getMessages(): Message[] {
-    return [...this.messages];
+    return this.conversationManager.getMessages();
   }
 
   /**
@@ -1653,11 +1607,11 @@ export class Agent {
    */
   setMessages(messages: Message[]): void {
     // Ensure all messages have IDs
-    this.messages = messages.map(msg => ({
+    this.conversationManager.setMessages(messages.map(msg => ({
       ...msg,
       id: msg.id || generateMessageId(),
-    }));
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages set, count:', this.messages.length);
+    })));
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages set, count:', this.conversationManager.getMessageCount());
   }
 
   /**
@@ -1667,11 +1621,11 @@ export class Agent {
    */
   updateMessagesAfterCompaction(compactedMessages: Message[]): void {
     // Ensure all messages have IDs
-    this.messages = compactedMessages.map(msg => ({
+    this.conversationManager.setMessages(compactedMessages.map(msg => ({
       ...msg,
       id: msg.id || generateMessageId(),
-    }));
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages updated after compaction, count:', this.messages.length);
+    })));
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages updated after compaction, count:', this.conversationManager.getMessageCount());
   }
 
   /**
@@ -1685,7 +1639,7 @@ export class Agent {
    */
   async rewindToMessage(userMessageIndex: number): Promise<string> {
     // Filter to user messages only
-    const userMessages = this.messages.filter(m => m.role === 'user');
+    const userMessages = this.conversationManager.getMessages().filter(m => m.role === 'user');
 
     if (userMessageIndex < 0 || userMessageIndex >= userMessages.length) {
       throw new Error(`Invalid message index: ${userMessageIndex}. Must be between 0 and ${userMessages.length - 1}`);
@@ -1698,7 +1652,7 @@ export class Agent {
     }
 
     // Find its position in the full messages array
-    const cutoffIndex = this.messages.findIndex(
+    const cutoffIndex = this.conversationManager.getMessages().findIndex(
       m => m.role === 'user' && m.timestamp === targetMessage.timestamp && m.content === targetMessage.content
     );
 
@@ -1707,13 +1661,13 @@ export class Agent {
     }
 
     // Preserve system message and truncate to just before the target message
-    const systemMessage = this.messages[0]?.role === 'system' ? this.messages[0] : null;
-    const truncatedMessages = this.messages.slice(systemMessage ? 1 : 0, cutoffIndex);
+    const systemMessage = this.conversationManager.getSystemMessage()?.role === 'system' ? this.conversationManager.getSystemMessage() : null;
+    const truncatedMessages = this.conversationManager.getMessages().slice(systemMessage ? 1 : 0, cutoffIndex);
 
     // Update messages to the truncated version
-    this.messages = systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages;
+    this.conversationManager.setMessages(systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages);
 
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Rewound to message', userMessageIndex, '- Total messages now:', this.messages.length);
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Rewound to message', userMessageIndex, '- Total messages now:', this.conversationManager.getMessageCount());
 
     // Return the target message content for pre-filling the input
     return targetMessage.content;
@@ -1750,9 +1704,9 @@ export class Agent {
     }
 
     // Context is full - validate we have enough messages for meaningful summarization (quality gate)
-    if (this.messages.length < BUFFER_SIZES.MIN_MESSAGES_TO_ATTEMPT_COMPACTION) {
+    if (this.conversationManager.getMessageCount() < BUFFER_SIZES.MIN_MESSAGES_TO_ATTEMPT_COMPACTION) {
       logger.debug('[AGENT_AUTO_COMPACT]', this.instanceId,
-        `Context at ${contextUsage}% (threshold: ${threshold}%) but only ${this.messages.length} messages - ` +
+        `Context at ${contextUsage}% (threshold: ${threshold}%) but only ${this.conversationManager.getMessageCount()} messages - ` +
         `too few to compact meaningfully. Consider increasing context_size if this occurs frequently.`);
       return;
     }
@@ -1774,16 +1728,16 @@ export class Agent {
       const compacted = await this.performCompaction();
 
       // Update messages
-      this.messages = compacted;
+      this.conversationManager.setMessages(compacted);
 
       // Update token count
-      this.tokenManager.updateTokenCount(this.messages);
+      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
 
       const newContextUsage = this.tokenManager.getContextUsagePercentage();
 
       // Get the last message's timestamp to place notice before it
       // Find the last non-system message timestamp
-      const lastMessageTimestamp = this.messages
+      const lastMessageTimestamp = this.conversationManager.getMessages()
         .filter(m => m.role !== 'system')
         .reduce((latest, msg) => Math.max(latest, msg.timestamp || 0), 0);
 
@@ -1799,7 +1753,7 @@ export class Agent {
           oldContextUsage: contextUsage,
           newContextUsage,
           threshold,
-          compactedMessages: this.messages,
+          compactedMessages: this.conversationManager.getMessages(),
         },
       });
 
@@ -1824,7 +1778,7 @@ export class Agent {
    * @returns Compacted message array
    */
   async compactConversation(
-    messages: Message[] = this.messages,
+    messages: Message[] = this.conversationManager.getMessages(),
     options: {
       customInstructions?: string;
       preserveLastUserMessage?: boolean;
@@ -1939,7 +1893,7 @@ export class Agent {
    * Delegates to compactConversation with auto-compact specific options
    */
   private async performCompaction(): Promise<Message[]> {
-    return this.compactConversation(this.messages, {
+    return this.compactConversation(this.conversationManager.getMessages(), {
       preserveLastUserMessage: true,
       timestampLabel: 'auto-compacted',
     });
@@ -1957,7 +1911,7 @@ export class Agent {
    */
   private generateId(): string {
     // Generate agent ID: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
-    return `agent-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    return `agent-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
   }
 
   /**
@@ -1969,217 +1923,6 @@ export class Agent {
     }
   }
 
-  /**
-   * Create a normalized signature for a tool call
-   * Used for cycle detection to identify identical tool calls
-   *
-   * @param toolCall - Tool call to create signature for
-   * @returns Normalized signature string
-   */
-  private createToolCallSignature(toolCall: {
-    function: { name: string; arguments: Record<string, any> };
-  }): string {
-    const { name, arguments: args } = toolCall.function;
-
-    // Start with tool name
-    let signature = name;
-
-    // Sort argument keys for consistency
-    const sortedKeys = Object.keys(args || {}).sort();
-
-    // Add each argument to signature
-    for (const key of sortedKeys) {
-      const value = args[key];
-
-      // Handle arrays specially (join with comma)
-      if (Array.isArray(value)) {
-        signature += `|${key}:${value.join(',')}`;
-      } else if (typeof value === 'object' && value !== null) {
-        // For objects, stringify and sort keys
-        signature += `|${key}:${JSON.stringify(value)}`;
-      } else {
-        signature += `|${key}:${value}`;
-      }
-    }
-
-    return signature;
-  }
-
-  /**
-   * Get hash of file content for tracking modifications
-   *
-   * @param filePath - Path to file
-   * @returns MD5 hash of file content or null if file doesn't exist
-   */
-  private getFileHash(filePath: string): string | null {
-    try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      return crypto.createHash('md5').update(content).digest('hex');
-    } catch (error) {
-      // File doesn't exist or can't be read
-      return null;
-    }
-  }
-
-  /**
-   * Check if a repeated read call is valid (file was modified)
-   *
-   * @param toolCall - Current tool call
-   * @param previousCalls - Previous history entries with same signature
-   * @returns True if file was modified between reads
-   */
-  private isValidFileRepeat(
-    toolCall: { function: { name: string; arguments: Record<string, any> } },
-    previousCalls: Array<{
-      signature: string;
-      toolName: string;
-      timestamp: number;
-      fileHashes?: Map<string, string>;
-    }>
-  ): boolean {
-    // Only applies to read tool
-    if (toolCall.function.name !== 'Read' && toolCall.function.name !== 'read') {
-      return false;
-    }
-
-    // Get file path from arguments
-    const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
-    if (!filePath) {
-      return false;
-    }
-
-    // Get current file hash
-    const currentHash = this.getFileHash(filePath);
-    if (!currentHash) {
-      return false; // File doesn't exist
-    }
-
-    // Check if any previous call has a different hash (file was modified)
-    for (const prevCall of previousCalls) {
-      if (prevCall.fileHashes && prevCall.fileHashes.has(filePath)) {
-        const prevHash = prevCall.fileHashes.get(filePath);
-        if (prevHash !== currentHash) {
-          return true; // File was modified
-        }
-      }
-    }
-
-    return false; // File unchanged
-  }
-
-  /**
-   * Detect tool call cycles in the current batch of tool calls
-   *
-   * @param toolCalls - Array of tool calls to check
-   * @returns Map of tool_call_id to cycle info (if cycle detected)
-   */
-  private detectToolCallCycles(
-    toolCalls: Array<{
-      id: string;
-      function: { name: string; arguments: Record<string, any> };
-    }>
-  ): Map<string, { toolName: string; count: number; isValidRepeat: boolean }> {
-    const cycles = new Map<string, { toolName: string; count: number; isValidRepeat: boolean }>();
-
-    for (const toolCall of toolCalls) {
-      const signature = this.createToolCallSignature(toolCall);
-
-      // Count occurrences in recent history
-      const previousCalls = this.toolCallHistory.filter(entry => entry.signature === signature);
-      const count = previousCalls.length + 1; // +1 for current call
-
-      if (count >= this.CYCLE_THRESHOLD) {
-        // Check if this is a valid repeat (file modification)
-        const isValidRepeat = this.isValidFileRepeat(toolCall, previousCalls);
-
-        cycles.set(toolCall.id, {
-          toolName: toolCall.function.name,
-          count,
-          isValidRepeat,
-        });
-
-        logger.debug(
-          '[AGENT_CYCLE_DETECTION]',
-          this.instanceId,
-          `Detected cycle: ${toolCall.function.name} called ${count} times (valid repeat: ${isValidRepeat})`
-        );
-      }
-    }
-
-    return cycles;
-  }
-
-  /**
-   * Add tool calls to history for cycle detection
-   *
-   * @param toolCalls - Tool calls to add to history
-   */
-  private addToolCallsToHistory(
-    toolCalls: Array<{
-      id: string;
-      function: { name: string; arguments: Record<string, any> };
-    }>
-  ): void {
-    for (const toolCall of toolCalls) {
-      const signature = this.createToolCallSignature(toolCall);
-      let fileHashes: Map<string, string> | undefined;
-
-      // For read tools, capture file hashes BEFORE execution
-      if (toolCall.function.name === 'Read' || toolCall.function.name === 'read') {
-        fileHashes = new Map();
-        const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
-
-        if (filePath) {
-          const hash = this.getFileHash(filePath);
-          if (hash) {
-            fileHashes.set(filePath, hash);
-          }
-        }
-
-        // Handle multiple file paths if provided
-        if (toolCall.function.arguments.file_paths && Array.isArray(toolCall.function.arguments.file_paths)) {
-          for (const path of toolCall.function.arguments.file_paths) {
-            const hash = this.getFileHash(path);
-            if (hash) {
-              fileHashes.set(path, hash);
-            }
-          }
-        }
-      }
-
-      this.toolCallHistory.push({
-        signature,
-        toolName: toolCall.function.name,
-        timestamp: Date.now(),
-        fileHashes,
-      });
-    }
-
-    // Trim history to max size (sliding window)
-    while (this.toolCallHistory.length > this.MAX_TOOL_HISTORY) {
-      this.toolCallHistory.shift();
-    }
-  }
-
-  /**
-   * Clear cycle history if the pattern is broken
-   * Called after tool execution to check if last 3 calls are all different
-   */
-  private clearCycleHistoryIfBroken(): void {
-    if (this.toolCallHistory.length < 3) {
-      return;
-    }
-
-    // Check last 3 entries
-    const last3 = this.toolCallHistory.slice(-3);
-    const signatures = last3.map(entry => entry.signature);
-
-    // If all different, cycle is broken - clear history
-    if (new Set(signatures).size === 3) {
-      logger.debug('[AGENT_CYCLE_DETECTION]', this.instanceId, 'Cycle broken - clearing history');
-      this.toolCallHistory = [];
-    }
-  }
 
   /**
    * Setup focus for this agent

@@ -187,7 +187,7 @@ export abstract class BaseTool {
    */
   protected emitOutputChunk(chunk: string): void {
     if (!this.currentCallId) {
-      console.warn(`[${this.name}] Cannot emit output chunk: no currentCallId set`);
+      logger.warn(`[${this.name}] Cannot emit output chunk: no currentCallId set`);
       return;
     }
 
@@ -208,7 +208,7 @@ export abstract class BaseTool {
    */
   protected emitDiffPreview(oldContent: string, newContent: string, filePath: string, operationType: 'edit' | 'write' | 'line_edit' = 'edit'): void {
     if (!this.currentCallId) {
-      console.warn(`[${this.name}] Cannot emit diff preview: no currentCallId set`);
+      logger.warn(`[${this.name}] Cannot emit diff preview: no currentCallId set`);
       return;
     }
 
@@ -489,7 +489,7 @@ export abstract class BaseTool {
       return patchNumber;
     } catch (error) {
       // Silently handle errors - patch capture should never break the tool
-      console.error(`[${this.name}] Failed to capture patch:`, error);
+      logger.error(`[${this.name}] Failed to capture patch:`, error);
       return null;
     }
   }

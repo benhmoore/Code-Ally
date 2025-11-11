@@ -7,7 +7,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { ActivityEventType, ToolStatus } from '../../types/index.js';
+import { ActivityEventType, ToolStatus } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 
 /**

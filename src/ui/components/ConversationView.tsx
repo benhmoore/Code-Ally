@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, Static, useStdout } from 'ink';
-import { Message, ToolCallState } from '../../types/index.js';
+import { Message, ToolCallState } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
 import { CompactionNotice, RewindNotice } from '../contexts/AppContext.js';
@@ -8,7 +8,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
-import { BUFFER_SIZES, TEXT_LIMITS } from '../../config/constants.js';
+import { BUFFER_SIZES, TEXT_LIMITS } from '@config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

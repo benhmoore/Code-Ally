@@ -6,10 +6,10 @@
  */
 
 import { Command } from './Command.js';
-import type { Message } from '../../types/index.js';
-import type { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import type { Message } from '@shared/index.js';
+import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { TodoManager } from '../../services/TodoManager.js';
+import type { TodoManager } from '@services/TodoManager.js';
 
 export class TodoCommand extends Command {
   readonly name = '/todo';

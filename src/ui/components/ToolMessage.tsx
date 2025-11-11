@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Box, Text } from 'ink';
-import { ToolCallState } from '../../types';
+import { ToolCallState } from '@shared/index.js';
 import { OutputScroller } from './OutputScroller';
-import { AnimationTicker } from '../../services/AnimationTicker.js';
+import { AnimationTicker } from '@services/AnimationTicker.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
-import { TEXT_LIMITS } from '../../config/constants.js';
+import { TEXT_LIMITS } from '@config/constants.js';
 
 // Simple text-based spinner animation
 const SimpleSpinner: React.FC = () => {

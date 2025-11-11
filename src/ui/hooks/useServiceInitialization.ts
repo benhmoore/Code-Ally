@@ -6,13 +6,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Agent } from '../../agent/Agent.js';
-import { CommandHistory } from '../../services/CommandHistory.js';
-import { CompletionProvider } from '../../services/CompletionProvider.js';
-import { CommandHandler } from '../../agent/CommandHandler.js';
-import { AgentManager } from '../../services/AgentManager.js';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { ConfigManager } from '../../services/ConfigManager.js';
+import { Agent } from '@agent/Agent.js';
+import { CommandHistory } from '@services/CommandHistory.js';
+import { CompletionProvider } from '@services/CompletionProvider.js';
+import { CommandHandler } from '@agent/CommandHandler.js';
+import { AgentManager } from '@services/AgentManager.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { ConfigManager } from '@services/ConfigManager.js';
 import { AppActions } from '../contexts/AppContext.js';
 
 /**

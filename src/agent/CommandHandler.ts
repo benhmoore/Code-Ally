@@ -18,6 +18,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TokenManager } from './TokenManager.js';
 import { logger } from '../services/Logger.js';
 import { Message, ActivityEventType } from '../types/index.js';
+import { ID_GENERATION } from '../config/constants.js';
 import {
   BUFFER_SIZES,
   TEXT_LIMITS,
@@ -166,8 +167,8 @@ export class CommandHandler {
    * Generate a random ID for events
    */
   private generateRandomId(): string {
-    // Generate event ID: evt-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
-    return `evt-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    // Generate event ID: evt-{timestamp}-{9-char-random} (base-36, skip '0.' prefix)
+    return `evt-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
   }
 
   // ===========================

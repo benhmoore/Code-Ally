@@ -7,22 +7,22 @@
  */
 
 import { useRef, useEffect, useState } from 'react';
-import { ActivityEventType, Message, ToolCallState } from '../../types/index.js';
+import { ActivityEventType, Message, ToolCallState } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
 import { reconstructInterjectionsFromMessages, reconstructToolCallsFromMessages, loadSessionData } from './useSessionResume.js';
-import { Agent } from '../../agent/Agent.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { ConfigManager } from '../../services/ConfigManager.js';
-import { SessionManager } from '../../services/SessionManager.js';
-import { PatchManager } from '../../services/PatchManager.js';
-import { ToolManager } from '../../tools/ToolManager.js';
-import { AgentManager } from '../../services/AgentManager.js';
-import { PluginConfigManager } from '../../plugins/PluginConfigManager.js';
-import { UI_DELAYS } from '../../config/constants.js';
-import { logger } from '../../services/Logger.js';
+import { Agent } from '@agent/Agent.js';
+import { ActivityStream } from '@services/ActivityStream.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { ConfigManager } from '@services/ConfigManager.js';
+import { SessionManager } from '@services/SessionManager.js';
+import { PatchManager } from '@services/PatchManager.js';
+import { ToolManager } from '@tools/ToolManager.js';
+import { AgentManager } from '@services/AgentManager.js';
+import { PluginConfigManager } from '@plugins/PluginConfigManager.js';
+import { UI_DELAYS } from '@config/constants.js';
+import { logger } from '@services/Logger.js';
 
 /**
  * Activity subscriptions state
@@ -579,7 +579,7 @@ export const useActivitySubscriptions = (
   // Plugin config request events
   useActivityEvent(ActivityEventType.PLUGIN_CONFIG_REQUEST, async (event) => {
     logger.debug('[App] Received PLUGIN_CONFIG_REQUEST event:', JSON.stringify(event.data, null, 2));
-    const { pluginName, pluginPath, schema } = event.data;
+    const { pluginName, pluginPath, schema, author, description, version, tools } = event.data;
 
     if (!pluginName || !pluginPath || !schema) {
       logger.error('[App] PLUGIN_CONFIG_REQUEST event missing required fields');
@@ -609,6 +609,10 @@ export const useActivitySubscriptions = (
       pluginPath,
       schema,
       existingConfig: existingConfig || {},
+      author,
+      description,
+      version,
+      tools,
     });
     logger.debug(`[App] pluginConfigRequest state should now be set`);
   });

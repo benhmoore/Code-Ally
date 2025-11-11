@@ -11,11 +11,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import { ToolCallState, ActivityEventType } from '../../types/index.js';
+import { ToolCallState, ActivityEventType } from '@shared/index.js';
 import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
-import { TEXT_LIMITS } from '../../config/constants.js';
+import { TEXT_LIMITS } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 
 interface ToolCallDisplayProps {

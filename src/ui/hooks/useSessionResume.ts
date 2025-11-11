@@ -6,14 +6,14 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Agent } from '../../agent/Agent.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { SessionManager } from '../../services/SessionManager.js';
-import { PatchManager } from '../../services/PatchManager.js';
-import { ToolManager } from '../../tools/ToolManager.js';
+import { Agent } from '@agent/Agent.js';
+import { ActivityStream } from '@services/ActivityStream.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { SessionManager } from '@services/SessionManager.js';
+import { PatchManager } from '@services/PatchManager.js';
+import { ToolManager } from '@tools/ToolManager.js';
 import { AppActions } from '../contexts/AppContext.js';
-import { Message, ToolCallState } from '../../types/index.js';
+import { Message, ToolCallState } from '@shared/index.js';
 import { SessionSelectRequest } from './useModalState.js';
 
 /**

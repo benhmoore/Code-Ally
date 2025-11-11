@@ -1,9 +1,9 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { useStdout } from 'ink';
-import { ToolCallState } from '../../types';
+import { ToolCallState } from '@shared/index.js';
 import { ToolMessage } from './ToolMessage';
-import { TEXT_LIMITS } from '../../config/constants.js';
+import { TEXT_LIMITS } from '@config/constants.js';
 
 interface ToolGroupMessageProps {
   /** Array of concurrent tool call states */

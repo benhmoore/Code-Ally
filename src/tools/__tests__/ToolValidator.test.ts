@@ -5,8 +5,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ToolValidator, ValidationResult } from '../ToolValidator.js';
 import { BaseTool } from '../BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../../types/index.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { ToolResult, FunctionDefinition } from '@shared/index.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 
 // Mock tool for testing
 class MockTool extends BaseTool {

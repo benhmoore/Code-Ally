@@ -3,10 +3,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { AgentTool } from '../../tools/AgentTool.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { AgentManager } from '../../services/AgentManager.js';
+import { AgentTool } from '@tools/AgentTool.js';
+import { ActivityStream } from '@services/ActivityStream.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { AgentManager } from '@services/AgentManager.js';
 import { mkdtemp, rm, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir, homedir } from 'os';

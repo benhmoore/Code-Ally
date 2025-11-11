@@ -11,7 +11,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { DiffDisplay } from './DiffDisplay.js';
-import type { UndoPreview } from '../../services/PatchManager.js';
+import type { UndoPreview } from '@services/PatchManager.js';
 
 export interface UndoRequest {
   /** Request ID for tracking */

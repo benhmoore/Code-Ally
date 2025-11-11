@@ -25,7 +25,23 @@
     "skipLibCheck": true,
     "jsx": "react",
     "jsxFactory": "React.createElement",
-    "jsxFragmentFactory": "React.Fragment"
+    "jsxFragmentFactory": "React.Fragment",
+    "baseUrl": ".",
+    "paths": {
+      "@agent/*": ["src/agent/*"],
+      "@agents/*": ["src/agents/*"],
+      "@services/*": ["src/services/*"],
+      "@tools/*": ["src/tools/*"],
+      "@utils/*": ["src/utils/*"],
+      "@config/*": ["src/config/*"],
+      "@llm/*": ["src/llm/*"],
+      "@security/*": ["src/security/*"],
+      "@checkers/*": ["src/checkers/*"],
+      "@plugins/*": ["src/plugins/*"],
+      "@ui/*": ["src/ui/*"],
+      "@shared/*": ["src/types/*"],
+      "@cli/*": ["src/cli/*"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.test.tsx"]

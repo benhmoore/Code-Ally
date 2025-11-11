@@ -9,15 +9,15 @@
  */
 
 import { useCallback } from 'react';
-import { Agent } from '../../agent/Agent.js';
-import { CommandHandler } from '../../agent/CommandHandler.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { ToolManager } from '../../tools/ToolManager.js';
+import { Agent } from '@agent/Agent.js';
+import { CommandHandler } from '@agent/CommandHandler.js';
+import { ActivityStream } from '@services/ActivityStream.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { ToolManager } from '@tools/ToolManager.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
-import { ActivityEventType } from '../../types/index.js';
-import { logger } from '../../services/Logger.js';
-import { PERMISSION_MESSAGES } from '../../config/constants.js';
+import { ActivityEventType } from '@shared/index.js';
+import { logger } from '@services/Logger.js';
+import { PERMISSION_MESSAGES } from '@config/constants.js';
 
 /**
  * Input handler functions

@@ -12,7 +12,7 @@ import * as os from 'os';
 import { WriteTool } from '../WriteTool.js';
 import { EditTool } from '../EditTool.js';
 import { LineEditTool } from '../LineEditTool.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 
 describe('Automatic File Checking After Modification', () => {
   let writeTool: WriteTool;

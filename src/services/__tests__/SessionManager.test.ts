@@ -9,7 +9,7 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SessionManager } from '../SessionManager.js';
-import { Message } from '../../types/index.js';
+import { Message } from '@shared/index.js';
 
 describe('SessionManager', () => {
   let tempDir: string;

@@ -10,8 +10,8 @@
 
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import type { AgentGenerationService } from '../../services/AgentGenerationService.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import type { AgentGenerationService } from '@services/AgentGenerationService.js';
 
 enum ConfigStep {
   DESCRIPTION,
@@ -263,7 +263,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
       const config = configManager?.getConfig();
       const endpoint = config?.endpoint || 'http://localhost:11434';
 
-      const { testModelToolCalling } = await import('../../llm/ModelValidation.js');
+      const { testModelToolCalling } = await import('@llm/ModelValidation.js');
       const result = await testModelToolCalling(endpoint, modelName);
 
       setModelSupportsTools(result.supportsTools);

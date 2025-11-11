@@ -8,9 +8,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ActivityStream } from '../ActivityStream.js';
-import { ActivityEventType } from '../../types/index.js';
-import type { ActivityEvent } from '../../types/index.js';
-import type { EventSubscriptionManager } from '../../plugins/EventSubscriptionManager.js';
+import { ActivityEventType } from '@shared/index.js';
+import type { ActivityEvent } from '@shared/index.js';
+import type { EventSubscriptionManager } from '@plugins/EventSubscriptionManager.js';
 
 describe('ActivityStream', () => {
   let stream: ActivityStream;

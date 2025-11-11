@@ -4,10 +4,10 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Agent } from '../Agent.js';
-import { ToolManager } from '../../tools/ToolManager.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
-import type { ModelClient, LLMResponse } from '../../llm/ModelClient.js';
-import type { Message, Config } from '../../types/index.js';
+import { ToolManager } from '@tools/ToolManager.js';
+import { ActivityStream } from '@services/ActivityStream.js';
+import type { ModelClient, LLMResponse } from '@llm/ModelClient.js';
+import type { Message, Config } from '@shared/index.js';
 
 describe('Agent - Interruption Handling', () => {
   let agent: Agent;

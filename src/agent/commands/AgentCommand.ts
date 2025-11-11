@@ -7,12 +7,12 @@
  */
 
 import { Command } from './Command.js';
-import { ActivityEventType } from '../../types/index.js';
-import type { Message } from '../../types/index.js';
-import type { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import { ActivityEventType } from '@shared/index.js';
+import type { Message } from '@shared/index.js';
+import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { AgentManager } from '../../services/AgentManager.js';
-import type { AgentPoolService } from '../../services/AgentPoolService.js';
+import type { AgentManager } from '@services/AgentManager.js';
+import type { AgentPoolService } from '@services/AgentPoolService.js';
 
 export class AgentCommand extends Command {
   readonly name = '/agent';

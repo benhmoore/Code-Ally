@@ -7,20 +7,25 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { PluginConfigSchema, ConfigProperty } from '../../plugins/PluginLoader.js';
-import { logger } from '../../services/Logger.js';
+import { PluginConfigSchema, ConfigProperty } from '@plugins/PluginLoader.js';
+import { logger } from '@services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
-import { PLUGIN_UI } from '../../plugins/constants.js';
+import { PLUGIN_UI } from '@plugins/constants.js';
 
 interface PluginConfigViewProps {
   pluginName: string;
   configSchema: PluginConfigSchema;
   existingConfig?: any;
+  author?: string;
+  description?: string;
+  version?: string;
+  tools?: any[];
   onComplete: (config: any) => void;
   onCancel: () => void;
 }
 
 enum ConfigStep {
+  SPLASHSCREEN,
   FIELD_INPUT,
   CONFIRM,
 }
@@ -29,10 +34,14 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
   pluginName,
   configSchema,
   existingConfig = {},
+  author,
+  description,
+  version,
+  tools = [],
   onComplete,
   onCancel,
 }) => {
-  const [step, setStep] = useState<ConfigStep>(ConfigStep.FIELD_INPUT);
+  const [step, setStep] = useState<ConfigStep>(ConfigStep.SPLASHSCREEN);
   const [fieldNames, setFieldNames] = useState<string[]>([]);
   const [currentFieldIndex, setCurrentFieldIndex] = useState(0);
   const [configValues, setConfigValues] = useState<Record<string, any>>({});
@@ -96,7 +105,12 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
       return;
     }
 
-    if (step === ConfigStep.FIELD_INPUT && currentProperty) {
+    if (step === ConfigStep.SPLASHSCREEN) {
+      // Press Enter to continue to field input
+      if (key.return) {
+        setStep(ConfigStep.FIELD_INPUT);
+      }
+    } else if (step === ConfigStep.FIELD_INPUT && currentProperty) {
       if (currentProperty.type === 'boolean') {
         // Boolean field - Y/N input
         if (PLUGIN_UI.BOOLEAN_YES.includes(input as any)) {
@@ -215,6 +229,64 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
     }
 
     onComplete(configValues);
+  };
+
+  const renderSplashscreen = () => {
+    return (
+      <>
+        <Box marginBottom={1} flexDirection="row" gap={1}>
+          <Text bold>
+            <ChickAnimation />
+          </Text>
+          <Text color="cyan" bold>
+            Plugin Installation
+          </Text>
+        </Box>
+
+        <Box marginBottom={1} flexDirection="column">
+          <Box marginBottom={1}>
+            <Text bold color="green">
+              {pluginName}
+            </Text>
+            {version && (
+              <Text dimColor> v{version}</Text>
+            )}
+          </Box>
+
+          {author && (
+            <Box marginBottom={1}>
+              <Text dimColor>by {author}</Text>
+            </Box>
+          )}
+
+          {description && (
+            <Box marginBottom={1}>
+              <Text>{description}</Text>
+            </Box>
+          )}
+
+          {tools && tools.length > 0 && (
+            <Box marginTop={1} flexDirection="column">
+              <Text bold>Tools ({tools.length}):</Text>
+              <Box marginTop={1} flexDirection="column" paddingLeft={2}>
+                {tools.map((tool: any, index: number) => (
+                  <Box key={index} marginBottom={0}>
+                    <Text dimColor>
+                      • <Text color="cyan">{tool.name}</Text>
+                      {tool.description && <Text> - {tool.description}</Text>}
+                    </Text>
+                  </Box>
+                ))}
+              </Box>
+            </Box>
+          )}
+        </Box>
+
+        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+          <Text dimColor>Press Enter to configure, ESC to cancel</Text>
+        </Box>
+      </>
+    );
   };
 
   const renderFieldInput = () => {
@@ -364,6 +436,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
         minHeight={PLUGIN_UI.CONFIG_VIEW_MIN_HEIGHT}
         width={PLUGIN_UI.CONFIG_VIEW_WIDTH}
       >
+        {step === ConfigStep.SPLASHSCREEN && renderSplashscreen()}
         {step === ConfigStep.FIELD_INPUT && renderFieldInput()}
         {step === ConfigStep.CONFIRM && renderConfirmation()}
       </Box>

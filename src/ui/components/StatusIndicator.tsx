@@ -8,19 +8,19 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { Box, Text } from 'ink';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { TodoManager, TodoItem } from '../../services/TodoManager.js';
-import { IdleMessageGenerator } from '../../services/IdleMessageGenerator.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
-import { ActivityEventType } from '../../types/index.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { TodoManager, TodoItem } from '@services/TodoManager.js';
+import { IdleMessageGenerator } from '@services/IdleMessageGenerator.js';
+import { ActivityStream } from '@services/ActivityStream.js';
+import { ActivityEventType } from '@shared/index.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
 import { formatElapsed } from '../utils/timeUtils.js';
-import { getGitBranch } from '../../utils/gitUtils.js';
-import { logger } from '../../services/Logger.js';
+import { getGitBranch } from '@utils/gitUtils.js';
+import { logger } from '@services/Logger.js';
 import * as os from 'os';
 import * as path from 'path';
-import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '../../config/constants.js';
+import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '@config/constants.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -72,6 +72,12 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   const previousTaskRef = useRef<string | null>(null);
   const wasProcessingRef = useRef<boolean>(isProcessing);
   const hasStartedRef = useRef<boolean>(false);
+  const recentMessagesRef = useRef(recentMessages);
+
+  // Keep recentMessages ref up to date
+  useEffect(() => {
+    recentMessagesRef.current = recentMessages;
+  }, [recentMessages]);
 
   // Reset timer when processing or compacting starts
   useEffect(() => {
@@ -171,7 +177,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           const needsImmediate = idleMessageGenerator.getQueueSize() <= 1;
 
           // Trigger background generation with context on startup
-          idleMessageGenerator.generateMessageBackground(recentMessages as any, context, needsImmediate);
+          idleMessageGenerator.generateMessageBackground(recentMessagesRef.current as any, context, needsImmediate);
 
           // If we triggered immediate generation, poll frequently until first message arrives
           if (needsImmediate) {
@@ -242,7 +248,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       if (fastPollInterval) clearInterval(fastPollInterval);
       if (normalPollInterval) clearInterval(normalPollInterval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionLoaded, isResuming]); // Run when session loads
 
   // Continuous idle message generation - generate new message every minute when idle
@@ -282,7 +287,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           };
 
           // Trigger background generation with context
-          idleMessageGenerator.generateMessageBackground(recentMessages as any, context);
+          idleMessageGenerator.generateMessageBackground(recentMessagesRef.current as any, context);
         }
       } catch (error) {
         // Silently handle errors
@@ -298,7 +303,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     }, POLLING_INTERVALS.STATUS_POLLING);
 
     return () => clearInterval(continuousInterval);
-  }, [isProcessing, isCompacting, recentMessages]);
+  }, [isProcessing, isCompacting]);
 
   // Track processing state changes to mark when processing has started
   useEffect(() => {

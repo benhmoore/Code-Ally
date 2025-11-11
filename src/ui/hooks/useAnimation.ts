@@ -149,8 +149,7 @@ export const useAnimation = (
     if (autoStart && !isRunning) {
       start();
     }
-  }, [autoStart]); // Only run on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, isRunning, start]);
 
   return {
     isRunning,

@@ -17,7 +17,7 @@
 import { useState } from 'react';
 import { ModelOption } from '../components/ModelSelector.js';
 import { PermissionRequest } from '../components/PermissionPrompt.js';
-import type { SessionInfo, Message } from '../../types/index.js';
+import type { SessionInfo, Message } from '@shared/index.js';
 import type { FileChangeStats } from '../components/RewindOptionsSelector.js';
 
 /**
@@ -53,6 +53,10 @@ export interface PluginConfigRequest {
   pluginPath: string;
   schema: any;
   existingConfig?: any;
+  author?: string;
+  description?: string;
+  version?: string;
+  tools?: any[];
 }
 
 /**

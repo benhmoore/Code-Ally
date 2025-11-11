@@ -14,7 +14,7 @@ import * as os from 'os';
 import { AgentManager } from './AgentManager.js';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { CACHE_TIMEOUTS, BUFFER_SIZES, REASONING_EFFORT_API_VALUES } from '../config/constants.js';
+import { CACHE_TIMEOUTS, BUFFER_SIZES, REASONING_EFFORT_API_VALUES, API_TIMEOUTS } from '../config/constants.js';
 import { FuzzyFilePathMatcher, FuzzyMatchResult } from './FuzzyFilePathMatcher.js';
 import type { Config } from '../types/index.js';
 
@@ -90,6 +90,7 @@ const AGENT_SUBCOMMANDS = [
  */
 const PLUGIN_SUBCOMMANDS = [
   { name: 'list', description: 'List all installed plugins' },
+  { name: 'show', description: 'Show detailed plugin information' },
   { name: 'config', description: 'Configure a plugin' },
   { name: 'install', description: 'Install a plugin from local path' },
   { name: 'uninstall', description: 'Uninstall a plugin' },
@@ -425,6 +426,11 @@ export class CompletionProvider {
       return await this.getPluginNameCompletions(context.currentWord);
     }
 
+    // Complete plugin names for /plugin show (user typed "/plugin show ")
+    if (command === '/plugin' && subcommand === 'show' && wordCount === 3) {
+      return await this.getPluginNameCompletions(context.currentWord);
+    }
+
     // Complete file paths for /plugin install (user typed "/plugin install ")
     if (command === '/plugin' && subcommand === 'install' && wordCount >= 3) {
       return await this.getFileCompletions(context);
@@ -612,7 +618,7 @@ export class CompletionProvider {
 
       const url = `${endpoint}/api/tags`;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_MODEL_LIST_TIMEOUT);
 
       const response = await fetch(url, {
         method: 'GET',

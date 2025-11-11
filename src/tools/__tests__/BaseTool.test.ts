@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { BaseTool } from '../../tools/BaseTool.js';
-import { ToolResult, ActivityEvent, ActivityEventType } from '../../types/index.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { BaseTool } from '@tools/BaseTool.js';
+import { ToolResult, ActivityEvent, ActivityEventType } from '@shared/index.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 
 // Mock tool implementation
 class MockTool extends BaseTool {

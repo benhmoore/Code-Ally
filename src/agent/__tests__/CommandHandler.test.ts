@@ -4,12 +4,12 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { CommandHandler } from '../CommandHandler.js';
-import { ConfigManager } from '../../services/ConfigManager.js';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { AgentManager } from '../../services/AgentManager.js';
-import { FocusManager } from '../../services/FocusManager.js';
-import { ProjectManager } from '../../services/ProjectManager.js';
-import type { Message } from '../../types/index.js';
+import { ConfigManager } from '@services/ConfigManager.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { AgentManager } from '@services/AgentManager.js';
+import { FocusManager } from '@services/FocusManager.js';
+import { ProjectManager } from '@services/ProjectManager.js';
+import type { Message } from '@shared/index.js';
 
 describe('CommandHandler', () => {
   let commandHandler: CommandHandler;

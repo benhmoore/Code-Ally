@@ -20,7 +20,7 @@ import {
 import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
-import { API_TIMEOUTS, TIME_UNITS, PERMISSION_MESSAGES } from '../config/constants.js';
+import { API_TIMEOUTS, TIME_UNITS, PERMISSION_MESSAGES, ID_GENERATION } from '../config/constants.js';
 
 /**
  * Ollama API payload structure
@@ -177,7 +177,7 @@ export class OllamaClient extends ModelClient {
 
     // Generate unique request ID for this request
     // Generate request ID: req-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
-    const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const requestId = `req-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
     logger.debug('[OLLAMA_CLIENT] Starting request:', requestId);
 
     // Prepare payload

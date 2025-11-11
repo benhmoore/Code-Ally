@@ -8,7 +8,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { createTwoFilesPatch } from 'diff';
-import { FORMATTING } from '../../config/constants.js';
+import { FORMATTING } from '@config/constants.js';
 
 export interface DiffLine {
   type: 'add' | 'remove' | 'context' | 'header';

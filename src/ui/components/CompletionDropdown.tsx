@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import { Completion } from '../../services/CompletionProvider.js';
+import { Completion } from '@services/CompletionProvider.js';
 
 export interface CompletionDropdownProps {
   /** Available completions */

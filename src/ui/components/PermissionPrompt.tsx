@@ -11,8 +11,8 @@
 
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
-import { PermissionChoice, SensitivityTier } from '../../agent/TrustManager.js';
-import { TEXT_LIMITS } from '../../config/constants.js';
+import { PermissionChoice, SensitivityTier } from '@agent/TrustManager.js';
+import { TEXT_LIMITS } from '@config/constants.js';
 
 export interface PermissionRequest {
   /** Tool or command requesting permission */

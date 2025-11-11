@@ -169,7 +169,7 @@ export class FormatTool extends BaseTool {
             formattersApplied.push(formatterName);
           } catch (error) {
             const errorMsg = `${formatterName} failed: ${formatError(error)}`;
-            console.warn(`[FormatTool] ${errorMsg}`);
+            logger.warn(`[FormatTool] ${errorMsg}`);
             errors.push(errorMsg);
           }
         }

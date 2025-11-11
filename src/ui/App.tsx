@@ -219,6 +219,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           pluginPath: pendingRequest.pluginPath,
           schema: pendingRequest.schema,
           existingConfig: existingConfig || {},
+          author: pendingRequest.author,
+          description: pendingRequest.description,
+          version: pendingRequest.version,
+          tools: pendingRequest.tools,
         });
       }
     };
@@ -343,6 +347,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             pluginName={modal.pluginConfigRequest.pluginName}
             configSchema={modal.pluginConfigRequest.schema}
             existingConfig={modal.pluginConfigRequest.existingConfig}
+            author={modal.pluginConfigRequest.author}
+            description={modal.pluginConfigRequest.description}
+            version={modal.pluginConfigRequest.version}
+            tools={modal.pluginConfigRequest.tools}
             onComplete={async (config) => {
               // Capture the request early to avoid null safety issues
               const request = modal.pluginConfigRequest;
@@ -416,6 +424,41 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                     toolManager.registerTools(newTools);
 
                     logger.info(`Plugin '${request.pluginName}' reloaded successfully`);
+
+                    // Start background process if plugin has background daemon enabled
+                    const loadedPlugins = pluginLoader.getLoadedPlugins();
+                    const pluginInfo = loadedPlugins.find((p: any) => p.name === request.pluginName);
+
+                    if (pluginInfo?.manifest.background?.enabled) {
+                      try {
+                        await pluginLoader.startPluginBackground(request.pluginName);
+                        logger.info(`[App] Started background process for '${request.pluginName}'`);
+                      } catch (bgError) {
+                        // Log error but don't fail the config save - plugin is still usable
+                        logger.error(
+                          `[App] Failed to start background process for '${request.pluginName}':`,
+                          bgError
+                        );
+                        logger.warn(
+                          `[App] Plugin '${request.pluginName}' configured but background process failed to start. Some features may not work until the daemon is started.`
+                        );
+                      }
+                    }
+
+                    // Refresh PluginActivationManager after tools are registered to make them available
+                    try {
+                      const pluginActivationManager = serviceRegistry.getPluginActivationManager();
+                      if (pluginActivationManager) {
+                        await pluginActivationManager.refresh();
+                        logger.debug(`[App] Refreshed PluginActivationManager after reloading '${request.pluginName}'`);
+                      }
+                    } catch (refreshError) {
+                      logger.error(
+                        `[App] Failed to refresh PluginActivationManager after reloading '${request.pluginName}':`,
+                        refreshError
+                      );
+                      // Continue - not a fatal error
+                    }
                   } catch (reloadError) {
                     logger.error(`Error reloading plugin '${request.pluginName}':`, reloadError);
                     // Continue - config was saved, just the reload failed
@@ -888,14 +931,15 @@ const AppContentWithMessages: React.FC<{ agent: Agent; initialMessages: Message[
   initialMessages,
 }) => {
   const { actions } = useAppContext();
+  const hasLoadedRef = useRef(false);
 
   // Load initial messages on mount
   useEffect(() => {
-    if (initialMessages.length > 0) {
+    if (!hasLoadedRef.current && initialMessages.length > 0) {
       actions.setMessages(initialMessages);
+      hasLoadedRef.current = true;
     }
-  }, []); // Only run once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessages, actions]);
 
   return <AppContent agent={agent} />;
 };

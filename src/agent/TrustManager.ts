@@ -19,6 +19,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ActivityEvent } from '../types/index.js';
 import { TEXT_LIMITS, PERMISSION_MESSAGES } from '../config/constants.js';
 import { PermissionDeniedError } from '../security/PathSecurity.js';
+import { logger } from '../services/Logger.js';
 
 /**
  * Trust scope levels for permission management
@@ -505,7 +506,7 @@ export class TrustManager {
     // Find pending permission request
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
-      console.error(`Unknown permission request ID: ${requestId}`);
+      logger.error(`Unknown permission request ID: ${requestId}`);
       return;
     }
 

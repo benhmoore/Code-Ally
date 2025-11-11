@@ -8,7 +8,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { getStatusColor, type ToolStatus } from '../utils/statusUtils.js';
-import { TEXT_LIMITS } from '../../config/constants.js';
+import { TEXT_LIMITS } from '@config/constants.js';
 
 export interface ToolOutputStreamProps {
   /** Name of the tool being executed */

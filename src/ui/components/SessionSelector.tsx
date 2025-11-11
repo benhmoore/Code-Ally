@@ -6,9 +6,9 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import { SessionInfo } from '../../types/index.js';
+import { SessionInfo } from '@shared/index.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
-import { TEXT_LIMITS } from '../../config/constants.js';
+import { TEXT_LIMITS } from '@config/constants.js';
 
 export interface SessionSelectorProps {
   /** Available sessions */

@@ -10,7 +10,7 @@ import {
   ServiceDescriptor,
   ScopedServiceRegistryProxy,
 } from '../ServiceRegistry.js';
-import { ServiceLifecycle, IService } from '../../types/index.js';
+import { ServiceLifecycle, IService } from '@shared/index.js';
 
 // Test service classes
 class SimpleService {

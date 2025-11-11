@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MessageHistory } from '../MessageHistory.js';
-import { Message } from '../../types/index.js';
+import { Message } from '@shared/index.js';
 
 describe('MessageHistory', () => {
   let history: MessageHistory;

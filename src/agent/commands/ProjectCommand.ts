@@ -6,11 +6,11 @@
  */
 
 import { Command } from './Command.js';
-import type { Message } from '../../types/index.js';
-import { ActivityEventType } from '../../types/index.js';
-import type { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import type { Message } from '@shared/index.js';
+import { ActivityEventType } from '@shared/index.js';
+import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { ProjectManager } from '../../services/ProjectManager.js';
+import type { ProjectManager } from '@services/ProjectManager.js';
 
 export class ProjectCommand extends Command {
   readonly name = '/project';

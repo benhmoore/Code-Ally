@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ReadTool } from '../../tools/ReadTool.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { ReadTool } from '@tools/ReadTool.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';

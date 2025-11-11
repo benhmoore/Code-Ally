@@ -3,10 +3,10 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ToolManager } from '../../tools/ToolManager.js';
-import { BaseTool } from '../../tools/BaseTool.js';
-import { ToolResult } from '../../types/index.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { ToolManager } from '@tools/ToolManager.js';
+import { BaseTool } from '@tools/BaseTool.js';
+import { ToolResult } from '@shared/index.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 
 class TestTool extends BaseTool {
   readonly name = 'test_tool';

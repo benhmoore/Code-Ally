@@ -5,8 +5,8 @@
  * Each command controls its own presentation through the useYellowOutput flag.
  */
 
-import type { Message } from '../../types/index.js';
-import type { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import type { Message } from '@shared/index.js';
+import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 
 export abstract class Command {

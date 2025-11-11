@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { LintTool } from '../LintTool.js';
 import { FormatTool } from '../FormatTool.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 
 describe('LintTool', () => {
   let lintTool: LintTool;

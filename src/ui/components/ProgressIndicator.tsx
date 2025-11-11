@@ -7,8 +7,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
-import { AnimationTicker } from '../../services/AnimationTicker.js';
-import { TEXT_LIMITS } from '../../config/constants.js';
+import { AnimationTicker } from '@services/AnimationTicker.js';
+import { TEXT_LIMITS } from '@config/constants.js';
 
 export type SpinnerType = 'default' | 'dots' | 'line' | 'dots2' | 'arc' | 'bounce';
 

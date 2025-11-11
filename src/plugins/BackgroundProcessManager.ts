@@ -24,6 +24,7 @@ import * as net from 'net';
 import { logger } from '../services/Logger.js';
 import { PLUGIN_ENVS_DIR } from '../config/paths.js';
 import { PLUGIN_TIMEOUTS, PLUGIN_CONSTRAINTS } from './constants.js';
+import { API_TIMEOUTS } from '../config/constants.js';
 
 /**
  * Configuration for a background process
@@ -403,7 +404,7 @@ export class BackgroundProcessManager {
         try {
           process.kill(pid, 'SIGTERM');
           // Wait a bit then force kill if needed
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, API_TIMEOUTS.PROCESS_KILL_GRACE_PERIOD));
           if (this.isProcessAlive(pid)) {
             process.kill(pid, 'SIGKILL');
           }
@@ -453,12 +454,12 @@ export class BackgroundProcessManager {
    */
   private async waitForSocket(socketPath: string, timeout: number): Promise<void> {
     const startTime = Date.now();
-    const pollInterval = 500; // Check every 500ms
+    const pollInterval = PLUGIN_TIMEOUTS.SOCKET_POLL_INTERVAL;
 
     while (Date.now() - startTime < timeout) {
       try {
         // Try to connect to the socket
-        await this.checkSocketConnection(socketPath, 1000);
+        await this.checkSocketConnection(socketPath, PLUGIN_TIMEOUTS.SOCKET_CONNECTION_CHECK_TIMEOUT);
         logger.debug(`[BackgroundProcessManager] Socket is ready: ${socketPath}`);
         return;
       } catch (error) {

@@ -6,10 +6,10 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import { Message } from '../../types/index.js';
-import { TEXT_LIMITS } from '../../config/constants.js';
-import { PatchMetadata } from '../../services/PatchManager.js';
-import { logger } from '../../services/Logger.js';
+import { Message } from '@shared/index.js';
+import { TEXT_LIMITS } from '@config/constants.js';
+import { PatchMetadata } from '@services/PatchManager.js';
+import { logger } from '@services/Logger.js';
 
 export interface RewindSelectorProps {
   /** User messages only (pre-filtered) */

@@ -57,7 +57,7 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
    */
   private getEphemeralMaxTokens(): number {
     const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
-    return Math.floor(contextSize * 0.9); // 90% of context
+    return Math.floor(contextSize * TOKEN_MANAGEMENT.EPHEMERAL_READ_MAX_PERCENT);
   }
 
   /**
@@ -67,7 +67,7 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
   private getUserInitiatedMaxTokens(): number {
     const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
     // Use 95% of context to leave room for user's message and response
-    return Math.floor(contextSize * 0.95);
+    return Math.floor(contextSize * TOKEN_MANAGEMENT.USER_INITIATED_READ_MAX_PERCENT);
   }
 
   /**
@@ -77,7 +77,7 @@ WARNING: Ephemeral content is automatically removed after one turn - you'll lose
   private getContextFileMaxTokens(): number {
     const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
     // Use 40% of context for context files
-    return Math.floor(contextSize * 0.4);
+    return Math.floor(contextSize * TOKEN_MANAGEMENT.CONTEXT_FILE_READ_MAX_PERCENT);
   }
 
   /**

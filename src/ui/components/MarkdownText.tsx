@@ -15,8 +15,8 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { marked } from 'marked';
-import { SyntaxHighlighter } from '../../services/SyntaxHighlighter.js';
-import { TEXT_LIMITS, FORMATTING } from '../../config/constants.js';
+import { SyntaxHighlighter } from '@services/SyntaxHighlighter.js';
+import { TEXT_LIMITS, FORMATTING } from '@config/constants.js';
 
 // Table rendering constants (specific to markdown table formatting)
 const TABLE_FORMATTING = {

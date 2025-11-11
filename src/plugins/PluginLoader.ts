@@ -196,6 +196,10 @@ let pendingConfigRequests: Array<{
   pluginName: string;
   pluginPath: string;
   schema: PluginConfigSchema;
+  author?: string;
+  description?: string;
+  version?: string;
+  tools?: any[];
 }> = [];
 
 /**
@@ -375,7 +379,15 @@ export class PluginLoader {
    * Get any pending configuration requests
    * Returns the first pending request and removes it from the queue
    */
-  static getPendingConfigRequest(): { pluginName: string; pluginPath: string; schema: PluginConfigSchema } | null {
+  static getPendingConfigRequest(): {
+    pluginName: string;
+    pluginPath: string;
+    schema: PluginConfigSchema;
+    author?: string;
+    description?: string;
+    version?: string;
+    tools?: any[];
+  } | null {
     if (pendingConfigRequests.length === 0) {
       return null;
     }
@@ -716,6 +728,73 @@ export class PluginLoader {
   }
 
   /**
+   * Start background process for a single plugin
+   *
+   * Starts the background daemon for a specific plugin if it has background.enabled === true.
+   * This is idempotent - if the plugin is already running, it will not start again.
+   *
+   * @param pluginName - Name of the plugin to start
+   * @throws Error if plugin is not loaded or does not have background enabled
+   */
+  async startPluginBackground(pluginName: string): Promise<void> {
+    const plugin = this.loadedPlugins.get(pluginName);
+
+    if (!plugin) {
+      throw new Error(`Plugin '${pluginName}' is not loaded`);
+    }
+
+    if (!plugin.manifest.background?.enabled) {
+      throw new Error(`Plugin '${pluginName}' does not have background enabled`);
+    }
+
+    // Check if already running (idempotent)
+    if (this.processManager.isRunning(pluginName)) {
+      logger.debug(`[PluginLoader] Background process for '${pluginName}' is already running`);
+      return;
+    }
+
+    const manifest = plugin.manifest;
+    const pluginPath = plugin.pluginPath;
+
+    // Build process configuration from manifest
+    const config: BackgroundProcessConfig = {
+      pluginName: manifest.name,
+      pluginPath: pluginPath,
+      command: this.envManager.getPythonPath(manifest.name), // Use venv Python
+      args: manifest.background!.args,
+      socketPath: manifest.background!.communication.path,
+      envVars: this.buildEnvVars(manifest, pluginName, plugin.config),
+      healthcheck: manifest.background!.healthcheck,
+      startupTimeout: manifest.background!.startup_timeout || PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_STARTUP,
+      shutdownGracePeriod: manifest.background!.shutdown_grace_period || PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_SHUTDOWN_GRACE_PERIOD,
+    };
+
+    // Start the daemon
+    await this.processManager.startProcess(config);
+    logger.info(`[PluginLoader] ✓ Started background process for '${pluginName}'`);
+
+    // Subscribe to events if specified in manifest
+    const events = manifest.background!.events;
+    if (events && events.length > 0) {
+      try {
+        this.eventSubscriptionManager.subscribe(
+          pluginName,
+          manifest.background!.communication.path,
+          events
+        );
+        logger.info(`[PluginLoader] ✓ Subscribed '${pluginName}' to ${events.length} event(s): ${events.join(', ')}`);
+      } catch (error) {
+        logger.error(
+          `[PluginLoader] Failed to subscribe '${pluginName}' to events: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+        // Continue - plugin is still running, just won't receive events
+      }
+    }
+  }
+
+  /**
    * Start background processes for all enabled plugins
    *
    * This should be called after loadPlugins() completes. It iterates through
@@ -742,46 +821,7 @@ export class PluginLoader {
     // Start each background plugin sequentially
     for (const pluginName of pluginsWithBackground) {
       try {
-        const plugin = this.loadedPlugins.get(pluginName)!;
-        const manifest = plugin.manifest;
-        const pluginPath = plugin.pluginPath;
-
-        // Build process configuration from manifest
-        const config: BackgroundProcessConfig = {
-          pluginName: manifest.name,
-          pluginPath: pluginPath,
-          command: this.envManager.getPythonPath(manifest.name), // Use venv Python
-          args: manifest.background!.args,
-          socketPath: manifest.background!.communication.path,
-          envVars: this.buildEnvVars(manifest, pluginName, plugin.config),
-          healthcheck: manifest.background!.healthcheck,
-          startupTimeout: manifest.background!.startup_timeout || PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_STARTUP,
-          shutdownGracePeriod: manifest.background!.shutdown_grace_period || PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_SHUTDOWN_GRACE_PERIOD,
-        };
-
-        // Start the daemon
-        await this.processManager.startProcess(config);
-        logger.info(`[PluginLoader] ✓ Started background process for '${pluginName}'`);
-
-        // Subscribe to events if specified in manifest
-        const events = manifest.background!.events;
-        if (events && events.length > 0) {
-          try {
-            this.eventSubscriptionManager.subscribe(
-              pluginName,
-              manifest.background!.communication.path,
-              events
-            );
-            logger.info(`[PluginLoader] ✓ Subscribed '${pluginName}' to ${events.length} event(s): ${events.join(', ')}`);
-          } catch (error) {
-            logger.error(
-              `[PluginLoader] Failed to subscribe '${pluginName}' to events: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            );
-            // Continue - plugin is still running, just won't receive events
-          }
-        }
+        await this.startPluginBackground(pluginName);
       } catch (error) {
         // Log error but continue with other plugins
         logger.error(
@@ -947,6 +987,10 @@ export class PluginLoader {
           pluginName: manifest.name,
           pluginPath: pluginPath,
           schema: manifest.config,
+          author: manifest.author,
+          description: manifest.description,
+          version: manifest.version,
+          tools: manifest.tools || [],
         });
 
         // Also emit event (in case UI is already mounted)
@@ -958,6 +1002,10 @@ export class PluginLoader {
             pluginName: manifest.name,
             pluginPath: pluginPath,
             schema: manifest.config,
+            author: manifest.author,
+            description: manifest.description,
+            version: manifest.version,
+            tools: manifest.tools || [],
           },
         });
 

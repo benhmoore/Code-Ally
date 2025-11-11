@@ -8,9 +8,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AgentPoolService } from '../AgentPoolService.js';
-import type { AgentConfig } from '../../agent/Agent.js';
-import { ModelClient } from '../../llm/ModelClient.js';
-import { ToolManager } from '../../tools/ToolManager.js';
+import type { AgentConfig } from '@agent/Agent.js';
+import { ModelClient } from '@llm/ModelClient.js';
+import { ToolManager } from '@tools/ToolManager.js';
 import { ActivityStream } from '../ActivityStream.js';
 
 // Mock the Agent class
@@ -432,7 +432,7 @@ describe('AgentPoolService', () => {
 
   describe('removeAgent', () => {
     it('should call agent.cleanup()', async () => {
-      const { Agent } = await import('../../agent/Agent.js');
+      const { Agent } = await import('@agent/Agent.js');
       const mockCleanup = vi.fn().mockResolvedValue(undefined);
 
       // Override mock for this test

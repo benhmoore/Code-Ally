@@ -7,9 +7,9 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
-import type { Message, Config, ToolCallState } from '../../types/index.js';
-import { UI_DELAYS } from '../../config/constants.js';
-import { generateMessageId } from '../../utils/id.js';
+import type { Message, Config, ToolCallState } from '@shared/index.js';
+import { UI_DELAYS } from '@config/constants.js';
+import { generateMessageId } from '@utils/id.js';
 
 /**
  * Compaction notice for UI display

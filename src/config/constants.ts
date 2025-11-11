@@ -52,6 +52,15 @@ export const API_TIMEOUTS = {
 
   /** ESLint fix timeout (10 seconds) */
   ESLINT_FIX_TIMEOUT: 10000,
+
+  /** Ollama model list fetch timeout (3 seconds) */
+  OLLAMA_MODEL_LIST_TIMEOUT: 3000,
+
+  /** Ollama model validation chat timeout (10 seconds) */
+  OLLAMA_VALIDATION_CHAT_TIMEOUT: 10000,
+
+  /** Process SIGTERM grace period before SIGKILL (2 seconds) */
+  PROCESS_KILL_GRACE_PERIOD: 2000,
 } as const;
 
 // ===========================================
@@ -71,11 +80,11 @@ export const POLLING_INTERVALS = {
   /** Fast status polling (1 second) */
   STATUS_FAST: 1000,
 
-  /** Standard status/idle polling interval (1 minute) */
-  STATUS_POLLING: 60000,
+  /** Standard status/idle polling interval (64 seconds) */
+  STATUS_POLLING: 64000,
 
-  /** Idle message minimum interval (10 seconds) */
-  IDLE_MESSAGE_MIN: 10000,
+  /** Idle message minimum interval (32 seconds) */
+  IDLE_MESSAGE_MIN: 32000,
 
   /** Agent activity watchdog check interval (10 seconds) */
   AGENT_WATCHDOG: 10000,
@@ -228,6 +237,18 @@ export const FORMATTING = {
 export const ID_GENERATION = {
   /** Todo item UUID truncation length (8 chars) */
   TODO_ID_LENGTH: 8,
+
+  /** Random string radix for base-36 encoding (0-9, a-z) */
+  RANDOM_STRING_RADIX: 36,
+
+  /** Random string substring start index (skip '0.' prefix from Math.random()) */
+  RANDOM_STRING_SUBSTRING_START: 2,
+
+  /** Random string length for agent/event IDs (7 characters) */
+  RANDOM_STRING_LENGTH_SHORT: 7,
+
+  /** Random string length for tool call IDs (9 characters) */
+  RANDOM_STRING_LENGTH_LONG: 9,
 } as const;
 
 // ===========================================
@@ -274,8 +295,8 @@ export const ANIMATION_TIMING = {
   /** Todo update animation interval (1 second) */
   TODO_UPDATE: 1000,
 
-  /** Chick mascot default animation speed (4 seconds) */
-  CHICK_ANIMATION_SPEED: 4000,
+  /** Chick mascot default animation speed (13 seconds) */
+  CHICK_ANIMATION_SPEED: 13000,
 
   /** Reasoning thought lifetime (5 seconds) */
   REASONING_THOUGHT_LIFETIME: 5000,
@@ -370,6 +391,15 @@ export const BUFFER_SIZES = {
 
   /** Maximum records in DuplicateDetector */
   DUPLICATE_DETECTOR_MAX_RECORDS: 200,
+
+  /** Maximum patches per session before cleanup */
+  MAX_PATCHES_PER_SESSION: 100,
+
+  /** Maximum total size of patches in bytes (10 MB) */
+  MAX_PATCHES_SIZE_BYTES: 10 * 1024 * 1024,
+
+  /** Patch number padding width (3 digits for up to 999 patches) */
+  PATCH_NUMBER_PADDING: 3,
 } as const;
 
 // ===========================================
@@ -545,6 +575,36 @@ export const TOKEN_MANAGEMENT = {
 
   /** Context near capacity warning threshold (80%) */
   NEAR_CAPACITY_THRESHOLD: 80,
+
+  /** Ephemeral read maximum percentage of context (90%) */
+  EPHEMERAL_READ_MAX_PERCENT: 0.9,
+
+  /** User-initiated read maximum percentage of context (95%) */
+  USER_INITIATED_READ_MAX_PERCENT: 0.95,
+
+  /** Context file read maximum percentage of context (40%) */
+  CONTEXT_FILE_READ_MAX_PERCENT: 0.4,
+} as const;
+
+// ===========================================
+// AGENT & CYCLE DETECTION
+// ===========================================
+
+/**
+ * Agent behavior and cycle detection configuration
+ */
+export const AGENT_CONFIG = {
+  /** Maximum tool call history for cycle detection (sliding window) */
+  MAX_TOOL_HISTORY: 15,
+
+  /** Number of identical tool calls that trigger cycle detection */
+  CYCLE_THRESHOLD: 3,
+
+  /** Maximum retry attempts for message validation */
+  MAX_VALIDATION_ATTEMPTS: 2,
+
+  /** Number of consecutive different tool calls to clear cycle history */
+  CYCLE_BREAK_THRESHOLD: 3,
 } as const;
 
 // ===========================================

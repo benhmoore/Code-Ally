@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { BashTool } from '../../tools/BashTool.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { BashTool } from '@tools/BashTool.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 
 describe('BashTool', () => {
   let activityStream: ActivityStream;

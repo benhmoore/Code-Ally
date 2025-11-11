@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { UndoFileEntry } from '../../services/PatchManager.js';
+import type { UndoFileEntry } from '@services/PatchManager.js';
 
 export interface UndoFileListRequest {
   /** Request ID for tracking */

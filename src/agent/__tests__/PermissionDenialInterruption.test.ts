@@ -7,14 +7,14 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Agent } from '../Agent.js';
-import { ModelClient } from '../../llm/ModelClient.js';
-import { ToolManager } from '../../tools/ToolManager.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
+import { ModelClient } from '@llm/ModelClient.js';
+import { ToolManager } from '@tools/ToolManager.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 import { TrustManager, PermissionChoice } from '../TrustManager.js';
-import { PermissionManager } from '../../security/PermissionManager.js';
-import { Config, ActivityEventType } from '../../types/index.js';
-import { PermissionDeniedError } from '../../security/PathSecurity.js';
-import { BashTool } from '../../tools/BashTool.js';
+import { PermissionManager } from '@security/PermissionManager.js';
+import { Config, ActivityEventType } from '@shared/index.js';
+import { PermissionDeniedError } from '@security/PathSecurity.js';
+import { BashTool } from '@tools/BashTool.js';
 
 describe('Permission Denial Interruption', () => {
   let agent: Agent;

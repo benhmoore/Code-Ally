@@ -125,3 +125,41 @@ export function createPatchFileContent(
 
   return header + '\n' + diffContent;
 }
+
+/**
+ * Diff statistics
+ */
+export interface DiffStats {
+  additions: number;
+  deletions: number;
+  changes: number;
+}
+
+/**
+ * Calculate diff statistics from a unified diff string
+ *
+ * Counts the number of additions and deletions in a unified diff,
+ * excluding the header lines (+++/---).
+ *
+ * @param diffContent - Unified diff content
+ * @returns Diff statistics (additions, deletions, changes)
+ */
+export function calculateDiffStats(diffContent: string): DiffStats {
+  const lines = diffContent.split('\n');
+  let additions = 0;
+  let deletions = 0;
+
+  for (const line of lines) {
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      additions++;
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      deletions++;
+    }
+  }
+
+  return {
+    additions,
+    deletions,
+    changes: additions + deletions,
+  };
+}

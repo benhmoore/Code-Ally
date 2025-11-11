@@ -9,8 +9,8 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SessionTitleGenerator } from '../SessionTitleGenerator.js';
-import { ModelClient, LLMResponse } from '../../llm/ModelClient.js';
-import { Message } from '../../types/index.js';
+import { ModelClient, LLMResponse } from '@llm/ModelClient.js';
+import { Message } from '@shared/index.js';
 
 // Mock ModelClient
 class MockModelClient extends ModelClient {

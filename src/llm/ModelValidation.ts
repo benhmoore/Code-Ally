@@ -5,6 +5,7 @@
  */
 
 import { logger } from '../services/Logger.js';
+import { API_TIMEOUTS } from '../config/constants.js';
 
 export interface ToolCallingSupportResult {
   supportsTools: boolean;
@@ -53,7 +54,7 @@ export async function testModelToolCalling(
     };
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_VALIDATION_CHAT_TIMEOUT);
 
     const response = await fetch(`${endpoint}/api/chat`, {
       method: 'POST',

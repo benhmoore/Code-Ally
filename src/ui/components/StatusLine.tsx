@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import { AnimationTicker } from '../../services/AnimationTicker.js';
-import { TEXT_LIMITS } from '../../config/constants.js';
-import { CONTEXT_THRESHOLDS } from '../../config/toolDefaults.js';
+import { AnimationTicker } from '@services/AnimationTicker.js';
+import { TEXT_LIMITS } from '@config/constants.js';
+import { CONTEXT_THRESHOLDS } from '@config/toolDefaults.js';
 
 interface StatusLineProps {
   /** Context usage as percentage (0-100) */

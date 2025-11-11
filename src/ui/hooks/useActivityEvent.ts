@@ -6,8 +6,8 @@
  * components should listen to activity events.
  */
 
-import { useEffect } from 'react';
-import { ActivityEventType, ActivityCallback } from '../../types/index.js';
+import { useEffect, useRef } from 'react';
+import { ActivityEventType, ActivityCallback } from '@shared/index.js';
 import { useActivityStream } from './useActivityStream.js';
 
 /**
@@ -45,15 +45,22 @@ export const useActivityEvent = (
   deps: readonly any[] = []
 ): void => {
   const activityStream = useActivityStream();
+  const callbackRef = useRef(callback);
+
+  // Always keep the ref updated with the latest callback
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
 
   useEffect(() => {
-    // Subscribe to the event
-    const unsubscribe = activityStream.subscribe(eventType, callback);
+    // Subscribe with a wrapper that calls the ref (always gets latest callback)
+    const unsubscribe = activityStream.subscribe(eventType, (...args) => {
+      callbackRef.current(...args);
+    });
 
     // Cleanup on unmount or when dependencies change
     return () => {
       unsubscribe();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activityStream, eventType, ...deps]);
 };

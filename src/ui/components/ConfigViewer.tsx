@@ -7,9 +7,9 @@
 
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { ConfigManager } from '../../services/ConfigManager.js';
-import { DEFAULT_CONFIG, CONFIG_TYPES } from '../../config/defaults.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { ConfigManager } from '@services/ConfigManager.js';
+import { DEFAULT_CONFIG, CONFIG_TYPES } from '@config/defaults.js';
 
 export interface ConfigEntry {
   key: string;

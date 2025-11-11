@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TodoManager, TodoItem, TodoStatus } from '../TodoManager.js';
 import { ActivityStream } from '../ActivityStream.js';
-import { ActivityEventType } from '../../types/index.js';
+import { ActivityEventType } from '@shared/index.js';
 
 describe('TodoManager', () => {
   let todoManager: TodoManager;

@@ -929,7 +929,8 @@ export class ToolOrchestrator {
    * Generate a unique ID
    */
   private generateId(prefix: string = 'tool'): string {
-    // Generate ID: {prefix}-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
-    return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    // Generate ID: {prefix}-{timestamp}-{9-char-random} (base-36, skip '0.' prefix)
+    const { ID_GENERATION } = require('../config/constants.js');
+    return `${prefix}-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
   }
 }

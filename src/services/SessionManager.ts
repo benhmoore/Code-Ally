@@ -18,7 +18,7 @@ import { generateShortId } from '../utils/id.js';
 import type { TodoItem } from './TodoManager.js';
 import { SessionTitleGenerator } from './SessionTitleGenerator.js';
 import { logger } from './Logger.js';
-import { TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
+import { TEXT_LIMITS, BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
 
 /**
  * Interface for ModelClient methods used by SessionManager
@@ -257,7 +257,7 @@ export class SessionManager implements IService {
       // Now perform our atomic file write
       const sessionPath = this.getSessionPath(sessionName);
       // Generate temp file with timestamp and random suffix (base-36 string starting at index 7)
-      const tempPath = `${sessionPath}.tmp.${Date.now()}.${Math.random().toString(36).substring(7)}`;
+      const tempPath = `${sessionPath}.tmp.${Date.now()}.${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
 
       try {
         // Write to temporary file first

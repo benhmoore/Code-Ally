@@ -12,6 +12,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { logger } from '../services/Logger.js';
 
 /**
  * Tool with custom function definition
@@ -112,11 +113,11 @@ export class ToolManager {
    */
   registerTool(tool: BaseTool): void {
     if (this.tools.has(tool.name)) {
-      console.debug(`[TOOL_MANAGER] Tool '${tool.name}' already registered, skipping duplicate`);
+      logger.debug(`[TOOL_MANAGER] Tool '${tool.name}' already registered, skipping duplicate`);
       return;
     }
     this.tools.set(tool.name, tool);
-    console.debug(`[TOOL_MANAGER] Registered contextual tool: ${tool.name}`);
+    logger.debug(`[TOOL_MANAGER] Registered contextual tool: ${tool.name}`);
   }
 
   /**
@@ -129,11 +130,11 @@ export class ToolManager {
    */
   unregisterTool(toolName: string): void {
     if (!this.tools.has(toolName)) {
-      console.debug(`[TOOL_MANAGER] Tool '${toolName}' not found, skipping unregister`);
+      logger.debug(`[TOOL_MANAGER] Tool '${toolName}' not found, skipping unregister`);
       return;
     }
     this.tools.delete(toolName);
-    console.debug(`[TOOL_MANAGER] Unregistered contextual tool: ${toolName}`);
+    logger.debug(`[TOOL_MANAGER] Unregistered contextual tool: ${toolName}`);
   }
 
   /**

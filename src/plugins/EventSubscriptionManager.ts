@@ -36,18 +36,8 @@
 import { logger } from '../services/Logger.js';
 import { SocketClient } from './SocketClient.js';
 import { BackgroundProcessManager } from './BackgroundProcessManager.js';
+import { PLUGIN_CONSTRAINTS } from './constants.js';
 
-/**
- * Maximum size for event data payloads (1MB)
- * Prevents large payloads from blocking socket writes or consuming excessive resources
- */
-const MAX_EVENT_DATA_SIZE = 1024 * 1024;
-
-/**
- * Maximum length for Unix domain socket paths (104 characters on most systems)
- * This is a hard limit imposed by the OS
- */
-const UNIX_SOCKET_PATH_MAX_LENGTH = 104;
 
 /**
  * Approved event types for Phase 1
@@ -145,8 +135,8 @@ export class EventSubscriptionManager {
     }
 
     // Validate socket path length (Unix domain socket path limit)
-    if (socketPath.length > UNIX_SOCKET_PATH_MAX_LENGTH) {
-      const errorMsg = `Plugin '${pluginName}' socket path exceeds maximum length of ${UNIX_SOCKET_PATH_MAX_LENGTH} characters: ${socketPath}`;
+    if (socketPath.length > PLUGIN_CONSTRAINTS.MAX_SOCKET_PATH_LENGTH) {
+      const errorMsg = `Plugin '${pluginName}' socket path exceeds maximum length of ${PLUGIN_CONSTRAINTS.MAX_SOCKET_PATH_LENGTH} characters: ${socketPath}`;
       logger.error(`[EventSubscriptionManager] ${errorMsg}`);
       throw new Error(errorMsg);
     }
@@ -264,9 +254,9 @@ export class EventSubscriptionManager {
         }
 
         // Validate event data size before dispatch
-        if (eventDataJson.length > MAX_EVENT_DATA_SIZE) {
+        if (eventDataJson.length > PLUGIN_CONSTRAINTS.MAX_EVENT_DATA_SIZE) {
           logger.warn(
-            `[EventSubscriptionManager] Event data exceeds maximum size (${eventDataJson.length} > ${MAX_EVENT_DATA_SIZE}), truncating event`
+            `[EventSubscriptionManager] Event data exceeds maximum size (${eventDataJson.length} > ${PLUGIN_CONSTRAINTS.MAX_EVENT_DATA_SIZE}), truncating event`
           );
           // Skip this event to avoid blocking
           return;

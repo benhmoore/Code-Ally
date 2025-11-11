@@ -13,13 +13,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { SetupWizard, SetupConfig } from '../../services/SetupWizard.js';
-import { ServiceRegistry } from '../../services/ServiceRegistry.js';
-import { ConfigManager } from '../../services/ConfigManager.js';
-import { logger } from '../../services/Logger.js';
+import { SetupWizard, SetupConfig } from '@services/SetupWizard.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { ConfigManager } from '@services/ConfigManager.js';
+import { logger } from '@services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
-import { testModelToolCalling } from '../../llm/ModelValidation.js';
+import { testModelToolCalling } from '@llm/ModelValidation.js';
 
 enum SetupStep {
   WELCOME,

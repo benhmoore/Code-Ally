@@ -5,7 +5,7 @@
  */
 
 import type { BaseTool } from '../tools/BaseTool.js';
-import type { PluginConfigSchema } from './PluginLoader.js';
+import type { PluginConfigSchema, PluginManifest } from './PluginLoader.js';
 
 /**
  * Plugin configuration management service
@@ -68,6 +68,16 @@ export interface PluginLoadResult {
 }
 
 /**
+ * Loaded plugin information
+ */
+export interface LoadedPluginInfo {
+  name: string;
+  manifest: PluginManifest;
+  pluginPath: string;
+  config?: any;
+}
+
+/**
  * Plugin loader service
  */
 export interface PluginLoaderService {
@@ -96,6 +106,21 @@ export interface PluginLoaderService {
    * Reload plugin after configuration
    */
   reloadPlugin(pluginName: string, pluginPath: string): Promise<BaseTool[]>;
+
+  /**
+   * Get all loaded plugins with their manifests
+   */
+  getLoadedPlugins(): LoadedPluginInfo[];
+
+  /**
+   * Start background process for a single plugin
+   */
+  startPluginBackground(pluginName: string): Promise<void>;
+
+  /**
+   * Start background processes for all enabled plugins
+   */
+  startBackgroundPlugins(): Promise<void>;
 }
 
 /**

@@ -1,8 +1,8 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import { Message } from '../../types/index.js';
+import { Message } from '@shared/index.js';
 import { MarkdownText } from './MarkdownText.js';
-import { TEXT_LIMITS } from '../../config/constants.js';
+import { TEXT_LIMITS } from '@config/constants.js';
 
 interface MessageDisplayProps {
   /** Message to display */

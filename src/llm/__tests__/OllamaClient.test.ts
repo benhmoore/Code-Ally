@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { OllamaClient } from '../OllamaClient.js';
-import type { Message } from '../../types/index.js';
+import type { Message } from '@shared/index.js';
 
 // Mock fetch globally
 const mockFetch = vi.fn();

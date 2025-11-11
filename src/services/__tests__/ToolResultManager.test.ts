@@ -4,14 +4,14 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ToolResultManager } from '../ToolResultManager.js';
-import { TokenManager } from '../../agent/TokenManager.js';
-import { ToolManager } from '../../tools/ToolManager.js';
+import { TokenManager } from '@agent/TokenManager.js';
+import { ToolManager } from '@tools/ToolManager.js';
 import { ActivityStream } from '../ActivityStream.js';
-import { BashTool } from '../../tools/BashTool.js';
-import { ReadTool } from '../../tools/ReadTool.js';
-import { GrepTool } from '../../tools/GrepTool.js';
-import { GlobTool } from '../../tools/GlobTool.js';
-import { LsTool } from '../../tools/LsTool.js';
+import { BashTool } from '@tools/BashTool.js';
+import { ReadTool } from '@tools/ReadTool.js';
+import { GrepTool } from '@tools/GrepTool.js';
+import { GlobTool } from '@tools/GlobTool.js';
+import { LsTool } from '@tools/LsTool.js';
 
 describe('ToolResultManager', () => {
   let toolResultManager: ToolResultManager;

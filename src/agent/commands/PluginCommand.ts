@@ -5,22 +5,24 @@
  */
 
 import { Command } from './Command.js';
-import type { Message } from '../../types/index.js';
-import { ActivityEventType } from '../../types/index.js';
-import type { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import type { Message } from '@shared/index.js';
+import { ActivityEventType } from '@shared/index.js';
+import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import { PLUGINS_DIR } from '../../config/paths.js';
+import { PLUGINS_DIR } from '@config/paths.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import type { PluginManifest } from '../../plugins/PluginLoader.js';
-import { formatError } from '../../utils/errorUtils.js';
-import { PathUtils } from '../../plugins/utils.js';
+import type { PluginManifest } from '@plugins/PluginLoader.js';
+import { formatError } from '@utils/errorUtils.js';
+import { PathUtils } from '@plugins/utils.js';
 import type {
   PluginConfigManagerService,
   PluginLoaderService,
   ToolManagerService,
-} from '../../plugins/interfaces.js';
-import { PLUGIN_FILES } from '../../plugins/constants.js';
+  LoadedPluginInfo,
+} from '@plugins/interfaces.js';
+import { PLUGIN_FILES } from '@plugins/constants.js';
+import { logger } from '@services/Logger.js';
 
 export class PluginCommand extends Command {
   readonly name = '/plugin';
@@ -47,6 +49,9 @@ export class PluginCommand extends Command {
     switch (subcommand.toLowerCase()) {
       case 'list':
         return this.listPlugins(serviceRegistry);
+      case 'show':
+        // /plugin show <plugin-name>
+        return this.showPluginDetails(parts.slice(1).join(' ').trim(), serviceRegistry);
       case 'config':
         // /plugin config <plugin-name>
         return this.handlePluginConfig(parts.slice(1).join(' ').trim(), serviceRegistry);
@@ -164,6 +169,10 @@ export class PluginCommand extends Command {
           pluginPath,
           schema: configSchema,
           existingConfig,
+          author: manifest.author,
+          description: manifest.description,
+          version: manifest.version,
+          tools: manifest.tools || [],
         },
         'plugin_config'
       );
@@ -204,6 +213,39 @@ export class PluginCommand extends Command {
       const toolManager = serviceRegistry.get<ToolManagerService>('tool_manager');
       if (toolManager && result.tools && result.tools.length > 0) {
         toolManager.registerTools(result.tools);
+      }
+
+      // Refresh PluginActivationManager to make the plugin immediately available
+      try {
+        const activationManager = serviceRegistry.getPluginActivationManager();
+        await activationManager.refresh();
+        logger.debug(`[PluginCommand] Refreshed PluginActivationManager after installing '${result.pluginName}'`);
+      } catch (error) {
+        logger.error(
+          `[PluginCommand] Failed to refresh PluginActivationManager: ${formatError(error)}`
+        );
+        // Continue - not a fatal error
+      }
+
+      // Start background process if plugin has background daemon enabled
+      if (result.pluginName) {
+        const loadedPlugins = pluginLoader.getLoadedPlugins();
+        const pluginInfo = loadedPlugins.find((p: LoadedPluginInfo) => p.name === result.pluginName);
+
+        if (pluginInfo?.manifest.background?.enabled) {
+          try {
+            await pluginLoader.startPluginBackground(result.pluginName);
+            logger.info(`[PluginCommand] Started background process for '${result.pluginName}'`);
+          } catch (error) {
+            // Log error but don't fail the install - plugin is still usable
+            logger.error(
+              `[PluginCommand] Failed to start background process for '${result.pluginName}': ${formatError(error)}`
+            );
+            logger.warn(
+              `[PluginCommand] Plugin '${result.pluginName}' installed but background process failed to start. Some features may not work until the daemon is started.`
+            );
+          }
+        }
       }
 
       // If this is an update with existing config, just show success message
@@ -285,11 +327,14 @@ export class PluginCommand extends Command {
         return this.createError('PluginLoader not available');
       }
 
+      const loadedPlugins = pluginLoader.getLoadedPlugins();
+
       let output = 'Installed Plugins:\n\n';
 
       for (const pluginName of installedPlugins) {
         const mode = activationManager.getActivationMode(pluginName) ?? 'always';
         const isActive = activationManager.isActive(pluginName);
+        const pluginInfo = loadedPlugins.find((p: LoadedPluginInfo) => p.name === pluginName);
 
         // Status indicator
         const status = isActive ? '● ' : '○ ';
@@ -297,12 +342,35 @@ export class PluginCommand extends Command {
         // Mode badge
         const modeBadge = mode === 'always' ? '[always]' : '[tagged]';
 
-        // For now, just show plugin name without version/description
-        // since we can't easily access manifest through the service interface
-        output += `${status}${pluginName} ${modeBadge}\n`;
+        // Plugin header
+        output += `${status}${pluginName} ${modeBadge}`;
+
+        if (pluginInfo) {
+          if (pluginInfo.manifest.version) {
+            output += ` v${pluginInfo.manifest.version}`;
+          }
+          output += '\n';
+
+          if (pluginInfo.manifest.author) {
+            output += `  by ${pluginInfo.manifest.author}\n`;
+          }
+
+          if (pluginInfo.manifest.description) {
+            output += `  ${pluginInfo.manifest.description}\n`;
+          }
+
+          if (pluginInfo.manifest.tools && pluginInfo.manifest.tools.length > 0) {
+            output += `  Tools: ${pluginInfo.manifest.tools.map((t: any) => t.name).join(', ')}\n`;
+          }
+        } else {
+          output += '\n';
+        }
+
+        output += '\n';
       }
 
-      output += '\nUse /plugin active to see active plugins in this session\n';
+      output += 'Use /plugin show <name> for detailed information\n';
+      output += 'Use /plugin active to see active plugins in this session\n';
       output += 'Use +plugin-name to activate or -plugin-name to deactivate';
 
       return {
@@ -311,6 +379,104 @@ export class PluginCommand extends Command {
       };
     } catch (error) {
       return this.createError(`Failed to list plugins: ${formatError(error)}`);
+    }
+  }
+
+  /**
+   * Show detailed information about a specific plugin
+   */
+  private async showPluginDetails(
+    pluginName: string,
+    serviceRegistry: ServiceRegistry
+  ): Promise<CommandResult> {
+    if (!pluginName) {
+      return this.createError('Plugin name required. Use /plugin show <plugin-name>');
+    }
+
+    try {
+      // Get activation manager
+      let activationManager;
+      try {
+        activationManager = serviceRegistry.getPluginActivationManager();
+      } catch {
+        return this.createError('Plugin system not initialized');
+      }
+
+      // Get plugin loader
+      const pluginLoader = serviceRegistry.get<PluginLoaderService>('plugin_loader');
+      if (!pluginLoader) {
+        return this.createError('PluginLoader not available');
+      }
+
+      const loadedPlugins = pluginLoader.getLoadedPlugins();
+      const pluginInfo = loadedPlugins.find((p: LoadedPluginInfo) => p.name === pluginName);
+
+      if (!pluginInfo) {
+        return this.createError(
+          `Plugin '${pluginName}' not found. Use /plugin list to see installed plugins.`
+        );
+      }
+
+      const mode = activationManager.getActivationMode(pluginName) ?? 'always';
+      const isActive = activationManager.isActive(pluginName);
+      const manifest = pluginInfo.manifest;
+
+      let output = '';
+
+      // Header
+      output += `Plugin: ${pluginName}\n`;
+      if (manifest.version) {
+        output += `Version: ${manifest.version}\n`;
+      }
+      if (manifest.author) {
+        output += `Author: ${manifest.author}\n`;
+      }
+
+      output += `Status: ${isActive ? 'Active ●' : 'Inactive ○'}\n`;
+      output += `Activation Mode: ${mode}\n\n`;
+
+      // Description
+      if (manifest.description) {
+        output += `${manifest.description}\n\n`;
+      }
+
+      // Tools
+      if (manifest.tools && manifest.tools.length > 0) {
+        output += `Tools (${manifest.tools.length}):\n`;
+        for (const tool of manifest.tools) {
+          output += `\n  • ${tool.name}\n`;
+          if (tool.description) {
+            output += `    ${tool.description}\n`;
+          }
+          if (tool.requiresConfirmation) {
+            output += `    ⚠️  Requires confirmation before execution\n`;
+          }
+        }
+        output += '\n';
+      }
+
+      // Background daemon info
+      if (manifest.background?.enabled) {
+        output += `Background Daemon: ${manifest.background.enabled ? 'Enabled' : 'Disabled'}\n`;
+        if (manifest.background.events && manifest.background.events.length > 0) {
+          output += `  Event Subscriptions: ${manifest.background.events.join(', ')}\n`;
+        }
+        output += '\n';
+      }
+
+      // Configuration
+      if (manifest.config?.schema?.properties) {
+        const configKeys = Object.keys(manifest.config.schema.properties);
+        output += `Configuration: ${configKeys.length} parameter(s)\n`;
+        output += `Use /plugin config ${pluginName} to configure\n`;
+      }
+
+      return {
+        handled: true,
+        response: output,
+      };
+    } catch (error) {
+      return this.createError(`Failed to show plugin details: ${formatError(error)}`);
     }
   }
 
@@ -422,6 +588,7 @@ export class PluginCommand extends Command {
       response: `Plugin Management Commands:
 
   /plugin list                    List all installed plugins
+  /plugin show <name>             Show detailed plugin information
   /plugin install <path|url>      Install a plugin
   /plugin uninstall <name>        Uninstall a plugin
   /plugin config <name>           Configure a plugin

@@ -11,17 +11,17 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
-import { CommandHistory } from '../../services/CommandHistory.js';
-import { CompletionProvider, Completion } from '../../services/CompletionProvider.js';
+import { CommandHistory } from '@services/CommandHistory.js';
+import { CompletionProvider, Completion } from '@services/CompletionProvider.js';
 import { CompletionDropdown } from './CompletionDropdown.js';
 import { PermissionRequest } from './PermissionPrompt.js';
 import { ModelOption } from './ModelSelector.js';
-import { ActivityStream } from '../../services/ActivityStream.js';
-import { ActivityEventType } from '../../types/index.js';
-import { logger } from '../../services/Logger.js';
-import { PermissionChoice } from '../../agent/TrustManager.js';
-import { Agent } from '../../agent/Agent.js';
-import { UI_DELAYS } from '../../config/constants.js';
+import { ActivityStream } from '@services/ActivityStream.js';
+import { ActivityEventType } from '@shared/index.js';
+import { logger } from '@services/Logger.js';
+import { PermissionChoice } from '@agent/TrustManager.js';
+import { Agent } from '@agent/Agent.js';
+import { UI_DELAYS } from '@config/constants.js';
 
 interface InputPromptProps {
   /** Callback when user submits input */
@@ -51,7 +51,7 @@ interface InputPromptProps {
   /** Whether config viewer is open */
   configViewerOpen?: boolean;
   /** Session selector data (if active) */
-  sessionSelectRequest?: { requestId: string; sessions: import('../../types/index.js').SessionInfo[]; selectedIndex: number };
+  sessionSelectRequest?: { requestId: string; sessions: import('@shared/index.js').SessionInfo[]; selectedIndex: number };
   /** Callback when session selection changes */
   onSessionNavigate?: (newIndex: number) => void;
   /** Rewind selector data (if active) */
