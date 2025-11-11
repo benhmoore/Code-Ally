@@ -11,6 +11,7 @@ import { FunctionDefinition, ToolResult } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
 
 /**
  * Tool with custom function definition
@@ -145,11 +146,32 @@ export class ToolManager {
     const functionDefs: FunctionDefinition[] = [];
     const excludeSet = new Set(excludeTools || []);
 
+    // Get active plugins from PluginActivationManager
+    let activePlugins: Set<string> | null = null;
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const activationManager = registry.getPluginActivationManager();
+      activePlugins = new Set(activationManager.getActivePlugins());
+    } catch (error) {
+      // If PluginActivationManager is not registered, include all tools
+      // This ensures backward compatibility
+      activePlugins = null;
+    }
+
     for (const tool of this.tools.values()) {
       // Skip excluded tools
       if (excludeSet.has(tool.name)) {
         continue;
       }
+
+      // Filter by plugin activation state
+      if (activePlugins !== null && tool.pluginName) {
+        // Plugin tool: only include if plugin is active
+        if (!activePlugins.has(tool.pluginName)) {
+          continue;
+        }
+      }
+      // Core tools (no pluginName) are always included
 
       const functionDef = this.generateFunctionDefinition(tool);
       functionDefs.push(functionDef);

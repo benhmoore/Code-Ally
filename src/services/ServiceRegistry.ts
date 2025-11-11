@@ -6,6 +6,7 @@
  */
 
 import { ServiceLifecycle, IService } from '../types/index.js';
+import type { PluginActivationManager } from '../plugins/PluginActivationManager.js';
 
 export class ServiceDescriptor<T> {
   private _instance?: T;
@@ -259,7 +260,7 @@ export class ServiceRegistry {
   /**
    * Set the PluginActivationManager instance
    */
-  setPluginActivationManager(manager: any): void {
+  setPluginActivationManager(manager: PluginActivationManager): void {
     this.registerInstance('plugin_activation_manager', manager);
   }
 
@@ -267,12 +268,12 @@ export class ServiceRegistry {
    * Get the PluginActivationManager instance
    * @throws Error if not registered
    */
-  getPluginActivationManager(): any {
+  getPluginActivationManager(): PluginActivationManager {
     const manager = this.get('plugin_activation_manager');
     if (!manager) {
       throw new Error('PluginActivationManager not registered in ServiceRegistry');
     }
-    return manager;
+    return manager as PluginActivationManager;
   }
 }
 

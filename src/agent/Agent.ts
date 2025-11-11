@@ -389,6 +389,35 @@ export class Agent {
       logger.debug('[AGENT_TURN]', this.instanceId, 'Reset turn start time for new turn');
     }
 
+    // Parse and activate plugin tags from the message
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const activationManager = registry.getPluginActivationManager();
+      const activatedPlugins = activationManager.parseAndActivateTags(message);
+
+      // If plugins were activated, add system message to inform the model
+      if (activatedPlugins.length > 0) {
+        const pluginNames = activatedPlugins.join(', ');
+        const systemMessage: Message = {
+          role: 'system',
+          content: `[System: Activated plugins: ${pluginNames}. Tools from these plugins are now available.]`,
+          timestamp: Date.now(),
+        };
+        this.messages.push(systemMessage);
+        logger.info(`[AGENT_PLUGIN_ACTIVATION] Activated plugins: ${pluginNames}`);
+      } else {
+        logger.debug('[AGENT_PLUGIN_ACTIVATION] No new plugins activated from tags');
+      }
+    } catch (error) {
+      // If PluginActivationManager is not registered, just log and continue
+      // This ensures backward compatibility and doesn't break existing functionality
+      logger.debug(
+        `[AGENT_PLUGIN_ACTIVATION] Could not parse plugin tags: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+
     // Add user message
     const userMessage: Message = {
       role: 'user',

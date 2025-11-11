@@ -554,6 +554,17 @@ async function main() {
       process.exit(0);
     };
 
+    // Create and initialize PluginActivationManager
+    // This must be done AFTER plugins are loaded and BEFORE ToolManager is created
+    const { PluginActivationManager } = await import('./plugins/PluginActivationManager.js');
+    const pluginActivationManager = new PluginActivationManager(
+      pluginLoader,
+      sessionManager
+    );
+    await pluginActivationManager.initialize();
+    registry.setPluginActivationManager(pluginActivationManager);
+    logger.debug('[CLI] PluginActivationManager initialized');
+
     // Merge built-in tools with plugin tools
     const allTools = [...tools, ...pluginTools];
 
