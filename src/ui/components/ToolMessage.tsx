@@ -95,10 +95,12 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         <Text color={toolNameColor} bold>
           {toolCall.toolName}
         </Text>
-        <Text color="gray" dimColor>
-          {' '}
-          {elapsedSeconds}s
-        </Text>
+        {elapsedSeconds > 5 && (
+          <Text color="gray" dimColor>
+            {' '}
+            {elapsedSeconds}s
+          </Text>
+        )}
         {toolCall.status === 'error' && toolCall.error && toolCall.error_type !== 'validation_error' && (
           <Text color="red" dimColor>
             {' '}

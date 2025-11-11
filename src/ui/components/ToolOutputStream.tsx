@@ -167,7 +167,7 @@ export const StreamingToolOutput: React.FC<StreamingToolOutputProps> = ({
         {truncatedDesc && (
           <Text dimColor> {truncatedDesc}</Text>
         )}
-        {elapsedSeconds !== undefined && elapsedSeconds > 0 && (
+        {elapsedSeconds !== undefined && elapsedSeconds > 5 && (
           <Text dimColor color="cyan">
             {' '}
             [{elapsedSeconds}s]

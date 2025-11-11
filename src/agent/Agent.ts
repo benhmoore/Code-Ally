@@ -96,7 +96,7 @@ export class Agent {
   private maxDuration?: number;
 
   // Performance tracking: timestamp when user prompt was received
-  private userPromptTimestamp?: number;
+  // private userPromptTimestamp?: number;
 
   // Activity monitoring - detects agents stuck generating tokens without tool calls
   private activityMonitor: ActivityMonitor;
@@ -398,8 +398,8 @@ export class Agent {
     this.messages.push(userMessage);
 
     // === PERF: User prompt received ===
-    this.userPromptTimestamp = Date.now();
-    logger.info('[PERF_USER_PROMPT]', this.instanceId, 'User prompt received at', this.userPromptTimestamp);
+    // this.userPromptTimestamp = Date.now();
+    // logger.info('[PERF_USER_PROMPT]', this.instanceId, 'User prompt received at', this.userPromptTimestamp);
 
     // If the previous request was interrupted, add a system reminder
     if (this.interruptionManager.wasRequestInterrupted()) {
@@ -720,47 +720,47 @@ export class Agent {
 
     try {
       // === PERF: About to send request to LLM ===
-      const llmRequestTimestamp = Date.now();
-      const preprocessingTime = this.userPromptTimestamp ? llmRequestTimestamp - this.userPromptTimestamp : 0;
-      logger.info('[PERF_LLM_REQUEST]', this.instanceId, 'Sending request to LLM at', llmRequestTimestamp, 'preprocessing took:', preprocessingTime + 'ms');
+      // const llmRequestTimestamp = Date.now();
+      // const preprocessingTime = this.userPromptTimestamp ? llmRequestTimestamp - this.userPromptTimestamp : 0;
+      // logger.info('[PERF_LLM_REQUEST]', this.instanceId, 'Sending request to LLM at', llmRequestTimestamp, 'preprocessing took:', preprocessingTime + 'ms');
 
       // === DEBUG: Print system prompt and tool context ===
-      const systemPrompt = this.messages[0]?.role === 'system' ? this.messages[0].content : 'No system prompt';
-      const systemPromptTokens = Math.ceil(systemPrompt.length / 4); // Rough estimate: 1 token ≈ 4 chars
-      console.log('\n========== SYSTEM PROMPT ==========');
-      console.log(`Length: ${systemPrompt.length} characters (~${systemPromptTokens} tokens)`);
-      console.log(systemPrompt);
-      console.log('\n========== TOOLS ==========');
-      const toolFunctions = functions as any;
-      if (toolFunctions && Array.isArray(toolFunctions) && toolFunctions.length > 0) {
-        console.log(`Sending ${toolFunctions.length} tools:\n`);
+      // const systemPrompt = this.messages[0]?.role === 'system' ? this.messages[0].content : 'No system prompt';
+      // const systemPromptTokens = Math.ceil(systemPrompt.length / 4); // Rough estimate: 1 token ≈ 4 chars
+      // console.log('\n========== SYSTEM PROMPT ==========');
+      // console.log(`Length: ${systemPrompt.length} characters (~${systemPromptTokens} tokens)`);
+      // console.log(systemPrompt);
+      // console.log('\n========== TOOLS ==========');
+      // const toolFunctions = functions as any;
+      // if (toolFunctions && Array.isArray(toolFunctions) && toolFunctions.length > 0) {
+      //   console.log(`Sending ${toolFunctions.length} tools:\n`);
 
-        // Calculate per-tool stats
-        const toolStats: Array<{name: string, chars: number, tokens: number}> = [];
-        toolFunctions.forEach((fn: any, idx: number) => {
-          const name = fn.name || fn.function?.name || 'unknown';
-          const toolJson = JSON.stringify(fn);
-          const chars = toolJson.length;
-          const tokens = Math.ceil(chars / 4);
-          toolStats.push({ name, chars, tokens });
-          console.log(`  ${idx + 1}. ${name.padEnd(25)} ${chars.toString().padStart(5)} chars (~${tokens.toString().padStart(4)} tokens)`);
-        });
+      //   // Calculate per-tool stats
+      //   const toolStats: Array<{name: string, chars: number, tokens: number}> = [];
+      //   toolFunctions.forEach((fn: any, idx: number) => {
+      //     const name = fn.name || fn.function?.name || 'unknown';
+      //     const toolJson = JSON.stringify(fn);
+      //     const chars = toolJson.length;
+      //     const tokens = Math.ceil(chars / 4);
+      //     toolStats.push({ name, chars, tokens });
+      //     console.log(`  ${idx + 1}. ${name.padEnd(25)} ${chars.toString().padStart(5)} chars (~${tokens.toString().padStart(4)} tokens)`);
+      //   });
 
-        // Sort by token count and show top offenders
-        const sorted = [...toolStats].sort((a, b) => b.tokens - a.tokens);
-        const schemaJson = JSON.stringify(toolFunctions);
-        const totalTokens = Math.ceil(schemaJson.length / 4);
+      //   // Sort by token count and show top offenders
+      //   const sorted = [...toolStats].sort((a, b) => b.tokens - a.tokens);
+      //   const schemaJson = JSON.stringify(toolFunctions);
+      //   const totalTokens = Math.ceil(schemaJson.length / 4);
 
-        console.log(`\n--- Summary ---`);
-        console.log(`Total tool schema: ${schemaJson.length} characters (~${totalTokens} tokens)`);
-        console.log(`\nTop 5 largest tools by token count:`);
-        sorted.slice(0, 5).forEach((tool, idx) => {
-          console.log(`  ${idx + 1}. ${tool.name.padEnd(25)} ~${tool.tokens} tokens`);
-        });
-      } else {
-        console.log('No tools being sent');
-      }
-      console.log('===================================\n');
+      //   console.log(`\n--- Summary ---`);
+      //   console.log(`Total tool schema: ${schemaJson.length} characters (~${totalTokens} tokens)`);
+      //   console.log(`\nTop 5 largest tools by token count:`);
+      //   sorted.slice(0, 5).forEach((tool, idx) => {
+      //     console.log(`  ${idx + 1}. ${tool.name.padEnd(25)} ~${tool.tokens} tokens`);
+      //   });
+      // } else {
+      //   console.log('No tools being sent');
+      // }
+      // console.log('===================================\n');
 
       // Send to model (includes system-reminder if present)
       const response = await this.modelClient.send(this.messages, {
@@ -770,9 +770,9 @@ export class Agent {
       });
 
       // === PERF: LLM response received ===
-      const llmResponseTimestamp = Date.now();
-      const llmDuration = llmResponseTimestamp - llmRequestTimestamp;
-      logger.info('[PERF_LLM_RESPONSE]', this.instanceId, 'LLM response received at', llmResponseTimestamp, 'duration:', llmDuration + 'ms');
+      // const llmResponseTimestamp = Date.now();
+      // const llmDuration = llmResponseTimestamp - llmRequestTimestamp;
+      // logger.info('[PERF_LLM_RESPONSE]', this.instanceId, 'LLM response received at', llmResponseTimestamp, 'duration:', llmDuration + 'ms');
 
       // Remove system-reminder messages after receiving response
       // These are temporary context hints that should not persist

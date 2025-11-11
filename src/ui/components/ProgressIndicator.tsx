@@ -119,7 +119,7 @@ export const StatusSpinner: React.FC<StatusSpinnerProps> = ({
     <Box>
       <ProgressIndicator type={type} color={color} />
       <Text color={color}> {label}</Text>
-      {startTime && elapsed > 0 && (
+      {startTime && elapsed > 5 && (
         <Text dimColor color={color}>
           {' '}
           [{elapsed}s]
@@ -184,7 +184,7 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({
           ({tokenCount} tokens)
         </Text>
       )}
-      {startTime && elapsed > 0 && (
+      {startTime && elapsed > 5 && (
         <Text dimColor> [{elapsed}s]</Text>
       )}
     </Box>
@@ -238,7 +238,7 @@ export const ToolExecutionIndicator: React.FC<ToolExecutionIndicatorProps> = ({
       {truncatedDesc && (
         <Text dimColor> {truncatedDesc}</Text>
       )}
-      {startTime && elapsed > 0 && (
+      {startTime && elapsed > 5 && (
         <Text dimColor color="cyan">
           {' '}
           [{elapsed}s]

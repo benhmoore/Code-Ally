@@ -205,8 +205,10 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           <Text dimColor> ({argsPreview})</Text>
         )}
 
-        {/* Duration */}
-        <Text dimColor> · {durationStr}</Text>
+        {/* Duration - only show if > 5 seconds */}
+        {duration > 5000 && (
+          <Text dimColor> · {durationStr}</Text>
+        )}
       </Box>
 
       {/* Diff preview (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
