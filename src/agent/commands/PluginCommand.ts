@@ -303,7 +303,7 @@ export class PluginCommand extends Command {
       }
 
       output += '\nUse /plugin active to see active plugins in this session\n';
-      output += 'Use #plugin-name in messages to activate tagged plugins';
+      output += 'Use +plugin-name to activate or -plugin-name to deactivate';
 
       return {
         handled: true,
@@ -397,19 +397,13 @@ export class PluginCommand extends Command {
         );
       }
 
-      if (mode === 'always') {
-        return {
-          handled: true,
-          response: `⚠ Cannot deactivate '${pluginName}' - it is set to "always" mode.\nReinstall the plugin to change its activation mode.`,
-        };
-      }
-
       const success = activationManager.deactivate(pluginName);
 
       if (success) {
+        const modeNote = mode === 'always' ? ' (will reactivate in new conversations)' : '';
         return {
           handled: true,
-          response: `✓ Deactivated plugin: ${pluginName}`,
+          response: `✓ Deactivated plugin: ${pluginName}${modeNote}`,
         };
       } else {
         return this.createError(`Failed to deactivate plugin: ${pluginName}`);
@@ -435,7 +429,7 @@ export class PluginCommand extends Command {
   /plugin activate <name>         Activate a plugin
   /plugin deactivate <name>       Deactivate a plugin
 
-Use #plugin-name in messages to activate tagged plugins`,
+Use +plugin-name to activate or -plugin-name to deactivate`,
     };
   }
 }

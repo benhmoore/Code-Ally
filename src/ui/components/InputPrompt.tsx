@@ -125,6 +125,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [buffer, setBuffer] = useState(bufferValue || '');
   const [cursorPosition, setCursorPosition] = useState(0);
   const [mentionedFiles, setMentionedFiles] = useState<string[]>([]);
+  const [mentionedPlugins, setMentionedPlugins] = useState<string[]>([]);
 
   // Handle prefill text
   useEffect(() => {
@@ -285,6 +286,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     // Track file mentions (avoid duplicates)
     if (completion.type === 'file' && !mentionedFiles.includes(insertText)) {
       setMentionedFiles([...mentionedFiles, insertText]);
+    }
+
+    // Track plugin mentions (avoid duplicates) - plugin names include the +/- prefix in insertText
+    if (completion.type === 'plugin' && !mentionedPlugins.includes(insertText)) {
+      setMentionedPlugins([...mentionedPlugins, insertText]);
     }
   };
 
@@ -1199,51 +1205,66 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   }
 
   /**
-   * Parse text and identify mentioned file paths for highlighting
+   * Parse text and identify mentioned file paths and plugins for highlighting
    * Returns array of segments with styling information
    */
-  const parseTextWithMentions = (text: string): Array<{ text: string; isHighlighted: boolean }> => {
-    if (mentionedFiles.length === 0 || !text) {
-      return [{ text, isHighlighted: false }];
+  const parseTextWithMentions = (
+    text: string
+  ): Array<{ text: string; highlightType: 'none' | 'file' | 'plugin' }> => {
+    if ((mentionedFiles.length === 0 && mentionedPlugins.length === 0) || !text) {
+      return [{ text, highlightType: 'none' }];
     }
 
-    const segments: Array<{ text: string; isHighlighted: boolean }> = [];
+    const segments: Array<{ text: string; highlightType: 'none' | 'file' | 'plugin' }> = [];
     let remaining = text;
     let searchIndex = 0;
 
     while (remaining.length > 0) {
-      // Find the earliest mentioned file in the remaining text
+      // Find the earliest mention (file or plugin) in the remaining text
       let earliestIndex = -1;
-      let earliestFile = '';
+      let earliestMention = '';
+      let earliestType: 'file' | 'plugin' = 'file';
 
+      // Check files
       for (const filePath of mentionedFiles) {
         const index = remaining.indexOf(filePath, searchIndex - (text.length - remaining.length));
         if (index !== -1 && (earliestIndex === -1 || index < earliestIndex)) {
           earliestIndex = index;
-          earliestFile = filePath;
+          earliestMention = filePath;
+          earliestType = 'file';
+        }
+      }
+
+      // Check plugins
+      for (const pluginName of mentionedPlugins) {
+        const index = remaining.indexOf(pluginName, searchIndex - (text.length - remaining.length));
+        if (index !== -1 && (earliestIndex === -1 || index < earliestIndex)) {
+          earliestIndex = index;
+          earliestMention = pluginName;
+          earliestType = 'plugin';
         }
       }
 
       if (earliestIndex === -1) {
         // No more mentions found
-        segments.push({ text: remaining, isHighlighted: false });
+        segments.push({ text: remaining, highlightType: 'none' });
         break;
       }
 
       // Add text before mention
       if (earliestIndex > 0) {
-        segments.push({ text: remaining.slice(0, earliestIndex), isHighlighted: false });
+        segments.push({ text: remaining.slice(0, earliestIndex), highlightType: 'none' });
       }
 
       // Add the mention
-      segments.push({ text: earliestFile, isHighlighted: true });
+      segments.push({ text: earliestMention, highlightType: earliestType });
 
       // Continue with text after mention
-      remaining = remaining.slice(earliestIndex + earliestFile.length);
+      remaining = remaining.slice(earliestIndex + earliestMention.length);
       searchIndex = 0;
     }
 
-    return segments.length > 0 ? segments : [{ text, isHighlighted: false }];
+    return segments.length > 0 ? segments : [{ text, highlightType: 'none' }];
   };
 
   return (
@@ -1266,6 +1287,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           // Parse line into segments with mentions
           const segments = parseTextWithMentions(displayText);
 
+          // Get color for segment based on highlight type
+          const getSegmentColor = (highlightType: 'none' | 'file' | 'plugin'): string => {
+            if (highlightType === 'file') return 'yellow';
+            if (highlightType === 'plugin') return 'cyan';
+            return textColor;
+          };
+
           return (
             <Box key={`line-${index}`}>
               <Text color={promptColor} bold={isCommandMode || isBashMode}>
@@ -1278,8 +1306,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                   {segments.map((segment, segIdx) => (
                     <Text
                       key={segIdx}
-                      color={segment.isHighlighted ? 'yellow' : textColor}
-                      dimColor={isEmpty && isFirstLine && !segment.isHighlighted}
+                      color={getSegmentColor(segment.highlightType)}
+                      dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
                     >
                       {segment.text}
                     </Text>
@@ -1294,7 +1322,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                     // Calculate character range for this segment
                     const segmentStart = segments.slice(0, segIdx).reduce((sum, s) => sum + s.text.length, 0);
                     const segmentEnd = segmentStart + segment.text.length;
-                    const segmentColor = segment.isHighlighted ? 'yellow' : textColor;
+                    const segmentColor = getSegmentColor(segment.highlightType);
 
                     // Check if cursor is in this segment
                     if (cursorPosInLine >= segmentStart && cursorPosInLine < segmentEnd) {
@@ -1305,13 +1333,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
                       return (
                         <React.Fragment key={segIdx}>
-                          <Text color={segmentColor} dimColor={isEmpty && isFirstLine && !segment.isHighlighted}>
+                          <Text color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
                             {before}
                           </Text>
                           <Text color="black" backgroundColor="yellow">
                             {at}
                           </Text>
-                          <Text color={segmentColor} dimColor={isEmpty && isFirstLine && !segment.isHighlighted}>
+                          <Text color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
                             {after}
                           </Text>
                         </React.Fragment>
@@ -1323,7 +1351,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                       <Text
                         key={segIdx}
                         color={segmentColor}
-                        dimColor={isEmpty && isFirstLine && !segment.isHighlighted}
+                        dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
                       >
                         {segment.text}
                       </Text>

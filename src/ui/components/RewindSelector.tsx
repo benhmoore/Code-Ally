@@ -262,15 +262,14 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
           return (
             <Box key={actualIndex} flexDirection="column">
               <Box>
-                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                  {isSelected ? '> ' : '  '}
-                </Text>
-                <Text color={isSelected ? 'green' : 'gray'} bold={isSelected}>
-                  {time}
-                </Text>
-                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                  {' - '}
-                  {content}
+                <Text>
+                  {isSelected ? (
+                    <Text color="green">&gt; </Text>
+                  ) : (
+                    <Text>  </Text>
+                  )}
+                  <Text color="gray" bold={isSelected}>{time}</Text>
+                  <Text bold={isSelected}> - {content}</Text>
                 </Text>
               </Box>
               <FileChangesDisplay changes={changes} isSelected={isSelected} />

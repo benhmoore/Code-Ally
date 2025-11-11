@@ -242,6 +242,7 @@ export class PluginLoader {
    *
    * Performs comprehensive validation of plugin configuration including:
    * - Required fields for all plugins (name, version, tools)
+   * - Plugin name format (must not start with + or -)
    * - Background daemon configuration (if enabled)
    * - Tool definitions and type-specific requirements
    * - Socket path length constraints
@@ -257,6 +258,15 @@ export class PluginLoader {
     // Required fields for all plugins
     if (!manifest.name || typeof manifest.name !== 'string') {
       errors.push("Missing required field 'name'");
+    } else {
+      // Validate plugin name format: must not start with + or -
+      if (manifest.name.startsWith('+') || manifest.name.startsWith('-')) {
+        errors.push(`Invalid plugin name '${manifest.name}': plugin names cannot start with '+' or '-'`);
+      }
+      // Validate plugin name pattern: only lowercase alphanumeric, underscore, and hyphen
+      if (!/^[a-z0-9_-]+$/.test(manifest.name)) {
+        errors.push(`Invalid plugin name '${manifest.name}': must contain only lowercase letters, numbers, underscores, and hyphens`);
+      }
     }
     if (!manifest.version || typeof manifest.version !== 'string') {
       errors.push("Missing required field 'version'");
@@ -429,6 +439,14 @@ export class PluginLoader {
       // Validate required manifest fields
       if (!manifest.name) {
         return { success: false, error: 'Plugin manifest missing required field: name' };
+      }
+
+      // Validate plugin name format
+      if (manifest.name.startsWith('+') || manifest.name.startsWith('-')) {
+        return { success: false, error: `Invalid plugin name '${manifest.name}': plugin names cannot start with '+' or '-'` };
+      }
+      if (!/^[a-z0-9_-]+$/.test(manifest.name)) {
+        return { success: false, error: `Invalid plugin name '${manifest.name}': must contain only lowercase letters, numbers, underscores, and hyphens` };
       }
 
       if (!manifest.tools || manifest.tools.length === 0) {

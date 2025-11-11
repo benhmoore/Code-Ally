@@ -125,8 +125,9 @@ export const UndoPrompt: React.FC<UndoPromptProps> = ({
           <Text dimColor>Select action:</Text>
           {options.map((option, index) => (
             <Box key={option} marginLeft={2}>
+              {selectedIndex === index && <Text color="green">&gt; </Text>}
+              {selectedIndex === index ? null : <Text>  </Text>}
               <Text color={selectedIndex === index ? 'yellow' : undefined}>
-                {selectedIndex === index ? '→ ' : '  '}
                 {option}
               </Text>
             </Box>

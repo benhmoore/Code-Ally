@@ -4,7 +4,7 @@
  * This service tracks which plugins are active in the current session and provides
  * methods to activate/deactivate plugins. It respects each plugin's activation mode:
  * - "always": Plugin is always active (cannot be deactivated)
- * - "tagged": Plugin must be explicitly activated via #plugin-name tags or commands
+ * - "tagged": Plugin must be explicitly activated via +plugin-name tags or commands
  *
  * The activation state is persisted to the session file for continuity across
  * CLI restarts.
@@ -94,7 +94,6 @@ export class PluginActivationManager {
     this.activePlugins.add(pluginName);
 
     if (!wasActive) {
-      logger.info(`[PluginActivationManager] Activated plugin: ${pluginName}`);
       this.saveToSession();
     }
 
@@ -104,24 +103,17 @@ export class PluginActivationManager {
   /**
    * Deactivate a plugin by name
    *
-   * Note: Plugins with "always" activation mode cannot be deactivated.
+   * Deactivates the plugin for the current conversation. Plugins with "always"
+   * activation mode will be re-activated automatically when a new conversation starts.
    *
    * @param pluginName - Name of the plugin to deactivate
-   * @returns True if deactivated successfully, false if plugin is in "always" mode or not found
+   * @returns True if deactivated successfully, false if plugin not found
    */
   deactivate(pluginName: string): boolean {
     const manifest = this.pluginManifests.get(pluginName);
 
     if (!manifest) {
       logger.warn(`[PluginActivationManager] Cannot deactivate '${pluginName}' - plugin not installed`);
-      return false;
-    }
-
-    const mode = manifest.activationMode ?? 'always';
-    if (mode === 'always') {
-      logger.warn(
-        `[PluginActivationManager] Cannot deactivate '${pluginName}' - plugin is in 'always' mode`
-      );
       return false;
     }
 
@@ -176,20 +168,25 @@ export class PluginActivationManager {
   }
 
   /**
-   * Parse plugin tags from a message and activate them
+   * Parse plugin tags from a message and activate/deactivate them
    *
-   * Searches for #plugin-name patterns in the message and attempts to activate
-   * each matched plugin. Returns the list of successfully activated plugin names.
+   * Searches for +plugin-name (activate) and -plugin-name (deactivate) patterns
+   * in the message and attempts to activate or deactivate each matched plugin.
+   * Returns lists of successfully activated and deactivated plugin names.
    *
    * @param message - User message to parse for plugin tags
-   * @returns Array of plugin names that were successfully activated
+   * @returns Object with arrays of activated and deactivated plugin names
    */
-  parseAndActivateTags(message: string): string[] {
-    const tagPattern = /#([a-z0-9_-]+)/gi;
-    const matches = message.matchAll(tagPattern);
-    const activated: string[] = [];
+  parseAndActivateTags(message: string): { activated: string[]; deactivated: string[] } {
+    const activatePattern = /\+([a-z0-9_-]+)/gi;
+    const deactivatePattern = /-([a-z0-9_-]+)/gi;
 
-    for (const match of matches) {
+    const activated: string[] = [];
+    const deactivated: string[] = [];
+
+    // Parse activation tags (+plugin-name)
+    const activateMatches = message.matchAll(activatePattern);
+    for (const match of activateMatches) {
       const pluginName = match[1];
       if (!pluginName) continue; // Skip if no capture group
 
@@ -201,12 +198,32 @@ export class PluginActivationManager {
           // Only report as "activated" if it wasn't already active
           if (!wasActive) {
             activated.push(pluginName);
+            logger.info(`[PluginActivationManager] Activated plugin: ${pluginName}`);
           }
         }
       }
     }
 
-    return activated;
+    // Parse deactivation tags (-plugin-name)
+    const deactivateMatches = message.matchAll(deactivatePattern);
+    for (const match of deactivateMatches) {
+      const pluginName = match[1];
+      if (!pluginName) continue; // Skip if no capture group
+
+      // Check if this matches an installed plugin
+      if (this.pluginManifests.has(pluginName)) {
+        const wasActive = this.activePlugins.has(pluginName);
+
+        if (this.deactivate(pluginName)) {
+          // Only report as "deactivated" if it was previously active
+          if (wasActive) {
+            deactivated.push(pluginName);
+          }
+        }
+      }
+    }
+
+    return { activated, deactivated };
   }
 
   /**

@@ -204,15 +204,19 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
               <Box key={index} flexDirection="column" marginBottom={index < options.length - 1 ? 1 : 0}>
                 {/* Option label */}
                 <Box>
-                  <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                    {isSelected ? '> ' : '  '}
-                  </Text>
-                  <Text
-                    color={isDimmed ? 'gray' : (isSelected ? 'green' : 'white')}
-                    bold={isSelected}
-                    dimColor={isDimmed}
-                  >
-                    {option.label}
+                  <Text>
+                    {isSelected ? (
+                      <Text color="green">&gt; </Text>
+                    ) : (
+                      <Text>  </Text>
+                    )}
+                    <Text
+                      color={isDimmed ? 'gray' : undefined}
+                      bold={isSelected}
+                      dimColor={isDimmed}
+                    >
+                      {option.label}
+                    </Text>
                   </Text>
                 </Box>
                 {/* Option description */}

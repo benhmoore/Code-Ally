@@ -93,11 +93,13 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
 
         return (
           <Box key={idx}>
-            <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-              {isSelected ? '> ' : '  '}
-            </Text>
-            <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-              {option}
+            <Text>
+              {isSelected ? (
+                <Text color="green">&gt; </Text>
+              ) : (
+                <Text>  </Text>
+              )}
+              <Text bold={isSelected}>{option}</Text>
             </Text>
           </Box>
         );

@@ -389,24 +389,30 @@ export class Agent {
       logger.debug('[AGENT_TURN]', this.instanceId, 'Reset turn start time for new turn');
     }
 
-    // Parse and activate plugin tags from the message
+    // Parse and activate/deactivate plugins from the message
     try {
       const registry = ServiceRegistry.getInstance();
       const activationManager = registry.getPluginActivationManager();
-      const activatedPlugins = activationManager.parseAndActivateTags(message);
+      const { activated, deactivated } = activationManager.parseAndActivateTags(message);
 
-      // If plugins were activated, add system message to inform the model
-      if (activatedPlugins.length > 0) {
-        const pluginNames = activatedPlugins.join(', ');
+      // Build system message if any plugins were activated or deactivated
+      const messageParts: string[] = [];
+      if (activated.length > 0) {
+        messageParts.push(`Activated plugins: ${activated.join(', ')}`);
+      }
+      if (deactivated.length > 0) {
+        messageParts.push(`Deactivated plugins: ${deactivated.join(', ')}`);
+      }
+
+      if (messageParts.length > 0) {
         const systemMessage: Message = {
           role: 'system',
-          content: `[System: Activated plugins: ${pluginNames}. Tools from these plugins are now available.]`,
+          content: `[System: ${messageParts.join('. ')}. Tools from active plugins are now available.]`,
           timestamp: Date.now(),
         };
         this.messages.push(systemMessage);
-        logger.info(`[AGENT_PLUGIN_ACTIVATION] Activated plugins: ${pluginNames}`);
       } else {
-        logger.debug('[AGENT_PLUGIN_ACTIVATION] No new plugins activated from tags');
+        logger.debug('[AGENT_PLUGIN_ACTIVATION] No plugins activated or deactivated from tags');
       }
     } catch (error) {
       // If PluginActivationManager is not registered, just log and continue

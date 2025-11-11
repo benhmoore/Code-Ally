@@ -74,18 +74,20 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
           return (
             <Box key={idx}>
-              <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                {isSelected ? '> ' : '  '}
+              <Text>
+                {isSelected ? (
+                  <Text color="green">&gt; </Text>
+                ) : (
+                  <Text>  </Text>
+                )}
+                <Text bold={isSelected}>{model.name}</Text>
+                {isCurrent && (
+                  <Text dimColor> (current)</Text>
+                )}
+                {model.size && (
+                  <Text dimColor> - {model.size}</Text>
+                )}
               </Text>
-              <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                {model.name}
-              </Text>
-              {isCurrent && (
-                <Text dimColor> (current)</Text>
-              )}
-              {model.size && (
-                <Text dimColor> - {model.size}</Text>
-              )}
             </Box>
           );
         })}

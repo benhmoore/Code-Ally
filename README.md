@@ -1,197 +1,171 @@
 # Code Ally
 
-AI pair programming assistant with Ink-based terminal UI, ported from Python/Rich to TypeScript/React.
+Terminal-based AI coding assistant that runs in your CLI. Built with TypeScript, React, and Ink.
 
-## Status
-
-**Current Phase**: 4 of 10 (UI Foundation Complete)
-
-- Service Layer: Complete (76/76 tests passing)
-- LLM Integration: Complete (66/66 tests passing)
-- Tool System: Foundation complete (43/48 tests passing)
-- UI Components: Complete (Ink/React components)
-- Build: Passing with TypeScript strict mode
-
-## Quick Start
+## Installation
 
 ```bash
-# Install dependencies
 npm install
-
-# Run in development mode
-npm run dev
-
-# Build for production
 npm run build
-
-# Run tests
-npm test
+npm link  # Makes 'ally' command available globally
 ```
+
+## Usage
+
+```bash
+# Start interactive session
+ally
+
+# Run with specific model
+ally --model llama3.2
+
+# Single message mode
+ally --once "explain this error: ..."
+
+# Resume previous session
+ally --resume
+
+# Initial setup
+ally --init
+```
+
+## What It Does
+
+Code Ally is an AI pair programming assistant that can:
+
+- Read, write, and edit files with undo support
+- Execute shell commands and analyze output
+- Search codebases with grep and glob patterns
+- Maintain conversation context across sessions
+- Create specialized agents for exploration and planning
+- Extend functionality through plugins
+
+**Safety features:**
+- Permission prompts for file modifications
+- Focus mode to restrict operations to specific directories
+- Undo system with file diff tracking
+- Path validation and sandboxing
 
 ## Architecture
 
-Code Ally uses a layered architecture with event-driven communication:
+Event-driven layered architecture:
 
 ```
-CLI Entry (cli.ts)
-    |
-    v
-Ink UI (React Components)
-    |
-    v
-Activity Stream (Event Bus)
-    |
-    v
-Agent Orchestrator
-    |
-    +-- Tool Manager --> Tools (Bash, Read, Write, Edit, etc.)
-    +-- LLM Client --> Ollama
-    +-- Service Registry (DI Container)
+CLI → Ink UI → ActivityStream (event bus) → Agent → LLM/Tools
 ```
 
-### Key Components
+**Core components:**
+- **Agent** (src/agent/): LLM orchestration, tool coordination, context management
+- **Tools** (src/tools/): File operations, shell commands, search utilities
+- **Plugins** (src/plugins/): Extensible tool system with activation management
+- **UI** (src/ui/): React/Ink terminal interface
+- **Services** (src/services/): Configuration, sessions, focus management
 
-**Service Layer** (`src/services/`)
-- ServiceRegistry: Dependency injection container
-- ConfigManager: Configuration management
-- PathResolver: Focus-aware path resolution
-- ActivityStream: Event-driven communication
-
-**LLM Integration** (`src/llm/`)
-- ModelClient: Abstract LLM interface
-- OllamaClient: Ollama-specific implementation
-- MessageHistory: Conversation state management
-- FunctionCalling: Tool schema conversion
-
-**Tool System** (`src/tools/`)
-- BaseTool: Abstract base with event emission
-- ToolManager: Registry and execution orchestration
-- Concrete tools: BashTool, ReadTool (more coming)
-
-**UI Components** (`src/ui/`)
-- App: Root component with context providers
-- ConversationView: Message list display
-- ToolGroupMessage: Concurrent tool visualization
-- InputPrompt: User input handling
-- StatusLine: Context and model info
-
-## Features
-
-### Current Implementation
-
-- Configuration management with JSON persistence
-- Ollama integration with function calling support
-- Event-driven tool execution
-- Concurrent tool visualization (Gemini-CLI style)
-- React-based terminal UI with Ink
-- TypeScript strict mode throughout
-
-### Planned Features
-
-- Session persistence across conversations
-- Custom agent creation and delegation
-- Undo system for file operations
-- Focus management (restrict to directory)
-- Tab completion and command history
-- Full tool suite (Write, Edit, Grep, Glob, Ls)
+**Key patterns:**
+- Dependency injection via ServiceRegistry
+- Event bus for UI/agent communication
+- Tool orchestration with permission gating
+- Agent pooling for performance
 
 ## Configuration
 
-Configuration file: `~/.ally/config.json`
+Configuration: `~/.ally/config.json`
 
-Key settings:
-- `model`: Ollama model name (null for auto-detect)
-- `endpoint`: Ollama API endpoint (default: http://localhost:11434)
-- `context_size`: Context window in tokens (default: 16384)
-- `temperature`: Generation temperature (default: 0.3)
-- `bash_timeout`: Command timeout in seconds (default: 30)
+```json
+{
+  "model": "llama3.2",
+  "endpoint": "http://localhost:11434",
+  "context_size": 16384,
+  "temperature": 0.3,
+  "bash_timeout": 30
+}
+```
+
+Run `ally --init` for interactive setup.
+
+## Plugin System
+
+Plugins extend functionality through custom tools. Two types:
+
+**Executable plugins:** Spawn per call, communicate via stdin/stdout JSON
+**Background plugins:** Long-running daemons with JSON-RPC over Unix sockets
+
+**Plugin structure:**
+```
+~/.ally/plugins/my-plugin/
+├── plugin.json          # Manifest
+├── tool.py             # Tool implementation
+└── requirements.txt    # Dependencies (optional)
+```
+
+**Activation modes:**
+- `always`: Auto-activated every session
+- `tagged`: Activate with `+plugin-name` in message
+
+See plugins in `~/.ally/plugins/` for examples.
+
+## Sessions and Agents
+
+**Sessions:**
+- Auto-saved in `~/.ally/sessions/`
+- Include conversation history, todos, active plugins
+- Resume with `ally --resume`
+
+**Specialized agents:**
+- Create custom agents via `/agent` command or agent wizard
+- Agents stored in `~/.ally/agents/`
+- Useful for focused tasks (exploration, planning, domain-specific work)
+
+**Slash commands:**
+```
+/compact    - Summarize conversation to free context
+/undo       - Revert file changes
+/rewind     - Go back to earlier message
+/config     - Modify configuration
+/model      - Switch LLM model
+/focus      - Restrict operations to directory
+```
 
 ## Development
 
-### Project Structure
-
-```
-src/
-├── services/       # Core infrastructure
-├── llm/           # LLM client and message handling
-├── tools/         # Tool system and implementations
-├── ui/            # Ink/React components
-├── types/         # TypeScript type definitions
-└── cli.ts         # Entry point
-
-docs/
-├── implementation_description/  # Architecture docs
-├── INK_ARCHITECTURE_DESIGN.md  # UI design
-├── PHASE_4_COMPLETE.md         # Current status
-└── TEST_RESULTS_FINAL.md       # Test coverage
-```
-
-### Testing
-
 ```bash
-# Run all tests
+# Run tests
 npm test
 
-# Run specific test suite
-npm test -- src/services/__tests__/
-npm test -- src/llm/__tests__/
-npm test -- src/tests/tools/
-
-# Type checking
+# Type check
 npm run type-check
+
+# Development mode
+npm run dev
 
 # Build
 npm run build
 ```
 
-### Agent-Based Development
+**Project structure:**
+```
+src/
+├── agent/      # Agent orchestration, tool coordination
+├── llm/        # LLM client implementation
+├── tools/      # Built-in tools (Bash, Read, Write, Edit, etc.)
+├── plugins/    # Plugin system and management
+├── ui/         # React/Ink terminal UI
+├── services/   # Core services (config, sessions, etc.)
+└── cli.ts      # Entry point
+```
 
-This project uses specialized agents for parallel implementation:
-- Service layer agent
-- LLM integration agent
-- Tool system agent
-- UI component agents
-
-See `docs/IMPLEMENTATION_STATUS.md` for details.
+**Stack:**
+- TypeScript 5.3+ (strict mode)
+- React 18 + Ink 4 (terminal UI)
+- Vitest (testing)
+- Zod (validation)
 
 ## Requirements
 
 - Node.js 18+
-- Ollama running locally (for LLM features)
+- Ollama running locally
 - Terminal with Unicode support
-
-## Dependencies
-
-**Runtime**:
-- ink: React for terminals (4.4.1)
-- react: Component framework (18.2.0)
-- zod: Schema validation (3.22.4)
-
-**Development**:
-- typescript: Type safety (5.3.3)
-- vitest: Testing framework (1.2.0)
-- tsx: TypeScript execution (4.7.0)
-- eslint: Linting (8.56.0)
-- prettier: Code formatting (3.2.4)
-
-## Documentation
-
-- `docs/INK_ARCHITECTURE_DESIGN.md` - Complete UI architecture
-- `docs/implementation_description/` - Detailed component docs
-- `docs/PHASE_4_COMPLETE.md` - Current implementation status
-- `docs/TEST_RESULTS_FINAL.md` - Test coverage report
 
 ## License
 
 MIT
-
-## Contributing
-
-This is currently in active development. The codebase uses:
-- TypeScript strict mode
-- ES modules with .js extensions
-- React/Ink for UI
-- Vitest for testing
-- Agent-based parallel development
-
-Contributions welcome after Phase 6 (Agent Orchestration) is complete.

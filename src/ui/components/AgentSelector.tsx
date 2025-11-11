@@ -70,11 +70,13 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
           return (
             <Box key={idx} marginBottom={0} flexDirection="column">
               <Box>
-                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                  {isSelected ? '> ' : '  '}
-                </Text>
-                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                  {agent.name}
+                <Text>
+                  {isSelected ? (
+                    <Text color="green">&gt; </Text>
+                  ) : (
+                    <Text>  </Text>
+                  )}
+                  <Text bold={isSelected}>{agent.name}</Text>
                 </Text>
               </Box>
               <Box marginLeft={4}>

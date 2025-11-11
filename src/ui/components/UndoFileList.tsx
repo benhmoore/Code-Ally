@@ -146,9 +146,8 @@ export const UndoFileList: React.FC<UndoFileListProps> = ({
                 <Box key={index} flexDirection="column" marginBottom={index < fileList.length - 1 ? 1 : 0}>
                   <Box>
                     {/* Selection indicator */}
-                    <Text color={isSelected ? 'yellow' : 'dim'} bold={isSelected}>
-                      {isSelected ? '→ ' : '  '}
-                    </Text>
+                    {isSelected && <Text color="green">&gt; </Text>}
+                    {isSelected ? null : <Text>  </Text>}
 
                     {/* File path */}
                     <Text color={isSelected ? 'white' : 'gray'} bold={isSelected}>

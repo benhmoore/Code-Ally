@@ -51,12 +51,14 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [customizeAgentModels, setCustomizeAgentModels] = useState(false);
+  const [selectedAgentModelsChoiceIndex, setSelectedAgentModelsChoiceIndex] = useState(1); // Default to "No"
   const [selectedExploreModelIndex, setSelectedExploreModelIndex] = useState(0);
   const [selectedPlanModelIndex, setSelectedPlanModelIndex] = useState(0);
   const [selectedContextSizeIndex, setSelectedContextSizeIndex] = useState(1); // Default to 32K
   const [temperature, setTemperature] = useState('0.3');
   const [temperatureInput, setTemperatureInput] = useState('0.3');
   const [autoConfirm, setAutoConfirm] = useState(false);
+  const [selectedAutoConfirmChoiceIndex, setSelectedAutoConfirmChoiceIndex] = useState(1); // Default to "No"
   const [error, setError] = useState<string | null>(null);
   const [setupWizard] = useState(() => {
     const registry = ServiceRegistry.getInstance();
@@ -111,13 +113,21 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         setStep(SetupStep.VALIDATING_MODEL);
       }
     } else if (step === SetupStep.AGENT_MODELS_CHOICE) {
-      if (input === 'y' || input === 'Y') {
-        setCustomizeAgentModels(true);
-        setSelectedExploreModelIndex(0);
-        setStep(SetupStep.EXPLORE_MODEL);
-      } else if (input === 'n' || input === 'N') {
-        setCustomizeAgentModels(false);
-        setStep(SetupStep.CONTEXT_SIZE);
+      if (key.upArrow) {
+        setSelectedAgentModelsChoiceIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setSelectedAgentModelsChoiceIndex((prev) => Math.min(1, prev + 1));
+      } else if (key.return) {
+        if (selectedAgentModelsChoiceIndex === 0) {
+          // Yes - Customize models
+          setCustomizeAgentModels(true);
+          setSelectedExploreModelIndex(0);
+          setStep(SetupStep.EXPLORE_MODEL);
+        } else {
+          // No - Use global model
+          setCustomizeAgentModels(false);
+          setStep(SetupStep.CONTEXT_SIZE);
+        }
       }
     } else if (step === SetupStep.EXPLORE_MODEL) {
       if (key.upArrow) {
@@ -144,12 +154,14 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         setStep(SetupStep.TEMPERATURE);
       }
     } else if (step === SetupStep.AUTO_CONFIRM) {
-      if (input === 'y' || input === 'Y') {
-        setAutoConfirm(true);
-        applyConfiguration(true);
-      } else if (input === 'n' || input === 'N') {
-        setAutoConfirm(false);
-        applyConfiguration(false);
+      if (key.upArrow) {
+        setSelectedAutoConfirmChoiceIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setSelectedAutoConfirmChoiceIndex((prev) => Math.min(1, prev + 1));
+      } else if (key.return) {
+        const autoConfirmValue = selectedAutoConfirmChoiceIndex === 0; // Yes = true, No = false
+        setAutoConfirm(autoConfirmValue);
+        applyConfiguration(autoConfirmValue);
       }
     } else if (step === SetupStep.COMPLETED) {
       if (key.return) {
@@ -501,7 +513,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               {availableModels.map((model, idx) => (
                 <Box key={idx}>
                   <Text color={idx === selectedModelIndex ? 'green' : undefined}>
-                    {idx === selectedModelIndex ? '▶ ' : '  '}
+                    {idx === selectedModelIndex ? '> ' : '  '}
                     {model}
                   </Text>
                 </Box>
@@ -546,7 +558,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             <Box marginBottom={1}>
               <Text>
-                Customize models for specialized agents? (Explore and Plan agents)
+                Customize models for specialized agents?
               </Text>
             </Box>
             <Box marginBottom={1} flexDirection="column">
@@ -557,18 +569,24 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 • Plan agent: Creates task breakdowns and plans
               </Text>
             </Box>
-            <Box marginBottom={1} flexDirection="column">
-              <Text dimColor>
-                • Customize: Use different models for these agents
-              </Text>
-              <Text dimColor>
-                • Default: Use global model ({availableModels[selectedModelIndex] || 'selected model'}) for all agents
-              </Text>
+            <Box flexDirection="column" marginBottom={1}>
+              <Box>
+                <Text color={selectedAgentModelsChoiceIndex === 0 ? 'green' : undefined}>
+                  {selectedAgentModelsChoiceIndex === 0 ? '> ' : '  '}
+                  <Text bold={selectedAgentModelsChoiceIndex === 0}>Yes</Text>
+                  <Text dimColor> - Customize models for Explore and Plan agents</Text>
+                </Text>
+              </Box>
+              <Box>
+                <Text color={selectedAgentModelsChoiceIndex === 1 ? 'green' : undefined}>
+                  {selectedAgentModelsChoiceIndex === 1 ? '> ' : '  '}
+                  <Text bold={selectedAgentModelsChoiceIndex === 1}>No</Text>
+                  <Text dimColor> - Use global model for all agents</Text>
+                </Text>
+              </Box>
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text>
-                Customize agent models? Press <Text color="green">Y</Text> for Yes or <Text color="yellow">N</Text> for No (default)
-              </Text>
+              <Text dimColor>Use ↑↓ arrow keys to navigate, Enter to select, ESC to cancel</Text>
             </Box>
           </>
         )}
@@ -593,7 +611,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               {availableModels.map((model, idx) => (
                 <Box key={idx}>
                   <Text color={idx === selectedExploreModelIndex ? 'green' : undefined}>
-                    {idx === selectedExploreModelIndex ? '▶ ' : '  '}
+                    {idx === selectedExploreModelIndex ? '> ' : '  '}
                     {model}
                   </Text>
                 </Box>
@@ -645,7 +663,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               {availableModels.map((model, idx) => (
                 <Box key={idx}>
                   <Text color={idx === selectedPlanModelIndex ? 'green' : undefined}>
-                    {idx === selectedPlanModelIndex ? '▶ ' : '  '}
+                    {idx === selectedPlanModelIndex ? '> ' : '  '}
                     {model}
                   </Text>
                 </Box>
@@ -697,7 +715,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               {contextSizeOptions.map((option, idx) => (
                 <Box key={idx}>
                   <Text color={idx === selectedContextSizeIndex ? 'green' : undefined}>
-                    {idx === selectedContextSizeIndex ? '▶ ' : '  '}
+                    {idx === selectedContextSizeIndex ? '> ' : '  '}
                     {option.label}
                   </Text>
                 </Box>
@@ -757,14 +775,24 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 Should Code Ally automatically execute tools without asking for confirmation?
               </Text>
             </Box>
-            <Box marginBottom={1} flexDirection="column">
-              <Text dimColor>• Yes: Tools run automatically (faster, less safe)</Text>
-              <Text dimColor>• No: You confirm each tool execution (slower, safer)</Text>
+            <Box flexDirection="column" marginBottom={1}>
+              <Box>
+                <Text color={selectedAutoConfirmChoiceIndex === 0 ? 'green' : undefined}>
+                  {selectedAutoConfirmChoiceIndex === 0 ? '> ' : '  '}
+                  <Text bold={selectedAutoConfirmChoiceIndex === 0}>Yes</Text>
+                  <Text dimColor> - Automatically execute tools without confirmation</Text>
+                </Text>
+              </Box>
+              <Box>
+                <Text color={selectedAutoConfirmChoiceIndex === 1 ? 'green' : undefined}>
+                  {selectedAutoConfirmChoiceIndex === 1 ? '> ' : '  '}
+                  <Text bold={selectedAutoConfirmChoiceIndex === 1}>No</Text>
+                  <Text dimColor> - Ask for confirmation before each tool execution</Text>
+                </Text>
+              </Box>
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text>
-                Press <Text color="green">Y</Text> for Yes or <Text color="yellow">N</Text> for No
-              </Text>
+              <Text dimColor>Use ↑↓ arrow keys to navigate, Enter to select, ESC to cancel</Text>
             </Box>
           </>
         )}

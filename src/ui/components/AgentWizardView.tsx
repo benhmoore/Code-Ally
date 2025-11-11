@@ -486,19 +486,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
           // Back
           goBack();
         }
-      } else if (input === '1') {
-        // Also support direct number input
-        setToolSelectionIndex(0);
-        setSelectedTools(undefined);
-        setStep(ConfigStep.CONFIRM);
-      } else if (input === '2') {
-        setToolSelectionIndex(1);
-        setSelectedTools(['read', 'glob', 'grep', 'ls']);
-        setStep(ConfigStep.CONFIRM);
-      } else if (input === '3') {
-        setToolSelectionIndex(2);
-        loadAvailableTools();
-        setStep(ConfigStep.TOOL_SELECTION_CUSTOM);
       }
     } else if (step === ConfigStep.TOOL_SELECTION_CUSTOM) {
       // Arrow key navigation
@@ -902,25 +889,22 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             </Box>
             <Box marginBottom={1} marginLeft={1} flexDirection="column">
               <Text color={toolSelectionIndex === 0 ? 'green' : undefined}>
-                {toolSelectionIndex === 0 ? '▶ ' : '  '}
-                <Text color="cyan">1</Text>. All tools - Full access to all available tools
+                {toolSelectionIndex === 0 ? '> ' : '  '}All tools - Full access to all available tools
               </Text>
               <Text color={toolSelectionIndex === 1 ? 'green' : undefined}>
-                {toolSelectionIndex === 1 ? '▶ ' : '  '}
-                <Text color="cyan">2</Text>. Read-only - Limited to file reading and analysis
+                {toolSelectionIndex === 1 ? '> ' : '  '}Read-only - Limited to file reading and analysis
               </Text>
               <Text color={toolSelectionIndex === 2 ? 'green' : undefined}>
-                {toolSelectionIndex === 2 ? '▶ ' : '  '}
-                <Text color="cyan">3</Text>. Custom - Choose specific tools
+                {toolSelectionIndex === 2 ? '> ' : '  '}Custom - Choose specific tools
               </Text>
               <Box marginTop={0.5}>
                 <Text color={toolSelectionIndex === 3 ? 'green' : undefined}>
-                  {toolSelectionIndex === 3 ? '▶ ' : '  '}Back
+                  {toolSelectionIndex === 3 ? '> ' : '  '}Back
                 </Text>
               </Box>
             </Box>
             <Box marginTop={1}>
-              <Text dimColor>Use ↑↓ to navigate, Enter to select, or press 1/2/3</Text>
+              <Text dimColor>↑↓ navigate • Enter select</Text>
             </Box>
           </Box>
         )}
@@ -936,14 +920,14 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 const isCursor = idx === customToolIndex;
                 return (
                   <Text key={tool} color={isCursor ? 'green' : undefined}>
-                    {isCursor ? '▶ ' : '  '}
+                    {isCursor ? '> ' : '  '}
                     {isSelected ? '[x]' : '[ ]'} {tool}
                   </Text>
                 );
               })}
               <Box marginTop={0.5}>
                 <Text color={customToolIndex === availableTools.length ? 'green' : undefined}>
-                  {customToolIndex === availableTools.length ? '▶ ' : '  '}Back
+                  {customToolIndex === availableTools.length ? '> ' : '  '}Back
                 </Text>
               </Box>
             </Box>

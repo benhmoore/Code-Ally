@@ -67,8 +67,11 @@ export interface AppProps {
   /** Available models from startup validation */
   availableModels?: any[];
 
-  /** Number of loaded plugins */
-  pluginCount?: number;
+  /** Number of active plugins */
+  activePluginCount?: number;
+
+  /** Total number of loaded plugins */
+  totalPluginCount?: number;
 }
 
 /**
@@ -78,7 +81,7 @@ export interface AppProps {
  * It subscribes to activity events and updates the app state accordingly.
  * Memoized to prevent unnecessary re-renders when children update.
  */
-const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null; showSetupWizard?: boolean; showModelSelector?: boolean; availableModels?: any[]; pluginCount?: number }> = ({ agent, resumeSession, showSetupWizard, showModelSelector, availableModels, pluginCount }) => {
+const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null; showSetupWizard?: boolean; showModelSelector?: boolean; availableModels?: any[]; activePluginCount?: number; totalPluginCount?: number }> = ({ agent, resumeSession, showSetupWizard, showModelSelector, availableModels, activePluginCount, totalPluginCount }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
 
@@ -243,7 +246,8 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         rewindNotices={state.rewindNotices}
         staticRemountKey={state.staticRemountKey}
         config={state.config}
-        pluginCount={pluginCount}
+        activePluginCount={activePluginCount}
+        totalPluginCount={totalPluginCount}
       />
 
       {/* Config Viewer (non-modal - shown above input) */}
@@ -823,14 +827,14 @@ const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
  * const { unmount } = render(<App config={config} />);
  * ```
  */
-export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession, showSetupWizard, showModelSelector, availableModels, pluginCount }) => {
+export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession, showSetupWizard, showModelSelector, availableModels, activePluginCount, totalPluginCount }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
   return (
     <ActivityProvider activityStream={streamRef.current}>
       <AppProvider initialConfig={config}>
-        <AppContent agent={agent} resumeSession={resumeSession} showSetupWizard={showSetupWizard} showModelSelector={showModelSelector} availableModels={availableModels} pluginCount={pluginCount} />
+        <AppContent agent={agent} resumeSession={resumeSession} showSetupWizard={showSetupWizard} showModelSelector={showModelSelector} availableModels={availableModels} activePluginCount={activePluginCount} totalPluginCount={totalPluginCount} />
       </AppProvider>
     </ActivityProvider>
   );

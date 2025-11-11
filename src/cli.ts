@@ -565,6 +565,9 @@ async function main() {
     registry.setPluginActivationManager(pluginActivationManager);
     logger.debug('[CLI] PluginActivationManager initialized');
 
+    // Get active plugin count for UI display
+    const activePluginCount = pluginActivationManager.getActivePlugins().length;
+
     // Merge built-in tools with plugin tools
     const allTools = [...tools, ...pluginTools];
 
@@ -683,7 +686,8 @@ async function main() {
         showSetupWizard: options.init || forceSetup, // Show setup wizard if --init flag or missing critical config
         showModelSelector: forceModelSelector, // Show model selector if model not found
         availableModels, // Pass available models from validation
-        pluginCount,
+        activePluginCount,
+        totalPluginCount: pluginCount,
       }),
       {
         exitOnCtrlC: false,

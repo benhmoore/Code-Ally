@@ -140,14 +140,14 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
           return (
             <Box key={session.session_id} flexDirection="column">
               <Box>
-                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                  {isSelected ? '> ' : '  '}
-                </Text>
-                <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-                  {displayName}
-                </Text>
-                <Text color={isSelected ? 'green' : 'gray'} dimColor={!isSelected}>
-                  {' '}({session.message_count} msgs, {relativeTime})
+                <Text>
+                  {isSelected ? (
+                    <Text color="green">&gt; </Text>
+                  ) : (
+                    <Text>  </Text>
+                  )}
+                  <Text bold={isSelected}>{displayName}</Text>
+                  <Text dimColor> ({session.message_count} msgs, {relativeTime})</Text>
                 </Text>
               </Box>
               <Box marginLeft={2}>

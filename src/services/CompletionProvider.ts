@@ -17,7 +17,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { CACHE_TIMEOUTS, BUFFER_SIZES, REASONING_EFFORT_API_VALUES } from '../config/constants.js';
 import { FuzzyFilePathMatcher, FuzzyMatchResult } from './FuzzyFilePathMatcher.js';
 
-export type CompletionType = 'command' | 'file' | 'directory' | 'option';
+export type CompletionType = 'command' | 'file' | 'directory' | 'option' | 'plugin';
 
 export interface Completion {
   value: string;
@@ -166,8 +166,10 @@ export class CompletionProvider {
       return await this.getBashCompletions(context);
     } else if (context.currentWord.startsWith('@')) {
       return await this.getFuzzyFilePathCompletions(context);
-    } else if (context.currentWord.startsWith('#')) {
-      return await this.getPluginTagCompletions(context);
+    } else if (context.currentWord.startsWith('+')) {
+      return await this.getPluginActivationCompletions(context);
+    } else if (context.currentWord.startsWith('-')) {
+      return await this.getPluginDeactivationCompletions(context);
     }
 
     // No completions
@@ -182,14 +184,35 @@ export class CompletionProvider {
     let wordStart = cursorPosition;
     let wordEnd = cursorPosition;
 
-    // Find start of word
+    // Prefix characters that start new completion contexts (+plugin, -plugin, @file, /command)
+    const prefixChars = ['+', '-', '@', '/'];
+
+    // Scan backwards to find word start
+    // Special handling: prefix characters at word boundaries are completion triggers
     while (wordStart > 0) {
-      const char = input[wordStart - 1];
-      if (!char || this.isWordBoundary(char)) break;
+      const charBefore = input[wordStart - 1];
+
+      // Stop at whitespace
+      if (!charBefore || this.isWordBoundary(charBefore)) break;
+
+      // Include this character by moving back
       wordStart--;
+
+      // Check if we just included a prefix character
+      const currentChar = input[wordStart];
+      if (currentChar && prefixChars.includes(currentChar)) {
+        // Only treat it as a prefix if there's whitespace before it
+        // This distinguishes "+plugin" from "my-plugin-name"
+        const charBeforePrefix = wordStart > 0 ? input[wordStart - 1] : '';
+        if (!charBeforePrefix || this.isWordBoundary(charBeforePrefix)) {
+          // It's a prefix character, stop here
+          break;
+        }
+        // Otherwise, it's just a hyphen in a word, keep scanning
+      }
     }
 
-    // Find end of word
+    // Scan forwards to find word end
     while (wordEnd < input.length) {
       const char = input[wordEnd];
       if (!char || this.isWordBoundary(char)) break;
@@ -453,7 +476,7 @@ export class CompletionProvider {
       return pluginNames.map(name => ({
         value: name,
         description: 'Plugin',
-        type: 'option' as const,
+        type: 'plugin' as const,
       }));
     } catch (error) {
       logger.debug(`Unable to read plugins directory: ${formatError(error)}`);
@@ -973,18 +996,18 @@ export class CompletionProvider {
   }
 
   /**
-   * Get plugin tag completions (for #plugin-name syntax)
+   * Get plugin activation completions (for +plugin-name syntax)
    *
-   * Provides autocomplete suggestions when user types # followed by partial plugin name.
-   * Shows plugin activation status and mode to help users understand which plugins need tagging.
+   * Provides autocomplete suggestions when user types + followed by partial plugin name.
+   * Shows all installed plugins, prioritizing inactive ones.
    *
    * @param context - Completion context containing the current word and cursor position
    * @returns Array of plugin completions sorted by relevance
    */
-  private async getPluginTagCompletions(context: CompletionContext): Promise<Completion[]> {
+  private async getPluginActivationCompletions(context: CompletionContext): Promise<Completion[]> {
     try {
-      // Get the partial plugin name after the # symbol
-      const partial = context.currentWord.slice(1); // Remove # prefix
+      // Get the partial plugin name after the + symbol
+      const partial = context.currentWord.slice(1); // Remove + prefix
 
       // Get the service registry to access PluginActivationManager
       const { ServiceRegistry } = await import('./ServiceRegistry.js');
@@ -1046,12 +1069,68 @@ export class CompletionProvider {
         return {
           value: name,
           description: `${status}${description}`,
-          type: 'option' as const,
-          insertText: `#${name} `, // Insert with # prefix and trailing space
+          type: 'plugin' as const,
+          insertText: `+${name} `, // Insert with + prefix and trailing space
         };
       });
     } catch (error) {
-      logger.debug(`Plugin tag completion failed: ${formatError(error)}`);
+      logger.debug(`Plugin activation completion failed: ${formatError(error)}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get plugin deactivation completions (for -plugin-name syntax)
+   *
+   * Provides autocomplete suggestions when user types - followed by partial plugin name.
+   * Shows all currently active plugins (can deactivate temporarily in this conversation).
+   *
+   * @param context - Completion context containing the current word and cursor position
+   * @returns Array of plugin completions sorted by relevance
+   */
+  private async getPluginDeactivationCompletions(context: CompletionContext): Promise<Completion[]> {
+    try {
+      // Get the partial plugin name after the - symbol
+      const partial = context.currentWord.slice(1); // Remove - prefix
+
+      // Get the service registry to access PluginActivationManager
+      const { ServiceRegistry } = await import('./ServiceRegistry.js');
+      const registry = ServiceRegistry.getInstance();
+
+      // Get PluginActivationManager
+      let activationManager;
+      try {
+        activationManager = registry.getPluginActivationManager();
+      } catch {
+        // If activation manager not available, return empty completions
+        return [];
+      }
+
+      const activePlugins = activationManager.getActivePlugins();
+
+      // Show all active plugins (user can deactivate any active plugin for this conversation)
+
+      // Filter by partial match
+      const matches = activePlugins.filter(name =>
+        name.toLowerCase().includes(partial.toLowerCase())
+      );
+
+      // Sort alphabetically
+      const sorted = matches.sort((a, b) => a.localeCompare(b));
+
+      // Map to Completion format with mode indicator
+      return sorted.map(name => {
+        const mode = activationManager.getActivationMode(name);
+        const modeLabel = mode === 'always' ? ' (always)' : '';
+        return {
+          value: name,
+          description: `✓ active${modeLabel} (will deactivate)`,
+          type: 'plugin' as const,
+          insertText: `-${name} `, // Insert with - prefix and trailing space
+        };
+      });
+    } catch (error) {
+      logger.debug(`Plugin deactivation completion failed: ${formatError(error)}`);
       return [];
     }
   }
