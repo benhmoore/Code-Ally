@@ -163,6 +163,7 @@ export class SessionManager implements IService {
       working_dir: process.cwd(),
       messages: [],
       metadata: {},
+      active_plugins: [], // Initialize with empty array
     };
 
     await this.saveSessionData(name, session);
@@ -296,6 +297,7 @@ export class SessionManager implements IService {
           working_dir: process.cwd(),
           messages: [],
           metadata: {},
+          active_plugins: [], // Initialize with empty array for backward compatibility
         };
       }
 
@@ -578,6 +580,36 @@ export class SessionManager implements IService {
   }
 
   /**
+   * Update session fields
+   *
+   * Allows updating arbitrary session fields while maintaining atomic writes.
+   * Use this for updating session properties like active_plugins, todos, etc.
+   *
+   * @param sessionName - Name of the session to update
+   * @param updates - Partial session object with fields to update
+   * @returns True if update succeeded, false otherwise
+   */
+  async updateSession(
+    sessionName: string,
+    updates: Partial<Omit<Session, 'id' | 'name' | 'created_at'>>
+  ): Promise<boolean> {
+    try {
+      const session = await this.loadSession(sessionName);
+      if (!session) return false;
+
+      // Apply updates to session
+      Object.assign(session, updates);
+      session.updated_at = new Date().toISOString();
+
+      await this.saveSessionData(sessionName, session);
+      return true;
+    } catch (error) {
+      console.error(`Failed to update session ${sessionName}:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Get todos from a session
    *
    * @param sessionName - Name of the session (defaults to current session)
@@ -649,6 +681,7 @@ export class SessionManager implements IService {
           messages: [],
           todos: [],
           metadata: {},
+          active_plugins: [], // Initialize with empty array for backward compatibility
         };
       }
 
@@ -701,7 +734,13 @@ export class SessionManager implements IService {
           messages: [],
           todos: [],
           metadata: {},
+          active_plugins: [], // Initialize with empty array for backward compatibility
         };
+      }
+
+      // Ensure backward compatibility - initialize active_plugins if undefined
+      if (session.active_plugins === undefined) {
+        session.active_plugins = [];
       }
 
       session.messages = filteredMessages;

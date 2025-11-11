@@ -333,6 +333,7 @@ export interface Session {
     detectedAt: string;
   };
   metadata?: SessionMetadata;
+  active_plugins?: string[]; // List of active plugin names for this session
 }
 
 export interface SessionInfo {

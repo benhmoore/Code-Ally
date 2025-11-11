@@ -255,6 +255,25 @@ export class ServiceRegistry {
       typeof obj.cleanup === 'function'
     );
   }
+
+  /**
+   * Set the PluginActivationManager instance
+   */
+  setPluginActivationManager(manager: any): void {
+    this.registerInstance('plugin_activation_manager', manager);
+  }
+
+  /**
+   * Get the PluginActivationManager instance
+   * @throws Error if not registered
+   */
+  getPluginActivationManager(): any {
+    const manager = this.get('plugin_activation_manager');
+    if (!manager) {
+      throw new Error('PluginActivationManager not registered in ServiceRegistry');
+    }
+    return manager;
+  }
 }
 
 /**

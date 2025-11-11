@@ -59,6 +59,9 @@ export interface PluginManifest {
   /** Configuration schema for interactive setup (optional) */
   config?: PluginConfigSchema;
 
+  /** Activation mode - determines when plugin tools are loaded (default: 'always') */
+  activationMode?: 'always' | 'tagged';
+
   /** Runtime environment (e.g., 'python3', 'node') */
   runtime?: string;
 
@@ -306,6 +309,15 @@ export class PluginLoader {
         if (hc.retries !== undefined && (typeof hc.retries !== 'number' || hc.retries < 0)) {
           errors.push("'background.healthcheck.retries' must be a non-negative number");
         }
+      }
+    }
+
+    // Validate activation mode (optional field)
+    if (manifest.activationMode !== undefined) {
+      if (manifest.activationMode !== 'always' && manifest.activationMode !== 'tagged') {
+        errors.push(
+          `Invalid activationMode '${manifest.activationMode}'. Must be 'always' or 'tagged'`
+        );
       }
     }
 
@@ -1069,5 +1081,25 @@ export class PluginLoader {
 
       return tool;
     }
+  }
+
+  /**
+   * Get all loaded plugins with their manifests
+   *
+   * @returns Array of loaded plugin information
+   */
+  getLoadedPlugins(): Array<{ name: string; manifest: PluginManifest; pluginPath: string; config?: any }> {
+    const plugins: Array<{ name: string; manifest: PluginManifest; pluginPath: string; config?: any }> = [];
+
+    for (const [name, info] of this.loadedPlugins.entries()) {
+      plugins.push({
+        name,
+        manifest: info.manifest,
+        pluginPath: info.pluginPath,
+        config: info.config,
+      });
+    }
+
+    return plugins;
   }
 }
