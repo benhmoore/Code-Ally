@@ -38,6 +38,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
   const [configValues, setConfigValues] = useState<Record<string, any>>({});
   const [currentInput, setCurrentInput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [selectedChoiceIndex, setSelectedChoiceIndex] = useState(0);
 
   // Initialize field names and config values
   useEffect(() => {
@@ -70,6 +71,12 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
       const firstProp = configSchema.schema.properties[firstField] as ConfigProperty;
       if (firstProp.type === 'boolean') {
         setCurrentInput('');
+      } else if (firstProp.type === 'choice') {
+        setCurrentInput('');
+        // Set selected choice index based on current value or default
+        const currentValue = initialValues[firstField] ?? firstProp.default;
+        const choiceIndex = firstProp.choices?.findIndex(c => c.value === currentValue) ?? 0;
+        setSelectedChoiceIndex(choiceIndex >= 0 ? choiceIndex : 0);
       } else {
         setCurrentInput(String(initialValues[firstField] ?? ''));
       }
@@ -96,6 +103,22 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
           handleFieldSubmit(true);
         } else if (PLUGIN_UI.BOOLEAN_NO.includes(input as any)) {
           handleFieldSubmit(false);
+        }
+      } else if (currentProperty.type === 'choice') {
+        // Choice field - arrow keys and Enter
+        if (key.upArrow) {
+          setSelectedChoiceIndex(prev =>
+            prev > 0 ? prev - 1 : (currentProperty.choices?.length || 1) - 1
+          );
+        } else if (key.downArrow) {
+          setSelectedChoiceIndex(prev =>
+            prev < (currentProperty.choices?.length || 1) - 1 ? prev + 1 : 0
+          );
+        } else if (key.return) {
+          const choice = currentProperty.choices?.[selectedChoiceIndex];
+          if (choice) {
+            handleFieldSubmit(choice.value);
+          }
         }
       } else {
         // Text/Number/Secret field - text input
@@ -157,6 +180,12 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
 
       if (nextProp.type === 'boolean') {
         setCurrentInput('');
+      } else if (nextProp.type === 'choice') {
+        setCurrentInput('');
+        // Set selected choice index based on current value or default
+        const currentValue = newValues[nextField] ?? nextProp.default;
+        const choiceIndex = nextProp.choices?.findIndex(c => c.value === currentValue) ?? 0;
+        setSelectedChoiceIndex(choiceIndex >= 0 ? choiceIndex : 0);
       } else {
         setCurrentInput(String(newValues[nextField] ?? ''));
       }
@@ -233,6 +262,26 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
               Press <Text color="green">Y</Text> for Yes or <Text color="yellow">N</Text> for No
             </Text>
           </Box>
+        ) : currentProperty.type === 'choice' ? (
+          <>
+            <Box marginBottom={1} flexDirection="column">
+              {currentProperty.choices?.map((choice, index) => (
+                <Box key={index} marginBottom={0}>
+                  <Text>
+                    {index === selectedChoiceIndex ? (
+                      <Text color="green">&gt; </Text>
+                    ) : (
+                      <Text>  </Text>
+                    )}
+                    <Text bold={index === selectedChoiceIndex}>{choice.label}</Text>
+                  </Text>
+                  {choice.description && (
+                    <Text dimColor> - {choice.description}</Text>
+                  )}
+                </Box>
+              ))}
+            </Box>
+          </>
         ) : (
           <>
             <Box marginBottom={1}>
@@ -253,6 +302,8 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
           <Text dimColor>
             {currentProperty.type === 'boolean'
               ? 'Press Y or N to continue'
+              : currentProperty.type === 'choice'
+              ? 'Use ↑↓ arrow keys to navigate, Enter to select, ESC to cancel'
               : 'Press Enter to continue, ESC to cancel'}
           </Text>
         </Box>

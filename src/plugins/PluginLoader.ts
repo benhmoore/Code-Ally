@@ -165,11 +165,16 @@ export interface PluginConfigSchema {
  * Configuration property definition
  */
 export interface ConfigProperty {
-  type: 'string' | 'number' | 'boolean' | 'integer';
+  type: 'string' | 'number' | 'boolean' | 'integer' | 'choice';
   description: string;
   required?: boolean;
   secret?: boolean;
   default?: any;
+  choices?: Array<{
+    label: string;
+    value: string;
+    description?: string;
+  }>;
 }
 
 /**

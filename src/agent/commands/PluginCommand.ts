@@ -131,18 +131,17 @@ export class PluginCommand extends Command {
             ...baseSchema.schema?.properties,
             activationMode: {
               type: 'choice' as const,
-              message: 'When should this plugin be active?',
-              description: 'Controls when plugin tools are loaded and available',
+              description: 'When should this plugin be active?',
               choices: [
                 {
-                  label: 'Always (tools always available)',
+                  label: 'Always',
                   value: 'always',
-                  description: 'Plugin tools are loaded in every conversation'
+                  description: 'Tools always available in every conversation'
                 },
                 {
-                  label: 'Only when tagged (use #plugin-name)',
+                  label: 'Only when tagged',
                   value: 'tagged',
-                  description: 'Plugin tools are only loaded when you activate it with #' + pluginName
+                  description: 'Tools only available when you use #' + pluginName
                 }
               ],
               default: manifest.activationMode || 'always'
