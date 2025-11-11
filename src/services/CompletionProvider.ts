@@ -79,9 +79,13 @@ const AGENT_SUBCOMMANDS = [
  * Plugin subcommands
  */
 const PLUGIN_SUBCOMMANDS = [
+  { name: 'list', description: 'List all installed plugins' },
   { name: 'config', description: 'Configure a plugin' },
   { name: 'install', description: 'Install a plugin from local path' },
   { name: 'uninstall', description: 'Uninstall a plugin' },
+  { name: 'active', description: 'List active plugins in this session' },
+  { name: 'activate', description: 'Activate a plugin' },
+  { name: 'deactivate', description: 'Deactivate a plugin' },
 ];
 
 /**
@@ -162,6 +166,8 @@ export class CompletionProvider {
       return await this.getBashCompletions(context);
     } else if (context.currentWord.startsWith('@')) {
       return await this.getFuzzyFilePathCompletions(context);
+    } else if (context.currentWord.startsWith('#')) {
+      return await this.getPluginTagCompletions(context);
     }
 
     // No completions
@@ -393,6 +399,16 @@ export class CompletionProvider {
 
     // Complete plugin names for /plugin uninstall (user typed "/plugin uninstall ")
     if (command === '/plugin' && subcommand === 'uninstall' && wordCount === 3) {
+      return await this.getPluginNameCompletions(context.currentWord);
+    }
+
+    // Complete plugin names for /plugin activate (user typed "/plugin activate ")
+    if (command === '/plugin' && subcommand === 'activate' && wordCount === 3) {
+      return await this.getPluginNameCompletions(context.currentWord);
+    }
+
+    // Complete plugin names for /plugin deactivate (user typed "/plugin deactivate ")
+    if (command === '/plugin' && subcommand === 'deactivate' && wordCount === 3) {
       return await this.getPluginNameCompletions(context.currentWord);
     }
 
@@ -954,6 +970,90 @@ export class CompletionProvider {
   invalidateCommandCache(): void {
     this.commandNamesCache = [];
     this.commandsCacheTime = 0;
+  }
+
+  /**
+   * Get plugin tag completions (for #plugin-name syntax)
+   *
+   * Provides autocomplete suggestions when user types # followed by partial plugin name.
+   * Shows plugin activation status and mode to help users understand which plugins need tagging.
+   *
+   * @param context - Completion context containing the current word and cursor position
+   * @returns Array of plugin completions sorted by relevance
+   */
+  private async getPluginTagCompletions(context: CompletionContext): Promise<Completion[]> {
+    try {
+      // Get the partial plugin name after the # symbol
+      const partial = context.currentWord.slice(1); // Remove # prefix
+
+      // Get the service registry to access PluginActivationManager
+      const { ServiceRegistry } = await import('./ServiceRegistry.js');
+      const registry = ServiceRegistry.getInstance();
+
+      // Get PluginActivationManager
+      let activationManager;
+      try {
+        activationManager = registry.getPluginActivationManager();
+      } catch {
+        // If activation manager not available, return empty completions
+        return [];
+      }
+
+      const installedPlugins = activationManager.getInstalledPlugins();
+
+      // Filter plugins by partial match
+      const matches = installedPlugins.filter(name =>
+        name.toLowerCase().includes(partial.toLowerCase())
+      );
+
+      // Sort: inactive tagged plugins first (most likely to want to activate), then others
+      const sorted = matches.sort((a, b) => {
+        const aMode = activationManager.getActivationMode(a);
+        const bMode = activationManager.getActivationMode(b);
+        const aActive = activationManager.isActive(a);
+        const bActive = activationManager.isActive(b);
+
+        // Prioritize inactive tagged plugins (most likely to want to activate)
+        if (!aActive && aMode === 'tagged' && (bActive || bMode === 'always')) return -1;
+        if (!bActive && bMode === 'tagged' && (aActive || aMode === 'always')) return 1;
+
+        return a.localeCompare(b);
+      });
+
+      // Map to Completion format with status indicators
+      return sorted.map(name => {
+        const mode = activationManager.getActivationMode(name);
+        const active = activationManager.isActive(name);
+
+        // Status indicators:
+        // ✓ - Currently active
+        // ● - Always mode (always active)
+        // ○ - Tagged mode, inactive (needs activation)
+        let status: string;
+        let description: string;
+
+        if (active && mode === 'always') {
+          status = '● ';
+          description = 'always active';
+        } else if (active && mode === 'tagged') {
+          status = '✓ ';
+          description = 'tagged mode (active)';
+        } else {
+          status = '○ ';
+          description = 'tagged mode (inactive)';
+        }
+
+        return {
+          value: name,
+          description: `${status}${description}`,
+          type: 'option' as const,
+          insertText: `#${name} `, // Insert with # prefix and trailing space
+        };
+      });
+    } catch (error) {
+      logger.debug(`Plugin tag completion failed: ${formatError(error)}`);
+      return [];
+    }
   }
 
   /**

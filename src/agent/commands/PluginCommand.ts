@@ -41,28 +41,30 @@ export class PluginCommand extends Command {
     const subcommand = parts[0];
 
     if (!subcommand) {
-      return this.createError('Invalid plugin command. Use /plugin config <plugin-name>');
+      return this.showHelp();
     }
 
-    if (subcommand.toLowerCase() === 'config') {
-      // /plugin config <plugin-name>
-      const pluginName = parts.slice(1).join(' ').trim();
-      return this.handlePluginConfig(pluginName, serviceRegistry);
+    switch (subcommand.toLowerCase()) {
+      case 'list':
+        return this.listPlugins(serviceRegistry);
+      case 'config':
+        // /plugin config <plugin-name>
+        return this.handlePluginConfig(parts.slice(1).join(' ').trim(), serviceRegistry);
+      case 'install':
+        // /plugin install <path>
+        return this.handlePluginInstall(parts.slice(1).join(' ').trim(), serviceRegistry);
+      case 'uninstall':
+        // /plugin uninstall <plugin-name>
+        return this.handlePluginUninstall(parts.slice(1).join(' ').trim(), serviceRegistry);
+      case 'active':
+        return this.listActivePlugins(serviceRegistry);
+      case 'activate':
+        return this.activatePlugin(parts.slice(1).join(' ').trim(), serviceRegistry);
+      case 'deactivate':
+        return this.deactivatePlugin(parts.slice(1).join(' ').trim(), serviceRegistry);
+      default:
+        return this.showHelp();
     }
-
-    if (subcommand.toLowerCase() === 'install') {
-      // /plugin install <path>
-      const pluginPath = parts.slice(1).join(' ').trim();
-      return this.handlePluginInstall(pluginPath, serviceRegistry);
-    }
-
-    if (subcommand.toLowerCase() === 'uninstall') {
-      // /plugin uninstall <plugin-name>
-      const pluginName = parts.slice(1).join(' ').trim();
-      return this.handlePluginUninstall(pluginName, serviceRegistry);
-    }
-
-    return this.createError('Unknown plugin subcommand. Use /plugin config|install|uninstall');
   }
 
   /**
@@ -239,5 +241,187 @@ export class PluginCommand extends Command {
     } catch (error) {
       return this.createError(`Failed to uninstall plugin: ${formatError(error)}`);
     }
+  }
+
+  /**
+   * List all installed plugins with activation status
+   */
+  private async listPlugins(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
+    try {
+      // Get activation manager which has access to plugin info
+      let activationManager;
+      try {
+        activationManager = serviceRegistry.getPluginActivationManager();
+      } catch {
+        return this.createError('Plugin system not initialized');
+      }
+
+      const installedPlugins = activationManager.getInstalledPlugins();
+
+      if (installedPlugins.length === 0) {
+        return {
+          handled: true,
+          response: 'No plugins installed. Use /plugin install <path> to install plugins.',
+        };
+      }
+
+      // Get plugin loader to access manifests
+      const pluginLoader = serviceRegistry.get<PluginLoaderService>('plugin_loader');
+      if (!pluginLoader) {
+        return this.createError('PluginLoader not available');
+      }
+
+      let output = 'Installed Plugins:\n\n';
+
+      for (const pluginName of installedPlugins) {
+        const mode = activationManager.getActivationMode(pluginName) ?? 'always';
+        const isActive = activationManager.isActive(pluginName);
+
+        // Status indicator
+        const status = isActive ? '● ' : '○ ';
+
+        // Mode badge
+        const modeBadge = mode === 'always' ? '[always]' : '[tagged]';
+
+        // For now, just show plugin name without version/description
+        // since we can't easily access manifest through the service interface
+        output += `${status}${pluginName} ${modeBadge}\n`;
+      }
+
+      output += '\nUse /plugin active to see active plugins in this session\n';
+      output += 'Use #plugin-name in messages to activate tagged plugins';
+
+      return {
+        handled: true,
+        response: output,
+      };
+    } catch (error) {
+      return this.createError(`Failed to list plugins: ${formatError(error)}`);
+    }
+  }
+
+  /**
+   * List currently active plugins
+   */
+  private async listActivePlugins(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
+    try {
+      const activationManager = serviceRegistry.getPluginActivationManager();
+      const activePlugins = activationManager.getActivePlugins();
+
+      if (activePlugins.length === 0) {
+        return {
+          handled: true,
+          response: 'No plugins currently active in this session.',
+        };
+      }
+
+      let output = 'Active Plugins:\n\n';
+
+      for (const pluginName of activePlugins) {
+        const mode = activationManager.getActivationMode(pluginName);
+        const modeBadge = mode === 'always' ? '[always]' : '[tagged]';
+        output += `  ${pluginName} ${modeBadge}\n`;
+      }
+
+      return {
+        handled: true,
+        response: output,
+      };
+    } catch (error) {
+      return this.createError(`Failed to list active plugins: ${formatError(error)}`);
+    }
+  }
+
+  /**
+   * Manually activate a plugin
+   */
+  private async activatePlugin(
+    pluginName: string,
+    serviceRegistry: ServiceRegistry
+  ): Promise<CommandResult> {
+    if (!pluginName) {
+      return this.createError('Plugin name required. Use /plugin activate <plugin-name>');
+    }
+
+    try {
+      const activationManager = serviceRegistry.getPluginActivationManager();
+      const success = activationManager.activate(pluginName);
+
+      if (success) {
+        return {
+          handled: true,
+          response: `✓ Activated plugin: ${pluginName}`,
+        };
+      } else {
+        return this.createError(
+          `Plugin '${pluginName}' not found. Use /plugin list to see installed plugins.`
+        );
+      }
+    } catch (error) {
+      return this.createError(`Failed to activate plugin: ${formatError(error)}`);
+    }
+  }
+
+  /**
+   * Manually deactivate a plugin (only "tagged" mode plugins)
+   */
+  private async deactivatePlugin(
+    pluginName: string,
+    serviceRegistry: ServiceRegistry
+  ): Promise<CommandResult> {
+    if (!pluginName) {
+      return this.createError('Plugin name required. Use /plugin deactivate <plugin-name>');
+    }
+
+    try {
+      const activationManager = serviceRegistry.getPluginActivationManager();
+      const mode = activationManager.getActivationMode(pluginName);
+
+      if (!mode) {
+        return this.createError(
+          `Plugin '${pluginName}' not found. Use /plugin list to see installed plugins.`
+        );
+      }
+
+      if (mode === 'always') {
+        return {
+          handled: true,
+          response: `⚠ Cannot deactivate '${pluginName}' - it is set to "always" mode.\nReinstall the plugin to change its activation mode.`,
+        };
+      }
+
+      const success = activationManager.deactivate(pluginName);
+
+      if (success) {
+        return {
+          handled: true,
+          response: `✓ Deactivated plugin: ${pluginName}`,
+        };
+      } else {
+        return this.createError(`Failed to deactivate plugin: ${pluginName}`);
+      }
+    } catch (error) {
+      return this.createError(`Failed to deactivate plugin: ${formatError(error)}`);
+    }
+  }
+
+  /**
+   * Show help for plugin commands
+   */
+  private showHelp(): CommandResult {
+    return {
+      handled: true,
+      response: `Plugin Management Commands:
+
+  /plugin list                    List all installed plugins
+  /plugin install <path|url>      Install a plugin
+  /plugin uninstall <name>        Uninstall a plugin
+  /plugin config <name>           Configure a plugin
+  /plugin active                  List active plugins in this session
+  /plugin activate <name>         Activate a plugin
+  /plugin deactivate <name>       Deactivate a plugin
+
+Use #plugin-name in messages to activate tagged plugins`,
+    };
   }
 }
