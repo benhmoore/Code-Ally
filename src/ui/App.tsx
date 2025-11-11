@@ -357,13 +357,43 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               }
 
               try {
-                // Save the configuration
+                // Extract activation mode from config (if present)
+                const { activationMode, ...pluginConfig } = config;
+
+                // Save the plugin configuration (without activation mode)
                 await pluginConfigManager.saveConfig(
                   request.pluginName,
                   request.pluginPath,
-                  config,
+                  pluginConfig,
                   request.schema
                 );
+
+                // If activation mode was set, update the plugin manifest
+                if (activationMode !== undefined) {
+                  try {
+                    const fs = await import('fs/promises');
+                    const { join } = await import('path');
+                    const manifestPath = join(request.pluginPath, 'plugin.json');
+                    const manifestContent = await fs.readFile(manifestPath, 'utf-8');
+                    const manifest = JSON.parse(manifestContent);
+
+                    // Update activation mode in manifest
+                    manifest.activationMode = activationMode;
+
+                    // Write updated manifest
+                    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
+                    logger.info(`[App] Updated activation mode for '${request.pluginName}' to '${activationMode}'`);
+
+                    // Refresh PluginActivationManager to pick up the new mode
+                    const pluginActivationManager = serviceRegistry.getPluginActivationManager();
+                    if (pluginActivationManager) {
+                      await pluginActivationManager.refresh();
+                    }
+                  } catch (manifestError) {
+                    logger.error(`[App] Failed to update manifest for '${request.pluginName}':`, manifestError);
+                    // Don't fail the whole config save if manifest update fails
+                  }
+                }
 
                 // Reload the plugin immediately
                 const { PluginLoader } = await import('../plugins/PluginLoader.js');

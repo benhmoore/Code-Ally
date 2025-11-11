@@ -104,18 +104,11 @@ export class PluginCommand extends Command {
         );
       }
 
-      // Check if plugin has a config schema
-      if (!manifest.config) {
-        return this.createError(
-          `Plugin '${pluginName}' does not define a configuration schema. No configuration is needed.`
-        );
-      }
-
-      // Load existing config if any
+      // Load existing config if any (even if no config schema)
       const configManager = serviceRegistry.get<PluginConfigManagerService>('plugin_config_manager');
       let existingConfig: any = null;
 
-      if (configManager) {
+      if (configManager && manifest.config) {
         try {
           existingConfig = await configManager.loadConfig(
             pluginName,
@@ -128,6 +121,41 @@ export class PluginCommand extends Command {
         }
       }
 
+      // Create config schema - either extend existing or create minimal one for activation mode
+      const baseSchema = manifest.config || { schema: { properties: {} } };
+      const configSchema = {
+        ...baseSchema,
+        schema: {
+          ...baseSchema.schema,
+          properties: {
+            ...baseSchema.schema?.properties,
+            activationMode: {
+              type: 'choice' as const,
+              message: 'When should this plugin be active?',
+              description: 'Controls when plugin tools are loaded and available',
+              choices: [
+                {
+                  label: 'Always (tools always available)',
+                  value: 'always',
+                  description: 'Plugin tools are loaded in every conversation'
+                },
+                {
+                  label: 'Only when tagged (use #plugin-name)',
+                  value: 'tagged',
+                  description: 'Plugin tools are only loaded when you activate it with #' + pluginName
+                }
+              ],
+              default: manifest.activationMode || 'always'
+            }
+          }
+        }
+      };
+
+      // Add activation mode to existing config if present
+      if (existingConfig && !existingConfig.activationMode) {
+        existingConfig.activationMode = manifest.activationMode || 'always';
+      }
+
       // Emit PLUGIN_CONFIG_REQUEST event
       return this.emitActivityEvent(
         serviceRegistry,
@@ -135,7 +163,7 @@ export class PluginCommand extends Command {
         {
           pluginName: manifest.name,
           pluginPath,
-          schema: manifest.config,
+          schema: configSchema,
           existingConfig,
         },
         'plugin_config'
@@ -179,30 +207,17 @@ export class PluginCommand extends Command {
         toolManager.registerTools(result.tools);
       }
 
-      // Build success message
-      let successMessage = '';
-      if (result.tools && result.tools.length > 0) {
-        successMessage = `✓ Plugin '${result.pluginName}' installed successfully with ${result.tools.length} tool(s)`;
-
-        // If this was a reinstall with existing config, offer to reconfigure
-        if (result.hadExistingConfig) {
-          successMessage += `\nYour existing configuration has been preserved. To reconfigure, run:\n  /plugin config ${result.pluginName}`;
-        }
-      } else {
-        successMessage = `✓ Plugin '${result.pluginName}' installed successfully`;
-
-        // If config was preserved, let them know
-        if (result.hadExistingConfig) {
-          successMessage += ' (existing configuration preserved)';
-        }
-
-        successMessage += `. Use /plugin config ${result.pluginName} to configure it.`;
+      // If this is an update with existing config, just show success message
+      if (result.hadExistingConfig) {
+        const successMessage = `✓ Plugin '${result.pluginName}' updated successfully with ${result.tools?.length || 0} tool(s)\nYour existing configuration has been preserved. To reconfigure, run:\n  /plugin config ${result.pluginName}`;
+        return {
+          handled: true,
+          response: successMessage,
+        };
       }
 
-      return {
-        handled: true,
-        response: successMessage,
-      };
+      // For fresh installs, always trigger config wizard to ask about activation mode
+      return this.handlePluginConfig(result.pluginName!, serviceRegistry);
     } catch (error) {
       return this.createError(`Failed to install plugin: ${formatError(error)}`);
     }
