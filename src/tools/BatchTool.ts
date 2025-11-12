@@ -19,6 +19,11 @@ export class BatchTool extends BaseTool {
   readonly visibleInChat = false; // Don't show batch() in conversation, only its children
   readonly isTransparentWrapper = true; // Promote children to replace wrapper
 
+  readonly usageGuidance = `Execute multiple independent tools concurrently for efficiency.
+
+Good candidates: parallel explore/plan calls, multiple searches across different patterns.
+Don't batch: dependent operations, file reads (use read's file_paths parameter instead).`;
+
   constructor(activityStream: ActivityStream) {
     super(activityStream);
   }
@@ -70,7 +75,7 @@ export class BatchTool extends BaseTool {
       return this.formatErrorResponse(
         'tools parameter is required and must contain at least one tool specification',
         'validation_error',
-        'Example: batch(tools=[{"name": "read", "arguments": {"file_path": "README.md"}}, {"name": "read", "arguments": {"file_path": "package.json"}}])'
+        'Example: batch(tools=[{"name": "explore", "arguments": {"task_description": "Find auth middleware"}}, {"name": "explore", "arguments": {"task_description": "Find auth routes"}}])'
       );
     }
 

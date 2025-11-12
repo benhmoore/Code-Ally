@@ -34,10 +34,19 @@ export class AgentAskTool extends BaseTool {
   readonly hideOutput = true; // Hide detailed output
 
   readonly usageGuidance = `**When to use agent_ask:**
-PREFER for any follow-up after explore/plan/agent. Agent has context → richer answers than direct tools.
-Examples: "How many?", "What about?", "Where is?" after exploration.
-Use direct tools only if question is truly independent from prior context.
-Requires agent_id from previous explore/plan/agent call (agents automatically persist).`;
+DEFAULT for ANY follow-up to explore/plan/agent. Agent already has context → dramatically more efficient than starting fresh.
+
+Use agent_ask when:
+- Asking clarifying questions ("How many X?", "What about Y?", "Where is Z?")
+- Drilling deeper into findings ("Show me that implementation", "Explain how that works")
+- Asking related questions ("What about the related feature?")
+- Continuing investigation in same area
+
+Start NEW agent only when:
+- Investigating completely unrelated area/problem
+- Switching to different system/module/concern
+
+When uncertain: Use agent_ask first. Much cheaper than restarting.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

@@ -320,7 +320,7 @@ export class SessionsTool extends BaseTool {
         // Always include agent_id when available
         if (agentId) {
           successResponse.agent_id = agentId;
-          successResponse.system_reminder = `Agent persists as ${agentId}. For follow-up questions, PREFER agent_ask(agent_id="${agentId}", message="...") over direct tools—agent has context for richer answers.`;
+          successResponse.system_reminder = `Agent persists as ${agentId}. For related follow-ups, USE agent_ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
         }
 
         return this.formatSuccessResponse(successResponse);
