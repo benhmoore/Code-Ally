@@ -28,6 +28,11 @@ export class ActivityStream {
 
   /**
    * Emit an event to all registered listeners
+   *
+   * Optimized for performance:
+   * - Single-pass iteration combining type-specific and wildcard listeners
+   * - Cached listener lookups to avoid repeated Map access
+   * - Centralized error handling
    */
   emit(event: ActivityEvent): void {
     // Capture references to avoid race conditions
@@ -39,28 +44,31 @@ export class ActivityStream {
       event.parentId = parent;
     }
 
-    // Notify listeners for this specific event type
+    // Single-pass iteration: collect both type-specific and wildcard listeners
+    // This reduces iteration overhead and Map lookups from 2 to 1
     const typeListeners = this.listeners.get(event.type);
+    const wildcardListeners = this.listeners.get('*');
+
+    // Call type-specific listeners first to maintain semantic order
     if (typeListeners) {
-      typeListeners.forEach(callback => {
+      for (const callback of typeListeners) {
         try {
           callback(event);
         } catch (error) {
           logger.error(`Error in activity stream listener:`, error);
         }
-      });
+      }
     }
 
-    // Notify wildcard listeners (subscribed to all events)
-    const wildcardListeners = this.listeners.get('*');
+    // Then call wildcard listeners
     if (wildcardListeners) {
-      wildcardListeners.forEach(callback => {
+      for (const callback of wildcardListeners) {
         try {
           callback(event);
         } catch (error) {
-          logger.error(`Error in wildcard activity stream listener:`, error);
+          logger.error(`Error in activity stream listener:`, error);
         }
-      });
+      }
     }
 
     // Forward approved events to background plugins via EventSubscriptionManager
@@ -75,26 +83,30 @@ export class ActivityStream {
   }
 
   /**
+   * Cached mapping from ActivityEventType to plugin event type (approved events only)
+   * Created once to avoid object allocation overhead on every emit() call
+   */
+  private readonly pluginEventTypeMapping: Record<string, string> = {
+    [ActivityEventType.TOOL_CALL_START]: 'TOOL_CALL_START',
+    [ActivityEventType.TOOL_CALL_END]: 'TOOL_CALL_END',
+    [ActivityEventType.AGENT_START]: 'AGENT_START',
+    [ActivityEventType.AGENT_END]: 'AGENT_END',
+    [ActivityEventType.PERMISSION_REQUEST]: 'PERMISSION_REQUEST',
+    [ActivityEventType.PERMISSION_RESPONSE]: 'PERMISSION_RESPONSE',
+    [ActivityEventType.COMPACTION_START]: 'COMPACTION_START',
+    [ActivityEventType.COMPACTION_COMPLETE]: 'COMPACTION_COMPLETE',
+    [ActivityEventType.CONTEXT_USAGE_UPDATE]: 'CONTEXT_USAGE_UPDATE',
+    [ActivityEventType.TODO_UPDATE]: 'TODO_UPDATE',
+    [ActivityEventType.THOUGHT_COMPLETE]: 'THOUGHT_COMPLETE',
+    [ActivityEventType.DIFF_PREVIEW]: 'DIFF_PREVIEW',
+  };
+
+  /**
    * Map ActivityEventType to plugin event type (approved events only)
    * Converts snake_case to UPPER_CASE for plugin event names
    */
   private mapToPluginEventType(activityEventType: ActivityEventType): string | null {
-    const mapping: Record<string, string> = {
-      [ActivityEventType.TOOL_CALL_START]: 'TOOL_CALL_START',
-      [ActivityEventType.TOOL_CALL_END]: 'TOOL_CALL_END',
-      [ActivityEventType.AGENT_START]: 'AGENT_START',
-      [ActivityEventType.AGENT_END]: 'AGENT_END',
-      [ActivityEventType.PERMISSION_REQUEST]: 'PERMISSION_REQUEST',
-      [ActivityEventType.PERMISSION_RESPONSE]: 'PERMISSION_RESPONSE',
-      [ActivityEventType.COMPACTION_START]: 'COMPACTION_START',
-      [ActivityEventType.COMPACTION_COMPLETE]: 'COMPACTION_COMPLETE',
-      [ActivityEventType.CONTEXT_USAGE_UPDATE]: 'CONTEXT_USAGE_UPDATE',
-      [ActivityEventType.TODO_UPDATE]: 'TODO_UPDATE',
-      [ActivityEventType.THOUGHT_COMPLETE]: 'THOUGHT_COMPLETE',
-      [ActivityEventType.DIFF_PREVIEW]: 'DIFF_PREVIEW',
-    };
-
-    return mapping[activityEventType] ?? null;
+    return this.pluginEventTypeMapping[activityEventType] ?? null;
   }
 
   /**

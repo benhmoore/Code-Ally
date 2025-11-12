@@ -33,6 +33,7 @@
     "cli-highlight": "^2.1.11",
     "commander": "^14.0.1",
     "diff": "^8.0.2",
+    "fast-glob": "^3.3.2",
     "ink": "^4.4.1",
     "inquirer": "^12.10.0",
     "marked": "^16.4.1",

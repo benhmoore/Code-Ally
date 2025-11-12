@@ -437,10 +437,6 @@ export class Agent {
     };
     this.conversationManager.addMessage(userMessage);
 
-    // === PERF: User prompt received ===
-    // this.userPromptTimestamp = Date.now();
-    // logger.info('[PERF_USER_PROMPT]', this.instanceId, 'User prompt received at', this.userPromptTimestamp);
-
     // If the previous request was interrupted, add a system reminder
     if (this.interruptionManager.wasRequestInterrupted()) {
       const systemReminder: Message = {
@@ -767,26 +763,12 @@ export class Agent {
     });
 
     try {
-      // === PERF: About to send request to LLM ===
-      // const llmRequestTimestamp = Date.now();
-      // const preprocessingTime = this.userPromptTimestamp ? llmRequestTimestamp - this.userPromptTimestamp : 0;
-      // logger.info('[PERF_LLM_REQUEST]', this.instanceId, 'Sending request to LLM at', llmRequestTimestamp, 'preprocessing took:', preprocessingTime + 'ms');
-
-      // === DEBUG: Print system prompt and tool context ===
-      // const systemPrompt = this.conversationManager.getSystemMessage()?.role === 'system' ? this.conversationManager.getSystemMessage()!.content : 'No system prompt';
-      // const systemPromptTokens = Math.ceil(systemPrompt.length / 4); // Rough estimate: 1 token ≈ 4 chars
-
       // Send to model (includes system-reminder if present)
       const response = await this.modelClient.send(this.conversationManager.getMessages(), {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
         stream: !this.config.isSpecializedAgent && this.config.config.parallel_tools,
       });
-
-      // === PERF: LLM response received ===
-      // const llmResponseTimestamp = Date.now();
-      // const llmDuration = llmResponseTimestamp - llmRequestTimestamp;
-      // logger.info('[PERF_LLM_RESPONSE]', this.instanceId, 'LLM response received at', llmResponseTimestamp, 'duration:', llmDuration + 'ms');
 
       // Remove system-reminder messages after receiving response
       // These are temporary context hints that should not persist
