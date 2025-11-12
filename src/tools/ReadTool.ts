@@ -28,7 +28,9 @@ export class ReadTool extends BaseTool {
   readonly usageGuidance = `**When to use read:**
 Regular reads (default) keep file content in context for future reference - prefer this for most use cases.
 ONLY use ephemeral=true when file exceeds normal token limit AND you need one-time inspection.
-WARNING: Ephemeral content is automatically removed after one turn - you'll lose access to it.`;
+WARNING: Ephemeral content is automatically removed after one turn - you'll lose access to it.
+
+For exploratory work (unknown file locations, multi-file pattern analysis), use explore() to preserve your context and tool call capacity.`;
 
   private config?: Config;
 

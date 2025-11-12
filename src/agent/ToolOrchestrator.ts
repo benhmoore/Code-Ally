@@ -25,7 +25,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
-import { BUFFER_SIZES } from '../config/constants.js';
+import { BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
 import { TOOL_NAMES } from '../config/toolDefaults.js';
 
 /**
@@ -930,7 +930,6 @@ export class ToolOrchestrator {
    */
   private generateId(prefix: string = 'tool'): string {
     // Generate ID: {prefix}-{timestamp}-{9-char-random} (base-36, skip '0.' prefix)
-    const { ID_GENERATION } = require('../config/constants.js');
     return `${prefix}-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
   }
 }

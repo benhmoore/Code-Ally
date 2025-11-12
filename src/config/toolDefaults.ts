@@ -130,4 +130,6 @@ export const CONTEXT_THRESHOLDS = {
 export const TOOL_NAMES = {
   /** Todo management tools */
   TODO_MANAGEMENT_TOOLS: ['todo_add', 'todo_update', 'todo_remove', 'todo_clear'],
+  /** Exploration-only tools (internal to explore agents) */
+  EXPLORATION_ONLY_TOOLS: ['write_temp'],
 } as const;

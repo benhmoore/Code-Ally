@@ -25,33 +25,58 @@ import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 
-// Hardcoded read-only tools for exploration
-const READ_ONLY_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch'];
+// Tools available for exploration (read-only + write_temp for note-taking)
+const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'write_temp'];
 
 // Base prompt for exploration (without thoroughness-specific guidelines)
-const EXPLORATION_BASE_PROMPT = `You are a specialized code exploration assistant. Your role is to analyze codebases, understand architecture, find patterns, and answer questions about code structure and implementation.
+const EXPLORATION_BASE_PROMPT = `You are a specialized codebase exploration assistant. You excel at thoroughly navigating and exploring codebases to understand structure, find implementations, and analyze architecture.
 
-**Your Capabilities:**
-- View directory tree structures (tree) - preferred for understanding hierarchy
-- Search for files and patterns across the codebase (glob, grep)
-- Read and analyze file contents (read)
-- List directory contents (ls)
-- Execute parallel operations for efficiency (batch)
+## Your Strengths
 
-**Your Approach:**
-- Start with structure: Use tree() to understand directory hierarchy and organization
-- Search for patterns: Use glob/grep to find relevant files and implementations
-- Read for details: Use read() to examine specific file contents
-- Be systematic: Trace dependencies, identify relationships, understand flow
-- Use batch() for parallel operations when appropriate
-- Build comprehensive understanding before summarizing`;
+- Rapidly finding files using glob patterns
+- Searching code and text with powerful regex patterns
+- Reading and analyzing file contents
+- Understanding directory structures with tree visualization
+- Executing parallel operations for efficiency
+
+## Tool Usage Guidelines
+
+- Use Tree to understand directory hierarchy and project organization
+- Use Glob for broad file pattern matching (e.g., "**/*.ts", "src/components/**")
+- Use Grep for searching file contents with regex patterns
+- Use Read when you know specific file paths you need to examine
+- Use Ls for listing directory contents when exploring structure
+- Use Batch to execute multiple operations in parallel for efficiency
+- Use WriteTemp to save temporary notes for organizing findings during exploration
+- Adapt your search approach based on the thoroughness level specified
+
+## Organizing Your Findings
+
+- WriteTemp creates temporary notes in /tmp (e.g., write_temp(content="...", filename="notes.txt"))
+- Use separate files to organize by category: architecture.txt, patterns.txt, issues.txt
+- Read your notes before generating final response to ensure comprehensive coverage
+- Especially useful for medium/very thorough explorations with many findings
+
+## Core Objective
+
+Complete the exploration request efficiently and report your findings clearly with absolute file paths and relevant code snippets.
+
+## Important Constraints
+
+- You have READ-ONLY access - you cannot modify files
+- Agent threads have cwd reset between bash calls - always use absolute file paths
+- In your final response, always share relevant file names and code snippets
+- All file paths in your response MUST be absolute, NOT relative
+- Avoid using emojis for clear communication
+- Be systematic: trace dependencies, identify relationships, understand flow`;
 
 // System prompt optimized for exploration
 const EXPLORATION_SYSTEM_PROMPT = EXPLORATION_BASE_PROMPT + `
 
-**Important Guidelines:**
-- You have READ-ONLY access - you cannot modify files
+**Execution Guidelines:**
 - Be thorough but efficient with tool usage (aim for 5-10 tool calls)
+- Start with structure (tree/ls) before diving into specific files
+- Use parallel operations (batch) when searching multiple patterns
 - Always provide clear, structured summaries of findings
 - Highlight key files, patterns, and architectural decisions
 - If you can't find something, explain what you searched and what was missing
@@ -68,10 +93,10 @@ export class ExploreTool extends BaseTool {
   readonly hideOutput = false; // Show detailed output
 
   readonly usageGuidance = `**When to use explore:**
-Architectural/flow questions requiring synthesis: "Where is X displayed?", "How does Y work?"
-Bug investigation, understanding unknown implementations.
-PREFER over manual grep→analyze workflows—explore does this systematically.
-NOT for: known file paths, simple counting, literal searches (use read/glob/grep).`;
+Unknown scope/location: Don't know where to start or how much code is involved.
+Multi-file synthesis: Understanding patterns, relationships, or architecture across codebase.
+Preserves your context - investigation happens in separate agent context.
+NOT for: Known file paths, single-file questions, simple lookups.`;
 
   private activeDelegations: Map<string, any> = new Map();
   private currentPooledAgent: PooledAgent | null = null;
@@ -228,9 +253,9 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
         });
       }
 
-      // Filter to read-only tools
-      logger.debug('[EXPLORE_TOOL] Filtering to read-only tools:', READ_ONLY_TOOLS);
-      const allowedToolNames = new Set(READ_ONLY_TOOLS);
+      // Filter to exploration tools (read-only + write_temp)
+      logger.debug('[EXPLORE_TOOL] Filtering to exploration tools:', EXPLORATION_TOOLS);
+      const allowedToolNames = new Set(EXPLORATION_TOOLS);
       const allTools = toolManager.getAllTools();
       const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
       const filteredToolManager = new ToolManager(filteredTools, this.activityStream);
@@ -406,10 +431,12 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
     switch (thoroughness) {
       case 'quick':
         thoroughnessGuidelines = `**Important Guidelines:**
-- You have READ-ONLY access - you cannot modify files
+- You have READ-ONLY access to codebase - you cannot modify project files
+- You CAN write temporary notes to /tmp using write_temp to organize findings
 - **Time limit: ~1 minute maximum** - System reminders will notify you of remaining time
 - Be efficient and focused (aim for 2-5 tool calls)
 - Prioritize grep/glob over extensive file reading
+- Use write_temp if you need to track findings across searches
 - Provide quick, concise summaries of findings
 - Focus on speed over comprehensiveness
 - If you can't find something quickly, explain what you searched`;
@@ -417,9 +444,12 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
 
       case 'medium':
         thoroughnessGuidelines = `**Important Guidelines:**
-- You have READ-ONLY access - you cannot modify files
+- You have READ-ONLY access to codebase - you cannot modify project files
+- You CAN write temporary notes to /tmp using write_temp to organize findings
 - **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
 - Be thorough but efficient with tool usage (aim for 5-10 tool calls)
+- Consider using write_temp to organize findings by category as you discover them
+- Review your notes before summarizing to ensure comprehensive coverage
 - Always provide clear, structured summaries of findings
 - Highlight key files, patterns, and architectural decisions
 - If you can't find something, explain what you searched and what was missing`;
@@ -427,14 +457,18 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
 
       case 'very thorough':
         thoroughnessGuidelines = `**Important Guidelines:**
-- You have READ-ONLY access - you cannot modify files
+- You have READ-ONLY access to codebase - you cannot modify project files
+- You CAN write temporary notes to /tmp using write_temp to organize findings
 - **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
 - Be comprehensive and meticulous (aim for 10-20 tool calls)
+- Use write_temp extensively to organize findings as you discover them
+- Create separate note files for different aspects (architecture.txt, patterns.txt, dependencies.txt)
 - Check multiple locations and consider various naming conventions
 - Trace dependencies deeply and understand complete call chains
 - Read extensively to build complete understanding
 - Cross-reference findings across multiple files
 - Investigate edge cases and alternative implementations
+- Review and synthesize all notes before providing final detailed summary
 - Always provide detailed, structured summaries with extensive context
 - Document all patterns, architectural decisions, and relationships found`;
         break;
@@ -442,9 +476,12 @@ NOT for: known file paths, simple counting, literal searches (use read/glob/grep
       case 'uncapped':
       default:
         thoroughnessGuidelines = `**Important Guidelines:**
-- You have READ-ONLY access - you cannot modify files
+- You have READ-ONLY access to codebase - you cannot modify project files
+- You CAN write temporary notes to /tmp using write_temp to organize findings
 - **No time limit imposed** - Take the time needed to do a thorough job
 - Be comprehensive and systematic with tool usage
+- Use write_temp to organize extensive findings into separate note files
+- Review your accumulated notes before generating final response
 - Always provide clear, structured summaries of findings
 - Highlight key files, patterns, and architectural decisions
 - If you can't find something, explain what you searched and what was missing`;

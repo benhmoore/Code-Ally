@@ -41,7 +41,9 @@ export class GrepTool extends BaseTool {
   readonly requiresConfirmation = false; // Read-only operation
   readonly usageGuidance = `**When to use grep:**
 Locate patterns across files or inspect matching lines with regex.
-Set output_mode="files_with_matches" for file lists (default), "content" for snippets with context, "count" for per-file totals.`;
+Set output_mode="files_with_matches" for file lists (default), "content" for snippets with context, "count" for per-file totals.
+
+WARNING: Multi-step investigations (grep → read → grep → read) rapidly fill your context, significantly reducing remaining tool calls and forcing premature conversation restart. For exploratory work with unknown scope, use explore() instead to preserve your capacity.`;
 
   private static readonly MAX_RESULTS = TOOL_LIMITS.MAX_SEARCH_RESULTS;
   private static readonly MAX_FILE_SIZE = TOOL_LIMITS.MAX_FILE_SIZE;

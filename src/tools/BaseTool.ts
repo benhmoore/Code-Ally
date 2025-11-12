@@ -78,6 +78,13 @@ export abstract class BaseTool {
   readonly pluginName?: string;
 
   /**
+   * Whether this is an internal tool restricted to specific agents
+   * Set to true for specialized tools that shouldn't be available to all agents
+   * (e.g., write_temp is only for explore agents)
+   */
+  readonly internalTool: boolean = false;
+
+  /**
    * Activity stream for emitting events
    */
   protected activityStream: ActivityStream;

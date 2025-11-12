@@ -43,6 +43,8 @@ export interface AgentConfig {
   isSpecializedAgent?: boolean;
   /** Whether this agent can manage the global todo list (default: false for specialized agents) */
   allowTodoManagement?: boolean;
+  /** Whether this agent can access exploration-only tools (default: true for specialized agents only) */
+  allowExplorationTools?: boolean;
   /** Enable verbose logging */
   verbose?: boolean;
   /** System prompt to prepend (initial/static version) */
@@ -698,10 +700,19 @@ export class Agent {
    */
   private async getLLMResponse(): Promise<LLMResponse> {
     // Get function definitions from tool manager
-    // Exclude todo management tools from specialized agents (only main agent can manage todos)
+    // Exclude restricted tools based on agent type
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-    const excludeTools = allowTodoManagement ? undefined : ([...TOOL_NAMES.TODO_MANAGEMENT_TOOLS] as string[]);
-    const functions = this.toolManager.getFunctionDefinitions(excludeTools);
+    const allowExplorationTools = this.config.allowExplorationTools ?? this.config.isSpecializedAgent ?? false;
+
+    const excludeTools: string[] = [];
+    if (!allowTodoManagement) {
+      excludeTools.push(...TOOL_NAMES.TODO_MANAGEMENT_TOOLS);
+    }
+    if (!allowExplorationTools) {
+      excludeTools.push(...TOOL_NAMES.EXPLORATION_ONLY_TOOLS);
+    }
+
+    const functions = this.toolManager.getFunctionDefinitions(excludeTools.length > 0 ? excludeTools : undefined);
 
     // Regenerate system prompt with current context (todos, etc.) before each LLM call
     // Works for both main agent and specialized agents
@@ -1419,10 +1430,19 @@ export class Agent {
    * @returns System prompt string
    */
   generateSystemPrompt(): string {
-    // Exclude todo management tools from specialized agents (only main agent can manage todos)
+    // Exclude restricted tools based on agent type
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-    const excludeTools = allowTodoManagement ? undefined : ([...TOOL_NAMES.TODO_MANAGEMENT_TOOLS] as string[]);
-    const functions = this.toolManager.getFunctionDefinitions(excludeTools);
+    const allowExplorationTools = this.config.allowExplorationTools ?? this.config.isSpecializedAgent ?? false;
+
+    const excludeTools: string[] = [];
+    if (!allowTodoManagement) {
+      excludeTools.push(...TOOL_NAMES.TODO_MANAGEMENT_TOOLS);
+    }
+    if (!allowExplorationTools) {
+      excludeTools.push(...TOOL_NAMES.EXPLORATION_ONLY_TOOLS);
+    }
+
+    const functions = this.toolManager.getFunctionDefinitions(excludeTools.length > 0 ? excludeTools : undefined);
 
     let prompt = this.config.systemPrompt || 'You are a helpful AI assistant.';
     prompt += '\n\nYou have access to the following tools:\n\n';

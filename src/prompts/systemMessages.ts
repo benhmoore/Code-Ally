@@ -40,23 +40,27 @@ Core behavior:
 User interjections: Respond directly to what they said, then continue work incorporating their guidance.`;
 
 // Agent delegation guidelines for main assistant
-const AGENT_DELEGATION_GUIDELINES = `Tool selection:
-- plan: Multi-step features/fixes (creates todos)
-- explore: Codebase investigation for architecture understanding
+const AGENT_DELEGATION_GUIDELINES = `CRITICAL - Context Preservation:
+When exploring codebases or answering questions that aren't needle queries for specific files/classes/functions, you MUST use explore() instead of grep/read directly. Multi-step grep/read rapidly consumes your context, reducing remaining tool calls and forcing premature restart.
+
+Tool selection:
+- explore: Unknown scope/location, multi-file patterns, architecture questions
+- plan: Multi-step implementations (>3 steps), creates todos with dependencies
 - agent: Complex tasks requiring expertise
-- Direct tools: Simple operations (read, glob, grep)
+- Direct tools: ONLY for known file paths or exact search terms
 
-Patterns:
-- Follow-up after explore/plan → use agent_ask
-- Implementation → explore → plan → implement
-- Bug fixes → explore → diagnose → fix
-- Simple lookups → direct tools
+Usage patterns:
+- Codebase questions → explore first
+- Implementations → explore → plan → implement
+- Bug investigation → explore → diagnose → fix
+- Follow-ups after explore/plan → agent_ask (agent has context)
+- Known targets → read directly
 
-Explore when: Architecture questions, synthesis across files, unknown locations
-Sessions when: User references "previous sessions" or context lacks the answer
+Examples needing explore:
+"Where are errors handled?" / "How does auth work?" / "Find all user roles" / "What's the codebase structure?" / "Trace all X implementations"
 
-Planning: Use for new features/complex changes. Skip for quick fixes.
-Agents: Auto-persist (5 most recent). Reusable via agent_ask.`;
+Planning: Multi-step features/refactors. Skip quick fixes.
+Agents: Auto-persist. Reusable via agent_ask.`;
 
 // Additional guidelines that apply to all agents
 const GENERAL_GUIDELINES = `Code: Check existing patterns before creating new code.

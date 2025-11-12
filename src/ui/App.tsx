@@ -129,9 +129,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Track whether we've already shown the model selector (to prevent showing it twice)
   const modelSelectorShownRef = useRef(false);
 
-  // Show model selector if model not found during startup (but NOT if setup wizard is shown)
+  // Show model selector if model not found during startup (but NOT if setup wizard is open)
   useEffect(() => {
-    if (showModelSelector && activityStream && !shouldShowSetupWizard && !modelSelectorShownRef.current) {
+    if (showModelSelector && activityStream && !modal.setupWizardOpen && !modelSelectorShownRef.current) {
       modelSelectorShownRef.current = true;
       const requestId = `model_select_${Date.now()}`;
       const config = state.config;
@@ -156,7 +156,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         },
       });
     }
-  }, [showModelSelector, activityStream, availableModels, shouldShowSetupWizard]);
+  }, [showModelSelector, activityStream, availableModels, modal.setupWizardOpen, state.config]);
 
   // State for patches to pass to RewindSelector
   const [patches, setPatches] = useState<PatchMetadata[]>([]);
