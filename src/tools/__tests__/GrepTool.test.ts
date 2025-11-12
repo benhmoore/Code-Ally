@@ -92,7 +92,7 @@ describe('GrepTool', () => {
       const result = await grepTool.execute({
         pattern: 'TEST',
         path: tempDir,
-        case_insensitive: true,
+        '-i': true,
         output_mode: 'content',
       });
 

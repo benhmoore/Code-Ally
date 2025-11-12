@@ -605,6 +605,21 @@ export const AGENT_CONFIG = {
 
   /** Number of consecutive different tool calls to clear cycle history */
   CYCLE_BREAK_THRESHOLD: 3,
+
+  /** Number of accesses to the same file before warning about repeated reads */
+  REPEATED_FILE_THRESHOLD: 5,
+
+  /** Minimum search success rate (30%) before warning about low hit rate */
+  HIT_RATE_THRESHOLD: 0.3,
+
+  /** Number of consecutive empty search results before warning */
+  EMPTY_STREAK_THRESHOLD: 3,
+
+  /** Number of similar (fuzzy matched) tool calls before warning */
+  SIMILAR_CALL_THRESHOLD: 3,
+
+  /** Minimum number of searches required before checking hit rate */
+  MIN_SEARCHES_FOR_HIT_RATE: 5,
 } as const;
 
 // ===========================================

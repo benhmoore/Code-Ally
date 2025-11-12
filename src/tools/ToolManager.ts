@@ -38,6 +38,7 @@ export class ToolManager {
   private validator: ToolValidator;
   private duplicateDetector: DuplicateDetector;
   private readFiles: Map<string, number> = new Map();
+  private functionDefinitionsCache: Map<string, FunctionDefinition[]> = new Map();
 
   constructor(tools: BaseTool[], _activityStream: ActivityStream) {
     this.tools = new Map();
@@ -117,6 +118,8 @@ export class ToolManager {
       return;
     }
     this.tools.set(tool.name, tool);
+    // Invalidate cache when tool is registered
+    this.functionDefinitionsCache.clear();
     logger.debug(`[TOOL_MANAGER] Registered contextual tool: ${tool.name}`);
   }
 
@@ -134,6 +137,8 @@ export class ToolManager {
       return;
     }
     this.tools.delete(toolName);
+    // Invalidate cache when tool is unregistered
+    this.functionDefinitionsCache.clear();
     logger.debug(`[TOOL_MANAGER] Unregistered contextual tool: ${toolName}`);
   }
 
@@ -144,9 +149,6 @@ export class ToolManager {
    * @returns List of function definitions for LLM function calling
    */
   getFunctionDefinitions(excludeTools?: string[]): FunctionDefinition[] {
-    const functionDefs: FunctionDefinition[] = [];
-    const excludeSet = new Set(excludeTools || []);
-
     // Get active plugins from PluginActivationManager
     let activePlugins: Set<string> | null = null;
     try {
@@ -158,6 +160,18 @@ export class ToolManager {
       // This ensures backward compatibility
       activePlugins = null;
     }
+
+    // Generate cache key based on plugin activation state
+    // This ensures cached results match the current activation state
+    const cacheKey = this.generateCacheKey(activePlugins, excludeTools);
+
+    // Check cache with activation-aware key
+    if (this.functionDefinitionsCache.has(cacheKey)) {
+      return this.functionDefinitionsCache.get(cacheKey)!;
+    }
+
+    const functionDefs: FunctionDefinition[] = [];
+    const excludeSet = new Set(excludeTools || []);
 
     for (const tool of this.tools.values()) {
       // Skip excluded tools
@@ -178,7 +192,41 @@ export class ToolManager {
       functionDefs.push(functionDef);
     }
 
+    // Cache the result with the activation-aware key
+    this.functionDefinitionsCache.set(cacheKey, functionDefs);
+
     return functionDefs;
+  }
+
+  /**
+   * Generate a cache key based on active plugins and excluded tools
+   *
+   * The cache key includes the sorted list of active plugins to ensure that
+   * cached function definitions match the current plugin activation state.
+   * This prevents returning cached definitions that include deactivated plugins.
+   *
+   * @param activePlugins - Set of active plugin names (null if no plugin system)
+   * @param excludeTools - Optional list of tool names to exclude
+   * @returns Cache key string
+   */
+  private generateCacheKey(activePlugins: Set<string> | null, excludeTools?: string[]): string {
+    const parts: string[] = [];
+
+    // Include active plugins in key (sorted for consistency)
+    if (activePlugins === null) {
+      parts.push('no-plugin-manager');
+    } else if (activePlugins.size === 0) {
+      parts.push('no-active-plugins');
+    } else {
+      parts.push(`plugins:${Array.from(activePlugins).sort().join(',')}`);
+    }
+
+    // Include exclusions in key if present
+    if (excludeTools && excludeTools.length > 0) {
+      parts.push(`exclude:${excludeTools.sort().join(',')}`);
+    }
+
+    return parts.join('|');
   }
 
   /**

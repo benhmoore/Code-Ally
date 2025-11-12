@@ -154,20 +154,31 @@ export class GlobTool extends BaseTool {
         absolute: true,
       });
 
-      // Get file info with stats
+      // Get file info with stats (parallel with concurrency limit)
+      const STAT_CONCURRENCY = 15; // Optimal concurrency for file stats
       const fileInfos: FileInfo[] = [];
-      for (const filePath of matchedFiles) {
-        try {
-          const fileStats = await fs.stat(filePath);
-          fileInfos.push({
-            path: filePath,
-            relativePath: path.relative(process.cwd(), filePath),
-            size: fileStats.size,
-            modified: fileStats.mtimeMs,
-          });
-        } catch {
-          // Skip files that can't be stat'd
-          continue;
+
+      // Process files in batches to limit concurrency
+      for (let i = 0; i < matchedFiles.length; i += STAT_CONCURRENCY) {
+        const batch = matchedFiles.slice(i, i + STAT_CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map(async (filePath) => {
+            const fileStats = await fs.stat(filePath);
+            return {
+              path: filePath,
+              relativePath: path.relative(process.cwd(), filePath),
+              size: fileStats.size,
+              modified: fileStats.mtimeMs,
+            };
+          })
+        );
+
+        // Collect successful results
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            fileInfos.push(result.value);
+          }
+          // Skip files that can't be stat'd (rejected promises)
         }
       }
 

@@ -31,6 +31,21 @@ interface ToolCallHistoryEntry {
 }
 
 /**
+ * Issue types for cycle detection
+ */
+export type IssueType =
+  | 'exact_duplicate'
+  | 'repeated_file'
+  | 'similar_calls'
+  | 'low_hit_rate'
+  | 'empty_streak';
+
+/**
+ * Severity levels for detected issues
+ */
+export type Severity = 'high' | 'medium' | 'low';
+
+/**
  * Cycle detection result for a specific tool call
  */
 export interface CycleInfo {
@@ -40,6 +55,22 @@ export interface CycleInfo {
   count: number;
   /** Whether this is a valid repeat (e.g., file was modified) */
   isValidRepeat: boolean;
+  /** Type of issue detected (optional) */
+  issueType?: IssueType;
+  /** Severity of the issue (optional) */
+  severity?: Severity;
+  /** Custom message to override default warning (optional) */
+  customMessage?: string;
+  /** Additional metadata about the issue (optional) */
+  metadata?: {
+    filePath?: string;
+    hitRate?: number;
+    consecutiveEmpty?: number;
+    searchTotal?: number;
+    searchHits?: number;
+    fileAccessCount?: number;
+    [key: string]: any;
+  };
 }
 
 /**
@@ -69,6 +100,18 @@ export class CycleDetector {
 
   /** Agent instance ID for logging */
   private readonly instanceId: string;
+
+  /** File access count tracker (for repeated file detection) */
+  private fileAccessCount: Map<string, number> = new Map();
+
+  /** Number of searches that returned results */
+  private searchHits: number = 0;
+
+  /** Total number of searches performed */
+  private searchTotal: number = 0;
+
+  /** Consecutive empty result streak */
+  private consecutiveEmpty: number = 0;
 
   /**
    * Create a new CycleDetector
@@ -176,6 +219,201 @@ export class CycleDetector {
   }
 
   /**
+   * Detect repeated file access pattern
+   *
+   * @param toolCall - Tool call to check
+   * @returns Cycle info if repeated file access detected, null otherwise
+   */
+  private detectRepeatedFileAccess(toolCall: {
+    function: { name: string; arguments: Record<string, any> };
+  }): CycleInfo | null {
+    // Only applies to read tool
+    if (toolCall.function.name !== 'Read' && toolCall.function.name !== 'read') {
+      return null;
+    }
+
+    // Get file path from arguments
+    const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
+    if (!filePath) {
+      return null;
+    }
+
+    // Get current access count
+    const count = this.fileAccessCount.get(filePath) || 0;
+
+    // Check if threshold exceeded
+    if (count >= AGENT_CONFIG.REPEATED_FILE_THRESHOLD) {
+      console.log('[PATTERN-DETECTION] Repeated file access:', filePath, `(${count + 1} times)`);
+      return {
+        toolName: toolCall.function.name,
+        count: count + 1,
+        isValidRepeat: false,
+        issueType: 'repeated_file',
+        severity: 'medium',
+        customMessage: `File ${filePath} has been read ${count + 1} times. Consider if this information is already available in context.`,
+        metadata: {
+          filePath,
+          fileAccessCount: count + 1,
+        },
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Calculate Levenshtein distance between two strings
+   *
+   * @param str1 - First string
+   * @param str2 - Second string
+   * @returns Edit distance between the strings
+   */
+  private levenshteinDistance(str1: string, str2: string): number {
+    const len1 = str1.length;
+    const len2 = str2.length;
+    const matrix: number[][] = [];
+
+    // Initialize matrix
+    for (let i = 0; i <= len1; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= len2; j++) {
+      if (matrix[0]) {
+        matrix[0][j] = j;
+      }
+    }
+
+    // Fill matrix
+    for (let i = 1; i <= len1; i++) {
+      for (let j = 1; j <= len2; j++) {
+        if (str1[i - 1] === str2[j - 1]) {
+          matrix[i]![j] = matrix[i - 1]![j - 1]!;
+        } else {
+          matrix[i]![j] = Math.min(
+            matrix[i - 1]![j - 1]! + 1, // substitution
+            matrix[i]![j - 1]! + 1, // insertion
+            matrix[i - 1]![j]! + 1 // deletion
+          );
+        }
+      }
+    }
+
+    return matrix[len1]![len2]!;
+  }
+
+  /**
+   * Check if two signatures are similar (fuzzy match)
+   *
+   * @param sig1 - First signature
+   * @param sig2 - Second signature
+   * @returns True if signatures are similar
+   */
+  private areSimilarSignatures(sig1: string, sig2: string): boolean {
+    // If exact match, not similar (handled by exact duplicate detection)
+    if (sig1 === sig2) {
+      return false;
+    }
+
+    // Calculate similarity threshold (80% similar)
+    const maxLen = Math.max(sig1.length, sig2.length);
+    const distance = this.levenshteinDistance(sig1, sig2);
+    const similarity = 1 - distance / maxLen;
+
+    return similarity >= 0.8;
+  }
+
+  /**
+   * Detect similar (but not identical) tool calls
+   *
+   * @param toolCall - Tool call to check
+   * @returns Cycle info if similar calls detected, null otherwise
+   */
+  private detectSimilarCalls(toolCall: {
+    function: { name: string; arguments: Record<string, any> };
+  }): CycleInfo | null {
+    const signature = this.createToolCallSignature(toolCall);
+
+    // Count similar calls in history
+    const similarCalls = this.toolCallHistory.filter(entry => this.areSimilarSignatures(entry.signature, signature));
+
+    const count = similarCalls.length;
+
+    if (count >= AGENT_CONFIG.SIMILAR_CALL_THRESHOLD) {
+      console.log('[PATTERN-DETECTION] Similar calls detected:', toolCall.function.name, `(${count + 1} similar)`);
+      return {
+        toolName: toolCall.function.name,
+        count: count + 1,
+        isValidRepeat: false,
+        issueType: 'similar_calls',
+        severity: 'medium',
+        customMessage: `Similar ${toolCall.function.name} calls detected ${count + 1} times. Consider if you're making progress or stuck in a pattern.`,
+        metadata: {
+          similarCallCount: count + 1,
+        },
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Detect low search hit rate
+   *
+   * @returns Cycle info if low hit rate detected, null otherwise
+   */
+  private detectLowHitRate(): CycleInfo | null {
+    // Need minimum searches to establish pattern
+    if (this.searchTotal < AGENT_CONFIG.MIN_SEARCHES_FOR_HIT_RATE) {
+      return null;
+    }
+
+    const hitRate = this.searchHits / this.searchTotal;
+
+    if (hitRate < AGENT_CONFIG.HIT_RATE_THRESHOLD) {
+      console.log('[PATTERN-DETECTION] Low hit rate:', `${Math.round(hitRate * 100)}%`, `(${this.searchHits}/${this.searchTotal})`);
+      return {
+        toolName: 'Search',
+        count: this.searchTotal,
+        isValidRepeat: false,
+        issueType: 'low_hit_rate',
+        severity: 'high',
+        customMessage: `Low search success rate: ${Math.round(hitRate * 100)}% (${this.searchHits}/${this.searchTotal}). Consider adjusting search strategy or looking in different locations.`,
+        metadata: {
+          hitRate,
+          searchHits: this.searchHits,
+          searchTotal: this.searchTotal,
+        },
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Detect consecutive empty search results
+   *
+   * @returns Cycle info if empty streak detected, null otherwise
+   */
+  private detectEmptyStreak(): CycleInfo | null {
+    if (this.consecutiveEmpty >= AGENT_CONFIG.EMPTY_STREAK_THRESHOLD) {
+      console.log('[PATTERN-DETECTION] Empty search streak:', this.consecutiveEmpty, 'consecutive empty results');
+      return {
+        toolName: 'Search',
+        count: this.consecutiveEmpty,
+        isValidRepeat: false,
+        issueType: 'empty_streak',
+        severity: 'high',
+        customMessage: `${this.consecutiveEmpty} consecutive searches with no results. Consider changing your search approach or exploring different paths.`,
+        metadata: {
+          consecutiveEmpty: this.consecutiveEmpty,
+        },
+      };
+    }
+
+    return null;
+  }
+
+  /**
    * Detect tool call cycles in the current batch of tool calls
    *
    * @param toolCalls - Array of tool calls to check
@@ -189,10 +427,11 @@ export class CycleDetector {
   ): Map<string, CycleInfo> {
     const cycles = new Map<string, CycleInfo>();
 
+    // Per-tool-call detections
     for (const toolCall of toolCalls) {
       const signature = this.createToolCallSignature(toolCall);
 
-      // Count occurrences in recent history
+      // 1. Exact duplicate detection (existing functionality)
       const previousCalls = this.toolCallHistory.filter(entry => entry.signature === signature);
       const count = previousCalls.length + 1; // +1 for current call
 
@@ -204,17 +443,110 @@ export class CycleDetector {
           toolName: toolCall.function.name,
           count,
           isValidRepeat,
+          issueType: 'exact_duplicate',
+          severity: isValidRepeat ? 'low' : 'high',
         });
 
         logger.debug(
           '[CYCLE_DETECTOR]',
           this.instanceId,
-          `Detected cycle: ${toolCall.function.name} called ${count} times (valid repeat: ${isValidRepeat})`
+          `Detected exact duplicate: ${toolCall.function.name} called ${count} times (valid repeat: ${isValidRepeat})`
         );
+      }
+
+      // 2. Repeated file access detection
+      if (!cycles.has(toolCall.id)) {
+        const repeatedFile = this.detectRepeatedFileAccess(toolCall);
+        if (repeatedFile) {
+          cycles.set(toolCall.id, repeatedFile);
+          logger.debug('[CYCLE_DETECTOR]', this.instanceId, `Detected repeated file access: ${repeatedFile.metadata?.filePath}`);
+        }
+      }
+
+      // 3. Similar calls detection
+      if (!cycles.has(toolCall.id)) {
+        const similarCalls = this.detectSimilarCalls(toolCall);
+        if (similarCalls) {
+          cycles.set(toolCall.id, similarCalls);
+          logger.debug('[CYCLE_DETECTOR]', this.instanceId, `Detected similar calls: ${toolCall.function.name}`);
+        }
       }
     }
 
+    // Global detections (not tied to specific tool call)
+    // We'll use a synthetic ID for these
+    const globalId = 'global-pattern-detection';
+
+    // 4. Low hit rate detection
+    const lowHitRate = this.detectLowHitRate();
+    if (lowHitRate) {
+      cycles.set(globalId, lowHitRate);
+      logger.debug('[CYCLE_DETECTOR]', this.instanceId, `Detected low hit rate: ${lowHitRate.metadata?.hitRate}`);
+    }
+
+    // 5. Empty streak detection
+    if (!cycles.has(globalId)) {
+      const emptyStreak = this.detectEmptyStreak();
+      if (emptyStreak) {
+        cycles.set(globalId, emptyStreak);
+        logger.debug('[CYCLE_DETECTOR]', this.instanceId, `Detected empty streak: ${emptyStreak.metadata?.consecutiveEmpty}`);
+      }
+    }
+
+    // Log summary if any issues found
+    if (cycles.size > 0) {
+      console.log('[PATTERN-DETECTION] Detected', cycles.size, 'issue(s):',
+        Array.from(cycles.values()).map(c => c.issueType || 'exact_duplicate'));
+    }
+
     return cycles;
+  }
+
+  /**
+   * Record metrics for a tool call and its result
+   *
+   * @param toolCall - Tool call to record metrics for
+   * @param result - Optional result of the tool call
+   */
+  private recordMetrics(
+    toolCall: { function: { name: string; arguments: Record<string, any> } },
+    result?: { success: boolean; [key: string]: any }
+  ): void {
+    const toolName = toolCall.function.name;
+
+    // Track file access counts for read operations
+    if (toolName === 'Read' || toolName === 'read') {
+      const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
+      if (filePath) {
+        const currentCount = this.fileAccessCount.get(filePath) || 0;
+        this.fileAccessCount.set(filePath, currentCount + 1);
+      }
+    }
+
+    // Track search hits/misses for grep/glob operations (only if result is provided)
+    if (result && (toolName === 'Grep' || toolName === 'grep' || toolName === 'Glob' || toolName === 'glob')) {
+      this.searchTotal++;
+
+      // Check if search was successful
+      // A search is successful if it returned results
+      const hasResults =
+        result.success &&
+        (result.matches?.length > 0 ||
+          result.files?.length > 0 ||
+          result.count > 0 ||
+          (typeof result.output === 'string' && result.output.trim().length > 0));
+
+      if (hasResults) {
+        this.searchHits++;
+        this.consecutiveEmpty = 0; // Reset empty streak
+      } else {
+        this.consecutiveEmpty++;
+      }
+
+      console.log('[PATTERN-DETECTION] Recording search:', toolName,
+        hasResults ? '✓ HIT' : '✗ MISS',
+        `(hit rate: ${Math.round((this.searchHits / this.searchTotal) * 100)}%)`);
+    }
   }
 
   /**
@@ -223,16 +555,29 @@ export class CycleDetector {
    * Should be called AFTER tool execution to track what was executed.
    *
    * @param toolCalls - Tool calls to add to history
+   * @param results - Optional array of tool results (for metric tracking)
    */
   recordToolCalls(
     toolCalls: Array<{
       id: string;
       function: { name: string; arguments: Record<string, any> };
-    }>
+    }>,
+    results?: Array<{ success: boolean; [key: string]: any }>
   ): void {
-    for (const toolCall of toolCalls) {
+    for (let i = 0; i < toolCalls.length; i++) {
+      const toolCall = toolCalls[i];
+      if (!toolCall) continue;
+
       const signature = this.createToolCallSignature(toolCall);
       let fileHashes: Map<string, string> | undefined;
+
+      // Record metrics if results provided
+      if (results && results[i]) {
+        this.recordMetrics(toolCall, results[i]);
+      } else {
+        // Still track file access counts even without results
+        this.recordMetrics(toolCall);
+      }
 
       // For read tools, capture file hashes BEFORE execution
       if (toolCall.function.name === 'Read' || toolCall.function.name === 'read') {
@@ -300,6 +645,10 @@ export class CycleDetector {
    */
   clearHistory(): void {
     this.toolCallHistory = [];
+    this.fileAccessCount.clear();
+    this.searchHits = 0;
+    this.searchTotal = 0;
+    this.consecutiveEmpty = 0;
     logger.debug('[CYCLE_DETECTOR]', this.instanceId, 'History cleared');
   }
 

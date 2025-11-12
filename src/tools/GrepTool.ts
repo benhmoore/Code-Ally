@@ -244,7 +244,8 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
         );
       }
 
-      // Search files
+      // Search files (parallel with concurrency limit)
+      const READ_CONCURRENCY = 10; // Optimal concurrency for file reading
       const matches: GrepMatch[] = [];
       const filesWithMatches = new Set<string>();
       const fileCounts = new Map<string, number>();
@@ -253,7 +254,8 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
       let filesSkippedBinary = 0;
       let filesSkippedError = 0;
 
-      for (const filePath of filesToSearch) {
+      // Process files in batches to limit concurrency
+      for (let i = 0; i < filesToSearch.length; i += READ_CONCURRENCY) {
         // For files_with_matches mode, stop when we have enough unique files
         if (outputMode === 'files_with_matches' && filesWithMatches.size >= maxResults) {
           break;
@@ -263,24 +265,47 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
           break;
         }
 
-        try {
-          // Check file size
-          const fileStats = await fs.stat(filePath);
-          if (fileStats.size > GrepTool.MAX_FILE_SIZE) {
-            filesSkippedLarge++;
+        const batch = filesToSearch.slice(i, i + READ_CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map(async (filePath) => {
+            // Check file size
+            const fileStats = await fs.stat(filePath);
+            if (fileStats.size > GrepTool.MAX_FILE_SIZE) {
+              return { type: 'skipped_large' as const, filePath };
+            }
+
+            // Read file
+            const content = await fs.readFile(filePath, { encoding: 'utf-8' });
+
+            // Check for binary content
+            if (isBinaryContent(content)) {
+              return { type: 'skipped_binary' as const, filePath };
+            }
+
+            return { type: 'success' as const, filePath, content };
+          })
+        );
+
+        // Process results from this batch
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            filesSkippedError++;
             continue;
           }
 
-          // Read file
-          const content = await fs.readFile(filePath, { encoding: 'utf-8' });
-
-          // Check for binary content
-          if (isBinaryContent(content)) {
+          const value = result.value;
+          if (value.type === 'skipped_large') {
+            filesSkippedLarge++;
+            continue;
+          }
+          if (value.type === 'skipped_binary') {
             filesSkippedBinary++;
             continue;
           }
 
+          // Success - process file content
           filesSearched++;
+          const { filePath, content } = value;
 
           // Search based on mode
           if (multiline) {
@@ -321,10 +346,6 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
               }
             }
           }
-        } catch {
-          // Skip files that can't be read
-          filesSkippedError++;
-          continue;
         }
       }
 

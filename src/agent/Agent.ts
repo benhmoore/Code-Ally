@@ -30,6 +30,9 @@ import { ToolResultManager } from '../services/ToolResultManager.js';
 import { ConfigManager } from '../services/ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
 import { isPermissionDeniedError } from '../security/PathSecurity.js';
+import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
+import { SessionPersistence } from './SessionPersistence.js';
+import { AgentCompactor } from './AgentCompactor.js';
 import { Message, ActivityEventType, Config } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
@@ -110,6 +113,15 @@ export class Agent {
   // Turn management - delegated to TurnManager
   private turnManager: TurnManager;
 
+  // Response processing - delegated to ResponseProcessor
+  private responseProcessor: ResponseProcessor;
+
+  // Session persistence - delegated to SessionPersistence
+  private sessionPersistence: SessionPersistence;
+
+  // Compaction - delegated to AgentCompactor
+  private agentCompactor: AgentCompactor;
+
   // Timeout continuation tracking - counts attempts to continue after activity timeout
   private timeoutContinuationAttempts: number = 0;
 
@@ -178,6 +190,21 @@ export class Agent {
       instanceId: this.instanceId,
     });
 
+    // Create response processor
+    this.responseProcessor = new ResponseProcessor(
+      this.messageValidator,
+      this.activityStream,
+      this.interruptionManager,
+      this.conversationManager,
+      this.requiredToolTracker
+    );
+
+    // Create session persistence handler
+    this.sessionPersistence = new SessionPersistence(
+      this.conversationManager,
+      this.instanceId
+    );
+
     // Create activity monitor for detecting agents stuck generating tokens
     // Only enabled for specialized agents (subagents) to detect infinite loops
     const activityTimeoutMs = config.config.tool_call_activity_timeout * 1000;
@@ -204,6 +231,14 @@ export class Agent {
       this.tokenManager,
       configManager, // Optional: uses defaults if not provided
       toolManager
+    );
+
+    // Create agent compactor for conversation compaction
+    this.agentCompactor = new AgentCompactor(
+      modelClient,
+      this.conversationManager,
+      this.tokenManager,
+      activityStream
     );
 
     // Create tool orchestrator
@@ -796,7 +831,7 @@ export class Agent {
   }
 
   /**
-   * Process LLM response (handles both tool calls and text)
+   * Process LLM response (handles interruptions and delegates to ResponseProcessor)
    *
    * @param response - LLM response
    * @param isRetry - Whether this is a retry after empty response
@@ -892,327 +927,71 @@ export class Agent {
       }
     }
 
-    // GAP 2: Partial response due to HTTP error (mid-stream interruption)
-    // Detect partial responses that were interrupted by HTTP 500/503 errors
-    // If we have partial content/tool_calls, continue from where we left off
-    if (response.error && response.partial && !isRetry) {
-      const hasContent = response.content && response.content.trim().length > 0;
-      const hasToolCalls = response.tool_calls && response.tool_calls.length > 0;
-
-      if (hasContent || hasToolCalls) {
-        logger.debug(`[CONTINUATION] Gap 2: Partial response due to HTTP error - prodding model to continue (content=${hasContent}, toolCalls=${hasToolCalls})`);
-        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Partial response due to HTTP error - attempting continuation');
-        logger.debug(`[AGENT_RESPONSE] Partial response details: content=${hasContent}, toolCalls=${hasToolCalls}`);
-
-        // Add the partial assistant response to conversation history
-        const assistantMessage: Message = {
-          role: 'assistant',
-          content: response.content || '',
-          tool_calls: response.tool_calls?.map(tc => ({
-            id: tc.id,
-            type: 'function' as const,
-            function: {
-              name: tc.function.name,
-              arguments: tc.function.arguments,
-            },
-          })),
-          thinking: response.thinking,
-          timestamp: Date.now(),
-        };
-        this.conversationManager.addMessage(assistantMessage);
-
-        // Add continuation prompt mentioning the error
-        const continuationPrompt: Message = {
-          role: 'user',
-          content: `<system-reminder>\nYour previous response encountered an error and was interrupted: ${response.error_message || 'Unknown error'}. Please continue where you left off.\n</system-reminder>`,
-          timestamp: Date.now(),
-        };
-        this.conversationManager.addMessage(continuationPrompt);
-
-        // Get continuation from LLM
-        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after partial HTTP error response...');
-        const continuationResponse = await this.getLLMResponse();
-
-        // Process continuation (mark as retry to prevent infinite loop)
-        return await this.processLLMResponse(continuationResponse, true);
-      }
-    }
-
-    // GAP 3: Tool call validation errors
-    // Detect validation errors where tool calls are malformed (missing function name, invalid JSON, etc.)
-    // Add assistant's response with malformed calls to history and request continuation with error details
-    const validationResult = this.messageValidator.validate(response, isRetry);
-
-    if (!validationResult.isValid && !isRetry) {
-      // Log the validation attempt
-      this.messageValidator.logAttempt(validationResult.errors);
-
-      // Check if we've exceeded the max validation attempts
-      if (validationResult.maxAttemptsExceeded) {
-        // Reset counter for next request
-        this.messageValidator.reset();
-
-        // Return error message to user
-        return this.messageValidator.createMaxAttemptsError(validationResult.errors);
-      }
-
-      // Add the assistant's response with malformed tool calls to conversation history
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: response.content || '',
-        tool_calls: response.tool_calls?.map(tc => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        })),
-        thinking: response.thinking,
-        timestamp: Date.now(),
-      };
-      this.conversationManager.addMessage(assistantMessage);
-
-      // Add continuation prompt with validation error details
-      const continuationPrompt = this.messageValidator.createValidationRetryMessage(validationResult.errors);
-      this.conversationManager.addMessage(continuationPrompt);
-
-      // Get continuation from LLM
-      logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after validation errors...');
-      const continuationResponse = await this.getLLMResponse();
-
-      // Process continuation (mark as retry to prevent infinite loop)
-      return await this.processLLMResponse(continuationResponse, true);
-    }
-
-    // Check for error (non-partial, non-validation errors)
-    if (response.error && !response.partial && !response.tool_call_validation_failed) {
-      return response.content || 'An error occurred';
-    }
-
-    // Extract tool calls
-    const toolCalls = response.tool_calls || [];
-    const content = response.content || '';
-
-    // Log LLM response to trace tool call origins
-    logger.debug('[AGENT] LLM response - hasContent:', !!response.content, 'toolCallCount:', toolCalls.length);
-    if (toolCalls.length > 0) {
-      logger.debug('[AGENT] Tool calls from LLM:');
-      toolCalls.forEach((tc, idx) => {
-        logger.debug(`  [${idx}] ${tc.function.name}(${JSON.stringify(tc.function.arguments)}) id:${tc.id}`);
-      });
-    }
-
-    // GAP 1: Truly empty response (no content AND no tool calls)
-    // Detect when the model provides neither text nor tool calls
-    // Note: Empty content WITH tool calls is valid - the model can directly call tools
-    if (!content.trim() && toolCalls.length === 0 && !isRetry) {
-      logger.debug('[CONTINUATION] Gap 1: Truly empty response (no content, no tools) - prodding model to continue');
-      logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Truly empty response (no content, no tools) - attempting continuation');
-
-      // First, add the assistant's empty response to conversation history
-      // This allows the model to see it provided nothing and should continue
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: '', // Truly empty - no content, no tool calls
-        // No tool_calls since toolCalls.length === 0
-        thinking: response.thinking,
-        timestamp: Date.now(),
-      };
-      this.conversationManager.addMessage(assistantMessage);
-
-      // Add generic continuation prompt
-      const continuationPrompt: Message = {
-        role: 'user',
-        content: '<system-reminder>\nYour response appears incomplete. Please continue where you left off.\n</system-reminder>',
-        timestamp: Date.now(),
-      };
-      this.conversationManager.addMessage(continuationPrompt);
-
-      // Get continuation from LLM
-      logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after truly empty response...');
-      const continuationResponse = await this.getLLMResponse();
-
-      // Process continuation (mark as retry to prevent infinite loop)
-      return await this.processLLMResponse(continuationResponse, true);
-    }
-
-    if (toolCalls.length > 0) {
-      // Check for interruption before processing tools
-      if (this.interruptionManager.isInterrupted()) {
-        return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-      }
-      // Reset validation counter on successful response with tool calls
-      this.messageValidator.reset();
-      // Response contains tool calls
-      return await this.processToolResponse(response, toolCalls);
-    } else {
-      // Reset validation counter on successful text-only response
-      this.messageValidator.reset();
-      // Text-only response
-      return await this.processTextResponse(response, isRetry);
-    }
+    // Delegate to ResponseProcessor for remaining logic
+    const context = this.buildResponseContext();
+    return await this.responseProcessor.processLLMResponse(response, context, isRetry);
   }
 
   /**
-   * Process a response that contains tool calls
-   *
-   * @param response - LLM response with tool calls
-   * @param toolCalls - Parsed tool calls
-   * @returns Final response after tool execution and follow-up
+   * Build response context for ResponseProcessor
+   * Contains callbacks and state needed for response processing
    */
-  private async processToolResponse(
-    response: LLMResponse,
-    toolCalls: Array<{
-      id: string;
-      type: 'function';
-      function: { name: string; arguments: Record<string, any> };
-    }>
-  ): Promise<string> {
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Processing tool response with', toolCalls.length, 'tool calls');
+  private buildResponseContext(): ResponseContext {
+    return {
+      instanceId: this.instanceId,
+      isSpecializedAgent: this.config.isSpecializedAgent || false,
+      parentCallId: this.config.parentCallId,
+      baseAgentPrompt: this.config.baseAgentPrompt,
+      generateId: () => this.generateId(),
+      autoSaveSession: () => this.autoSaveSession(),
+      getLLMResponse: () => this.getLLMResponse(),
+      unwrapBatchToolCalls: (toolCalls) => this.unwrapBatchToolCalls(toolCalls),
+      executeToolCalls: async (toolCalls, cycles) => {
+        // Execute tool calls via orchestrator
+        // Permission denied errors need special handling by Agent.ts
+        try {
+          const results = await this.toolOrchestrator.executeToolCalls(toolCalls, cycles);
+          return results;
+        } catch (error) {
+          // Check if this is a permission denied error that triggered interruption
+          if (isPermissionDeniedError(error)) {
+            // Get unwrapped tool calls for adding permission denial results
+            const unwrappedToolCalls = this.unwrapBatchToolCalls(toolCalls);
 
-    // Unwrap batch calls before adding to conversation
-    // This ensures the conversation history matches what was actually executed
-    const unwrappedToolCalls = this.unwrapBatchToolCalls(toolCalls);
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'After unwrapping:', unwrappedToolCalls.length, 'tool calls');
+            logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Permission denied during tool execution - adding tool results before interruption');
 
-    // Add assistant message with unwrapped tool calls to history
-    const toolCallsForMessage = unwrappedToolCalls.map(tc => ({
-      id: tc.id,
-      type: 'function' as const,
-      function: {
-        name: tc.function.name,
-        arguments: tc.function.arguments,
+            // Add tool result messages to conversation history so model knows what happened
+            // This ensures the conversation is complete before we interrupt
+            for (const toolCall of unwrappedToolCalls) {
+              const toolResultMessage: Message = {
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: toolCall.function.name,
+                content: JSON.stringify(PERMISSION_DENIED_TOOL_RESULT),
+                timestamp: Date.now(),
+              };
+              this.conversationManager.addMessage(toolResultMessage);
+            }
+
+            logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added permission denial tool results. Total messages now:', this.conversationManager.getMessageCount());
+
+            // Save session with permission denial context
+            this.autoSaveSession();
+          }
+
+          // Re-throw to propagate to Agent.ts error handler
+          throw error;
+        }
       },
-    }));
-
-    const assistantMessage: Message = {
-      role: 'assistant',
-      content: response.content || '',
-      tool_calls: toolCallsForMessage,
-      thinking: response.thinking,
-      timestamp: Date.now(),
+      detectCycles: (toolCalls) => this.cycleDetector.detectCycles(toolCalls),
+      recordToolCalls: (toolCalls, results) => this.cycleDetector.recordToolCalls(toolCalls, results),
+      clearCyclesIfBroken: () => this.cycleDetector.clearIfBroken(),
+      clearCurrentTurn: () => this.toolManager.clearCurrentTurn(),
+      startToolExecution: () => this.startToolExecution(),
+      getContextUsagePercentage: () => this.tokenManager.getContextUsagePercentage(),
+      contextWarningThreshold: CONTEXT_THRESHOLDS.WARNING,
+      cleanupEphemeralMessages: () => this.cleanupEphemeralMessages(),
     };
-    this.conversationManager.addMessage(assistantMessage);
-
-    // Auto-save after assistant message with tool calls
-    this.autoSaveSession();
-
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Assistant message with tool calls added. Total messages:', this.conversationManager.getMessageCount());
-
-    // Check context usage for specialized agents (subagents)
-    // Enforce stricter limit (WARNING threshold) to ensure room for final summary
-    const contextUsage = this.tokenManager.getContextUsagePercentage();
-    if (this.config.isSpecializedAgent && contextUsage >= CONTEXT_THRESHOLDS.WARNING) {
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent at', contextUsage + '% context - blocking tool execution to preserve space for summary');
-
-      // Remove the assistant message with tool calls we just added
-      this.conversationManager.getMessages().slice(0, -1); this.conversationManager.setMessages(this.conversationManager.getMessages().slice(0, -1));
-
-      // Add a system reminder instructing the agent to provide final summary
-      const systemReminder: Message = {
-        role: 'system',
-        content: '<system-reminder>\n' +
-          `Context usage at ${contextUsage}% - too high for specialized agent to execute more tools. ` +
-          'You MUST provide your final summary now. Do NOT request any more tool calls. ' +
-          'Summarize your work, findings, and recommendations based on the information you have gathered.\n' +
-          '</system-reminder>',
-        timestamp: Date.now(),
-      };
-      this.conversationManager.addMessage(systemReminder);
-
-      // Get final response from LLM (without executing tools)
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Requesting final summary from specialized agent...');
-      const finalResponse = await this.getLLMResponse();
-
-      return await this.processLLMResponse(finalResponse);
-    }
-
-    // Detect cycles BEFORE executing tools
-    const cycles = this.cycleDetector.detectCycles(unwrappedToolCalls);
-    if (cycles.size > 0) {
-      logger.debug('[AGENT_CYCLE_DETECTION]', this.instanceId, `Detected ${cycles.size} potential cycles`);
-    }
-
-    // Execute tool calls via orchestrator (pass original calls for unwrapping)
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Executing tool calls via orchestrator...');
-
-    // Start tool execution and create abort controller
-    this.startToolExecution();
-
-    try {
-      await this.toolOrchestrator.executeToolCalls(toolCalls, cycles);
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Tool calls completed. Total messages now:', this.conversationManager.getMessageCount());
-    } catch (error) {
-      // Check if this is a permission denied error that triggered interruption
-      if (isPermissionDeniedError(error)) {
-        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Permission denied during tool execution - adding tool results before interruption');
-
-        // Add tool result messages to conversation history so model knows what happened
-        // This ensures the conversation is complete before we interrupt
-        for (const toolCall of unwrappedToolCalls) {
-          const toolResultMessage: Message = {
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            name: toolCall.function.name,
-            content: JSON.stringify(PERMISSION_DENIED_TOOL_RESULT),
-            timestamp: Date.now(),
-          };
-          this.conversationManager.addMessage(toolResultMessage);
-        }
-
-        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added permission denial tool results. Total messages now:', this.conversationManager.getMessageCount());
-
-        // Save session with permission denial context
-        this.autoSaveSession();
-
-        throw error; // Re-throw to be caught by sendMessage's error handler
-      }
-      // Re-throw any other errors
-      throw error;
-    }
-
-    // Check if agent was interrupted during tool execution
-    if (this.interruptionManager.isInterrupted()) {
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Agent interrupted during tool execution - stopping follow-up');
-      this.interruptionManager.markRequestAsInterrupted();
-      return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-    }
-
-    // Add tool calls to history for cycle detection (AFTER execution)
-    this.cycleDetector.recordToolCalls(unwrappedToolCalls);
-
-    // Check if cycle pattern is broken (3 consecutive different calls)
-    this.cycleDetector.clearIfBroken();
-
-    // Track required tool calls
-    if (this.requiredToolTracker.hasRequiredTools()) {
-      logger.debug(`[REQUIRED_TOOLS_DEBUG] Checking ${unwrappedToolCalls.length} tool calls for required tools`);
-      unwrappedToolCalls.forEach(tc => {
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] Tool executed: ${tc.function.name}`);
-        if (this.requiredToolTracker.markCalled(tc.function.name)) {
-          logger.debug(`[REQUIRED_TOOLS_DEBUG] ✓ Tracked required tool call: ${tc.function.name}`);
-          logger.debug(`[REQUIRED_TOOLS_DEBUG] Called so far:`, this.requiredToolTracker.getCalledTools());
-        }
-      });
-    }
-
-    // Clear current turn (for redundancy detection)
-    this.toolManager.clearCurrentTurn();
-
-    // Check if agent was interrupted before requesting follow-up
-    if (this.interruptionManager.isInterrupted()) {
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Agent interrupted before follow-up LLM call - stopping');
-      this.interruptionManager.markRequestAsInterrupted();
-      return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-    }
-
-    // Get follow-up response from LLM
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Getting follow-up response from LLM...');
-    const followUpResponse = await this.getLLMResponse();
-
-    // Recursively process the follow-up (it might contain more tool calls)
-    return await this.processLLMResponse(followUpResponse);
   }
 
   /**
@@ -1233,175 +1012,6 @@ export class Agent {
       // Auto-save after cleanup
       this.autoSaveSession();
     }
-  }
-
-  /**
-   * Process a text-only response (no tool calls)
-   *
-   * @param response - LLM response with text content
-   * @param isRetry - Whether this is a retry after empty response
-   * @returns The text content
-   */
-  private async processTextResponse(response: LLMResponse, isRetry: boolean = false): Promise<string> {
-    // Validate that we have actual content
-    const content = response.content || '';
-
-    // Check if all required tool calls have been executed before allowing agent to exit
-    // IMPORTANT: This check must happen BEFORE any fallback/retry logic to ensure required tools are always enforced
-    if (this.requiredToolTracker.hasRequiredTools() && !this.interruptionManager.isInterrupted()) {
-      logger.debug(`[REQUIRED_TOOLS_DEBUG] Agent attempting to exit with text response`);
-      logger.debug(`[REQUIRED_TOOLS_DEBUG] Required tools:`, this.requiredToolTracker.getRequiredTools());
-      logger.debug(`[REQUIRED_TOOLS_DEBUG] Called tools:`, this.requiredToolTracker.getCalledTools());
-
-      const result = this.requiredToolTracker.checkAndWarn();
-      logger.debug(`[REQUIRED_TOOLS_DEBUG] Missing tools:`, result.missingTools);
-
-      if (result.shouldFail) {
-        // Exceeded max warnings - fail the operation
-        const errorMessage = this.requiredToolTracker.createFailureMessage(result.missingTools);
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] ✗ FAILING - exceeded max warnings (${result.warningCount}/${result.maxWarnings})`);
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] Error message:`, errorMessage);
-        logger.error('[AGENT_REQUIRED_TOOLS]', this.instanceId, errorMessage);
-
-        const assistantMessage: Message = {
-          role: 'assistant',
-          content: `[Error: ${errorMessage}]`,
-          timestamp: Date.now(),
-        };
-        this.conversationManager.addMessage(assistantMessage);
-        this.autoSaveSession();
-
-        return `[Error: ${errorMessage}]`;
-      }
-
-      if (result.shouldWarn) {
-        // Send reminder to call required tools
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${result.warningCount}/${result.maxWarnings}`);
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] Sending reminder to call: ${result.missingTools.join(', ')}`);
-
-        const reminderMessage = this.requiredToolTracker.createWarningMessage(result.missingTools);
-        this.requiredToolTracker.setWarningMessageIndex(this.conversationManager.getMessageCount()); // Track index before push
-        this.conversationManager.addMessage(reminderMessage);
-
-        // Get new response from LLM
-        logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, 'Requesting LLM to call required tools...');
-        const retryResponse = await this.getLLMResponse();
-
-        // Recursively process the response
-        return await this.processLLMResponse(retryResponse);
-      }
-
-      // All required tools have been called
-      if (this.requiredToolTracker.areAllCalled()) {
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] ✓ SUCCESS - All required tools have been called`);
-        logger.debug('[AGENT_REQUIRED_TOOLS]', this.instanceId, 'All required tools have been called:', this.requiredToolTracker.getCalledTools());
-
-        // Remove the warning message from history if it exists
-        const warningIndex = this.requiredToolTracker.getWarningMessageIndex();
-        if (warningIndex >= 0 && warningIndex < this.conversationManager.getMessageCount()) {
-          const messages = this.conversationManager.getMessages();
-          const warningMessage = messages[warningIndex];
-          if (warningMessage && warningMessage.role === 'system' && warningMessage.content.includes('must call the following required tool')) {
-            logger.debug(`[REQUIRED_TOOLS_DEBUG] Removing satisfied warning from conversation history at index ${warningIndex}`);
-            messages.splice(warningIndex, 1);
-            this.conversationManager.setMessages(messages);
-            this.requiredToolTracker.clearWarningMessageIndex();
-          }
-        }
-      }
-    }
-
-    // Handle empty content - attempt continuation if appropriate
-    if (!content.trim() && !isRetry) {
-      // Check if previous message had tool calls (indicates we're in follow-up after tools)
-      const lastMessage = this.conversationManager.getLastMessage();
-      const isAfterToolExecution = lastMessage?.role === 'assistant' && lastMessage?.tool_calls && lastMessage.tool_calls.length > 0;
-
-      if (isAfterToolExecution) {
-        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Empty response after tool execution - attempting continuation');
-        logger.debug(`[AGENT_RESPONSE] Empty response after ${lastMessage.tool_calls?.length || 0} tool calls`);
-
-        // Add continuation prompt
-        const continuationPrompt: Message = {
-          role: 'user',
-          content: '<system-reminder>\nYou just executed tool calls but did not provide any response. Please provide your response now based on the tool results.\n</system-reminder>',
-          timestamp: Date.now(),
-        };
-        this.conversationManager.addMessage(continuationPrompt);
-
-        // Get continuation from LLM
-        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Requesting continuation after empty response...');
-        const retryResponse = await this.getLLMResponse();
-
-        // Process retry (mark as retry to prevent infinite loop)
-        return await this.processLLMResponse(retryResponse, true);
-      } else {
-        // Empty response but not after tool execution - just log debug
-        logger.debug('[AGENT_RESPONSE]', this.instanceId, 'Model returned empty content');
-      }
-    } else if (!content.trim() && isRetry) {
-      // Still empty after continuation attempt - use fallback
-      logger.error('[AGENT_RESPONSE]', this.instanceId, 'Still empty after continuation attempt - using fallback message');
-      const fallbackContent = this.config.isSpecializedAgent
-        ? 'Task completed. Tool results are available in the conversation history.'
-        : 'I apologize, but I encountered an issue generating a response. The requested operations have been completed.';
-
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: fallbackContent,
-        timestamp: Date.now(),
-      };
-      this.conversationManager.addMessage(assistantMessage);
-
-      // Clean up ephemeral messages BEFORE auto-save
-      this.cleanupEphemeralMessages();
-
-      this.autoSaveSession();
-
-      this.emitEvent({
-        id: this.generateId(),
-        type: ActivityEventType.AGENT_END,
-        timestamp: Date.now(),
-        data: {
-          content: fallbackContent,
-          isSpecializedAgent: this.config.isSpecializedAgent || false,
-          instanceId: this.instanceId,
-          agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
-        },
-      });
-
-      return fallbackContent;
-    }
-
-    // Normal path - we have content and all required tools (if any) have been called
-    const assistantMessage: Message = {
-      role: 'assistant',
-      content: content,
-      timestamp: Date.now(),
-    };
-    this.conversationManager.addMessage(assistantMessage);
-
-    // Clean up ephemeral messages BEFORE auto-save
-    // This ensures ephemeral content doesn't persist in session files
-    this.cleanupEphemeralMessages();
-
-    // Auto-save after text response
-    this.autoSaveSession();
-
-    // Emit completion event
-    this.emitEvent({
-      id: this.generateId(),
-      type: ActivityEventType.AGENT_END,
-      timestamp: Date.now(),
-      data: {
-        content: content,
-        isSpecializedAgent: this.config.isSpecializedAgent || false,
-        instanceId: this.instanceId,
-        agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
-      },
-    });
-
-    return content;
   }
 
   /**
@@ -1503,56 +1113,10 @@ export class Agent {
 
   /**
    * Auto-save session to disk (messages and todos)
+   * Delegates to SessionPersistence
    */
   private async autoSaveSession(): Promise<void> {
-    const registry = ServiceRegistry.getInstance();
-    const sessionManager = registry.get('session_manager');
-    const todoManager = registry.get('todo_manager');
-
-    if (!sessionManager || typeof (sessionManager as any).autoSave !== 'function') {
-      return; // Session manager not available
-    }
-
-    // Get current session
-    const currentSession = (sessionManager as any).getCurrentSession();
-
-    // Create a new session if none exists and we have user messages
-    if (!currentSession) {
-      const hasUserMessages = this.conversationManager.getMessages().some(m => m.role === 'user');
-      if (hasUserMessages && typeof (sessionManager as any).generateSessionName === 'function') {
-        const sessionName = (sessionManager as any).generateSessionName();
-        await (sessionManager as any).createSession(sessionName);
-        (sessionManager as any).setCurrentSession(sessionName);
-        logger.debug('[AGENT_SESSION]', this.instanceId, 'Created new session:', sessionName);
-      } else {
-        return; // No user messages yet, don't create session
-      }
-    }
-
-    // Get todos if TodoManager is available
-    let todos: any[] | undefined;
-    if (todoManager && typeof (todoManager as any).getTodos === 'function') {
-      todos = (todoManager as any).getTodos();
-    }
-
-    // Get idle messages if IdleMessageGenerator is available
-    let idleMessages: string[] | undefined;
-    const idleMessageGenerator = registry.get('idle_message_generator');
-    if (idleMessageGenerator && typeof (idleMessageGenerator as any).getQueue === 'function') {
-      idleMessages = (idleMessageGenerator as any).getQueue();
-    }
-
-    // Get project context if ProjectContextDetector is available
-    let projectContext: any | undefined;
-    const projectContextDetector = registry.get('project_context_detector');
-    if (projectContextDetector && typeof (projectContextDetector as any).getCached === 'function') {
-      projectContext = (projectContextDetector as any).getCached();
-    }
-
-    // Auto-save (non-blocking, fire and forget)
-    (sessionManager as any).autoSave(this.conversationManager.getMessages(), todos, idleMessages, projectContext).catch((error: Error) => {
-      logger.error('[AGENT_SESSION]', this.instanceId, 'Failed to auto-save session:', error);
-    });
+    await this.sessionPersistence.autoSave();
   }
 
   /**
@@ -1684,85 +1248,15 @@ export class Agent {
 
   /**
    * Check if auto-compaction should trigger based on context usage
+   * Delegates to AgentCompactor
    */
   private async checkAutoCompaction(): Promise<void> {
-    // Don't auto-compact for specialized agents
-    if (this.config.isSpecializedAgent) {
-      return;
-    }
-
-    // Get TokenManager (instance variable)
-    if (typeof this.tokenManager.getContextUsagePercentage !== 'function') {
-      return;
-    }
-
-    // Check current context usage
-    const contextUsage = this.tokenManager.getContextUsagePercentage();
-    const threshold = this.config.config.compact_threshold || CONTEXT_THRESHOLDS.CRITICAL;
-
-    // Check if context usage exceeds threshold (primary concern - do we need to compact?)
-    if (contextUsage < threshold) {
-      return; // Context not full, no need to compact
-    }
-
-    // Context is full - validate we have enough messages for meaningful summarization (quality gate)
-    if (this.conversationManager.getMessageCount() < BUFFER_SIZES.MIN_MESSAGES_TO_ATTEMPT_COMPACTION) {
-      logger.debug('[AGENT_AUTO_COMPACT]', this.instanceId,
-        `Context at ${contextUsage}% (threshold: ${threshold}%) but only ${this.conversationManager.getMessageCount()} messages - ` +
-        `too few to compact meaningfully. Consider increasing context_size if this occurs frequently.`);
-      return;
-    }
-
-    // Both conditions met: context is full AND we have enough messages
-    logger.debug('[AGENT_AUTO_COMPACT]', this.instanceId,
-      `Context at ${contextUsage}%, threshold ${threshold}% - triggering compaction`);
-
-    try {
-      // Emit compaction start event
-      this.emitEvent({
-        id: this.generateId(),
-        type: ActivityEventType.COMPACTION_START,
-        timestamp: Date.now(),
-        data: {},
-      });
-
-      // Perform compaction
-      const compacted = await this.performCompaction();
-
-      // Update messages
-      this.conversationManager.setMessages(compacted);
-
-      // Update token count
-      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
-
-      const newContextUsage = this.tokenManager.getContextUsagePercentage();
-
-      // Get the last message's timestamp to place notice before it
-      // Find the last non-system message timestamp
-      const lastMessageTimestamp = this.conversationManager.getMessages()
-        .filter(m => m.role !== 'system')
-        .reduce((latest, msg) => Math.max(latest, msg.timestamp || 0), 0);
-
-      // Place compaction notice right before the last message (timestamp - 1)
-      const noticeTimestamp = lastMessageTimestamp > 0 ? lastMessageTimestamp - 1 : Date.now();
-
-      // Emit compaction complete event with notice data and compacted messages
-      this.emitEvent({
-        id: this.generateId(),
-        type: ActivityEventType.COMPACTION_COMPLETE,
-        timestamp: noticeTimestamp,
-        data: {
-          oldContextUsage: contextUsage,
-          newContextUsage,
-          threshold,
-          compactedMessages: this.conversationManager.getMessages(),
-        },
-      });
-
-      logger.debug('[AGENT_AUTO_COMPACT]', this.instanceId, `Compaction complete - Context now at ${newContextUsage}%`);
-    } catch (error) {
-      logger.error('[AGENT_AUTO_COMPACT]', this.instanceId, 'Compaction failed:', error);
-    }
+    await this.agentCompactor.checkAndPerformAutoCompaction({
+      instanceId: this.instanceId,
+      isSpecializedAgent: this.config.isSpecializedAgent || false,
+      compactThreshold: this.config.config.compact_threshold,
+      generateId: () => this.generateId(),
+    });
   }
 
   /**
@@ -1771,6 +1265,8 @@ export class Agent {
    * This is the single source of truth for compaction logic, used by both:
    * - Auto-compaction (when context reaches threshold)
    * - Manual /compact command (with optional custom instructions)
+   *
+   * Delegates to AgentCompactor.
    *
    * @param messages - Messages to compact (defaults to this.messages)
    * @param options - Compaction options
@@ -1787,118 +1283,7 @@ export class Agent {
       timestampLabel?: string;
     } = {}
   ): Promise<Message[]> {
-    const {
-      customInstructions,
-      preserveLastUserMessage = true,
-      timestampLabel = undefined,
-    } = options;
-
-    // Extract system message and other messages
-    const systemMessage = messages[0]?.role === 'system' ? messages[0] : null;
-    let otherMessages = systemMessage ? messages.slice(1) : messages;
-
-    // Filter out ephemeral messages before compaction
-    // Cleanup happens at end-of-turn (processTextResponse), but compaction can trigger
-    // mid-turn (during getLLMResponse after tool execution). This ensures ephemeral
-    // content is never summarized into conversation history, regardless of timing.
-    otherMessages = otherMessages.filter(msg => !msg.metadata?.ephemeral);
-
-    // If we have fewer than 2 non-system messages to summarize, nothing to compact (Level 2: summarization threshold)
-    if (otherMessages.length < BUFFER_SIZES.MIN_MESSAGES_TO_SUMMARIZE) {
-      return messages;
-    }
-
-    // Find the last user message (the one that triggered compaction or current user request)
-    const lastUserMessage = preserveLastUserMessage
-      ? [...otherMessages].reverse().find(m => m.role === 'user')
-      : undefined;
-
-    // Messages to summarize: everything except the last user message (if preserving it)
-    const messagesToSummarize = lastUserMessage
-      ? otherMessages.slice(0, otherMessages.lastIndexOf(lastUserMessage))
-      : otherMessages;
-
-    // Create summarization request
-    const summarizationRequest: Message[] = [];
-
-    // Add system message for summarization
-    summarizationRequest.push({
-      role: 'system',
-      content:
-        'You are an AI assistant summarizing a conversation to save context space. ' +
-        'Preserve specific details about: (1) unresolved problems with error messages, stack traces, and file paths, ' +
-        '(2) current investigation state, attempted solutions that failed, and next steps, (3) decisions made. ' +
-        'Be extremely detailed about ongoing problems but brief about completed work. Use bullet points.',
-    });
-
-    // Add messages to be summarized
-    summarizationRequest.push(...messagesToSummarize);
-
-    // Build summarization request
-    let finalRequest = 'Summarize this conversation, preserving technical details needed to continue work.';
-
-    // Add custom instructions if provided (used by manual /compact command)
-    if (customInstructions) {
-      finalRequest += ` Additional instructions: ${customInstructions}`;
-    }
-
-    // Add context about the current user request if we're preserving it
-    if (lastUserMessage) {
-      finalRequest += `\n\nThe user's current request is: "${lastUserMessage.content}"`;
-    }
-
-    summarizationRequest.push({
-      role: 'user',
-      content: finalRequest,
-    });
-
-    // Generate summary
-    const response = await this.modelClient.send(summarizationRequest, {
-      stream: false,
-    });
-
-    const summary = response.content.trim();
-
-    // Build compacted message list
-    const compacted: Message[] = [];
-    if (systemMessage) {
-      compacted.push(systemMessage);
-    }
-
-    // Add summary as system message if we got a meaningful one
-    // Simple truthy check: if LLM returns empty/whitespace, we skip it;
-    // if it returns any real content, we include it. No magic strings needed.
-    if (summary) {
-      const summaryLabel = timestampLabel
-        ? `CONVERSATION SUMMARY (${timestampLabel} at ${new Date().toLocaleTimeString()})`
-        : 'CONVERSATION SUMMARY';
-
-      compacted.push({
-        role: 'system',
-        content: `${summaryLabel}: ${summary}`,
-        metadata: {
-          isConversationSummary: true,
-        },
-      });
-    }
-
-    // Add the last user message if we're preserving it
-    if (lastUserMessage) {
-      compacted.push(lastUserMessage);
-    }
-
-    return compacted;
-  }
-
-  /**
-   * Perform conversation compaction (internal auto-compaction)
-   * Delegates to compactConversation with auto-compact specific options
-   */
-  private async performCompaction(): Promise<Message[]> {
-    return this.compactConversation(this.conversationManager.getMessages(), {
-      preserveLastUserMessage: true,
-      timestampLabel: 'auto-compacted',
-    });
+    return this.agentCompactor.compactConversation(messages, options);
   }
 
   /**

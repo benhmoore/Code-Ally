@@ -84,7 +84,7 @@ export class ToolOrchestrator {
   private toolResultManager: ToolResultManager | null = null;
   private permissionManager: PermissionManager | null = null;
   private parentCallId?: string; // Parent context for nested agents
-  private cycleDetectionResults: Map<string, { toolName: string; count: number; isValidRepeat: boolean }> = new Map();
+  private cycleDetectionResults: Map<string, import('./CycleDetector.js').CycleInfo> = new Map();
 
   constructor(
     toolManager: ToolManager,
@@ -129,15 +129,16 @@ export class ToolOrchestrator {
    *
    * @param toolCalls - Array of tool calls from LLM
    * @param cycles - Optional map of tool call ID to cycle detection info
+   * @returns Array of tool results matching the unwrapped tool calls
    */
   async executeToolCalls(
     toolCalls: ToolCall[],
-    cycles?: Map<string, { toolName: string; count: number; isValidRepeat: boolean }>
-  ): Promise<void> {
+    cycles?: Map<string, import('./CycleDetector.js').CycleInfo>
+  ): Promise<ToolResult[]> {
     logger.debug('[TOOL_ORCHESTRATOR] executeToolCalls called with', toolCalls.length, 'tool calls');
 
     if (toolCalls.length === 0) {
-      return;
+      return [];
     }
 
     // Store cycles for later use in result formatting
@@ -151,9 +152,9 @@ export class ToolOrchestrator {
     const canRunConcurrently = this.canRunConcurrently(unwrappedCalls);
 
     if (canRunConcurrently && this.config.config.parallel_tools) {
-      await this.executeConcurrent(unwrappedCalls);
+      return await this.executeConcurrent(unwrappedCalls);
     } else {
-      await this.executeSequential(unwrappedCalls);
+      return await this.executeSequential(unwrappedCalls);
     }
   }
 
@@ -226,8 +227,9 @@ export class ToolOrchestrator {
    * Execute tool calls concurrently
    *
    * @param toolCalls - Array of tool calls
+   * @returns Array of tool results
    */
-  private async executeConcurrent(toolCalls: ToolCall[]): Promise<void> {
+  private async executeConcurrent(toolCalls: ToolCall[]): Promise<ToolResult[]> {
     // Emit group start event (with parent context if nested)
     const groupId = this.generateId('tool-group');
     logger.debug('[TOOL_ORCHESTRATOR] executeConcurrent - groupId:', groupId, 'parentCallId:', this.parentCallId, 'toolCount:', toolCalls.length);
@@ -283,7 +285,17 @@ export class ToolOrchestrator {
 
       for (let i = 0; i < results.length; i++) {
         const settledResult = results[i];
-        if (!settledResult) continue;
+
+        // TypeScript check - Promise.allSettled should always return results
+        if (!settledResult) {
+          // Push placeholder to maintain alignment with toolCalls array
+          successfulResults.push({
+            success: false,
+            error: 'Unexpected empty result from Promise.allSettled',
+            error_type: 'system_error',
+          });
+          continue;
+        }
 
         if (settledResult.status === 'rejected') {
           // Check if this is a permission denial
@@ -398,6 +410,9 @@ export class ToolOrchestrator {
           success: successfulResults.every(r => r?.success),
         },
       });
+
+      // Return results (filter out any nulls that shouldn't exist but TypeScript requires)
+      return successfulResults.filter((r): r is ToolResult => r !== null);
     } catch (error) {
       // Emit error event (with parent context if nested)
       this.emitEvent({
@@ -419,12 +434,16 @@ export class ToolOrchestrator {
    * Execute tool calls sequentially
    *
    * @param toolCalls - Array of tool calls
+   * @returns Array of tool results
    */
-  private async executeSequential(toolCalls: ToolCall[]): Promise<void> {
+  private async executeSequential(toolCalls: ToolCall[]): Promise<ToolResult[]> {
+    const results: ToolResult[] = [];
     for (const toolCall of toolCalls) {
       const result = await this.executeSingleTool(toolCall);
       await this.processToolResult(toolCall, result);
+      results.push(result);
     }
+    return results;
   }
 
   /**
@@ -809,9 +828,41 @@ export class ToolOrchestrator {
     // Inject cycle detection warning if this tool call is part of a cycle
     if (toolCallId && this.cycleDetectionResults.has(toolCallId)) {
       const cycleInfo = this.cycleDetectionResults.get(toolCallId)!;
-      if (!cycleInfo.isValidRepeat) {
-        const cycleWarning = `You've called "${cycleInfo.toolName}" with identical arguments ${cycleInfo.count} times recently, getting the same results. This suggests you're stuck in a loop. Consider trying a different approach or re-reading previous results.`;
-        injectSystemReminder(cycleWarning, 'Cycle detection');
+
+      // Determine if we should inject warning:
+      // - Always inject if !isValidRepeat (critical cycles)
+      // - Also inject if severity is 'high' (even if marked as valid repeat)
+      const shouldWarn = !cycleInfo.isValidRepeat || cycleInfo.severity === 'high';
+
+      if (shouldWarn) {
+        // Use custom message if provided, otherwise fallback to default
+        const message = cycleInfo.customMessage ||
+          `You've called "${cycleInfo.toolName}" with identical arguments ${cycleInfo.count} times recently, getting the same results. This suggests you're stuck in a loop. Consider trying a different approach or re-reading previous results.`;
+
+        // Use issueType for label if provided, otherwise default to 'Cycle detection'
+        const label = cycleInfo.issueType || 'Cycle detection';
+
+        console.log('[PATTERN-DETECTION] Injecting warning:', label, '-', message.substring(0, 80) + '...');
+        injectSystemReminder(message, label);
+      }
+    }
+
+    // Also check for global pattern detections (empty_streak, low_hit_rate)
+    // These apply to the entire execution, not specific tool calls
+    if (this.cycleDetectionResults.has('global-pattern-detection')) {
+      const globalInfo = this.cycleDetectionResults.get('global-pattern-detection')!;
+
+      // Global patterns are always high severity
+      const shouldWarn = !globalInfo.isValidRepeat || globalInfo.severity === 'high';
+
+      if (shouldWarn) {
+        const message = globalInfo.customMessage ||
+          `Pattern detected: ${globalInfo.issueType}`;
+
+        const label = globalInfo.issueType || 'Pattern detection';
+
+        console.log('[PATTERN-DETECTION] Injecting global warning:', label, '-', message.substring(0, 80) + '...');
+        injectSystemReminder(message, label);
       }
     }
 

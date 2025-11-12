@@ -57,7 +57,8 @@ interface ParsedNode {
  * Uses marked for parsing and cli-highlight for syntax highlighting.
  */
 export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme }) => {
-  const highlighter = useMemo(() => new SyntaxHighlighter(theme), [theme]);
+  // Use singleton instance for better performance (avoids creating new instances)
+  const highlighter = useMemo(() => SyntaxHighlighter.getInstance(theme), [theme]);
 
   const parsed = useMemo(() => {
     try {
