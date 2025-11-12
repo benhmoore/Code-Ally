@@ -33,6 +33,7 @@ import { isPermissionDeniedError } from '../security/PathSecurity.js';
 import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
 import { SessionPersistence } from './SessionPersistence.js';
 import { AgentCompactor } from './AgentCompactor.js';
+import { ContextCoordinator } from './ContextCoordinator.js';
 import { Message, ActivityEventType, Config } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
@@ -121,6 +122,9 @@ export class Agent {
 
   // Compaction - delegated to AgentCompactor
   private agentCompactor: AgentCompactor;
+
+  // Context coordination - delegated to ContextCoordinator
+  private contextCoordinator: ContextCoordinator;
 
   // Timeout continuation tracking - counts attempts to continue after activity timeout
   private timeoutContinuationAttempts: number = 0;
@@ -241,6 +245,13 @@ export class Agent {
       activityStream
     );
 
+    // Create context coordinator for context usage tracking
+    this.contextCoordinator = new ContextCoordinator(
+      this.tokenManager,
+      this.conversationManager,
+      this.instanceId
+    );
+
     // Create tool orchestrator
     this.toolOrchestrator = new ToolOrchestrator(
       toolManager,
@@ -293,8 +304,8 @@ export class Agent {
       }
 
       // Update token count with initial system message
-      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
-      const initialUsage = this.tokenManager.getContextUsagePercentage();
+      this.contextCoordinator.updateTokenCount();
+      const initialUsage = this.contextCoordinator.getContextUsagePercentage();
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Initial context usage:', initialUsage + '%');
     }
 
@@ -304,8 +315,8 @@ export class Agent {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added', config.initialMessages.length, 'initial messages');
 
       // Update token count after adding initial messages
-      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
-      const contextUsage = this.tokenManager.getContextUsagePercentage();
+      this.contextCoordinator.updateTokenCount();
+      const contextUsage = this.contextCoordinator.getContextUsagePercentage();
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Context usage after initial messages:', contextUsage + '%');
     }
   }
@@ -929,7 +940,41 @@ export class Agent {
 
     // Delegate to ResponseProcessor for remaining logic
     const context = this.buildResponseContext();
-    return await this.responseProcessor.processLLMResponse(response, context, isRetry);
+    const result = await this.responseProcessor.processLLMResponse(response, context, isRetry);
+
+    // Check if an interruption happened during ResponseProcessor execution
+    // This handles interjections that occur during tool execution or continuation logic
+    if (this.interruptionManager.isInterrupted()) {
+      const interruptionType = this.interruptionManager.getInterruptionType();
+
+      if (interruptionType === 'interjection') {
+        // Preserve partial response from ResponseProcessor if we have content
+        if (result && result.trim()) {
+          this.conversationManager.addMessage({
+            role: 'assistant',
+            content: result,
+            timestamp: Date.now(),
+            metadata: { partial: true },
+          });
+        }
+
+        // Reset flags
+        this.interruptionManager.reset();
+
+        // Resume with continuation call
+        logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection after ResponseProcessor, continuing...');
+        const continuationResponse = await this.getLLMResponse();
+
+        // Process continuation
+        return await this.processLLMResponse(continuationResponse);
+      } else {
+        // Regular cancel - mark as interrupted for next request
+        this.interruptionManager.markRequestAsInterrupted();
+        return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -988,7 +1033,7 @@ export class Agent {
       clearCyclesIfBroken: () => this.cycleDetector.clearIfBroken(),
       clearCurrentTurn: () => this.toolManager.clearCurrentTurn(),
       startToolExecution: () => this.startToolExecution(),
-      getContextUsagePercentage: () => this.tokenManager.getContextUsagePercentage(),
+      getContextUsagePercentage: () => this.contextCoordinator.getContextUsagePercentage(),
       contextWarningThreshold: CONTEXT_THRESHOLDS.WARNING,
       cleanupEphemeralMessages: () => this.cleanupEphemeralMessages(),
     };
@@ -1007,7 +1052,7 @@ export class Agent {
         `Cleaned up ${removedCount} ephemeral message(s)`);
 
       // Update token count after cleanup
-      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
+      this.contextCoordinator.updateTokenCount();
 
       // Auto-save after cleanup
       this.autoSaveSession();
@@ -1133,13 +1178,13 @@ export class Agent {
     };
     this.conversationManager.addMessage(messageWithMetadata);
 
-    // Update TokenManager with new message count
-    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
+    // Update token count with new message
+    this.contextCoordinator.updateTokenCount();
 
     // Emit context usage update event for real-time UI updates
     // Only emit for main agent, not specialized agents (subagents)
     if (!this.config.isSpecializedAgent) {
-      const contextUsage = this.tokenManager.getContextUsagePercentage();
+      const contextUsage = this.contextCoordinator.getContextUsagePercentage();
       this.emitEvent({
         id: this.generateId(),
         type: ActivityEventType.CONTEXT_USAGE_UPDATE,

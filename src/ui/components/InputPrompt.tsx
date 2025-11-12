@@ -136,11 +136,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     }
   }, [prefillText, onPrefillConsumed]);
 
-  // Use ref to track current buffer for Ctrl+C handler (avoids stale closure)
+  // Use refs to track current buffer and cursor position (avoids stale closure issues with paste)
   const bufferRef = useRef(buffer);
+  const cursorPositionRef = useRef(cursorPosition);
   useEffect(() => {
     bufferRef.current = buffer;
   }, [buffer]);
+  useEffect(() => {
+    cursorPositionRef.current = cursorPosition;
+  }, [cursorPosition]);
 
   // History navigation state
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -233,6 +237,39 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
     };
   }, [buffer, cursorPosition]);
+
+  /**
+   * Calculate cursor line and position within that line
+   */
+  const getCursorLineInfo = (text: string, cursorPos: number): { line: number; posInLine: number; charsBeforeLine: number } => {
+    const lines = text.split('\n');
+    let charCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const lineLength = (lines[i] || '').length;
+      // Check if cursor is on this line (including end of line position)
+      if (charCount + lineLength >= cursorPos) {
+        return {
+          line: i,
+          posInLine: cursorPos - charCount,
+          charsBeforeLine: charCount,
+        };
+      }
+      charCount += lineLength + 1; // +1 for newline
+    }
+
+    // Cursor is beyond buffer (shouldn't happen, but handle defensively)
+    // Place it at end of last line
+    const lastLineIndex = Math.max(0, lines.length - 1);
+    const lastLineLength = (lines[lastLineIndex] || '').length;
+    const charsBeforeLastLine = Math.max(0, text.length - lastLineLength);
+
+    return {
+      line: lastLineIndex,
+      posInLine: lastLineLength,
+      charsBeforeLine: charsBeforeLastLine,
+    };
+  };
 
   /**
    * Apply selected completion
@@ -878,25 +915,45 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // ===== History Navigation =====
+      // ===== History Navigation / Line Navigation =====
       if (key.upArrow && !showCompletions) {
-        // If not at beginning, move cursor to beginning first
-        if (cursorPosition > 0) {
-          setCursorPosition(0);
-        } else {
-          // Already at beginning, navigate to previous history
+        // For multiline: move between lines, only navigate history from first line
+        const lines = buffer.split('\n');
+        const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
+
+        if (cursorInfo.line > 0) {
+          // Move to previous line at same column position or end of line
+          const prevLineStart = cursorInfo.charsBeforeLine - (lines[cursorInfo.line - 1] || '').length - 1;
+          const prevLineLength = (lines[cursorInfo.line - 1] || '').length;
+          const newPos = prevLineStart + Math.min(cursorInfo.posInLine, prevLineLength);
+          setCursorPosition(newPos);
+        } else if (cursorPosition === 0) {
+          // At start of first line - navigate history
           navigateHistoryPrevious();
+        } else {
+          // On first line but not at start - move to start
+          setCursorPosition(0);
         }
         return;
       }
 
       if (key.downArrow && !showCompletions) {
-        // If not at end, move cursor to end first
-        if (cursorPosition < buffer.length) {
-          setCursorPosition(buffer.length);
-        } else {
-          // Already at end, navigate to next history
+        // For multiline: move between lines, only navigate history from last line
+        const lines = buffer.split('\n');
+        const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
+
+        if (cursorInfo.line < lines.length - 1) {
+          // Move to next line at same column position or end of line
+          const nextLineStart = cursorInfo.charsBeforeLine + (lines[cursorInfo.line] || '').length + 1;
+          const nextLineLength = (lines[cursorInfo.line + 1] || '').length;
+          const newPos = nextLineStart + Math.min(cursorInfo.posInLine, nextLineLength);
+          setCursorPosition(newPos);
+        } else if (cursorPosition === buffer.length) {
+          // At end of last line - navigate history
           navigateHistoryNext();
+        } else {
+          // On last line but not at end - move to end
+          setCursorPosition(buffer.length);
         }
         return;
       }
@@ -1001,10 +1058,12 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       if (key.return) {
         if (key.ctrl) {
           // Ctrl+Enter - Insert newline
-          const before = buffer.slice(0, cursorPosition);
-          const after = buffer.slice(cursorPosition);
+          const currentBuffer = bufferRef.current;
+          const currentCursor = cursorPositionRef.current;
+          const before = currentBuffer.slice(0, currentCursor);
+          const after = currentBuffer.slice(currentCursor);
           setBuffer(before + '\n' + after);
-          setCursorPosition(cursorPosition + 1);
+          setCursorPosition(currentCursor + 1);
         } else {
           // Check if agent is processing - if so, this is an interjection
           const message = buffer.trim();
@@ -1135,11 +1194,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       // ===== Backspace =====
       if (key.backspace || key.delete) {
         // Regular backspace - delete single character
-        if (cursorPosition > 0) {
-          const before = buffer.slice(0, cursorPosition - 1);
-          const after = buffer.slice(cursorPosition);
+        const currentCursor = cursorPositionRef.current;
+        if (currentCursor > 0) {
+          const currentBuffer = bufferRef.current;
+          const before = currentBuffer.slice(0, currentCursor - 1);
+          const after = currentBuffer.slice(currentCursor);
           setBuffer(before + after);
-          setCursorPosition(cursorPosition - 1);
+          setCursorPosition(currentCursor - 1);
           setHistoryIndex(-1); // Reset history when editing
         }
         return;
@@ -1159,10 +1220,20 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       // ===== Regular Character Input =====
       if (input && !key.ctrl && !key.meta) {
-        const before = buffer.slice(0, cursorPosition);
-        const after = buffer.slice(cursorPosition);
-        setBuffer(before + input + after);
-        setCursorPosition(cursorPosition + 1);
+        // Use refs to avoid stale closure issues with rapid paste events
+        const currentBuffer = bufferRef.current;
+        const currentCursor = cursorPositionRef.current;
+
+        // Normalize line endings - convert \r\n and \r to \n
+        const normalizedInput = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+        const before = currentBuffer.slice(0, currentCursor);
+        const after = currentBuffer.slice(currentCursor);
+        const newBuffer = before + normalizedInput + after;
+        const newCursor = currentCursor + normalizedInput.length;
+
+        setBuffer(newBuffer);
+        setCursorPosition(newCursor);
         setHistoryIndex(-1); // Reset history when typing
       }
     },
@@ -1174,20 +1245,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const isEmpty = buffer.trim().length === 0;
 
   // Calculate which line the cursor is on and position within that line
-  let cursorLine = 0;
-  let cursorPosInLine = cursorPosition;
-  let charCount = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? '';
-    const lineLength = line.length;
-    if (charCount + lineLength >= cursorPosition) {
-      cursorLine = i;
-      cursorPosInLine = cursorPosition - charCount;
-      break;
-    }
-    charCount += lineLength + 1; // +1 for newline character
-  }
+  const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
+  const cursorLine = cursorInfo.line;
+  const cursorPosInLine = cursorInfo.posInLine;
 
   // Determine prompt style based on first character
   const isCommandMode = buffer.startsWith('/');
@@ -1279,7 +1339,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       >
         {lines.map((line, index) => {
           const isFirstLine = index === 0;
-          const prompt = isFirstLine ? promptText : '... ';
+          const prompt = isFirstLine ? promptText : '';
           const displayText = line || (isEmpty && isFirstLine ? placeholder : '');
           const textColor = isEmpty && isFirstLine ? 'gray' : 'white';
           const isCursorLine = index === cursorLine;

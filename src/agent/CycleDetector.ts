@@ -311,6 +311,7 @@ export class CycleDetector {
   private areSimilarSignatures(sig1: string, sig2: string): boolean {
     // If exact match, not similar (handled by exact duplicate detection)
     if (sig1 === sig2) {
+      console.log('[PATTERN-DETECTION] areSimilarSignatures: exact match, returning false');
       return false;
     }
 
@@ -318,6 +319,15 @@ export class CycleDetector {
     const maxLen = Math.max(sig1.length, sig2.length);
     const distance = this.levenshteinDistance(sig1, sig2);
     const similarity = 1 - distance / maxLen;
+
+    console.log('[PATTERN-DETECTION] areSimilarSignatures:', {
+      sig1: sig1.substring(0, 60) + (sig1.length > 60 ? '...' : ''),
+      sig2: sig2.substring(0, 60) + (sig2.length > 60 ? '...' : ''),
+      distance,
+      similarity: Math.round(similarity * 100) + '%',
+      threshold: '80%',
+      isSimilar: similarity >= 0.8,
+    });
 
     return similarity >= 0.8;
   }
@@ -333,10 +343,23 @@ export class CycleDetector {
   }): CycleInfo | null {
     const signature = this.createToolCallSignature(toolCall);
 
+    console.log('[PATTERN-DETECTION] detectSimilarCalls:', {
+      toolName: toolCall.function.name,
+      currentSignature: signature,
+      historySize: this.toolCallHistory.length,
+      threshold: AGENT_CONFIG.SIMILAR_CALL_THRESHOLD,
+    });
+
     // Count similar calls in history
     const similarCalls = this.toolCallHistory.filter(entry => this.areSimilarSignatures(entry.signature, signature));
 
     const count = similarCalls.length;
+
+    console.log('[PATTERN-DETECTION] detectSimilarCalls result:', {
+      similarCallsFound: count,
+      threshold: AGENT_CONFIG.SIMILAR_CALL_THRESHOLD,
+      willTrigger: count >= AGENT_CONFIG.SIMILAR_CALL_THRESHOLD,
+    });
 
     if (count >= AGENT_CONFIG.SIMILAR_CALL_THRESHOLD) {
       console.log('[PATTERN-DETECTION] Similar calls detected:', toolCall.function.name, `(${count + 1} similar)`);
