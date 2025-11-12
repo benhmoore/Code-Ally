@@ -394,9 +394,7 @@ Execute this task thoroughly using available tools, then provide your comprehens
 // Dictionary of specific system messages
 export const SYSTEM_MESSAGES = {
   compaction_notice: 'Context compacted to save space.',
-  git_commit_template: `🤖 Generated with Code Ally
-
-Co-Authored-By: Ally <noreply@codeally.dev>`,
+  git_commit_template: `( o)> Generated with Code Ally`,
 };
 
 /**

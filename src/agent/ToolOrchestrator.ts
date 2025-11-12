@@ -842,7 +842,6 @@ export class ToolOrchestrator {
         // Use issueType for label if provided, otherwise default to 'Cycle detection'
         const label = cycleInfo.issueType || 'Cycle detection';
 
-        console.log('[PATTERN-DETECTION] Injecting warning:', label, '-', message.substring(0, 80) + '...');
         injectSystemReminder(message, label);
       }
     }
@@ -861,7 +860,6 @@ export class ToolOrchestrator {
 
         const label = globalInfo.issueType || 'Pattern detection';
 
-        console.log('[PATTERN-DETECTION] Injecting global warning:', label, '-', message.substring(0, 80) + '...');
         injectSystemReminder(message, label);
       }
     }

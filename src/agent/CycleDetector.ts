@@ -243,7 +243,6 @@ export class CycleDetector {
 
     // Check if threshold exceeded
     if (count >= AGENT_CONFIG.REPEATED_FILE_THRESHOLD) {
-      console.log('[PATTERN-DETECTION] Repeated file access:', filePath, `(${count + 1} times)`);
       return {
         toolName: toolCall.function.name,
         count: count + 1,
@@ -262,74 +261,49 @@ export class CycleDetector {
   }
 
   /**
-   * Calculate Levenshtein distance between two strings
+   * Parse a signature into tool name and parameter set
    *
-   * @param str1 - First string
-   * @param str2 - Second string
-   * @returns Edit distance between the strings
+   * @param signature - Signature string to parse
+   * @returns Object with tool name and parameter set
    */
-  private levenshteinDistance(str1: string, str2: string): number {
-    const len1 = str1.length;
-    const len2 = str2.length;
-    const matrix: number[][] = [];
-
-    // Initialize matrix
-    for (let i = 0; i <= len1; i++) {
-      matrix[i] = [i];
-    }
-    for (let j = 0; j <= len2; j++) {
-      if (matrix[0]) {
-        matrix[0][j] = j;
-      }
-    }
-
-    // Fill matrix
-    for (let i = 1; i <= len1; i++) {
-      for (let j = 1; j <= len2; j++) {
-        if (str1[i - 1] === str2[j - 1]) {
-          matrix[i]![j] = matrix[i - 1]![j - 1]!;
-        } else {
-          matrix[i]![j] = Math.min(
-            matrix[i - 1]![j - 1]! + 1, // substitution
-            matrix[i]![j - 1]! + 1, // insertion
-            matrix[i - 1]![j]! + 1 // deletion
-          );
-        }
-      }
-    }
-
-    return matrix[len1]![len2]!;
+  private parseSignature(signature: string): { toolName: string; params: Set<string> } {
+    const parts = signature.split('|');
+    const toolName = parts[0] || '';
+    const params = new Set(parts.slice(1)); // All key:value pairs
+    return { toolName, params };
   }
 
   /**
-   * Check if two signatures are similar (fuzzy match)
+   * Check if two signatures are similar using Jaccard similarity on parameters
+   *
+   * This approach compares parameter overlap rather than string distance,
+   * making it more robust to calls with varying numbers of parameters.
    *
    * @param sig1 - First signature
    * @param sig2 - Second signature
-   * @returns True if signatures are similar
+   * @returns True if signatures are similar (60%+ parameter overlap)
    */
   private areSimilarSignatures(sig1: string, sig2: string): boolean {
     // If exact match, not similar (handled by exact duplicate detection)
     if (sig1 === sig2) {
-      console.log('[PATTERN-DETECTION] areSimilarSignatures: exact match, returning false');
       return false;
     }
 
-    // Calculate similarity threshold (80% similar)
-    const maxLen = Math.max(sig1.length, sig2.length);
-    const distance = this.levenshteinDistance(sig1, sig2);
-    const similarity = 1 - distance / maxLen;
+    const parsed1 = this.parseSignature(sig1);
+    const parsed2 = this.parseSignature(sig2);
 
-    console.log('[PATTERN-DETECTION] areSimilarSignatures:', {
-      sig1: sig1.substring(0, 60) + (sig1.length > 60 ? '...' : ''),
-      sig2: sig2.substring(0, 60) + (sig2.length > 60 ? '...' : ''),
-      distance,
-      similarity: Math.round(similarity * 100) + '%',
-      threshold: '80%',
-      isSimilar: similarity >= 0.8,
-    });
+    // Tool names must match exactly
+    if (parsed1.toolName !== parsed2.toolName) {
+      return false;
+    }
 
-    return similarity >= 0.8;
+    // Calculate Jaccard similarity: intersection / union
+    const intersection = new Set([...parsed1.params].filter(p => parsed2.params.has(p)));
+    const union = new Set([...parsed1.params, ...parsed2.params]);
+
+    const similarity = union.size > 0 ? intersection.size / union.size : 0;
+
+    return similarity >= 0.6; // 60% parameter overlap
   }
 
   /**
@@ -343,26 +317,12 @@ export class CycleDetector {
   }): CycleInfo | null {
     const signature = this.createToolCallSignature(toolCall);
 
-    console.log('[PATTERN-DETECTION] detectSimilarCalls:', {
-      toolName: toolCall.function.name,
-      currentSignature: signature,
-      historySize: this.toolCallHistory.length,
-      threshold: AGENT_CONFIG.SIMILAR_CALL_THRESHOLD,
-    });
-
     // Count similar calls in history
     const similarCalls = this.toolCallHistory.filter(entry => this.areSimilarSignatures(entry.signature, signature));
 
     const count = similarCalls.length;
 
-    console.log('[PATTERN-DETECTION] detectSimilarCalls result:', {
-      similarCallsFound: count,
-      threshold: AGENT_CONFIG.SIMILAR_CALL_THRESHOLD,
-      willTrigger: count >= AGENT_CONFIG.SIMILAR_CALL_THRESHOLD,
-    });
-
     if (count >= AGENT_CONFIG.SIMILAR_CALL_THRESHOLD) {
-      console.log('[PATTERN-DETECTION] Similar calls detected:', toolCall.function.name, `(${count + 1} similar)`);
       return {
         toolName: toolCall.function.name,
         count: count + 1,
@@ -393,7 +353,6 @@ export class CycleDetector {
     const hitRate = this.searchHits / this.searchTotal;
 
     if (hitRate < AGENT_CONFIG.HIT_RATE_THRESHOLD) {
-      console.log('[PATTERN-DETECTION] Low hit rate:', `${Math.round(hitRate * 100)}%`, `(${this.searchHits}/${this.searchTotal})`);
       return {
         toolName: 'Search',
         count: this.searchTotal,
@@ -419,7 +378,6 @@ export class CycleDetector {
    */
   private detectEmptyStreak(): CycleInfo | null {
     if (this.consecutiveEmpty >= AGENT_CONFIG.EMPTY_STREAK_THRESHOLD) {
-      console.log('[PATTERN-DETECTION] Empty search streak:', this.consecutiveEmpty, 'consecutive empty results');
       return {
         toolName: 'Search',
         count: this.consecutiveEmpty,
@@ -516,12 +474,6 @@ export class CycleDetector {
       }
     }
 
-    // Log summary if any issues found
-    if (cycles.size > 0) {
-      console.log('[PATTERN-DETECTION] Detected', cycles.size, 'issue(s):',
-        Array.from(cycles.values()).map(c => c.issueType || 'exact_duplicate'));
-    }
-
     return cycles;
   }
 
@@ -565,10 +517,6 @@ export class CycleDetector {
       } else {
         this.consecutiveEmpty++;
       }
-
-      console.log('[PATTERN-DETECTION] Recording search:', toolName,
-        hasResults ? '✓ HIT' : '✗ MISS',
-        `(hit rate: ${Math.round((this.searchHits / this.searchTotal) * 100)}%)`);
     }
   }
 

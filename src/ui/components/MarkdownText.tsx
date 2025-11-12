@@ -236,11 +236,17 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
     // Get terminal width (with fallback)
     const terminalWidth = process.stdout.columns || TEXT_LIMITS.TERMINAL_WIDTH_MARKDOWN_FALLBACK;
 
+    // Helper to get max line length for cells with line breaks
+    const getMaxLineLength = (text: string): number => {
+      const lines = text.split('\n');
+      return Math.max(...lines.map(line => line.length));
+    };
+
     // Calculate natural widths (what content actually needs)
-    const naturalWidths = header.map((h) => h.length);
+    const naturalWidths = header.map((h) => getMaxLineLength(h));
     rows.forEach((row) => {
       row.forEach((cell, colIdx) => {
-        naturalWidths[colIdx] = Math.max(naturalWidths[colIdx] || 0, cell.length);
+        naturalWidths[colIdx] = Math.max(naturalWidths[colIdx] || 0, getMaxLineLength(cell));
       });
     });
 
@@ -288,33 +294,39 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
 
   // Wrap text to fit within specified width
   const wrapText = (text: string, width: number): string[] => {
-    if (text.length <= width) {
-      return [text];
-    }
+    // First, split on explicit line breaks (\n)
+    const explicitLines = text.split('\n');
+    const wrappedLines: string[] = [];
 
-    const lines: string[] = [];
-    let remaining = text;
-
-    while (remaining.length > 0) {
-      if (remaining.length <= width) {
-        lines.push(remaining);
-        break;
+    // Then wrap each line individually if needed
+    for (const line of explicitLines) {
+      if (line.length <= width) {
+        wrappedLines.push(line);
+        continue;
       }
 
-      // Try to break at a space
-      let breakPoint = width;
-      const lastSpace = remaining.lastIndexOf(' ', width);
+      let remaining = line;
+      while (remaining.length > 0) {
+        if (remaining.length <= width) {
+          wrappedLines.push(remaining);
+          break;
+        }
 
-      if (lastSpace > width * TEXT_LIMITS.WORD_BOUNDARY_THRESHOLD) {
-        // Good break point found (not too early)
-        breakPoint = lastSpace;
+        // Try to break at a space
+        let breakPoint = width;
+        const lastSpace = remaining.lastIndexOf(' ', width);
+
+        if (lastSpace > width * TEXT_LIMITS.WORD_BOUNDARY_THRESHOLD) {
+          // Good break point found (not too early)
+          breakPoint = lastSpace;
+        }
+
+        wrappedLines.push(remaining.substring(0, breakPoint));
+        remaining = remaining.substring(breakPoint).trimStart();
       }
-
-      lines.push(remaining.substring(0, breakPoint));
-      remaining = remaining.substring(breakPoint).trimStart();
     }
 
-    return lines;
+    return wrappedLines;
   };
 
   // Pad a cell to the specified width
@@ -429,6 +441,9 @@ function formatInlineMarkdown(text: string): string {
  */
 function stripInlineMarkdown(text: string): string {
   let stripped = text;
+
+  // Convert <br> and <br/> tags to newlines
+  stripped = stripped.replace(/<br\s*\/?>/gi, '\n');
 
   // Remove inline code
   stripped = stripped.replace(/`([^`]+)`/g, '$1');

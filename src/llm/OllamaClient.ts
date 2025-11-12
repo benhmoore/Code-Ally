@@ -82,7 +82,7 @@ export class OllamaClient extends ModelClient {
   constructor(config: ModelClientConfig) {
     super();
     this._endpoint = config.endpoint;
-    this._modelName = config.modelName || 'qwen2.5-coder:32b';
+    this._modelName = config.modelName || '';
     this._temperature = config.temperature;
     this._contextSize = config.contextSize;
     this._maxTokens = config.maxTokens;

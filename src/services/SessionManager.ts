@@ -481,10 +481,13 @@ export class SessionManager implements IService {
       const session = await this.loadSession(name);
       if (!session) continue;
 
+      // Ensure backward compatibility - initialize messages array if undefined
+      const messages = session.messages ?? [];
+
       // Determine display name - prefer title, fallback to first message snippet
       let displayName = session.metadata?.title;
       if (!displayName) {
-        const firstUserMessage = session.messages.find(msg => msg.role === 'user');
+        const firstUserMessage = messages.find(msg => msg.role === 'user');
         if (firstUserMessage) {
           const content = firstUserMessage.content.trim();
           const cleanContent = content.replace(/\s+/g, ' ');
@@ -502,7 +505,7 @@ export class SessionManager implements IService {
         session_id: session.id,
         display_name: displayName,
         last_modified_timestamp: updatedAt.getTime(),
-        message_count: session.messages.length,
+        message_count: messages.length,
         working_dir: session.working_dir,
         timestamp: updatedAt.getTime(),
       });

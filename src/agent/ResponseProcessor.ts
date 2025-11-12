@@ -462,7 +462,6 @@ export class ResponseProcessor {
 
     // Add tool calls to history for cycle detection (AFTER execution)
     // Pass results to enable search hit rate tracking
-    console.log('[PATTERN-DETECTION] Recording', toolResults.length, 'tool results for cycle detection');
     context.recordToolCalls(unwrappedToolCalls, toolResults);
 
     // Check if cycle pattern is broken (3 consecutive different calls)
