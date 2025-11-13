@@ -41,7 +41,7 @@ export interface MarkdownTextProps {
 }
 
 interface ParsedNode {
-  type: 'text' | 'code' | 'heading' | 'list' | 'list-item' | 'paragraph' | 'strong' | 'em' | 'codespan' | 'link' | 'table';
+  type: 'text' | 'code' | 'heading' | 'list' | 'list-item' | 'paragraph' | 'strong' | 'em' | 'codespan' | 'link' | 'table' | 'hr';
   content?: string;
   language?: string;
   depth?: number;
@@ -133,6 +133,10 @@ function parseTokens(tokens: any[]): ParsedNode[] {
         type: 'paragraph',
         content: token.text,
       });
+    } else if (token.type === 'hr') {
+      nodes.push({
+        type: 'hr',
+      });
     } else if (token.type === 'space') {
       // Skip space tokens
       continue;
@@ -161,7 +165,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
     });
 
     return (
-      <Box flexDirection="column" paddingLeft={2} marginY={1}>
+      <Box flexDirection="column" paddingLeft={2}>
         <Text dimColor color={UI_COLORS.TEXT_DIM}>
           {node.language ? `[${node.language}]` : '[code]'}
         </Text>
@@ -176,7 +180,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
 
   if (node.type === 'heading') {
     return (
-      <Box marginY={1}>
+      <Box>
         <Text bold color={UI_COLORS.TEXT_DEFAULT}>
           {node.content}
         </Text>
@@ -186,7 +190,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
 
   if (node.type === 'list') {
     return (
-      <Box flexDirection="column" marginY={1}>
+      <Box flexDirection="column">
         {node.children?.map((item, idx) => (
           <Box key={idx} paddingLeft={2}>
             <Text>
@@ -206,16 +210,25 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
   if (node.type === 'paragraph') {
     const formatted = formatInlineMarkdown(node.content || '');
     return (
-      <Box marginY={1}>
+      <Box>
         <Text>{formatted}</Text>
       </Box>
     );
   }
 
-  if (node.type === 'text') {
+  if (node.type === 'hr') {
     return (
       <Box>
-        <Text>{node.content}</Text>
+        <Text dimColor>{'─'.repeat(40)}</Text>
+      </Box>
+    );
+  }
+
+  if (node.type === 'text') {
+    const formatted = formatInlineMarkdown(node.content || '');
+    return (
+      <Box>
+        <Text>{formatted}</Text>
       </Box>
     );
   }
@@ -347,7 +360,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
   };
 
   return (
-    <Box flexDirection="column" marginY={1}>
+    <Box flexDirection="column">
       {/* Top border */}
       <Text dimColor>{createTopBorder()}</Text>
 
@@ -416,6 +429,19 @@ function formatInlineMarkdown(text: string): string {
   // Handle inline code first (to avoid conflicts)
   formatted = formatted.replace(/`([^`]+)`/g, '[$1]');
 
+  // Handle LaTeX math expressions
+  // Inline math: \(...\)
+  formatted = formatted.replace(/\\\(([^)]+)\\\)/g, (_match, mathContent) => {
+    return convertLatexToUnicode(mathContent);
+  });
+  // Display math: \[...\] or $$...$$
+  formatted = formatted.replace(/\\\[([^\]]+)\\\]/g, (_match, mathContent) => {
+    return convertLatexToUnicode(mathContent);
+  });
+  formatted = formatted.replace(/\$\$([^$]+)\$\$/g, (_match, mathContent) => {
+    return convertLatexToUnicode(mathContent);
+  });
+
   // Handle bold
   formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '$1');
   formatted = formatted.replace(/__([^_]+)__/g, '$1');
@@ -436,6 +462,93 @@ function formatInlineMarkdown(text: string): string {
 }
 
 /**
+ * Convert LaTeX math commands to Unicode symbols for terminal display
+ */
+function convertLatexToUnicode(latex: string): string {
+  let converted = latex;
+
+  // Common math operators
+  const replacements: Record<string, string> = {
+    '\\times': '×',
+    '\\div': '÷',
+    '\\cdot': '·',
+    '\\pm': '±',
+    '\\mp': '∓',
+    '\\leq': '≤',
+    '\\geq': '≥',
+    '\\neq': '≠',
+    '\\approx': '≈',
+    '\\equiv': '≡',
+    '\\propto': '∝',
+    '\\infty': '∞',
+    '\\partial': '∂',
+    '\\nabla': '∇',
+    '\\sum': '∑',
+    '\\prod': '∏',
+    '\\int': '∫',
+    '\\sqrt': '√',
+    '\\alpha': 'α',
+    '\\beta': 'β',
+    '\\gamma': 'γ',
+    '\\delta': 'δ',
+    '\\epsilon': 'ε',
+    '\\theta': 'θ',
+    '\\lambda': 'λ',
+    '\\mu': 'μ',
+    '\\pi': 'π',
+    '\\sigma': 'σ',
+    '\\tau': 'τ',
+    '\\phi': 'φ',
+    '\\omega': 'ω',
+    '\\Delta': 'Δ',
+    '\\Sigma': 'Σ',
+    '\\Omega': 'Ω',
+    '\\leftarrow': '←',
+    '\\rightarrow': '→',
+    '\\leftrightarrow': '↔',
+    '\\Leftarrow': '⇐',
+    '\\Rightarrow': '⇒',
+    '\\Leftrightarrow': '⇔',
+    '\\in': '∈',
+    '\\notin': '∉',
+    '\\subset': '⊂',
+    '\\supset': '⊃',
+    '\\subseteq': '⊆',
+    '\\supseteq': '⊇',
+    '\\cup': '∪',
+    '\\cap': '∩',
+    '\\emptyset': '∅',
+    '\\forall': '∀',
+    '\\exists': '∃',
+    '\\neg': '¬',
+    '\\land': '∧',
+    '\\lor': '∨',
+  };
+
+  // Replace LaTeX commands with Unicode
+  for (const [latex, unicode] of Object.entries(replacements)) {
+    converted = converted.replace(new RegExp(latex.replace(/\\/g, '\\\\'), 'g'), unicode);
+  }
+
+  // Handle \frac{a}{b} → a/b
+  converted = converted.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1)/($2)');
+
+  // Handle ^{superscript} and _{subscript} - just use parentheses for clarity
+  converted = converted.replace(/\^{([^}]+)}/g, '^($1)');
+  converted = converted.replace(/_{([^}]+)}/g, '_($1)');
+  converted = converted.replace(/\^(\w)/g, '^$1');
+  converted = converted.replace(/_(\w)/g, '_$1');
+
+  // Strip remaining backslashes for unknown commands
+  converted = converted.replace(/\\([a-zA-Z]+)/g, '$1');
+
+  // Clean up extra spaces
+  converted = converted.trim();
+
+  return converted;
+}
+
+/**
  * Strip inline markdown for plain text display
  */
 function stripInlineMarkdown(text: string): string {
@@ -446,6 +559,17 @@ function stripInlineMarkdown(text: string): string {
 
   // Remove inline code
   stripped = stripped.replace(/`([^`]+)`/g, '$1');
+
+  // Handle LaTeX math expressions
+  stripped = stripped.replace(/\\\(([^)]+)\\\)/g, (_match, mathContent) => {
+    return convertLatexToUnicode(mathContent);
+  });
+  stripped = stripped.replace(/\\\[([^\]]+)\\\]/g, (_match, mathContent) => {
+    return convertLatexToUnicode(mathContent);
+  });
+  stripped = stripped.replace(/\$\$([^$]+)\$\$/g, (_match, mathContent) => {
+    return convertLatexToUnicode(mathContent);
+  });
 
   // Remove bold
   stripped = stripped.replace(/\*\*([^*]+)\*\*/g, '$1');

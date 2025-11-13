@@ -358,10 +358,16 @@ FORMAT: Return as a numbered list, one message per line:
 ...
 10. Tenth message
 
+MARKDOWN SUPPORT:
+- You can use **bold**, *italic*, \`inline code\`, and other markdown formatting
+- Use markdown to add emphasis and make messages more expressive
+- Examples: "**Ready** to code!", "*Feeling* productive", "\`git push\` energy"
+
 CRITICAL RULES:
 - BE BOLD and SURPRISING - safe greetings are BORING
 - USE the context provided - reference real details when possible
 - OCCASIONALLY use syntax from the primary language (e.g., "let code = 'time';" for JavaScript, "impl Ready {}" for Rust)
+- Use markdown formatting to add emphasis and expressiveness
 - NO generic "ready to code" or "let's go" phrases
 - VARIETY is key - be creative and unpredictable
 - Mix humor styles: fake facts, empty promises, playful observations, self-aware jokes, language syntax
@@ -376,13 +382,13 @@ STRICT SAFETY RULES - NEVER BREAK THESE:
 Think: What would make someone laugh or smile unexpectedly WITHOUT confusing them?
 
 Examples (be creative, don't copy these):
-- "Let's goooo!"
-- "What's cookin'?"
+- "Let's **goooo**!"
+- "What's *cookin'*?"
 - "Nothing will go wrong today!" (humorous empty promise)
-- "Experts say code yourself!" (fake expert advice)
-- "Feature branch vibes!" (if on feature branch)
-- "const ready = true;" (JavaScript syntax)
-- "impl Ready {}" (Rust syntax, if Rust project)
+- "Experts say **code yourself**!" (fake expert advice with bold)
+- "Feature branch *vibes*!" (if on feature branch)
+- "\`const ready = true;\`" (JavaScript syntax in code formatting)
+- "\`impl Ready {}\`" (Rust syntax, if Rust project)
 ${cwdContext}${gitBranchContext}${homeDirContext}${projectContext}
 
 Reply with ONLY the numbered list, nothing else. No quotes around messages, no punctuation unless natural.`;

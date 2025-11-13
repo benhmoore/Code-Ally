@@ -45,9 +45,11 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
   // Assistant messages - markdown-formatted with syntax highlighting
   if (role === 'assistant') {
     // Handle empty or undefined content
-    const safeContent = content || '';
+    // Trim all leading/trailing whitespace for clean display
+    const safeContent = (content || '').trim();
 
     // Get thinking from message field (native reasoning from model)
+    // Trim all leading/trailing whitespace for clean display
     const thinking = message.thinking?.trim() || null;
 
     // Check if this is a command response that should be styled in yellow
@@ -58,7 +60,7 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
     return (
       <Box flexDirection="column">
         {showThinking && thinking && (
-          <Box marginBottom={1}>
+          <Box>
             <Text dimColor italic>
               ∴ {thinking}
             </Text>

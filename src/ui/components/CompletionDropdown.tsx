@@ -13,6 +13,7 @@ import { Box, Text } from 'ink';
 import { Completion } from '@services/CompletionProvider.js';
 import { ModalContainer } from './ModalContainer.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { UI_SYMBOLS } from '@config/uiSymbols.js';
 
 export interface CompletionDropdownProps {
   /** Available completions */
@@ -111,7 +112,7 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
             <Box key={actualIndex} paddingLeft={1}>
               {/* Selection indicator */}
               <Text color={isSelected ? UI_COLORS.PRIMARY : undefined} bold={isSelected}>
-                {isSelected ? '❯ ' : '  '}
+                {isSelected ? `${UI_SYMBOLS.NAVIGATION.CHEVRON_RIGHT} ` : '  '}
               </Text>
 
               {/* Icon */}

@@ -24,6 +24,7 @@ import * as path from 'path';
 import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '@config/constants.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { MarkdownText } from './MarkdownText.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -571,7 +572,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
             <Text dimColor> (esc to interrupt · {formatElapsed(elapsed)})</Text>
           </>
         ) : (
-          <Text color={UI_COLORS.PRIMARY}>{idleMessage}</Text>
+          <Box>
+            <MarkdownText content={idleMessage} />
+          </Box>
         )}
       </Box>
 

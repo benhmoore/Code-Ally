@@ -333,6 +333,29 @@ ${guidances.join('\n\n')}`;
     logger.warn('Failed to load tool guidance for system prompt:', formatError(error));
   }
 
+  // Get agent usage guidance
+  let agentGuidanceContext = '';
+  try {
+    const serviceRegistry = ServiceRegistry.getInstance();
+
+    if (serviceRegistry && serviceRegistry.hasService('agent_manager')) {
+      const agentManager = serviceRegistry.get<any>('agent_manager');
+      if (agentManager && typeof agentManager.getAgentUsageGuidance === 'function') {
+        const guidances = await agentManager.getAgentUsageGuidance();
+
+        if (guidances && guidances.length > 0) {
+          agentGuidanceContext = `
+
+## Agent Usage Guidance
+
+${guidances.join('\n\n')}`;
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn('Failed to load agent guidance for system prompt:', formatError(error));
+  }
+
   // Add once-mode specific instructions
   const onceModeInstructions = isOnceMode
     ? `
@@ -345,7 +368,7 @@ This is a non-interactive, single-turn conversation. Your response will be final
   const contextBudgetReminder = getContextBudgetReminder(tokenManager);
 
   // Combine core directives with context
-  return `${CORE_DIRECTIVES}${onceModeInstructions}${toolGuidanceContext}${contextBudgetReminder}
+  return `${CORE_DIRECTIVES}${onceModeInstructions}${toolGuidanceContext}${agentGuidanceContext}${contextBudgetReminder}
 
 **Context:**
 ${context}${todoContext}`;

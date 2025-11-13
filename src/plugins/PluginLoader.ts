@@ -1276,6 +1276,7 @@ export class PluginLoader {
           temperature: agentDef.temperature !== undefined ? agentDef.temperature : parsedAgent.temperature,
           reasoning_effort: agentDef.reasoning_effort || parsedAgent.reasoning_effort,
           tools: agentDef.tools || parsedAgent.tools,
+          usage_guidelines: agentDef.usage_guidelines || parsedAgent.usage_guidelines,
           // Add plugin tracking metadata
           _pluginName: manifest.name,
         };
@@ -1333,14 +1334,41 @@ export class PluginLoader {
       const metadata: Record<string, any> = {};
 
       // Parse YAML-style frontmatter
-      frontmatter.split('\n').forEach(line => {
-        const match = line.match(/^(\w+):\s*(.+)$/);
+      const lines = frontmatter.split('\n');
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (!line) {
+          i++;
+          continue;
+        }
+
+        const match = line.match(/^(\w+):\s*(.*)$/);
+
         if (match) {
           const key = match[1];
           const value = match[2];
-          if (key && value) {
+
+          if (key && value !== undefined) {
+            // Handle multiline strings (usage_guidelines: |)
+            if (value.trim() === '|') {
+              const multilineContent: string[] = [];
+              i++;
+              // Collect indented lines following the |
+              while (i < lines.length) {
+                const nextLine = lines[i];
+                if (!nextLine || (!nextLine.startsWith('  ') && nextLine.trim() !== '')) {
+                  break;
+                }
+                // Remove the indentation (first 2 spaces)
+                multilineContent.push(nextLine.replace(/^  /, ''));
+                i++;
+              }
+              metadata[key] = multilineContent.join('\n').trim();
+              continue; // Don't increment i again, already done
+            }
             // Handle JSON arrays (for tools field)
-            if (value.trim().startsWith('[')) {
+            else if (value.trim().startsWith('[')) {
               try {
                 metadata[key] = JSON.parse(value);
               } catch {
@@ -1353,7 +1381,8 @@ export class PluginLoader {
             }
           }
         }
-      });
+        i++;
+      }
 
       return {
         name: metadata.name || agentName,
@@ -1363,6 +1392,7 @@ export class PluginLoader {
         temperature: metadata.temperature ? parseFloat(metadata.temperature) : undefined,
         reasoning_effort: metadata.reasoning_effort,
         tools: metadata.tools, // Array of tool names or undefined
+        usage_guidelines: metadata.usage_guidelines,
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
       };

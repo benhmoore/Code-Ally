@@ -12,6 +12,7 @@ import { constants } from 'fs';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { AGENTS_DIR, BUILTIN_AGENTS_DIR } from '../config/paths.js';
+import { ServiceRegistry } from './ServiceRegistry.js';
 
 export interface AgentData {
   name: string;
@@ -21,6 +22,7 @@ export interface AgentData {
   temperature?: number;
   reasoning_effort?: string; // Reasoning effort: "inherit", "low", "medium", "high". Defaults to "inherit"
   tools?: string[]; // Tool names this agent can use. Empty array = all tools, undefined = all tools
+  usage_guidelines?: string; // Optional guidance on when/how to use this agent
   created_at?: string;
   updated_at?: string;
   _pluginName?: string; // Plugin source identifier (only for plugin-provided agents)
@@ -55,6 +57,25 @@ export class AgentManager {
   }
 
   /**
+   * Check if a plugin agent is active
+   *
+   * @param pluginName - Plugin name (optional)
+   * @returns True if plugin is active, or if not a plugin agent
+   */
+  private isPluginAgentActive(pluginName?: string): boolean {
+    if (!pluginName) return true; // Non-plugin agents are always active
+
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const activationManager = registry.getPluginActivationManager();
+      return activationManager.isActive(pluginName);
+    } catch (error) {
+      // If PluginActivationManager unavailable, allow all agents
+      return true;
+    }
+  }
+
+  /**
    * Check if an agent exists (in user, plugin, or built-in sources)
    *
    * @param agentName - Agent name
@@ -67,9 +88,14 @@ export class AgentManager {
       await access(userPath, constants.F_OK);
       return true;
     } catch {
-      // Check plugin agents
+      // Check plugin agents (only if plugin is active)
       if (this.pluginAgents.has(agentName)) {
-        return true;
+        const pluginAgent = this.pluginAgents.get(agentName)!;
+
+        if (this.isPluginAgentActive(pluginAgent._pluginName)) {
+          return true;
+        }
+        // Plugin is deactivated, continue to check built-in
       }
 
       // Fall back to built-in
@@ -102,10 +128,16 @@ export class AgentManager {
     }
 
     // 2. Try plugin agents (second priority)
+    // Check if plugin agent exists and its plugin is active
     const pluginAgent = this.pluginAgents.get(agentName);
     if (pluginAgent) {
-      logger.debug(`Loaded plugin agent '${agentName}' from plugin '${pluginAgent._pluginName}'`);
-      return pluginAgent;
+      if (this.isPluginAgentActive(pluginAgent._pluginName)) {
+        logger.debug(`Loaded plugin agent '${agentName}' from plugin '${pluginAgent._pluginName}'`);
+        return pluginAgent;
+      } else {
+        logger.debug(`Plugin agent '${agentName}' skipped - plugin '${pluginAgent._pluginName}' is not active`);
+        // Fall through to check built-in agents
+      }
     }
 
     // 3. Try built-in agents (lowest priority)
@@ -164,6 +196,7 @@ export class AgentManager {
   /**
    * List all available agents (user + plugin + built-in)
    * Priority: user agents override plugin agents override built-ins with the same name
+   * Filters plugin agents by activation state
    *
    * @returns Array of agent info
    */
@@ -198,7 +231,14 @@ export class AgentManager {
     }
 
     // 2. Load plugin agents (override built-in, second priority)
+    // Filter by plugin activation state
     for (const [name, agentData] of this.pluginAgents.entries()) {
+      // Skip agents from deactivated plugins
+      if (!this.isPluginAgentActive(agentData._pluginName)) {
+        logger.debug(`[AgentManager] Filtering out agent '${name}' - plugin '${agentData._pluginName}' is not active`);
+        continue;
+      }
+
       agentMap.set(name, {
         name: agentData.name,
         description: agentData.description,
@@ -265,14 +305,41 @@ export class AgentManager {
       const metadata: Record<string, any> = {};
 
       // Parse YAML-style frontmatter
-      frontmatter.split('\n').forEach(line => {
-        const match = line.match(/^(\w+):\s*(.+)$/);
+      const lines = frontmatter.split('\n');
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (!line) {
+          i++;
+          continue;
+        }
+
+        const match = line.match(/^(\w+):\s*(.*)$/);
+
         if (match) {
           const key = match[1];
           const value = match[2];
-          if (key && value) {
+
+          if (key && value !== undefined) {
+            // Handle multiline strings (usage_guidelines: |)
+            if (value.trim() === '|') {
+              const multilineContent: string[] = [];
+              i++;
+              // Collect indented lines following the |
+              while (i < lines.length) {
+                const nextLine = lines[i];
+                if (!nextLine || (!nextLine.startsWith('  ') && nextLine.trim() !== '')) {
+                  break;
+                }
+                // Remove the indentation (first 2 spaces)
+                multilineContent.push(nextLine.replace(/^  /, ''));
+                i++;
+              }
+              metadata[key] = multilineContent.join('\n').trim();
+              continue; // Don't increment i again, already done
+            }
             // Handle JSON arrays (for tools field)
-            if (value.trim().startsWith('[')) {
+            else if (value.trim().startsWith('[')) {
               try {
                 metadata[key] = JSON.parse(value);
               } catch {
@@ -285,7 +352,8 @@ export class AgentManager {
             }
           }
         }
-      });
+        i++;
+      }
 
       return {
         name: metadata.name || agentName,
@@ -295,6 +363,7 @@ export class AgentManager {
         temperature: metadata.temperature ? parseFloat(metadata.temperature) : undefined,
         reasoning_effort: metadata.reasoning_effort,
         tools: metadata.tools, // Array of tool names or undefined
+        usage_guidelines: metadata.usage_guidelines,
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
       };
@@ -332,6 +401,15 @@ export class AgentManager {
       lines.push(`tools: ${JSON.stringify(agent.tools)}`);
     }
 
+    if (agent.usage_guidelines) {
+      // Write usage_guidelines as multiline string
+      lines.push(`usage_guidelines: |`);
+      const guidelineLines = agent.usage_guidelines.split('\n');
+      guidelineLines.forEach(line => {
+        lines.push(`  ${line}`);
+      });
+    }
+
     lines.push(`created_at: "${agent.created_at || new Date().toISOString()}"`);
     lines.push(`updated_at: "${new Date().toISOString()}"`);
 
@@ -360,6 +438,65 @@ export class AgentManager {
 ${descriptions.join('\n')}
 
 Use the 'agent' tool to delegate tasks to specialized agents when their expertise matches the task requirements.`;
+  }
+
+  /**
+   * Get all agent usage guidance strings for injection into system prompt
+   *
+   * @returns Array of guidance strings from agents that provide them
+   */
+  async getAgentUsageGuidance(): Promise<string[]> {
+    const guidances: string[] = [];
+
+    // Get all available agents (user + plugin + built-in)
+    const agents = await this.listAgents();
+
+    for (const agentInfo of agents) {
+      // Load the full agent data to get usage_guidelines
+      const agentData = await this.loadAgent(agentInfo.name);
+
+      if (agentData && agentData.usage_guidelines) {
+        // If agent has a plugin name, prepend it to the first line
+        if (agentData._pluginName) {
+          // Split guidance into lines to modify the first line
+          const lines = agentData.usage_guidelines.split('\n');
+          if (lines.length > 0 && lines[0]) {
+            // Check if first line starts with "**When to use" pattern
+            const firstLine = lines[0];
+            const whenMatch = firstLine.match(/^(\*\*When to use [^:]+:\*\*)/);
+            if (whenMatch) {
+              // Insert plugin attribution after the bold header and add agent name
+              lines[0] = `${whenMatch[1]} (agent: ${agentData.name}, plugin: ${agentData._pluginName})`;
+            } else {
+              // Fallback: just prepend plugin and agent info at the start
+              lines[0] = `(agent: ${agentData.name}, plugin: ${agentData._pluginName}) ${firstLine}`;
+            }
+            guidances.push(lines.join('\n'));
+          } else {
+            guidances.push(agentData.usage_guidelines);
+          }
+        } else {
+          // Built-in or user agent - prepend agent name for clarity
+          const lines = agentData.usage_guidelines.split('\n');
+          if (lines.length > 0 && lines[0]) {
+            const firstLine = lines[0];
+            const whenMatch = firstLine.match(/^(\*\*When to use [^:]+:\*\*)/);
+            if (whenMatch) {
+              // Insert agent name after the bold header
+              lines[0] = `${whenMatch[1]} (agent: ${agentData.name})`;
+            } else {
+              // Fallback: just prepend agent name at the start
+              lines[0] = `(agent: ${agentData.name}) ${firstLine}`;
+            }
+            guidances.push(lines.join('\n'));
+          } else {
+            guidances.push(agentData.usage_guidelines);
+          }
+        }
+      }
+    }
+
+    return guidances;
   }
 
   /**

@@ -188,6 +188,10 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
   const toolCallCount = toolCall.totalChildCount || 0;
 
+  // Trim all leading/trailing whitespace from output and error for clean display
+  const trimmedOutput = toolCall.output?.trim();
+  const trimmedError = toolCall.error?.trim();
+
   return (
     <Box flexDirection="column">
       <Box>
@@ -215,7 +219,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
       {/* Diff preview (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
       {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && toolCall.diffPreview && (
-        <Box flexDirection="column" marginTop={1} marginBottom={1} paddingLeft={indent.length + 4}>
+        <Box flexDirection="column" paddingLeft={indent.length + 4}>
           <DiffDisplay
             oldContent={toolCall.diffPreview.oldContent}
             newContent={toolCall.diffPreview.newContent}
@@ -227,7 +231,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
       {/* Error output as threaded child (hidden if collapsed, but always show errors even with hideOutput) */}
       {/* Hide validation_error type - these are model-directed messages, not user errors */}
-      {!toolCall.collapsed && toolCall.error && toolCall.error_type !== 'validation_error' && (
+      {!toolCall.collapsed && trimmedError && toolCall.error_type !== 'validation_error' && (
         <Box flexDirection="column">
           <Box>
             <Text>{indent}    </Text>
@@ -236,16 +240,16 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           </Box>
           <Box paddingLeft={indent.length + 8}>
             <Text color="red" dimColor>
-              {config?.show_full_tool_output || toolCall.error.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
-                ? toolCall.error
-                : `${toolCall.error.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
+              {config?.show_full_tool_output || trimmedError.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
+                ? trimmedError
+                : `${trimmedError.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
             </Text>
           </Box>
         </Box>
       )}
 
       {/* Output as threaded child (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
-      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && toolCall.output && !toolCall.error && (
+      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && trimmedOutput && !toolCall.error && (
         <Box flexDirection="column">
           <Box>
             <Text>{indent}    </Text>
@@ -254,9 +258,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           </Box>
           <Box paddingLeft={indent.length + 8}>
             <Text dimColor>
-              {config?.show_full_tool_output || toolCall.output.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
-                ? toolCall.output
-                : `${toolCall.output.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
+              {config?.show_full_tool_output || trimmedOutput.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
+                ? trimmedOutput
+                : `${trimmedOutput.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
             </Text>
           </Box>
         </Box>

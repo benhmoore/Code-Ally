@@ -310,19 +310,26 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     const divider = createDivider(terminalWidth);
     const items: React.ReactNode[] = [];
 
-    completedTimeline.forEach((item) => {
+    completedTimeline.forEach((item, idx) => {
+      // Apply consistent spacing: marginTop={1} for all items except first
+      const spacing = idx > 0 ? { marginTop: 1 } : {};
+
       if (item.type === 'message') {
-        items.push(<MessageDisplay key={`msg-${item.message.id || item.index}`} message={item.message} config={config} />);
+        items.push(
+          <Box key={`msg-${item.message.id || item.index}`} {...spacing}>
+            <MessageDisplay message={item.message} config={config} />
+          </Box>
+        );
       } else if (item.type === 'toolCall') {
         items.push(
-          <Box key={`tool-${item.toolCall.id}`}>
+          <Box key={`tool-${item.toolCall.id}`} {...spacing}>
             {renderToolCallTree(item.toolCall, 0, config)}
           </Box>
         );
       } else if (item.type === 'compactionNotice') {
         // Compaction notice
         items.push(
-          <Box key={`compaction-${item.notice.id}`} flexDirection="column" marginY={1}>
+          <Box key={`compaction-${item.notice.id}`} flexDirection="column" {...spacing}>
             <Box><Text dimColor>{divider}</Text></Box>
             <Box>
               <Text color={UI_COLORS.TEXT_DEFAULT} bold>Conversation compacted</Text>
@@ -337,7 +344,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         const hasFailedRestorations = item.notice.failedRestorations && item.notice.failedRestorations.length > 0;
 
         items.push(
-          <Box key={`rewind-${item.notice.id}`} flexDirection="column" marginY={1}>
+          <Box key={`rewind-${item.notice.id}`} flexDirection="column" {...spacing}>
             <Box><Text dimColor>{divider}</Text></Box>
             <Box>
               <Text color={UI_COLORS.PRIMARY} bold>Conversation rewound</Text>

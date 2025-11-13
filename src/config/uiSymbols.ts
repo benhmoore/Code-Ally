@@ -135,14 +135,6 @@ export const UI_SYMBOLS = {
   },
 
   // ========================================
-  // Selection (UI Indicators)
-  // ========================================
-  SELECTION: {
-    /** Selected item indicator - heavy right-pointing angle */
-    SELECTED: '❯',
-  },
-
-  // ========================================
   // Separators
   // ========================================
   SEPARATOR: {

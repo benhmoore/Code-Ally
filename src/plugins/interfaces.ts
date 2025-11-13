@@ -35,6 +35,9 @@ export interface AgentDefinition {
 
   /** Optional reasoning effort level (e.g., 'low', 'medium', 'high') */
   reasoning_effort?: string;
+
+  /** Optional guidance on when/how to use this agent */
+  usage_guidelines?: string;
 }
 
 /**
