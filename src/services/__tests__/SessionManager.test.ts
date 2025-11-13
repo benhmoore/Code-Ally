@@ -466,4 +466,162 @@ describe('SessionManager', () => {
       expect(otherDirSessions.length).toBe(0);
     });
   });
+
+  describe('orphaned patch directory cleanup', () => {
+    it('should clean up orphaned patch directories on initialization', async () => {
+      // Create a session with patches directory
+      const sessionName = 'session_20240101T120000_test1234';
+      const sessionJsonPath = join(tempDir, `${sessionName}.json`);
+      const sessionDirPath = join(tempDir, sessionName);
+      const patchesDirPath = join(sessionDirPath, 'patches');
+
+      // Create the patches directory structure
+      await fs.mkdir(patchesDirPath, { recursive: true });
+      await fs.writeFile(join(patchesDirPath, 'test.patch'), 'test content');
+
+      // Create the session JSON file
+      const session = {
+        id: sessionName,
+        name: sessionName,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        working_dir: process.cwd(),
+        messages: [],
+        metadata: {},
+        active_plugins: [],
+      };
+      await fs.writeFile(sessionJsonPath, JSON.stringify(session, null, 2));
+
+      // Verify everything exists
+      await expect(fs.access(sessionJsonPath)).resolves.toBeUndefined();
+      await expect(fs.access(patchesDirPath)).resolves.toBeUndefined();
+
+      // Delete the session JSON (simulating orphaned state)
+      await fs.unlink(sessionJsonPath);
+
+      // Create a new SessionManager to trigger cleanup
+      const newSessionManager = new SessionManager({ maxSessions: 3 });
+      (newSessionManager as any).sessionsDir = tempDir;
+      await newSessionManager.initialize();
+
+      // Verify the orphaned directory was cleaned up
+      await expect(fs.access(sessionDirPath)).rejects.toThrow();
+      await expect(fs.access(patchesDirPath)).rejects.toThrow();
+
+      await newSessionManager.cleanup();
+    });
+
+    it('should not delete directories with valid session JSON files', async () => {
+      // Create a session with patches directory
+      const sessionName = 'session_20240101T120000_test5678';
+      const sessionJsonPath = join(tempDir, `${sessionName}.json`);
+      const sessionDirPath = join(tempDir, sessionName);
+      const patchesDirPath = join(sessionDirPath, 'patches');
+
+      // Create the patches directory structure
+      await fs.mkdir(patchesDirPath, { recursive: true });
+      await fs.writeFile(join(patchesDirPath, 'test.patch'), 'test content');
+
+      // Create the session JSON file
+      const session = {
+        id: sessionName,
+        name: sessionName,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        working_dir: process.cwd(),
+        messages: [],
+        metadata: {},
+        active_plugins: [],
+      };
+      await fs.writeFile(sessionJsonPath, JSON.stringify(session, null, 2));
+
+      // Verify everything exists
+      await expect(fs.access(sessionJsonPath)).resolves.toBeUndefined();
+      await expect(fs.access(patchesDirPath)).resolves.toBeUndefined();
+
+      // Create a new SessionManager to trigger cleanup (session JSON still exists)
+      const newSessionManager = new SessionManager({ maxSessions: 3 });
+      (newSessionManager as any).sessionsDir = tempDir;
+      await newSessionManager.initialize();
+
+      // Verify the directory was NOT deleted
+      await expect(fs.access(sessionDirPath)).resolves.toBeUndefined();
+      await expect(fs.access(patchesDirPath)).resolves.toBeUndefined();
+      await expect(fs.access(sessionJsonPath)).resolves.toBeUndefined();
+
+      await newSessionManager.cleanup();
+    });
+
+    it('should skip directories without patches subdirectory', async () => {
+      // Create a directory without patches subdirectory
+      const dirName = 'some_other_directory';
+      const dirPath = join(tempDir, dirName);
+
+      await fs.mkdir(dirPath, { recursive: true });
+      await fs.writeFile(join(dirPath, 'somefile.txt'), 'test content');
+
+      // Create a new SessionManager to trigger cleanup
+      const newSessionManager = new SessionManager({ maxSessions: 3 });
+      (newSessionManager as any).sessionsDir = tempDir;
+      await newSessionManager.initialize();
+
+      // Verify the directory was NOT deleted (no patches subdirectory)
+      await expect(fs.access(dirPath)).resolves.toBeUndefined();
+
+      await newSessionManager.cleanup();
+    });
+
+    it('should skip .quarantine and other hidden directories', async () => {
+      // Create hidden directories
+      const quarantinePath = join(tempDir, '.quarantine');
+      const hiddenPath = join(tempDir, '.hidden');
+
+      await fs.mkdir(quarantinePath, { recursive: true });
+      await fs.mkdir(hiddenPath, { recursive: true });
+
+      // Create a new SessionManager to trigger cleanup
+      const newSessionManager = new SessionManager({ maxSessions: 3 });
+      (newSessionManager as any).sessionsDir = tempDir;
+      await newSessionManager.initialize();
+
+      // Verify hidden directories were NOT deleted
+      await expect(fs.access(quarantinePath)).resolves.toBeUndefined();
+      await expect(fs.access(hiddenPath)).resolves.toBeUndefined();
+
+      await newSessionManager.cleanup();
+    });
+
+    it('should handle multiple orphaned directories', async () => {
+      // Create multiple orphaned patch directories
+      const orphanedSessions = [
+        'session_20240101T120000_orphan1',
+        'session_20240101T130000_orphan2',
+        'session_20240101T140000_orphan3',
+      ];
+
+      for (const sessionName of orphanedSessions) {
+        const sessionDirPath = join(tempDir, sessionName);
+        const patchesDirPath = join(sessionDirPath, 'patches');
+        await fs.mkdir(patchesDirPath, { recursive: true });
+        await fs.writeFile(join(patchesDirPath, 'test.patch'), 'test content');
+      }
+
+      // Verify all directories exist
+      for (const sessionName of orphanedSessions) {
+        await expect(fs.access(join(tempDir, sessionName, 'patches'))).resolves.toBeUndefined();
+      }
+
+      // Create a new SessionManager to trigger cleanup
+      const newSessionManager = new SessionManager({ maxSessions: 3 });
+      (newSessionManager as any).sessionsDir = tempDir;
+      await newSessionManager.initialize();
+
+      // Verify all orphaned directories were cleaned up
+      for (const sessionName of orphanedSessions) {
+        await expect(fs.access(join(tempDir, sessionName))).rejects.toThrow();
+      }
+
+      await newSessionManager.cleanup();
+    });
+  });
 });

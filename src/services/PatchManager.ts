@@ -892,6 +892,214 @@ export class PatchManager implements IService {
   // ========== Session Management & Cleanup ==========
 
   /**
+   * Validate patch integrity on session change
+   *
+   * Performs the following validations:
+   * 1. All patches in index have corresponding .diff files
+   * 2. No orphaned .diff files exist (not in index)
+   * 3. Quarantines corrupted patches
+   *
+   * This method is graceful - it logs warnings but doesn't throw errors,
+   * allowing the system to continue with valid patches.
+   */
+  private async validatePatchIntegrity(): Promise<void> {
+    const sessionId = this.getSessionId();
+    if (!sessionId) {
+      logger.debug('No active session - skipping patch integrity validation');
+      return;
+    }
+
+    const patchesDir = this.fileManager.getPatchesDir();
+    if (!patchesDir) {
+      logger.debug('No patches directory - skipping patch integrity validation');
+      return;
+    }
+
+    try {
+      // Check if patches directory exists
+      const dirExists = await fs.access(patchesDir).then(() => true).catch(() => false);
+      if (!dirExists) {
+        logger.debug('Patches directory does not exist yet - skipping validation');
+        return;
+      }
+
+      const allPatches = this.indexManager.getAllPatches();
+      const patchFilesInIndex = new Set(allPatches.map(p => p.patch_file));
+
+      // Get all .diff files in the patches directory
+      const files = await fs.readdir(patchesDir);
+      const diffFiles = files.filter(f => f.startsWith('patch_') && f.endsWith('.diff'));
+
+      const corruptedPatches: PatchMetadata[] = [];
+      const orphanedFiles: string[] = [];
+
+      // Validation 1: Check that all patches in index have corresponding .diff files
+      for (const patch of allPatches) {
+        const patchExists = await this.fileManager.patchExists(patch.patch_file);
+        if (!patchExists) {
+          logger.warn(
+            `[Patch Integrity] Missing patch file for patch #${patch.patch_number}: ${patch.patch_file} (${patch.operation_type} on ${patch.file_path})`
+          );
+          corruptedPatches.push(patch);
+        }
+      }
+
+      // Validation 2: Check for orphaned .diff files not in index
+      for (const diffFile of diffFiles) {
+        if (!patchFilesInIndex.has(diffFile)) {
+          logger.warn(
+            `[Patch Integrity] Orphaned patch file not in index: ${diffFile}`
+          );
+          orphanedFiles.push(diffFile);
+        }
+      }
+
+      // Quarantine corrupted patches (missing files)
+      if (corruptedPatches.length > 0) {
+        await this.quarantineCorruptedPatches(corruptedPatches, sessionId, 'missing_patch_file');
+      }
+
+      // Quarantine orphaned files
+      if (orphanedFiles.length > 0) {
+        await this.quarantineOrphanedFiles(orphanedFiles, sessionId);
+      }
+
+      // Log summary
+      if (corruptedPatches.length > 0 || orphanedFiles.length > 0) {
+        logger.info(
+          `[Patch Integrity] Validation complete: ${corruptedPatches.length} corrupted patches quarantined, ${orphanedFiles.length} orphaned files quarantined`
+        );
+      } else {
+        logger.debug('[Patch Integrity] Validation complete: all patches valid');
+      }
+
+    } catch (error) {
+      logger.error('[Patch Integrity] Failed to validate patch integrity:', error);
+      // Don't throw - allow system to continue
+    }
+  }
+
+  /**
+   * Quarantine corrupted patches by moving their metadata to quarantine
+   * and removing them from the index
+   *
+   * @param patches - Array of corrupted patch metadata
+   * @param sessionId - Current session ID
+   * @param reason - Reason for quarantine
+   */
+  private async quarantineCorruptedPatches(
+    patches: PatchMetadata[],
+    sessionId: string,
+    reason: string
+  ): Promise<void> {
+    const quarantineDir = path.join(this.sessionsDir, '.quarantine');
+
+    try {
+      // Ensure quarantine directory exists
+      await fs.mkdir(quarantineDir, { recursive: true });
+
+      // Create quarantine metadata file
+      const timestamp = Date.now();
+      const quarantineFile = path.join(
+        quarantineDir,
+        `patches_${sessionId}_${timestamp}.json`
+      );
+
+      const quarantineData = {
+        session_id: sessionId,
+        timestamp: new Date().toISOString(),
+        reason,
+        patches: patches.map(p => ({
+          patch_number: p.patch_number,
+          timestamp: p.timestamp,
+          operation_type: p.operation_type,
+          file_path: p.file_path,
+          patch_file: p.patch_file,
+        })),
+      };
+
+      await fs.writeFile(quarantineFile, JSON.stringify(quarantineData, null, 2), 'utf-8');
+      logger.warn(
+        `[Patch Integrity] Quarantined ${patches.length} corrupted patches to: ${quarantineFile}`
+      );
+
+      // Remove corrupted patches from index
+      const patchNumbers = new Set(patches.map(p => p.patch_number));
+      const removedCount = this.indexManager.removePatches(patchNumbers);
+      await this.indexManager.saveIndex();
+
+      logger.info(
+        `[Patch Integrity] Removed ${removedCount} corrupted patch entries from index`
+      );
+
+    } catch (error) {
+      logger.error('[Patch Integrity] Failed to quarantine corrupted patches:', error);
+      // Don't throw - continue with best effort
+    }
+  }
+
+  /**
+   * Quarantine orphaned patch files by moving them to quarantine directory
+   *
+   * @param files - Array of orphaned patch filenames
+   * @param sessionId - Current session ID
+   */
+  private async quarantineOrphanedFiles(files: string[], sessionId: string): Promise<void> {
+    const patchesDir = this.fileManager.getPatchesDir();
+    if (!patchesDir) {
+      return;
+    }
+
+    const quarantineDir = path.join(this.sessionsDir, '.quarantine', `orphaned_${sessionId}_${Date.now()}`);
+
+    try {
+      // Create quarantine subdirectory for orphaned files
+      await fs.mkdir(quarantineDir, { recursive: true });
+
+      let movedCount = 0;
+      const movedFiles: string[] = [];
+      const failedFiles: string[] = [];
+      for (const file of files) {
+        try {
+          const sourcePath = path.join(patchesDir, file);
+          const destPath = path.join(quarantineDir, file);
+
+          await fs.rename(sourcePath, destPath);
+          movedCount++;
+          movedFiles.push(file);
+          logger.debug(`[Patch Integrity] Moved orphaned file to quarantine: ${file}`);
+        } catch (error) {
+          failedFiles.push(file);
+          logger.warn(`[Patch Integrity] Failed to quarantine orphaned file ${file}:`, error);
+          // Continue with other files
+        }
+      }
+
+      logger.warn(
+        `[Patch Integrity] Quarantined ${movedCount} orphaned patch files to: ${quarantineDir}`
+      );
+
+      // Create a manifest file in quarantine directory
+      const manifestPath = path.join(quarantineDir, 'MANIFEST.json');
+      const manifest = {
+        session_id: sessionId,
+        timestamp: new Date().toISOString(),
+        reason: 'orphaned_files_not_in_index',
+        moved_files: movedFiles,
+        failed_files: failedFiles,
+        moved_count: movedCount,
+        failed_count: failedFiles.length,
+      };
+
+      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
+
+    } catch (error) {
+      logger.error('[Patch Integrity] Failed to quarantine orphaned files:', error);
+      // Don't throw - continue with best effort
+    }
+  }
+
+  /**
    * Reload patches when session changes
    * This should be called when switching sessions
    */
@@ -906,6 +1114,9 @@ export class PatchManager implements IService {
     // Reload index
     await this.indexManager.loadIndex();
     logger.debug(`Patches reloaded for session: ${this.getSessionId() || 'none'}`);
+
+    // Validate patch integrity and quarantine corrupted patches
+    await this.validatePatchIntegrity();
   }
 
   /**

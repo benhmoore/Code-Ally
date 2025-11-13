@@ -42,6 +42,10 @@ export interface MessageMetadata {
   mentions?: {
     files?: string[];
   };
+  /** Tool visibility state for each tool call (keyed by tool call ID) */
+  tool_visibility?: Record<string, boolean>;
+  /** Tool status for each tool call (keyed by tool call ID) */
+  tool_status?: Record<string, 'success' | 'error'>;
   // Future: Add more presentation hints as needed
 }
 

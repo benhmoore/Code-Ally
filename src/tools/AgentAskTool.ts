@@ -32,6 +32,7 @@ export class AgentAskTool extends BaseTool {
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = true; // Hide detailed output
+  readonly visibleInChat = false; // Silent tool call - not shown in UI
 
   readonly usageGuidance = `**When to use agent_ask:**
 DEFAULT for ANY follow-up to explore/plan/agent. Agent already has context → dramatically more efficient than starting fresh.
@@ -288,9 +289,9 @@ When uncertain: Use agent_ask first. Much cheaper than restarting.`;
 
       // Determine agent type from base prompt
       let agentType = 'agent';
-      if (baseAgentPrompt?.includes('code exploration')) {
+      if (baseAgentPrompt?.includes('codebase exploration')) {
         agentType = 'exploration agent';
-      } else if (baseAgentPrompt?.includes('implementation planner')) {
+      } else if (baseAgentPrompt?.includes('implementation planning')) {
         agentType = 'planning agent';
       }
 
@@ -374,7 +375,15 @@ When uncertain: Use agent_ask first. Much cheaper than restarting.`;
 
   /**
    * Inject user message into active pooled agent
-   * Used for routing interjections to subagents
+   *
+   * NOTE: This method exists for interface compatibility but is NOT used.
+   * agent_ask is intentionally excluded from injectable tools in ToolManager.
+   * When agent_ask is running, interjections route to main agent instead,
+   * since agent_ask is just querying for information while the main
+   * conversation continues with the main agent.
+   *
+   * This differs from explore/plan/agent which DO accept interjections
+   * because those tools represent direct interactions with subagents.
    */
   injectUserMessage(message: string): void {
     if (!this.currentPooledAgent) {

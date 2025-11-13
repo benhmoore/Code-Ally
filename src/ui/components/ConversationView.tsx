@@ -8,7 +8,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
-import { BUFFER_SIZES, TEXT_LIMITS } from '@config/constants.js';
+import { BUFFER_SIZES, TEXT_LIMITS, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -88,8 +88,8 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
     calls: (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[]
   ): (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] => {
     return calls.map(call => {
-      // Check if this is an agent delegation (has 'agent' in toolName)
-      const isAgentDelegation = call.toolName === 'agent';
+      // Check if this is an agent delegation
+      const isAgentDelegation = AGENT_DELEGATION_TOOLS.includes(call.toolName as any);
 
       if (isAgentDelegation && call.children && call.children.length > BUFFER_SIZES.TOP_ITEMS_PREVIEW) {
         // Keep total count before limiting
@@ -188,7 +188,7 @@ const ActiveContent = React.memo<{
 
     {streamingContent && (
       <Box>
-        <Text color="green">{streamingContent}</Text>
+        <Text dimColor>{streamingContent}</Text>
       </Box>
     )}
   </>

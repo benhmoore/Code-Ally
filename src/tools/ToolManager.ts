@@ -70,10 +70,14 @@ export class ToolManager {
    * Checks explore, plan, and agent tools for an active pooled agent.
    * Returns the tool instance, name, and call ID if found.
    *
+   * NOTE: agent_ask is intentionally excluded - interjections should route
+   * to the main agent, not the queried subagent, since agent_ask is just
+   * querying for information while the main conversation continues.
+   *
    * @returns {tool: BaseTool, name: string, callId: string} if found, undefined otherwise
    */
   getActiveInjectableTool(): { tool: BaseTool; name: string; callId: string } | undefined {
-    const injectableToolNames = ['explore', 'plan', 'agent', 'agent_ask'];
+    const injectableToolNames = ['explore', 'plan', 'agent'];
 
     for (const toolName of injectableToolNames) {
       const tool = this.tools.get(toolName);

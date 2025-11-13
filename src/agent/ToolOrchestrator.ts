@@ -565,18 +565,18 @@ export class ToolOrchestrator {
 
         // Wait for user permission (this can take 0-30 seconds)
         await this.permissionManager.checkPermission(toolName, args);
-
-        // Emit execution start event (timer starts NOW, after permission granted)
-        this.emitEvent({
-          id,
-          type: ActivityEventType.TOOL_EXECUTION_START,
-          timestamp: Date.now(),
-          parentId: effectiveParentId,
-          data: {
-            toolName,
-          },
-        });
       }
+
+      // Emit execution start event (timer starts NOW, after permission granted or if no permission needed)
+      this.emitEvent({
+        id,
+        type: ActivityEventType.TOOL_EXECUTION_START,
+        timestamp: Date.now(),
+        parentId: effectiveParentId,
+        data: {
+          toolName,
+        },
+      });
 
       // Execute tool via tool manager (pass ID for streaming output)
       result = await this.toolManager.executeTool(
@@ -744,13 +744,20 @@ export class ToolOrchestrator {
         : formattedResult;
     }
 
-    // Add tool result message to conversation with ephemeral metadata
+    // Add tool result message to conversation with ephemeral metadata and tool status
+    const metadata: any = {};
+    if (isEphemeral) {
+      metadata.ephemeral = true;
+    }
+    // Store tool status for session persistence
+    metadata.tool_status = { [toolCall.id]: result.success ? 'success' : 'error' };
+
     this.agent.addMessage({
       role: 'tool',
       content: finalContent,
       tool_call_id: toolCall.id,
       name: toolCall.function.name,
-      metadata: isEphemeral ? { ephemeral: true } : undefined,
+      metadata,
     });
 
     logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool result added to agent conversation',

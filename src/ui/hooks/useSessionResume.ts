@@ -56,7 +56,7 @@ export function reconstructInterjectionsFromMessages(messages: Message[], activi
  */
 export function reconstructToolCallsFromMessages(messages: Message[], serviceRegistry: ServiceRegistry): ToolCallState[] {
   const toolCalls: ToolCallState[] = [];
-  const toolResultsMap = new Map<string, { output: string; error?: string; timestamp: number }>();
+  const toolResultsMap = new Map<string, { output: string; error?: string; timestamp: number; metadata?: any }>();
 
   // Get ToolManager to look up tool visibility
   const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
@@ -68,6 +68,7 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
         output: msg.content,
         error: msg.content.startsWith('Error:') ? msg.content : undefined,
         timestamp: msg.timestamp || Date.now(),
+        metadata: msg.metadata,
       });
     }
   });
@@ -91,18 +92,33 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
           parsedArgs = tc.function.arguments;
         }
 
-        // Look up tool definition to get visibility settings
+        // Prefer stored metadata over current tool definitions (for backwards compatibility with version changes)
         let visibleInChat = true; // Default to visible
-        if (toolManager) {
+        let status: 'success' | 'error' | 'pending' | 'validating' | 'scheduled' | 'executing' | 'cancelled' = 'success';
+
+        // First, try to get visibility from stored metadata
+        if (msg.metadata?.tool_visibility?.[tc.id] !== undefined) {
+          visibleInChat = msg.metadata.tool_visibility[tc.id] ?? true;
+        } else if (toolManager) {
+          // Fallback to current tool definition if no stored metadata
           const toolDef = toolManager.getTool(tc.function.name);
           if (toolDef) {
             visibleInChat = toolDef.visibleInChat ?? true;
           }
         }
 
+        // Try to get status from stored metadata (prefer tool result message metadata over assistant message)
+        // Tool result message metadata is more accurate as it's set at execution time
+        if (result?.metadata?.tool_status?.[tc.id]) {
+          status = result.metadata.tool_status[tc.id];
+        } else if (result) {
+          // Fallback to inferring from result
+          status = hasError ? 'error' : 'success';
+        }
+
         const toolCallState: ToolCallState = {
           id: tc.id,
-          status: result ? (hasError ? 'error' : 'success') : 'success', // Default to success if we have the call
+          status,
           toolName: tc.function.name,
           arguments: parsedArgs,
           output: result?.output,

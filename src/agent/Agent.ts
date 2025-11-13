@@ -283,8 +283,8 @@ export class Agent {
       // Use setImmediate to ensure UI listeners are attached first
       if (config.config.show_system_prompt_in_chat) {
         const agentType = config.isSpecializedAgent
-          ? (config.baseAgentPrompt?.includes('Explore') ? 'Explore Agent'
-             : config.baseAgentPrompt?.includes('Plan') ? 'Plan Agent'
+          ? (config.baseAgentPrompt?.includes('codebase exploration') ? 'Explore Agent'
+             : config.baseAgentPrompt?.includes('implementation planning') ? 'Plan Agent'
              : 'Specialized Agent')
           : 'Main Agent (Ally)';
 

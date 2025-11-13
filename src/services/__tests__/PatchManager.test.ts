@@ -566,4 +566,190 @@ describe('PatchManager', () => {
       expect(index.patches[0].file_path).toBe(specialPath);
     });
   });
+
+  describe('patch integrity validation', () => {
+    it('should validate patches successfully when all files exist', async () => {
+      // Create some patches
+      await patchManager.captureOperation('edit', '/test/file1.txt', 'a', 'b');
+      await patchManager.captureOperation('edit', '/test/file2.txt', 'c', 'd');
+
+      // Trigger validation by session change
+      await patchManager.onSessionChange();
+
+      // All patches should still exist
+      const indexPath = path.join(getPatchesDir(), 'patch_index.json');
+      const content = await fs.readFile(indexPath, 'utf-8');
+      const index = JSON.parse(content);
+
+      expect(index.patches.length).toBe(2);
+    });
+
+    it('should quarantine patches with missing files', async () => {
+      // Create patches
+      await patchManager.captureOperation('edit', '/test/file1.txt', 'a', 'b');
+      await patchManager.captureOperation('edit', '/test/file2.txt', 'c', 'd');
+      await patchManager.captureOperation('edit', '/test/file3.txt', 'e', 'f');
+
+      // Manually delete a patch file to simulate corruption
+      const patchFile = path.join(getPatchesDir(), 'patch_002.diff');
+      await fs.unlink(patchFile);
+
+      // Trigger validation
+      await patchManager.onSessionChange();
+
+      // Check that corrupted patch was removed from index
+      const indexPath = path.join(getPatchesDir(), 'patch_index.json');
+      const content = await fs.readFile(indexPath, 'utf-8');
+      const index = JSON.parse(content);
+
+      expect(index.patches.length).toBe(2);
+      expect(index.patches.find((p: any) => p.patch_number === 2)).toBeUndefined();
+
+      // Check that quarantine file was created
+      const quarantineDir = path.join(process.cwd(), '.ally-sessions', '.quarantine');
+      const quarantineFiles = await fs.readdir(quarantineDir);
+      const quarantineFile = quarantineFiles.find(f => f.startsWith(`patches_${testSessionId}_`));
+
+      expect(quarantineFile).toBeDefined();
+
+      // Verify quarantine file content
+      const quarantinePath = path.join(quarantineDir, quarantineFile!);
+      const quarantineContent = await fs.readFile(quarantinePath, 'utf-8');
+      const quarantineData = JSON.parse(quarantineContent);
+
+      expect(quarantineData.reason).toBe('missing_patch_file');
+      expect(quarantineData.patches.length).toBe(1);
+      expect(quarantineData.patches[0].patch_number).toBe(2);
+    });
+
+    it('should quarantine orphaned patch files not in index', async () => {
+      // Create patches
+      await patchManager.captureOperation('edit', '/test/file1.txt', 'a', 'b');
+      await patchManager.captureOperation('edit', '/test/file2.txt', 'c', 'd');
+
+      // Manually create an orphaned patch file
+      const orphanedFile = path.join(getPatchesDir(), 'patch_9999.diff');
+      await fs.writeFile(orphanedFile, 'orphaned patch content', 'utf-8');
+
+      // Trigger validation
+      await patchManager.onSessionChange();
+
+      // Check that orphaned file was moved to quarantine
+      const orphanedExists = await fs.access(orphanedFile).then(() => true).catch(() => false);
+      expect(orphanedExists).toBe(false);
+
+      // Check quarantine directory
+      const quarantineDir = path.join(process.cwd(), '.ally-sessions', '.quarantine');
+      const quarantineDirs = await fs.readdir(quarantineDir);
+      const orphanedDir = quarantineDirs.find(d => d.startsWith(`orphaned_${testSessionId}_`));
+
+      expect(orphanedDir).toBeDefined();
+
+      // Verify orphaned file is in quarantine
+      const quarantinePath = path.join(quarantineDir, orphanedDir!);
+      const quarantinedFiles = await fs.readdir(quarantinePath);
+      expect(quarantinedFiles).toContain('patch_9999.diff');
+
+      // Verify manifest was created
+      expect(quarantinedFiles).toContain('MANIFEST.json');
+      const manifestPath = path.join(quarantinePath, 'MANIFEST.json');
+      const manifestContent = await fs.readFile(manifestPath, 'utf-8');
+      const manifest = JSON.parse(manifestContent);
+
+      expect(manifest.reason).toBe('orphaned_files_not_in_index');
+      expect(manifest.files).toContain('patch_9999.diff');
+    });
+
+    it('should handle multiple corrupted patches', async () => {
+      // Create patches
+      await patchManager.captureOperation('edit', '/test/file1.txt', 'a', 'b');
+      await patchManager.captureOperation('edit', '/test/file2.txt', 'c', 'd');
+      await patchManager.captureOperation('edit', '/test/file3.txt', 'e', 'f');
+      await patchManager.captureOperation('edit', '/test/file4.txt', 'g', 'h');
+
+      // Delete multiple patch files
+      await fs.unlink(path.join(getPatchesDir(), 'patch_001.diff'));
+      await fs.unlink(path.join(getPatchesDir(), 'patch_003.diff'));
+
+      // Trigger validation
+      await patchManager.onSessionChange();
+
+      // Check that only valid patches remain
+      const indexPath = path.join(getPatchesDir(), 'patch_index.json');
+      const content = await fs.readFile(indexPath, 'utf-8');
+      const index = JSON.parse(content);
+
+      expect(index.patches.length).toBe(2);
+      expect(index.patches.find((p: any) => p.patch_number === 1)).toBeUndefined();
+      expect(index.patches.find((p: any) => p.patch_number === 2)).toBeDefined();
+      expect(index.patches.find((p: any) => p.patch_number === 3)).toBeUndefined();
+      expect(index.patches.find((p: any) => p.patch_number === 4)).toBeDefined();
+
+      // Verify quarantine file
+      const quarantineDir = path.join(process.cwd(), '.ally-sessions', '.quarantine');
+      const quarantineFiles = await fs.readdir(quarantineDir);
+      const quarantineFile = quarantineFiles.find(f => f.startsWith(`patches_${testSessionId}_`));
+
+      expect(quarantineFile).toBeDefined();
+
+      const quarantinePath = path.join(quarantineDir, quarantineFile!);
+      const quarantineContent = await fs.readFile(quarantinePath, 'utf-8');
+      const quarantineData = JSON.parse(quarantineContent);
+
+      expect(quarantineData.patches.length).toBe(2);
+    });
+
+    it('should not fail if patches directory does not exist', async () => {
+      // Create new session with no patches
+      const newSessionId = `test-session-no-patches-${Date.now()}`;
+      const newManager = new PatchManager({
+        getSessionId: () => newSessionId,
+        maxPatchesPerSession: 100,
+        maxPatchesSizeBytes: 10 * 1024 * 1024
+      });
+      await newManager.initialize();
+
+      // Trigger validation on empty session - should not throw
+      await expect(newManager.onSessionChange()).resolves.not.toThrow();
+
+      await newManager.cleanup();
+      await fs.rm(path.join(process.cwd(), '.ally-sessions', newSessionId), { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('should handle validation when no session is active', async () => {
+      // Create manager with no session
+      const noSessionManager = new PatchManager({
+        getSessionId: () => null,
+        maxPatchesPerSession: 100,
+        maxPatchesSizeBytes: 10 * 1024 * 1024
+      });
+      await noSessionManager.initialize();
+
+      // Trigger validation - should not throw
+      await expect(noSessionManager.onSessionChange()).resolves.not.toThrow();
+
+      await noSessionManager.cleanup();
+    });
+
+    it('should continue normal operation after validation', async () => {
+      // Create patches
+      await patchManager.captureOperation('edit', '/test/file1.txt', 'a', 'b');
+      await patchManager.captureOperation('edit', '/test/file2.txt', 'c', 'd');
+
+      // Delete a patch file
+      await fs.unlink(path.join(getPatchesDir(), 'patch_001.diff'));
+
+      // Trigger validation
+      await patchManager.onSessionChange();
+
+      // Should be able to create new patches after validation
+      const newPatchNum = await patchManager.captureOperation('edit', '/test/file3.txt', 'e', 'f');
+      expect(newPatchNum).toBeDefined();
+      expect(newPatchNum).toBeGreaterThan(0);
+
+      // Should be able to get history
+      const history = patchManager.getPatchHistory();
+      expect(history.length).toBeGreaterThan(0);
+    });
+  });
 });

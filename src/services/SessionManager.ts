@@ -79,6 +79,9 @@ export class SessionManager implements IService {
 
     // Clean up any stale temporary files from previous crashes
     await this.cleanupTempFiles();
+
+    // Clean up orphaned patch directories from deleted sessions
+    await this.cleanupOrphanedPatchDirectories();
   }
 
   /**
@@ -105,6 +108,76 @@ export class SessionManager implements IService {
     } catch (error) {
       // Ignore errors during cleanup
       logger.debug('[SESSION] Error during temp file cleanup:', error);
+    }
+  }
+
+  /**
+   * Clean up orphaned patch directories from deleted sessions
+   *
+   * Scans .ally-sessions/ for patch directories that don't have a corresponding
+   * session JSON file. This handles cases where:
+   * - Session JSON was deleted but patches directory remained
+   * - Session creation failed after creating patches directory
+   * - Manual file system operations left orphaned directories
+   */
+  private async cleanupOrphanedPatchDirectories(): Promise<void> {
+    try {
+      const entries = await fs.readdir(this.sessionsDir, { withFileTypes: true });
+      const orphanedDirs: string[] = [];
+
+      // Iterate through all entries in .ally-sessions/
+      for (const entry of entries) {
+        // Skip files, .quarantine, and other non-session directories
+        if (!entry.isDirectory() || entry.name.startsWith('.')) {
+          continue;
+        }
+
+        // Check if this is a session directory (has a corresponding .json file)
+        // Format: session_<timestamp>_<id>/ should have session_<timestamp>_<id>.json
+        const sessionJsonPath = join(this.sessionsDir, `${entry.name}.json`);
+
+        try {
+          await fs.access(sessionJsonPath);
+          // Session JSON exists, this directory is not orphaned
+        } catch (error) {
+          // Session JSON does not exist - this is an orphaned directory
+          const dirPath = join(this.sessionsDir, entry.name);
+
+          // Verify it has a patches subdirectory before marking as orphaned
+          // This prevents false positives from other directories
+          try {
+            const patchesPath = join(dirPath, 'patches');
+            const patchesStat = await fs.stat(patchesPath);
+
+            if (patchesStat.isDirectory()) {
+              orphanedDirs.push(entry.name);
+              logger.debug(`[SESSION] Found orphaned patch directory: ${entry.name}`);
+            }
+          } catch {
+            // No patches subdirectory, not an orphaned session directory
+            // Could be some other directory structure
+          }
+        }
+      }
+
+      // Delete orphaned directories
+      for (const dirName of orphanedDirs) {
+        try {
+          const dirPath = join(this.sessionsDir, dirName);
+          await fs.rm(dirPath, { recursive: true, force: true });
+          logger.info(`[SESSION] Deleted orphaned patch directory: ${dirName}`);
+        } catch (error) {
+          logger.error(`[SESSION] Failed to delete orphaned directory ${dirName}:`, error);
+          // Continue with other directories even if one fails
+        }
+      }
+
+      if (orphanedDirs.length > 0) {
+        logger.info(`[SESSION] Cleaned up ${orphanedDirs.length} orphaned patch director${orphanedDirs.length === 1 ? 'y' : 'ies'}`);
+      }
+    } catch (error) {
+      // Ignore errors during cleanup - don't fail startup
+      logger.debug('[SESSION] Error during orphaned patch directory cleanup:', error);
     }
   }
 
@@ -184,6 +257,12 @@ export class SessionManager implements IService {
     };
 
     await this.saveSessionData(name, session);
+
+    // Set as current session BEFORE cleanup to protect it from deletion
+    // This prevents a race condition where cleanup could delete the newly created session
+    // if maxSessions limit is reached during the save->cleanup window
+    this.currentSession = name;
+
     await this.cleanupOldSessions();
 
     return name;
@@ -286,11 +365,15 @@ export class SessionManager implements IService {
     // Wait for our write to complete
     await writePromise;
 
-    // Clean up our promise from the queue if we're still the current one
-    // Another write may have already started and replaced us in the queue
-    if (this.writeQueue.get(sessionName) === writePromise) {
-      this.writeQueue.delete(sessionName);
-    }
+    // Clean up from the queue unconditionally
+    // This is safe because:
+    // 1. If no new write started, we remove our completed promise (correct cleanup)
+    // 2. If a new write started, it already captured our promise (line 324) and chained after it (line 330-334)
+    //    The chaining works because the promise was captured BEFORE being added to the queue, not because
+    //    it stays in the queue. New writes will re-add their promise immediately (line 363).
+    // 3. We can't accidentally delete a new write's promise because new writes execute line 363 (set)
+    //    BEFORE reaching their await, so the queue is already updated by the time we delete here.
+    this.writeQueue.delete(sessionName);
   }
 
   /**
@@ -533,13 +616,26 @@ export class SessionManager implements IService {
   /**
    * Clean up old sessions beyond the maximum limit
    *
-   * Keeps only the most recently modified sessions up to maxSessions count
+   * Keeps only the most recently modified sessions up to maxSessions count.
+   *
+   * IMPORTANT: This method excludes currentSession from cleanup to prevent deletion
+   * in race conditions (e.g., multiple instances or createSession flow). The exclusion
+   * means we must slice at (maxSessions - 1) to ensure total sessions don't exceed limit.
+   *
+   * Example: maxSessions=3
+   *   - Have 5 total sessions: [current, s1, s2, s3, s4]
+   *   - Eligible for cleanup: [s1, s2, s3, s4] (4 sessions)
+   *   - Keep newest (maxSessions - 1) = 2: [s1, s2]
+   *   - Delete: [s3, s4]
+   *   - Result: 3 total sessions (1 current + 2 eligible)
    */
   private async cleanupOldSessions(): Promise<void> {
     try {
       const files = await fs.readdir(this.sessionsDir);
       const jsonFiles = files.filter(file => file.endsWith('.json'));
 
+      // Early return if we haven't exceeded the limit yet
+      // Note: This check uses total count, but deletion logic accounts for currentSession exclusion
       if (jsonFiles.length <= this.maxSessions) {
         return;
       }
@@ -549,15 +645,24 @@ export class SessionManager implements IService {
         jsonFiles.map(async file => {
           const filePath = join(this.sessionsDir, file);
           const stats = await fs.stat(filePath);
-          return { file, mtime: stats.mtime.getTime(), path: filePath };
+          // Extract session name (without .json extension) for comparison
+          const sessionName = file.slice(0, -5);
+          return { name: sessionName, file, mtime: stats.mtime.getTime(), path: filePath };
         })
       );
 
+      // Exclude current session to prevent deletion if multiple instances hit the limit simultaneously
+      const eligibleForCleanup = fileStats.filter(f => f.name !== this.currentSession);
+
       // Sort by modification time (newest first)
-      fileStats.sort((a, b) => b.mtime - a.mtime);
+      eligibleForCleanup.sort((a, b) => b.mtime - a.mtime);
 
       // Delete old sessions beyond the limit
-      const toDelete = fileStats.slice(this.maxSessions);
+      // Since we excluded currentSession from eligible list, we need to keep maxSessions - 1
+      // to ensure total sessions (including current) don't exceed maxSessions
+      // Example: maxSessions=3, have 5 sessions (1 current + 4 eligible)
+      //   Keep 2 eligible + 1 current = 3 total
+      const toDelete = eligibleForCleanup.slice(this.maxSessions - 1);
       for (const { path } of toDelete) {
         try {
           await fs.unlink(path);

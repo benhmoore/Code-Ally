@@ -525,7 +525,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modal.sessionSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
 
           <SessionSelector
             sessions={modal.sessionSelectRequest.sessions}
@@ -559,7 +559,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modal.modelSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
 
           <ModelSelector
             models={modal.modelSelectRequest.models}
@@ -592,7 +592,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Rewind Options Selector (shown after selecting message in rewind) */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
 
           <RewindOptionsSelector
             targetMessage={modal.rewindOptionsRequest.targetMessage}
@@ -639,7 +639,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           return (
             <Box marginTop={1} flexDirection="column">
               {/* Status Indicator - always visible to show todos */}
-              <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+              <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
 
               <RewindSelector
                 messages={userMessages}
@@ -710,7 +710,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Undo File List (two-stage flow - stage 1) */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
 
           <UndoFileList
             request={modal.undoFileListRequest}
@@ -743,7 +743,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
 
           <UndoPrompt
             request={modal.undoRequest}
@@ -774,7 +774,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
 
           <PermissionPrompt
             request={modal.permissionRequest}
@@ -805,7 +805,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Input Group - Status Indicator + Input Prompt */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
 
           {/* Input Prompt */}
           <InputPrompt

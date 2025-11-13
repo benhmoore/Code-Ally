@@ -636,6 +636,16 @@ export const AGENT_POOL = {
 } as const;
 
 // ===========================================
+// UI DISPLAY
+// ===========================================
+
+/**
+ * Tool names that delegate to agents and should be displayed with agent-specific UI
+ * Used by ToolCallDisplay and ConversationView to identify agent delegations
+ */
+export const AGENT_DELEGATION_TOOLS = ['agent', 'explore', 'plan'] as const;
+
+// ===========================================
 // THOROUGHNESS LEVELS
 // ===========================================
 

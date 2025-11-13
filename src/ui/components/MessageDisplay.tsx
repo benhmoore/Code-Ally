@@ -58,8 +58,8 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
       <Box flexDirection="column">
         {showThinking && thinking && (
           <Box marginBottom={1}>
-            <Text dimColor italic color="cyan">
-              {thinking}
+            <Text dimColor italic>
+              ∴ {thinking}
             </Text>
           </Box>
         )}

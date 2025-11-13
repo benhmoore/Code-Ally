@@ -375,12 +375,27 @@ export class ResponseProcessor {
       },
     }));
 
+    // Build tool metadata for session persistence
+    const tool_visibility: Record<string, boolean> = {};
+    const serviceRegistry = await import('../services/ServiceRegistry.js').then(m => m.ServiceRegistry.getInstance());
+    const toolManager = serviceRegistry.get('tool_manager');
+
+    if (toolManager) {
+      for (const tc of unwrappedToolCalls) {
+        const tool = (toolManager as any).getTool?.(tc.function.name);
+        if (tool) {
+          tool_visibility[tc.id] = tool.visibleInChat ?? true;
+        }
+      }
+    }
+
     const assistantMessage: Message = {
       role: 'assistant',
       content: response.content || '',
       tool_calls: toolCallsForMessage,
       thinking: response.thinking,
       timestamp: Date.now(),
+      metadata: Object.keys(tool_visibility).length > 0 ? { tool_visibility } : undefined,
     };
     this.conversationManager.addMessage(assistantMessage);
 

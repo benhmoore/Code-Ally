@@ -12,7 +12,7 @@ import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { TodoManager, TodoItem } from '@services/TodoManager.js';
 import { IdleMessageGenerator } from '@services/IdleMessageGenerator.js';
 import { ActivityStream } from '@services/ActivityStream.js';
-import { ActivityEventType } from '@shared/index.js';
+import { ActivityEventType, ToolCallState } from '@shared/index.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
 import { formatElapsed } from '../utils/timeUtils.js';
@@ -35,12 +35,71 @@ interface StatusIndicatorProps {
   sessionLoaded?: boolean;
   /** Whether we're resuming a session (don't generate new messages) */
   isResuming?: boolean;
+  /** Active tool calls for detecting agent discussions */
+  activeToolCalls?: ToolCallState[];
 }
 
-export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting, isCancelling = false, recentMessages = [], sessionLoaded = true, isResuming = false }) => {
+/**
+ * Helper function to detect active agent_ask tool and extract display name
+ * Returns agent name if ask_agent is currently executing, null otherwise
+ *
+ * This shows "Discussing with [agent_name]..." when the main agent (Ally)
+ * is consulting a subagent in the background via ask_agent.
+ *
+ * Note: Direct calls to explore/plan/agent do NOT trigger this - those are
+ * user interactions and should show normal task status.
+ */
+const getActiveAgentName = (toolCalls: ToolCallState[]): string | null => {
+  // Find executing ask_agent tool
+  const activeAskAgentTool = toolCalls.find(tc =>
+    tc.status === 'executing' && tc.toolName === 'agent_ask'
+  );
+
+  if (!activeAskAgentTool) return null;
+
+  // Extract agent_id from arguments
+  const agentId = activeAskAgentTool.arguments?.agent_id;
+  if (!agentId || typeof agentId !== 'string') {
+    return 'Assistant'; // Fallback if no agent_id
+  }
+
+  // Look up agent metadata from pool to determine type
+  try {
+    const registry = ServiceRegistry.getInstance();
+    const agentPoolService = registry.get<any>('agent_pool');
+
+    if (!agentPoolService) {
+      return 'Assistant'; // Fallback if pool not available
+    }
+
+    const metadata = agentPoolService.getAgentMetadata(agentId);
+    if (!metadata || !metadata.config) {
+      return 'Assistant'; // Fallback if metadata not found
+    }
+
+    // Determine agent type from baseAgentPrompt (same logic as AgentAskTool)
+    const baseAgentPrompt = metadata.config.baseAgentPrompt;
+    if (baseAgentPrompt?.includes('codebase exploration')) {
+      return 'Explorer';
+    } else if (baseAgentPrompt?.includes('implementation planning')) {
+      return 'Planner';
+    } else {
+      return 'Assistant';
+    }
+  } catch (error) {
+    // Silently handle errors and return fallback
+    return 'Assistant';
+  }
+};
+
+export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting, isCancelling = false, recentMessages = [], sessionLoaded = true, isResuming = false, activeToolCalls = [] }) => {
   const [currentTask, setCurrentTask] = useState<string | null>(null);
   const [_startTime, setStartTime] = useState<number>(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+
+  // State for interjection indicator
+  const [showInterjectionIndicator, setShowInterjectionIndicator] = useState<boolean>(false);
+  const interjectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initialize idle message - start with thinking animation
   const [idleMessage, setIdleMessage] = useState<string>(() => {
@@ -357,6 +416,49 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     return undefined;
   }, [isProcessing]);
 
+  // Subscribe to USER_INTERJECTION events to show acknowledgment indicator
+  useEffect(() => {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const activityStream = registry.get<ActivityStream>('activity_stream');
+
+      if (activityStream) {
+        const handleUserInterjection = () => {
+          // Clear any existing timeout
+          if (interjectionTimeoutRef.current) {
+            clearTimeout(interjectionTimeoutRef.current);
+          }
+
+          // Show the indicator
+          setShowInterjectionIndicator(true);
+
+          // Auto-dismiss after 5 seconds
+          interjectionTimeoutRef.current = setTimeout(() => {
+            setShowInterjectionIndicator(false);
+            interjectionTimeoutRef.current = null;
+          }, 5000);
+        };
+
+        // Subscribe to USER_INTERJECTION events
+        const unsubscribe = activityStream.subscribe(
+          ActivityEventType.USER_INTERJECTION,
+          handleUserInterjection
+        );
+
+        // Cleanup on unmount
+        return () => {
+          unsubscribe();
+          if (interjectionTimeoutRef.current) {
+            clearTimeout(interjectionTimeoutRef.current);
+          }
+        };
+      }
+    } catch (error) {
+      // Silently handle errors
+    }
+    return undefined;
+  }, []);
+
   // Update task status and elapsed time every second (polling fallback)
   useEffect(() => {
     // Function to update todo status
@@ -405,6 +507,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   // Use elapsed seconds from state
   const elapsed = elapsedSeconds;
 
+  // Detect if we're discussing with an agent
+  const activeAgentName = getActiveAgentName(activeToolCalls);
+
   // Show cancelling status if cancelling (highest priority)
   if (isCancelling) {
     return (
@@ -440,6 +545,14 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     <Box flexDirection="column">
       {/* Status line */}
       <Box>
+        {/* Interjection acknowledgment indicator (prepended to left) */}
+        {showInterjectionIndicator && (
+          <>
+            <Text color="yellow">Interjection received</Text>
+            <Text> · </Text>
+          </>
+        )}
+
         {/* Show mascot only when idle */}
         {!(isProcessing || isCompacting) && (
           <>
@@ -451,7 +564,13 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           <>
             <ProgressIndicator type="arc" color="yellow" />
             <Text> </Text>
-            <Text>{allTodos.length === 0 ? 'Thinking' : currentTask || 'Processing'}</Text>
+            <Text>
+              {activeAgentName
+                ? `Discussing with ${activeAgentName}...`
+                : allTodos.length === 0
+                  ? 'Thinking'
+                  : currentTask || 'Processing'}
+            </Text>
             <Text dimColor> (esc to interrupt · {formatElapsed(elapsed)})</Text>
           </>
         ) : (

@@ -25,7 +25,7 @@ export function getStatusColor(status: ToolStatus): string {
     case 'scheduled':
       return 'cyan';
     case 'success':
-      return 'green';
+      return 'white';
     case 'error':
     case 'cancelled':
       return 'red';

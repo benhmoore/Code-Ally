@@ -15,7 +15,7 @@ import { ToolCallState, ActivityEventType } from '@shared/index.js';
 import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
-import { TEXT_LIMITS } from '@config/constants.js';
+import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 
 interface ToolCallDisplayProps {
@@ -164,7 +164,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const durationStr = formatDuration(duration);
 
   // Check if this is an agent delegation
-  const isAgentDelegation = toolCall.toolName === 'agent';
+  const isAgentDelegation = AGENT_DELEGATION_TOOLS.includes(toolCall.toolName as any);
 
   // For agent tool, show agent_name as the tool name
   const displayName = isAgentDelegation && toolCall.arguments?.agent_name
@@ -359,6 +359,14 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         }
         return null;
       })()}
+
+      {/* Completion summary for finished agents - always show even when collapsed */}
+      {isAgentDelegation && !isRunning && toolCallCount > 0 && toolCall.endTime && (
+        <Box>
+          <Text>{indent}    </Text>
+          <Text dimColor>Done ({toolCallCount} tool use{toolCallCount === 1 ? '' : 's'} · {durationStr})</Text>
+        </Box>
+      )}
     </Box>
   );
 };
