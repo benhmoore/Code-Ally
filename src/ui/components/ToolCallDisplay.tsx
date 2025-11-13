@@ -260,14 +260,6 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Truncation indicator for agent delegations with many tool calls (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
-      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && isAgentDelegation && toolCallCount > 3 && (
-        <Box>
-          <Text>{indent}    </Text>
-          <Text dimColor>... (showing last 3 of {toolCallCount} tool calls)</Text>
-        </Box>
-      )}
-
       {/* Nested content: interleaved tool calls and interjections sorted by timestamp */}
       {/* Always render if we have interjections, even if hideOutput is true */}
       {(interjections.length > 0 || ((!toolCall.collapsed || config?.show_full_tool_output) && (!toolCall.hideOutput || config?.show_full_tool_output))) && (() => {
@@ -351,6 +343,21 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
             })}
           </>
         );
+      })()}
+
+      {/* Truncation indicator for agent delegations with many tool calls - shown at the end */}
+      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && isAgentDelegation && (() => {
+        const visibleCount = toolCall.children?.length || 0;
+        const hiddenCount = toolCallCount - visibleCount;
+        if (hiddenCount > 0) {
+          return (
+            <Box>
+              <Text>{indent}    </Text>
+              <Text dimColor>+{hiddenCount} more tool use{hiddenCount === 1 ? '' : 's'}</Text>
+            </Box>
+          );
+        }
+        return null;
       })()}
     </Box>
   );
