@@ -41,7 +41,7 @@ export interface MarkdownTextProps {
 }
 
 interface ParsedNode {
-  type: 'text' | 'code' | 'heading' | 'list' | 'list-item' | 'paragraph' | 'strong' | 'em' | 'codespan' | 'link' | 'table' | 'hr';
+  type: 'text' | 'code' | 'heading' | 'list' | 'list-item' | 'paragraph' | 'strong' | 'em' | 'codespan' | 'link' | 'table' | 'hr' | 'space';
   content?: string;
   language?: string;
   depth?: number;
@@ -138,8 +138,10 @@ function parseTokens(tokens: any[]): ParsedNode[] {
         type: 'hr',
       });
     } else if (token.type === 'space') {
-      // Skip space tokens
-      continue;
+      // Preserve space tokens as empty text nodes to maintain blank line spacing
+      nodes.push({
+        type: 'space',
+      });
     } else {
       // Fallback for unknown token types
       nodes.push({
@@ -209,6 +211,27 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
 
   if (node.type === 'paragraph') {
     const formatted = formatInlineMarkdown(node.content || '');
+
+    // Handle styled text segments
+    if (Array.isArray(formatted)) {
+      return (
+        <Box>
+          {formatted.map((segment, idx) => (
+            <Text
+              key={idx}
+              color={segment.color}
+              bold={segment.bold}
+              italic={segment.italic}
+              strikethrough={segment.strikethrough}
+            >
+              {segment.text}
+            </Text>
+          ))}
+        </Box>
+      );
+    }
+
+    // Handle plain string
     return (
       <Box>
         <Text>{formatted}</Text>
@@ -224,8 +247,34 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
     );
   }
 
+  if (node.type === 'space') {
+    // Render blank line to preserve spacing between paragraphs
+    return <Box marginTop={1} />;
+  }
+
   if (node.type === 'text') {
     const formatted = formatInlineMarkdown(node.content || '');
+
+    // Handle styled text segments
+    if (Array.isArray(formatted)) {
+      return (
+        <Box>
+          {formatted.map((segment, idx) => (
+            <Text
+              key={idx}
+              color={segment.color}
+              bold={segment.bold}
+              italic={segment.italic}
+              strikethrough={segment.strikethrough}
+            >
+              {segment.text}
+            </Text>
+          ))}
+        </Box>
+      );
+    }
+
+    // Handle plain string
     return (
       <Box>
         <Text>{formatted}</Text>
@@ -423,18 +472,36 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
 /**
  * Format inline markdown (bold, italic, inline code, links)
  */
-function formatInlineMarkdown(text: string): string {
+/**
+ * Styled segment - represents text with formatting (color, italic, strikethrough, bold, code)
+ */
+interface StyledSegment {
+  text: string;
+  color?: string;
+  italic?: boolean;
+  strikethrough?: boolean;
+  bold?: boolean;
+  code?: boolean;
+}
+
+/**
+ * Parse and format inline markdown, returning segments with styling information
+ */
+function formatInlineMarkdown(text: string): string | StyledSegment[] {
+  // Check if there are any formatting markers that require segment-based rendering
+  const hasFormatting = /<(red|green|yellow|cyan|blue|magenta|white|gray|orange)>|<span\s+color=|`|~~|\*\*|\*|__|_/i.test(text);
+
+  if (hasFormatting) {
+    return parseStyledText(text);
+  }
+
+  // No formatting - return plain string with simple transformations
   let formatted = text;
 
-  // Handle inline code first (to avoid conflicts)
-  formatted = formatted.replace(/`([^`]+)`/g, '[$1]');
-
   // Handle LaTeX math expressions
-  // Inline math: \(...\)
   formatted = formatted.replace(/\\\(([^)]+)\\\)/g, (_match, mathContent) => {
     return convertLatexToUnicode(mathContent);
   });
-  // Display math: \[...\] or $$...$$
   formatted = formatted.replace(/\\\[([^\]]+)\\\]/g, (_match, mathContent) => {
     return convertLatexToUnicode(mathContent);
   });
@@ -442,23 +509,116 @@ function formatInlineMarkdown(text: string): string {
     return convertLatexToUnicode(mathContent);
   });
 
-  // Handle bold
-  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '$1');
-  formatted = formatted.replace(/__([^_]+)__/g, '$1');
-
-  // Handle italic
-  formatted = formatted.replace(/\*([^*]+)\*/g, '$1');
-  formatted = formatted.replace(/_([^_]+)_/g, '$1');
-
-  // Handle markdown links - just show the text (hyperlinks can corrupt Ink rendering)
+  // Handle markdown links - just show the text
   formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, _url) => {
     return text;
   });
 
-  // Don't make file paths clickable - hyperlinks can corrupt Ink rendering
-  // formatted = makeFilePathsClickable(formatted);
-
   return formatted;
+}
+
+/**
+ * Parse text with markdown formatting into styled segments
+ * Supports: colors, bold, italic, strikethrough, code
+ */
+function parseStyledText(text: string): StyledSegment[] {
+  const segments: StyledSegment[] = [];
+
+  // Tokenize the text into formatting regions
+  // Priority: code > color > strikethrough > bold > italic
+  const tokens = tokenizeFormatting(text);
+
+  for (const token of tokens) {
+    if (token.text) {
+      segments.push(token);
+    }
+  }
+
+  return segments.length > 0 ? segments : [{ text }];
+}
+
+/**
+ * Tokenize text into formatted segments
+ */
+function tokenizeFormatting(text: string): StyledSegment[] {
+  const segments: StyledSegment[] = [];
+  let pos = 0;
+
+  // Combined regex for all formatting types (order matters!)
+  // 1. Inline code (highest priority)
+  // 2. Color tags
+  // 3. Strikethrough
+  // 4. Bold
+  // 5. Italic
+  const formattingRegex = /`([^`]+)`|<(red|green|yellow|cyan|blue|magenta|white|gray|orange)>(.*?)<\/\2>|<span\s+color=["']?(red|green|yellow|cyan|blue|magenta|white|gray|orange)["']?>(.*?)<\/span>|~~(.*?)~~|\*\*([^*]+)\*\*|__([^_]+)__|(?<!\*)\*([^*]+)\*(?!\*)|(?<!_)_([^_]+)_(?!_)/g;
+
+  let match;
+  while ((match = formattingRegex.exec(text)) !== null) {
+    // Add plain text before this match
+    if (match.index > pos) {
+      segments.push({ text: text.substring(pos, match.index) });
+    }
+
+    // Determine what was matched and create appropriate segment
+    if (match[1]) {
+      // Inline code: `text` - render with primary color for distinction
+      segments.push({ text: match[1], code: true, color: UI_COLORS.PRIMARY });
+    } else if (match[2] && match[3]) {
+      // Color tag: <red>text</red>
+      const color = match[2].toLowerCase() === 'orange' ? UI_COLORS.WARNING : match[2].toLowerCase();
+      // Recursively parse nested formatting
+      const nested = tokenizeFormatting(match[3]);
+      for (const seg of nested) {
+        segments.push({ ...seg, color });
+      }
+    } else if (match[4] && match[5]) {
+      // Color tag: <span color="red">text</span>
+      const color = match[4].toLowerCase() === 'orange' ? UI_COLORS.WARNING : match[4].toLowerCase();
+      const nested = tokenizeFormatting(match[5]);
+      for (const seg of nested) {
+        segments.push({ ...seg, color });
+      }
+    } else if (match[6]) {
+      // Strikethrough: ~~text~~
+      const nested = tokenizeFormatting(match[6]);
+      for (const seg of nested) {
+        segments.push({ ...seg, strikethrough: true });
+      }
+    } else if (match[7]) {
+      // Bold: **text**
+      const nested = tokenizeFormatting(match[7]);
+      for (const seg of nested) {
+        segments.push({ ...seg, bold: true });
+      }
+    } else if (match[8]) {
+      // Bold: __text__
+      const nested = tokenizeFormatting(match[8]);
+      for (const seg of nested) {
+        segments.push({ ...seg, bold: true });
+      }
+    } else if (match[9]) {
+      // Italic: *text*
+      const nested = tokenizeFormatting(match[9]);
+      for (const seg of nested) {
+        segments.push({ ...seg, italic: true });
+      }
+    } else if (match[10]) {
+      // Italic: _text_
+      const nested = tokenizeFormatting(match[10]);
+      for (const seg of nested) {
+        segments.push({ ...seg, italic: true });
+      }
+    }
+
+    pos = match.index + match[0].length;
+  }
+
+  // Add any remaining plain text
+  if (pos < text.length) {
+    segments.push({ text: text.substring(pos) });
+  }
+
+  return segments;
 }
 
 /**

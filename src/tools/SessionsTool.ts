@@ -224,6 +224,15 @@ export class SessionsTool extends BaseTool {
         },
       });
 
+      // Build exclude files list (current session if it exists)
+      const excludeFiles: string[] = [];
+      if (currentSessionId) {
+        // Use path.resolve to ensure absolute path
+        const currentSessionPath = path.resolve(sessionsDir, currentSessionId + '.json');
+        excludeFiles.push(currentSessionPath);
+        logger.debug('[SESSIONS_TOOL] Excluding current session from analysis:', currentSessionPath);
+      }
+
       // Create agent configuration with focusDirectory set to sessions dir
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
@@ -235,6 +244,7 @@ export class SessionsTool extends BaseTool {
         parentCallId: callId,
         maxDuration: getThoroughnessDuration('quick'), // 1 minute limit for session analysis
         focusDirectory: '.ally-sessions', // Restrict agent to sessions directory
+        excludeFiles: excludeFiles, // Exclude current session
       };
 
       // Always use pooled agent for persistence
@@ -357,12 +367,12 @@ export class SessionsTool extends BaseTool {
     try {
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
 
-      // Add context note about focus constraint and current session exclusion
+      // Add context note about focus constraint
       let contextNote = '\n\n**Important:** You are sandboxed to the .ally-sessions/ directory. All file operations are automatically restricted to this directory.';
 
+      // Note that current session is excluded (enforced at file system level)
       if (currentSessionId) {
-        const sessionsDir = path.join(process.cwd(), '.ally-sessions');
-        contextNote += `\n\n**IMPORTANT:** Exclude the current session (${path.join(sessionsDir, currentSessionId + '.json')}) from your analysis. This is the active conversation and should not be included in historical analysis.`;
+        contextNote += '\n\n**Note:** The current active session is automatically excluded from your analysis - you only have access to historical sessions.';
       }
 
       const result = await getAgentSystemPrompt(SESSION_ANALYSIS_PROMPT + contextNote, task);

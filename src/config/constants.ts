@@ -415,7 +415,33 @@ export const IDLE_MESSAGE_GENERATION = {
 
   /** Maximum words per idle message */
   MAX_WORDS: 6,
+
+  /** Probability (0-1) of injecting a command tip instead of LLM message */
+  TIP_INJECTION_PROBABILITY: 0.2,
 } as const;
+
+/**
+ * Useful command tips shown occasionally in idle messages
+ * These are injected randomly to help users discover features
+ */
+export const COMMAND_TIPS = [
+  'Resume a conversation with `ally --resume`',
+  '`/plugin list` to see all your plugins',
+  '`/config set field=value` to customize Ally',
+  '`ally --list-sessions` shows conversations',
+  '`/model` to switch AI models',
+  'Press `Esc` to interrupt Ally anytime',
+  '`/agent list` shows specialized agents',
+  '`/config` to view all settings',
+  '`ally --once "question"` for quick answers',
+  '`/help` shows all available commands',
+  '`+plugin-name` activates a tagged plugin',
+  '`/todo add <task>` to create a task',
+  '`ally --debug` for troubleshooting',
+  '`/project init` creates ALLY.md config',
+  '`/clear` clears conversation history',
+  '`/focus <file>` to track a file',
+] as const;
 
 // ===========================================
 // CONTEXT & TOKEN SIZES
@@ -623,6 +649,15 @@ export const AGENT_CONFIG = {
 
   /** Minimum number of searches required before checking hit rate */
   MIN_SEARCHES_FOR_HIT_RATE: 5,
+
+  /** Default maximum retries for agent tool requirements before allowing exit */
+  DEFAULT_REQUIREMENT_MAX_RETRIES: 2,
+
+  /** Maximum agent nesting depth (0=root Ally, 1-3=delegated agents) */
+  MAX_AGENT_DEPTH: 3,
+
+  /** Agent pool size with nesting support (increased to handle nested agents) */
+  AGENT_POOL_SIZE_WITH_NESTING: 15,
 } as const;
 
 // ===========================================

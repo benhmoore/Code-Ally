@@ -32,7 +32,7 @@ Plugins needed a way to provide domain-specific AI agents that:
 
 2. **Tool-Specific Agents**
    - Agents that only use specific plugin tools
-   - Agents with required_agent binding for critical tools
+   - Agents with visible_to binding for critical tools
 
 3. **Workflow Agents**
    - Multi-step agents with predefined workflows
@@ -383,7 +383,7 @@ interface ToolDefinition {
   schema?: any;
 
   // New: Agent binding
-  required_agent?: string;  // Tool only executes for this agent
+  visible_to?: string;  // Tool only executes for this agent
 }
 ```
 
@@ -391,9 +391,9 @@ interface ToolDefinition {
 
 ```typescript
 // Before tool execution
-if (toolDef.required_agent && toolDef.required_agent !== currentAgentName) {
+if (toolDef.visible_to && toolDef.visible_to !== currentAgentName) {
   throw new Error(
-    `Tool '${toolDef.name}' requires agent '${toolDef.required_agent}' ` +
+    `Tool '${toolDef.name}' requires agent '${toolDef.visible_to}' ` +
     `but current agent is '${currentAgentName}'`
   );
 }
@@ -406,7 +406,7 @@ if (toolDef.required_agent && toolDef.required_agent !== currentAgentName) {
   "tools": [{
     "name": "execute_sql",
     "description": "Execute SQL queries",
-    "required_agent": "database-agent",
+    "visible_to": "database-agent",
     "command": "python3",
     "args": ["sql.py"]
   }]
@@ -644,10 +644,10 @@ class ToolOrchestrator {
       const tool = this.toolManager.getTool(toolCall.function.name);
 
       // Validate tool-agent binding
-      if (tool.required_agent && tool.required_agent !== this.currentAgentName) {
+      if (tool.visible_to && tool.visible_to !== this.currentAgentName) {
         results.push({
           success: false,
-          error: `Tool '${tool.name}' requires agent '${tool.required_agent}' ` +
+          error: `Tool '${tool.name}' requires agent '${tool.visible_to}' ` +
                  `but current agent is '${this.currentAgentName}'`,
           error_type: 'validation_error',
         });
@@ -697,7 +697,7 @@ class ToolOrchestrator {
    - ✓ Provide all tools to user agents
 
 5. **Tool-Agent Binding**
-   - ✓ Allow tool with required_agent constraint
+   - ✓ Allow tool with visible_to constraint
    - ✓ Reject tool when agent does not match
    - ✓ Validate tool execution with correct agent
    - ✓ Provide clear error message for mismatched agent
@@ -771,7 +771,7 @@ class ToolOrchestrator {
     "name": "my_tool",
     "command": "python3",
     "args": ["tool.py"],
-    "required_agent": "my-agent"
+    "visible_to": "my-agent"
   }],
   "agents": [{
     "name": "my-agent",
@@ -858,7 +858,7 @@ You are a specialized agent for my domain.
 **Risk:** Critical tools used without appropriate context
 
 **Mitigation:**
-- `required_agent` field enforces agent matching
+- `visible_to` field enforces agent matching
 - Validation before tool execution
 - Clear error messages guide correct usage
 

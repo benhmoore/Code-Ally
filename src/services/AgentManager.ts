@@ -13,6 +13,8 @@ import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { AGENTS_DIR, BUILTIN_AGENTS_DIR } from '../config/paths.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
+import { AgentRequirements } from '../agent/RequirementTracker.js';
+import { parseFrontmatterYAML, extractFrontmatter } from '../utils/yamlUtils.js';
 
 export interface AgentData {
   name: string;
@@ -23,6 +25,7 @@ export interface AgentData {
   reasoning_effort?: string; // Reasoning effort: "inherit", "low", "medium", "high". Defaults to "inherit"
   tools?: string[]; // Tool names this agent can use. Empty array = all tools, undefined = all tools
   usage_guidelines?: string; // Optional guidance on when/how to use this agent
+  requirements?: AgentRequirements; // Tool call requirements for this agent
   created_at?: string;
   updated_at?: string;
   _pluginName?: string; // Plugin source identifier (only for plugin-provided agents)
@@ -288,72 +291,13 @@ export class AgentManager {
    */
   private parseAgentFile(content: string, agentName: string): AgentData | null {
     try {
-      // Simple frontmatter parser
-      const frontmatterMatch = content.match(/^---\n([\s\S]+?)\n---\n([\s\S]+)$/);
-
-      if (!frontmatterMatch) {
+      const extracted = extractFrontmatter(content);
+      if (!extracted) {
         return null;
       }
 
-      const frontmatter = frontmatterMatch[1];
-      const body = frontmatterMatch[2];
-
-      if (!frontmatter || !body) {
-        return null;
-      }
-
-      const metadata: Record<string, any> = {};
-
-      // Parse YAML-style frontmatter
-      const lines = frontmatter.split('\n');
-      let i = 0;
-      while (i < lines.length) {
-        const line = lines[i];
-        if (!line) {
-          i++;
-          continue;
-        }
-
-        const match = line.match(/^(\w+):\s*(.*)$/);
-
-        if (match) {
-          const key = match[1];
-          const value = match[2];
-
-          if (key && value !== undefined) {
-            // Handle multiline strings (usage_guidelines: |)
-            if (value.trim() === '|') {
-              const multilineContent: string[] = [];
-              i++;
-              // Collect indented lines following the |
-              while (i < lines.length) {
-                const nextLine = lines[i];
-                if (!nextLine || (!nextLine.startsWith('  ') && nextLine.trim() !== '')) {
-                  break;
-                }
-                // Remove the indentation (first 2 spaces)
-                multilineContent.push(nextLine.replace(/^  /, ''));
-                i++;
-              }
-              metadata[key] = multilineContent.join('\n').trim();
-              continue; // Don't increment i again, already done
-            }
-            // Handle JSON arrays (for tools field)
-            else if (value.trim().startsWith('[')) {
-              try {
-                metadata[key] = JSON.parse(value);
-              } catch {
-                // If JSON parse fails, treat as string
-                metadata[key] = value.replace(/^["']|["']$/g, '');
-              }
-            } else {
-              // Remove quotes from simple values
-              metadata[key] = value.replace(/^["']|["']$/g, '');
-            }
-          }
-        }
-        i++;
-      }
+      const { frontmatter, body } = extracted;
+      const metadata = parseFrontmatterYAML(frontmatter);
 
       return {
         name: metadata.name || agentName,
@@ -364,6 +308,7 @@ export class AgentManager {
         reasoning_effort: metadata.reasoning_effort,
         tools: metadata.tools, // Array of tool names or undefined
         usage_guidelines: metadata.usage_guidelines,
+        requirements: metadata.requirements, // Agent requirements object
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
       };
@@ -408,6 +353,30 @@ export class AgentManager {
       guidelineLines.forEach(line => {
         lines.push(`  ${line}`);
       });
+    }
+
+    if (agent.requirements) {
+      // Write requirements as nested object
+      lines.push(`requirements:`);
+      const reqs = agent.requirements;
+      if (reqs.required_tools_one_of) {
+        lines.push(`  required_tools_one_of: ${JSON.stringify(reqs.required_tools_one_of)}`);
+      }
+      if (reqs.required_tools_all) {
+        lines.push(`  required_tools_all: ${JSON.stringify(reqs.required_tools_all)}`);
+      }
+      if (reqs.minimum_tool_calls !== undefined) {
+        lines.push(`  minimum_tool_calls: ${reqs.minimum_tool_calls}`);
+      }
+      if (reqs.require_tool_use !== undefined) {
+        lines.push(`  require_tool_use: ${reqs.require_tool_use}`);
+      }
+      if (reqs.max_retries !== undefined) {
+        lines.push(`  max_retries: ${reqs.max_retries}`);
+      }
+      if (reqs.reminder_message) {
+        lines.push(`  reminder_message: "${reqs.reminder_message}"`);
+      }
     }
 
     lines.push(`created_at: "${agent.created_at || new Date().toISOString()}"`);

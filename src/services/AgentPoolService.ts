@@ -183,8 +183,15 @@ export class AgentPoolService implements IService {
         reserved.metadata.lastAccessedAt = Date.now();
         reserved.metadata.useCount++;
 
+        // CRITICAL: Update parentCallId for this invocation
+        // When reusing a pooled agent, we must update its ToolOrchestrator's parentCallId
+        // to match the current delegation context, otherwise nested tool calls will be
+        // parented to stale IDs from previous invocations
+        const toolOrchestrator = reserved.metadata.agent.getToolOrchestrator();
+        toolOrchestrator.setParentCallId(agentConfig.parentCallId);
+
         logger.debug(
-          `[AGENT_POOL] Reusing agent ${reserved.metadata.agentId} (uses: ${reserved.metadata.useCount})`
+          `[AGENT_POOL] Reusing agent ${reserved.metadata.agentId} (uses: ${reserved.metadata.useCount}) with parentCallId: ${agentConfig.parentCallId}`
         );
 
         return {

@@ -22,6 +22,7 @@ import { TokenManager } from './TokenManager.js';
 import { InterruptionManager } from './InterruptionManager.js';
 import { ActivityMonitor } from './ActivityMonitor.js';
 import { RequiredToolTracker } from './RequiredToolTracker.js';
+import { RequirementValidator } from './RequirementTracker.js';
 import { MessageValidator } from './MessageValidator.js';
 import { ConversationManager } from './ConversationManager.js';
 import { CycleDetector } from './CycleDetector.js';
@@ -64,16 +65,24 @@ export interface AgentConfig {
   parentCallId?: string;
   /** Required tool calls that must be executed before agent can exit */
   requiredToolCalls?: string[];
+  /** Agent requirements specification (new requirements system) */
+  requirements?: import('./RequirementTracker.js').AgentRequirements;
   /** Maximum duration in minutes the agent should run before wrapping up (optional) */
   maxDuration?: number;
   /** Internal: Unique key for pool matching (used by AgentTool to distinguish custom agents) */
   _poolKey?: string;
   /** Directory to restrict this agent's file operations to (optional) */
   focusDirectory?: string;
+  /** Files to exclude from agent access (absolute paths) */
+  excludeFiles?: string[];
   /** Initial messages to add to agent's conversation history (optional) */
   initialMessages?: Message[];
   /** Agent type identifier (e.g., 'explore', 'plan', 'agent') */
   agentType?: string;
+  /** Nesting depth (0=root, 1-3=delegated agents) */
+  agentDepth?: number;
+  /** Agent call stack for circular delegation detection (tracks agent names in call chain) */
+  agentCallStack?: string[];
 }
 
 /**
@@ -102,11 +111,20 @@ export class Agent {
   // Agent instance ID for debugging
   private readonly instanceId: string;
 
+  // Agent depth tracking (0=root, 1-3=delegated agents)
+  private readonly agentDepth: number;
+
+  // Agent call stack for circular delegation detection
+  private readonly agentCallStack: string[];
+
   // Activity monitoring - detects agents stuck generating tokens without tool calls
   private activityMonitor: ActivityMonitor;
 
   // Required tool calls tracking - delegated to RequiredToolTracker
   private requiredToolTracker: RequiredToolTracker;
+
+  // Requirement validation - delegated to RequirementValidator
+  private requirementValidator: RequirementValidator;
 
   // Message validation - delegated to MessageValidator
   private messageValidator: MessageValidator;
@@ -156,9 +174,15 @@ export class Agent {
     // Store agent name from agentType in config (for tool-agent binding)
     this.agentName = config.agentType;
 
+    // Store agent depth from config (default to 0 if undefined)
+    this.agentDepth = config.agentDepth ?? 0;
+
+    // Store agent call stack from config (default to empty array)
+    this.agentCallStack = config.agentCallStack ?? [];
+
     // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none');
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none', 'depth:', this.agentDepth);
 
     // Create conversation manager
     this.conversationManager = new ConversationManager({
@@ -197,6 +221,13 @@ export class Agent {
       logger.debug(`[REQUIRED_TOOLS_DEBUG] Agent ${this.instanceId} configured with required tools:`, config.requiredToolCalls);
     }
 
+    // Create requirement validator
+    this.requirementValidator = new RequirementValidator(this.instanceId);
+    if (config.requirements) {
+      this.requirementValidator.setRequirements(config.requirements);
+      logger.debug('[REQUIREMENT_VALIDATOR]', this.instanceId, 'Agent configured with requirements:', config.requirements);
+    }
+
     // Create message validator
     this.messageValidator = new MessageValidator({
       maxAttempts: AGENT_CONFIG.MAX_VALIDATION_ATTEMPTS,
@@ -209,7 +240,8 @@ export class Agent {
       this.activityStream,
       this.interruptionManager,
       this.conversationManager,
-      this.requiredToolTracker
+      this.requiredToolTracker,
+      this.requirementValidator
     );
 
     // Create session persistence handler
@@ -367,6 +399,19 @@ export class Agent {
     return this.agentName;
   }
 
+  /**
+   * Get the agent depth (used by AgentTool for nesting depth tracking)
+   */
+  getAgentDepth(): number {
+    return this.agentDepth;
+  }
+
+  /**
+   * Get the agent call stack (used by AgentTool for circular delegation detection)
+   */
+  getAgentCallStack(): string[] {
+    return this.agentCallStack;
+  }
 
   /**
    * Reset the tool call activity timer
@@ -774,7 +819,7 @@ export class Agent {
 
     const functions = this.toolManager.getFunctionDefinitions(
       excludeTools.length > 0 ? excludeTools : undefined,
-      this.agentName  // Pass agent name for required_agent filtering
+      this.agentName  // Pass agent name for visible_to filtering
     );
 
     // Regenerate system prompt with current context (todos, etc.) before each LLM call
@@ -1102,7 +1147,7 @@ export class Agent {
 
     const functions = this.toolManager.getFunctionDefinitions(
       excludeTools.length > 0 ? excludeTools : undefined,
-      this.agentName  // Pass agent name for required_agent filtering
+      this.agentName  // Pass agent name for visible_to filtering
     );
 
     let prompt = this.config.systemPrompt || 'You are a helpful AI assistant.';
@@ -1397,6 +1442,12 @@ export class Agent {
       // Save previous focus state
       this.previousFocus = focusManager.getFocusDirectory();
 
+      // Set excluded files if provided
+      if (this.config.excludeFiles && this.config.excludeFiles.length > 0) {
+        focusManager.setExcludedFiles(this.config.excludeFiles);
+        logger.debug('[AGENT_FOCUS]', this.instanceId, 'Excluded', this.config.excludeFiles.length, 'files from access');
+      }
+
       // Set new focus
       const result = await focusManager.setFocus(focusDirectory);
 
@@ -1427,6 +1478,13 @@ export class Agent {
       const focusManager = registry.get<FocusManager>('focus_manager');
 
       if (focusManager) {
+        // Clear excluded files set by this agent
+        if (this.config.excludeFiles && this.config.excludeFiles.length > 0) {
+          focusManager.clearExcludedFiles();
+          logger.debug('[AGENT_FOCUS]', this.instanceId, 'Cleared excluded files');
+        }
+
+        // Restore previous focus
         if (this.previousFocus) {
           await focusManager.setFocus(this.previousFocus);
           logger.debug('[AGENT_FOCUS]', this.instanceId, 'Restored previous focus:', this.previousFocus);

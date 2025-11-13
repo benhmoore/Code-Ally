@@ -6,6 +6,7 @@
 
 import type { BaseTool } from '../tools/BaseTool.js';
 import type { PluginConfigSchema, PluginManifest } from './PluginLoader.js';
+import type { AgentRequirements } from '../agent/RequirementTracker.js';
 
 /**
  * Agent definition within a plugin
@@ -38,6 +39,9 @@ export interface AgentDefinition {
 
   /** Optional guidance on when/how to use this agent */
   usage_guidelines?: string;
+
+  /** Optional tool call requirements for this agent */
+  requirements?: AgentRequirements;
 }
 
 /**

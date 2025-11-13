@@ -232,11 +232,24 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
       } else if (stats.isDirectory()) {
         // Use fast-glob to find matching files
         const globPattern = path.join(absolutePath, '**', filePattern);
-        filesToSearch = await fg(globPattern, {
+        const matchedFiles = await fg(globPattern, {
           dot: false,
           onlyFiles: true,
           ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],
         });
+
+        // Filter out excluded files if focus manager has exclusions
+        if (focusManager) {
+          filesToSearch = [];
+          for (const filePath of matchedFiles) {
+            const validation = await focusManager.validatePathInFocus(filePath);
+            if (validation.success) {
+              filesToSearch.push(filePath);
+            }
+          }
+        } else {
+          filesToSearch = matchedFiles;
+        }
       } else {
         return this.formatErrorResponse(
           `Not a file or directory: ${searchPath}`,

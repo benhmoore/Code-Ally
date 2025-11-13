@@ -85,10 +85,10 @@ export abstract class BaseTool {
   readonly internalTool: boolean = false;
 
   /**
-   * Optional agent name this tool requires (tool will only execute if current agent matches)
+   * Optional array of agent names this tool is visible to (empty or missing = visible to all)
    * Set by plugin wrappers from manifest tool definition
    */
-  readonly requiredAgent?: string;
+  readonly visibleTo?: string[];
 
   /**
    * Activity stream for emitting events

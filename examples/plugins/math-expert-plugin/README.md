@@ -7,7 +7,7 @@ A complete example plugin demonstrating the plugin agent feature with contextual
 This plugin showcases how to:
 - Define a custom agent with specialized capabilities
 - Create contextual tools that are only accessible to specific agents
-- Bind tools to agents using `required_agent` constraints
+- Bind tools to agents using `visible_to` constraints
 - Implement a focused AI agent for domain-specific tasks
 
 ## Plugin Components
@@ -27,7 +27,7 @@ A specialized mathematician agent configured to:
 
 ### Tools
 
-All four tools are **contextual** - they can only be used by the `math-expert` agent due to the `required_agent: "math-expert"` constraint in the manifest.
+All four tools are **contextual** - they can only be used by the `math-expert` agent due to the `visible_to: ["math-expert"]` constraint in the manifest.
 
 #### `add`
 Add two numbers together.
@@ -169,7 +169,7 @@ The key feature demonstrated here is **contextual tools**. In `plugin.json`, eac
 ```json
 {
   "name": "add",
-  "required_agent": "math-expert",
+  "visible_to": ["math-expert"],
   ...
 }
 ```
@@ -177,6 +177,7 @@ The key feature demonstrated here is **contextual tools**. In `plugin.json`, eac
 This ensures that:
 1. Only the `math-expert` agent can call these tools
 2. Other agents in the system cannot access them
+3. Empty or missing `visible_to` array would make the tool visible to all agents
 3. The tools appear only when the math-expert agent is active
 
 ### Agent Tool Restriction
@@ -227,9 +228,10 @@ This plugin serves as a reference implementation showing:
    - Configure agent parameters (temperature, reasoning effort)
 
 2. **How to create contextual tools:**
-   - Add `required_agent` field to tool definitions
-   - Tools become exclusive to that agent
+   - Add `visible_to` field with agent array to tool definitions
+   - Tools become exclusive to agents in the array
    - Prevents tool access from other contexts
+   - Empty or missing array = visible to all agents
 
 3. **How to write agent system prompts:**
    - Use YAML frontmatter for metadata

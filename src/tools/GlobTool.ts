@@ -154,13 +154,25 @@ export class GlobTool extends BaseTool {
         absolute: true,
       });
 
+      // Filter out excluded files if focus manager has exclusions
+      let filteredFiles = matchedFiles;
+      if (focusManager) {
+        filteredFiles = [];
+        for (const filePath of matchedFiles) {
+          const validation = await focusManager.validatePathInFocus(filePath);
+          if (validation.success) {
+            filteredFiles.push(filePath);
+          }
+        }
+      }
+
       // Get file info with stats (parallel with concurrency limit)
       const STAT_CONCURRENCY = 15; // Optimal concurrency for file stats
       const fileInfos: FileInfo[] = [];
 
       // Process files in batches to limit concurrency
-      for (let i = 0; i < matchedFiles.length; i += STAT_CONCURRENCY) {
-        const batch = matchedFiles.slice(i, i + STAT_CONCURRENCY);
+      for (let i = 0; i < filteredFiles.length; i += STAT_CONCURRENCY) {
+        const batch = filteredFiles.slice(i, i + STAT_CONCURRENCY);
         const results = await Promise.allSettled(
           batch.map(async (filePath) => {
             const fileStats = await fs.stat(filePath);

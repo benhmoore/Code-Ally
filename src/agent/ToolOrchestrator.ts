@@ -68,6 +68,7 @@ export interface IAgentForOrchestrator {
   getTurnStartTime(): number | undefined;
   getMaxDuration(): number | undefined;
   getAgentName(): string | undefined;
+  getAgentDepth(): number;
   getTokenManager(): {
     getContextUsagePercentage(): number;
     trackToolResult(toolCallId: string, content: string): string | null;

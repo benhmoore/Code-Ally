@@ -15,6 +15,7 @@ import {
   API_TIMEOUTS,
   TEXT_LIMITS,
   IDLE_MESSAGE_GENERATION,
+  COMMAND_TIPS,
 } from '../config/constants.js';
 
 /**
@@ -273,6 +274,16 @@ export class IdleMessageGenerator implements CancellableService {
     const messages = await this.generateMessageBatch(recentMessages, context);
     logger.debug(`[IDLE_MSG] 💬 Generated ${messages.length} new messages - first: "${messages[0]}"`);
 
+    // Occasionally inject a command tip to help users discover features
+    if (Math.random() < IDLE_MESSAGE_GENERATION.TIP_INJECTION_PROBABILITY && messages.length > 0) {
+      const randomTip = COMMAND_TIPS[Math.floor(Math.random() * COMMAND_TIPS.length)];
+      if (randomTip) {
+        const randomIndex = Math.floor(Math.random() * messages.length);
+        messages[randomIndex] = randomTip;
+        logger.debug(`[IDLE_MSG] 💡 Injected command tip at index ${randomIndex}: "${randomTip}"`);
+      }
+    }
+
     // Replace the queue with new messages
     this.messageQueue = messages;
     this.currentMessageIndex = 0;
@@ -358,10 +369,11 @@ FORMAT: Return as a numbered list, one message per line:
 ...
 10. Tenth message
 
-MARKDOWN SUPPORT:
-- You can use **bold**, *italic*, \`inline code\`, and other markdown formatting
-- Use markdown to add emphasis and make messages more expressive
-- Examples: "**Ready** to code!", "*Feeling* productive", "\`git push\` energy"
+MARKDOWN & COLOR SUPPORT:
+- You can use **bold**, *italic*, ~~strikethrough~~, \`inline code\`, and other markdown formatting
+- You can use color tags: <red>text</red>, <green>text</green>, <yellow>text</yellow>, <cyan>text</cyan>, <blue>text</blue>, <orange>text</orange>
+- Use markdown and colors to add emphasis and make messages more expressive
+- Examples: "**Ready** to code!", "*Feeling* productive", "~~Bugs~~ Features!", "\`git push\` energy", "<green>All systems go!</green>"
 
 CRITICAL RULES:
 - BE BOLD and SURPRISING - safe greetings are BORING
@@ -389,6 +401,11 @@ Examples (be creative, don't copy these):
 - "Feature branch *vibes*!" (if on feature branch)
 - "\`const ready = true;\`" (JavaScript syntax in code formatting)
 - "\`impl Ready {}\`" (Rust syntax, if Rust project)
+- "<green>All systems nominal!</green>" (playful status with color)
+- "<cyan>Vibe check:</cyan> **immaculate**" (color + bold combo)
+- "<orange>Caution:</orange> might write good code" (playful warning)
+- "~~Procrastinating~~ *Strategizing*" (strikethrough + italic combo)
+- "**100%** ~~bug-free~~ code incoming!" (bold + strikethrough)
 ${cwdContext}${gitBranchContext}${homeDirContext}${projectContext}
 
 Reply with ONLY the numbered list, nothing else. No quotes around messages, no punctuation unless natural.`;

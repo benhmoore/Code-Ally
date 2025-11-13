@@ -108,6 +108,8 @@ This is what shapes the agent's behavior.
 | `temperature` | number | No | Temperature 0.0-1.0 (defaults to config) |
 | `reasoning_effort` | string | No | "low", "medium", "high", or "inherit" (default) |
 | `tools` | string[] | No | Allowed tool names (see Tool Scoping below) |
+| `usage_guidelines` | string | No | Instructions for main agent on when/how to use this agent (injected into system prompt) |
+| `requirements` | object | No | Tool usage requirements (see Agent Requirements below) |
 | `created_at` | string | No | Creation timestamp |
 | `updated_at` | string | No | Last update timestamp |
 
@@ -186,14 +188,14 @@ This agent can only use read and grep tools.
 
 ## Tool-Agent Binding
 
-Bind tools to specific agents using `required_agent`:
+Bind tools to specific agents using `visible_to`:
 
 ```json
 {
   "tools": [{
     "name": "database_query",
     "description": "Execute database queries",
-    "required_agent": "database-agent",
+    "visible_to": ["database-agent"],
     "command": "python3",
     "args": ["query.py"]
   }]
@@ -201,14 +203,97 @@ Bind tools to specific agents using `required_agent`:
 ```
 
 **Behavior:**
-- Tool only executes when current agent matches `required_agent`
-- Other agents get clear error: "Tool 'database_query' requires agent 'database-agent'"
+- Tool is only visible and executable by agents in the `visible_to` array
+- Empty or missing array = visible to all agents (including main Ally)
+- Non-empty array = tool is filtered out for agents not in the list
+- Other agents get clear error: "Tool 'database_query' is only visible to agents: [database-agent]"
 - Ensures tools run in correct context with appropriate safeguards
 
 **Use Cases:**
 - Database tools requiring specialized validation
 - API tools needing specific authentication context
 - Admin tools requiring elevated permissions
+
+## Usage Guidelines
+
+Plugin agents can provide instructions to the main Ally agent about when and how to use them via the `usage_guidelines` field:
+
+```markdown
+---
+name: math-expert
+usage_guidelines: |
+  **When to use:** User asks for arithmetic calculations (add, subtract, multiply, divide)
+  **When NOT to use:** Advanced math (square roots, exponents, trigonometry)
+  **CRITICAL:** If this agent cannot complete the task, pass its response to the user verbatim
+---
+```
+
+**Behavior:**
+- Guidelines are injected into the main agent's system prompt
+- Helps main agent select appropriate specialized agents
+- Provides context on agent capabilities and limitations
+- Can include critical behavioral instructions (e.g., how to handle failures)
+
+**Best Practices:**
+- Keep guidelines concise (2-4 bullet points)
+- Clearly state when to use vs not use
+- Document important limitations
+- Include failure handling instructions if needed
+
+## Agent Requirements
+
+Ensure agents use their tools before completing tasks with the `requirements` field:
+
+```markdown
+---
+name: math-expert
+tools: ["add", "subtract", "multiply", "divide", "cannot_calculate"]
+requirements:
+  required_tools_one_of: ["add", "subtract", "multiply", "divide", "cannot_calculate"]
+  require_tool_use: true
+  max_retries: 2
+  reminder_message: "You must use your arithmetic tools or call cannot_calculate if unable"
+---
+```
+
+### Requirement Types
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `required_tools_one_of` | string[] | At least one tool from this list must be called successfully |
+| `required_tools_all` | string[] | All tools in this list must be called successfully |
+| `minimum_tool_calls` | number | Minimum number of successful tool calls (any tools) |
+| `require_tool_use` | boolean | Requires at least one successful tool call |
+| `max_retries` | number | Maximum reminder attempts before allowing exit (default: 2) |
+| `reminder_message` | string | Custom message when requirements not met |
+
+**Behavior:**
+- Only **successful** tool calls count (where `success: true`)
+- If requirements not met when agent tries to exit, a reminder is injected
+- Agent gets up to `max_retries` reminders before being allowed to exit anyway
+- Prevents agents from hallucinating answers instead of using tools
+
+**Example - Require One Of:**
+```yaml
+requirements:
+  required_tools_one_of: ["read", "grep"]
+  max_retries: 1
+  reminder_message: "You must read or search files to answer this question"
+```
+
+**Example - Require All:**
+```yaml
+requirements:
+  required_tools_all: ["validate_schema", "execute_query"]
+  reminder_message: "You must validate the schema before executing the query"
+```
+
+**Example - Minimum Count:**
+```yaml
+requirements:
+  minimum_tool_calls: 3
+  reminder_message: "You must gather more information before providing an answer"
+```
 
 ## Agent Pooling and Isolation
 
@@ -280,7 +365,7 @@ Result: User version loads
     "description": "Execute analytics query",
     "command": "python3",
     "args": ["query.py"],
-    "required_agent": "analytics-agent"
+    "visible_to": ["analytics-agent"]
   }],
 
   "agents": [{
@@ -410,7 +495,7 @@ reasoning_effort: medium
     "description": "Execute SQL query",
     "command": "python3",
     "args": ["query.py"],
-    "required_agent": "database-agent"
+    "visible_to": [ "database-agent"
   }]
 }
 ```
@@ -509,7 +594,7 @@ Provide specific line references and actionable suggestions.
 
 **Solutions:**
 1. Use correct agent: `agent(agent_name="other-agent", ...)`
-2. Remove `required_agent` constraint from tool
+2. Remove `visible_to` constraint from tool (or leave array empty)
 3. Verify agent name matches exactly
 
 ### Agent Uses Wrong Model
@@ -561,7 +646,7 @@ Tools can be shared across agents with different constraints:
       "description": "Write to database",
       "command": "python3",
       "args": ["query.py", "--write"],
-      "required_agent": "admin-agent"
+      "visible_to": [ "admin-agent"
       // Only admin-agent can use
     }
   ]

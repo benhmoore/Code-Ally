@@ -16,6 +16,7 @@ import { LLMResponse } from '../llm/ModelClient.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { MessageValidator } from './MessageValidator.js';
 import { RequiredToolTracker } from './RequiredToolTracker.js';
+import { RequirementValidator } from './RequirementTracker.js';
 import { InterruptionManager } from './InterruptionManager.js';
 import { ConversationManager } from './ConversationManager.js';
 import { Message, ActivityEventType } from '../types/index.js';
@@ -107,7 +108,8 @@ export class ResponseProcessor {
     private activityStream: ActivityStream,
     private interruptionManager: InterruptionManager,
     private conversationManager: ConversationManager,
-    private requiredToolTracker: RequiredToolTracker
+    private requiredToolTracker: RequiredToolTracker,
+    private requirementValidator: RequirementValidator
   ) {}
 
   /**
@@ -482,7 +484,7 @@ export class ResponseProcessor {
     // Check if cycle pattern is broken (3 consecutive different calls)
     context.clearCyclesIfBroken();
 
-    // Track required tool calls
+    // Track required tool calls (legacy requiredToolCalls config)
     if (this.requiredToolTracker.hasRequiredTools()) {
       logger.debug(`[REQUIRED_TOOLS_DEBUG] Checking ${unwrappedToolCalls.length} tool calls for required tools`);
       unwrappedToolCalls.forEach(tc => {
@@ -491,6 +493,17 @@ export class ResponseProcessor {
           logger.debug(`[REQUIRED_TOOLS_DEBUG] ✓ Tracked required tool call: ${tc.function.name}`);
           logger.debug(`[REQUIRED_TOOLS_DEBUG] Called so far:`, this.requiredToolTracker.getCalledTools());
         }
+      });
+    }
+
+    // Track requirements (new requirements system)
+    if (this.requirementValidator.hasRequirements()) {
+      logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Recording tool call results for requirements');
+      unwrappedToolCalls.forEach((tc, index) => {
+        const result = toolResults[index];
+        const success = result ? result.success === true : false;
+        this.requirementValidator.recordToolCall(tc.function.name, success);
+        logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, `Tool ${tc.function.name}: success=${success}`);
       });
     }
 
@@ -607,6 +620,58 @@ export class ResponseProcessor {
             this.requiredToolTracker.clearWarningMessageIndex();
           }
         }
+      }
+    }
+
+    // Check requirements (new requirements system)
+    if (this.requirementValidator.hasRequirements() && !this.interruptionManager.isInterrupted()) {
+      logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Checking requirements before agent exit');
+      logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Successful tool calls:', this.requirementValidator.getSuccessfulToolCalls());
+
+      const { met, reason } = this.requirementValidator.checkRequirements();
+
+      if (!met) {
+        // Requirements not met - check if we should retry or allow exit
+        if (this.requirementValidator.hasExceededMaxRetries()) {
+          // Max retries exceeded - allow exit anyway
+          logger.warn('[REQUIREMENT_VALIDATOR]', context.instanceId,
+            'Requirements not met but max retries exceeded. Allowing exit. Reason:', reason);
+        } else {
+          // Inject reminder and retry
+          this.requirementValidator.incrementRetryCount();
+          const retryCount = this.requirementValidator.getRetryCount();
+          const maxRetries = this.requirementValidator.getMaxRetries();
+
+          logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId,
+            `Requirements not met. Injecting reminder (attempt ${retryCount}/${maxRetries})`);
+
+          const reminderMessage: Message = {
+            role: 'system',
+            content: `<system-reminder>\n${this.requirementValidator.getReminderMessage()}\n</system-reminder>`,
+            timestamp: Date.now(),
+          };
+          this.conversationManager.addMessage(reminderMessage);
+          context.autoSaveSession();
+
+          // Check for interruption before retry
+          if (this.interruptionManager.isInterrupted()) {
+            logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Interrupted before requirements retry');
+            if (this.interruptionManager.getInterruptionType() === 'cancel') {
+              this.interruptionManager.markRequestAsInterrupted();
+              return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
+            }
+            return '';
+          }
+
+          // Get new response from LLM
+          logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Requesting LLM to meet requirements...');
+          const retryResponse = await context.getLLMResponse();
+
+          // Recursively process the response
+          return await this.processLLMResponse(retryResponse, context);
+        }
+      } else {
+        logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'All requirements met');
       }
     }
 

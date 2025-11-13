@@ -93,6 +93,7 @@ export type ErrorType =
   | 'command_failed'
   | 'interrupted'
   | 'interactive_command'
+  | 'depth_limit_exceeded'
   | 'execution_error'
   | 'plugin_error'
   | 'user_error'

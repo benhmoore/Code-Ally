@@ -93,9 +93,9 @@ export class BackgroundToolWrapper extends BaseTool {
 		this.usageGuidance = toolDef.usageGuidance;
 		this.pluginName = manifest.name;
 
-		// Set requiredAgent from tool definition (cast to any since it's readonly)
-		if (toolDef.required_agent) {
-			(this as any).requiredAgent = toolDef.required_agent;
+		// Set visibleTo from tool definition (cast to any since it's readonly)
+		if (toolDef.visible_to) {
+			(this as any).visibleTo = toolDef.visible_to;
 		}
 
 		// Validate required fields for background RPC tools

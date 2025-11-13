@@ -19,7 +19,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT, ID_GENERATION } from '../config/constants.js';
+import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT, ID_GENERATION, AGENT_CONFIG } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 
@@ -137,6 +137,44 @@ export class AgentTool extends BaseTool {
       }
     }
 
+    // Extract current agent depth and validate nesting limit
+    const registry = ServiceRegistry.getInstance();
+    const currentAgent = registry.get<any>('agent');
+    const currentDepth = currentAgent?.getAgentDepth?.() ?? 0;
+    const newDepth = currentDepth + 1;
+
+    // Validate depth limit
+    if (newDepth > AGENT_CONFIG.MAX_AGENT_DEPTH) {
+      return this.formatErrorResponse(
+        `Cannot delegate to agent '${agentName}': maximum nesting depth (${AGENT_CONFIG.MAX_AGENT_DEPTH}) exceeded. Current depth: ${currentDepth}, attempted depth: ${newDepth}. Maximum structure: Ally → Agent1 → Agent2 → Agent3.`,
+        'depth_limit_exceeded'
+      );
+    }
+
+    // Prevent self-delegation (agent calling itself)
+    const currentAgentName = currentAgent?.getAgentName?.();
+    if (currentAgentName && agentName === currentAgentName) {
+      return this.formatErrorResponse(
+        `Agent '${agentName}' cannot delegate to itself. Please choose a different agent.`,
+        'validation_error'
+      );
+    }
+
+    // Prevent circular delegation (detect cycles in agent call chain)
+    const currentCallStack = currentAgent?.getAgentCallStack?.() ?? [];
+    if (currentCallStack.includes(agentName)) {
+      // Build chain visualization for error message
+      // Include current agent name if available to show full chain
+      const fullChain = currentAgentName
+        ? [...currentCallStack, currentAgentName, agentName]
+        : [...currentCallStack, agentName];
+      const chainVisualization = fullChain.join(' → ');
+      return this.formatErrorResponse(
+        `Circular delegation detected: agent '${agentName}' is already in the call chain (${chainVisualization}). Choose a different agent to break the cycle.`,
+        'validation_error'
+      );
+    }
+
     // Execute single agent - pass currentCallId to avoid race conditions
     // IMPORTANT: this.currentCallId is set by BaseTool.execute() before executeImpl is called
     // We capture it here to avoid it being overwritten by concurrent executions
@@ -237,7 +275,7 @@ export class AgentTool extends BaseTool {
       }
     }
 
-    return await this.executeSingleAgentWrapper(agentName, taskPrompt, thoroughness, callId, initialMessages);
+    return await this.executeSingleAgentWrapper(agentName, taskPrompt, thoroughness, callId, newDepth, initialMessages);
   }
 
   /**
@@ -248,12 +286,13 @@ export class AgentTool extends BaseTool {
     taskPrompt: string,
     thoroughness: string,
     callId: string,
+    newDepth: number,
     initialMessages?: Message[]
   ): Promise<ToolResult> {
     logger.debug('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId, 'thoroughness:', thoroughness);
 
     try {
-      const result = await this.executeSingleAgent(agentName, taskPrompt, thoroughness, callId, initialMessages);
+      const result = await this.executeSingleAgent(agentName, taskPrompt, thoroughness, callId, newDepth, initialMessages);
 
       if (result.success) {
         // Build response with agent_id (always returned since agents always persist)
@@ -294,6 +333,7 @@ export class AgentTool extends BaseTool {
     taskPrompt: string,
     thoroughness: string,
     callId: string,
+    newDepth: number,
     initialMessages?: Message[]
   ): Promise<any> {
     logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId, 'thoroughness:', thoroughness);
@@ -330,7 +370,7 @@ export class AgentTool extends BaseTool {
 
       // Execute the agent task
       logger.debug('[AGENT_TOOL] Executing agent task...');
-      const taskResult = await this.executeAgentTask(agentData, taskPrompt, thoroughness, callId, initialMessages);
+      const taskResult = await this.executeAgentTask(agentData, taskPrompt, thoroughness, callId, newDepth, initialMessages);
       logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
 
       const duration = (Date.now() - startTime) / 1000;
@@ -379,6 +419,7 @@ export class AgentTool extends BaseTool {
     taskPrompt: string,
     thoroughness: string,
     callId: string,
+    newDepth: number,
     initialMessages?: Message[]
   ): Promise<{ result: string; agent_id?: string }> {
     logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
@@ -411,6 +452,7 @@ export class AgentTool extends BaseTool {
     }
 
     logger.debug('[AGENT_TOOL] All required services available');
+    logger.debug('[AGENT_TOOL] Agent depth:', newDepth);
 
     // Determine target model
     const targetModel = agentData.model || config.model;
@@ -502,6 +544,14 @@ export class AgentTool extends BaseTool {
     // Create scoped registry for sub-agent (currently unused - for future extension)
     // const scopedRegistry = new ScopedServiceRegistryProxy(registry);
 
+    // Build updated agent call stack for circular delegation detection
+    const currentAgent = registry.get<any>('agent');
+    const currentAgentName = currentAgent?.getAgentName?.();
+    const currentCallStack = currentAgent?.getAgentCallStack?.() ?? [];
+    const newCallStack = currentAgentName
+      ? [...currentCallStack, currentAgentName]
+      : currentCallStack;
+
     // Create sub-agent with scoped context and parent relationship
     // IMPORTANT: Use callId parameter, not this.currentCallId (which can be overwritten by concurrent calls)
     logger.debug('[AGENT_TOOL] Creating sub-agent with parentCallId:', callId);
@@ -528,6 +578,9 @@ export class AgentTool extends BaseTool {
         maxDuration,
         initialMessages,
         agentType: agentData.name || 'agent',
+        requirements: agentData.requirements,
+        agentDepth: newDepth,
+        agentCallStack: newCallStack,
       };
 
       subAgent = new Agent(
@@ -559,6 +612,9 @@ export class AgentTool extends BaseTool {
         maxDuration,
         initialMessages,
         agentType: agentData.name || 'agent',
+        requirements: agentData.requirements,
+        agentDepth: newDepth,
+        agentCallStack: newCallStack,
       };
 
       // Acquire agent from pool

@@ -150,7 +150,7 @@ export class ToolManager {
    * Generate function definitions for all tools
    *
    * @param excludeTools - Optional list of tool names to exclude
-   * @param currentAgentName - Optional current agent name for required_agent filtering
+   * @param currentAgentName - Optional current agent name for visible_to filtering
    * @returns List of function definitions for LLM function calling
    */
   getFunctionDefinitions(excludeTools?: string[], currentAgentName?: string): FunctionDefinition[] {
@@ -193,12 +193,16 @@ export class ToolManager {
       }
       // Core tools (no pluginName) are always included
 
-      // Skip tools that require a specific agent if this isn't that agent
-      if (tool.requiredAgent && tool.requiredAgent !== currentAgentName) {
-        logger.debug(
-          `[ToolManager] Filtering out tool '${tool.name}' - requires agent '${tool.requiredAgent}', current agent is '${currentAgentName || 'none'}'`
-        );
-        continue;
+      // Filter tools by visible_to array (if specified)
+      // Empty or missing array = visible to all agents
+      if (tool.visibleTo && tool.visibleTo.length > 0) {
+        // Non-empty array = only visible to specified agents
+        if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
+          logger.debug(
+            `[ToolManager] Filtering out tool '${tool.name}' - only visible to agents: [${tool.visibleTo.join(', ')}], current agent is '${currentAgentName || 'none'}'`
+          );
+          continue;
+        }
       }
 
       const functionDef = this.generateFunctionDefinition(tool);
@@ -217,11 +221,11 @@ export class ToolManager {
    * The cache key includes the sorted list of active plugins to ensure that
    * cached function definitions match the current plugin activation state.
    * This prevents returning cached definitions that include deactivated plugins.
-   * Also includes agent name to ensure tools are filtered based on required_agent.
+   * Also includes agent name to ensure tools are filtered based on visible_to.
    *
    * @param activePlugins - Set of active plugin names (null if no plugin system)
    * @param excludeTools - Optional list of tool names to exclude
-   * @param currentAgentName - Optional current agent name for required_agent filtering
+   * @param currentAgentName - Optional current agent name for visible_to filtering
    * @returns Cache key string
    */
   private generateCacheKey(activePlugins: Set<string> | null, excludeTools?: string[], currentAgentName?: string): string {
@@ -349,13 +353,15 @@ export class ToolManager {
       };
     }
 
-    // Check required_agent constraint
-    if (tool.requiredAgent && currentAgentName !== tool.requiredAgent) {
-      return {
-        success: false,
-        error: `Tool '${toolName}' requires agent '${tool.requiredAgent}' but current agent is '${currentAgentName || 'unknown'}'`,
-        error_type: 'agent_mismatch',
-      };
+    // Check visible_to constraint (if specified and non-empty)
+    if (tool.visibleTo && tool.visibleTo.length > 0) {
+      if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
+        return {
+          success: false,
+          error: `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
+          error_type: 'agent_mismatch',
+        };
+      }
     }
 
     const duplicateCheck = this.duplicateDetector.check(toolName, args);

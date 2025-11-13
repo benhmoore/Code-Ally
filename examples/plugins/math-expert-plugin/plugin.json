@@ -24,7 +24,7 @@
         },
         "required": ["a", "b"]
       },
-      "required_agent": "math-expert"
+      "visible_to": ["math-expert"]
     },
     {
       "name": "subtract",
@@ -45,7 +45,7 @@
         },
         "required": ["a", "b"]
       },
-      "required_agent": "math-expert"
+      "visible_to": ["math-expert"]
     },
     {
       "name": "multiply",
@@ -66,7 +66,7 @@
         },
         "required": ["a", "b"]
       },
-      "required_agent": "math-expert"
+      "visible_to": ["math-expert"]
     },
     {
       "name": "divide",
@@ -87,7 +87,23 @@
         },
         "required": ["a", "b"]
       },
-      "required_agent": "math-expert"
+      "visible_to": ["math-expert"]
+    },
+    {
+      "name": "cannot_calculate",
+      "description": "Call this when you cannot perform the requested calculation with your available arithmetic tools (add, subtract, multiply, divide)",
+      "command": "python3",
+      "args": ["tools/cannot_calculate.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Explanation of why the calculation cannot be performed"
+          }
+        }
+      },
+      "visible_to": ["math-expert"]
     }
   ],
   "agents": [
@@ -95,7 +111,7 @@
       "name": "math-expert",
       "description": "Expert mathematician specializing in arithmetic calculations",
       "system_prompt_file": "agents/math-expert.md",
-      "tools": ["add", "subtract", "multiply", "divide"]
+      "tools": ["add", "subtract", "multiply", "divide", "cannot_calculate"]
     }
   ]
 }

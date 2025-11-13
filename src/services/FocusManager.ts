@@ -18,6 +18,7 @@ export interface FocusResult {
 
 export class FocusManager {
   private focusDirectory: string | null = null;
+  private excludedFiles: Set<string> = new Set();
   private readonly initialWorkingDirectory: string;
 
   constructor() {
@@ -96,7 +97,23 @@ export class FocusManager {
   }
 
   /**
-   * Clear the current focus
+   * Set files to exclude from access (absolute paths)
+   *
+   * @param filePaths - Array of absolute file paths to exclude
+   */
+  setExcludedFiles(filePaths: string[]): void {
+    this.excludedFiles = new Set(filePaths.map(p => resolve(p)));
+  }
+
+  /**
+   * Clear excluded files list
+   */
+  clearExcludedFiles(): void {
+    this.excludedFiles.clear();
+  }
+
+  /**
+   * Clear the current focus (does NOT clear excluded files)
    *
    * @returns Result indicating success
    */
@@ -193,7 +210,7 @@ export class FocusManager {
    * @returns Validation result
    */
   async validatePathInFocus(filePath: string): Promise<FocusResult> {
-    if (!this.isFocused()) {
+    if (!this.isFocused() && this.excludedFiles.size === 0) {
       return { success: true, message: '' };
     }
 
@@ -204,19 +221,32 @@ export class FocusManager {
     try {
       // Normalize the file path and resolve symlinks
       const normalizedPath = await realpath(filePath).catch(() => resolve(filePath));
-      const focusDir = await realpath(this.focusDirectory!);
 
-      // Check if the path is within the focus directory
-      const isWithinFocus =
-        normalizedPath === focusDir || normalizedPath.startsWith(focusDir + sep);
-
-      if (!isWithinFocus) {
-        const focusDisplay = this.getFocusDisplay();
+      // Check if path is in excluded files list
+      if (this.excludedFiles.has(normalizedPath)) {
         const relativePath = relative(this.initialWorkingDirectory, normalizedPath);
         return {
           success: false,
-          message: `Access denied: path '${relativePath}' is outside focused directory '${focusDisplay}'`,
+          message: `Access denied: path '${relativePath}' is excluded from access`,
         };
+      }
+
+      // If focus is set, check focus constraints
+      if (this.isFocused()) {
+        const focusDir = await realpath(this.focusDirectory!);
+
+        // Check if the path is within the focus directory
+        const isWithinFocus =
+          normalizedPath === focusDir || normalizedPath.startsWith(focusDir + sep);
+
+        if (!isWithinFocus) {
+          const focusDisplay = this.getFocusDisplay();
+          const relativePath = relative(this.initialWorkingDirectory, normalizedPath);
+          return {
+            success: false,
+            message: `Access denied: path '${relativePath}' is outside focused directory '${focusDisplay}'`,
+          };
+        }
       }
 
       return { success: true, message: '' };

@@ -7,7 +7,7 @@
  * - Priority system (user > plugin > builtin)
  * - AgentTool integration with pool keys
  * - Tool scoping (core + plugin tools)
- * - Tool-agent binding with required_agent
+ * - Tool-agent binding with visible_to
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -524,47 +524,49 @@ Agent prompt.`;
   });
 
   describe('Tool-Agent Binding', () => {
-    it('should allow tool with required_agent constraint', () => {
-      // Tool specifies required_agent
+    it('should allow tool with visible_to constraint', () => {
+      // Tool specifies visible_to
       const toolDef = {
         name: 'specialized_tool',
         description: 'A specialized tool',
-        required_agent: 'data-analyst',
+        visible_to: ['data-analyst'],
       };
 
       const currentAgent = 'data-analyst';
 
       // Validation should pass
-      expect(toolDef.required_agent).toBe(currentAgent);
+      expect(toolDef.visible_to).toContain(currentAgent);
     });
 
-    it('should reject tool when agent does not match', () => {
+    it('should reject tool when agent is not in visible_to array', () => {
       const toolDef = {
         name: 'specialized_tool',
         description: 'A specialized tool',
-        required_agent: 'data-analyst',
+        visible_to: ['data-analyst'],
       };
 
       const currentAgent = 'general';
 
       // Validation should fail
-      expect(toolDef.required_agent).not.toBe(currentAgent);
+      expect(toolDef.visible_to).not.toContain(currentAgent);
     });
 
     it('should validate tool execution with correct agent', () => {
       const toolDef = {
         name: 'analytics_query',
         description: 'Query analytics database',
-        required_agent: 'analytics-agent',
+        visible_to: ['analytics-agent'],
       };
 
       // Simulate validation logic
       const validateToolForAgent = (tool: any, agentName: string | undefined) => {
-        if (tool.required_agent && tool.required_agent !== agentName) {
-          return {
-            valid: false,
-            error: `Tool '${tool.name}' requires agent '${tool.required_agent}' but current agent is '${agentName || 'unknown'}'`,
-          };
+        if (tool.visible_to && tool.visible_to.length > 0) {
+          if (!agentName || !tool.visible_to.includes(agentName)) {
+            return {
+              valid: false,
+              error: `Tool '${tool.name}' is only visible to agents: [${tool.visible_to.join(', ')}]. Current agent is '${agentName || 'unknown'}'`,
+            };
+          }
         }
         return { valid: true };
       };
@@ -576,31 +578,33 @@ Agent prompt.`;
       // Should fail with wrong agent
       const result2 = validateToolForAgent(toolDef, 'general');
       expect(result2.valid).toBe(false);
-      expect(result2.error).toContain("requires agent 'analytics-agent'");
+      expect(result2.error).toContain("only visible to agents:");
     });
 
     it('should provide clear error message for mismatched agent', () => {
       const toolName = 'database_query';
-      const requiredAgent = 'database-agent';
+      const visibleTo = ['database-agent'];
       const currentAgent = 'general';
 
-      const errorMessage = `Tool '${toolName}' requires agent '${requiredAgent}' but current agent is '${currentAgent}'`;
+      const errorMessage = `Tool '${toolName}' is only visible to agents: [${visibleTo.join(', ')}]. Current agent is '${currentAgent}'`;
 
-      expect(errorMessage).toContain('requires agent');
-      expect(errorMessage).toContain(requiredAgent);
+      expect(errorMessage).toContain('only visible to');
+      expect(errorMessage).toContain(visibleTo[0]);
       expect(errorMessage).toContain(currentAgent);
     });
 
-    it('should allow tool without required_agent for any agent', () => {
+    it('should allow tool without visible_to for any agent', () => {
       const toolDef = {
         name: 'read',
         description: 'Read files',
-        required_agent: undefined,
+        visible_to: undefined,
       };
 
       const validateToolForAgent = (tool: any, agentName: string | undefined) => {
-        if (tool.required_agent && tool.required_agent !== agentName) {
-          return { valid: false };
+        if (tool.visible_to && tool.visible_to.length > 0) {
+          if (!agentName || !tool.visible_to.includes(agentName)) {
+            return { valid: false };
+          }
         }
         return { valid: true };
       };

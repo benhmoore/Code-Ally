@@ -238,6 +238,8 @@ System prompt defining agent behavior.
 - `temperature`: 0.0-1.0 (optional, defaults to config)
 - `reasoning_effort`: "low", "medium", "high" (optional)
 - `tools`: Array of allowed tool names (optional, see below)
+- `usage_guidelines`: Instructions for main agent on when/how to use this agent (optional)
+- `requirements`: Tool usage requirements to prevent hallucination (optional)
 
 ### Tool Scoping
 
@@ -266,21 +268,63 @@ tools: ["read", "my_tool"]
 
 ### Tool-Agent Binding
 
-Bind tools to specific agents with `required_agent`:
+Bind tools to specific agents with `visible_to`:
 
 ```json
 {
   "tools": [{
     "name": "database_query",
     "description": "Execute database queries",
-    "required_agent": "database-agent",
+    "visible_to": ["database-agent"],
     "command": "python3",
     "args": ["query.py"]
   }]
 }
 ```
 
-**Effect:** Tool only executes when current agent is `database-agent`.
+**Effect:** Tool is only visible and executable by agents in the `visible_to` array. Empty or missing array means visible to all agents (including main Ally).
+
+### Usage Guidelines
+
+Provide instructions to the main agent about when and how to use your specialized agent:
+
+```markdown
+---
+name: my-agent
+usage_guidelines: |
+  **When to use:** User asks for database operations
+  **When NOT to use:** Simple file operations
+  **CRITICAL:** If agent fails, pass response verbatim to user
+---
+```
+
+**Injected into main agent's system prompt** to help with agent selection.
+
+### Agent Requirements
+
+Prevent hallucination by requiring tool use before agent completes:
+
+```markdown
+---
+name: math-expert
+tools: ["add", "subtract", "multiply", "divide", "cannot_calculate"]
+requirements:
+  required_tools_one_of: ["add", "subtract", "multiply", "divide", "cannot_calculate"]
+  require_tool_use: true
+  max_retries: 2
+  reminder_message: "Use your tools to calculate, or call cannot_calculate if unable"
+---
+```
+
+**Requirement types:**
+- `required_tools_one_of`: At least one tool from list must be called successfully
+- `required_tools_all`: All tools must be called successfully
+- `minimum_tool_calls`: Minimum number of successful tool calls
+- `require_tool_use`: At least one successful tool call required
+- `max_retries`: Retry limit before allowing exit (default: 2)
+- `reminder_message`: Custom reminder when requirements not met
+
+**Only successful calls count** (where `success: true` in tool response).
 
 ### Complete Example
 
@@ -298,7 +342,7 @@ Bind tools to specific agents with `required_agent`:
       "description": "Execute SQL query",
       "command": "python3",
       "args": ["query.py"],
-      "required_agent": "database-agent"
+      "visible_to": ["database-agent"]
     },
     {
       "name": "explain_query",

@@ -35,6 +35,7 @@ import type { BackgroundProcessManager, BackgroundProcessConfig } from './Backgr
 import type { EventSubscriptionManager } from './EventSubscriptionManager.js';
 import type { AgentDefinition } from './interfaces.js';
 import type { AgentData } from '../services/AgentManager.js';
+import { parseFrontmatterYAML, extractFrontmatter } from '../utils/yamlUtils.js';
 
 /**
  * Plugin manifest schema
@@ -155,8 +156,8 @@ export interface ToolDefinition {
   /** Optional usage guidance to inject into agent system prompt */
   usageGuidance?: string;
 
-  /** Optional agent name this tool requires (tool will only execute if current agent matches) */
-  required_agent?: string;
+  /** Optional array of agent names this tool is visible to (empty or missing = visible to all) */
+  visible_to?: string[];
 }
 
 /**
@@ -1317,72 +1318,13 @@ export class PluginLoader {
    */
   private parseAgentFile(content: string, agentName: string): AgentData | null {
     try {
-      // Simple frontmatter parser (matches AgentManager implementation)
-      const frontmatterMatch = content.match(/^---\n([\s\S]+?)\n---\n([\s\S]+)$/);
-
-      if (!frontmatterMatch) {
+      const extracted = extractFrontmatter(content);
+      if (!extracted) {
         return null;
       }
 
-      const frontmatter = frontmatterMatch[1];
-      const body = frontmatterMatch[2];
-
-      if (!frontmatter || !body) {
-        return null;
-      }
-
-      const metadata: Record<string, any> = {};
-
-      // Parse YAML-style frontmatter
-      const lines = frontmatter.split('\n');
-      let i = 0;
-      while (i < lines.length) {
-        const line = lines[i];
-        if (!line) {
-          i++;
-          continue;
-        }
-
-        const match = line.match(/^(\w+):\s*(.*)$/);
-
-        if (match) {
-          const key = match[1];
-          const value = match[2];
-
-          if (key && value !== undefined) {
-            // Handle multiline strings (usage_guidelines: |)
-            if (value.trim() === '|') {
-              const multilineContent: string[] = [];
-              i++;
-              // Collect indented lines following the |
-              while (i < lines.length) {
-                const nextLine = lines[i];
-                if (!nextLine || (!nextLine.startsWith('  ') && nextLine.trim() !== '')) {
-                  break;
-                }
-                // Remove the indentation (first 2 spaces)
-                multilineContent.push(nextLine.replace(/^  /, ''));
-                i++;
-              }
-              metadata[key] = multilineContent.join('\n').trim();
-              continue; // Don't increment i again, already done
-            }
-            // Handle JSON arrays (for tools field)
-            else if (value.trim().startsWith('[')) {
-              try {
-                metadata[key] = JSON.parse(value);
-              } catch {
-                // If JSON parse fails, treat as string
-                metadata[key] = value.replace(/^["']|["']$/g, '');
-              }
-            } else {
-              // Remove quotes from simple values
-              metadata[key] = value.replace(/^["']|["']$/g, '');
-            }
-          }
-        }
-        i++;
-      }
+      const { frontmatter, body } = extracted;
+      const metadata = parseFrontmatterYAML(frontmatter);
 
       return {
         name: metadata.name || agentName,
@@ -1393,6 +1335,7 @@ export class PluginLoader {
         reasoning_effort: metadata.reasoning_effort,
         tools: metadata.tools, // Array of tool names or undefined
         usage_guidelines: metadata.usage_guidelines,
+        requirements: metadata.requirements, // Agent requirements object
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
       };

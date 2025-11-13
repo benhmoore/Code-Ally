@@ -25,7 +25,7 @@ import { App } from './ui/App.js';
 import { ArgumentParser, type CLIOptions } from './cli/ArgumentParser.js';
 import { logger } from './services/Logger.js';
 import { formatRelativeTime } from './ui/utils/timeUtils.js';
-import { AGENT_POOL } from './config/constants.js';
+import { AGENT_CONFIG } from './config/constants.js';
 import { runStartupValidation, needsSetup } from './cli/validation.js';
 
 /**
@@ -654,7 +654,7 @@ async function main() {
       configManager,
       permissionManager,
       {
-        maxPoolSize: AGENT_POOL.DEFAULT_MAX_SIZE, // Keep up to 5 agents in pool (auto-evict least recently used when full)
+        maxPoolSize: AGENT_CONFIG.AGENT_POOL_SIZE_WITH_NESTING, // Keep up to 15 agents in pool for depth-3 nesting support (auto-evict least recently used when full)
         verbose: options.debug || false, // Enable verbose logging in debug mode
       }
     );

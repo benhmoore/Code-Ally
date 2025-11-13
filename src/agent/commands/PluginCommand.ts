@@ -448,8 +448,8 @@ export class PluginCommand extends Command {
           if (tool.requiresConfirmation) {
             notes.push('Requires confirmation');
           }
-          if (tool.required_agent) {
-            notes.push(`Restricted to: ${tool.required_agent}`);
+          if (tool.visible_to && tool.visible_to.length > 0) {
+            notes.push(`Visible to: ${tool.visible_to.join(', ')}`);
           }
           const notesStr = notes.join(', ');
           output += `| ${name} | ${description} | ${notesStr} |\n`;

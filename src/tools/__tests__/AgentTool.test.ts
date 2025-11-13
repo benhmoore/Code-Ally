@@ -162,6 +162,140 @@ describe('AgentTool', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('thoroughness must be one of');
     });
+
+    it('should reject agent delegation beyond maximum depth', async () => {
+      // Mock a parent agent at depth 3 (maximum depth)
+      const mockParentAgent = {
+        getAgentDepth: vi.fn().mockReturnValue(3),
+      };
+
+      registry.registerInstance('agent', mockParentAgent);
+
+      const result = await tool.execute({
+        agent_name: 'general',
+        task_prompt: 'Test task at excessive depth',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('maximum nesting depth');
+      expect(result.error).toContain('exceeded');
+      expect(result.error_type).toBe('depth_limit_exceeded');
+    });
+
+    it('should allow agent delegation at depth 1', async () => {
+      // Mock a root agent at depth 0
+      const mockRootAgent = {
+        getAgentDepth: vi.fn().mockReturnValue(0),
+      };
+
+      registry.registerInstance('agent', mockRootAgent);
+
+      const result = await tool.execute({
+        agent_name: 'general',
+        task_prompt: 'Test task at depth 1',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should allow agent delegation at maximum allowed depth', async () => {
+      // Mock a parent agent at depth 2 (so new agent will be at depth 3, which is max)
+      const mockParentAgent = {
+        getAgentDepth: vi.fn().mockReturnValue(2),
+      };
+
+      registry.registerInstance('agent', mockParentAgent);
+
+      const result = await tool.execute({
+        agent_name: 'general',
+        task_prompt: 'Test task at maximum allowed depth',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject self-delegation (agent calling itself)', async () => {
+      // Mock an agent trying to call itself
+      const mockAgent = {
+        getAgentDepth: vi.fn().mockReturnValue(1),
+        getAgentName: vi.fn().mockReturnValue('general'),
+        getAgentCallStack: vi.fn().mockReturnValue([]),
+      };
+
+      registry.registerInstance('agent', mockAgent);
+
+      const result = await tool.execute({
+        agent_name: 'general',
+        task_prompt: 'Test self-delegation',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('cannot delegate to itself');
+      expect(result.error_type).toBe('validation_error');
+    });
+
+    it('should reject circular delegation (A → B → A)', async () => {
+      // Mock an agent with 'general' in its call stack
+      const mockAgent = {
+        getAgentDepth: vi.fn().mockReturnValue(2),
+        getAgentName: vi.fn().mockReturnValue('specialized'),
+        getAgentCallStack: vi.fn().mockReturnValue(['general']),
+      };
+
+      registry.registerInstance('agent', mockAgent);
+
+      // Try to delegate back to 'general' - should be rejected
+      const result = await tool.execute({
+        agent_name: 'general',
+        task_prompt: 'Test circular delegation',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Circular delegation detected');
+      expect(result.error).toContain('general → specialized → general');
+      expect(result.error_type).toBe('validation_error');
+    });
+
+    it('should reject circular delegation (A → B → C → A)', async () => {
+      // Mock an agent with a longer call stack
+      const mockAgent = {
+        getAgentDepth: vi.fn().mockReturnValue(2),
+        getAgentName: vi.fn().mockReturnValue('agent-c'),
+        getAgentCallStack: vi.fn().mockReturnValue(['agent-a', 'agent-b']),
+      };
+
+      registry.registerInstance('agent', mockAgent);
+
+      // Try to delegate back to 'agent-a' - should be rejected
+      const result = await tool.execute({
+        agent_name: 'agent-a',
+        task_prompt: 'Test longer circular delegation',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Circular delegation detected');
+      expect(result.error).toContain('agent-a → agent-b → agent-c → agent-a');
+      expect(result.error_type).toBe('validation_error');
+    });
+
+    it('should allow delegation to different agent (no cycle)', async () => {
+      // Mock an agent with some agents in call stack
+      const mockAgent = {
+        getAgentDepth: vi.fn().mockReturnValue(1),
+        getAgentName: vi.fn().mockReturnValue('specialized'),
+        getAgentCallStack: vi.fn().mockReturnValue([]),
+      };
+
+      registry.registerInstance('agent', mockAgent);
+
+      // Delegate to a different agent (general) - should succeed
+      const result = await tool.execute({
+        agent_name: 'general',
+        task_prompt: 'Test valid delegation',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('execution', () => {

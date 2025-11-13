@@ -30,6 +30,7 @@ const BEHAVIORAL_DIRECTIVES = `**After tool calls, provide a text response summa
 Core behavior:
 - Use tools directly, never delegate to users
 - Be concise (1-3 sentences). No emoji.
+- Use markdown formatting in responses: *italic*, ~~strikethrough~~, **bold**. For emphasis, use color tags: <red>, <green>, <yellow>, <cyan>, <blue>, <orange>
 - Use todos for multi-step tasks
 - Retry with adjustments after failures
 - Batch independent tools when efficient
