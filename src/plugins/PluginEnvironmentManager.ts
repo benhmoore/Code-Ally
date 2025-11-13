@@ -252,11 +252,22 @@ export class PluginEnvironmentManager {
   /**
    * Get the path to the Python interpreter in the plugin's venv
    *
+   * Falls back to system 'python3' if venv doesn't exist.
+   *
    * @param pluginName - Name of the plugin
-   * @returns Absolute path to the Python interpreter
+   * @returns Absolute path to the Python interpreter, or 'python3' if venv doesn't exist
    */
   getPythonPath(pluginName: string): string {
-    return join(PLUGIN_ENVS_DIR, pluginName, 'bin', 'python3');
+    const venvPythonPath = join(PLUGIN_ENVS_DIR, pluginName, 'bin', 'python3');
+
+    // Check if venv python exists synchronously
+    try {
+      require('fs').accessSync(venvPythonPath);
+      return venvPythonPath;
+    } catch {
+      // Venv doesn't exist, fall back to system python3
+      return 'python3';
+    }
   }
 
   /**

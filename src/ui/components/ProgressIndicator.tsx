@@ -9,6 +9,8 @@ import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
 import { AnimationTicker } from '@services/AnimationTicker.js';
 import { TEXT_LIMITS } from '@config/constants.js';
+import { UI_SYMBOLS } from '@config/uiSymbols.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 export type SpinnerType = 'default' | 'dots' | 'line' | 'dots2' | 'arc' | 'bounce';
 
@@ -24,15 +26,15 @@ export interface ProgressIndicatorProps {
 }
 
 /**
- * Spinner frame definitions
+ * Spinner frame definitions - uses centralized UI_SYMBOLS
  */
-const SPINNERS: Record<SpinnerType, string[]> = {
-  default: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-  dots: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-  line: ['─', '\\', '|', '/'],
-  dots2: ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'],
-  arc: ['◜', '◠', '◝', '◞', '◡', '◟'],
-  bounce: ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
+const SPINNERS: Record<SpinnerType, readonly string[]> = {
+  default: UI_SYMBOLS.SPINNER.DEFAULT,
+  dots: UI_SYMBOLS.SPINNER.DOTS,
+  line: UI_SYMBOLS.SPINNER.LINE,
+  dots2: UI_SYMBOLS.SPINNER.DOTS2,
+  arc: UI_SYMBOLS.SPINNER.ARC,
+  bounce: UI_SYMBOLS.SPINNER.BOUNCE,
 };
 
 /**
@@ -44,7 +46,7 @@ const SPINNERS: Record<SpinnerType, string[]> = {
 export const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({
   type = 'default',
   text,
-  color = 'cyan',
+  color = UI_COLORS.PRIMARY,
   dimText = false,
 }) => {
   const [, forceUpdate] = useState({});
@@ -96,7 +98,7 @@ export const StatusSpinner: React.FC<StatusSpinnerProps> = ({
   label,
   startTime,
   type = 'dots2',
-  color = 'cyan',
+  color = UI_COLORS.PRIMARY,
 }) => {
   const ticker = AnimationTicker.getInstance();
   const [, forceUpdate] = useState({});
@@ -170,16 +172,16 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({
 
   return (
     <Box>
-      <ProgressIndicator type="dots2" color="cyan" />
+      <ProgressIndicator type="dots2" color={UI_COLORS.PRIMARY} />
       {modelName && (
-        <Text dimColor color="yellow">
+        <Text dimColor color={UI_COLORS.PRIMARY}>
           {' '}
           {modelName.slice(0, TEXT_LIMITS.MODEL_NAME_DISPLAY_MAX)}
         </Text>
       )}
-      <Text color="cyan"> {context.charAt(0).toUpperCase() + context.slice(1)}</Text>
+      <Text color={UI_COLORS.PRIMARY}> {context.charAt(0).toUpperCase() + context.slice(1)}</Text>
       {tokenCount && tokenCount > 0 && (
-        <Text dimColor color="green">
+        <Text dimColor color={UI_COLORS.TEXT_DEFAULT}>
           {' '}
           ({tokenCount} tokens)
         </Text>
@@ -233,13 +235,13 @@ export const ToolExecutionIndicator: React.FC<ToolExecutionIndicatorProps> = ({
 
   return (
     <Box>
-      <ProgressIndicator type="dots" color="yellow" />
-      <Text color="yellow"> {toolName}</Text>
+      <ProgressIndicator type="dots" color={UI_COLORS.PRIMARY} />
+      <Text color={UI_COLORS.PRIMARY}> {toolName}</Text>
       {truncatedDesc && (
         <Text dimColor> {truncatedDesc}</Text>
       )}
       {startTime && elapsed > 5 && (
-        <Text dimColor color="cyan">
+        <Text dimColor color={UI_COLORS.TEXT_DIM}>
           {' '}
           [{elapsed}s]
         </Text>

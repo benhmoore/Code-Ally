@@ -11,6 +11,9 @@ import { PluginConfigSchema, ConfigProperty } from '@plugins/PluginLoader.js';
 import { logger } from '@services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { PLUGIN_UI } from '@plugins/constants.js';
+import { ModalContainer } from './ModalContainer.js';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 interface PluginConfigViewProps {
   pluginName: string;
@@ -20,6 +23,7 @@ interface PluginConfigViewProps {
   description?: string;
   version?: string;
   tools?: any[];
+  agents?: any[];
   onComplete: (config: any) => void;
   onCancel: () => void;
 }
@@ -38,6 +42,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
   description,
   version,
   tools = [],
+  agents = [],
   onComplete,
   onCancel,
 }) => {
@@ -238,14 +243,14 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
           <Text bold>
             <ChickAnimation />
           </Text>
-          <Text color="cyan" bold>
+          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
             Plugin Installation
           </Text>
         </Box>
 
         <Box marginBottom={1} flexDirection="column">
           <Box marginBottom={1}>
-            <Text bold color="green">
+            <Text bold color={UI_COLORS.TEXT_DEFAULT}>
               {pluginName}
             </Text>
             {version && (
@@ -272,8 +277,24 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
                 {tools.map((tool: any, index: number) => (
                   <Box key={index} marginBottom={0}>
                     <Text dimColor>
-                      • <Text color="cyan">{tool.name}</Text>
+                      • <Text color={UI_COLORS.TEXT_DEFAULT}>{tool.name}</Text>
                       {tool.description && <Text> - {tool.description}</Text>}
+                    </Text>
+                  </Box>
+                ))}
+              </Box>
+            </Box>
+          )}
+
+          {agents && agents.length > 0 && (
+            <Box marginTop={1} flexDirection="column">
+              <Text bold>Agents ({agents.length}):</Text>
+              <Box marginTop={1} flexDirection="column" paddingLeft={2}>
+                {agents.map((agent: any, index: number) => (
+                  <Box key={index} marginBottom={0}>
+                    <Text dimColor>
+                      • <Text color={UI_COLORS.TEXT_DEFAULT}>{agent.name}</Text>
+                      {agent.description && <Text> - {agent.description}</Text>}
                     </Text>
                   </Box>
                 ))}
@@ -308,7 +329,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
           <Text bold>
             <ChickAnimation />
           </Text>
-          <Text color="cyan" bold>
+          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
             Configure {pluginName} [{progress}]
           </Text>
         </Box>
@@ -331,7 +352,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
         {currentProperty.type === 'boolean' ? (
           <Box marginBottom={1}>
             <Text>
-              Press <Text color="green">Y</Text> for Yes or <Text color="yellow">N</Text> for No
+              Press <Text color={UI_COLORS.PRIMARY}>Y</Text> for Yes or <Text color={UI_COLORS.PRIMARY}>N</Text> for No
             </Text>
           </Box>
         ) : currentProperty.type === 'choice' ? (
@@ -339,14 +360,9 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
             <Box marginBottom={1} flexDirection="column">
               {currentProperty.choices?.map((choice, index) => (
                 <Box key={index} marginBottom={0}>
-                  <Text>
-                    {index === selectedChoiceIndex ? (
-                      <Text color="green">&gt; </Text>
-                    ) : (
-                      <Text>  </Text>
-                    )}
-                    <Text bold={index === selectedChoiceIndex}>{choice.label}</Text>
-                  </Text>
+                  <SelectionIndicator isSelected={index === selectedChoiceIndex}>
+                    {choice.label}
+                  </SelectionIndicator>
                   {choice.description && (
                     <Text dimColor> - {choice.description}</Text>
                   )}
@@ -357,9 +373,9 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
         ) : (
           <>
             <Box marginBottom={1}>
-              <Text color="green">{currentField}: </Text>
+              <Text color={UI_COLORS.PRIMARY}>{currentField}: </Text>
               <Text>{displayValue}</Text>
-              <Text color="cyan">█</Text>
+              <Text color={UI_COLORS.PRIMARY}>█</Text>
             </Box>
             <Box marginBottom={1}>
               <Text dimColor>
@@ -390,7 +406,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
           <Text bold>
             <ChickAnimation />
           </Text>
-          <Text color="cyan" bold>
+          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
             Confirm Configuration
           </Text>
         </Box>
@@ -417,8 +433,8 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
 
         <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
           <Text>
-            Save this configuration? Press <Text color="green">Y</Text> for Yes or{' '}
-            <Text color="yellow">N</Text> to cancel
+            Save this configuration? Press <Text color={UI_COLORS.PRIMARY}>Y</Text> for Yes or{' '}
+            <Text color={UI_COLORS.PRIMARY}>N</Text> to cancel
           </Text>
         </Box>
       </>
@@ -427,19 +443,13 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <Box
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-        minHeight={PLUGIN_UI.CONFIG_VIEW_MIN_HEIGHT}
-        width={PLUGIN_UI.CONFIG_VIEW_WIDTH}
-      >
+      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
+        <Box minHeight={PLUGIN_UI.CONFIG_VIEW_MIN_HEIGHT} width={PLUGIN_UI.CONFIG_VIEW_WIDTH} flexDirection="column">
         {step === ConfigStep.SPLASHSCREEN && renderSplashscreen()}
         {step === ConfigStep.FIELD_INPUT && renderFieldInput()}
         {step === ConfigStep.CONFIRM && renderConfirmation()}
-      </Box>
+        </Box>
+      </ModalContainer>
     </Box>
   );
 };

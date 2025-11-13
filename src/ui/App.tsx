@@ -40,6 +40,7 @@ import { useModalState } from './hooks/useModalState.js';
 import { useSessionResume } from './hooks/useSessionResume.js';
 import { useInputHandlers } from './hooks/useInputHandlers.js';
 import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
+import { useContentWidth } from './hooks/useContentWidth.js';
 
 
 /**
@@ -237,8 +238,11 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
     return focusManager?.getFocusDisplay() ?? null;
   }, [state.messages.length]); // Re-compute when messages change (focus commands add messages)
 
+  // Get content width with max width constraint for readability
+  const contentWidth = useContentWidth();
+
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" padding={1} width={contentWidth}>
       {/* Conversation View - contains header + all conversation history */}
       <ConversationView
         messages={state.messages}
@@ -351,6 +355,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             description={modal.pluginConfigRequest.description}
             version={modal.pluginConfigRequest.version}
             tools={modal.pluginConfigRequest.tools}
+            agents={modal.pluginConfigRequest.agents}
             onComplete={async (config) => {
               // Capture the request early to avoid null safety issues
               const request = modal.pluginConfigRequest;

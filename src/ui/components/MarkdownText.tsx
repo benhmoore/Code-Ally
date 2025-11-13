@@ -17,6 +17,9 @@ import { Box, Text } from 'ink';
 import { marked } from 'marked';
 import { SyntaxHighlighter } from '@services/SyntaxHighlighter.js';
 import { TEXT_LIMITS, FORMATTING } from '@config/constants.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
+import { UI_SYMBOLS } from '@config/uiSymbols.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 // Table rendering constants (specific to markdown table formatting)
 const TABLE_FORMATTING = {
@@ -159,10 +162,10 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
 
     return (
       <Box flexDirection="column" paddingLeft={2} marginY={1}>
-        <Text dimColor color="cyan">
+        <Text dimColor color={UI_COLORS.TEXT_DIM}>
           {node.language ? `[${node.language}]` : '[code]'}
         </Text>
-        <Box flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
+        <Box flexDirection="column" borderStyle="single" borderColor={UI_COLORS.TEXT_DIM} paddingX={1}>
           {highlighted.split('\n').map((line, idx) => (
             <Text key={idx}>{line}</Text>
           ))}
@@ -172,13 +175,9 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
   }
 
   if (node.type === 'heading') {
-    const color = node.depth === 1 ? 'cyan' : node.depth === 2 ? 'blue' : 'yellow';
-    const prefix = '#'.repeat(node.depth || 1) + ' ';
-
     return (
       <Box marginY={1}>
-        <Text bold color={color}>
-          {prefix}
+        <Text bold color={UI_COLORS.TEXT_DEFAULT}>
           {node.content}
         </Text>
       </Box>
@@ -231,10 +230,10 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
  * Automatically adjusts column widths to fit terminal width
  */
 const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ header, rows }) => {
+  const terminalWidth = useContentWidth();
+
   // Calculate optimal column widths with terminal width constraints
   const columnWidths = useMemo(() => {
-    // Get terminal width (with fallback)
-    const terminalWidth = process.stdout.columns || TEXT_LIMITS.TERMINAL_WIDTH_MARKDOWN_FALLBACK;
 
     // Helper to get max line length for cells with line breaks
     const getMaxLineLength = (text: string): number => {
@@ -290,7 +289,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
       const proportionalBonus = Math.floor((excess / totalExcess) * remainingSpace);
       return minWidth + proportionalBonus;
     });
-  }, [header, rows]);
+  }, [header, rows, terminalWidth]);
 
   // Wrap text to fit within specified width
   const wrapText = (text: string, width: number): string[] => {
@@ -336,15 +335,15 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
 
   // Create horizontal separator lines with proper connectors
   const createTopBorder = (): string => {
-    return '┌─' + columnWidths.map((w) => '─'.repeat(w)).join('─┬─') + '─┐';
+    return UI_SYMBOLS.BORDER.TOP_LEFT + UI_SYMBOLS.BORDER.HORIZONTAL + columnWidths.map((w) => UI_SYMBOLS.BORDER.HORIZONTAL.repeat(w)).join(UI_SYMBOLS.BORDER.HORIZONTAL + UI_SYMBOLS.BORDER.T_DOWN + UI_SYMBOLS.BORDER.HORIZONTAL) + UI_SYMBOLS.BORDER.HORIZONTAL + UI_SYMBOLS.BORDER.TOP_RIGHT;
   };
 
   const createMiddleSeparator = (): string => {
-    return '├─' + columnWidths.map((w) => '─'.repeat(w)).join('─┼─') + '─┤';
+    return UI_SYMBOLS.BORDER.T_RIGHT + UI_SYMBOLS.BORDER.HORIZONTAL + columnWidths.map((w) => UI_SYMBOLS.BORDER.HORIZONTAL.repeat(w)).join(UI_SYMBOLS.BORDER.HORIZONTAL + UI_SYMBOLS.BORDER.CROSS + UI_SYMBOLS.BORDER.HORIZONTAL) + UI_SYMBOLS.BORDER.HORIZONTAL + UI_SYMBOLS.BORDER.T_LEFT;
   };
 
   const createBottomBorder = (): string => {
-    return '└─' + columnWidths.map((w) => '─'.repeat(w)).join('─┴─') + '─┘';
+    return UI_SYMBOLS.BORDER.BOTTOM_LEFT + UI_SYMBOLS.BORDER.HORIZONTAL + columnWidths.map((w) => UI_SYMBOLS.BORDER.HORIZONTAL.repeat(w)).join(UI_SYMBOLS.BORDER.HORIZONTAL + UI_SYMBOLS.BORDER.T_UP + UI_SYMBOLS.BORDER.HORIZONTAL) + UI_SYMBOLS.BORDER.HORIZONTAL + UI_SYMBOLS.BORDER.BOTTOM_RIGHT;
   };
 
   return (

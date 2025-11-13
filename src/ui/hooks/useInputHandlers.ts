@@ -390,7 +390,8 @@ export const useInputHandlers = (
             false, // isRetry
             agent.getToolAbortSignal?.(),
             true,  // isUserInitiated (95% limit)
-            false  // isContextFile (not applicable)
+            false, // isContextFile (not applicable)
+            agent.getAgentName?.() // currentAgentName for tool-agent binding validation
           );
 
           // Emit TOOL_CALL_END event to complete the tool call

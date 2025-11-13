@@ -17,6 +17,7 @@
 ## Reference
 
 - [Configuration](reference/configuration.md) - Configuration file options and CLI flags
+- [UI Styling](STYLING.md) - UI constants, utilities, and component patterns
 
 ## Source Documentation
 
@@ -67,4 +68,4 @@ Code Ally documentation follows these principles:
 - **Work on core code:** See source READMEs (`src/*/README.md`)
 - **Add a new tool:** Check `src/tools/README.md`
 - **Modify the agent:** Check `src/agent/` and architecture docs
-- **Change the UI:** Check `src/ui/README.md`
+- **Change the UI:** Check `src/ui/README.md` and [UI Styling](STYLING.md)

@@ -57,6 +57,7 @@ export interface PluginConfigRequest {
   description?: string;
   version?: string;
   tools?: any[];
+  agents?: any[];
 }
 
 /**

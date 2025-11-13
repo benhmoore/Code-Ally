@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Text, Static, useStdout } from 'ink';
+import { Box, Text, Static } from 'ink';
 import { Message, ToolCallState } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
@@ -8,7 +8,10 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
-import { BUFFER_SIZES, TEXT_LIMITS, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
+import { BUFFER_SIZES, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
+import { createDivider } from '../utils/uiHelpers.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -211,8 +214,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   activePluginCount,
   totalPluginCount,
 }) => {
-  const { stdout } = useStdout();
-  const terminalWidth = stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK; // Fallback to 80 if unavailable
+  const terminalWidth = useContentWidth();
 
   // Get git branch on mount
   const [gitBranch, setGitBranch] = useState<string | null>(null);
@@ -305,8 +307,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
   // Pre-render timeline items as JSX for Static component
   const completedJSXItems = React.useMemo(() => {
-    const dividerWidth = Math.max(TEXT_LIMITS.DIVIDER_MIN_WIDTH, terminalWidth - TEXT_LIMITS.DIVIDER_PADDING);
-    const divider = '─'.repeat(dividerWidth);
+    const divider = createDivider(terminalWidth);
     const items: React.ReactNode[] = [];
 
     completedTimeline.forEach((item) => {
@@ -324,7 +325,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           <Box key={`compaction-${item.notice.id}`} flexDirection="column" marginY={1}>
             <Box><Text dimColor>{divider}</Text></Box>
             <Box>
-              <Text color="cyan" bold>Conversation compacted</Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>Conversation compacted</Text>
               <Text dimColor> - Removed earlier messages to free context</Text>
             </Box>
             <Box><Text dimColor>{divider}</Text></Box>
@@ -339,12 +340,12 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           <Box key={`rewind-${item.notice.id}`} flexDirection="column" marginY={1}>
             <Box><Text dimColor>{divider}</Text></Box>
             <Box>
-              <Text color="yellow" bold>Conversation rewound</Text>
+              <Text color={UI_COLORS.PRIMARY} bold>Conversation rewound</Text>
               <Text dimColor> - Returned to message #{item.notice.targetMessageIndex + 1}</Text>
             </Box>
             {hasRestoredFiles && (
               <Box marginLeft={2}>
-                <Text color="green">Restored {item.notice.restoredFiles!.length} file{item.notice.restoredFiles!.length !== 1 ? 's' : ''}:</Text>
+                <Text color={UI_COLORS.TEXT_DEFAULT}>Restored {item.notice.restoredFiles!.length} file{item.notice.restoredFiles!.length !== 1 ? 's' : ''}:</Text>
                 {item.notice.restoredFiles!.map((file, idx) => (
                   <Box key={`restored-${idx}`} marginLeft={2}>
                     <Text dimColor>• {file}</Text>
@@ -354,7 +355,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
             )}
             {hasFailedRestorations && (
               <Box marginLeft={2}>
-                <Text color="red">Failed restorations:</Text>
+                <Text color={UI_COLORS.ERROR}>Failed restorations:</Text>
                 {item.notice.failedRestorations!.map((failure, idx) => (
                   <Box key={`failed-${idx}`} marginLeft={2}>
                     <Text dimColor>• {failure}</Text>
@@ -372,7 +373,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   }, [completedTimeline, terminalWidth]);
 
   // Calculate divider for header
-  const headerDivider = '─'.repeat(Math.max(TEXT_LIMITS.DIVIDER_MIN_WIDTH, terminalWidth - TEXT_LIMITS.DIVIDER_PADDING));
+  const headerDivider = createDivider(terminalWidth);
 
   return (
     <Box flexDirection="column">
@@ -381,10 +382,10 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         <Box flexDirection="column" marginBottom={1}>
           <Box flexDirection="row">
             <Box flexDirection="column" marginRight={2}>
-              <Text color="yellow" bold>      __</Text>
-              <Text color="yellow" bold>  ___( o)&gt;</Text>
-              <Text color="yellow" bold>  \ &lt;_. )</Text>
-              <Text color="yellow" bold>   `---&apos;  </Text>
+              <Text color={UI_COLORS.PRIMARY} bold>      __</Text>
+              <Text color={UI_COLORS.PRIMARY} bold>  ___( o)&gt;</Text>
+              <Text color={UI_COLORS.PRIMARY} bold>  \ &lt;_. )</Text>
+              <Text color={UI_COLORS.PRIMARY} bold>   `---&apos;  </Text>
             </Box>
             <Box flexDirection="column">
               <Text>Ally v{packageJson.version}</Text>
@@ -396,7 +397,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
                 </Text>
               )}
               {gitBranch && (
-                <Text dimColor color="yellow">branch: {gitBranch}</Text>
+                <Text dimColor color={UI_COLORS.PRIMARY}>branch: {gitBranch}</Text>
               )}
             </Box>
           </Box>

@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { AnimationTicker } from '@services/AnimationTicker.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { CONTEXT_THRESHOLDS } from '@config/toolDefaults.js';
+import { UI_COLORS, getContextUsageColor } from '../constants/colors.js';
 
 interface StatusLineProps {
   /** Context usage as percentage (0-100) */
@@ -66,13 +67,6 @@ export const StatusLine: React.FC<StatusLineProps> = ({
 
   const frame = ticker.getFrame() % SPINNER_FRAMES.length;
 
-  // Determine context color based on usage
-  const getContextColor = (): string => {
-    if (contextUsagePercent >= CONTEXT_THRESHOLDS.CRITICAL) return 'red';
-    if (contextUsagePercent >= CONTEXT_THRESHOLDS.NORMAL) return 'yellow';
-    return 'green';
-  };
-
   // Truncate model name to 5 chars (matching Python behavior)
   const truncatedModel = modelName
     ? modelName.slice(0, TEXT_LIMITS.MODEL_NAME_DISPLAY_MAX)
@@ -88,7 +82,7 @@ export const StatusLine: React.FC<StatusLineProps> = ({
     return null;
   }
 
-  const contextColor = getContextColor();
+  const contextColor = getContextUsageColor(contextUsagePercent);
 
   return (
     <Box justifyContent="space-between" paddingBottom={1}>
@@ -96,7 +90,7 @@ export const StatusLine: React.FC<StatusLineProps> = ({
       <Box>
         {agent && (
           <Box>
-            <Text color="cyan">{SPINNER_FRAMES[frame]} {agent}</Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT}>{SPINNER_FRAMES[frame]} {agent}</Text>
             {subAgents && subAgents.length > 0 && (
               <Text dimColor> → {subAgents.join(', ')}</Text>
             )}
@@ -118,7 +112,7 @@ export const StatusLine: React.FC<StatusLineProps> = ({
         {/* Model name */}
         {modelName && (
           <Box marginRight={2}>
-            <Text dimColor color="yellow">
+            <Text dimColor color={UI_COLORS.PRIMARY}>
               {truncatedModel}
             </Text>
           </Box>
@@ -127,7 +121,7 @@ export const StatusLine: React.FC<StatusLineProps> = ({
         {/* Active tool count with spinner */}
         {activeToolCount > 0 && (
           <Box>
-            <Text color="cyan">
+            <Text color={UI_COLORS.TEXT_DEFAULT}>
               {SPINNER_FRAMES[frame]} {activeToolCount} tool{activeToolCount !== 1 ? 's' : ''}
             </Text>
           </Box>

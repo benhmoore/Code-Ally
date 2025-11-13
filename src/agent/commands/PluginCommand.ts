@@ -173,6 +173,7 @@ export class PluginCommand extends Command {
           description: manifest.description,
           version: manifest.version,
           tools: manifest.tools || [],
+          agents: manifest.agents || [],
         },
         'plugin_config'
       );
@@ -250,7 +251,11 @@ export class PluginCommand extends Command {
 
       // If this is an update with existing config, just show success message
       if (result.hadExistingConfig) {
-        const successMessage = `✓ Plugin '${result.pluginName}' updated successfully with ${result.tools?.length || 0} tool(s)\nYour existing configuration has been preserved. To reconfigure, run:\n  /plugin config ${result.pluginName}`;
+        const toolsCount = result.tools?.length || 0;
+        const agentsCount = result.agents?.length || 0;
+        const toolsText = `${toolsCount} tool(s)`;
+        const agentsText = agentsCount > 0 ? ` and ${agentsCount} agent(s)` : '';
+        const successMessage = `✓ Plugin '${result.pluginName}' updated successfully with ${toolsText}${agentsText}\nYour existing configuration has been preserved. To reconfigure, run:\n  /plugin config ${result.pluginName}`;
         return {
           handled: true,
           response: successMessage,
@@ -329,7 +334,9 @@ export class PluginCommand extends Command {
 
       const loadedPlugins = pluginLoader.getLoadedPlugins();
 
-      let output = 'Installed Plugins:\n\n';
+      let output = '## Installed Plugins\n\n';
+      output += `| Status | Name | Version | Mode | Description | Tools | Agents |\n`;
+      output += `|--------|------|---------|------|-------------|-------|--------|\n`;
 
       for (const pluginName of installedPlugins) {
         const mode = activationManager.getActivationMode(pluginName) ?? 'always';
@@ -337,41 +344,30 @@ export class PluginCommand extends Command {
         const pluginInfo = loadedPlugins.find((p: LoadedPluginInfo) => p.name === pluginName);
 
         // Status indicator
-        const status = isActive ? '● ' : '○ ';
+        const status = isActive ? '●' : '○';
 
-        // Mode badge
-        const modeBadge = mode === 'always' ? '[always]' : '[tagged]';
-
-        // Plugin header
-        output += `${status}${pluginName} ${modeBadge}`;
+        // Mode
+        const modeStr = mode === 'always' ? 'always' : 'tagged';
 
         if (pluginInfo) {
-          if (pluginInfo.manifest.version) {
-            output += ` v${pluginInfo.manifest.version}`;
-          }
-          output += '\n';
+          const version = pluginInfo.manifest.version || '';
+          const description = pluginInfo.manifest.description || '';
+          const toolsCount = pluginInfo.manifest.tools?.length || 0;
+          const agentsCount = pluginInfo.manifest.agents?.length || 0;
+          const toolsStr = toolsCount > 0 ? `${toolsCount}` : '-';
+          const agentsStr = agentsCount > 0 ? `${agentsCount}` : '-';
 
-          if (pluginInfo.manifest.author) {
-            output += `  by ${pluginInfo.manifest.author}\n`;
-          }
-
-          if (pluginInfo.manifest.description) {
-            output += `  ${pluginInfo.manifest.description}\n`;
-          }
-
-          if (pluginInfo.manifest.tools && pluginInfo.manifest.tools.length > 0) {
-            output += `  Tools: ${pluginInfo.manifest.tools.map((t: any) => t.name).join(', ')}\n`;
-          }
+          output += `| ${status} | ${pluginName} | ${version} | ${modeStr} | ${description} | ${toolsStr} | ${agentsStr} |\n`;
         } else {
-          output += '\n';
+          output += `| ${status} | ${pluginName} | | ${modeStr} | | - | - |\n`;
         }
-
-        output += '\n';
       }
 
-      output += 'Use /plugin show <name> for detailed information\n';
-      output += 'Use /plugin active to see active plugins in this session\n';
-      output += 'Use +plugin-name to activate or -plugin-name to deactivate';
+      output += '\n---\n\n';
+      output += '**Commands:**\n';
+      output += '- `/plugin show <name>` for detailed information\n';
+      output += '- `/plugin active` to see active plugins in this session\n';
+      output += '- `+plugin-name` to activate or `-plugin-name` to deactivate';
 
       return {
         handled: true,
@@ -442,15 +438,36 @@ export class PluginCommand extends Command {
 
       // Tools
       if (manifest.tools && manifest.tools.length > 0) {
-        output += `Tools (${manifest.tools.length}):\n`;
+        output += `## Tools (${manifest.tools.length})\n\n`;
+        output += `| Name | Description | Notes |\n`;
+        output += `|------|-------------|-------|\n`;
         for (const tool of manifest.tools) {
-          output += `\n  • ${tool.name}\n`;
-          if (tool.description) {
-            output += `    ${tool.description}\n`;
-          }
+          const name = tool.name;
+          const description = tool.description || '';
+          const notes: string[] = [];
           if (tool.requiresConfirmation) {
-            output += `    ⚠️  Requires confirmation before execution\n`;
+            notes.push('Requires confirmation');
           }
+          if (tool.required_agent) {
+            notes.push(`Restricted to: ${tool.required_agent}`);
+          }
+          const notesStr = notes.join(', ');
+          output += `| ${name} | ${description} | ${notesStr} |\n`;
+        }
+        output += '\n';
+      }
+
+      // Agents
+      if (manifest.agents && manifest.agents.length > 0) {
+        output += `## Agents (${manifest.agents.length})\n\n`;
+        output += `| Name | Description | Tools | Model |\n`;
+        output += `|------|-------------|-------|-------|\n`;
+        for (const agent of manifest.agents) {
+          const name = agent.name;
+          const description = agent.description || '';
+          const tools = agent.tools && agent.tools.length > 0 ? agent.tools.join(', ') : '';
+          const model = agent.model || '';
+          output += `| ${name} | ${description} | ${tools} | ${model} |\n`;
         }
         output += '\n';
       }

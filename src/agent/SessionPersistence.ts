@@ -55,6 +55,12 @@ export class SessionPersistence {
         await (sessionManager as any).createSession(sessionName);
         (sessionManager as any).setCurrentSession(sessionName);
         logger.debug('[AGENT_SESSION]', this.instanceId, 'Created new session:', sessionName);
+
+        // Notify PatchManager about the new session
+        const patchManager = registry.get('patch_manager');
+        if (patchManager && typeof (patchManager as any).onSessionChange === 'function') {
+          await (patchManager as any).onSessionChange();
+        }
       } else {
         return; // No user messages yet, don't create session
       }

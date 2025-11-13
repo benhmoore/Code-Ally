@@ -290,6 +290,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         config: config,
         parentCallId: callId,
         maxDuration,
+        agentType: 'explore',
       };
 
       // Always use pooled agent for persistence

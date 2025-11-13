@@ -1248,12 +1248,13 @@ process.on('SIGTERM', () => {
       );
 
       // Load plugins
-      const { tools, pluginCount } = await pluginLoader.loadPlugins(
+      const { tools, agents, pluginCount } = await pluginLoader.loadPlugins(
         join(tempDir, 'plugins')
       );
 
       expect(pluginCount).toBe(1);
       expect(tools).toHaveLength(2);
+      expect(agents).toHaveLength(0); // No agents in this test
       expect(tools[0].name).toBe('greet');
       expect(tools[1].name).toBe('calculate');
 

@@ -14,6 +14,7 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { UI_COLORS } from '../constants/colors.js';
 
 enum WizardStep {
   WELCOME,
@@ -222,8 +223,8 @@ This file provides project-specific guidance to Code Ally when working with this
     <Box flexDirection="column" padding={1} width="100%">
       {step === WizardStep.WELCOME && (
         <Box flexDirection="column" width="100%">
-          <Box borderStyle="double" borderColor="cyan" padding={1} marginBottom={1} width="100%">
-            <Text bold color="cyan">
+          <Box borderStyle="double" borderColor={UI_COLORS.TEXT_DIM} padding={1} marginBottom={1} width="100%">
+            <Text bold color={UI_COLORS.TEXT_DEFAULT}>
               Welcome to Project Configuration!
             </Text>
           </Box>
@@ -238,7 +239,7 @@ This file provides project-specific guidance to Code Ally when working with this
           </Text>
           <Box marginTop={1}>
             <Text>
-              Press <Text color="green" bold>Enter</Text> to continue or <Text color="yellow" bold>S</Text> to skip
+              Press <Text color={UI_COLORS.PRIMARY} bold>Enter</Text> to continue or <Text color={UI_COLORS.PRIMARY} bold>S</Text> to skip
             </Text>
           </Box>
         </Box>
@@ -246,9 +247,9 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.PROJECT_NAME && (
         <Box flexDirection="column">
-          <Text bold color="cyan">Project Name:</Text>
+          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Project Name:</Text>
           <Box marginTop={1}>
-            <Text color="green">&gt; </Text>
+            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
             <Text>{projectNameInput}</Text>
             <Text color="gray">█</Text>
           </Box>
@@ -260,9 +261,9 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.DESCRIPTION && (
         <Box flexDirection="column">
-          <Text bold color="cyan">Brief project description (optional):</Text>
+          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Brief project description (optional):</Text>
           <Box marginTop={1}>
-            <Text color="green">&gt; </Text>
+            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
             <Text>{descriptionInput}</Text>
             <Text color="gray">█</Text>
           </Box>
@@ -274,9 +275,9 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.LANGUAGE && (
         <Box flexDirection="column">
-          <Text bold color="cyan">Primary programming language:</Text>
+          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Primary programming language:</Text>
           <Box marginTop={1}>
-            <Text color="green">&gt; </Text>
+            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
             <Text>{languageInput}</Text>
             <Text color="gray">█</Text>
           </Box>
@@ -288,15 +289,15 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.SETUP_COMMANDS && (
         <Box flexDirection="column">
-          <Text bold color="cyan">Setup commands (e.g., npm install):</Text>
+          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Setup commands (e.g., npm install):</Text>
           {setupCommands.map((cmd, i) => (
             <Box key={i} marginLeft={2}>
-              <Text color="green">✓ </Text>
+              <Text color={UI_COLORS.PRIMARY}>✓ </Text>
               <Text>{cmd}</Text>
             </Box>
           ))}
           <Box marginTop={1}>
-            <Text color="green">&gt; </Text>
+            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
             <Text>{setupCommandInput}</Text>
             <Text color="gray">█</Text>
           </Box>
@@ -308,15 +309,15 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.BUILD_COMMANDS && (
         <Box flexDirection="column">
-          <Text bold color="cyan">Build commands (e.g., npm run build):</Text>
+          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Build commands (e.g., npm run build):</Text>
           {buildCommands.map((cmd, i) => (
             <Box key={i} marginLeft={2}>
-              <Text color="green">✓ </Text>
+              <Text color={UI_COLORS.PRIMARY}>✓ </Text>
               <Text>{cmd}</Text>
             </Box>
           ))}
           <Box marginTop={1}>
-            <Text color="green">&gt; </Text>
+            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
             <Text>{buildCommandInput}</Text>
             <Text color="gray">█</Text>
           </Box>
@@ -328,15 +329,15 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.TEST_COMMANDS && (
         <Box flexDirection="column">
-          <Text bold color="cyan">Test commands (e.g., npm test):</Text>
+          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Test commands (e.g., npm test):</Text>
           {testCommands.map((cmd, i) => (
             <Box key={i} marginLeft={2}>
-              <Text color="green">✓ </Text>
+              <Text color={UI_COLORS.PRIMARY}>✓ </Text>
               <Text>{cmd}</Text>
             </Box>
           ))}
           <Box marginTop={1}>
-            <Text color="green">&gt; </Text>
+            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
             <Text>{testCommandInput}</Text>
             <Text color="gray">█</Text>
           </Box>
@@ -348,9 +349,9 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.FORMATTER && (
         <Box flexDirection="column">
-          <Text bold color="cyan">Code formatter (e.g., prettier, black):</Text>
+          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Code formatter (e.g., prettier, black):</Text>
           <Box marginTop={1}>
-            <Text color="green">&gt; </Text>
+            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
             <Text>{formatterInput}</Text>
             <Text color="gray">█</Text>
           </Box>
@@ -362,9 +363,9 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.LINTER && (
         <Box flexDirection="column">
-          <Text bold color="cyan">Linter (e.g., eslint, ruff):</Text>
+          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Linter (e.g., eslint, ruff):</Text>
           <Box marginTop={1}>
-            <Text color="green">&gt; </Text>
+            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
             <Text>{linterInput}</Text>
             <Text color="gray">█</Text>
           </Box>
@@ -376,7 +377,7 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.GENERATING && (
         <Box flexDirection="column">
-          <Text color="yellow">⏳ Generating ALLY.md...</Text>
+          <Text color={UI_COLORS.PRIMARY}>⏳ Generating ALLY.md...</Text>
         </Box>
       )}
 
@@ -384,30 +385,30 @@ This file provides project-specific guidance to Code Ally when working with this
         <Box flexDirection="column">
           {error ? (
             <>
-              <Text color="red" bold>✗ Error creating ALLY.md</Text>
-              <Text color="red">{error}</Text>
+              <Text color={UI_COLORS.ERROR} bold>✗ Error creating ALLY.md</Text>
+              <Text color={UI_COLORS.ERROR}>{error}</Text>
             </>
           ) : (
             <>
-              <Box borderStyle="double" borderColor="green" padding={1} marginBottom={1}>
-                <Text bold color="green">
+              <Box borderStyle="double" borderColor={UI_COLORS.PRIMARY} padding={1} marginBottom={1}>
+                <Text bold color={UI_COLORS.PRIMARY}>
                   ✓ Project Configuration Complete!
                 </Text>
               </Box>
-              <Text>Generated ALLY.md in: <Text color="cyan">{process.cwd()}/ALLY.md</Text></Text>
+              <Text>Generated ALLY.md in: <Text color={UI_COLORS.TEXT_DEFAULT}>{process.cwd()}/ALLY.md</Text></Text>
               <Box marginTop={1}>
                 <Text>Code Ally will now use this configuration when working in this project.</Text>
               </Box>
               <Box marginTop={1}>
                 <Text>You can:</Text>
                 <Text>  • Edit ALLY.md manually to add more details</Text>
-                <Text>  • Regenerate it anytime with <Text color="cyan">/project init</Text></Text>
-                <Text>  • View it with <Text color="cyan">/project view</Text></Text>
+                <Text>  • Regenerate it anytime with <Text color={UI_COLORS.TEXT_DEFAULT}>/project init</Text></Text>
+                <Text>  • View it with <Text color={UI_COLORS.TEXT_DEFAULT}>/project view</Text></Text>
               </Box>
             </>
           )}
           <Box marginTop={1}>
-            <Text>Press <Text color="green" bold>Enter</Text> to continue</Text>
+            <Text>Press <Text color={UI_COLORS.PRIMARY} bold>Enter</Text> to continue</Text>
           </Box>
         </Box>
       )}

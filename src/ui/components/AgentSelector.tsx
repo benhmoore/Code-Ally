@@ -6,6 +6,11 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { UI_COLORS } from '../constants/colors.js';
+import { createDivider } from '../utils/uiHelpers.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
 
 export interface AgentOption {
   name: string;
@@ -32,22 +37,23 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
   taskPrompt,
   visible = true,
 }) => {
+  const terminalWidth = useContentWidth();
+  const divider = createDivider(terminalWidth);
+
   if (!visible) {
     return null;
   }
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      {/* Header */}
-      <Box
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-      >
-        <Box marginBottom={1}>
-          <Text color="cyan" bold>
+      <Box flexDirection="column">
+        {/* Top divider */}
+        <Box>
+          <Text dimColor>{divider}</Text>
+        </Box>
+
+        <Box marginY={1}>
+          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
             Select Agent
           </Text>
         </Box>
@@ -55,7 +61,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
         {taskPrompt && (
           <Box marginBottom={1} flexDirection="column">
             <Text dimColor>Task: </Text>
-            <Text color="yellow">{taskPrompt}</Text>
+            <Text color={UI_COLORS.PRIMARY}>{taskPrompt}</Text>
           </Box>
         )}
 
@@ -69,16 +75,9 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
 
           return (
             <Box key={idx} marginBottom={0} flexDirection="column">
-              <Box>
-                <Text>
-                  {isSelected ? (
-                    <Text color="green">&gt; </Text>
-                  ) : (
-                    <Text>  </Text>
-                  )}
-                  <Text bold={isSelected}>{agent.name}</Text>
-                </Text>
-              </Box>
+              <SelectionIndicator isSelected={isSelected}>
+                {agent.name}
+              </SelectionIndicator>
               <Box marginLeft={4}>
                 <Text dimColor>{agent.description}</Text>
               </Box>
@@ -87,11 +86,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
         })}
 
         {/* Footer */}
-        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-          <Text dimColor>
-            ↑↓ navigate  •  Enter select  •  Esc/Ctrl+C cancel
-          </Text>
-        </Box>
+        <KeyboardHintFooter action="select" />
       </Box>
     </Box>
   );

@@ -10,6 +10,8 @@ import { Box, Text } from 'ink';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { ConfigManager } from '@services/ConfigManager.js';
 import { DEFAULT_CONFIG, CONFIG_TYPES } from '@config/defaults.js';
+import { ModalContainer } from './ModalContainer.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 export interface ConfigEntry {
   key: string;
@@ -97,15 +99,9 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
   return (
     <Box flexDirection="column" paddingX={1}>
       {/* Header */}
-      <Box
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-      >
+      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
         <Box marginBottom={1}>
-          <Text color="cyan" bold>
+          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
             Configuration
           </Text>
         </Box>
@@ -120,7 +116,7 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
         {categories.map((category, catIdx) => (
           <Box key={catIdx} flexDirection="column" marginTop={catIdx > 0 ? 1 : 0}>
             <Box marginBottom={1}>
-              <Text color="yellow" bold>
+              <Text color={UI_COLORS.PRIMARY} bold>
                 {category.name}
               </Text>
             </Box>
@@ -180,7 +176,7 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
             Use /config set key=value to change • /config reset to restore defaults • /config to close
           </Text>
         </Box>
-      </Box>
+      </ModalContainer>
     </Box>
   );
 };

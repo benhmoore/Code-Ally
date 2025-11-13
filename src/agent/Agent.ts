@@ -38,6 +38,7 @@ import { Message, ActivityEventType, Config } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
+import { getAgentType, getAgentDisplayName } from '../utils/agentTypeUtils.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 import * as crypto from 'crypto';
@@ -71,6 +72,8 @@ export interface AgentConfig {
   focusDirectory?: string;
   /** Initial messages to add to agent's conversation history (optional) */
   initialMessages?: Message[];
+  /** Agent type identifier (e.g., 'explore', 'plan', 'agent') */
+  agentType?: string;
 }
 
 /**
@@ -82,6 +85,9 @@ export class Agent {
   private activityStream: ActivityStream;
   private toolOrchestrator: ToolOrchestrator;
   private config: AgentConfig;
+
+  // Agent name from agentType in config (for tool-agent binding)
+  private agentName?: string;
 
   // Request state
   private requestInProgress: boolean = false;
@@ -146,6 +152,9 @@ export class Agent {
     this.toolManager = toolManager;
     this.activityStream = activityStream;
     this.config = config;
+
+    // Store agent name from agentType in config (for tool-agent binding)
+    this.agentName = config.agentType;
 
     // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
@@ -282,10 +291,12 @@ export class Agent {
       // Emit system prompt event if configured
       // Use setImmediate to ensure UI listeners are attached first
       if (config.config.show_system_prompt_in_chat) {
-        const agentType = config.isSpecializedAgent
-          ? (config.baseAgentPrompt?.includes('codebase exploration') ? 'Explore Agent'
-             : config.baseAgentPrompt?.includes('implementation planning') ? 'Plan Agent'
-             : 'Specialized Agent')
+        // Use centralized utility to determine agent type
+        const agentTypeKey = config.isSpecializedAgent
+          ? getAgentType({ config })
+          : 'main';
+        const agentTypeDisplay = config.isSpecializedAgent
+          ? getAgentDisplayName(agentTypeKey) + ' Agent'
           : 'Main Agent (Ally)';
 
         setImmediate(() => {
@@ -294,7 +305,7 @@ export class Agent {
             type: ActivityEventType.SYSTEM_PROMPT_DISPLAY,
             timestamp: Date.now(),
             data: {
-              agentType,
+              agentType: agentTypeDisplay,
               systemPrompt: config.systemPrompt,
               instanceId: this.instanceId,
             },
@@ -347,6 +358,13 @@ export class Agent {
    */
   getInterruptionManager(): InterruptionManager {
     return this.interruptionManager;
+  }
+
+  /**
+   * Get the agent name (used by ToolOrchestrator for tool-agent binding validation)
+   */
+  getAgentName(): string | undefined {
+    return this.agentName;
   }
 
 
@@ -754,7 +772,10 @@ export class Agent {
       excludeTools.push(...TOOL_NAMES.EXPLORATION_ONLY_TOOLS);
     }
 
-    const functions = this.toolManager.getFunctionDefinitions(excludeTools.length > 0 ? excludeTools : undefined);
+    const functions = this.toolManager.getFunctionDefinitions(
+      excludeTools.length > 0 ? excludeTools : undefined,
+      this.agentName  // Pass agent name for required_agent filtering
+    );
 
     // Regenerate system prompt with current context (todos, etc.) before each LLM call
     // Works for both main agent and specialized agents
@@ -1079,7 +1100,10 @@ export class Agent {
       excludeTools.push(...TOOL_NAMES.EXPLORATION_ONLY_TOOLS);
     }
 
-    const functions = this.toolManager.getFunctionDefinitions(excludeTools.length > 0 ? excludeTools : undefined);
+    const functions = this.toolManager.getFunctionDefinitions(
+      excludeTools.length > 0 ? excludeTools : undefined,
+      this.agentName  // Pass agent name for required_agent filtering
+    );
 
     let prompt = this.config.systemPrompt || 'You are a helpful AI assistant.';
     prompt += '\n\nYou have access to the following tools:\n\n';

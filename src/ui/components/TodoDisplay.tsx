@@ -10,6 +10,7 @@ import { Box, Text } from 'ink';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { TodoManager, TodoItem } from '@services/TodoManager.js';
 import { POLLING_INTERVALS, BUFFER_SIZES } from '@config/constants.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 /**
  * TodoDisplay Component
@@ -76,7 +77,7 @@ export const TodoDisplay: React.FC = () => {
   return (
     <Box flexDirection="row" marginTop={1}>
       <Text dimColor>→ </Text>
-      <Text color="yellow" bold>
+      <Text color={UI_COLORS.PRIMARY} bold>
         NEXT:{' '}
       </Text>
       <Text>{getTodoDisplayText(displayTodos[0])}</Text>

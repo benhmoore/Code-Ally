@@ -98,6 +98,9 @@ export interface AppActions {
   /** Clear all active tool calls */
   clearToolCalls: () => void;
 
+  /** Clear only running/pending tool calls (preserve completed ones) */
+  clearRunningToolCalls: () => void;
+
   /** Set thinking state */
   setIsThinking: (isThinking: boolean) => void;
 
@@ -297,6 +300,18 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setActiveToolCalls([]);
   }, []);
 
+  const clearRunningToolCalls = useCallback(() => {
+    setActiveToolCalls((prev) =>
+      prev.filter((call) => {
+        // Keep only root-level completed tool calls (no parentId)
+        // This preserves completed agent calls but removes their child tool calls
+        const isCompleted = call.status === 'success' || call.status === 'error' || call.status === 'cancelled';
+        const isRootLevel = !call.parentId;
+        return isCompleted && isRootLevel;
+      })
+    );
+  }, []);
+
   const addCompactionNotice = useCallback((notice: CompactionNotice) => {
     setCompactionNotices((prev) => [...prev, notice]);
   }, []);
@@ -368,6 +383,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     updateToolCall,
     removeToolCall,
     clearToolCalls,
+    clearRunningToolCalls,
     setIsThinking,
     setStreamingContent,
     setIsCompacting,
@@ -376,7 +392,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     clearRewindNotices,
     forceStaticRemount,
     resetConversationView,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView]);
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, clearRunningToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

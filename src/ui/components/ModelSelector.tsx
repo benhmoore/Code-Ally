@@ -6,6 +6,11 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { UI_COLORS } from '../constants/colors.js';
+import { createDivider } from '../utils/uiHelpers.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
 
 export interface ModelOption {
   name: string;
@@ -36,22 +41,23 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   typeName,
   visible = true,
 }) => {
+  const terminalWidth = useContentWidth();
+  const divider = createDivider(terminalWidth);
+
   if (!visible) {
     return null;
   }
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      {/* Header */}
-      <Box
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-      >
-        <Box marginBottom={1}>
-          <Text color="cyan" bold>
+      <Box flexDirection="column">
+        {/* Top divider */}
+        <Box>
+          <Text dimColor>{divider}</Text>
+        </Box>
+
+        <Box marginY={1}>
+          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
             Select {typeName || 'Model'}
           </Text>
         </Box>
@@ -59,7 +65,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         {currentModel && (
           <Box marginBottom={1}>
             <Text dimColor>Current: </Text>
-            <Text color="yellow">{currentModel}</Text>
+            <Text color={UI_COLORS.PRIMARY}>{currentModel}</Text>
           </Box>
         )}
 
@@ -74,30 +80,21 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
           return (
             <Box key={idx}>
-              <Text>
-                {isSelected ? (
-                  <Text color="green">&gt; </Text>
-                ) : (
-                  <Text>  </Text>
-                )}
-                <Text bold={isSelected}>{model.name}</Text>
+              <SelectionIndicator isSelected={isSelected}>
+                {model.name}
                 {isCurrent && (
                   <Text dimColor> (current)</Text>
                 )}
                 {model.size && (
                   <Text dimColor> - {model.size}</Text>
                 )}
-              </Text>
+              </SelectionIndicator>
             </Box>
           );
         })}
 
         {/* Footer */}
-        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-          <Text dimColor>
-            ↑↓ navigate  •  Enter select  •  Esc/Ctrl+C cancel
-          </Text>
-        </Box>
+        <KeyboardHintFooter action="select" />
       </Box>
     </Box>
   );

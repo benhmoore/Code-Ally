@@ -165,7 +165,7 @@ export class SessionManager implements IService {
         try {
           const dirPath = join(this.sessionsDir, dirName);
           await fs.rm(dirPath, { recursive: true, force: true });
-          logger.info(`[SESSION] Deleted orphaned patch directory: ${dirName}`);
+          logger.debug(`[SESSION] Deleted orphaned patch directory: ${dirName}`);
         } catch (error) {
           logger.error(`[SESSION] Failed to delete orphaned directory ${dirName}:`, error);
           // Continue with other directories even if one fails
@@ -173,7 +173,7 @@ export class SessionManager implements IService {
       }
 
       if (orphanedDirs.length > 0) {
-        logger.info(`[SESSION] Cleaned up ${orphanedDirs.length} orphaned patch director${orphanedDirs.length === 1 ? 'y' : 'ies'}`);
+        logger.debug(`[SESSION] Cleaned up ${orphanedDirs.length} orphaned patch director${orphanedDirs.length === 1 ? 'y' : 'ies'}`);
       }
     } catch (error) {
       // Ignore errors during cleanup - don't fail startup

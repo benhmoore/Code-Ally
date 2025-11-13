@@ -9,6 +9,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { createTwoFilesPatch } from 'diff';
 import { FORMATTING } from '@config/constants.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 export interface DiffLine {
   type: 'add' | 'remove' | 'context' | 'header';
@@ -92,11 +93,11 @@ const DiffLine: React.FC<{ line: DiffLine }> = ({ line }) => {
   const getColor = (): string => {
     switch (line.type) {
       case 'add':
-        return 'green';
+        return UI_COLORS.TEXT_DEFAULT;
       case 'remove':
-        return 'red';
+        return UI_COLORS.ERROR;
       case 'header':
-        return 'cyan';
+        return UI_COLORS.TEXT_DIM;
       default:
         return 'white';
     }
@@ -234,7 +235,7 @@ export const InlineDiff: React.FC<{ oldContent: string; newContent: string }> = 
   return (
     <Box flexDirection="column">
       <Text dimColor>
-        Changes: <Text color="green">+{additions}</Text> <Text color="red">-{deletions}</Text>
+        Changes: <Text color={UI_COLORS.TEXT_DEFAULT}>+{additions}</Text> <Text color={UI_COLORS.ERROR}>-{deletions}</Text>
       </Text>
     </Box>
   );

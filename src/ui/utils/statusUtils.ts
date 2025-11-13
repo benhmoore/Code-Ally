@@ -2,6 +2,9 @@
  * UI utilities for tool status display
  */
 
+import { UI_SYMBOLS } from '@config/uiSymbols.js';
+import { UI_COLORS } from '../constants/colors.js';
+
 export type ToolStatus =
   | 'pending'
   | 'validating'
@@ -23,19 +26,21 @@ export function getStatusColor(status: ToolStatus): string {
     case 'pending':
     case 'validating':
     case 'scheduled':
-      return 'cyan';
+      return UI_COLORS.PRIMARY;
     case 'success':
-      return 'white';
+      return UI_COLORS.TEXT_DEFAULT;
     case 'error':
     case 'cancelled':
-      return 'red';
+      return UI_COLORS.ERROR;
     default:
-      return 'white';
+      return UI_COLORS.TEXT_DEFAULT;
   }
 }
 
 /**
  * Get the icon for a tool status
+ *
+ * Uses centralized UI_SYMBOLS as single source of truth for status icons.
  *
  * @param status - The tool status
  * @returns Icon character for the status
@@ -43,19 +48,19 @@ export function getStatusColor(status: ToolStatus): string {
 export function getStatusIcon(status: ToolStatus): string {
   switch (status) {
     case 'pending':
-      return '○';
+      return UI_SYMBOLS.STATUS.PENDING;
     case 'validating':
-      return '◔';
+      return UI_SYMBOLS.STATUS.VALIDATING;
     case 'scheduled':
-      return '◐';
+      return UI_SYMBOLS.STATUS.SCHEDULED;
     case 'executing':
-      return '●';
+      return UI_SYMBOLS.STATUS.EXECUTING;
     case 'success':
-      return '✓';
+      return UI_SYMBOLS.STATUS.SUCCESS;
     case 'error':
-      return '✕';
+      return UI_SYMBOLS.STATUS.ERROR;
     case 'cancelled':
-      return '⊘';
+      return UI_SYMBOLS.STATUS.CANCELLED;
     default:
       return '?';
   }

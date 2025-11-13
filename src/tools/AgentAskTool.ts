@@ -20,6 +20,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { AgentPoolService, AgentMetadata, PooledAgent } from '../services/AgentPoolService.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
+import { getAgentType, getAgentDisplayName } from '../utils/agentTypeUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 
@@ -281,21 +282,16 @@ When uncertain: Use agent_ask first. Much cheaper than restarting.`;
 
       // Extract task context from agent config
       const taskPrompt = config.taskPrompt;
-      const baseAgentPrompt = config.baseAgentPrompt;
 
       if (!taskPrompt) {
         return null;
       }
 
-      // Determine agent type from base prompt
-      let agentType = 'agent';
-      if (baseAgentPrompt?.includes('codebase exploration')) {
-        agentType = 'exploration agent';
-      } else if (baseAgentPrompt?.includes('implementation planning')) {
-        agentType = 'planning agent';
-      }
+      // Use centralized utility to determine agent type
+      const agentType = getAgentType(metadata);
+      const displayName = getAgentDisplayName(agentType);
 
-      return `This agent is a ${agentType} created for: "${taskPrompt}"`;
+      return `This agent is a ${displayName} created for: "${taskPrompt}"`;
     } catch (error) {
       logger.debug('[ASK_AGENT_TOOL] Error building task context:', error);
       return null;

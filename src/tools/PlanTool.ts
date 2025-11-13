@@ -341,6 +341,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         parentCallId: callId,
         requiredToolCalls: ['todo_add'], // Planning agent MUST call todo_add before exiting
         maxDuration,
+        agentType: 'plan',
       };
 
       // Always use pooled agent for persistence

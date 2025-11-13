@@ -12,6 +12,9 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { AgentGenerationService } from '@services/AgentGenerationService.js';
+import { ModalContainer } from './ModalContainer.js';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 enum ConfigStep {
   DESCRIPTION,
@@ -545,9 +548,10 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
   return (
     <Box flexDirection="column" width="100%">
-      <Box borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column" width="100%">
+      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
+        <Box flexDirection="column" width="100%">
         <Box marginBottom={1}>
-          <Text color="cyan" bold>
+          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
             Create Agent
           </Text>
         </Box>
@@ -560,14 +564,14 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             <Box marginBottom={1} marginLeft={1} flexDirection="column">
               {currentInput.length === 0 && !inNavigationMode ? (
                 <Box>
-                  <Text color="green">&gt; </Text>
+                  <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
                   <Text color="gray">█</Text>
                 </Box>
               ) : inNavigationMode ? (
                 // Show read-only preview when in navigation mode
                 currentInput.split('\n').slice(-5).map((line, i) => (
                   <Box key={i}>
-                    <Text color="green">&gt; </Text>
+                    <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
                     <Text>{line}</Text>
                   </Box>
                 ))
@@ -575,7 +579,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 // Show editable text with cursor
                 currentInput.split('\n').slice(-5).map((line, i) => (
                   <Box key={i}>
-                    <Text color="green">&gt; </Text>
+                    <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
                     <Text>{line}</Text>
                     {i === currentInput.split('\n').slice(-5).length - 1 && (
                       <Text color="gray">█</Text>
@@ -593,15 +597,15 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               {inNavigationMode && <Text dimColor>Select an option:</Text>}
               <Box marginTop={1} marginLeft={2} flexDirection="column">
                 <Box>
-                  <Text color={inNavigationMode && actionIndex === 0 ? 'green' : 'gray'} bold={inNavigationMode && actionIndex === 0}>
-                    {inNavigationMode && actionIndex === 0 ? '> ' : '  '}Continue
-                  </Text>
+                  <SelectionIndicator isSelected={inNavigationMode && actionIndex === 0}>
+                    <Text color={inNavigationMode && actionIndex === 0 ? 'green' : 'gray'}>Continue</Text>
+                  </SelectionIndicator>
                 </Box>
                 {getPreviousStep(step) !== null && (
                   <Box marginTop={0.5}>
-                    <Text color={inNavigationMode && actionIndex === 1 ? 'green' : 'gray'} bold={inNavigationMode && actionIndex === 1}>
-                      {inNavigationMode && actionIndex === 1 ? '> ' : '  '}Back
-                    </Text>
+                    <SelectionIndicator isSelected={inNavigationMode && actionIndex === 1}>
+                      <Text color={inNavigationMode && actionIndex === 1 ? 'green' : 'gray'}>Back</Text>
+                    </SelectionIndicator>
                   </Box>
                 )}
               </Box>
@@ -614,7 +618,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
             {error && (
               <Box marginTop={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
           </Box>
@@ -623,12 +627,12 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         {step === ConfigStep.GENERATING && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
-              <Text color="yellow">Generating agent configuration...</Text>
+              <Text color={UI_COLORS.PRIMARY}>Generating agent configuration...</Text>
             </Box>
             <Text dimColor>Ally is creating name, description, and system prompt</Text>
             {error && (
               <Box marginTop={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
           </Box>
@@ -654,13 +658,13 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                     )}
                     {visibleSlice.map((line, i) => (
                       <Box key={i}>
-                        <Text color="green">&gt; </Text>
+                        <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
                         <Text>{line}</Text>
                       </Box>
                     ))}
                     {!inNavigationMode && (
                       <Box>
-                        <Text color="green">&gt; </Text>
+                        <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
                         <Text color="gray">█</Text>
                       </Box>
                     )}
@@ -680,15 +684,15 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               {inNavigationMode && <Text dimColor>Select an option:</Text>}
               <Box marginTop={1} marginLeft={2} flexDirection="column">
                 <Box>
-                  <Text color={inNavigationMode && actionIndex === 0 ? 'green' : 'gray'} bold={inNavigationMode && actionIndex === 0}>
-                    {inNavigationMode && actionIndex === 0 ? '> ' : '  '}Continue
-                  </Text>
+                  <SelectionIndicator isSelected={inNavigationMode && actionIndex === 0}>
+                    <Text color={inNavigationMode && actionIndex === 0 ? 'green' : 'gray'}>Continue</Text>
+                  </SelectionIndicator>
                 </Box>
                 {getPreviousStep(step) !== null && (
                   <Box marginTop={0.5}>
-                    <Text color={inNavigationMode && actionIndex === 1 ? 'green' : 'gray'} bold={inNavigationMode && actionIndex === 1}>
-                      {inNavigationMode && actionIndex === 1 ? '> ' : '  '}Back
-                    </Text>
+                    <SelectionIndicator isSelected={inNavigationMode && actionIndex === 1}>
+                      <Text color={inNavigationMode && actionIndex === 1 ? 'green' : 'gray'}>Back</Text>
+                    </SelectionIndicator>
                   </Box>
                 )}
               </Box>
@@ -701,7 +705,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
             {error && (
               <Box marginTop={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
           </Box>
@@ -723,15 +727,15 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               {inNavigationMode && <Text dimColor>Select an option:</Text>}
               <Box marginTop={1} marginLeft={2} flexDirection="column">
                 <Box>
-                  <Text color={inNavigationMode && actionIndex === 0 ? 'green' : 'gray'} bold={inNavigationMode && actionIndex === 0}>
-                    {inNavigationMode && actionIndex === 0 ? '> ' : '  '}Continue
-                  </Text>
+                  <SelectionIndicator isSelected={inNavigationMode && actionIndex === 0}>
+                    <Text color={inNavigationMode && actionIndex === 0 ? 'green' : 'gray'}>Continue</Text>
+                  </SelectionIndicator>
                 </Box>
                 {getPreviousStep(step) !== null && (
                   <Box marginTop={0.5}>
-                    <Text color={inNavigationMode && actionIndex === 1 ? 'green' : 'gray'} bold={inNavigationMode && actionIndex === 1}>
-                      {inNavigationMode && actionIndex === 1 ? '> ' : '  '}Back
-                    </Text>
+                    <SelectionIndicator isSelected={inNavigationMode && actionIndex === 1}>
+                      <Text color={inNavigationMode && actionIndex === 1 ? 'green' : 'gray'}>Back</Text>
+                    </SelectionIndicator>
                   </Box>
                 )}
               </Box>
@@ -744,7 +748,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
             {error && (
               <Box marginTop={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
           </Box>
@@ -766,15 +770,15 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               {inNavigationMode && <Text dimColor>Select an option:</Text>}
               <Box marginTop={1} marginLeft={2} flexDirection="column">
                 <Box>
-                  <Text color={inNavigationMode && actionIndex === 0 ? 'green' : 'gray'} bold={inNavigationMode && actionIndex === 0}>
-                    {inNavigationMode && actionIndex === 0 ? '> ' : '  '}Continue
-                  </Text>
+                  <SelectionIndicator isSelected={inNavigationMode && actionIndex === 0}>
+                    <Text color={inNavigationMode && actionIndex === 0 ? 'green' : 'gray'}>Continue</Text>
+                  </SelectionIndicator>
                 </Box>
                 {getPreviousStep(step) !== null && (
                   <Box marginTop={0.5}>
-                    <Text color={inNavigationMode && actionIndex === 1 ? 'green' : 'gray'} bold={inNavigationMode && actionIndex === 1}>
-                      {inNavigationMode && actionIndex === 1 ? '> ' : '  '}Back
-                    </Text>
+                    <SelectionIndicator isSelected={inNavigationMode && actionIndex === 1}>
+                      <Text color={inNavigationMode && actionIndex === 1 ? 'green' : 'gray'}>Back</Text>
+                    </SelectionIndicator>
                   </Box>
                 )}
               </Box>
@@ -787,7 +791,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
             {error && (
               <Box marginTop={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
           </Box>
@@ -805,19 +809,19 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               <Text dimColor>Select an option:</Text>
               <Box marginTop={1} marginLeft={2} flexDirection="column">
                 <Box>
-                  <Text color={modelChoiceIndex === 0 ? 'green' : undefined} bold={modelChoiceIndex === 0}>
-                    {modelChoiceIndex === 0 ? '> ' : '  '}Yes, customize model
-                  </Text>
+                  <SelectionIndicator isSelected={modelChoiceIndex === 0}>
+                    Yes, customize model
+                  </SelectionIndicator>
                 </Box>
                 <Box marginTop={0.5}>
-                  <Text color={modelChoiceIndex === 1 ? 'green' : undefined} bold={modelChoiceIndex === 1}>
-                    {modelChoiceIndex === 1 ? '> ' : '  '}No, use global default
-                  </Text>
+                  <SelectionIndicator isSelected={modelChoiceIndex === 1}>
+                    No, use global default
+                  </SelectionIndicator>
                 </Box>
                 <Box marginTop={0.5}>
-                  <Text color={modelChoiceIndex === 2 ? 'green' : undefined} bold={modelChoiceIndex === 2}>
-                    {modelChoiceIndex === 2 ? '> ' : '  '}Back
-                  </Text>
+                  <SelectionIndicator isSelected={modelChoiceIndex === 2}>
+                    Back
+                  </SelectionIndicator>
                 </Box>
               </Box>
               <Box marginTop={1}>
@@ -826,7 +830,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             </Box>
             {error && (
               <Box marginTop={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
           </Box>
@@ -841,17 +845,18 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               {availableModels.map((model, idx) => {
                 const isSelected = idx === modelIndex;
                 return (
-                  <Text key={model.name} color={isSelected ? 'green' : undefined}>
-                    {isSelected ? '> ' : '  '}
-                    {model.name}
-                    {model.size && <Text dimColor> - {model.size}</Text>}
-                  </Text>
+                  <Box key={model.name}>
+                    <SelectionIndicator isSelected={isSelected}>
+                      {model.name}
+                      {model.size && <Text dimColor> - {model.size}</Text>}
+                    </SelectionIndicator>
+                  </Box>
                 );
               })}
               <Box marginTop={0.5}>
-                <Text color={modelIndex === availableModels.length ? 'green' : undefined}>
-                  {modelIndex === availableModels.length ? '> ' : '  '}Back
-                </Text>
+                <SelectionIndicator isSelected={modelIndex === availableModels.length}>
+                  Back
+                </SelectionIndicator>
               </Box>
             </Box>
             <Box marginTop={1}>
@@ -859,7 +864,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             </Box>
             {error && (
               <Box marginTop={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
           </Box>
@@ -867,13 +872,13 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
         {step === ConfigStep.MODEL_VALIDATING && (
           <Box flexDirection="column">
-            <Text color="yellow">Validating model capabilities...</Text>
+            <Text color={UI_COLORS.PRIMARY}>Validating model capabilities...</Text>
             <Box marginTop={1}>
               <Text dimColor>Testing tool-calling support for {selectedModel}</Text>
             </Box>
             {error && (
               <Box marginTop={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
           </Box>
@@ -888,19 +893,19 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               <Text dimColor>Choose which tools this agent can use:</Text>
             </Box>
             <Box marginBottom={1} marginLeft={1} flexDirection="column">
-              <Text color={toolSelectionIndex === 0 ? 'green' : undefined}>
-                {toolSelectionIndex === 0 ? '> ' : '  '}All tools - Full access to all available tools
-              </Text>
-              <Text color={toolSelectionIndex === 1 ? 'green' : undefined}>
-                {toolSelectionIndex === 1 ? '> ' : '  '}Read-only - Limited to file reading and analysis
-              </Text>
-              <Text color={toolSelectionIndex === 2 ? 'green' : undefined}>
-                {toolSelectionIndex === 2 ? '> ' : '  '}Custom - Choose specific tools
-              </Text>
+              <SelectionIndicator isSelected={toolSelectionIndex === 0}>
+                All tools - Full access to all available tools
+              </SelectionIndicator>
+              <SelectionIndicator isSelected={toolSelectionIndex === 1}>
+                Read-only - Limited to file reading and analysis
+              </SelectionIndicator>
+              <SelectionIndicator isSelected={toolSelectionIndex === 2}>
+                Custom - Choose specific tools
+              </SelectionIndicator>
               <Box marginTop={0.5}>
-                <Text color={toolSelectionIndex === 3 ? 'green' : undefined}>
-                  {toolSelectionIndex === 3 ? '> ' : '  '}Back
-                </Text>
+                <SelectionIndicator isSelected={toolSelectionIndex === 3}>
+                  Back
+                </SelectionIndicator>
               </Box>
             </Box>
             <Box marginTop={1}>
@@ -919,16 +924,17 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 const isSelected = customToolsSelected.has(tool);
                 const isCursor = idx === customToolIndex;
                 return (
-                  <Text key={tool} color={isCursor ? 'green' : undefined}>
-                    {isCursor ? '> ' : '  '}
-                    {isSelected ? '[x]' : '[ ]'} {tool}
-                  </Text>
+                  <Box key={tool}>
+                    <SelectionIndicator isSelected={isCursor}>
+                      {isSelected ? '[x]' : '[ ]'} {tool}
+                    </SelectionIndicator>
+                  </Box>
                 );
               })}
               <Box marginTop={0.5}>
-                <Text color={customToolIndex === availableTools.length ? 'green' : undefined}>
-                  {customToolIndex === availableTools.length ? '> ' : '  '}Back
-                </Text>
+                <SelectionIndicator isSelected={customToolIndex === availableTools.length}>
+                  Back
+                </SelectionIndicator>
               </Box>
             </Box>
             <Box marginTop={1}>
@@ -942,7 +948,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             <Box marginBottom={1}>
               <Text>
                 <Text bold>Name: </Text>
-                <Text color="cyan">{customName}</Text>
+                <Text color={UI_COLORS.TEXT_DEFAULT}>{customName}</Text>
               </Text>
             </Box>
             <Box marginBottom={1}>
@@ -979,7 +985,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             </Box>
             {selectedModel && !_modelSupportsTools && (
               <Box marginBottom={1} marginLeft={2}>
-                <Text color="yellow">
+                <Text color={UI_COLORS.PRIMARY}>
                   Note: {selectedModel} only supports generation (no tool calling)
                 </Text>
               </Box>
@@ -988,14 +994,14 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               <Text dimColor>Select an option:</Text>
               <Box marginTop={1} marginLeft={2} flexDirection="column">
                 <Box>
-                  <Text color={confirmIndex === 0 ? 'green' : undefined} bold={confirmIndex === 0}>
-                    {confirmIndex === 0 ? '> ' : '  '}Create Agent
-                  </Text>
+                  <SelectionIndicator isSelected={confirmIndex === 0}>
+                    Create Agent
+                  </SelectionIndicator>
                 </Box>
                 <Box marginTop={0.5}>
-                  <Text color={confirmIndex === 1 ? 'green' : undefined} bold={confirmIndex === 1}>
-                    {confirmIndex === 1 ? '> ' : '  '}Back
-                  </Text>
+                  <SelectionIndicator isSelected={confirmIndex === 1}>
+                    Back
+                  </SelectionIndicator>
                 </Box>
               </Box>
               <Box marginTop={1}>
@@ -1009,7 +1015,8 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
           <Text dimColor>Esc cancel</Text>
         </Box>
-      </Box>
+        </Box>
+      </ModalContainer>
     </Box>
   );
 };

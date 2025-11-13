@@ -20,6 +20,9 @@ import { logger } from '@services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
 import { testModelToolCalling } from '@llm/ModelValidation.js';
+import { ModalContainer } from './ModalContainer.js';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 enum SetupStep {
   WELCOME,
@@ -391,15 +394,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1} width="100%">
-      <Box
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-        minHeight={20}
-        width="100%"
-      >
+      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
+        <Box minHeight={20} width="100%" flexDirection="column">
         {/* Welcome Step */}
         {step === SetupStep.WELCOME && (
           <>
@@ -407,7 +403,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Code Ally Setup
               </Text>
             </Box>
@@ -431,7 +427,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
               <Text>
-                Press <Text color="green">Enter</Text> to continue or <Text color="yellow">S</Text> to skip
+                Press <Text color={UI_COLORS.PRIMARY}>Enter</Text> to continue or <Text color={UI_COLORS.PRIMARY}>S</Text> to skip
               </Text>
             </Box>
           </>
@@ -444,7 +440,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Step 1: Ollama Endpoint
               </Text>
             </Box>
@@ -455,13 +451,13 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             {error && (
               <Box marginBottom={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
             <Box marginBottom={1}>
-              <Text color="green">Endpoint: </Text>
+              <Text color={UI_COLORS.PRIMARY}>Endpoint: </Text>
               <Text>{endpointInput}</Text>
-              <Text color="cyan">█</Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
               <Text dimColor>Press Enter to validate connection</Text>
@@ -476,7 +472,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Validating Endpoint...
               </Text>
             </Box>
@@ -495,7 +491,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Step 2: Model Selection
               </Text>
             </Box>
@@ -506,16 +502,15 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             {error && (
               <Box marginBottom={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
             <Box flexDirection="column" marginBottom={1}>
               {availableModels.map((model, idx) => (
                 <Box key={idx}>
-                  <Text color={idx === selectedModelIndex ? 'green' : undefined}>
-                    {idx === selectedModelIndex ? '> ' : '  '}
+                  <SelectionIndicator isSelected={idx === selectedModelIndex}>
                     {model}
-                  </Text>
+                  </SelectionIndicator>
                 </Box>
               ))}
             </Box>
@@ -532,7 +527,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Validating Model...
               </Text>
             </Box>
@@ -540,7 +535,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text>
                 Testing {availableModels[selectedModelIndex]} for tool support{' '}
               </Text>
-              <ProgressIndicator type="dots" color="cyan" />
+              <ProgressIndicator type="dots" color={UI_COLORS.TEXT_DEFAULT} />
             </Box>
           </>
         )}
@@ -552,7 +547,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Step 2b: Agent Models
               </Text>
             </Box>
@@ -571,18 +566,16 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             <Box flexDirection="column" marginBottom={1}>
               <Box>
-                <Text color={selectedAgentModelsChoiceIndex === 0 ? 'green' : undefined}>
-                  {selectedAgentModelsChoiceIndex === 0 ? '> ' : '  '}
-                  <Text bold={selectedAgentModelsChoiceIndex === 0}>Yes</Text>
-                  <Text dimColor> - Customize models for Explore and Plan agents</Text>
-                </Text>
+                <SelectionIndicator isSelected={selectedAgentModelsChoiceIndex === 0}>
+                  Yes
+                </SelectionIndicator>
+                <Text dimColor> - Customize models for Explore and Plan agents</Text>
               </Box>
               <Box>
-                <Text color={selectedAgentModelsChoiceIndex === 1 ? 'green' : undefined}>
-                  {selectedAgentModelsChoiceIndex === 1 ? '> ' : '  '}
-                  <Text bold={selectedAgentModelsChoiceIndex === 1}>No</Text>
-                  <Text dimColor> - Use global model for all agents</Text>
-                </Text>
+                <SelectionIndicator isSelected={selectedAgentModelsChoiceIndex === 1}>
+                  No
+                </SelectionIndicator>
+                <Text dimColor> - Use global model for all agents</Text>
               </Box>
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
@@ -598,7 +591,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Step 2c: Explore Agent Model
               </Text>
             </Box>
@@ -610,10 +603,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             <Box flexDirection="column" marginBottom={1}>
               {availableModels.map((model, idx) => (
                 <Box key={idx}>
-                  <Text color={idx === selectedExploreModelIndex ? 'green' : undefined}>
-                    {idx === selectedExploreModelIndex ? '> ' : '  '}
+                  <SelectionIndicator isSelected={idx === selectedExploreModelIndex}>
                     {model}
-                  </Text>
+                  </SelectionIndicator>
                 </Box>
               ))}
             </Box>
@@ -630,7 +622,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Validating Explore Model...
               </Text>
             </Box>
@@ -638,7 +630,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text>
                 Testing {availableModels[selectedExploreModelIndex]} for tool support{' '}
               </Text>
-              <ProgressIndicator type="dots" color="cyan" />
+              <ProgressIndicator type="dots" color={UI_COLORS.TEXT_DEFAULT} />
             </Box>
           </>
         )}
@@ -650,7 +642,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Step 2d: Plan Agent Model
               </Text>
             </Box>
@@ -662,10 +654,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             <Box flexDirection="column" marginBottom={1}>
               {availableModels.map((model, idx) => (
                 <Box key={idx}>
-                  <Text color={idx === selectedPlanModelIndex ? 'green' : undefined}>
-                    {idx === selectedPlanModelIndex ? '> ' : '  '}
+                  <SelectionIndicator isSelected={idx === selectedPlanModelIndex}>
                     {model}
-                  </Text>
+                  </SelectionIndicator>
                 </Box>
               ))}
             </Box>
@@ -682,7 +673,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Validating Plan Model...
               </Text>
             </Box>
@@ -690,7 +681,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text>
                 Testing {availableModels[selectedPlanModelIndex]} for tool support{' '}
               </Text>
-              <ProgressIndicator type="dots" color="cyan" />
+              <ProgressIndicator type="dots" color={UI_COLORS.TEXT_DEFAULT} />
             </Box>
           </>
         )}
@@ -702,7 +693,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Step 3: Context Size
               </Text>
             </Box>
@@ -714,10 +705,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             <Box flexDirection="column" marginBottom={1}>
               {contextSizeOptions.map((option, idx) => (
                 <Box key={idx}>
-                  <Text color={idx === selectedContextSizeIndex ? 'green' : undefined}>
-                    {idx === selectedContextSizeIndex ? '> ' : '  '}
+                  <SelectionIndicator isSelected={idx === selectedContextSizeIndex}>
                     {option.label}
-                  </Text>
+                  </SelectionIndicator>
                 </Box>
               ))}
             </Box>
@@ -734,7 +724,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Step 4: Temperature
               </Text>
             </Box>
@@ -745,13 +735,13 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             {error && (
               <Box marginBottom={1}>
-                <Text color="red">{error}</Text>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
               </Box>
             )}
             <Box marginBottom={1}>
-              <Text color="green">Temperature: </Text>
+              <Text color={UI_COLORS.PRIMARY}>Temperature: </Text>
               <Text>{temperatureInput}</Text>
-              <Text color="cyan">█</Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
               <Text dimColor>Enter a value between 0.0 and 2.0, then press Enter</Text>
@@ -766,7 +756,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Step 5: Auto-confirm Tools
               </Text>
             </Box>
@@ -777,18 +767,16 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             <Box flexDirection="column" marginBottom={1}>
               <Box>
-                <Text color={selectedAutoConfirmChoiceIndex === 0 ? 'green' : undefined}>
-                  {selectedAutoConfirmChoiceIndex === 0 ? '> ' : '  '}
-                  <Text bold={selectedAutoConfirmChoiceIndex === 0}>Yes</Text>
-                  <Text dimColor> - Automatically execute tools without confirmation</Text>
-                </Text>
+                <SelectionIndicator isSelected={selectedAutoConfirmChoiceIndex === 0}>
+                  Yes
+                </SelectionIndicator>
+                <Text dimColor> - Automatically execute tools without confirmation</Text>
               </Box>
               <Box>
-                <Text color={selectedAutoConfirmChoiceIndex === 1 ? 'green' : undefined}>
-                  {selectedAutoConfirmChoiceIndex === 1 ? '> ' : '  '}
-                  <Text bold={selectedAutoConfirmChoiceIndex === 1}>No</Text>
-                  <Text dimColor> - Ask for confirmation before each tool execution</Text>
-                </Text>
+                <SelectionIndicator isSelected={selectedAutoConfirmChoiceIndex === 1}>
+                  No
+                </SelectionIndicator>
+                <Text dimColor> - Ask for confirmation before each tool execution</Text>
               </Box>
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
@@ -804,7 +792,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="cyan" bold>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
                 Applying Configuration...
               </Text>
             </Box>
@@ -823,7 +811,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold>
                 <ChickAnimation />
               </Text>
-              <Text color="green" bold>
+              <Text color={UI_COLORS.PRIMARY} bold>
                 Setup Complete
               </Text>
             </Box>
@@ -852,12 +840,13 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
               <Text>
-                Press <Text color="green">Enter</Text> to start
+                Press <Text color={UI_COLORS.PRIMARY}>Enter</Text> to start
               </Text>
             </Box>
           </>
         )}
-      </Box>
+        </Box>
+      </ModalContainer>
     </Box>
   );
 };

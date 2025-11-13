@@ -67,7 +67,7 @@ CLI → Ink UI → ActivityStream (event bus) → Agent → LLM/Tools
 - Tool orchestration with permission gating
 - Agent pooling for performance
 
-## Configuration
+Sessions are stored in `./.ally-sessions/`
 
 Configuration: `~/.ally/config.json`
 

@@ -197,7 +197,8 @@ export class AgentTool extends BaseTool {
           false, // isRetry
           undefined, // abort signal (agent doesn't exist yet)
           false, // isUserInitiated
-          true   // isContextFile - enables 40% limit
+          true,  // isContextFile - enables 40% limit
+          undefined // currentAgentName (agent doesn't exist yet)
         );
 
         // Validate read result before adding to conversation
@@ -473,18 +474,29 @@ export class AgentTool extends BaseTool {
       throw error;
     }
 
-    // Filter tools based on agent configuration
+    // Filter tools based on agent configuration and plugin context
     let filteredToolManager = toolManager;
+    const allTools = toolManager.getAllTools();
+
     if (agentData.tools !== undefined && agentData.tools.length > 0) {
-      // Agent has specific tool restrictions - create filtered tool manager
-      logger.debug('[AGENT_TOOL] Filtering tools for agent:', agentData.tools);
+      // Agent explicitly specifies allowed tools
+      logger.debug('[AGENT_TOOL] Agent specifies allowed tools:', agentData.tools);
       const allowedToolNames = new Set(agentData.tools);
-      const allTools = toolManager.getAllTools();
       const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
       filteredToolManager = new ToolManager(filteredTools, this.activityStream);
       logger.debug('[AGENT_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
+    } else if (agentData._pluginName) {
+      // Plugin agent with no explicit tool list: provide core tools + plugin's own tools
+      logger.debug('[AGENT_TOOL] Plugin agent - filtering to core tools + plugin tools');
+      const coreTools = allTools.filter(tool => !tool.pluginName);
+      const pluginTools = allTools.filter(tool => tool.pluginName === agentData._pluginName);
+      const filteredTools = [...coreTools, ...pluginTools];
+      filteredToolManager = new ToolManager(filteredTools, this.activityStream);
+      logger.debug('[AGENT_TOOL] Plugin agent has access to', filteredTools.length, 'tools:',
+        filteredTools.map(t => t.name).join(', '));
     } else {
-      logger.debug('[AGENT_TOOL] Agent has access to all tools (unrestricted)');
+      // User agent with no explicit tool list: provide all tools
+      logger.debug('[AGENT_TOOL] User agent has access to all tools (unrestricted)');
     }
 
     // Create scoped registry for sub-agent (currently unused - for future extension)
@@ -515,6 +527,7 @@ export class AgentTool extends BaseTool {
         parentCallId: callId,
         maxDuration,
         initialMessages,
+        agentType: agentData.name || 'agent',
       };
 
       subAgent = new Agent(
@@ -528,7 +541,10 @@ export class AgentTool extends BaseTool {
     } else {
       // IMPORTANT: Create unique pool key for this agent config
       // Must include agent_name to avoid mixing different custom agents
-      const poolKey = `agent-${agentData.name}`;
+      // For plugin agents, include plugin name to avoid conflicts across plugins
+      const poolKey = agentData._pluginName
+        ? `plugin-${agentData._pluginName}-${agentData.name}`
+        : `agent-${agentData.name}`;
 
       // Create config with pool metadata
       const agentConfig: AgentConfig = {
@@ -542,6 +558,7 @@ export class AgentTool extends BaseTool {
         _poolKey: poolKey, // CRITICAL: Add this for pool matching
         maxDuration,
         initialMessages,
+        agentType: agentData.name || 'agent',
       };
 
       // Acquire agent from pool
@@ -701,7 +718,12 @@ export class AgentTool extends BaseTool {
    */
   private getAgentManager(): AgentManager {
     if (!this.agentManager) {
-      this.agentManager = new AgentManager();
+      const registry = ServiceRegistry.getInstance();
+      const agentManager = registry.get<AgentManager>('agent_manager');
+      if (!agentManager) {
+        throw new Error('AgentManager not registered in ServiceRegistry');
+      }
+      this.agentManager = agentManager;
     }
     return this.agentManager;
   }

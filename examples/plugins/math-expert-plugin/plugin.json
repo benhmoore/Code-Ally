@@ -1,0 +1,101 @@
+{
+  "name": "math-expert-plugin",
+  "version": "1.0.0",
+  "description": "Example plugin with math expert agent and contextual tools",
+  "author": "Claude Code Team",
+  "runtime": "python3",
+  "tools": [
+    {
+      "name": "add",
+      "description": "Add two numbers together",
+      "command": "python3",
+      "args": ["tools/add.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number",
+            "description": "First number"
+          },
+          "b": {
+            "type": "number",
+            "description": "Second number"
+          }
+        },
+        "required": ["a", "b"]
+      },
+      "required_agent": "math-expert"
+    },
+    {
+      "name": "subtract",
+      "description": "Subtract one number from another",
+      "command": "python3",
+      "args": ["tools/subtract.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number",
+            "description": "Number to subtract from"
+          },
+          "b": {
+            "type": "number",
+            "description": "Number to subtract"
+          }
+        },
+        "required": ["a", "b"]
+      },
+      "required_agent": "math-expert"
+    },
+    {
+      "name": "multiply",
+      "description": "Multiply two numbers together",
+      "command": "python3",
+      "args": ["tools/multiply.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number",
+            "description": "First number"
+          },
+          "b": {
+            "type": "number",
+            "description": "Second number"
+          }
+        },
+        "required": ["a", "b"]
+      },
+      "required_agent": "math-expert"
+    },
+    {
+      "name": "divide",
+      "description": "Divide one number by another",
+      "command": "python3",
+      "args": ["tools/divide.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number",
+            "description": "Dividend (number to be divided)"
+          },
+          "b": {
+            "type": "number",
+            "description": "Divisor (number to divide by)"
+          }
+        },
+        "required": ["a", "b"]
+      },
+      "required_agent": "math-expert"
+    }
+  ],
+  "agents": [
+    {
+      "name": "math-expert",
+      "description": "Expert mathematician specializing in arithmetic calculations",
+      "system_prompt_file": "agents/math-expert.md",
+      "tools": ["add", "subtract", "multiply", "divide"]
+    }
+  ]
+}

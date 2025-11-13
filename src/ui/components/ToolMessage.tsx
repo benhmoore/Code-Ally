@@ -5,6 +5,7 @@ import { OutputScroller } from './OutputScroller';
 import { AnimationTicker } from '@services/AnimationTicker.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { TEXT_LIMITS } from '@config/constants.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 // Simple text-based spinner animation
 const SimpleSpinner: React.FC = () => {
@@ -21,7 +22,7 @@ const SimpleSpinner: React.FC = () => {
 
   const frame = ticker.getFrame() % frames.length;
 
-  return <Text color="cyan">{frames[frame]}</Text>;
+  return <Text color={UI_COLORS.PRIMARY}>{frames[frame]}</Text>;
 };
 
 interface ToolMessageProps {

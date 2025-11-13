@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { Message } from '@shared/index.js';
 import { MarkdownText } from './MarkdownText.js';
 import { TEXT_LIMITS } from '@config/constants.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 interface MessageDisplayProps {
   /** Message to display */
@@ -34,7 +35,7 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
   if (role === 'user') {
     return (
       <Box flexDirection="column">
-        <Text bold color="yellow">
+        <Text bold color={UI_COLORS.PRIMARY}>
           {`> ${content}`}
         </Text>
       </Box>
@@ -65,9 +66,9 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
         )}
         {safeContent && (
           isError ? (
-            <Text color="red">{safeContent}</Text>
+            <Text color={UI_COLORS.ERROR}>{safeContent}</Text>
           ) : isCommandResponse ? (
-            <Text color="yellow">{safeContent}</Text>
+            <Text color={UI_COLORS.PRIMARY}>{safeContent}</Text>
           ) : (
             <MarkdownText content={safeContent} />
           )
@@ -81,7 +82,7 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
   if (role === 'system') {
     return (
       <Box>
-        <Text dimColor color="gray">
+        <Text dimColor color={UI_COLORS.TEXT_DIM}>
           {content}
         </Text>
       </Box>
@@ -100,7 +101,7 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
 
     return (
       <Box flexDirection="column" paddingLeft={2}>
-        <Text color="cyan" dimColor>
+        <Text color={UI_COLORS.TEXT_DIM} dimColor>
           {toolName}
         </Text>
         <Text color="white" dimColor>

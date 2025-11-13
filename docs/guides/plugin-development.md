@@ -169,6 +169,180 @@ ally
 "Use my_tool with input 'test'"
 ```
 
+## Custom Agents
+
+Plugins can provide **custom AI agents** with specialized behaviors, system prompts, and tool access.
+
+### Quick Example
+
+**1. Add agent to plugin.json:**
+
+```json
+{
+  "name": "my-plugin",
+  "tools": [...],
+  "agents": [
+    {
+      "name": "my-agent",
+      "description": "Specialized agent for my domain",
+      "system_prompt_file": "agent.md"
+    }
+  ]
+}
+```
+
+**2. Create agent definition file:**
+
+**File:** `agent.md`
+
+```markdown
+---
+name: my-agent
+description: Specialized agent for database operations
+model: claude-3-5-sonnet-20241022
+temperature: 0.3
+tools: ["read", "write", "my_tool"]
+---
+
+You are a specialized database agent.
+Help users with queries, schema design, and optimization.
+```
+
+**3. Use the agent:**
+
+```bash
+# Main agent delegates task
+"Delegate to my-agent: analyze the schema"
+```
+
+### Agent Definition Format
+
+Agents use **markdown with YAML frontmatter**:
+
+```markdown
+---
+name: agent-name
+description: Brief description
+model: claude-3-5-sonnet-20241022
+temperature: 0.7
+tools: ["read", "write", "my_tool"]
+---
+
+System prompt defining agent behavior.
+```
+
+**Fields:**
+- `name`: Agent identifier (required, must match manifest)
+- `description`: Brief description for selection (required)
+- `model`: Model to use (optional, defaults to config)
+- `temperature`: 0.0-1.0 (optional, defaults to config)
+- `reasoning_effort`: "low", "medium", "high" (optional)
+- `tools`: Array of allowed tool names (optional, see below)
+
+### Tool Scoping
+
+**Default behavior (no `tools` field):**
+
+Plugin agents automatically get:
+- All core tools (read, write, bash, grep, etc.)
+- Only the plugin's own tools
+
+```markdown
+---
+name: my-agent
+# No tools field → gets core + plugin tools
+---
+```
+
+**Explicit tools:**
+
+```markdown
+---
+name: restricted-agent
+tools: ["read", "my_tool"]
+# Only these tools available
+---
+```
+
+### Tool-Agent Binding
+
+Bind tools to specific agents with `required_agent`:
+
+```json
+{
+  "tools": [{
+    "name": "database_query",
+    "description": "Execute database queries",
+    "required_agent": "database-agent",
+    "command": "python3",
+    "args": ["query.py"]
+  }]
+}
+```
+
+**Effect:** Tool only executes when current agent is `database-agent`.
+
+### Complete Example
+
+**plugin.json:**
+
+```json
+{
+  "name": "database-tools",
+  "version": "1.0.0",
+  "description": "Database tools with specialized agent",
+
+  "tools": [
+    {
+      "name": "query_db",
+      "description": "Execute SQL query",
+      "command": "python3",
+      "args": ["query.py"],
+      "required_agent": "database-agent"
+    },
+    {
+      "name": "explain_query",
+      "description": "Explain query plan",
+      "command": "python3",
+      "args": ["explain.py"]
+    }
+  ],
+
+  "agents": [{
+    "name": "database-agent",
+    "description": "SQL expert and query optimizer",
+    "system_prompt_file": "database-agent.md",
+    "model": "claude-3-5-sonnet-20241022",
+    "temperature": 0.2
+  }]
+}
+```
+
+**database-agent.md:**
+
+```markdown
+---
+name: database-agent
+description: SQL query optimization specialist
+temperature: 0.2
+tools: ["read", "query_db", "explain_query"]
+---
+
+You are a database specialist with SQL expertise.
+
+Workflow:
+1. Read and understand schema
+2. Validate SQL syntax
+3. Use EXPLAIN for optimization
+4. Check for injection vulnerabilities
+
+Never execute destructive queries without confirmation.
+```
+
+**For full documentation on plugin agents, see:**
+- [Plugin Agents Guide](../plugin-agents.md) - Complete reference
+- Architecture details below
+
 ## Executable Plugins
 
 ### Overview

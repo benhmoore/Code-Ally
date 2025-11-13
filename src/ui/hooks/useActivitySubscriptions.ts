@@ -279,7 +279,6 @@ export const useActivitySubscriptions = (
   // Agent end
   useActivityEvent(ActivityEventType.AGENT_END, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
-    const wasInterrupted = event.data?.interrupted || false;
 
     if (isSpecialized) {
       setActiveAgentsCount((prev) => Math.max(0, prev - 1));
@@ -287,10 +286,10 @@ export const useActivitySubscriptions = (
       streamingContentRef.current = '';
       actions.setStreamingContent(undefined);
 
-      // Clear active tool calls when main agent ends (especially if interrupted)
-      if (wasInterrupted) {
-        actions.clearToolCalls();
-      }
+      // Clear only running/pending tool calls when main agent ends
+      // Preserves completed tool calls for display in conversation history
+      // This prevents false positive "agent is processing" errors when rewinding after completion
+      actions.clearRunningToolCalls();
     }
 
     setIsCancelling(false);

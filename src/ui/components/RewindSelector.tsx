@@ -10,6 +10,11 @@ import { Message } from '@shared/index.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { PatchMetadata } from '@services/PatchManager.js';
 import { logger } from '@services/Logger.js';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { createDivider } from '../utils/uiHelpers.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 export interface RewindSelectorProps {
   /** User messages only (pre-filtered) */
@@ -106,13 +111,13 @@ function calculateFileChanges(
  * - Single filename if exactly 1 file changed
  * - "N files changed" summary if multiple files changed
  *
- * Color adapts based on selection state (green for selected, gray otherwise)
+ * Color adapts based on selection state (yellow for selected, gray otherwise)
  */
 const FileChangesDisplay: React.FC<{
   changes: FileChangeStats;
   isSelected: boolean;
 }> = ({ changes, isSelected }) => {
-  const color = isSelected ? 'green' : 'gray';
+  const color = isSelected ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DIM;
 
   if (changes.fileCount === 0) {
     return (
@@ -180,17 +185,17 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
     return map;
   }, [messages, patches]);
 
+  const terminalWidth = useContentWidth();
+  const divider = createDivider(terminalWidth);
+
   if (messages.length === 0) {
     return (
       <Box flexDirection="column" paddingX={1}>
-        <Box
-          borderStyle="round"
-          borderColor="cyan"
-          paddingX={2}
-          paddingY={1}
-          flexDirection="column"
-        >
-          <Text color="yellow">No user messages to rewind to</Text>
+        <Box>
+          <Text dimColor>{divider}</Text>
+        </Box>
+        <Box marginY={1}>
+          <Text color={UI_COLORS.PRIMARY}>No user messages to rewind to</Text>
         </Box>
       </Box>
     );
@@ -221,76 +226,64 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Box
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-      >
-        {/* Header */}
-        <Box marginBottom={1}>
-          <Text color="cyan" bold>
-            Rewind Conversation
-          </Text>
-        </Box>
-
-        <Box marginBottom={1}>
-          <Text dimColor>Select a prompt to rewind to ({totalMessages} messages):</Text>
-        </Box>
-
-        {/* Scroll indicator - more above */}
-        {hasMoreAbove && (
-          <Box>
-            <Text dimColor>  ↑ {startIdx} more...</Text>
-          </Box>
-        )}
-
-        {/* Message list */}
-        {visibleMessages.map((msg, idx) => {
-          const actualIndex = startIdx + idx;
-          const isSelected = actualIndex === selectedIndex;
-          const time = formatTime((msg as any).timestamp);
-          const content = truncateContent(msg.content);
-          const changes = fileChangesMap.get(actualIndex) || {
-            fileCount: 0,
-            additions: 0,
-            deletions: 0,
-            files: [],
-          };
-
-          return (
-            <Box key={actualIndex} flexDirection="column">
-              <Box>
-                <Text>
-                  {isSelected ? (
-                    <Text color="green">&gt; </Text>
-                  ) : (
-                    <Text>  </Text>
-                  )}
-                  <Text color="gray" bold={isSelected}>{time}</Text>
-                  <Text bold={isSelected}> - {content}</Text>
-                </Text>
-              </Box>
-              <FileChangesDisplay changes={changes} isSelected={isSelected} />
-            </Box>
-          );
-        })}
-
-        {/* Scroll indicator - more below */}
-        {hasMoreBelow && (
-          <Box>
-            <Text dimColor>  ↓ {totalMessages - endIdx} more...</Text>
-          </Box>
-        )}
-
-        {/* Footer */}
-        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-          <Text dimColor>
-            ↑↓ navigate  •  Enter rewind  •  Esc/Ctrl+C cancel
-          </Text>
-        </Box>
+      {/* Top divider */}
+      <Box>
+        <Text dimColor>{divider}</Text>
       </Box>
+
+      {/* Header */}
+      <Box marginY={1}>
+        <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+          Rewind Conversation
+        </Text>
+      </Box>
+
+      <Box marginBottom={1}>
+        <Text dimColor>Select a prompt to rewind to ({totalMessages} messages):</Text>
+      </Box>
+
+      {/* Scroll indicator - more above */}
+      {hasMoreAbove && (
+        <Box>
+          <Text dimColor>  ↑ {startIdx} more...</Text>
+        </Box>
+      )}
+
+      {/* Message list */}
+      {visibleMessages.map((msg, idx) => {
+        const actualIndex = startIdx + idx;
+        const isSelected = actualIndex === selectedIndex;
+        const time = formatTime((msg as any).timestamp);
+        const content = truncateContent(msg.content);
+        const changes = fileChangesMap.get(actualIndex) || {
+          fileCount: 0,
+          additions: 0,
+          deletions: 0,
+          files: [],
+        };
+
+        return (
+          <Box key={actualIndex} flexDirection="column">
+            <Box>
+              <SelectionIndicator isSelected={isSelected}>
+                <Text color="gray" bold={isSelected}>{time}</Text>
+                <Text bold={isSelected}> - {content}</Text>
+              </SelectionIndicator>
+            </Box>
+            <FileChangesDisplay changes={changes} isSelected={isSelected} />
+          </Box>
+        );
+      })}
+
+      {/* Scroll indicator - more below */}
+      {hasMoreBelow && (
+        <Box>
+          <Text dimColor>  ↓ {totalMessages - endIdx} more...</Text>
+        </Box>
+      )}
+
+      {/* Footer */}
+      <KeyboardHintFooter action="rewind to" />
     </Box>
   );
 };

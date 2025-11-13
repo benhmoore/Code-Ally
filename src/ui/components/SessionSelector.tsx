@@ -9,6 +9,11 @@ import { Box, Text } from 'ink';
 import { SessionInfo } from '@shared/index.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
 import { TEXT_LIMITS } from '@config/constants.js';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { UI_COLORS } from '../constants/colors.js';
+import { createDivider } from '../utils/uiHelpers.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
 
 export interface SessionSelectorProps {
   /** Available sessions */
@@ -51,6 +56,9 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   visible = true,
   maxVisible = 10,
 }) => {
+  const terminalWidth = useContentWidth();
+  const divider = createDivider(terminalWidth);
+
   if (!visible) {
     return null;
   }
@@ -58,19 +66,18 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   if (sessions.length === 0) {
     return (
       <Box flexDirection="column" paddingX={1}>
-        <Box
-          borderStyle="round"
-          borderColor="cyan"
-          paddingX={2}
-          paddingY={1}
-          flexDirection="column"
-        >
-          <Box marginBottom={1}>
-            <Text color="cyan" bold>
+        <Box flexDirection="column">
+          {/* Top divider */}
+          <Box>
+            <Text dimColor>{divider}</Text>
+          </Box>
+
+          <Box marginY={1}>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
               Resume Session
             </Text>
           </Box>
-          <Text color="yellow">No sessions found</Text>
+          <Text color={UI_COLORS.PRIMARY}>No sessions found</Text>
           <Box marginTop={1}>
             <Text dimColor>Start a new conversation to create a session.</Text>
           </Box>
@@ -104,16 +111,15 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Box
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-      >
+      <Box flexDirection="column">
+        {/* Top divider */}
+        <Box>
+          <Text dimColor>{divider}</Text>
+        </Box>
+
         {/* Header */}
-        <Box marginBottom={1}>
-          <Text color="cyan" bold>
+        <Box marginY={1}>
+          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
             Resume Session
           </Text>
         </Box>
@@ -139,19 +145,12 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
 
           return (
             <Box key={session.session_id} flexDirection="column">
-              <Box>
-                <Text>
-                  {isSelected ? (
-                    <Text color="green">&gt; </Text>
-                  ) : (
-                    <Text>  </Text>
-                  )}
-                  <Text bold={isSelected}>{displayName}</Text>
-                  <Text dimColor> ({session.message_count} msgs, {relativeTime})</Text>
-                </Text>
-              </Box>
+              <SelectionIndicator isSelected={isSelected}>
+                {displayName}
+                <Text dimColor> ({session.message_count} msgs, {relativeTime})</Text>
+              </SelectionIndicator>
               <Box marginLeft={2}>
-                <Text color={isSelected ? 'cyan' : 'gray'} dimColor={!isSelected}>
+                <Text color={isSelected ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DIM} dimColor={!isSelected}>
                   {workingDir}
                 </Text>
               </Box>
@@ -167,11 +166,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         )}
 
         {/* Footer */}
-        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-          <Text dimColor>
-            ↑↓ navigate  •  Enter select  •  Esc/Ctrl+C cancel
-          </Text>
-        </Box>
+        <KeyboardHintFooter action="select" />
       </Box>
     </Box>
   );

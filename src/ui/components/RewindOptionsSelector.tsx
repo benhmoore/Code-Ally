@@ -16,6 +16,11 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Message } from '@shared/index.js';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { createDivider } from '../utils/uiHelpers.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 /**
  * File change statistics
@@ -123,6 +128,9 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     return null;
   }
 
+  const terminalWidth = useContentWidth();
+  const divider = createDivider(terminalWidth);
+
   const messagePreview = truncateContent(targetMessage.content);
   const fileList = fileChanges.files.slice(0, 3).map(f => {
     const filename = f.path.split('/').pop() || f.path;
@@ -151,92 +159,77 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Box
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-      >
-        {/* Header */}
-        <Box marginBottom={1}>
-          <Text color="cyan" bold>
-            Rewind Options
-          </Text>
-        </Box>
+      {/* Top divider */}
+      <Box>
+        <Text dimColor>{divider}</Text>
+      </Box>
 
-        {/* Target message preview */}
-        <Box marginBottom={1} flexDirection="column">
-          <Text dimColor>Rewinding to:</Text>
-          <Box marginLeft={2}>
-            <Text color="white">"{messagePreview}"</Text>
-          </Box>
-        </Box>
+      {/* Header */}
+      <Box marginY={1}>
+        <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+          Rewind Options
+        </Text>
+      </Box>
 
-        {/* File changes preview */}
-        {fileChanges.fileCount > 0 && (
-          <Box marginBottom={1} flexDirection="column">
-            {fileList.map((filename, index) => (
-              <Box key={index} marginLeft={2}>
-                <Text dimColor>• {filename}</Text>
-              </Box>
-            ))}
-            {hasMoreFiles && (
-              <Box marginLeft={2}>
-                <Text dimColor>• ... and {fileChanges.fileCount - 3} more</Text>
-              </Box>
-            )}
-          </Box>
-        )}
-
-        {/* Section header */}
-        <Box marginTop={1} marginBottom={1}>
-          <Text dimColor>Select an option:</Text>
-        </Box>
-
-        {/* Radio options */}
-        <Box flexDirection="column" marginBottom={1}>
-          {options.map((option, index) => {
-            const isSelected = index === selectedOption;
-            const isDimmed = option.dimmed;
-
-            return (
-              <Box key={index} flexDirection="column" marginBottom={index < options.length - 1 ? 1 : 0}>
-                {/* Option label */}
-                <Box>
-                  <Text>
-                    {isSelected ? (
-                      <Text color="green">&gt; </Text>
-                    ) : (
-                      <Text>  </Text>
-                    )}
-                    <Text
-                      color={isDimmed ? 'gray' : undefined}
-                      bold={isSelected}
-                      dimColor={isDimmed}
-                    >
-                      {option.label}
-                    </Text>
-                  </Text>
-                </Box>
-                {/* Option description */}
-                {option.description && (
-                  <Box marginLeft={4}>
-                    <Text dimColor>{option.description}</Text>
-                  </Box>
-                )}
-              </Box>
-            );
-          })}
-        </Box>
-
-        {/* Help text */}
-        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-          <Text dimColor>
-            ↑↓ navigate  •  Enter select  •  Esc cancel
-          </Text>
+      {/* Target message preview */}
+      <Box marginBottom={1} flexDirection="column">
+        <Text dimColor>Rewinding to:</Text>
+        <Box marginLeft={2}>
+          <Text color="white">"{messagePreview}"</Text>
         </Box>
       </Box>
+
+      {/* File changes preview */}
+      {fileChanges.fileCount > 0 && (
+        <Box marginBottom={1} flexDirection="column">
+          {fileList.map((filename, index) => (
+            <Box key={index} marginLeft={2}>
+              <Text dimColor>• {filename}</Text>
+            </Box>
+          ))}
+          {hasMoreFiles && (
+            <Box marginLeft={2}>
+              <Text dimColor>• ... and {fileChanges.fileCount - 3} more</Text>
+            </Box>
+          )}
+        </Box>
+      )}
+
+      {/* Section header */}
+      <Box marginTop={1} marginBottom={1}>
+        <Text dimColor>Select an option:</Text>
+      </Box>
+
+      {/* Radio options */}
+      <Box flexDirection="column" marginBottom={1}>
+        {options.map((option, index) => {
+          const isSelected = index === selectedOption;
+          const isDimmed = option.dimmed;
+
+          return (
+            <Box key={index} flexDirection="column" marginBottom={index < options.length - 1 ? 1 : 0}>
+              {/* Option label */}
+              <SelectionIndicator isSelected={isSelected}>
+                <Text
+                  color={isDimmed ? 'gray' : undefined}
+                  dimColor={isDimmed}
+                >
+                  {option.label}
+                </Text>
+              </SelectionIndicator>
+              {/* Option description */}
+              {option.description && (
+                <Box marginLeft={4}>
+                  <Text dimColor>{option.description}</Text>
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+      </Box>
+
+      {/* Help text */}
+      <KeyboardHintFooter action="select" cancelText="cancel" />
     </Box>
   );
 };

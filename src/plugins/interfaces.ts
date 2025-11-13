@@ -8,6 +8,36 @@ import type { BaseTool } from '../tools/BaseTool.js';
 import type { PluginConfigSchema, PluginManifest } from './PluginLoader.js';
 
 /**
+ * Agent definition within a plugin
+ *
+ * Defines a specialized agent that can be spawned with custom configuration,
+ * system prompts, and tool restrictions. Agents enable plugins to provide
+ * domain-specific conversational interfaces.
+ */
+export interface AgentDefinition {
+  /** Unique agent name (will be used as identifier) */
+  name: string;
+
+  /** Human-readable description of what the agent does */
+  description: string;
+
+  /** Path to system prompt file, relative to plugin directory */
+  system_prompt_file: string;
+
+  /** Optional list of tool names this agent can access (restricts available tools) */
+  tools?: string[];
+
+  /** Optional custom model identifier (e.g., 'claude-3-5-sonnet-20241022') */
+  model?: string;
+
+  /** Optional custom temperature setting (0.0 to 1.0) */
+  temperature?: number;
+
+  /** Optional reasoning effort level (e.g., 'low', 'medium', 'high') */
+  reasoning_effort?: string;
+}
+
+/**
  * Plugin configuration management service
  */
 export interface PluginConfigManagerService {
@@ -47,6 +77,7 @@ export interface PluginInstallResult {
   success: boolean;
   pluginName?: string;
   tools?: BaseTool[];
+  agents?: any[]; // AgentData[] - imported separately to avoid circular dependency
   error?: string;
   hadExistingConfig?: boolean;
 }
@@ -64,6 +95,7 @@ export interface PluginUninstallResult {
  */
 export interface PluginLoadResult {
   tools: BaseTool[];
+  agents: any[]; // AgentData[] - imported separately to avoid circular dependency
   pluginCount: number;
 }
 

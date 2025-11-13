@@ -22,6 +22,7 @@ import { logger } from '@services/Logger.js';
 import { PermissionChoice } from '@agent/TrustManager.js';
 import { Agent } from '@agent/Agent.js';
 import { UI_DELAYS } from '@config/constants.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 interface InputPromptProps {
   /** Callback when user submits input */
@@ -1254,14 +1255,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const isBashMode = buffer.startsWith('!');
 
   let promptText = '> ';
-  let promptColor = 'gray';
+  let promptColor = UI_COLORS.TEXT_DIM;
 
   if (isCommandMode) {
     promptText = 'Command > ';
-    promptColor = 'gray';
+    promptColor = UI_COLORS.TEXT_DIM;
   } else if (isBashMode) {
     promptText = 'Bash > ';
-    promptColor = 'green';
+    promptColor = UI_COLORS.TEXT_DIM;
   }
 
   /**
@@ -1349,8 +1350,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
           // Get color for segment based on highlight type
           const getSegmentColor = (highlightType: 'none' | 'file' | 'plugin'): string => {
-            if (highlightType === 'file') return 'yellow';
-            if (highlightType === 'plugin') return 'cyan';
+            if (highlightType === 'file') return UI_COLORS.PRIMARY;
+            if (highlightType === 'plugin') return UI_COLORS.PRIMARY;
             return textColor;
           };
 
@@ -1396,7 +1397,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                           <Text color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
                             {before}
                           </Text>
-                          <Text color="black" backgroundColor="yellow">
+                          <Text color={UI_COLORS.TEXT_CONTRAST} backgroundColor={UI_COLORS.PRIMARY}>
                             {at}
                           </Text>
                           <Text color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
@@ -1419,7 +1420,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                   })}
                   {/* Handle cursor at end of line */}
                   {cursorPosInLine >= displayText.length && (
-                    <Text color="black" backgroundColor="yellow">
+                    <Text color={UI_COLORS.TEXT_CONTRAST} backgroundColor={UI_COLORS.PRIMARY}>
                       {' '}
                     </Text>
                   )}

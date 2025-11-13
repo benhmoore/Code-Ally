@@ -4,6 +4,7 @@ import { useStdout } from 'ink';
 import { ToolCallState } from '@shared/index.js';
 import { ToolMessage } from './ToolMessage';
 import { TEXT_LIMITS } from '@config/constants.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 interface ToolGroupMessageProps {
   /** Array of concurrent tool call states */
@@ -131,7 +132,7 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
           Concurrent Tools: {summary.completed}/{summary.total}
         </Text>
         {summary.successful > 0 && (
-          <Text color="green">
+          <Text color={UI_COLORS.TEXT_DEFAULT}>
             {' '}
             ✓{summary.successful}
           </Text>

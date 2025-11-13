@@ -225,7 +225,16 @@ async function handleResumeCommand(
 
       if (answer.toLowerCase().startsWith('y')) {
         await sessionManager.createSession(sessionId);
+        sessionManager.setCurrentSession(sessionId);
         console.log(`\n✓ Created new session: ${sessionId}\n`);
+
+        // Notify PatchManager about the new session
+        const registry = ServiceRegistry.getInstance();
+        const patchManager = registry.get('patch_manager');
+        if (patchManager && typeof (patchManager as any).onSessionChange === 'function') {
+          await (patchManager as any).onSessionChange();
+        }
+
         return sessionId;
       }
 
@@ -280,6 +289,13 @@ async function handleOnceMode(
   if (options.session && !options.noSession) {
     sessionName = options.session;
     sessionManager.setCurrentSession(sessionName);
+
+    // Notify PatchManager about the session change
+    const registry = ServiceRegistry.getInstance();
+    const patchManager = registry.get('patch_manager');
+    if (patchManager && typeof (patchManager as any).onSessionChange === 'function') {
+      await (patchManager as any).onSessionChange();
+    }
 
     // Load existing session if it exists
     if (await sessionManager.sessionExists(sessionName)) {
@@ -537,7 +553,7 @@ async function main() {
       eventSubscriptionManager
     );
     registry.registerInstance('plugin_loader', pluginLoader);
-    const { tools: pluginTools, pluginCount } = await pluginLoader.loadPlugins(PLUGINS_DIR);
+    const { tools: pluginTools, agents: pluginAgents, pluginCount } = await pluginLoader.loadPlugins(PLUGINS_DIR);
     logger.debug('[CLI] Plugins loaded successfully');
 
     // Start background plugin daemons
@@ -589,6 +605,12 @@ async function main() {
     const { AgentManager } = await import('./services/AgentManager.js');
     const agentManager = new AgentManager();
     registry.registerInstance('agent_manager', agentManager);
+
+    // Register plugin agents with AgentManager
+    if (pluginAgents.length > 0) {
+      agentManager.registerPluginAgents(pluginAgents);
+      logger.debug(`[CLI] Registered ${pluginAgents.length} plugin agent(s)`);
+    }
 
     // Create agent generation service for LLM-assisted agent creation
     const { AgentGenerationService } = await import('./services/AgentGenerationService.js');

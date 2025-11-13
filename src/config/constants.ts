@@ -492,6 +492,9 @@ export const TEXT_LIMITS = {
   /** Terminal width fallback for markdown (120 columns) */
   TERMINAL_WIDTH_MARKDOWN_FALLBACK: 120,
 
+  /** Maximum content width for readability on wide screens (200 columns) */
+  MAX_CONTENT_WIDTH: 200,
+
   /** Terminal height fallback (24 rows) */
   TERMINAL_HEIGHT_FALLBACK: 24,
 

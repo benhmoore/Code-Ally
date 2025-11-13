@@ -11,6 +11,8 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { Completion } from '@services/CompletionProvider.js';
+import { ModalContainer } from './ModalContainer.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 export interface CompletionDropdownProps {
   /** Available completions */
@@ -84,86 +86,81 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
   const showScrollDown = endIndex < completions.length;
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="gray"
-      paddingX={1}
-      marginTop={1}
-      width="80%"
-    >
-      {/* Header */}
-      <Box marginBottom={0}>
-        <Text dimColor>
-          {completions.length} {completions.length === 1 ? 'suggestion' : 'suggestions'}
-        </Text>
-      </Box>
-
-      {/* Scroll indicator */}
-      {showScrollUp && (
-        <Box justifyContent="center">
-          <Text dimColor>↑ more</Text>
+    <Box flexDirection="column" marginTop={1} width="80%">
+      <ModalContainer borderColor="gray">
+        {/* Header */}
+        <Box marginBottom={0}>
+          <Text dimColor>
+            {completions.length} {completions.length === 1 ? 'suggestion' : 'suggestions'}
+          </Text>
         </Box>
-      )}
 
-      {/* Completion items */}
-      {visibleCompletions.map((completion, idx) => {
-        const actualIndex = startIndex + idx;
-        const isSelected = actualIndex === selectedIndex;
-
-        return (
-          <Box key={actualIndex} paddingLeft={1}>
-            {/* Selection indicator */}
-            <Text color={isSelected ? 'green' : undefined} bold={isSelected}>
-              {isSelected ? '❯ ' : '  '}
-            </Text>
-
-            {/* Icon */}
-            <Text color={getCompletionColor(completion.type)}>
-              {getCompletionIcon(completion.type)}{' '}
-            </Text>
-
-            {/* Value */}
-            <Box width="30%">
-              <Text
-                color={isSelected ? 'white' : undefined}
-                bold={isSelected}
-                wrap="truncate"
-              >
-                {completion.value}
-              </Text>
-            </Box>
-
-            {/* Description */}
-            {completion.description && (
-              <Box marginLeft={2} flexGrow={1}>
-                <Text dimColor={!isSelected} wrap="truncate">
-                  {completion.description}
-                </Text>
-                {completion.currentValue && (
-                  <Text dimColor wrap="truncate">
-                    {' '}({completion.currentValue})
-                  </Text>
-                )}
-              </Box>
-            )}
+        {/* Scroll indicator */}
+        {showScrollUp && (
+          <Box justifyContent="center">
+            <Text dimColor>↑ more</Text>
           </Box>
-        );
-      })}
+        )}
 
-      {/* Scroll indicator */}
-      {showScrollDown && (
-        <Box justifyContent="center">
-          <Text dimColor>↓ more</Text>
+        {/* Completion items */}
+        {visibleCompletions.map((completion, idx) => {
+          const actualIndex = startIndex + idx;
+          const isSelected = actualIndex === selectedIndex;
+
+          return (
+            <Box key={actualIndex} paddingLeft={1}>
+              {/* Selection indicator */}
+              <Text color={isSelected ? UI_COLORS.PRIMARY : undefined} bold={isSelected}>
+                {isSelected ? '❯ ' : '  '}
+              </Text>
+
+              {/* Icon */}
+              <Text color={getCompletionColor(completion.type)}>
+                {getCompletionIcon(completion.type)}{' '}
+              </Text>
+
+              {/* Value */}
+              <Box width="30%">
+                <Text
+                  color={isSelected ? 'white' : undefined}
+                  bold={isSelected}
+                  wrap="truncate"
+                >
+                  {completion.value}
+                </Text>
+              </Box>
+
+              {/* Description */}
+              {completion.description && (
+                <Box marginLeft={2} flexGrow={1}>
+                  <Text dimColor={!isSelected} wrap="truncate">
+                    {completion.description}
+                  </Text>
+                  {completion.currentValue && (
+                    <Text dimColor wrap="truncate">
+                      {' '}({completion.currentValue})
+                    </Text>
+                  )}
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+
+        {/* Scroll indicator */}
+        {showScrollDown && (
+          <Box justifyContent="center">
+            <Text dimColor>↓ more</Text>
+          </Box>
+        )}
+
+        {/* Footer hint - Note: CompletionDropdown uses Tab instead of Enter */}
+        <Box marginTop={0} borderTop borderColor="gray">
+          <Text dimColor>
+            Tab: select • ↑↓: navigate • Esc: dismiss
+          </Text>
         </Box>
-      )}
-
-      {/* Footer hint */}
-      <Box marginTop={0} borderTop borderColor="gray">
-        <Text dimColor>
-          Tab: select • ↑↓: navigate • Esc: dismiss
-        </Text>
-      </Box>
+      </ModalContainer>
     </Box>
   );
 };

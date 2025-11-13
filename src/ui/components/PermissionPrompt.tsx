@@ -10,9 +10,13 @@
  */
 
 import React from 'react';
-import { Box, Text, useStdout } from 'ink';
+import { Box, Text } from 'ink';
 import { PermissionChoice, SensitivityTier } from '@agent/TrustManager.js';
-import { TEXT_LIMITS } from '@config/constants.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { createDivider } from '../utils/uiHelpers.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 export interface PermissionRequest {
   /** Tool or command requesting permission */
@@ -39,18 +43,11 @@ export interface PermissionPromptProps {
 }
 
 /**
- * Get color based on sensitivity tier
+ * Get color based on sensitivity tier - always returns yellow per design system
  */
-function getSensitivityColor(tier: SensitivityTier): string {
-  switch (tier) {
-    case SensitivityTier.EXTREMELY_SENSITIVE:
-      return 'red';
-    case SensitivityTier.SENSITIVE:
-      return 'yellow';
-    case SensitivityTier.NORMAL:
-    default:
-      return 'cyan';
-  }
+function getSensitivityColor(_tier: SensitivityTier): string {
+  // Always use primary color (yellow) for permission titles regardless of sensitivity
+  return UI_COLORS.PRIMARY;
 }
 
 /**
@@ -67,12 +64,10 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
 
   const { toolName, sensitivity, options } = request;
   const color = getSensitivityColor(sensitivity);
-  const { stdout } = useStdout();
-  const terminalWidth = stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
+  const terminalWidth = useContentWidth();
 
   // Create divider line
-  const dividerWidth = Math.max(60, terminalWidth - 4);
-  const divider = '─'.repeat(dividerWidth);
+  const divider = createDivider(terminalWidth);
 
   return (
     <Box flexDirection="column">
@@ -84,7 +79,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
       {/* Header */}
       <Box marginY={1}>
         <Text color={color} bold>Permission required for </Text>
-        <Text bold color="cyan">{toolName}</Text>
+        <Text bold color={UI_COLORS.TEXT_DEFAULT}>{toolName}</Text>
       </Box>
 
       {/* Options */}
@@ -93,24 +88,15 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
 
         return (
           <Box key={idx}>
-            <Text>
-              {isSelected ? (
-                <Text color="green">&gt; </Text>
-              ) : (
-                <Text>  </Text>
-              )}
-              <Text bold={isSelected}>{option}</Text>
-            </Text>
+            <SelectionIndicator isSelected={isSelected}>
+              {option}
+            </SelectionIndicator>
           </Box>
         );
       })}
 
       {/* Footer */}
-      <Box marginTop={1}>
-        <Text dimColor>
-          ↑↓ navigate  •  Enter confirm  •  Esc/Ctrl+C deny
-        </Text>
-      </Box>
+      <KeyboardHintFooter action="confirm" cancelText="deny" />
     </Box>
   );
 };

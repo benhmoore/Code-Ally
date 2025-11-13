@@ -18,9 +18,12 @@ import { ProgressIndicator } from './ProgressIndicator.js';
 import { formatElapsed } from '../utils/timeUtils.js';
 import { getGitBranch } from '@utils/gitUtils.js';
 import { logger } from '@services/Logger.js';
+import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import * as os from 'os';
 import * as path from 'path';
 import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '@config/constants.js';
+import { UI_SYMBOLS } from '@config/uiSymbols.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -73,19 +76,13 @@ const getActiveAgentName = (toolCalls: ToolCallState[]): string | null => {
     }
 
     const metadata = agentPoolService.getAgentMetadata(agentId);
-    if (!metadata || !metadata.config) {
+    if (!metadata) {
       return 'Assistant'; // Fallback if metadata not found
     }
 
-    // Determine agent type from baseAgentPrompt (same logic as AgentAskTool)
-    const baseAgentPrompt = metadata.config.baseAgentPrompt;
-    if (baseAgentPrompt?.includes('codebase exploration')) {
-      return 'Explorer';
-    } else if (baseAgentPrompt?.includes('implementation planning')) {
-      return 'Planner';
-    } else {
-      return 'Assistant';
-    }
+    // Use centralized utility to determine agent type and get display name
+    const agentType = getAgentType(metadata);
+    return getAgentDisplayName(agentType);
   } catch (error) {
     // Silently handle errors and return fallback
     return 'Assistant';
@@ -514,9 +511,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   if (isCancelling) {
     return (
       <Box>
-        <ProgressIndicator type="arc" color="red" />
+        <ProgressIndicator type="arc" color={UI_COLORS.ERROR} />
         <Text> </Text>
-        <Text color="red">Cancelling</Text>
+        <Text color={UI_COLORS.ERROR}>Cancelling</Text>
       </Box>
     );
   }
@@ -525,9 +522,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   if (isCompacting) {
     return (
       <Box>
-        <ProgressIndicator type="arc" color="cyan" />
+        <ProgressIndicator type="arc" color={UI_COLORS.PRIMARY} />
         <Text> </Text>
-        <Text color="cyan">Compacting conversation</Text>
+        <Text color={UI_COLORS.PRIMARY}>Compacting conversation</Text>
         <Text dimColor> ({formatElapsed(elapsed)})</Text>
       </Box>
     );
@@ -535,10 +532,10 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   // Get checkbox symbol based on status
   const getCheckbox = (status: string): string => {
-    if (status === 'completed') return '☑';
-    if (status === 'in_progress') return '☐';
-    if (status === 'proposed') return '◯'; // Empty circle for proposed
-    return '☐';
+    if (status === 'completed') return UI_SYMBOLS.TODO.CHECKED;
+    if (status === 'in_progress') return UI_SYMBOLS.TODO.UNCHECKED;
+    if (status === 'proposed') return UI_SYMBOLS.TODO.PROPOSED;
+    return UI_SYMBOLS.TODO.UNCHECKED;
   };
 
   return (
@@ -548,7 +545,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         {/* Interjection acknowledgment indicator (prepended to left) */}
         {showInterjectionIndicator && (
           <>
-            <Text color="yellow">Interjection received</Text>
+            <Text color={UI_COLORS.PRIMARY}>Interjection received</Text>
             <Text> · </Text>
           </>
         )}
@@ -556,13 +553,13 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         {/* Show mascot only when idle */}
         {!(isProcessing || isCompacting) && (
           <>
-            <ChickAnimation color="yellow" speed={4000} />
+            <ChickAnimation color={UI_COLORS.PRIMARY} speed={4000} />
             <Text> </Text>
           </>
         )}
         {isProcessing || isCompacting ? (
           <>
-            <ProgressIndicator type="arc" color="yellow" />
+            <ProgressIndicator type="arc" color={UI_COLORS.PRIMARY} />
             <Text> </Text>
             <Text>
               {activeAgentName
@@ -574,7 +571,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
             <Text dimColor> (esc to interrupt · {formatElapsed(elapsed)})</Text>
           </>
         ) : (
-          <Text color="yellow">{idleMessage}</Text>
+          <Text color={UI_COLORS.PRIMARY}>{idleMessage}</Text>
         )}
       </Box>
 
@@ -588,30 +585,30 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
                 {/* Arrow for in-progress task */}
                 {todo.status === 'in_progress' ? (
                   <>
-                    <Text color="yellow">→ </Text>
-                    <Text color="yellow">{getCheckbox(todo.status)}</Text>
+                    <Text color={UI_COLORS.PRIMARY}>→ </Text>
+                    <Text color={UI_COLORS.PRIMARY}>{getCheckbox(todo.status)}</Text>
                     <Text> </Text>
-                    <Text color="yellow">{todo.task}</Text>
+                    <Text color={UI_COLORS.PRIMARY}>{todo.task}</Text>
                   </>
                 ) : todo.status === 'proposed' ? (
                   <>
                     <Text>   </Text>
-                    <Text color="gray" dimColor>
+                    <Text color={UI_COLORS.TEXT_DIM} dimColor>
                       {getCheckbox(todo.status)}
                     </Text>
                     <Text> </Text>
-                    <Text color="gray" dimColor>
+                    <Text color={UI_COLORS.TEXT_DIM} dimColor>
                       {todo.task}
                     </Text>
                   </>
                 ) : (
                   <>
                     <Text>   </Text>
-                    <Text color={todo.status === 'completed' ? 'green' : 'white'}>
+                    <Text color={todo.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT}>
                       {getCheckbox(todo.status)}
                     </Text>
                     <Text> </Text>
-                    <Text color={todo.status === 'completed' ? 'green' : 'white'} dimColor={todo.status === 'completed'}>
+                    <Text color={todo.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT} dimColor={todo.status === 'completed'}>
                       {todo.task}
                     </Text>
                   </>
@@ -625,30 +622,30 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
                     <Box key={subIndex}>
                       {subtask.status === 'in_progress' ? (
                         <>
-                          <Text color="yellow">↳ → </Text>
-                          <Text color="yellow">{getCheckbox(subtask.status)}</Text>
+                          <Text color={UI_COLORS.PRIMARY}>↳ → </Text>
+                          <Text color={UI_COLORS.PRIMARY}>{getCheckbox(subtask.status)}</Text>
                           <Text> </Text>
-                          <Text color="yellow">{subtask.task}</Text>
+                          <Text color={UI_COLORS.PRIMARY}>{subtask.task}</Text>
                         </>
                       ) : subtask.status === 'proposed' ? (
                         <>
-                          <Text color="gray" dimColor>↳   </Text>
-                          <Text color="gray" dimColor>
+                          <Text color={UI_COLORS.TEXT_DIM} dimColor>↳   </Text>
+                          <Text color={UI_COLORS.TEXT_DIM} dimColor>
                             {getCheckbox(subtask.status)}
                           </Text>
                           <Text> </Text>
-                          <Text color="gray" dimColor>
+                          <Text color={UI_COLORS.TEXT_DIM} dimColor>
                             {subtask.task}
                           </Text>
                         </>
                       ) : (
                         <>
-                          <Text color={subtask.status === 'completed' ? 'green' : 'white'} dimColor={subtask.status === 'completed'}>↳   </Text>
-                          <Text color={subtask.status === 'completed' ? 'green' : 'white'}>
+                          <Text color={subtask.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT} dimColor={subtask.status === 'completed'}>↳   </Text>
+                          <Text color={subtask.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT}>
                             {getCheckbox(subtask.status)}
                           </Text>
                           <Text> </Text>
-                          <Text color={subtask.status === 'completed' ? 'green' : 'white'} dimColor={subtask.status === 'completed'}>
+                          <Text color={subtask.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT} dimColor={subtask.status === 'completed'}>
                             {subtask.task}
                           </Text>
                         </>

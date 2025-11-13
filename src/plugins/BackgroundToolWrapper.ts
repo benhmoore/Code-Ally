@@ -93,6 +93,11 @@ export class BackgroundToolWrapper extends BaseTool {
 		this.usageGuidance = toolDef.usageGuidance;
 		this.pluginName = manifest.name;
 
+		// Set requiredAgent from tool definition (cast to any since it's readonly)
+		if (toolDef.required_agent) {
+			(this as any).requiredAgent = toolDef.required_agent;
+		}
+
 		// Validate required fields for background RPC tools
 		if (!toolDef.method) {
 			throw new Error(`Tool definition for '${toolDef.name}' is missing required 'method' field for background_rpc type`);

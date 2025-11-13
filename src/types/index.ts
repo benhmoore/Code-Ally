@@ -97,6 +97,7 @@ export type ErrorType =
   | 'plugin_error'
   | 'user_error'
   | 'file_error'
+  | 'agent_mismatch'
   | 'general';
 
 export interface ToolResult {

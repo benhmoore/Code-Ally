@@ -67,6 +67,7 @@ export interface IAgentForOrchestrator {
   getToolAbortSignal(): AbortSignal | undefined;
   getTurnStartTime(): number | undefined;
   getMaxDuration(): number | undefined;
+  getAgentName(): string | undefined;
   getTokenManager(): {
     getContextUsagePercentage(): number;
     trackToolResult(toolCallId: string, content: string): string | null;
@@ -578,13 +579,16 @@ export class ToolOrchestrator {
         },
       });
 
-      // Execute tool via tool manager (pass ID for streaming output)
+      // Execute tool via tool manager (pass ID for streaming output and agent name for binding validation)
       result = await this.toolManager.executeTool(
         toolName,
         args,
         id,
         false,
-        this.agent.getToolAbortSignal()
+        this.agent.getToolAbortSignal(),
+        false, // isUserInitiated
+        false, // isContextFile
+        this.agent.getAgentName() // currentAgentName for tool-agent binding validation
       );
 
       // For specialized agents: report elapsed turn duration in minutes

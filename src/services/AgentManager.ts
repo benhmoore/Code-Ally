@@ -23,21 +23,26 @@ export interface AgentData {
   tools?: string[]; // Tool names this agent can use. Empty array = all tools, undefined = all tools
   created_at?: string;
   updated_at?: string;
+  _pluginName?: string; // Plugin source identifier (only for plugin-provided agents)
 }
 
 export interface AgentInfo {
   name: string;
   description: string;
   file_path: string;
+  source?: 'user' | 'plugin' | 'builtin';
+  pluginName?: string; // Plugin name for plugin-provided agents
 }
 
 export class AgentManager {
   private readonly userAgentsDir: string;
   private readonly builtinAgentsDir: string;
+  private pluginAgents: Map<string, AgentData>;
 
   constructor() {
     this.userAgentsDir = AGENTS_DIR;
     this.builtinAgentsDir = BUILTIN_AGENTS_DIR;
+    this.pluginAgents = new Map<string, AgentData>();
   }
 
   /**
@@ -50,7 +55,7 @@ export class AgentManager {
   }
 
   /**
-   * Check if an agent exists (in either user or built-in directories)
+   * Check if an agent exists (in user, plugin, or built-in sources)
    *
    * @param agentName - Agent name
    * @returns True if agent exists
@@ -62,6 +67,11 @@ export class AgentManager {
       await access(userPath, constants.F_OK);
       return true;
     } catch {
+      // Check plugin agents
+      if (this.pluginAgents.has(agentName)) {
+        return true;
+      }
+
       // Fall back to built-in
       const builtinPath = join(this.builtinAgentsDir, `${agentName}.md`);
       try {
@@ -75,23 +85,30 @@ export class AgentManager {
 
   /**
    * Load an agent by name
-   * Priority: user agents (~/.ally/agents/) > built-in agents (dist/agents/)
+   * Priority: user agents (~/.ally/agents/) > plugin agents > built-in agents (dist/agents/)
    *
    * @param agentName - Agent name
    * @returns Agent data or null if not found
    */
   async loadAgent(agentName: string): Promise<AgentData | null> {
-    // Try user directory first
+    // 1. Try user agents first (highest priority)
     const userPath = join(this.userAgentsDir, `${agentName}.md`);
     try {
       const content = await readFile(userPath, 'utf-8');
-      logger.debug(`Loaded user agent '${agentName}'`);
+      logger.debug(`Loaded user agent '${agentName}' from user directory`);
       return this.parseAgentFile(content, agentName);
     } catch (error) {
       logger.debug(`Agent '${agentName}' not found in user directory`);
     }
 
-    // Fall back to built-in agents
+    // 2. Try plugin agents (second priority)
+    const pluginAgent = this.pluginAgents.get(agentName);
+    if (pluginAgent) {
+      logger.debug(`Loaded plugin agent '${agentName}' from plugin '${pluginAgent._pluginName}'`);
+      return pluginAgent;
+    }
+
+    // 3. Try built-in agents (lowest priority)
     const builtinPath = join(this.builtinAgentsDir, `${agentName}.md`);
     try {
       const content = await readFile(builtinPath, 'utf-8');
@@ -145,15 +162,15 @@ export class AgentManager {
   }
 
   /**
-   * List all available agents (user + built-in)
-   * User agents override built-ins with the same name
+   * List all available agents (user + plugin + built-in)
+   * Priority: user agents override plugin agents override built-ins with the same name
    *
    * @returns Array of agent info
    */
   async listAgents(): Promise<AgentInfo[]> {
     const agentMap = new Map<string, AgentInfo>();
 
-    // Load built-in agents first
+    // 1. Load built-in agents first (lowest priority)
     try {
       const builtinFiles = await readdir(this.builtinAgentsDir);
       for (const file of builtinFiles.filter(f => f.endsWith('.md'))) {
@@ -169,6 +186,7 @@ export class AgentManager {
               name: agent.name,
               description: agent.description,
               file_path: filePath,
+              source: 'builtin',
             });
           }
         } catch {
@@ -179,7 +197,18 @@ export class AgentManager {
       logger.debug('Could not load built-in agents:', formatError(error));
     }
 
-    // Load user agents (override built-ins)
+    // 2. Load plugin agents (override built-in, second priority)
+    for (const [name, agentData] of this.pluginAgents.entries()) {
+      agentMap.set(name, {
+        name: agentData.name,
+        description: agentData.description,
+        file_path: `<plugin:${agentData._pluginName}>`, // Virtual path for plugin agents
+        source: 'plugin',
+        pluginName: agentData._pluginName,
+      });
+    }
+
+    // 3. Load user agents (override all, highest priority)
     try {
       const userFiles = await readdir(this.userAgentsDir);
       for (const file of userFiles.filter(f => f.endsWith('.md'))) {
@@ -195,6 +224,7 @@ export class AgentManager {
               name: agent.name,
               description: agent.description,
               file_path: filePath,
+              source: 'user',
             });
           }
         } catch {
@@ -330,5 +360,61 @@ export class AgentManager {
 ${descriptions.join('\n')}
 
 Use the 'agent' tool to delegate tasks to specialized agents when their expertise matches the task requirements.`;
+  }
+
+  /**
+   * Register a single plugin-provided agent
+   *
+   * @param agentData - Agent data with _pluginName property
+   * @throws Error if _pluginName is not present
+   */
+  public registerPluginAgent(agentData: AgentData): void {
+    if (!agentData._pluginName) {
+      throw new Error(`Cannot register plugin agent '${agentData.name}': _pluginName is required`);
+    }
+
+    this.pluginAgents.set(agentData.name, agentData);
+    logger.debug(`Registered plugin agent '${agentData.name}' from plugin '${agentData._pluginName}'`);
+  }
+
+  /**
+   * Register multiple plugin-provided agents in bulk
+   *
+   * @param agents - Array of agent data with _pluginName properties
+   */
+  public registerPluginAgents(agents: AgentData[]): void {
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const agent of agents) {
+      try {
+        this.registerPluginAgent(agent);
+        successCount++;
+      } catch (error) {
+        failCount++;
+        logger.error(`Failed to register plugin agent '${agent.name}':`, formatError(error));
+      }
+    }
+
+    logger.debug(`Registered ${successCount} plugin agent(s)${failCount > 0 ? `, ${failCount} failed` : ''}`);
+  }
+
+  /**
+   * Unregister a plugin-provided agent
+   *
+   * @param agentName - Name of the agent to unregister
+   * @returns True if agent was found and removed
+   */
+  public unregisterPluginAgent(agentName: string): boolean {
+    const agent = this.pluginAgents.get(agentName);
+
+    if (!agent) {
+      logger.debug(`Plugin agent '${agentName}' not found for unregistration`);
+      return false;
+    }
+
+    this.pluginAgents.delete(agentName);
+    logger.info(`Unregistered plugin agent '${agentName}' from plugin '${agent._pluginName}'`);
+    return true;
   }
 }

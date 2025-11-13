@@ -33,6 +33,8 @@ import { logger } from '../services/Logger.js';
 import type { SocketClient } from './SocketClient.js';
 import type { BackgroundProcessManager, BackgroundProcessConfig } from './BackgroundProcessManager.js';
 import type { EventSubscriptionManager } from './EventSubscriptionManager.js';
+import type { AgentDefinition } from './interfaces.js';
+import type { AgentData } from '../services/AgentManager.js';
 
 /**
  * Plugin manifest schema
@@ -55,6 +57,9 @@ export interface PluginManifest {
 
   /** Array of tools provided by this plugin */
   tools: ToolDefinition[];
+
+  /** Array of agent definitions provided by this plugin (optional) */
+  agents?: AgentDefinition[];
 
   /** Configuration schema for interactive setup (optional) */
   config?: PluginConfigSchema;
@@ -149,6 +154,9 @@ export interface ToolDefinition {
 
   /** Optional usage guidance to inject into agent system prompt */
   usageGuidance?: string;
+
+  /** Optional agent name this tool requires (tool will only execute if current agent matches) */
+  required_agent?: string;
 }
 
 /**
@@ -200,6 +208,7 @@ let pendingConfigRequests: Array<{
   description?: string;
   version?: string;
   tools?: any[];
+  agents?: any[];
 }> = [];
 
 /**
@@ -387,6 +396,7 @@ export class PluginLoader {
     description?: string;
     version?: string;
     tools?: any[];
+    agents?: any[];
   } | null {
     if (pendingConfigRequests.length === 0) {
       return null;
@@ -418,6 +428,7 @@ export class PluginLoader {
     success: boolean;
     pluginName?: string;
     tools?: BaseTool[];
+    agents?: any[];
     error?: string;
     hadExistingConfig?: boolean;
   }> {
@@ -506,10 +517,10 @@ export class PluginLoader {
       }
 
       // Load the plugin (this triggers dependency installation)
-      const tools = await this.loadPlugin(targetPath);
+      const { tools, agents } = await this.loadPlugin(targetPath);
 
-      // If no tools loaded, check if it's because config is needed (not an error)
-      if (tools.length === 0) {
+      // If no tools or agents loaded, check if it's because config is needed (not an error)
+      if (tools.length === 0 && agents.length === 0) {
         // Check if plugin requires configuration
         if (manifest.config) {
           const isComplete = await this.configManager.isConfigComplete(
@@ -527,6 +538,7 @@ export class PluginLoader {
               success: true,
               pluginName: manifest.name,
               tools: [],
+              agents: [],
               hadExistingConfig,
             };
           }
@@ -539,14 +551,19 @@ export class PluginLoader {
         };
       }
 
+      const toolsCount = tools.length;
+      const agentsCount = agents.length;
+      const toolsText = `${toolsCount} tool(s)`;
+      const agentsText = agentsCount > 0 ? ` and ${agentsCount} agent(s)` : '';
       logger.info(
-        `[PluginLoader] ✓ Plugin '${manifest.name}' installed successfully with ${tools.length} tool(s)`
+        `[PluginLoader] ✓ Plugin '${manifest.name}' installed successfully with ${toolsText}${agentsText}`
       );
 
       return {
         success: true,
         pluginName: manifest.name,
         tools,
+        agents,
         hadExistingConfig,
       };
     } catch (error) {
@@ -643,10 +660,11 @@ export class PluginLoader {
    * as a BaseTool instance.
    *
    * @param pluginDir - Path to the plugins directory
-   * @returns Array of loaded tool instances
+   * @returns Object containing tools, agents, and plugin count
    */
-  async loadPlugins(pluginDir: string): Promise<{ tools: BaseTool[], pluginCount: number }> {
+  async loadPlugins(pluginDir: string): Promise<{ tools: BaseTool[], agents: AgentData[], pluginCount: number }> {
     const tools: BaseTool[] = [];
+    const agents: AgentData[] = [];
     let pluginCount = 0;
 
     try {
@@ -664,7 +682,7 @@ export class PluginLoader {
             error instanceof Error ? error.message : String(error)
           }`
         );
-        return { tools, pluginCount };
+        return { tools, agents, pluginCount };
       }
 
       // Filter to only directories (each plugin should be in its own subdirectory)
@@ -688,7 +706,7 @@ export class PluginLoader {
 
       if (pluginDirs.length === 0) {
         logger.debug('[PluginLoader] No plugin directories found');
-        return { tools, pluginCount };
+        return { tools, agents, pluginCount };
       }
 
       logger.debug(`[PluginLoader] Found ${pluginDirs.length} potential plugin(s)`);
@@ -696,12 +714,13 @@ export class PluginLoader {
       // Attempt to load each plugin
       for (const pluginPath of pluginDirs) {
         try {
-          const pluginTools = await this.loadPlugin(pluginPath);
-          if (pluginTools.length > 0) {
-            tools.push(...pluginTools);
+          const result = await this.loadPlugin(pluginPath);
+          if (result.tools.length > 0 || result.agents.length > 0) {
+            tools.push(...result.tools);
+            agents.push(...result.agents);
             pluginCount++;
             logger.debug(
-              `[PluginLoader] Successfully loaded plugin with ${pluginTools.length} tool(s): ${pluginTools.map(t => t.name).join(', ')}`
+              `[PluginLoader] Successfully loaded plugin with ${result.tools.length} tool(s) and ${result.agents.length} agent(s): ${result.tools.map(t => t.name).join(', ')}`
             );
           }
         } catch (error) {
@@ -714,7 +733,7 @@ export class PluginLoader {
         }
       }
 
-      logger.debug(`[PluginLoader] Successfully loaded ${pluginCount} plugin(s) with ${tools.length} tool(s)`);
+      logger.debug(`[PluginLoader] Successfully loaded ${pluginCount} plugin(s) with ${tools.length} tool(s) and ${agents.length} agent(s)`);
     } catch (error) {
       // Catch-all for unexpected errors during the loading process
       logger.error(
@@ -724,7 +743,7 @@ export class PluginLoader {
       );
     }
 
-    return { tools, pluginCount };
+    return { tools, agents, pluginCount };
   }
 
   /**
@@ -858,6 +877,8 @@ export class PluginLoader {
    *
    * Used to reload a plugin after its configuration has been provided.
    * Reads the manifest, loads the configuration, and returns loaded tools.
+   * Note: This only returns tools for backward compatibility. Agents are
+   * loaded internally but not returned.
    *
    * @param pluginName - Name of the plugin to reload
    * @param pluginPath - Path to the plugin directory
@@ -867,14 +888,14 @@ export class PluginLoader {
     logger.info(`[PluginLoader] Reloading plugin '${pluginName}' from ${pluginPath}`);
 
     try {
-      const tools = await this.loadPlugin(pluginPath);
+      const { tools, agents } = await this.loadPlugin(pluginPath);
 
-      if (tools.length > 0) {
+      if (tools.length > 0 || agents.length > 0) {
         logger.info(
-          `[PluginLoader] Successfully reloaded plugin '${pluginName}' with ${tools.length} tool(s): ${tools.map(t => t.name).join(', ')}`
+          `[PluginLoader] Successfully reloaded plugin '${pluginName}' with ${tools.length} tool(s) and ${agents.length} agent(s): ${tools.map(t => t.name).join(', ')}`
         );
       } else {
-        logger.warn(`[PluginLoader] No tools loaded when reloading plugin '${pluginName}'`);
+        logger.warn(`[PluginLoader] No tools or agents loaded when reloading plugin '${pluginName}'`);
       }
 
       return tools;
@@ -893,11 +914,12 @@ export class PluginLoader {
    *
    * Reads and validates the plugin manifest, then creates
    * ExecutableToolWrapper instances for each tool in the toolset.
+   * Also loads any agents defined in the plugin.
    *
    * @param pluginPath - Path to the plugin directory
-   * @returns Array of loaded tool instances
+   * @returns Object containing tools and agents
    */
-  private async loadPlugin(pluginPath: string): Promise<BaseTool[]> {
+  private async loadPlugin(pluginPath: string): Promise<{ tools: BaseTool[], agents: AgentData[] }> {
     const manifestPath = join(pluginPath, PLUGIN_FILES.MANIFEST);
 
     // Check if manifest exists
@@ -907,7 +929,7 @@ export class PluginLoader {
       logger.warn(
         `[PluginLoader] Skipping ${pluginPath}: No ${PLUGIN_FILES.MANIFEST} manifest found`
       );
-      return [];
+      return { tools: [], agents: [] };
     }
 
     // Read and parse the manifest
@@ -921,7 +943,7 @@ export class PluginLoader {
           error instanceof Error ? error.message : String(error)
         }`
       );
-      return [];
+      return { tools: [], agents: [] };
     }
 
     // Validate required fields
@@ -929,7 +951,7 @@ export class PluginLoader {
       logger.error(
         `[PluginLoader] Invalid manifest in ${pluginPath}: Missing required field 'name'`
       );
-      return [];
+      return { tools: [], agents: [] };
     }
 
     // Backward compatibility: convert old single-tool format to toolset
@@ -991,6 +1013,7 @@ export class PluginLoader {
           description: manifest.description,
           version: manifest.version,
           tools: manifest.tools || [],
+          agents: manifest.agents || [],
         });
 
         // Also emit event (in case UI is already mounted)
@@ -1006,13 +1029,14 @@ export class PluginLoader {
             description: manifest.description,
             version: manifest.version,
             tools: manifest.tools || [],
+            agents: manifest.agents || [],
           },
         });
 
         logger.debug(
-          `[PluginLoader] Plugin '${manifest.name}' waiting for configuration - returning empty tools array`
+          `[PluginLoader] Plugin '${manifest.name}' waiting for configuration - returning empty tools and agents arrays`
         );
-        return [];
+        return { tools: [], agents: [] };
       }
 
       // Config is complete, load it
@@ -1031,7 +1055,7 @@ export class PluginLoader {
             error instanceof Error ? error.message : String(error)
           }`
         );
-        return [];
+        return { tools: [], agents: [] };
       }
     }
 
@@ -1048,7 +1072,7 @@ export class PluginLoader {
         logger.error(
           `[PluginLoader] Failed to install dependencies for plugin '${manifest.name}'. Plugin will not be loaded.`
         );
-        return [];
+        return { tools: [], agents: [] };
       }
     }
 
@@ -1067,8 +1091,11 @@ export class PluginLoader {
       }
     }
 
+    // Load all agents in the plugin
+    const agents = await this.loadPluginAgents(manifest, pluginPath);
+
     // Store loaded plugin info for background process management
-    if (tools.length > 0) {
+    if (tools.length > 0 || agents.length > 0) {
       this.loadedPlugins.set(manifest.name, {
         manifest,
         pluginPath,
@@ -1076,7 +1103,7 @@ export class PluginLoader {
       });
     }
 
-    return tools;
+    return { tools, agents };
   }
 
   /**
@@ -1172,5 +1199,175 @@ export class PluginLoader {
     }
 
     return plugins;
+  }
+
+  /**
+   * Load plugin agents from manifest and parse their definition files
+   *
+   * Reads agent markdown files from the plugin directory, parses frontmatter
+   * and content, and returns fully-formed agent definitions with plugin metadata.
+   *
+   * @param manifest - Plugin manifest containing agent definitions
+   * @param pluginPath - Path to the plugin directory
+   * @returns Array of parsed agent data with plugin context
+   */
+  private async loadPluginAgents(manifest: PluginManifest, pluginPath: string): Promise<Array<AgentData & { _pluginName: string }>> {
+    // Return early if no agents defined
+    if (!manifest.agents || manifest.agents.length === 0) {
+      return [];
+    }
+
+    const agents: Array<AgentData & { _pluginName: string }> = [];
+    const seenAgentNames = new Set<string>();
+
+    // Iterate through each agent definition
+    for (const agentDef of manifest.agents) {
+      // Check for duplicate agent names within this plugin
+      if (seenAgentNames.has(agentDef.name)) {
+        logger.warn(
+          `[PluginLoader] Skipping duplicate agent name '${agentDef.name}' in plugin '${manifest.name}'. Keeping first occurrence.`
+        );
+        continue;
+      }
+      seenAgentNames.add(agentDef.name);
+      try {
+        // Validate agent definition has required fields
+        if (!agentDef.name || !agentDef.system_prompt_file) {
+          logger.warn(
+            `[PluginLoader] Skipping invalid agent in plugin '${manifest.name}': missing name or system_prompt_file`
+          );
+          continue;
+        }
+
+        // Construct path to agent markdown file
+        const agentFilePath = join(pluginPath, agentDef.system_prompt_file);
+
+        // Read agent markdown file
+        let fileContent: string;
+        try {
+          fileContent = await fs.readFile(agentFilePath, 'utf-8');
+        } catch (error) {
+          logger.warn(
+            `[PluginLoader] Failed to read agent file '${agentDef.system_prompt_file}' for agent '${agentDef.name}' in plugin '${manifest.name}': ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+          continue;
+        }
+
+        // Parse the agent file (frontmatter + content)
+        const parsedAgent = this.parseAgentFile(fileContent, agentDef.name);
+
+        if (!parsedAgent) {
+          logger.warn(
+            `[PluginLoader] Failed to parse agent file '${agentDef.system_prompt_file}' for agent '${agentDef.name}' in plugin '${manifest.name}'`
+          );
+          continue;
+        }
+
+        // Merge manifest values with parsed values (manifest takes precedence)
+        const mergedAgent: AgentData & { _pluginName: string } = {
+          // Start with parsed file values
+          ...parsedAgent,
+          // Override with manifest values (these take precedence)
+          name: agentDef.name,
+          description: agentDef.description || parsedAgent.description,
+          model: agentDef.model || parsedAgent.model,
+          temperature: agentDef.temperature !== undefined ? agentDef.temperature : parsedAgent.temperature,
+          reasoning_effort: agentDef.reasoning_effort || parsedAgent.reasoning_effort,
+          tools: agentDef.tools || parsedAgent.tools,
+          // Add plugin tracking metadata
+          _pluginName: manifest.name,
+        };
+
+        agents.push(mergedAgent);
+
+        logger.debug(
+          `[PluginLoader] Successfully loaded agent '${agentDef.name}' from plugin '${manifest.name}'`
+        );
+      } catch (error) {
+        // Log error but continue with other agents
+        logger.warn(
+          `[PluginLoader] Error loading agent '${agentDef.name}' from plugin '${manifest.name}': ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+
+    if (agents.length > 0) {
+      logger.debug(
+        `[PluginLoader] Loaded ${agents.length} agent(s) from plugin '${manifest.name}': ${agents.map(a => a.name).join(', ')}`
+      );
+    }
+
+    return agents;
+  }
+
+  /**
+   * Parse agent markdown file (frontmatter + content)
+   *
+   * Reuses the same parsing logic as AgentManager to ensure consistency.
+   * Expects markdown file with YAML frontmatter followed by system prompt content.
+   *
+   * @param content - Raw markdown file content
+   * @param agentName - Agent name for fallback
+   * @returns Parsed agent data or null if invalid
+   */
+  private parseAgentFile(content: string, agentName: string): AgentData | null {
+    try {
+      // Simple frontmatter parser (matches AgentManager implementation)
+      const frontmatterMatch = content.match(/^---\n([\s\S]+?)\n---\n([\s\S]+)$/);
+
+      if (!frontmatterMatch) {
+        return null;
+      }
+
+      const frontmatter = frontmatterMatch[1];
+      const body = frontmatterMatch[2];
+
+      if (!frontmatter || !body) {
+        return null;
+      }
+
+      const metadata: Record<string, any> = {};
+
+      // Parse YAML-style frontmatter
+      frontmatter.split('\n').forEach(line => {
+        const match = line.match(/^(\w+):\s*(.+)$/);
+        if (match) {
+          const key = match[1];
+          const value = match[2];
+          if (key && value) {
+            // Handle JSON arrays (for tools field)
+            if (value.trim().startsWith('[')) {
+              try {
+                metadata[key] = JSON.parse(value);
+              } catch {
+                // If JSON parse fails, treat as string
+                metadata[key] = value.replace(/^["']|["']$/g, '');
+              }
+            } else {
+              // Remove quotes from simple values
+              metadata[key] = value.replace(/^["']|["']$/g, '');
+            }
+          }
+        }
+      });
+
+      return {
+        name: metadata.name || agentName,
+        description: metadata.description || '',
+        system_prompt: body.trim(),
+        model: metadata.model,
+        temperature: metadata.temperature ? parseFloat(metadata.temperature) : undefined,
+        reasoning_effort: metadata.reasoning_effort,
+        tools: metadata.tools, // Array of tool names or undefined
+        created_at: metadata.created_at,
+        updated_at: metadata.updated_at,
+      };
+    } catch {
+      return null;
+    }
   }
 }

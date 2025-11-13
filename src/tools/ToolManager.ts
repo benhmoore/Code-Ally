@@ -150,9 +150,10 @@ export class ToolManager {
    * Generate function definitions for all tools
    *
    * @param excludeTools - Optional list of tool names to exclude
+   * @param currentAgentName - Optional current agent name for required_agent filtering
    * @returns List of function definitions for LLM function calling
    */
-  getFunctionDefinitions(excludeTools?: string[]): FunctionDefinition[] {
+  getFunctionDefinitions(excludeTools?: string[], currentAgentName?: string): FunctionDefinition[] {
     // Get active plugins from PluginActivationManager
     let activePlugins: Set<string> | null = null;
     try {
@@ -165,9 +166,9 @@ export class ToolManager {
       activePlugins = null;
     }
 
-    // Generate cache key based on plugin activation state
-    // This ensures cached results match the current activation state
-    const cacheKey = this.generateCacheKey(activePlugins, excludeTools);
+    // Generate cache key based on plugin activation state and agent name
+    // This ensures cached results match the current activation state and agent context
+    const cacheKey = this.generateCacheKey(activePlugins, excludeTools, currentAgentName);
 
     // Check cache with activation-aware key
     if (this.functionDefinitionsCache.has(cacheKey)) {
@@ -192,6 +193,14 @@ export class ToolManager {
       }
       // Core tools (no pluginName) are always included
 
+      // Skip tools that require a specific agent if this isn't that agent
+      if (tool.requiredAgent && tool.requiredAgent !== currentAgentName) {
+        logger.debug(
+          `[ToolManager] Filtering out tool '${tool.name}' - requires agent '${tool.requiredAgent}', current agent is '${currentAgentName || 'none'}'`
+        );
+        continue;
+      }
+
       const functionDef = this.generateFunctionDefinition(tool);
       functionDefs.push(functionDef);
     }
@@ -203,17 +212,19 @@ export class ToolManager {
   }
 
   /**
-   * Generate a cache key based on active plugins and excluded tools
+   * Generate a cache key based on active plugins, excluded tools, and agent name
    *
    * The cache key includes the sorted list of active plugins to ensure that
    * cached function definitions match the current plugin activation state.
    * This prevents returning cached definitions that include deactivated plugins.
+   * Also includes agent name to ensure tools are filtered based on required_agent.
    *
    * @param activePlugins - Set of active plugin names (null if no plugin system)
    * @param excludeTools - Optional list of tool names to exclude
+   * @param currentAgentName - Optional current agent name for required_agent filtering
    * @returns Cache key string
    */
-  private generateCacheKey(activePlugins: Set<string> | null, excludeTools?: string[]): string {
+  private generateCacheKey(activePlugins: Set<string> | null, excludeTools?: string[], currentAgentName?: string): string {
     const parts: string[] = [];
 
     // Include active plugins in key (sorted for consistency)
@@ -228,6 +239,11 @@ export class ToolManager {
     // Include exclusions in key if present
     if (excludeTools && excludeTools.length > 0) {
       parts.push(`exclude:${excludeTools.sort().join(',')}`);
+    }
+
+    // Include agent name in key if present
+    if (currentAgentName) {
+      parts.push(`agent:${currentAgentName}`);
     }
 
     return parts.join('|');
@@ -310,6 +326,7 @@ export class ToolManager {
    * @param abortSignal - Optional AbortSignal for interrupting tool execution
    * @param isUserInitiated - Internal flag for user-initiated execution (not visible to model)
    * @param isContextFile - Internal flag for context file read (not visible to model)
+   * @param currentAgentName - Current agent name for tool-agent binding validation
    * @returns Tool result
    */
   async executeTool(
@@ -319,7 +336,8 @@ export class ToolManager {
     _preApproved: boolean = false,
     abortSignal?: AbortSignal,
     isUserInitiated: boolean = false,
-    isContextFile: boolean = false
+    isContextFile: boolean = false,
+    currentAgentName?: string
   ): Promise<ToolResult> {
     const tool = this.tools.get(toolName);
     if (!tool) {
@@ -328,6 +346,15 @@ export class ToolManager {
         error: `Unknown tool: ${toolName}`,
         error_type: 'validation_error',
         suggestion: `Available tools: ${Array.from(this.tools.keys()).join(', ')}`,
+      };
+    }
+
+    // Check required_agent constraint
+    if (tool.requiredAgent && currentAgentName !== tool.requiredAgent) {
+      return {
+        success: false,
+        error: `Tool '${toolName}' requires agent '${tool.requiredAgent}' but current agent is '${currentAgentName || 'unknown'}'`,
+        error_type: 'agent_mismatch',
       };
     }
 

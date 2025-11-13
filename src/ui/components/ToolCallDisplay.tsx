@@ -17,6 +17,8 @@ import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
+import { UI_SYMBOLS } from '@config/uiSymbols.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -182,7 +184,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const statusIcon = getStatusIcon(toolCall.status);
 
   // Prefix icon: arrow for running (flashing), status icon for completed
-  const prefixIcon = isRunning ? (arrowVisible ? '→' : ' ') : statusIcon;
+  const prefixIcon = isRunning ? (arrowVisible ? UI_SYMBOLS.NAVIGATION.ARROW_RIGHT : ' ') : statusIcon;
 
   const toolCallCount = toolCall.totalChildCount || 0;
 
@@ -316,8 +318,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
                     {/* Interjection */}
                     <Box>
                       <Text>{indent}    </Text>
-                      <Text color="yellow" bold>{'> '}</Text>
-                      <Text color="yellow" bold>{item.data.message}</Text>
+                      <Text color={UI_COLORS.PRIMARY} bold>{'> '}</Text>
+                      <Text color={UI_COLORS.PRIMARY} bold>{item.data.message}</Text>
                     </Box>
 
                     {/* Acknowledgment (if exists) */}

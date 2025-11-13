@@ -9,6 +9,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { getStatusColor, type ToolStatus } from '../utils/statusUtils.js';
 import { TEXT_LIMITS } from '@config/constants.js';
+import { UI_COLORS } from '../constants/colors.js';
 
 export interface ToolOutputStreamProps {
   /** Name of the tool being executed */
@@ -109,7 +110,7 @@ export interface ToolOutputGroupProps {
 export const ToolOutputGroup: React.FC<ToolOutputGroupProps> = ({ tools, maxLinesPerTool = 5 }) => {
   return (
     <Box flexDirection="column">
-      <Text bold color="cyan">
+      <Text bold color={UI_COLORS.TEXT_DEFAULT}>
         Executing {tools.length} tool{tools.length !== 1 ? 's' : ''}:
       </Text>
       {tools.map((tool) => (
@@ -163,12 +164,12 @@ export const StreamingToolOutput: React.FC<StreamingToolOutputProps> = ({
     <Box flexDirection="column">
       {/* Header */}
       <Box>
-        <Text color="yellow">{toolName}</Text>
+        <Text color={UI_COLORS.PRIMARY}>{toolName}</Text>
         {truncatedDesc && (
           <Text dimColor> {truncatedDesc}</Text>
         )}
         {elapsedSeconds !== undefined && elapsedSeconds > 5 && (
-          <Text dimColor color="cyan">
+          <Text dimColor color={UI_COLORS.TEXT_DIM}>
             {' '}
             [{elapsedSeconds}s]
           </Text>

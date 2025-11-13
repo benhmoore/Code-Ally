@@ -64,6 +64,11 @@ export class ExecutableToolWrapper extends BaseTool {
 		this.usageGuidance = toolDef.usageGuidance;
 		this.pluginName = manifest.name;
 
+		// Set requiredAgent from tool definition (cast to any since it's readonly)
+		if (toolDef.required_agent) {
+			(this as any).requiredAgent = toolDef.required_agent;
+		}
+
 		if (!toolDef.command) {
 			throw new Error(`Tool definition for '${toolDef.name}' is missing required 'command' field`);
 		}
