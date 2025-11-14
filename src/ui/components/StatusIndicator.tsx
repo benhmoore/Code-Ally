@@ -47,7 +47,7 @@ interface StatusIndicatorProps {
  * Helper function to detect active agent-ask tool and extract display name
  * Returns agent name if agent-ask is currently executing, null otherwise
  *
- * This shows "Discussing with [agent_name]..." when the main agent (Ally)
+ * This shows "Checking with [agent_name]..." when the main agent (Ally)
  * is consulting a subagent in the background via agent-ask.
  *
  * Note: Direct calls to explore/plan/agent do NOT trigger this - those are
@@ -505,7 +505,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   // Use elapsed seconds from state
   const elapsed = elapsedSeconds;
 
-  // Detect if we're discussing with an agent
+  // Detect if we're checking with an agent
   const activeAgentName = getActiveAgentName(activeToolCalls);
 
   // Show cancelling status if cancelling (highest priority)
@@ -564,7 +564,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
             <Text> </Text>
             <Text>
               {activeAgentName
-                ? `Discussing with ${activeAgentName}...`
+                ? `Checking with ${activeAgentName}...`
                 : allTodos.length === 0
                   ? 'Thinking'
                   : currentTask || 'Processing'}

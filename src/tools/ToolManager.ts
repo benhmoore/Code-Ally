@@ -297,6 +297,20 @@ export class ToolManager {
       };
     }
 
+    // Dynamically inject description parameter for UI subtext
+    // Only inject if tool doesn't already define it
+    if (functionDef.function.parameters?.properties && !functionDef.function.parameters.properties.description) {
+      functionDef.function.parameters.properties.description = {
+        type: 'string',
+        description: 'Brief description of what this operation does (5-10 words, shown in UI)',
+      };
+
+      // Add to required array if it exists
+      if (functionDef.function.parameters.required && Array.isArray(functionDef.function.parameters.required)) {
+        functionDef.function.parameters.required.push('description');
+      }
+    }
+
     return functionDef;
   }
 

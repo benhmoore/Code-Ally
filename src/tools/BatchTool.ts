@@ -75,7 +75,7 @@ Don't batch: dependent operations, file reads (use read's file_paths parameter i
       return this.formatErrorResponse(
         'tools parameter is required and must contain at least one tool specification',
         'validation_error',
-        'Example: batch(tools=[{"name": "explore", "arguments": {"task_description": "Find auth middleware"}}, {"name": "explore", "arguments": {"task_description": "Find auth routes"}}])'
+        'Example: batch(tools=[{"name": "explore", "arguments": {"task_prompt": "Find auth middleware"}}, {"name": "explore", "arguments": {"task_prompt": "Find auth routes"}}])'
       );
     }
 

@@ -771,8 +771,135 @@ See `examples/plugins/` for:
 - Event subscription example
 - Configuration example
 
+## Tool Function Definition Enhancement
+
+### Dynamic Description Parameter
+
+ToolManager automatically injects a `description` parameter into all tool function definitions (unless the tool already defines it):
+
+```typescript
+// In ToolManager.generateFunctionDefinition()
+if (functionDef.function.parameters?.properties && !functionDef.function.parameters.properties.description) {
+  functionDef.function.parameters.properties.description = {
+    type: 'string',
+    description: 'Brief description of what this operation does (5-10 words, shown in UI)',
+  };
+}
+```
+
+**Purpose:**
+- Provides consistent way for tools to receive UI subtext
+- Allows agents to describe what they're doing in natural language
+- Automatically filtered from args preview to avoid duplication
+
+### Tool Subtext Display
+
+Tools can customize their UI appearance through two methods:
+
+#### formatSubtext()
+
+Returns the subtext string shown after the tool name in the UI.
+
+**Default implementation (BaseTool):**
+```typescript
+formatSubtext(args: Record<string, any>): string | null {
+  return args.description || null;
+}
+```
+
+**Example implementations:**
+- BashTool: Shows command snippet + description
+- ReadTool: Shows filenames + line range + description
+- WriteTool: Shows filename + description
+
+#### getSubtextParameters()
+
+Returns array of parameter names shown in subtext (filtered from args preview).
+
+**Default implementation (BaseTool):**
+```typescript
+getSubtextParameters(): string[] {
+  return ['description'];
+}
+```
+
+**Example implementations:**
+- BashTool: `['command', 'description']`
+- ReadTool: `['file_paths', 'description']`
+- WriteTool: `['file_path', 'description']`
+
+### Tool Usage Guidance
+
+Tools can provide `usageGuidance` string that gets injected into agent system prompts:
+
+```typescript
+readonly usageGuidance?: string;
+```
+
+**Collection (in ToolManager):**
+```typescript
+getToolUsageGuidance(): string[] {
+  const guidances: string[] = [];
+  for (const tool of this.tools.values()) {
+    if (tool.usageGuidance) {
+      guidances.push(tool.usageGuidance);
+    }
+  }
+  return guidances;
+}
+```
+
+**Effect:**
+- Helps agents understand when/how to use tools
+- Reduces incorrect tool usage
+- Especially useful for tools with specific constraints
+
+### Tool Visibility Control
+
+Tools can restrict which agents can see and use them via `visibleTo` property:
+
+```typescript
+readonly visibleTo?: string[];  // Array of agent names
+```
+
+**Semantics:**
+- `undefined` or `null` → Visible to all agents
+- `[]` (empty array) → Visible to all agents
+- `["agent1", "agent2"]` → Only visible to specified agents
+
+**Filtering (in ToolManager.getFunctionDefinitions()):**
+```typescript
+if (tool.visibleTo && tool.visibleTo.length > 0) {
+  if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
+    continue; // Filter out this tool
+  }
+}
+```
+
+**Validation (in ToolManager.executeTool()):**
+```typescript
+if (tool.visibleTo && tool.visibleTo.length > 0) {
+  if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
+    return {
+      success: false,
+      error: `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]`,
+      error_type: 'agent_mismatch',
+    };
+  }
+}
+```
+
 ## Further Reading
 
-- [Plugin Development Guide](../guides/plugin-development.md)
-- [Configuration Reference](../reference/configuration.md)
-- Source: `src/plugins/`
+### Documentation
+
+- [Plugin Development Guide](../guides/plugin-development.md) - Complete guide for creating plugins
+- [Plugin Custom Agents Guide](../plugin-agents.md) - Guide for creating custom AI agents in plugins
+- [Plugin Custom Agents Design](../design/plugin-custom-agents.md) - Architecture and implementation details
+- [Configuration Reference](../reference/configuration.md) - Configuration options
+
+### Source Code
+
+- `src/plugins/` - Plugin loading and management
+- `src/tools/BaseTool.ts` - Base tool class with formatSubtext/getSubtextParameters
+- `src/tools/ToolManager.ts` - Tool registration, filtering, and execution

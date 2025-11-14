@@ -245,6 +245,7 @@ export interface Config {
   show_thinking_in_chat: boolean;
   show_system_prompt_in_chat: boolean;
   show_full_tool_output: boolean;
+  show_tool_parameters_in_chat: boolean; // Show tool parameter lists in chat UI
 
   // Tool Call Retry Settings
   tool_call_retry_enabled: boolean;

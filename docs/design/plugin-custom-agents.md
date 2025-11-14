@@ -372,7 +372,7 @@ if (agentData.tools !== undefined && agentData.tools.length > 0) {
 
 ### 7. Tool-Agent Binding
 
-Tools can require specific agents:
+Tools can restrict visibility to specific agents:
 
 ```typescript
 interface ToolDefinition {
@@ -382,20 +382,43 @@ interface ToolDefinition {
   args?: string[];
   schema?: any;
 
-  // New: Agent binding
-  visible_to?: string;  // Tool only executes for this agent
+  // Agent binding
+  visible_to?: string[];  // Array of agent names (empty or missing = all agents)
 }
 ```
 
-**Validation (in ToolOrchestrator):**
+**Semantics:**
+- `visible_to: undefined` or `null` → Visible to all agents
+- `visible_to: []` (empty array) → Visible to all agents
+- `visible_to: ["agent1", "agent2"]` → Only visible to specified agents
+
+**Filtering (in ToolManager.getFunctionDefinitions()):**
 
 ```typescript
-// Before tool execution
-if (toolDef.visible_to && toolDef.visible_to !== currentAgentName) {
-  throw new Error(
-    `Tool '${toolDef.name}' requires agent '${toolDef.visible_to}' ` +
-    `but current agent is '${currentAgentName}'`
-  );
+// Filter tools by visible_to array
+if (tool.visibleTo && tool.visibleTo.length > 0) {
+  // Non-empty array = only visible to specified agents
+  if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
+    logger.debug(
+      `Filtering out tool '${tool.name}' - only visible to agents: [${tool.visibleTo.join(', ')}]`
+    );
+    continue;
+  }
+}
+```
+
+**Validation (in ToolManager.executeTool()):**
+
+```typescript
+// Check visible_to constraint (if specified and non-empty)
+if (tool.visibleTo && tool.visibleTo.length > 0) {
+  if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
+    return {
+      success: false,
+      error: `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
+      error_type: 'agent_mismatch',
+    };
+  }
 }
 ```
 
@@ -874,6 +897,25 @@ The plugin custom agents system provides a powerful, flexible way for plugins to
 
 The architecture is clean, well-tested, and production-ready.
 
+## Tool Feature Documentation
+
+### formatSubtext() and getSubtextParameters()
+
+These methods are part of the BaseTool interface and allow tools to customize their UI appearance:
+
+**formatSubtext()** - Customizes subtext display in UI
+**getSubtextParameters()** - Declares which parameters are shown in subtext
+
+See `/src/tools/BaseTool.ts` for implementation details and `/docs/architecture/plugin-system.md` for complete documentation.
+
+### Dynamic Description Parameter
+
+ToolManager automatically injects a `description` parameter into all tool function definitions (unless already defined). See `/docs/architecture/plugin-system.md` for details.
+
+### Tool Usage Guidance
+
+Tools can provide `usageGuidance` string that gets injected into agent system prompts. See `/docs/architecture/plugin-system.md` for complete documentation.
+
 ## References
 
 ### Code Files
@@ -882,6 +924,8 @@ The architecture is clean, well-tested, and production-ready.
 - `/src/plugins/interfaces.ts` - Type definitions
 - `/src/services/AgentManager.ts` - Agent storage and retrieval
 - `/src/tools/AgentTool.ts` - Agent execution and tool scoping
+- `/src/tools/BaseTool.ts` - Base tool class with formatSubtext/getSubtextParameters
+- `/src/tools/ToolManager.ts` - Tool registration, filtering, and execution
 - `/src/agent/Agent.ts` - Core agent implementation
 - `/src/plugins/__tests__/plugin-agents.test.ts` - Comprehensive tests
 
@@ -889,4 +933,4 @@ The architecture is clean, well-tested, and production-ready.
 
 - `/docs/plugin-agents.md` - User guide for plugin agents
 - `/docs/guides/plugin-development.md` - Plugin development guide
-- `/docs/architecture/plugin-system.md` - Plugin system architecture
+- `/docs/architecture/plugin-system.md` - Plugin system architecture with tool feature details

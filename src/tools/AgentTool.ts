@@ -915,6 +915,33 @@ export class AgentTool extends BaseTool implements InjectableTool {
   }
 
   /**
+   * Format subtext for display in UI
+   * Shows: [task_prompt] (truncated to 80 chars)
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const taskPrompt = args.task_prompt as string;
+
+    if (!taskPrompt) {
+      return null;
+    }
+
+    // Truncate to 80 chars if needed
+    if (taskPrompt.length > 80) {
+      return taskPrompt.substring(0, 77) + '...';
+    }
+
+    return taskPrompt;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   * AgentTool shows both 'task_prompt' and 'description' in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['task_prompt', 'description'];
+  }
+
+  /**
    * Custom result preview
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

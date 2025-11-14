@@ -46,6 +46,7 @@ export const DEFAULT_CONFIG: Config = {
   show_thinking_in_chat: true, // Show model thinking content in chat conversation
   show_system_prompt_in_chat: false, // Show system prompts when agents are created
   show_full_tool_output: false, // Show full tool output without truncation in UI
+  show_tool_parameters_in_chat: false, // Show tool parameter lists in parentheses after tool names
 
   // ==========================================
   // TOOL CALL RETRY SETTINGS
@@ -121,6 +122,7 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   show_thinking_in_chat: 'boolean',
   show_system_prompt_in_chat: 'boolean',
   show_full_tool_output: 'boolean',
+  show_tool_parameters_in_chat: 'boolean',
 
   // Tool Call Retry
   tool_call_retry_enabled: 'boolean',

@@ -7,6 +7,7 @@
 
 import { AgentConfig } from '../agent/Agent.js';
 import { AgentMetadata } from '../services/AgentPoolService.js';
+import { formatDisplayName } from '../ui/utils/uiHelpers.js';
 
 /**
  * Standard agent type constants
@@ -31,11 +32,22 @@ const AGENT_TYPE_DISPLAY_NAMES: Record<string, string> = {
 /**
  * Get display name for an agent type
  *
+ * For built-in agent types (explore, plan, agent, main), returns the predefined
+ * display name. For custom plugin agents, converts the kebab-case agent name
+ * to Title Case using formatDisplayName (e.g., "dokuwiki-investigator" -> "Dokuwiki Investigator").
+ *
  * @param agentType - Agent type constant or custom string
  * @returns User-friendly display name
  */
 export function getAgentDisplayName(agentType: string): string {
-  return AGENT_TYPE_DISPLAY_NAMES[agentType] || 'Assistant';
+  // Check if this is a built-in agent type
+  if (AGENT_TYPE_DISPLAY_NAMES[agentType]) {
+    return AGENT_TYPE_DISPLAY_NAMES[agentType];
+  }
+
+  // For custom agents, convert kebab-case to Title Case
+  // This handles plugin agents like "dokuwiki-investigator" -> "Dokuwiki Investigator"
+  return formatDisplayName(agentType);
 }
 
 /**

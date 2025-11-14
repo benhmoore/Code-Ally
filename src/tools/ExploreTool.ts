@@ -140,7 +140,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         parameters: {
           type: 'object',
           properties: {
-            task_description: {
+            task_prompt: {
               type: 'string',
               description: 'Description of what to explore or find in the codebase. Be specific about what you want to understand.',
             },
@@ -149,7 +149,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
               description: 'Level of thoroughness for exploration: "quick" (~1 min, 2-5 tool calls), "medium" (~5 min, 5-10 tool calls), "very thorough" (~10 min, 10-20 tool calls), "uncapped" (no time limit, default). Controls time budget and depth.',
             },
           },
-          required: ['task_description'],
+          required: ['task_prompt'],
         },
       },
     };
@@ -158,15 +158,15 @@ Note: Multiple independent explorations can be batched for efficiency.`;
   protected async executeImpl(args: any): Promise<ToolResult> {
     this.captureParams(args);
 
-    const taskDescription = args.task_description;
+    const taskPrompt = args.task_prompt;
     const thoroughness = args.thoroughness ?? 'uncapped';
 
-    // Validate task_description parameter
-    if (!taskDescription || typeof taskDescription !== 'string') {
+    // Validate task_prompt parameter
+    if (!taskPrompt || typeof taskPrompt !== 'string') {
       return this.formatErrorResponse(
-        'task_description parameter is required and must be a string',
+        'task_prompt parameter is required and must be a string',
         'validation_error',
-        'Example: explore(task_description="Find how error handling is implemented")'
+        'Example: explore(task_prompt="Find how error handling is implemented")'
       );
     }
 
@@ -176,7 +176,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
       return this.formatErrorResponse(
         `thoroughness parameter must be one of: ${validThoroughness.join(', ')}`,
         'validation_error',
-        'Example: explore(task_description="...", thoroughness="uncapped")'
+        'Example: explore(task_prompt="...", thoroughness="uncapped")'
       );
     }
 
@@ -189,7 +189,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
       );
     }
 
-    return await this.executeExploration(taskDescription, thoroughness, callId);
+    return await this.executeExploration(taskPrompt, thoroughness, callId);
   }
 
   /**
@@ -197,12 +197,12 @@ Note: Multiple independent explorations can be batched for efficiency.`;
    *
    * All exploration agents are persisted in the agent pool for reuse.
    *
-   * @param taskDescription - The exploration task to execute
+   * @param taskPrompt - The exploration task to execute
    * @param thoroughness - Level of thoroughness: "quick", "medium", or "very thorough"
    * @param callId - Unique call identifier for tracking
    */
   private async executeExploration(
-    taskDescription: string,
+    taskPrompt: string,
     thoroughness: string,
     callId: string
   ): Promise<ToolResult> {
@@ -280,7 +280,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
       logger.debug('[EXPLORE_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
 
       // Create specialized system prompt
-      const specializedPrompt = await this.createExplorationSystemPrompt(taskDescription, thoroughness, resolvedReasoningEffort);
+      const specializedPrompt = await this.createExplorationSystemPrompt(taskPrompt, thoroughness, resolvedReasoningEffort);
 
       // Emit exploration start event
       this.emitEvent({
@@ -289,7 +289,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         timestamp: Date.now(),
         data: {
           agentName: 'explore',
-          taskPrompt: taskDescription,
+          taskPrompt: taskPrompt,
         },
       });
 
@@ -302,7 +302,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         verbose: false,
         systemPrompt: specializedPrompt,
         baseAgentPrompt: EXPLORATION_SYSTEM_PROMPT,
-        taskPrompt: taskDescription,
+        taskPrompt: taskPrompt,
         config: config,
         parentCallId: callId,
         maxDuration,
@@ -358,14 +358,14 @@ Note: Multiple independent explorations can be batched for efficiency.`;
       // Track active delegation
       this.activeDelegations.set(callId, {
         agent: explorationAgent,
-        taskDescription,
+        taskPrompt,
         startTime: Date.now(),
       });
 
       try {
         // Execute exploration
         logger.debug('[EXPLORE_TOOL] Sending task to exploration agent...');
-        const response = await explorationAgent.sendMessage(`Execute this exploration task: ${taskDescription}`);
+        const response = await explorationAgent.sendMessage(`Execute this exploration task: ${taskPrompt}`);
         logger.debug('[EXPLORE_TOOL] Exploration agent response received, length:', response?.length || 0);
 
         let finalResponse: string;
@@ -467,14 +467,14 @@ Note: Multiple independent explorations can be batched for efficiency.`;
   /**
    * Create specialized system prompt for exploration
    */
-  private async createExplorationSystemPrompt(taskDescription: string, thoroughness: string, reasoningEffort?: string): Promise<string> {
+  private async createExplorationSystemPrompt(taskPrompt: string, thoroughness: string, reasoningEffort?: string): Promise<string> {
     logger.debug('[EXPLORE_TOOL] Creating exploration system prompt with thoroughness:', thoroughness);
     try {
       // Adjust the base prompt based on thoroughness level
       const adjustedPrompt = this.adjustPromptForThoroughness(thoroughness);
 
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-      const result = await getAgentSystemPrompt(adjustedPrompt, taskDescription, undefined, undefined, reasoningEffort);
+      const result = await getAgentSystemPrompt(adjustedPrompt, taskPrompt, undefined, undefined, reasoningEffort);
       logger.debug('[EXPLORE_TOOL] System prompt created, length:', result?.length || 0);
       return result;
     } catch (error) {
@@ -625,6 +625,33 @@ Note: Multiple independent explorations can be batched for efficiency.`;
     logger.debug('[EXPLORE_TOOL] Injecting user message into pooled agent:', this._currentPooledAgent.agentId);
     agent.addUserInterjection(message);
     agent.interrupt('interjection');
+  }
+
+  /**
+   * Format subtext for display in UI
+   * Shows: [task_prompt] (truncated to 80 chars)
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const taskPrompt = args.task_prompt as string;
+
+    if (!taskPrompt) {
+      return null;
+    }
+
+    // Truncate to 80 chars if needed
+    if (taskPrompt.length > 80) {
+      return taskPrompt.substring(0, 77) + '...';
+    }
+
+    return taskPrompt;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   * ExploreTool shows both 'task_prompt' and 'description' in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['task_prompt', 'description'];
   }
 
   /**

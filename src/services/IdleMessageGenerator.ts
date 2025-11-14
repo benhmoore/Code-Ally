@@ -204,7 +204,7 @@ export class IdleMessageGenerator implements CancellableService {
       }
 
       // Fallback: return default messages
-      logger.warn('[IDLE_MSG] No valid messages parsed, returning fallback');
+      logger.debug('[IDLE_MSG] No valid messages parsed, returning fallback');
       return ['Idle'];
     } catch (error) {
       // Don't log interrupted/cancelled errors - they're expected

@@ -405,6 +405,39 @@ export abstract class BaseTool {
   }
 
   /**
+   * Format subtext for display in the UI
+   *
+   * This method can be overridden by individual tools to provide
+   * custom subtext formatting based on their arguments. The subtext
+   * appears dimmed after the tool name in the UI.
+   *
+   * Default implementation: returns the description parameter if present.
+   *
+   * @param args - Tool arguments passed to execute()
+   * @returns Formatted subtext string or null if no subtext should be shown
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    return args.description || null;
+  }
+
+  /**
+   * Get list of parameter names that are shown in subtext
+   *
+   * These parameters will be filtered from the args preview in the UI
+   * to avoid showing the same information twice (once in subtext, once in args).
+   *
+   * Default implementation: returns ['description'] since that's the default subtext parameter.
+   *
+   * Override this in tools that show additional parameters in their subtext
+   * (e.g., BashTool shows 'command', ReadTool shows 'file_path').
+   *
+   * @returns Array of parameter names that are displayed in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['description'];
+  }
+
+  /**
    * Get a preview of the tool result for display
    *
    * This method can be overridden by individual tools to provide

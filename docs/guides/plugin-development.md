@@ -347,6 +347,11 @@ Bind tools to specific agents with `visible_to`:
 }
 ```
 
+**Behavior:**
+- `visible_to: undefined` or `null` → Tool is visible to all agents
+- `visible_to: []` (empty array) → Tool is visible to all agents
+- `visible_to: ["agent1", "agent2"]` → Tool is only visible to specified agents
+
 **Effect:** Tool is only visible and executable by agents in the `visible_to` array. Empty or missing array means visible to all agents (including main Ally).
 
 ### Usage Guidelines
@@ -596,6 +601,115 @@ Define parameters using JSON Schema:
 - `boolean`
 - `array` (with `items` schema)
 - `object` (with `properties` schema)
+
+**Automatic description parameter:**
+Code Ally automatically injects a `description` parameter into all tool function definitions (unless your tool already defines it). This parameter is used for UI subtext display and is typically 5-10 words describing what the operation does.
+
+### Tool Metadata: Subtext Display
+
+Tools can customize how they appear in the UI by implementing these optional methods in their TypeScript implementation (for plugin wrappers):
+
+#### formatSubtext()
+
+Customize the subtext shown after the tool name in the UI. This appears dimmed and provides context about what the tool is doing.
+
+**Default behavior:** Returns `args.description` if present, otherwise `null`.
+
+**Example implementations:**
+
+```typescript
+// BashTool - shows command snippet
+formatSubtext(args: Record<string, any>): string | null {
+  const command = args.command as string;
+  const description = args.description as string;
+
+  if (!command) return null;
+
+  let snippet = command.length > 40
+    ? command.substring(0, 40) + '...'
+    : command;
+
+  return description ? `${snippet} - ${description}` : snippet;
+}
+
+// ReadTool - shows filenames and line ranges
+formatSubtext(args: Record<string, any>): string | null {
+  const filePaths = args.file_paths;
+  const description = args.description;
+  const limit = args.limit || 0;
+  const offset = args.offset || 0;
+
+  const filenames = filePaths.map(p => p.split('/').pop());
+  let rangeInfo = limit > 0 ? ` - first ${limit} lines` : '';
+
+  const filesStr = `(${filenames.join(', ')}${rangeInfo})`;
+  return description ? `${description} ${filesStr}` : filesStr;
+}
+```
+
+#### getSubtextParameters()
+
+Declare which parameters are shown in the subtext so they're filtered from the args preview (avoiding duplicate information).
+
+**Default behavior:** Returns `['description']` since that's the default subtext parameter.
+
+**Example implementations:**
+
+```typescript
+// BashTool - shows both command and description
+getSubtextParameters(): string[] {
+  return ['command', 'description'];
+}
+
+// ReadTool - shows file_paths and description
+getSubtextParameters(): string[] {
+  return ['file_paths', 'description'];
+}
+
+// WriteTool - shows file_path and description
+getSubtextParameters(): string[] {
+  return ['file_path', 'description'];
+}
+```
+
+**For plugin tools:**
+These methods are implemented in the tool wrapper classes (ExecutableToolWrapper, BackgroundToolWrapper). The base implementations use the `description` parameter by default. To customize, you would need to extend the wrapper classes or implement custom TypeScript tools.
+
+### Tool Usage Guidance
+
+Tools can provide usage guidance that gets injected into agent system prompts. This helps agents understand when and how to use your tool effectively.
+
+**Property:** `usageGuidance` (string, optional)
+
+**Example from ReadTool:**
+
+```typescript
+readonly usageGuidance = `**When to use read:**
+Regular reads (default) keep file content in context for future reference - prefer this for most use cases.
+ONLY use ephemeral=true when file exceeds normal token limit AND you need one-time inspection.
+WARNING: Ephemeral content is automatically removed after one turn - you'll lose access to it.
+
+For exploratory work (unknown file locations, multi-file pattern analysis), use explore() to preserve your context and tool call capacity.`;
+```
+
+**Example from ExploreTool:**
+
+```typescript
+readonly usageGuidance = `**When to use explore:**
+Unknown scope/location: Don't know where to start or how much code is involved.
+Multi-file synthesis: Understanding patterns, relationships, or architecture across codebase.
+Preserves your context - investigation happens in separate agent context.
+NOT for: Known file paths, single-file questions, simple lookups.`;
+```
+
+**For plugin tools:**
+To add usage guidance to a plugin tool, you would need to implement it in a TypeScript wrapper class. The plugin manifest does not currently support specifying usage guidance directly. This is a feature primarily for built-in tools, but plugin authors can add it by extending the wrapper implementation.
+
+**Effect:**
+- Guidance is automatically included in the agent's system prompt
+- Helps agents make better decisions about tool selection
+- Reduces incorrect tool usage
+- Especially useful for tools with specific use cases or constraints
 
 ### Dependencies
 
@@ -1426,7 +1540,14 @@ git clone https://github.com/user/my-plugin.git
 
 ## Further Reading
 
-- [Plugin System Architecture](../architecture/plugin-system.md)
-- [Architecture Overview](../architecture/overview.md)
-- [Configuration Reference](../reference/configuration.md)
-- Examples: `examples/plugins/`
+### Documentation
+
+- [Plugin System Architecture](../architecture/plugin-system.md) - Technical details on plugin loading, activation, and execution
+- [Plugin Custom Agents Guide](../plugin-agents.md) - Complete guide for creating custom AI agents in plugins
+- [Plugin Custom Agents Design](../design/plugin-custom-agents.md) - Architecture and implementation details for plugin agents
+- [Architecture Overview](../architecture/overview.md) - Overall system architecture
+- [Configuration Reference](../reference/configuration.md) - Configuration options
+
+### Examples
+
+- `examples/plugins/` - Example plugin implementations

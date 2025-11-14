@@ -339,6 +339,73 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
 
 
   /**
+   * Format subtext for display in UI
+   * Shows: [description] (file1.txt, file2.txt) or just (filenames) if no description
+   * Includes line range information when limit/offset are used
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const filePaths = args.file_paths;
+    const description = args.description as string;
+    const limit = args.limit !== undefined ? Number(args.limit) : 0;
+    const offset = args.offset !== undefined ? Number(args.offset) : 0;
+
+    if (!filePaths) {
+      return null;
+    }
+
+    // Extract filenames (basename only)
+    const paths = Array.isArray(filePaths) ? filePaths : [filePaths];
+    const filenames = paths.map((p: string) => {
+      const parts = p.split('/');
+      return parts[parts.length - 1] || p;
+    });
+
+    // Build line range info if applicable
+    let rangeInfo = '';
+    if (limit > 0 || offset !== 0) {
+      if (offset < 0) {
+        // Negative offset: reading from end
+        if (limit > 0) {
+          rangeInfo = ` - last ${limit} lines`;
+        } else {
+          rangeInfo = ` - last ${Math.abs(offset)} lines`;
+        }
+      } else if (offset > 0) {
+        // Positive offset: reading from specific line
+        const startLine = offset;
+        if (limit > 0) {
+          const endLine = startLine + limit - 1;
+          rangeInfo = ` - lines ${startLine}-${endLine}`;
+        } else {
+          rangeInfo = ` - from line ${startLine}`;
+        }
+      } else {
+        // offset = 0: reading from beginning
+        if (limit > 0) {
+          rangeInfo = ` - first ${limit} lines`;
+        }
+      }
+    }
+
+    const filenamesStr = `(${filenames.join(', ')}${rangeInfo})`;
+
+    // If description exists, show it first
+    if (description) {
+      return `${description} ${filenamesStr}`;
+    }
+
+    return filenamesStr;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   * ReadTool shows both 'file_paths' and 'description' in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['file_paths', 'description'];
+  }
+
+  /**
    * Get truncation guidance for read output
    */
   getTruncationGuidance(): string {

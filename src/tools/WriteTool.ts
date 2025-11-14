@@ -187,6 +187,39 @@ export class WriteTool extends BaseTool {
   }
 
   /**
+   * Format subtext for display in UI
+   * Shows: [description] (filename.txt) or just (filename) if no description
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const filePath = args.file_path as string;
+    const description = args.description as string;
+
+    if (!filePath) {
+      return null;
+    }
+
+    // Extract filename (basename only)
+    const parts = filePath.split('/');
+    const filename = parts[parts.length - 1] || filePath;
+    const filenameStr = `(${filename})`;
+
+    // If description exists, show it first
+    if (description) {
+      return `${description} ${filenameStr}`;
+    }
+
+    return filenameStr;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   * WriteTool shows both 'file_path' and 'description' in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['file_path', 'description'];
+  }
+
+  /**
    * Custom result preview for write tool
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

@@ -40,11 +40,6 @@ export class BashTool extends BaseTool {
               type: 'string',
               description: `Shell command to execute. IMPORTANT: Use non-interactive flags: npm create -y ..., npm init -y, apt install -y, etc. Commands will be killed if idle for ${TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000}+ seconds.`,
             },
-            description: {
-              type: 'string',
-              description:
-                'Brief description of what this command does (5-10 words, shown in UI)',
-            },
             timeout: {
               type: 'integer',
               description: `Timeout in seconds (default: 30, max: 60)`,
@@ -377,6 +372,40 @@ export class BashTool extends BaseTool {
         );
       });
     });
+  }
+
+  /**
+   * Format subtext for display in UI
+   * Shows: [command_snippet] - [description]
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const command = args.command as string;
+    const description = args.description as string;
+
+    if (!command) {
+      return null;
+    }
+
+    // Show first 40 chars of command, truncate with ... if longer
+    let commandSnippet = command;
+    if (commandSnippet.length > 40) {
+      commandSnippet = commandSnippet.substring(0, 40) + '...';
+    }
+
+    // Add description if provided
+    if (description) {
+      return `${commandSnippet} - ${description}`;
+    }
+
+    return commandSnippet;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   * BashTool shows both 'command' and 'description' in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['command', 'description'];
   }
 
   /**

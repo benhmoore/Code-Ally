@@ -728,6 +728,33 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
   }
 
   /**
+   * Format subtext for display in UI
+   * Shows: [requirements] (truncated to 80 chars)
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const requirements = args.requirements as string;
+
+    if (!requirements) {
+      return null;
+    }
+
+    // Truncate to 80 chars if needed
+    if (requirements.length > 80) {
+      return requirements.substring(0, 77) + '...';
+    }
+
+    return requirements;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   * PlanTool shows both 'requirements' and 'description' in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['requirements', 'description'];
+  }
+
+  /**
    * Custom result preview
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

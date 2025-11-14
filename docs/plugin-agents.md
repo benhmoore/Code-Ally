@@ -203,9 +203,14 @@ Bind tools to specific agents using `visible_to`:
 ```
 
 **Behavior:**
+- `visible_to: undefined` or `null` → Tool is visible to all agents
+- `visible_to: []` (empty array) → Tool is visible to all agents
+- `visible_to: ["agent1", "agent2"]` → Tool is only visible to specified agents
+
+**Effect:**
 - Tool is only visible and executable by agents in the `visible_to` array
-- Empty or missing array = visible to all agents (including main Ally)
-- Non-empty array = tool is filtered out for agents not in the list
+- Tools with empty or missing array are visible to all agents (including main Ally)
+- Tools with non-empty array are filtered out for agents not in the list
 - Other agents get clear error: "Tool 'database-query' is only visible to agents: [database-agent]"
 - Ensures tools run in correct context with appropriate safeguards
 
@@ -673,8 +678,29 @@ Workflow:
 3. Combine results into final deliverable
 ```
 
+## Advanced: Tool Metadata and Features
+
+### Automatic Description Parameter
+
+Code Ally automatically injects a `description` parameter into all tool function definitions (unless the tool already defines it). This parameter is used for UI subtext display and is typically 5-10 words describing what the operation does.
+
+### Tool Subtext Display
+
+Tools can customize their UI appearance through:
+- `formatSubtext()` - Customizes the subtext shown after the tool name
+- `getSubtextParameters()` - Declares which parameters are shown in subtext
+
+See [Plugin System Architecture](architecture/plugin-system.md) for complete technical documentation.
+
+### Tool Usage Guidance
+
+Tools can provide `usageGuidance` string that gets injected into agent system prompts. This helps agents understand when and how to use tools effectively.
+
+**Note:** These features are primarily for built-in tools and require TypeScript implementation. Plugin tools use the default implementations.
+
 ## See Also
 
 - [Plugin Development Guide](guides/plugin-development.md) - Creating plugins
-- [Plugin System Architecture](architecture/plugin-system.md) - Technical details
+- [Plugin System Architecture](architecture/plugin-system.md) - Technical details including tool features
+- [Plugin Custom Agents Design](design/plugin-custom-agents.md) - Architecture and implementation details
 - [Configuration Reference](reference/configuration.md) - Config options

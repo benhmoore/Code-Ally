@@ -20,6 +20,8 @@ import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { ToolManager } from '@tools/ToolManager.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -34,7 +36,7 @@ interface ToolCallDisplayProps {
  * Format arguments for preview - shows all parameters with truncated values
  *
  * @param args Tool arguments
- * @param toolName Tool name (used to filter agent_name from agent tool)
+ * @param toolName Tool name (used to get parameter filtering from tool instance)
  */
 function formatArgsPreview(args: any, toolName?: string): string {
   if (!args || typeof args !== 'object') {
@@ -46,10 +48,33 @@ function formatArgsPreview(args: any, toolName?: string): string {
     return '';
   }
 
-  // For agent tool, filter out agent_name since it's shown as the tool name
-  const filteredKeys = toolName === 'agent'
-    ? keys.filter(k => k !== 'agent_name')
-    : keys;
+  // Get parameters to filter from tool instance
+  let paramsToFilter: Set<string> = new Set(['description']); // Default fallback
+
+  if (toolName) {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const toolManager = registry.get<ToolManager>('tool_manager');
+
+      if (toolManager) {
+        const tool = toolManager.getTool(toolName);
+        if (tool && typeof tool.getSubtextParameters === 'function') {
+          const subtextParams = tool.getSubtextParameters();
+          paramsToFilter = new Set(subtextParams);
+        }
+      }
+    } catch (error) {
+      // ServiceRegistry not available (e.g., in tests) - use default fallback
+    }
+
+    // Special case: agent_name is shown as tool name for agent tool, not in subtext
+    if (toolName === 'agent') {
+      paramsToFilter.add('agent_name');
+    }
+  }
+
+  // Filter out parameters shown in subtext or elsewhere
+  const filteredKeys = keys.filter(k => !paramsToFilter.has(k));
 
   if (filteredKeys.length === 0) {
     return '';
@@ -80,6 +105,66 @@ function formatArgsPreview(args: any, toolName?: string): string {
   });
 
   return formattedArgs.join(', ');
+}
+
+/**
+ * Extract subtext for display - shown dimmed after tool name
+ * Returns the most relevant contextual information for the tool call
+ *
+ * Uses tool's formatSubtext() method if available, otherwise falls back to description parameter.
+ *
+ * @param toolCall - Tool call state
+ * @param toolName - Internal tool name (not display name)
+ * @returns Truncated subtext string or empty string
+ */
+function extractSubtext(toolCall: ToolCallState, toolName: string): string {
+  const args = toolCall.arguments;
+  if (!args || typeof args !== 'object') {
+    return '';
+  }
+
+  let subtext = '';
+
+  // Try to get tool instance from ToolManager and call formatSubtext()
+  try {
+    const registry = ServiceRegistry.getInstance();
+    const toolManager = registry.get<ToolManager>('tool_manager');
+
+    if (toolManager) {
+      const tool = toolManager.getTool(toolName);
+      if (tool && typeof tool.formatSubtext === 'function') {
+        const formatted = tool.formatSubtext(args);
+        if (formatted) {
+          subtext = formatted;
+        }
+      }
+    }
+  } catch (error) {
+    // ServiceRegistry not available (e.g., in tests) - fall back to legacy logic
+  }
+
+  // Fallback to legacy logic if tool-based formatting didn't produce a result
+  if (!subtext) {
+    // Agent tools: Use task_prompt
+    if (toolName === 'agent' || toolName === 'explore') {
+      subtext = args.task_prompt || '';
+    }
+    // Plan tool: Use requirements
+    else if (toolName === 'plan') {
+      subtext = args.requirements || '';
+    }
+    // All other tools: Use description if provided
+    else if (args.description) {
+      subtext = args.description;
+    }
+  }
+
+  // Truncate to reasonable length (80 chars)
+  if (subtext.length > 80) {
+    subtext = subtext.slice(0, 77) + '...';
+  }
+
+  return subtext;
 }
 
 /**
@@ -178,6 +263,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Format arguments (filter out agent_name for agent tool)
   const argsPreview = formatArgsPreview(toolCall.arguments, toolCall.toolName);
 
+  // Extract subtext for display
+  const subtext = extractSubtext(toolCall, toolCall.toolName);
+
   // Indent based on level
   const indent = '    '.repeat(level);
 
@@ -208,8 +296,13 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           {displayName}
         </Text>
 
-        {/* Arguments preview */}
-        {argsPreview && (
+        {/* Subtext - contextual information */}
+        {subtext && (
+          <Text dimColor> - {subtext}</Text>
+        )}
+
+        {/* Arguments preview - only show if config enabled */}
+        {argsPreview && config?.show_tool_parameters_in_chat && (
           <Text dimColor> ({argsPreview})</Text>
         )}
 

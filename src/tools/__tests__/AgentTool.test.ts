@@ -69,6 +69,7 @@ describe('AgentTool', () => {
       show_context_in_prompt: false,
       show_thinking_in_chat: false,
       show_full_tool_output: false,
+      show_tool_parameters_in_chat: false,
       diff_display_enabled: true,
       diff_display_max_file_size: 1048576,
       diff_display_context_lines: 3,

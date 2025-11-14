@@ -37,6 +37,7 @@ Core behavior:
 - Test/lint after code changes
 - Read system_reminder in tool results
 - Trust specialized agent results
+- ALWAYS provide the description parameter (5-10 words) for tool calls - it's shown in the UI to help users track your progress
 
 User interjections: Respond directly to what they said, then continue work incorporating their guidance.`;
 
