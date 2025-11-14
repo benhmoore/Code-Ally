@@ -445,6 +445,10 @@ export class ResponseProcessor {
       logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Requesting final summary from specialized agent...');
       const finalResponse = await context.getLLMResponse();
 
+      // Clear delegations before early return to prevent delegation leaks
+      const completedCallIds = unwrappedToolCalls.map(tc => tc.id);
+      this.clearInjectableToolDelegations(completedCallIds);
+
       return await this.processLLMResponse(finalResponse, context);
     }
 
@@ -469,7 +473,9 @@ export class ResponseProcessor {
     } finally {
       // ALWAYS clear delegation context, even on error/interruption
       // This ensures interjections don't route to stale/dead agents
-      this.clearInjectableToolDelegations();
+      // Pass the specific call IDs that just completed to avoid clearing concurrent delegations
+      const completedCallIds = unwrappedToolCalls.map(tc => tc.id);
+      this.clearInjectableToolDelegations(completedCallIds);
     }
 
     // Check if agent was interrupted during tool execution
@@ -795,9 +801,15 @@ export class ResponseProcessor {
   }
 
   /**
-   * Clear delegation context for injectable tools after parent processes tool results
+   * Clear delegation context for specific tool calls after parent processes tool results
+   *
+   * This method only clears delegations for the specific tool call IDs that just completed,
+   * avoiding race conditions with concurrent delegations. If a callId doesn't exist in the
+   * delegation manager, it's silently skipped (e.g., for non-delegation tools like Read, Write).
+   *
+   * @param completedCallIds - Array of tool call IDs that just finished execution
    */
-  private clearInjectableToolDelegations(): void {
+  private clearInjectableToolDelegations(completedCallIds: string[]): void {
     try {
       const registry = ServiceRegistry.getInstance();
       const toolManager = registry.get<any>('tool_manager');
@@ -807,11 +819,20 @@ export class ResponseProcessor {
         return;
       }
 
-      // Clear all active delegations after parent processes results
-      const active = delegationManager.getAllActive();
-      for (const context of active) {
-        delegationManager.clear(context.callId);
-        logger.debug(`[RESPONSE_PROCESSOR] Cleared delegation: callId=${context.callId}`);
+      // Clear only the specific delegations that just completed
+      // This prevents race conditions with concurrent delegations (e.g., Main → agent-1 + agent-2)
+      let clearedCount = 0;
+      for (const callId of completedCallIds) {
+        // Check if this callId has a delegation context (not all tools register delegations)
+        if (delegationManager.has(callId)) {
+          delegationManager.clear(callId);
+          logger.debug(`[RESPONSE_PROCESSOR] Cleared delegation: callId=${callId}`);
+          clearedCount++;
+        }
+      }
+
+      if (clearedCount > 0) {
+        logger.debug(`[RESPONSE_PROCESSOR] Cleared ${clearedCount} delegation(s) for completed tool calls`);
       }
     } catch (error) {
       logger.warn(`[RESPONSE_PROCESSOR] Error clearing delegations: ${error}`);

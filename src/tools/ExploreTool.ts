@@ -321,6 +321,21 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         explorationAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
         this.currentPooledAgent = pooledAgent; // Track for interjection routing
+
+        // Register delegation with DelegationContextManager
+        try {
+          const serviceRegistry = ServiceRegistry.getInstance();
+          const toolManager = serviceRegistry.get<any>('tool_manager');
+          const delegationManager = toolManager?.getDelegationContextManager();
+          if (delegationManager) {
+            delegationManager.register(callId, 'explore', pooledAgent);
+            logger.debug(`[EXPLORE_TOOL] Registered delegation: callId=${callId}`);
+          }
+        } catch (error) {
+          // ServiceRegistry not available in tests - skip delegation registration
+          logger.debug(`[EXPLORE_TOOL] Delegation registration skipped: ${error}`);
+        }
+
         logger.debug('[EXPLORE_TOOL] Acquired pooled agent:', agentId);
       }
 
@@ -392,10 +407,37 @@ Note: Multiple independent explorations can be batched for efficiency.`;
           // Release agent back to pool
           logger.debug('[EXPLORE_TOOL] Releasing agent back to pool');
           pooledAgent.release();
+
+          // Transition delegation to completing state
+          try {
+            const serviceRegistry = ServiceRegistry.getInstance();
+            const toolManager = serviceRegistry.get<any>('tool_manager');
+            const delegationManager = toolManager?.getDelegationContextManager();
+            if (delegationManager) {
+              delegationManager.transitionToCompleting(callId);
+              logger.debug(`[EXPLORE_TOOL] Transitioned delegation to completing: callId=${callId}`);
+            }
+          } catch (error) {
+            logger.debug(`[EXPLORE_TOOL] Delegation transition skipped: ${error}`);
+          }
+
           this.currentPooledAgent = null; // Clear tracked pooled agent
         } else {
           // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
           await explorationAgent.cleanup();
+
+          // Transition delegation to completing state
+          try {
+            const serviceRegistry = ServiceRegistry.getInstance();
+            const toolManager = serviceRegistry.get<any>('tool_manager');
+            const delegationManager = toolManager?.getDelegationContextManager();
+            if (delegationManager) {
+              delegationManager.transitionToCompleting(callId);
+              logger.debug(`[EXPLORE_TOOL] Transitioned delegation to completing: callId=${callId}`);
+            }
+          } catch (error) {
+            logger.debug(`[EXPLORE_TOOL] Delegation transition skipped: ${error}`);
+          }
         }
       }
     } catch (error) {
