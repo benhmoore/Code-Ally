@@ -39,7 +39,7 @@ describe('DelegationContextManager', () => {
 
       manager.register('call-1', 'agent', pooledAgent);
 
-      const context = manager.get('call-1');
+      const context = manager.getContext('call-1');
       expect(context).toBeDefined();
       expect(context?.callId).toBe('call-1');
       expect(context?.toolName).toBe('agent');
@@ -68,7 +68,7 @@ describe('DelegationContextManager', () => {
       manager.register('call-1', 'explore', pooledAgent2); // Duplicate callId
 
       // Should overwrite with new registration
-      const context = manager.get('call-1');
+      const context = manager.getContext('call-1');
       expect(context?.toolName).toBe('explore');
     });
   });
@@ -80,7 +80,7 @@ describe('DelegationContextManager', () => {
       manager.register('call-1', 'agent', pooledAgent);
       manager.transitionToCompleting('call-1');
 
-      const context = manager.get('call-1');
+      const context = manager.getContext('call-1');
       expect(context?.state).toBe('completing');
     });
 
@@ -96,7 +96,7 @@ describe('DelegationContextManager', () => {
       manager.transitionToCompleting('call-1');
       manager.transitionToCompleting('call-1'); // Transition again
 
-      const context = manager.get('call-1');
+      const context = manager.getContext('call-1');
       expect(context?.state).toBe('completing');
     });
   });
@@ -273,12 +273,12 @@ describe('DelegationContextManager', () => {
       // Register
       manager.register('call-1', 'agent', pooledAgent);
       expect(manager.has('call-1')).toBe(true);
-      expect(manager.get('call-1')?.state).toBe('executing');
+      expect(manager.getContext('call-1')?.state).toBe('executing');
 
       // Transition
       manager.transitionToCompleting('call-1');
       expect(manager.has('call-1')).toBe(true);
-      expect(manager.get('call-1')?.state).toBe('completing');
+      expect(manager.getContext('call-1')?.state).toBe('completing');
 
       // Clear
       manager.clear('call-1');
@@ -299,7 +299,7 @@ describe('DelegationContextManager', () => {
       // call-2 should still be active
       expect(manager.has('call-1')).toBe(false);
       expect(manager.has('call-2')).toBe(true);
-      expect(manager.get('call-2')?.state).toBe('executing');
+      expect(manager.getContext('call-2')?.state).toBe('executing');
     });
   });
 

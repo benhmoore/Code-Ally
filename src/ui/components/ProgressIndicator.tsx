@@ -8,6 +8,7 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
 import { AnimationTicker } from '@services/AnimationTicker.js';
+import { formatDisplayName } from '../utils/uiHelpers.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -236,7 +237,7 @@ export const ToolExecutionIndicator: React.FC<ToolExecutionIndicatorProps> = ({
   return (
     <Box>
       <ProgressIndicator type="dots" color={UI_COLORS.PRIMARY} />
-      <Text color={UI_COLORS.PRIMARY}> {toolName}</Text>
+      <Text color={UI_COLORS.PRIMARY}> {formatDisplayName(toolName)}</Text>
       {truncatedDesc && (
         <Text dimColor> {truncatedDesc}</Text>
       )}

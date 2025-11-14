@@ -4,6 +4,7 @@ import { ToolCallState } from '@shared/index.js';
 import { OutputScroller } from './OutputScroller';
 import { AnimationTicker } from '@services/AnimationTicker.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
+import { formatDisplayName } from '../utils/uiHelpers.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
 
@@ -94,7 +95,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
       <Box>
         <Box marginRight={1}>{statusIcon}</Box>
         <Text color={toolNameColor} bold>
-          {toolCall.toolName}
+          {formatDisplayName(toolCall.toolName)}
         </Text>
         {elapsedSeconds > 5 && (
           <Text color="gray" dimColor>

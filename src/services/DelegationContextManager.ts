@@ -87,6 +87,13 @@ export class DelegationContextManager {
       );
     }
 
+    // Check concurrent delegation limit
+    if (this.contexts.size >= AGENT_CONFIG.MAX_CONCURRENT_DELEGATIONS) {
+      logger.warn(
+        `[DELEGATION_CONTEXT] register: max concurrent delegations (${AGENT_CONFIG.MAX_CONCURRENT_DELEGATIONS}) reached. Current: ${this.contexts.size}. Proceeding anyway.`
+      );
+    }
+
     const context: DelegationContext = {
       callId,
       toolName,
@@ -353,16 +360,6 @@ export class DelegationContextManager {
   }
 
   /**
-   * Get delegation context by call ID
-   *
-   * @param callId - Call ID to lookup
-   * @returns Delegation context if found, undefined otherwise
-   */
-  get(callId: string): DelegationContext | undefined {
-    return this.contexts.get(callId);
-  }
-
-  /**
    * Check if a delegation exists
    *
    * @param callId - Call ID to check
@@ -426,5 +423,30 @@ export class DelegationContextManager {
     }
 
     return stats;
+  }
+
+  /**
+   * Check for stale delegations and log warnings
+   *
+   * Identifies delegations that have been active longer than the stale threshold.
+   * This helps detect stuck or hung agents that may need manual intervention.
+   *
+   * @returns Array of stale delegation contexts
+   */
+  checkStaleDelegations(): DelegationContext[] {
+    const now = Date.now();
+    const staleDelegations: DelegationContext[] = [];
+
+    for (const context of this.contexts.values()) {
+      const age = now - context.timestamp;
+      if (age > AGENT_CONFIG.DELEGATION_STALE_THRESHOLD) {
+        staleDelegations.push(context);
+        logger.warn(
+          `[DELEGATION_CONTEXT] Stale delegation detected: callId=${context.callId} tool=${context.toolName} age=${Math.round(age / 1000)}s state=${context.state}`
+        );
+      }
+    }
+
+    return staleDelegations;
   }
 }

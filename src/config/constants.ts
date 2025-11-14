@@ -656,8 +656,22 @@ export const AGENT_CONFIG = {
   /** Maximum agent nesting depth (0=root Ally, 1-3=delegated agents) */
   MAX_AGENT_DEPTH: 3,
 
-  /** Maximum recursion depth for delegation context search (prevents stack overflow) */
+  /**
+   * Maximum recursion depth for delegation context search (prevents stack overflow)
+   *
+   * IMPORTANT: Should be MAX_AGENT_DEPTH + 1 to allow searching entire delegation tree.
+   * - MAX_AGENT_DEPTH=3 allows: Ally(0) → A1(1) → A2(2) → A3(3) = 4 levels
+   * - MAX_DELEGATION_RECURSION_DEPTH=4 allows searching all 4 levels
+   *
+   * If you change MAX_AGENT_DEPTH, update this value accordingly.
+   */
   MAX_DELEGATION_RECURSION_DEPTH: 4,
+
+  /** Maximum concurrent delegations per manager (prevents resource exhaustion) */
+  MAX_CONCURRENT_DELEGATIONS: 20,
+
+  /** Delegation age warning threshold in milliseconds (1 hour) */
+  DELEGATION_STALE_THRESHOLD: 60 * 60 * 1000,
 
   /** Agent pool size with nesting support (increased to handle nested agents) */
   AGENT_POOL_SIZE_WITH_NESTING: 15,

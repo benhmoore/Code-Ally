@@ -75,23 +75,25 @@ export function isAgentDelegation(toolName: string): boolean {
 }
 
 /**
- * Formats an agent name for display by converting kebab/snake case to Title Case
+ * Formats a name for display by converting kebab/snake case to Title Case
  *
- * Transforms agent names from their internal format (lowercase with hyphens/underscores)
- * to a human-readable format with proper capitalization.
+ * Transforms names from their internal format (lowercase with hyphens/underscores)
+ * to a human-readable format with proper capitalization. Works for both agent
+ * names and tool names.
  *
- * @param agentName - The internal agent name (e.g., "math-expert", "explore")
- * @returns The formatted display name (e.g., "Math Expert", "Explore")
+ * @param name - The internal name (e.g., "math-expert", "explore", "web-fetch")
+ * @returns The formatted display name (e.g., "Math Expert", "Explore", "Web Fetch")
  *
  * @example
  * ```typescript
- * formatAgentName('math-expert');      // Returns: 'Math Expert'
- * formatAgentName('explore');          // Returns: 'Explore'
- * formatAgentName('my_custom_agent');  // Returns: 'My Custom Agent'
+ * formatDisplayName('math-expert');      // Returns: 'Math Expert'
+ * formatDisplayName('explore');          // Returns: 'Explore'
+ * formatDisplayName('web-fetch');        // Returns: 'Web Fetch'
+ * formatDisplayName('my_custom_agent');  // Returns: 'My Custom Agent'
  * ```
  */
-export function formatAgentName(agentName: string): string {
-  return agentName
+export function formatDisplayName(name: string): string {
+  return name
     .split(/[-_]/)  // Split by hyphens or underscores
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())  // Capitalize each word
     .join(' ');  // Join with spaces
