@@ -15,6 +15,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { logger } from '../services/Logger.js';
 import { validateToolName } from '../utils/namingValidation.js';
 import { DelegationContextManager } from '../services/DelegationContextManager.js';
+import { isInjectableTool } from './InjectableTool.js';
 
 /**
  * Tool with custom function definition
@@ -71,8 +72,8 @@ export class ToolManager {
   /**
    * Find the currently active tool that supports message injection
    *
-   * Checks explore, plan, and agent tools for an active pooled agent.
-   * Returns the tool instance, name, and call ID if found.
+   * Finds the deepest 'executing' delegation for interjection routing.
+   * Only routes to actively executing agents, NOT completing/dying agents.
    *
    * NOTE: agent-ask is intentionally excluded - interjections should route
    * to the main agent, not the queried subagent, since agent-ask is just
@@ -90,6 +91,13 @@ export class ToolManager {
     const tool = this.tools.get(activeDelegation.toolName);
     if (!tool) {
       logger.warn(`[TOOL_MANAGER] Active delegation references unknown tool: ${activeDelegation.toolName}`);
+      return undefined;
+    }
+
+    // Validate that the tool implements InjectableTool interface
+    // This ensures type safety - only tools with injectUserMessage() can be returned
+    if (!isInjectableTool(tool)) {
+      logger.warn(`[TOOL_MANAGER] Active delegation tool '${activeDelegation.toolName}' does not implement InjectableTool interface`);
       return undefined;
     }
 

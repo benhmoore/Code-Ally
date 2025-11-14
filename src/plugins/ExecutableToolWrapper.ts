@@ -165,14 +165,18 @@ export class ExecutableToolWrapper extends BaseTool {
 	 */
 	private getResolvedCommand(): string {
 		// If plugin uses Python runtime and command is python3, use venv Python
+		logger.debug(`[ExecutableToolWrapper] getResolvedCommand - manifest.runtime: ${this.manifest.runtime}, command: ${this.command}, manifest.name: ${this.manifest.name}`);
 		if (
 			this.manifest.runtime === 'python3' &&
 			(this.command === 'python3' || this.command === 'python')
 		) {
-			return this.envManager.getPythonPath(this.manifest.name);
+			const pythonPath = this.envManager.getPythonPath(this.manifest.name);
+			logger.debug(`[ExecutableToolWrapper] Using venv Python: ${pythonPath}`);
+			return pythonPath;
 		}
 
 		// Otherwise use command as-is
+		logger.debug(`[ExecutableToolWrapper] Using command as-is: ${this.command}`);
 		return this.command;
 	}
 

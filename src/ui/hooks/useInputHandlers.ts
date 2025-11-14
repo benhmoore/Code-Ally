@@ -14,6 +14,7 @@ import { CommandHandler } from '@agent/CommandHandler.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { ToolManager } from '@tools/ToolManager.js';
+import { isInjectableTool } from '@tools/InjectableTool.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ActivityEventType } from '@shared/index.js';
 import { logger } from '@services/Logger.js';
@@ -86,12 +87,18 @@ export const useInputHandlers = (
       logger.debug('[APP] Routing interjection to active tool:', activeTool.name);
 
       try {
-        (activeTool.tool as any).injectUserMessage(message);
-        routedToTool = true;
-        targetToolName = activeTool.name;
-        parentId = activeTool.callId; // Use tool call ID for nesting
+        // Type-safe check for injectable tool
+        if (isInjectableTool(activeTool.tool)) {
+          activeTool.tool.injectUserMessage(message);
+          routedToTool = true;
+          targetToolName = activeTool.name;
+          parentId = activeTool.callId; // Use tool call ID for nesting
 
-        logger.debug('[APP] Successfully routed to tool:', activeTool.name, 'callId:', activeTool.callId);
+          logger.debug('[APP] Successfully routed to tool:', activeTool.name, 'callId:', activeTool.callId);
+        } else {
+          logger.warn('[APP] Active tool does not support message injection:', activeTool.name);
+          routedToTool = false;
+        }
       } catch (error) {
         logger.error('[APP] Failed to inject into tool:', error);
         routedToTool = false;

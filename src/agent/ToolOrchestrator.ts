@@ -127,6 +127,16 @@ export class ToolOrchestrator {
   }
 
   /**
+   * Get the tool manager for this orchestrator
+   * Used for delegation state cleanup when agents are reused from pool
+   *
+   * @returns Tool manager instance
+   */
+  getToolManager(): ToolManager {
+    return this.toolManager;
+  }
+
+  /**
    * Execute tool calls (concurrent or sequential based on tool types)
    *
    * @param toolCalls - Array of tool calls from LLM

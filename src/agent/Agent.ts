@@ -421,6 +421,37 @@ export class Agent {
   }
 
   /**
+   * Clear conversation history (used by AgentPoolService when reusing pooled agents)
+   *
+   * CRITICAL: This must be called when reusing a pooled agent to prevent context
+   * seepage from previous tasks. Without this, agents retain their full conversation
+   * history including tool calls and results from unrelated previous delegations.
+   */
+  clearConversationHistory(): void {
+    this.conversationManager.clearMessages();
+    logger.debug(`[AGENT] Cleared conversation history for agent ${this.instanceId}`);
+  }
+
+  /**
+   * Update system prompt (used by AgentPoolService when reusing pooled agents)
+   *
+   * CRITICAL: When reusing a pooled agent for a new task, we must replace the old
+   * system prompt with the new one. Without this, after clearing conversation history,
+   * the agent has NO system prompt and exhibits undefined behavior (e.g., math-expert
+   * acting like an Explore agent).
+   *
+   * @param newSystemPrompt - The new system prompt for this task
+   */
+  updateSystemPrompt(newSystemPrompt: string): void {
+    const systemMessage = {
+      role: 'system' as const,
+      content: newSystemPrompt,
+    };
+    this.conversationManager.addMessage(systemMessage);
+    logger.debug(`[AGENT] Updated system prompt for agent ${this.instanceId}, length:`, newSystemPrompt.length);
+  }
+
+  /**
    * Reset the tool call activity timer
    * Called by ToolOrchestrator when a tool call is executed
    */
@@ -1530,6 +1561,26 @@ export class Agent {
 
     // Restore focus
     await this.restoreFocus();
+
+    // Clear delegation state to prevent memory leaks
+    // This breaks circular references: DelegationContext → PooledAgent → Agent → DelegationContextManager
+    // Must happen before final resource disposal but after agent has completed work
+    try {
+      const toolOrchestrator = this.getToolOrchestrator();
+      if (toolOrchestrator && typeof toolOrchestrator.getToolManager === 'function') {
+        const toolManager = toolOrchestrator.getToolManager();
+        if (toolManager && typeof toolManager.getDelegationContextManager === 'function') {
+          const delegationManager = toolManager.getDelegationContextManager();
+          if (delegationManager && typeof delegationManager.clearAll === 'function') {
+            delegationManager.clearAll();
+            logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Cleared delegation state during cleanup');
+          }
+        }
+      }
+    } catch (error) {
+      // Graceful degradation - log warning but don't block cleanup
+      logger.warn('[AGENT_CLEANUP]', this.instanceId, 'Failed to clear delegation state during cleanup:', error);
+    }
 
     // Only close the model client if this is NOT a specialized subagent
     // Subagents share the client and shouldn't close it

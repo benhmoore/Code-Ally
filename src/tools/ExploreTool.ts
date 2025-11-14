@@ -13,6 +13,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { InjectableTool } from './InjectableTool.js';
 import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -83,7 +84,7 @@ const EXPLORATION_SYSTEM_PROMPT = EXPLORATION_BASE_PROMPT + `
 
 Execute your exploration systematically and provide comprehensive results.`;
 
-export class ExploreTool extends BaseTool {
+export class ExploreTool extends BaseTool implements InjectableTool {
   readonly name = 'explore';
   readonly description =
     'Explore codebase with read-only access. Delegates to specialized exploration agent. Use when you need to understand code structure, find implementations, or analyze architecture. Returns comprehensive findings.';
@@ -101,7 +102,22 @@ NOT for: Known file paths, single-file questions, simple lookups.
 Note: Multiple independent explorations can be batched for efficiency.`;
 
   private activeDelegations: Map<string, any> = new Map();
-  private currentPooledAgent: PooledAgent | null = null;
+  private _currentPooledAgent: PooledAgent | null = null;
+
+  // InjectableTool interface properties
+  get delegationState(): 'executing' | 'completing' | null {
+    // Always null for ExploreTool - delegation state is managed by DelegationContextManager
+    return null;
+  }
+
+  get activeCallId(): string | null {
+    // Always null for ExploreTool - delegation tracking is done by DelegationContextManager
+    return null;
+  }
+
+  get currentPooledAgent(): PooledAgent | null {
+    return this._currentPooledAgent;
+  }
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -320,7 +336,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager, customModelClient);
         explorationAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
-        this.currentPooledAgent = pooledAgent; // Track for interjection routing
+        this._currentPooledAgent = pooledAgent; // Track for interjection routing
 
         // Register delegation with DelegationContextManager
         try {
@@ -421,7 +437,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
             logger.debug(`[EXPLORE_TOOL] Delegation transition skipped: ${error}`);
           }
 
-          this.currentPooledAgent = null; // Clear tracked pooled agent
+          this._currentPooledAgent = null; // Clear tracked pooled agent
         } else {
           // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
           await explorationAgent.cleanup();
@@ -595,18 +611,18 @@ Note: Multiple independent explorations can be batched for efficiency.`;
    * Used for routing interjections to subagents
    */
   injectUserMessage(message: string): void {
-    if (!this.currentPooledAgent) {
+    if (!this._currentPooledAgent) {
       logger.warn('[EXPLORE_TOOL] injectUserMessage called but no active pooled agent');
       return;
     }
 
-    const agent = this.currentPooledAgent.agent;
+    const agent = this._currentPooledAgent.agent;
     if (!agent) {
       logger.warn('[EXPLORE_TOOL] injectUserMessage called but pooled agent has no agent instance');
       return;
     }
 
-    logger.debug('[EXPLORE_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
+    logger.debug('[EXPLORE_TOOL] Injecting user message into pooled agent:', this._currentPooledAgent.agentId);
     agent.addUserInterjection(message);
     agent.interrupt('interjection');
   }

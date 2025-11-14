@@ -12,6 +12,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { InjectableTool } from './InjectableTool.js';
 import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -134,7 +135,7 @@ const PLANNING_SYSTEM_PROMPT = PLANNING_BASE_PROMPT + `
 
 ` + PLANNING_CLOSING;
 
-export class PlanTool extends BaseTool {
+export class PlanTool extends BaseTool implements InjectableTool {
   readonly name = 'plan';
   readonly description =
     'Create implementation plan by researching codebase patterns. Delegates to planning agent with read-only + explore access. Returns detailed, actionable plan grounded in existing architecture.';
@@ -150,7 +151,22 @@ Use deny-proposal if plan doesn't align with user intent.
 Skip for: Quick fixes, continuing existing plans, simple changes.`;
 
   private activeDelegations: Map<string, any> = new Map();
-  private currentPooledAgent: PooledAgent | null = null;
+  private _currentPooledAgent: PooledAgent | null = null;
+
+  // InjectableTool interface properties
+  get delegationState(): 'executing' | 'completing' | null {
+    // Always null for PlanTool - delegation state is managed by DelegationContextManager
+    return null;
+  }
+
+  get activeCallId(): string | null {
+    // Always null for PlanTool - delegation tracking is done by DelegationContextManager
+    return null;
+  }
+
+  get currentPooledAgent(): PooledAgent | null {
+    return this._currentPooledAgent;
+  }
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -371,7 +387,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager, customModelClient);
         planningAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
-        this.currentPooledAgent = pooledAgent; // Track for interjection routing
+        this._currentPooledAgent = pooledAgent; // Track for interjection routing
 
         // Register delegation with DelegationContextManager
         try {
@@ -483,7 +499,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
             logger.debug(`[PLAN_TOOL] Delegation transition skipped: ${error}`);
           }
 
-          this.currentPooledAgent = null; // Clear tracked pooled agent
+          this._currentPooledAgent = null; // Clear tracked pooled agent
         } else {
           // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
           await planningAgent.cleanup();
@@ -644,18 +660,18 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
    * Used for routing interjections to subagents
    */
   injectUserMessage(message: string): void {
-    if (!this.currentPooledAgent) {
+    if (!this._currentPooledAgent) {
       logger.warn('[PLAN_TOOL] injectUserMessage called but no active pooled agent');
       return;
     }
 
-    const agent = this.currentPooledAgent.agent;
+    const agent = this._currentPooledAgent.agent;
     if (!agent) {
       logger.warn('[PLAN_TOOL] injectUserMessage called but pooled agent has no agent instance');
       return;
     }
 
-    logger.debug('[PLAN_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
+    logger.debug('[PLAN_TOOL] Injecting user message into pooled agent:', this._currentPooledAgent.agentId);
     agent.addUserInterjection(message);
     agent.interrupt('interjection');
   }

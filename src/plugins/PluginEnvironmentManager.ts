@@ -10,7 +10,7 @@
  * - node: Creates node_modules and installs from package.json
  */
 
-import { promises as fs } from 'fs';
+import { promises as fs, accessSync } from 'fs';
 import { join } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -259,13 +259,16 @@ export class PluginEnvironmentManager {
    */
   getPythonPath(pluginName: string): string {
     const venvPythonPath = join(PLUGIN_ENVS_DIR, pluginName, 'bin', 'python3');
+    logger.debug(`[PluginEnvironmentManager] getPythonPath - pluginName: ${pluginName}, checking: ${venvPythonPath}`);
 
     // Check if venv python exists synchronously
     try {
-      require('fs').accessSync(venvPythonPath);
+      accessSync(venvPythonPath);
+      logger.debug(`[PluginEnvironmentManager] Venv Python exists, returning: ${venvPythonPath}`);
       return venvPythonPath;
-    } catch {
+    } catch (error) {
       // Venv doesn't exist, fall back to system python3
+      logger.debug(`[PluginEnvironmentManager] Venv Python check failed (${error}), falling back to: python3`);
       return 'python3';
     }
   }

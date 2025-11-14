@@ -656,6 +656,9 @@ export const AGENT_CONFIG = {
   /** Maximum agent nesting depth (0=root Ally, 1-3=delegated agents) */
   MAX_AGENT_DEPTH: 3,
 
+  /** Maximum recursion depth for delegation context search (prevents stack overflow) */
+  MAX_DELEGATION_RECURSION_DEPTH: 4,
+
   /** Agent pool size with nesting support (increased to handle nested agents) */
   AGENT_POOL_SIZE_WITH_NESTING: 15,
 } as const;

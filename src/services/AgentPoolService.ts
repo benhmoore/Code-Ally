@@ -183,12 +183,84 @@ export class AgentPoolService implements IService {
         reserved.metadata.lastAccessedAt = Date.now();
         reserved.metadata.useCount++;
 
+        // CRITICAL: Clear nested delegation state before reusing agent
+        // When reusing a pooled agent, we must clear any stale nested delegation contexts
+        // from previous tasks to prevent findDeepestDelegation() from routing to dead agent instances
+        //
+        // Scenario that this prevents:
+        // 1. Main → Agent1 (pool-agent-1) → Agent2
+        // 2. Agent2 delegation registered in Agent1's DelegationContextManager
+        // 3. Agent1 completes, released to pool
+        // 4. Main → Agent1 (same pool-agent-1 reused) → Agent3
+        // 5. User interjects
+        // 6. findDeepestDelegation() finds STALE Agent2 delegation in Agent1's manager
+        // 7. Routes to dead Agent2 instance → CRASH
+        //
+        // Chain: agent → toolOrchestrator → toolManager → delegationContextManager
+        // Use defensive programming with optional chaining to handle missing methods
+        try {
+          const agent = reserved.metadata.agent;
+          // Check if getToolOrchestrator method exists (may not exist in mock agents or older versions)
+          if (typeof agent.getToolOrchestrator === 'function') {
+            const toolOrchestrator = agent.getToolOrchestrator();
+            if (toolOrchestrator && typeof toolOrchestrator.getToolManager === 'function') {
+              const toolManager = toolOrchestrator.getToolManager();
+              if (toolManager && typeof toolManager.getDelegationContextManager === 'function') {
+                const delegationManager = toolManager.getDelegationContextManager();
+                if (delegationManager && typeof delegationManager.clearAll === 'function') {
+                  delegationManager.clearAll();
+                  logger.debug(
+                    `[AGENT_POOL] Cleared nested delegation state for reused agent ${reserved.metadata.agentId}`
+                  );
+                }
+              }
+            }
+          }
+        } catch (error) {
+          // Graceful degradation - if we can't clear delegation state, log and continue
+          // This shouldn't prevent agent reuse, but we should know about it
+          logger.warn(
+            `[AGENT_POOL] Failed to clear delegation state for agent ${reserved.metadata.agentId}:`,
+            error
+          );
+        }
+
+        // CRITICAL: Clear conversation history and update system prompt before reusing agent
+        // When reusing a pooled agent, we must:
+        // 1. Clear conversation history to remove old messages
+        // 2. Update system prompt with the new task's prompt
+        // Without this, agents retain messages from unrelated previous delegations
+        try {
+          const agent = reserved.metadata.agent;
+          if (typeof agent.clearConversationHistory === 'function') {
+            agent.clearConversationHistory();
+            logger.debug(
+              `[AGENT_POOL] Cleared conversation history for reused agent ${reserved.metadata.agentId}`
+            );
+          }
+
+          // Update system prompt if provided in new config
+          if (agentConfig.systemPrompt && typeof agent.updateSystemPrompt === 'function') {
+            agent.updateSystemPrompt(agentConfig.systemPrompt);
+            logger.debug(
+              `[AGENT_POOL] Updated system prompt for reused agent ${reserved.metadata.agentId}`
+            );
+          }
+        } catch (error) {
+          logger.warn(
+            `[AGENT_POOL] Failed to clear conversation history or update system prompt for agent ${reserved.metadata.agentId}:`,
+            error
+          );
+        }
+
         // CRITICAL: Update parentCallId for this invocation
         // When reusing a pooled agent, we must update its ToolOrchestrator's parentCallId
         // to match the current delegation context, otherwise nested tool calls will be
         // parented to stale IDs from previous invocations
-        const toolOrchestrator = reserved.metadata.agent.getToolOrchestrator();
-        toolOrchestrator.setParentCallId(agentConfig.parentCallId);
+        const toolOrchestrator = reserved.metadata.agent.getToolOrchestrator?.();
+        if (toolOrchestrator && typeof toolOrchestrator.setParentCallId === 'function') {
+          toolOrchestrator.setParentCallId(agentConfig.parentCallId);
+        }
 
         logger.debug(
           `[AGENT_POOL] Reusing agent ${reserved.metadata.agentId} (uses: ${reserved.metadata.useCount}) with parentCallId: ${agentConfig.parentCallId}`
@@ -311,11 +383,19 @@ export class AgentPoolService implements IService {
       // Check if configuration matches
       let matches = false;
 
-      // If _poolKey exists, use strict matching
-      if (agentConfig._poolKey && metadata.config._poolKey) {
+      // CRITICAL: Prevent cross-type agent reuse
+      // If EITHER side has a pool key, BOTH must have matching pool keys
+      // This prevents math-expert from reusing explore agents (and vice versa)
+      if (agentConfig._poolKey || metadata.config._poolKey) {
+        // If only one side has a pool key, they cannot match
+        if (!agentConfig._poolKey || !metadata.config._poolKey) {
+          continue; // Skip this agent - incompatible pool key configuration
+        }
+        // Both have pool keys - use strict matching
         matches = metadata.config._poolKey === agentConfig._poolKey;
       } else {
-        // Fallback to old logic for ExploreTool/PlanTool
+        // Both lack pool keys - use fallback logic for old ExploreTool/PlanTool
+        // This allows explore and plan agents to share pools
         matches = metadata.config.isSpecializedAgent === agentConfig.isSpecializedAgent;
       }
 

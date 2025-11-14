@@ -19,12 +19,7 @@
 
 import { PooledAgent } from './AgentPoolService.js';
 import { logger } from './Logger.js';
-
-/**
- * Maximum recursion depth for findDeepestDelegation
- * Prevents stack overflow in pathological cases (circular references)
- */
-const MAX_RECURSION_DEPTH = 20;
+import { AGENT_CONFIG } from '../config/constants.js';
 
 /**
  * Lifecycle state of a delegation
@@ -165,13 +160,35 @@ export class DelegationContextManager {
   }
 
   /**
+   * Get a delegation context by call ID
+   *
+   * Returns the full delegation context for the given call ID, or undefined if not found.
+   * This is useful for accessing delegation metadata like timestamp.
+   *
+   * @param callId - Call ID of the delegation to retrieve
+   * @returns DelegationContext if found, undefined otherwise
+   */
+  getContext(callId: string): DelegationContext | undefined {
+    return this.contexts.get(callId);
+  }
+
+  /**
    * Get the deepest active delegation for interjection routing
    *
    * Performs recursive depth-first search through nested agent hierarchies
-   * to find the deepest delegation in 'executing' or 'completing' state.
+   * to find the deepest delegation in 'executing' state.
+   *
+   * IMPORTANT: Only routes to 'executing' delegations, NOT 'completing'.
+   * This prevents race conditions where interjections route to dying/dead agents:
+   * - 'executing' = active delegation, capable of receiving interjections
+   * - 'completing' = agent done, parent processing result, NO interjections
+   *
+   * The 'completing' state exists to track lifecycle (agent finished but not yet
+   * cleaned up by parent), but interjections should never route to completing agents
+   * since they may already be released to the pool or cleaned up.
    *
    * Algorithm:
-   * 1. Find all contexts in active states ('executing' or 'completing')
+   * 1. Find all contexts in 'executing' state (NOT 'completing')
    * 2. For each context, recursively check for nested delegations in sub-agents
    * 3. Return the deepest delegation found (nested takes priority)
    * 4. If multiple delegations at same depth, return most recent (highest timestamp)
@@ -179,9 +196,10 @@ export class DelegationContextManager {
    * @returns ActiveDelegation if found, undefined if no active delegations
    */
   getActiveDelegation(): ActiveDelegation | undefined {
-    // Collect all active contexts (executing or completing)
+    // Collect only executing contexts (NOT completing)
+    // Completing agents are dying/dead and cannot receive interjections
     const activeContexts = Array.from(this.contexts.values()).filter(
-      ctx => ctx.state === 'executing' || ctx.state === 'completing'
+      ctx => ctx.state === 'executing'
     );
 
     if (activeContexts.length === 0) {
@@ -239,9 +257,9 @@ export class DelegationContextManager {
     currentDepth: number
   ): { delegation: DelegationContext; depth: number } | undefined {
     // Guard against infinite recursion
-    if (currentDepth >= MAX_RECURSION_DEPTH) {
+    if (currentDepth >= AGENT_CONFIG.MAX_DELEGATION_RECURSION_DEPTH) {
       logger.warn(
-        `[DELEGATION_CONTEXT] findDeepestDelegation: max recursion depth ${MAX_RECURSION_DEPTH} reached for callId=${context.callId}`
+        `[DELEGATION_CONTEXT] findDeepestDelegation: max recursion depth ${AGENT_CONFIG.MAX_DELEGATION_RECURSION_DEPTH} reached for callId=${context.callId}`
       );
       return { delegation: context, depth: currentDepth };
     }
@@ -261,16 +279,19 @@ export class DelegationContextManager {
         return { delegation: context, depth: currentDepth };
       }
 
-      // Access ToolManager via ToolOrchestrator
-      // Note: ToolOrchestrator doesn't expose getToolManager(), but we can access
-      // the toolManager field if needed. For now, check via the orchestrator.
-      const toolManager = (toolOrchestrator as any).toolManager;
+      // Access ToolManager via ToolOrchestrator's public API
+      const toolManager = typeof toolOrchestrator.getToolManager === 'function'
+        ? toolOrchestrator.getToolManager()
+        : undefined;
+
       if (!toolManager) {
         return { delegation: context, depth: currentDepth };
       }
 
-      // Check if ToolManager has a delegationContextManager
-      nestedManager = (toolManager as any).delegationContextManager;
+      // Access DelegationContextManager via ToolManager's public API
+      nestedManager = typeof toolManager.getDelegationContextManager === 'function'
+        ? toolManager.getDelegationContextManager()
+        : undefined;
     } catch (error) {
       // Graceful degradation - if we can't access nested manager, treat as leaf
       logger.debug(
@@ -293,9 +314,8 @@ export class DelegationContextManager {
     }
 
     // Found nested delegation - construct nested context and recurse
-    // Try to get actual timestamp from nested manager's internal state
-    const nestedContexts = (nestedManager as any).contexts as Map<string, DelegationContext>;
-    const actualNestedContext = nestedContexts?.get(nestedDelegation.callId);
+    // Get actual timestamp from nested manager using public API
+    const actualNestedContext = nestedManager.getContext(nestedDelegation.callId);
     const actualTimestamp = actualNestedContext?.timestamp ?? nestedDelegation.timestamp;
 
     const nestedContext: DelegationContext = {
@@ -353,17 +373,27 @@ export class DelegationContextManager {
   }
 
   /**
-   * Clear all delegations
+   * Clear all delegations (used when agent is reused from pool)
    *
-   * Removes all tracked delegations. Use with caution - may leave
-   * active agents in inconsistent state.
+   * This prevents stale delegation state from previous tasks when a pooled agent
+   * is reused. When an agent is released to the pool and later reused for a new task,
+   * any nested delegation contexts from the previous task must be cleared to prevent
+   * findDeepestDelegation() from routing to dead agent instances.
+   *
+   * Critical for preventing state pollution in the delegation system:
+   * - Main → Agent1 (pool-agent-1) → Agent2  (Agent2 registered in Agent1's manager)
+   * - Agent1 released to pool
+   * - Main → Agent1 (reused pool-agent-1) → Agent3
+   * - Without clearAll(), findDeepestDelegation() would find stale Agent2 delegation
+   *
+   * Use with caution outside of pool reuse - may leave active agents in inconsistent state.
    */
   clearAll(): void {
     const count = this.contexts.size;
     this.contexts.clear();
 
     if (count > 0) {
-      logger.debug(`[DELEGATION_CONTEXT] clearAll: removed ${count} contexts`);
+      logger.debug(`[DELEGATION_CONTEXT] clearAll: removed ${count} contexts (pool cleanup)`);
     }
   }
 

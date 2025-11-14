@@ -10,6 +10,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { InjectableTool } from './InjectableTool.js';
 import { ToolResult, FunctionDefinition, ActivityEventType, Message } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -23,7 +24,7 @@ import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT, ID_GENERATION,
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 
-export class AgentTool extends BaseTool {
+export class AgentTool extends BaseTool implements InjectableTool {
   readonly name = 'agent';
   readonly description =
     'Delegate task to specialized agent. Each call runs ONE agent. For concurrent execution, make multiple agent() calls in same response';
@@ -34,7 +35,22 @@ export class AgentTool extends BaseTool {
 
   private agentManager: AgentManager | null = null;
   private activeDelegations: Map<string, any> = new Map();
-  private currentPooledAgent: PooledAgent | null = null;
+  private _currentPooledAgent: PooledAgent | null = null;
+
+  // InjectableTool interface properties
+  get delegationState(): 'executing' | 'completing' | null {
+    // Always null for AgentTool - delegation state is managed by DelegationContextManager
+    return null;
+  }
+
+  get activeCallId(): string | null {
+    // Always null for AgentTool - delegation tracking is done by DelegationContextManager
+    return null;
+  }
+
+  get currentPooledAgent(): PooledAgent | null {
+    return this._currentPooledAgent;
+  }
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -654,7 +670,7 @@ export class AgentTool extends BaseTool {
       pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager, customModelClient);
       subAgent = pooledAgent.agent;
       agentId = pooledAgent.agentId;
-      this.currentPooledAgent = pooledAgent; // Track for interjection routing
+      this._currentPooledAgent = pooledAgent; // Track for interjection routing
 
       // Register delegation with DelegationContextManager
       try {
@@ -882,18 +898,18 @@ export class AgentTool extends BaseTool {
    * Used for routing interjections to subagents
    */
   injectUserMessage(message: string): void {
-    if (!this.currentPooledAgent) {
+    if (!this._currentPooledAgent) {
       logger.warn('[AGENT_TOOL] injectUserMessage called but no active pooled agent');
       return;
     }
 
-    const agent = this.currentPooledAgent.agent;
+    const agent = this._currentPooledAgent.agent;
     if (!agent) {
       logger.warn('[AGENT_TOOL] injectUserMessage called but pooled agent has no agent instance');
       return;
     }
 
-    logger.debug('[AGENT_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
+    logger.debug('[AGENT_TOOL] Injecting user message into pooled agent:', this._currentPooledAgent.agentId);
     agent.addUserInterjection(message);
     agent.interrupt('interjection');
   }
