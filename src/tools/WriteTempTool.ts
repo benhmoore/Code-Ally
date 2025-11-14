@@ -16,7 +16,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 export class WriteTempTool extends BaseTool {
-  readonly name = 'write_temp';
+  readonly name = 'write-temp';
   readonly description = 'Write temporary notes to /tmp for organizing exploration findings. Files are automatically namespaced to avoid conflicts.';
   readonly requiresConfirmation = false; // Safe operation - isolated to /tmp
   readonly internalTool = true; // Only available to specific agents (ExploreTool)
@@ -68,7 +68,7 @@ export class WriteTempTool extends BaseTool {
       return this.formatErrorResponse(
         'content parameter is required',
         'validation_error',
-        'Example: write_temp(content="Architecture notes...", filename="notes.txt")'
+        'Example: write-temp(content="Architecture notes...", filename="notes.txt")'
       );
     }
 
@@ -76,7 +76,7 @@ export class WriteTempTool extends BaseTool {
       return this.formatErrorResponse(
         'filename parameter is required',
         'validation_error',
-        'Example: write_temp(content="...", filename="notes.txt")'
+        'Example: write-temp(content="...", filename="notes.txt")'
       );
     }
 
@@ -161,7 +161,7 @@ export class WriteTempTool extends BaseTool {
   }
 
   /**
-   * Custom result preview for write_temp tool
+   * Custom result preview for write-temp tool
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {
     if (!result.success) {

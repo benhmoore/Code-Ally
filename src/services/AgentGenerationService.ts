@@ -6,6 +6,7 @@
  */
 
 import type { ModelClient } from '../llm/ModelClient.js';
+import { validateAgentName } from '../utils/namingValidation.js';
 
 export interface AgentGenerationResult {
   name: string;
@@ -102,10 +103,10 @@ Do not include any text before or after the JSON. The name must be lowercase wit
         throw new Error('Missing required fields in generated agent configuration');
       }
 
-      // Validate name format
-      if (!/^[a-z0-9-]+$/.test(parsed.name)) {
-        // Try to fix common issues
-        parsed.name = parsed.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+      // Validate name format using strict validation utility
+      const nameValidation = validateAgentName(parsed.name);
+      if (!nameValidation.valid) {
+        throw new Error(nameValidation.error);
       }
 
       return {

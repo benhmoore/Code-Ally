@@ -139,7 +139,7 @@ SocketClient
 
   "tools": [
     {
-      "name": "my_tool",
+      "name": "my-tool",
       "type": "executable",
       "command": "python3",
       "args": ["tool.py"],
@@ -553,7 +553,7 @@ def on_event(params):
 {
   "jsonrpc": "2.0",
   "id": "call-123",
-  "method": "my_tool",
+  "method": "my-tool",
   "params": {
     "input": "value"
   }

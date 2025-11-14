@@ -42,6 +42,49 @@ export interface AgentDefinition {
 
   /** Optional tool call requirements for this agent */
   requirements?: AgentRequirements;
+
+  /**
+   * List of agent names that can call this agent.
+   * - If undefined: agent is visible to all agents (default)
+   * - If empty array []: agent is visible to none (only main assistant can use it)
+   * - If ["agent1", "agent2"]: only these agents can call this agent
+   *
+   * @example
+   * visible_from_agents: ["explore", "plan"] // Only explore and plan agents can use this
+   * visible_from_agents: [] // Only main assistant can use this
+   * visible_from_agents: undefined // All agents can use this (default)
+   */
+  visible_from_agents?: string[];
+
+  /**
+   * Whether this agent can delegate to sub-agents.
+   * - If undefined: defaults to true (can delegate)
+   * - If false: agent cannot spawn sub-agents
+   * - If true: agent can spawn sub-agents
+   *
+   * Useful for restricting delegation chains to prevent infinite recursion
+   * or to enforce that certain agents work in isolation.
+   *
+   * @example
+   * can_delegate_to_agents: false // Agent works alone, no delegation
+   * can_delegate_to_agents: true // Agent can spawn sub-agents (default)
+   */
+  can_delegate_to_agents?: boolean;
+
+  /**
+   * Whether this agent can see other agents in its tool list.
+   * - If undefined: defaults to true (can see agents)
+   * - If false: agent cannot see agent/explore/plan tools
+   * - If true: agent can see and use agent tools
+   *
+   * Controls visibility of agent-related tools in the agent's context.
+   * When false, the agent operates in isolation without awareness of other agents.
+   *
+   * @example
+   * can_see_agents: false // Agent doesn't see agent/explore/plan tools
+   * can_see_agents: true // Agent can see and use agent tools (default)
+   */
+  can_see_agents?: boolean;
 }
 
 /**

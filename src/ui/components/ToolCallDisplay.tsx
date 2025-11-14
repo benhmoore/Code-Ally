@@ -15,6 +15,7 @@ import { ToolCallState, ActivityEventType } from '@shared/index.js';
 import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
+import { formatAgentName } from '../utils/uiHelpers.js';
 import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
@@ -168,9 +169,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Check if this is an agent delegation
   const isAgentDelegation = AGENT_DELEGATION_TOOLS.includes(toolCall.toolName as any);
 
-  // For agent tool, show agent_name as the tool name
+  // For agent tool, show formatted agent_name as the tool name
   const displayName = isAgentDelegation && toolCall.arguments?.agent_name
-    ? toolCall.arguments.agent_name
+    ? formatAgentName(toolCall.arguments.agent_name)
     : toolCall.toolName;
 
   // Format arguments (filter out agent_name for agent tool)

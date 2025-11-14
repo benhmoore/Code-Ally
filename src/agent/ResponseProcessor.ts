@@ -22,6 +22,7 @@ import { ConversationManager } from './ConversationManager.js';
 import { Message, ActivityEventType } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
 
 /**
  * Context needed for processing LLM responses
@@ -461,9 +462,15 @@ export class ResponseProcessor {
 
     let toolResults: Array<{ success: boolean; [key: string]: any }> | undefined;
 
-    // Execute tool calls and let any errors (including permission denied) propagate to Agent.ts
-    toolResults = await context.executeToolCalls(toolCalls, cycles);
-    logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Tool calls completed. Total messages now:', this.conversationManager.getMessageCount());
+    try {
+      // Execute tool calls and let any errors (including permission denied) propagate to Agent.ts
+      toolResults = await context.executeToolCalls(toolCalls, cycles);
+      logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Tool calls completed. Total messages now:', this.conversationManager.getMessageCount());
+    } finally {
+      // ALWAYS clear delegation context, even on error/interruption
+      // This ensures interjections don't route to stale/dead agents
+      this.clearInjectableToolDelegations();
+    }
 
     // Check if agent was interrupted during tool execution
     if (this.interruptionManager.isInterrupted()) {
@@ -785,5 +792,29 @@ export class ResponseProcessor {
    */
   private emitEvent(event: any): void {
     this.activityStream.emit(event);
+  }
+
+  /**
+   * Clear delegation context for injectable tools after parent processes tool results
+   */
+  private clearInjectableToolDelegations(): void {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const toolManager = registry.get<any>('tool_manager');
+      const delegationManager = toolManager?.getDelegationContextManager();
+
+      if (!delegationManager) {
+        return;
+      }
+
+      // Clear all active delegations after parent processes results
+      const active = delegationManager.getAllActive();
+      for (const context of active) {
+        delegationManager.clear(context.callId);
+        logger.debug(`[RESPONSE_PROCESSOR] Cleared delegation: callId=${context.callId}`);
+      }
+    } catch (error) {
+      logger.warn(`[RESPONSE_PROCESSOR] Error clearing delegations: ${error}`);
+    }
   }
 }

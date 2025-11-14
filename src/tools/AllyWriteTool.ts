@@ -14,7 +14,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 export class AllyWriteTool extends BaseTool {
-  readonly name = 'ally_write';
+  readonly name = 'ally-write';
   readonly description =
     'Append instructions to ALLY.md file in the current directory. ' +
     'Use this tool when users give instructions they want to remember, such as: ' +

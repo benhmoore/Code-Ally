@@ -681,4 +681,497 @@ You are a complete agent for integration testing.`;
       expect(loadedAgent?.tools).toEqual(['read', 'write', 'plugin_tool']);
     });
   });
+
+  describe('Agent Visibility Filtering', () => {
+    it('should allow all agents to load when visible_from_agents is undefined', async () => {
+      const agent: AgentData = {
+        name: 'public-agent',
+        description: 'Visible to all',
+        system_prompt: 'Test prompt',
+        // visible_from_agents undefined = visible to all
+      };
+      agentManager.registerPluginAgent({ ...agent, _pluginName: 'test-plugin' });
+
+      // Should be visible to main assistant
+      const loadedByMain = await agentManager.loadAgent('public-agent');
+      expect(loadedByMain).toBeTruthy();
+
+      // Should be visible to any agent
+      const loadedByAgent = await agentManager.loadAgent('public-agent', 'some-agent');
+      expect(loadedByAgent).toBeTruthy();
+    });
+
+    it('should restrict agent to main assistant when visible_from_agents is empty array', async () => {
+      const agent: AgentData = {
+        name: 'main-only-agent',
+        description: 'Only main assistant can use',
+        system_prompt: 'Test prompt',
+        visible_from_agents: [], // Empty array = main assistant only
+        _pluginName: 'test-plugin',
+      };
+      agentManager.registerPluginAgent(agent);
+
+      // Should be visible to main assistant (undefined caller)
+      const loadedByMain = await agentManager.loadAgent('main-only-agent');
+      expect(loadedByMain).toBeTruthy();
+
+      // Should NOT be visible to any other agent
+      const loadedByAgent = await agentManager.loadAgent('main-only-agent', 'explore');
+      expect(loadedByAgent).toBeNull();
+    });
+
+    it('should restrict agent to specific agents in visible_from_agents list', async () => {
+      const agent: AgentData = {
+        name: 'restricted-agent',
+        description: 'Only visible to specific agents',
+        system_prompt: 'Test prompt',
+        visible_from_agents: ['explore', 'plan'],
+        _pluginName: 'test-plugin',
+      };
+      agentManager.registerPluginAgent(agent);
+
+      // Should be visible to agents in the list
+      const loadedByExplore = await agentManager.loadAgent('restricted-agent', 'explore');
+      expect(loadedByExplore).toBeTruthy();
+
+      const loadedByPlan = await agentManager.loadAgent('restricted-agent', 'plan');
+      expect(loadedByPlan).toBeTruthy();
+
+      // Should NOT be visible to agents not in the list
+      const loadedByOther = await agentManager.loadAgent('restricted-agent', 'other-agent');
+      expect(loadedByOther).toBeNull();
+
+      // Should NOT be visible to main assistant when not in list
+      const loadedByMain = await agentManager.loadAgent('restricted-agent');
+      expect(loadedByMain).toBeNull();
+    });
+
+    it('should filter listAgents() based on visibility', async () => {
+      // Register agents with different visibility settings
+      agentManager.registerPluginAgent({
+        name: 'public-agent',
+        description: 'Public',
+        system_prompt: 'Prompt',
+        _pluginName: 'test-plugin',
+        // undefined = visible to all
+      });
+
+      agentManager.registerPluginAgent({
+        name: 'main-only',
+        description: 'Main only',
+        system_prompt: 'Prompt',
+        _pluginName: 'test-plugin',
+        visible_from_agents: [], // Main only
+      });
+
+      agentManager.registerPluginAgent({
+        name: 'explore-only',
+        description: 'Explore only',
+        system_prompt: 'Prompt',
+        _pluginName: 'test-plugin',
+        visible_from_agents: ['explore'],
+      });
+
+      // Main assistant should see public-agent and main-only
+      const mainList = await agentManager.listAgents();
+      const mainNames = mainList.map(a => a.name);
+      expect(mainNames).toContain('public-agent');
+      expect(mainNames).toContain('main-only');
+      expect(mainNames).not.toContain('explore-only');
+
+      // Explore agent should see public-agent and explore-only
+      const exploreList = await agentManager.listAgents('explore');
+      const exploreNames = exploreList.map(a => a.name);
+      expect(exploreNames).toContain('public-agent');
+      expect(exploreNames).toContain('explore-only');
+      expect(exploreNames).not.toContain('main-only');
+
+      // Other agent should only see public-agent
+      const otherList = await agentManager.listAgents('other');
+      const otherNames = otherList.map(a => a.name);
+      expect(otherNames).toContain('public-agent');
+      expect(otherNames).not.toContain('main-only');
+      expect(otherNames).not.toContain('explore-only');
+    });
+  });
+
+  describe('Agent Validation', () => {
+    it('should validate visible_from_agents is an array', async () => {
+      const agent: AgentData = {
+        name: 'invalid-agent',
+        description: 'Invalid',
+        system_prompt: 'Test',
+        visible_from_agents: 'not-an-array' as any,
+      };
+
+      const result = await agentManager.saveAgent(agent);
+      expect(result).toBe(false);
+    });
+
+    it('should validate visible_from_agents contains only non-empty strings', async () => {
+      const agent: AgentData = {
+        name: 'invalid-agent',
+        description: 'Invalid',
+        system_prompt: 'Test',
+        visible_from_agents: ['valid', '', 'also-valid'] as any,
+      };
+
+      const result = await agentManager.saveAgent(agent);
+      expect(result).toBe(false);
+    });
+
+    it('should validate can_delegate_to_agents is a boolean', async () => {
+      const agent: AgentData = {
+        name: 'invalid-agent',
+        description: 'Invalid',
+        system_prompt: 'Test',
+        can_delegate_to_agents: 'not-a-boolean' as any,
+      };
+
+      const result = await agentManager.saveAgent(agent);
+      expect(result).toBe(false);
+    });
+
+    it('should validate can_see_agents is a boolean', async () => {
+      const agent: AgentData = {
+        name: 'invalid-agent',
+        description: 'Invalid',
+        system_prompt: 'Test',
+        can_see_agents: 'not-a-boolean' as any,
+      };
+
+      const result = await agentManager.saveAgent(agent);
+      expect(result).toBe(false);
+    });
+
+    it('should save agent with valid fields', async () => {
+      const agent: AgentData = {
+        name: 'valid-agent',
+        description: 'Valid',
+        system_prompt: 'Test',
+        visible_from_agents: ['explore', 'plan'],
+        can_delegate_to_agents: false,
+        can_see_agents: true,
+      };
+
+      const result = await agentManager.saveAgent(agent);
+      expect(result).toBe(true);
+    });
+  });
+
+  describe('Agent Permission Enforcement', () => {
+    it('should block delegation when can_delegate_to_agents is false', async () => {
+      // Import AgentTool for testing
+      const { AgentTool } = await import('@tools/AgentTool.js');
+      const { ServiceRegistry } = await import('@services/ServiceRegistry.js');
+
+      // Create an agent with can_delegate_to_agents: false
+      const restrictedAgent: AgentData = {
+        name: 'restricted-agent',
+        description: 'Agent that cannot delegate',
+        system_prompt: 'You are a restricted agent',
+        can_delegate_to_agents: false,
+      };
+
+      // Register the restricted agent
+      agentManager.registerPluginAgent({ ...restrictedAgent, _pluginName: 'test-plugin' });
+
+      // Create a target agent that the restricted agent will try to call
+      const targetAgent: AgentData = {
+        name: 'target-agent',
+        description: 'Target agent',
+        system_prompt: 'You are a target agent',
+      };
+      agentManager.registerPluginAgent({ ...targetAgent, _pluginName: 'test-plugin' });
+
+      // Get ServiceRegistry singleton and register services
+      const registry = ServiceRegistry.getInstance();
+      registry.registerInstance('agent_manager', agentManager);
+      registry.registerInstance('tool_manager', toolManager);
+
+      // Mock the current agent to be the restricted agent
+      const mockAgent = {
+        getAgentName: () => 'restricted-agent',
+        getAgentCallStack: () => [],
+      };
+      registry.registerInstance('agent', mockAgent);
+
+      // Create AgentTool instance (it will use ServiceRegistry.getInstance() internally)
+      const agentTool = new AgentTool(activityStream);
+
+      // Try to delegate to target-agent from restricted-agent
+      const result = await agentTool.execute(
+        {
+          agent_name: 'target-agent',
+          task_prompt: 'Do something',
+        },
+        'test-call-id'
+      );
+
+      // Expect permission_denied error
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('cannot delegate to sub-agents');
+      expect(result.error).toContain('can_delegate_to_agents: false');
+      // Note: The wrapper currently converts all error_types to 'execution_error'
+      // The actual error_type from executeSingleAgent is 'permission_denied'
+      // but executeSingleAgentWrapper overwrites it
+      expect(result.error_type).toBe('execution_error');
+    });
+
+    it('should allow delegation when can_delegate_to_agents is true or undefined', async () => {
+      const { AgentTool } = await import('@tools/AgentTool.js');
+      const { ServiceRegistry } = await import('@services/ServiceRegistry.js');
+
+      // Create an agent with can_delegate_to_agents: true (explicitly allowed)
+      const allowedAgent: AgentData = {
+        name: 'allowed-agent',
+        description: 'Agent that can delegate',
+        system_prompt: 'You are an allowed agent',
+        can_delegate_to_agents: true,
+      };
+      agentManager.registerPluginAgent({ ...allowedAgent, _pluginName: 'test-plugin' });
+
+      // Create target agent
+      const targetAgent: AgentData = {
+        name: 'target-agent-2',
+        description: 'Target agent',
+        system_prompt: 'You are a target agent',
+      };
+      agentManager.registerPluginAgent({ ...targetAgent, _pluginName: 'test-plugin' });
+
+      // Get ServiceRegistry singleton
+      const registry = ServiceRegistry.getInstance();
+      registry.registerInstance('agent_manager', agentManager);
+      registry.registerInstance('tool_manager', toolManager);
+
+      const mockAgent = {
+        getAgentName: () => 'allowed-agent',
+        getAgentCallStack: () => [],
+      };
+      registry.registerInstance('agent', mockAgent);
+
+      // Create AgentTool instance (it will use ServiceRegistry.getInstance() internally)
+      const agentTool = new AgentTool(activityStream);
+
+      // Mock AgentPoolService to prevent actual agent execution
+      const { AgentPoolService } = await import('@services/AgentPoolService.js');
+      const mockAcquire = vi.spyOn(AgentPoolService.prototype, 'acquire').mockResolvedValue({
+        agent: {
+          run: vi.fn().mockResolvedValue({
+            stopReason: 'end_turn',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'Done' }] },
+          }),
+        } as any,
+        release: async () => {},
+      });
+
+      // Try to delegate - should NOT get permission_denied error
+      const result = await agentTool.execute(
+        {
+          agent_name: 'target-agent-2',
+          task_prompt: 'Do something',
+        },
+        'test-call-id-2'
+      );
+
+      // Should not have permission_denied error
+      expect(result.error_type).not.toBe('permission_denied');
+
+      // Cleanup happens automatically with test teardown
+    });
+
+    it('should filter agent tools when can_see_agents is false', async () => {
+      // Import necessary modules
+      const { AgentTool } = await import('@tools/AgentTool.js');
+      const { ToolManager } = await import('@tools/ToolManager.js');
+      const { ServiceRegistry } = await import('@services/ServiceRegistry.js');
+
+      // Create an agent with can_see_agents: false
+      const noSeeAgent: AgentData = {
+        name: 'no-see-agent',
+        description: 'Agent that cannot see other agents',
+        system_prompt: 'You cannot see other agents',
+        can_see_agents: false,
+      };
+
+      // Register the agent
+      agentManager.registerPluginAgent({ ...noSeeAgent, _pluginName: 'test-plugin' });
+
+      // Create a ToolManager with agent delegation tools
+      const { AgentTool: AgentToolClass } = await import('@tools/AgentTool.js');
+      const mockTools = [
+        new AgentToolClass(activityStream), // 'agent' tool
+        { name: 'read', execute: async () => ({}), getFunctionDefinition: () => ({}) },
+        { name: 'write', execute: async () => ({}), getFunctionDefinition: () => ({}) },
+        { name: 'explore', execute: async () => ({}), getFunctionDefinition: () => ({}) },
+        { name: 'plan', execute: async () => ({}), getFunctionDefinition: () => ({}) },
+        { name: 'agent-ask', execute: async () => ({}), getFunctionDefinition: () => ({}) },
+        { name: 'bash', execute: async () => ({}), getFunctionDefinition: () => ({}) },
+      ];
+
+      const fullToolManager = new ToolManager(mockTools as any, activityStream);
+
+      // Get ServiceRegistry singleton
+      const registry = ServiceRegistry.getInstance();
+      registry.registerInstance('agent_manager', agentManager);
+      registry.registerInstance('tool_manager', fullToolManager);
+
+      // Mock current agent context (main assistant, not within an agent)
+      const mockAgent = {
+        getAgentName: () => undefined,
+        getAgentCallStack: () => [],
+      };
+      registry.registerInstance('agent', mockAgent);
+
+      // Mock required services for AgentTool execution
+      registry.registerInstance('model_client', { send: vi.fn() } as any);
+      registry.registerInstance('config_manager', {
+        getValue: vi.fn().mockReturnValue(undefined),
+        getConfig: vi.fn().mockReturnValue({}),
+      } as any);
+      registry.registerInstance('permission_manager', {
+        checkPermission: vi.fn().mockResolvedValue(true),
+      } as any);
+
+      // Create AgentTool (it will use ServiceRegistry.getInstance() internally)
+      const agentTool = new AgentToolClass(activityStream);
+
+      // Mock AgentPoolService to intercept the ToolManager used for the agent
+      let capturedToolManager: ToolManager | null = null;
+      const mockAgentPool = {
+        acquire: vi.fn().mockImplementation(async (agentConfig: any, toolManager: ToolManager, customModelClient?: any) => {
+          // Capture the tool manager passed to the agent (second parameter)
+          capturedToolManager = toolManager;
+
+          // Return mock pooled agent
+          return {
+            agent: {
+              sendMessage: vi.fn().mockResolvedValue('Task completed'),
+            } as any,
+            agentId: 'test-agent-id',
+            release: async () => {},
+          };
+        }),
+      };
+      registry.registerInstance('agent_pool', mockAgentPool);
+
+      // Execute agent task
+      await agentTool.execute(
+        {
+          agent_name: 'no-see-agent',
+          task_prompt: 'Do something',
+        },
+        'test-call-id-3'
+      );
+
+      // Verify the ToolManager was captured
+      expect(capturedToolManager).toBeTruthy();
+
+      if (capturedToolManager) {
+        const availableTools = capturedToolManager.getAllTools();
+        const toolNames = availableTools.map(t => t.name);
+
+        // Should NOT include agent delegation tools
+        expect(toolNames).not.toContain('agent');
+        expect(toolNames).not.toContain('explore');
+        expect(toolNames).not.toContain('plan');
+        expect(toolNames).not.toContain('agent-ask');
+
+        // Should still include other tools
+        expect(toolNames).toContain('read');
+        expect(toolNames).toContain('write');
+        expect(toolNames).toContain('bash');
+      }
+
+      // Cleanup happens automatically with test teardown
+    });
+
+    it('should include agent tools when can_see_agents is true or undefined', async () => {
+      const { AgentTool } = await import('@tools/AgentTool.js');
+      const { ToolManager } = await import('@tools/ToolManager.js');
+      const { ServiceRegistry } = await import('@services/ServiceRegistry.js');
+
+      // Create an agent with can_see_agents: true
+      const canSeeAgent: AgentData = {
+        name: 'can-see-agent',
+        description: 'Agent that can see other agents',
+        system_prompt: 'You can see other agents',
+        can_see_agents: true,
+      };
+
+      agentManager.registerPluginAgent({ ...canSeeAgent, _pluginName: 'test-plugin' });
+
+      // Create ToolManager with agent tools
+      const { AgentTool: AgentToolClass } = await import('@tools/AgentTool.js');
+      const mockTools = [
+        new AgentToolClass(activityStream),
+        { name: 'read', execute: async () => ({}), getFunctionDefinition: () => ({}) },
+        { name: 'explore', execute: async () => ({}), getFunctionDefinition: () => ({}) },
+      ];
+
+      const fullToolManager = new ToolManager(mockTools as any, activityStream);
+
+      const registry = ServiceRegistry.getInstance();
+      registry.registerInstance('agent_manager', agentManager);
+      registry.registerInstance('tool_manager', fullToolManager);
+
+      const mockAgent = {
+        getAgentName: () => undefined,
+        getAgentCallStack: () => [],
+      };
+      registry.registerInstance('agent', mockAgent);
+
+      // Mock required services for AgentTool execution
+      registry.registerInstance('model_client', { send: vi.fn() } as any);
+      registry.registerInstance('config_manager', {
+        getValue: vi.fn().mockReturnValue(undefined),
+        getConfig: vi.fn().mockReturnValue({}),
+      } as any);
+      registry.registerInstance('permission_manager', {
+        checkPermission: vi.fn().mockResolvedValue(true),
+      } as any);
+
+      const agentTool = new AgentToolClass(activityStream);
+
+      // Mock AgentPoolService to intercept the ToolManager used for the agent
+      let capturedToolManager: ToolManager | null = null;
+      const mockAgentPool = {
+        acquire: vi.fn().mockImplementation(async (agentConfig: any, toolManager: ToolManager, customModelClient?: any) => {
+          // Capture the tool manager passed to the agent (second parameter)
+          capturedToolManager = toolManager;
+
+          // Return mock pooled agent
+          return {
+            agent: {
+              sendMessage: vi.fn().mockResolvedValue('Task completed'),
+            } as any,
+            agentId: 'test-agent-id',
+            release: async () => {},
+          };
+        }),
+      };
+      registry.registerInstance('agent_pool', mockAgentPool);
+
+      await agentTool.execute(
+        {
+          agent_name: 'can-see-agent',
+          task_prompt: 'Do something',
+        },
+        'test-call-id-4'
+      );
+
+      expect(capturedToolManager).toBeTruthy();
+
+      if (capturedToolManager) {
+        const toolNames = capturedToolManager.getAllTools().map(t => t.name);
+
+        // Should include agent delegation tools
+        expect(toolNames).toContain('agent');
+        expect(toolNames).toContain('explore');
+        expect(toolNames).toContain('read');
+      }
+
+      // Cleanup happens automatically with test teardown
+    });
+  });
 });

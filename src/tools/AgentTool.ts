@@ -275,7 +275,7 @@ export class AgentTool extends BaseTool {
       }
     }
 
-    return await this.executeSingleAgentWrapper(agentName, taskPrompt, thoroughness, callId, newDepth, initialMessages);
+    return await this.executeSingleAgentWrapper(agentName, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
   }
 
   /**
@@ -287,12 +287,13 @@ export class AgentTool extends BaseTool {
     thoroughness: string,
     callId: string,
     newDepth: number,
+    currentAgentName: string | undefined,
     initialMessages?: Message[]
   ): Promise<ToolResult> {
     logger.debug('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId, 'thoroughness:', thoroughness);
 
     try {
-      const result = await this.executeSingleAgent(agentName, taskPrompt, thoroughness, callId, newDepth, initialMessages);
+      const result = await this.executeSingleAgent(agentName, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
 
       if (result.success) {
         // Build response with agent_id (always returned since agents always persist)
@@ -305,7 +306,7 @@ export class AgentTool extends BaseTool {
         // Always include agent_id when available
         if (result.agent_id) {
           successResponse.agent_id = result.agent_id;
-          successResponse.system_reminder = `Agent persists as ${result.agent_id}. For related follow-ups, USE agent_ask(agent_id="${result.agent_id}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
+          successResponse.system_reminder = `Agent persists as ${result.agent_id}. For related follow-ups, USE agent-ask(agent_id="${result.agent_id}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
         }
 
         return this.formatSuccessResponse(successResponse);
@@ -334,6 +335,7 @@ export class AgentTool extends BaseTool {
     thoroughness: string,
     callId: string,
     newDepth: number,
+    currentAgentName: string | undefined,
     initialMessages?: Message[]
   ): Promise<any> {
     logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId, 'thoroughness:', thoroughness);
@@ -345,8 +347,9 @@ export class AgentTool extends BaseTool {
       const agentManager = this.getAgentManager();
 
       // Load agent data (from built-in or user directory)
-      logger.debug('[AGENT_TOOL] Loading agent:', agentName);
-      const agentData = await agentManager.loadAgent(agentName);
+      // Pass current agent name for visibility filtering
+      logger.debug('[AGENT_TOOL] Loading agent:', agentName, 'caller:', currentAgentName || 'main');
+      const agentData = await agentManager.loadAgent(agentName, currentAgentName);
       logger.debug('[AGENT_TOOL] Agent data loaded:', agentData ? 'success' : 'null');
 
       if (!agentData) {
@@ -355,6 +358,22 @@ export class AgentTool extends BaseTool {
           error: `Agent '${agentName}' not found`,
           agent_used: agentName,
         };
+      }
+
+      // Check if current agent has permission to delegate to sub-agents
+      if (currentAgentName) {
+        // Load current agent data to check can_delegate_to_agents permission
+        const currentAgentData = await agentManager.loadAgent(currentAgentName);
+
+        if (currentAgentData && currentAgentData.can_delegate_to_agents === false) {
+          logger.debug('[AGENT_TOOL] Agent', currentAgentName, 'cannot delegate to sub-agents (can_delegate_to_agents: false)');
+          return {
+            success: false,
+            error: `Agent '${currentAgentName}' cannot delegate to sub-agents (can_delegate_to_agents: false)`,
+            error_type: 'permission_denied',
+            agent_used: agentName,
+          };
+        }
       }
 
       // Emit agent start event
@@ -508,7 +527,8 @@ export class AgentTool extends BaseTool {
       specializedPrompt = await this.createAgentSystemPrompt(
         agentData.system_prompt,
         taskPrompt,
-        resolvedReasoningEffort
+        resolvedReasoningEffort,
+        agentData.name
       );
       logger.debug('[AGENT_TOOL] Specialized prompt created, length:', specializedPrompt?.length || 0);
     } catch (error) {
@@ -539,6 +559,16 @@ export class AgentTool extends BaseTool {
     } else {
       // User agent with no explicit tool list: provide all tools
       logger.debug('[AGENT_TOOL] User agent has access to all tools (unrestricted)');
+    }
+
+    // Filter out agent delegation tools if agent has can_see_agents: false
+    if (agentData.can_see_agents === false) {
+      logger.debug('[AGENT_TOOL] Agent cannot see other agents - filtering out agent/explore/plan/agent-ask tools');
+      const agentToolNames = new Set(['agent', 'explore', 'plan', 'agent-ask']);
+      const toolsToUse = filteredToolManager.getAllTools();
+      const toolsWithoutAgents = toolsToUse.filter(tool => !agentToolNames.has(tool.name));
+      filteredToolManager = new ToolManager(toolsWithoutAgents, this.activityStream);
+      logger.debug('[AGENT_TOOL] Filtered to', toolsWithoutAgents.length, 'tools (removed agent delegation tools)');
     }
 
     // Create scoped registry for sub-agent (currently unused - for future extension)
@@ -625,6 +655,21 @@ export class AgentTool extends BaseTool {
       subAgent = pooledAgent.agent;
       agentId = pooledAgent.agentId;
       this.currentPooledAgent = pooledAgent; // Track for interjection routing
+
+      // Register delegation with DelegationContextManager
+      try {
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const toolManager = serviceRegistry.get<any>('tool_manager');
+        const delegationManager = toolManager?.getDelegationContextManager();
+        if (delegationManager) {
+          delegationManager.register(callId, 'agent', pooledAgent);
+          logger.debug(`[AGENT_TOOL] Registered delegation: callId=${callId}`);
+        }
+      } catch (error) {
+        // ServiceRegistry not available in tests - skip delegation registration
+        logger.debug(`[AGENT_TOOL] Delegation registration skipped: ${error}`);
+      }
+
       logger.debug(`[AGENT_TOOL] Using pooled agent ${agentId} for ${agentData.name}`);
     }
 
@@ -703,23 +748,49 @@ export class AgentTool extends BaseTool {
       if (pooledAgent) {
         logger.debug('[AGENT_TOOL] Releasing agent back to pool');
         pooledAgent.release();
-        this.currentPooledAgent = null; // Clear tracked pooled agent
+
+        // Transition delegation to completing state
+        try {
+          const serviceRegistry = ServiceRegistry.getInstance();
+          const toolManager = serviceRegistry.get<any>('tool_manager');
+          const delegationManager = toolManager?.getDelegationContextManager();
+          if (delegationManager) {
+            delegationManager.transitionToCompleting(callId);
+            logger.debug(`[AGENT_TOOL] Transitioned delegation to completing: callId=${callId}`);
+          }
+        } catch (error) {
+          logger.debug(`[AGENT_TOOL] Delegation transition skipped: ${error}`);
+        }
       } else {
         // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
         await subAgent.cleanup();
+
+        // Transition delegation to completing state
+        try {
+          const serviceRegistry = ServiceRegistry.getInstance();
+          const toolManager = serviceRegistry.get<any>('tool_manager');
+          const delegationManager = toolManager?.getDelegationContextManager();
+          if (delegationManager) {
+            delegationManager.transitionToCompleting(callId);
+            logger.debug(`[AGENT_TOOL] Transitioned delegation to completing: callId=${callId}`);
+          }
+        } catch (error) {
+          logger.debug(`[AGENT_TOOL] Delegation transition skipped: ${error}`);
+        }
       }
     }
   }
 
+
   /**
    * Create specialized system prompt for agent
    */
-  private async createAgentSystemPrompt(agentPrompt: string, taskPrompt: string, reasoningEffort?: string): Promise<string> {
+  private async createAgentSystemPrompt(agentPrompt: string, taskPrompt: string, reasoningEffort?: string, agentName?: string): Promise<string> {
     logger.debug('[AGENT_TOOL] Importing systemMessages module...');
     try {
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
       logger.debug('[AGENT_TOOL] Calling getAgentSystemPrompt...');
-      const result = await getAgentSystemPrompt(agentPrompt, taskPrompt, undefined, undefined, reasoningEffort);
+      const result = await getAgentSystemPrompt(agentPrompt, taskPrompt, undefined, undefined, reasoningEffort, agentName);
       logger.debug('[AGENT_TOOL] getAgentSystemPrompt returned, length:', result?.length || 0);
       return result;
     } catch (error) {

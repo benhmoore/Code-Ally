@@ -26,7 +26,7 @@ cd ~/.ally/plugins/my-plugin
   "activationMode": "tagged",
   "tools": [
     {
-      "name": "my_tool",
+      "name": "my-tool",
       "type": "executable",
       "command": "python3",
       "args": ["tool.py"],
@@ -56,7 +56,7 @@ cd ~/.ally/plugins/my-plugin
   "activationMode": "tagged",
   "tools": [
     {
-      "name": "my_tool",
+      "name": "my-tool",
       "type": "executable",
       "command": "npx",
       "args": ["tsx", "tool.ts"],
@@ -166,7 +166,7 @@ ally
 +my-plugin
 
 # Use tool
-"Use my_tool with input 'test'"
+"Use my-tool with input 'test'"
 ```
 
 ## Custom Agents
@@ -201,7 +201,7 @@ name: my-agent
 description: Specialized agent for database operations
 model: claude-3-5-sonnet-20241022
 temperature: 0.3
-tools: ["read", "write", "my_tool"]
+tools: ["read", "write", "my-tool"]
 ---
 
 You are a specialized database agent.
@@ -215,6 +215,71 @@ Help users with queries, schema design, and optimization.
 "Delegate to my-agent: analyze the schema"
 ```
 
+## Naming Conventions
+
+All tool and agent names in Code Ally plugins must follow **kebab-case** naming conventions.
+
+### Pattern Requirements
+
+**Valid names:**
+- Lowercase letters (a-z)
+- Numbers (0-9)
+- Hyphens (-) to separate words
+- Must start and end with a letter or number
+
+**Pattern:** `/^[a-z0-9]+(-[a-z0-9]+)*$/`
+
+### Valid Examples
+
+```
+my-tool
+data-processor
+api-client
+read-file
+execute-command
+math-expert
+code-reviewer
+database-query-v2
+```
+
+### Invalid Examples
+
+```
+my_tool          ❌ (uses underscores)
+myTool           ❌ (uses camelCase)
+MyTool           ❌ (uses PascalCase)
+my--tool         ❌ (double hyphen)
+-my-tool         ❌ (starts with hyphen)
+my-tool-         ❌ (ends with hyphen)
+My-Tool          ❌ (uppercase letters)
+```
+
+### Validation
+
+Code Ally validates all tool and agent names during plugin loading. Names that don't match the kebab-case pattern will be rejected with a clear error message:
+
+```
+Error: Tool name 'my_tool' is invalid. Tool names must match pattern: /^[a-z0-9]+(-[a-z0-9]+)*$/
+Valid examples: my-tool, data-processor, api-client
+```
+
+### Python Function Names
+
+In Python plugin implementations, you can still use snake_case for internal function names (following PEP 8 conventions), but the tool name in JSON-RPC method comparisons must match the kebab-case tool name:
+
+```python
+# Tool name in manifest: "my-tool"
+
+# Python function can use snake_case internally
+def my_tool(self, params):
+    # Implementation
+    pass
+
+# BUT method comparison must match the tool name
+if method == 'my-tool':  # ✓ Correct - matches tool name
+    result = self.my_tool(params)
+```
+
 ### Agent Definition Format
 
 Agents use **markdown with YAML frontmatter**:
@@ -225,7 +290,7 @@ name: agent-name
 description: Brief description
 model: claude-3-5-sonnet-20241022
 temperature: 0.7
-tools: ["read", "write", "my_tool"]
+tools: ["read", "write", "my-tool"]
 ---
 
 System prompt defining agent behavior.
@@ -261,7 +326,7 @@ name: my-agent
 ```markdown
 ---
 name: restricted-agent
-tools: ["read", "my_tool"]
+tools: ["read", "my-tool"]
 # Only these tools available
 ---
 ```
@@ -273,7 +338,7 @@ Bind tools to specific agents with `visible_to`:
 ```json
 {
   "tools": [{
-    "name": "database_query",
+    "name": "database-query",
     "description": "Execute database queries",
     "visible_to": ["database-agent"],
     "command": "python3",
@@ -307,12 +372,12 @@ Prevent hallucination by requiring tool use before agent completes:
 ```markdown
 ---
 name: math-expert
-tools: ["add", "subtract", "multiply", "divide", "cannot_calculate"]
+tools: ["add", "subtract", "multiply", "divide", "cannot-calculate"]
 requirements:
-  required_tools_one_of: ["add", "subtract", "multiply", "divide", "cannot_calculate"]
+  required_tools_one_of: ["add", "subtract", "multiply", "divide", "cannot-calculate"]
   require_tool_use: true
   max_retries: 2
-  reminder_message: "Use your tools to calculate, or call cannot_calculate if unable"
+  reminder_message: "Use your tools to calculate, or call cannot-calculate if unable"
 ---
 ```
 
@@ -338,14 +403,14 @@ requirements:
 
   "tools": [
     {
-      "name": "query_db",
+      "name": "query-db",
       "description": "Execute SQL query",
       "command": "python3",
       "args": ["query.py"],
       "visible_to": ["database-agent"]
     },
     {
-      "name": "explain_query",
+      "name": "explain-query",
       "description": "Explain query plan",
       "command": "python3",
       "args": ["explain.py"]
@@ -369,7 +434,7 @@ requirements:
 name: database-agent
 description: SQL query optimization specialist
 temperature: 0.2
-tools: ["read", "query_db", "explain_query"]
+tools: ["read", "query-db", "explain-query"]
 ---
 
 You are a database specialist with SQL expertise.
@@ -725,7 +790,7 @@ class PluginDaemon:
             return None  # No response for notifications
 
         # Tool methods
-        if method == 'my_tool':
+        if method == 'my-tool':
             result = self.my_tool(params)
             return {
                 'jsonrpc': '2.0',
@@ -785,7 +850,7 @@ if __name__ == '__main__':
 
   "tools": [
     {
-      "name": "my_tool",
+      "name": "my-tool",
       "type": "background_rpc",
       "description": "Tool description",
       "schema": {
@@ -1048,7 +1113,7 @@ ally
 +my-plugin
 
 # Test tool
-"use my_tool with input 'test'"
+"use my-tool with input 'test'"
 
 # Check logs
 ally --debug
@@ -1268,7 +1333,7 @@ main();
     "file": "package.json"
   },
   "tools": [{
-    "name": "reverse_string",
+    "name": "reverse-string",
     "command": "npx",
     "args": ["tsx", "reverse.ts"],
     "schema": {

@@ -25,7 +25,7 @@ import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 
 export class AgentAskTool extends BaseTool {
-  readonly name = 'agent_ask';
+  readonly name = 'agent-ask';
   private currentPooledAgent: PooledAgent | null = null;
   readonly description =
     'Continue conversation with a persistent agent created by explore/plan/agent. Send additional messages to the same agent instance. All agents automatically persist and can be queried later. Use when you need follow-up questions or iterative refinement.';
@@ -35,10 +35,10 @@ export class AgentAskTool extends BaseTool {
   readonly hideOutput = true; // Hide detailed output
   readonly visibleInChat = false; // Silent tool call - not shown in UI
 
-  readonly usageGuidance = `**When to use agent_ask:**
+  readonly usageGuidance = `**When to use agent-ask:**
 DEFAULT for ANY follow-up to explore/plan/agent. Agent already has context → dramatically more efficient than starting fresh.
 
-Use agent_ask when:
+Use agent-ask when:
 - Asking clarifying questions ("How many X?", "What about Y?", "Where is Z?")
 - Drilling deeper into findings ("Show me that implementation", "Explain how that works")
 - Asking related questions ("What about the related feature?")
@@ -48,7 +48,7 @@ Start NEW agent only when:
 - Investigating completely unrelated area/problem
 - Switching to different system/module/concern
 
-When uncertain: Use agent_ask first. Much cheaper than restarting.`;
+When uncertain: Use agent-ask first. Much cheaper than restarting.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -97,7 +97,7 @@ When uncertain: Use agent_ask first. Much cheaper than restarting.`;
       return this.formatErrorResponse(
         'agent_id parameter is required and must be a string',
         'validation_error',
-        'Example: agent_ask(agent_id="pool-agent-123-456", message="What about error handling?")'
+        'Example: agent-ask(agent_id="pool-agent-123-456", message="What about error handling?")'
       );
     }
 
@@ -106,7 +106,7 @@ When uncertain: Use agent_ask first. Much cheaper than restarting.`;
       return this.formatErrorResponse(
         'message parameter is required and must be a string',
         'validation_error',
-        'Example: agent_ask(agent_id="pool-agent-123-456", message="What about error handling?")'
+        'Example: agent-ask(agent_id="pool-agent-123-456", message="What about error handling?")'
       );
     }
 
@@ -116,7 +116,7 @@ When uncertain: Use agent_ask first. Much cheaper than restarting.`;
       return this.formatErrorResponse(
         `thoroughness must be one of: ${validThoroughness.join(', ')}`,
         'validation_error',
-        'Example: agent_ask(agent_id="...", message="...", thoroughness="uncapped")'
+        'Example: agent-ask(agent_id="...", message="...", thoroughness="uncapped")'
       );
     }
 
@@ -156,7 +156,7 @@ When uncertain: Use agent_ask first. Much cheaper than restarting.`;
 
       if (!agentPoolService) {
         return this.formatErrorResponse(
-          'AgentPoolService not available. agent_ask requires the agent pool service.',
+          'AgentPoolService not available. agent-ask requires the agent pool service.',
           'system_error',
           'Ensure AgentPoolService is registered in ServiceRegistry'
         );
@@ -206,12 +206,12 @@ When uncertain: Use agent_ask first. Much cheaper than restarting.`;
       logger.debug('[ASK_AGENT_TOOL] Set agent maxDuration to', maxDuration, 'minutes for thoroughness:', thoroughness);
 
       // Save original parent call ID and temporarily update to current call ID
-      // This ensures tool calls made by the agent nest under the current agent_ask call
+      // This ensures tool calls made by the agent nest under the current agent-ask call
       const orchestrator = agent.getToolOrchestrator();
       const originalParentCallId = orchestrator.getParentCallId();
 
       try {
-        // Set parent call ID to current agent_ask call ID
+        // Set parent call ID to current agent-ask call ID
         orchestrator.setParentCallId(callId);
         logger.debug('[ASK_AGENT_TOOL] Updated agent parent call ID from', originalParentCallId, 'to', callId);
 
@@ -373,9 +373,9 @@ When uncertain: Use agent_ask first. Much cheaper than restarting.`;
    * Inject user message into active pooled agent
    *
    * NOTE: This method exists for interface compatibility but is NOT used.
-   * agent_ask is intentionally excluded from injectable tools in ToolManager.
-   * When agent_ask is running, interjections route to main agent instead,
-   * since agent_ask is just querying for information while the main
+   * agent-ask is intentionally excluded from injectable tools in ToolManager.
+   * When agent-ask is running, interjections route to main agent instead,
+   * since agent-ask is just querying for information while the main
    * conversation continues with the main agent.
    *
    * This differs from explore/plan/agent which DO accept interjections

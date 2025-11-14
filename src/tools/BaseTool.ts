@@ -38,7 +38,7 @@ export abstract class BaseTool {
   /**
    * Whether this tool should appear in the conversation UI
    * Set to false for tools that should be hidden from chat
-   * (e.g., batch, todo_add, todo_update)
+   * (e.g., batch, todo-add, todo-update)
    */
   readonly visibleInChat: boolean = true;
 
@@ -80,7 +80,7 @@ export abstract class BaseTool {
   /**
    * Whether this is an internal tool restricted to specific agents
    * Set to true for specialized tools that shouldn't be available to all agents
-   * (e.g., write_temp is only for explore agents)
+   * (e.g., write-temp is only for explore agents)
    */
   readonly internalTool: boolean = false;
 
@@ -219,7 +219,7 @@ export abstract class BaseTool {
    * Emit a diff preview for file changes
    * Shows user what will change before applying modifications
    */
-  protected emitDiffPreview(oldContent: string, newContent: string, filePath: string, operationType: 'edit' | 'write' | 'line_edit' = 'edit'): void {
+  protected emitDiffPreview(oldContent: string, newContent: string, filePath: string, operationType: 'edit' | 'write' | 'line-edit' = 'edit'): void {
     if (!this.currentCallId) {
       logger.warn(`[${this.name}] Cannot emit diff preview: no currentCallId set`);
       return;
@@ -250,7 +250,7 @@ export abstract class BaseTool {
   protected async safelyEmitDiffPreview(
     filePath: string,
     generatePreview: () => Promise<{ oldContent: string; newContent: string }>,
-    operationType: 'edit' | 'write' | 'line_edit' = 'edit'
+    operationType: 'edit' | 'write' | 'line-edit' = 'edit'
   ): Promise<void> {
     try {
       const { oldContent, newContent } = await generatePreview();
@@ -467,7 +467,7 @@ export abstract class BaseTool {
    *
    * Call this after successfully performing a file modification to enable undo.
    *
-   * @param operationType - Type of operation (write, edit, line_edit, delete)
+   * @param operationType - Type of operation (write, edit, line-edit, delete)
    * @param filePath - Path to the file being modified
    * @param originalContent - Original content before modification
    * @param newContent - New content after modification (undefined for delete)

@@ -612,6 +612,23 @@ async function main() {
       logger.debug(`[CLI] Registered ${pluginAgents.length} plugin agent(s)`);
     }
 
+    // Register built-in tool-based agents
+    logger.debug('[CLI] Registering built-in tool-agents');
+    const exploreTool = toolManager.getTool('explore');
+    const planTool = toolManager.getTool('plan');
+    const sessionsTool = toolManager.getTool('sessions');
+
+    if (exploreTool && 'getAgentMetadata' in exploreTool) {
+      agentManager.registerBuiltInAgent((exploreTool as any).getAgentMetadata());
+    }
+    if (planTool && 'getAgentMetadata' in planTool) {
+      agentManager.registerBuiltInAgent((planTool as any).getAgentMetadata());
+    }
+    if (sessionsTool && 'getAgentMetadata' in sessionsTool) {
+      agentManager.registerBuiltInAgent((sessionsTool as any).getAgentMetadata());
+    }
+    logger.debug('[CLI] Built-in tool-agents registered');
+
     // Create agent generation service for LLM-assisted agent creation
     const { AgentGenerationService } = await import('./services/AgentGenerationService.js');
     const agentGenerationService = new AgentGenerationService(serviceModelClient);

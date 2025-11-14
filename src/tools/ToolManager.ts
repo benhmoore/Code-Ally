@@ -13,6 +13,8 @@ import { formatError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { logger } from '../services/Logger.js';
+import { validateToolName } from '../utils/namingValidation.js';
+import { DelegationContextManager } from '../services/DelegationContextManager.js';
 
 /**
  * Tool with custom function definition
@@ -39,11 +41,13 @@ export class ToolManager {
   private duplicateDetector: DuplicateDetector;
   private readFiles: Map<string, number> = new Map();
   private functionDefinitionsCache: Map<string, FunctionDefinition[]> = new Map();
+  private delegationContextManager: DelegationContextManager;
 
   constructor(tools: BaseTool[], _activityStream: ActivityStream) {
     this.tools = new Map();
     this.validator = new ToolValidator();
     this.duplicateDetector = new DuplicateDetector();
+    this.delegationContextManager = new DelegationContextManager();
 
     for (const tool of tools) {
       this.tools.set(tool.name, tool);
@@ -70,30 +74,30 @@ export class ToolManager {
    * Checks explore, plan, and agent tools for an active pooled agent.
    * Returns the tool instance, name, and call ID if found.
    *
-   * NOTE: agent_ask is intentionally excluded - interjections should route
-   * to the main agent, not the queried subagent, since agent_ask is just
+   * NOTE: agent-ask is intentionally excluded - interjections should route
+   * to the main agent, not the queried subagent, since agent-ask is just
    * querying for information while the main conversation continues.
    *
    * @returns {tool: BaseTool, name: string, callId: string} if found, undefined otherwise
    */
   getActiveInjectableTool(): { tool: BaseTool; name: string; callId: string } | undefined {
-    const injectableToolNames = ['explore', 'plan', 'agent'];
+    const activeDelegation = this.delegationContextManager.getActiveDelegation();
 
-    for (const toolName of injectableToolNames) {
-      const tool = this.tools.get(toolName);
-      if (tool && typeof (tool as any).injectUserMessage === 'function') {
-        // Check if this tool has an active pooled agent and current call ID
-        if ((tool as any).currentPooledAgent && (tool as any).currentCallId) {
-          return {
-            tool,
-            name: toolName,
-            callId: (tool as any).currentCallId
-          };
-        }
-      }
+    if (!activeDelegation) {
+      return undefined;
     }
 
-    return undefined;
+    const tool = this.tools.get(activeDelegation.toolName);
+    if (!tool) {
+      logger.warn(`[TOOL_MANAGER] Active delegation references unknown tool: ${activeDelegation.toolName}`);
+      return undefined;
+    }
+
+    return {
+      tool,
+      name: activeDelegation.toolName,
+      callId: activeDelegation.callId
+    };
   }
 
   /**
@@ -115,8 +119,15 @@ export class ToolManager {
    * to prevent overwriting existing tools.
    *
    * @param tool - Tool to register
+   * @throws Error if tool name is invalid
    */
   registerTool(tool: BaseTool): void {
+    // Validate tool name format (kebab-case)
+    const validation = validateToolName(tool.name);
+    if (!validation.valid) {
+      throw new Error(`Failed to register tool: ${validation.error}`);
+    }
+
     if (this.tools.has(tool.name)) {
       logger.debug(`[TOOL_MANAGER] Tool '${tool.name}' already registered, skipping duplicate`);
       return;
@@ -442,7 +453,7 @@ export class ToolManager {
       }
     }
 
-    if (['write', 'edit', 'line_edit'].includes(toolName) && args.file_path) {
+    if (['write', 'edit', 'line-edit'].includes(toolName) && args.file_path) {
       this.readFiles.set(args.file_path, Date.now());
     }
   }
@@ -467,5 +478,12 @@ export class ToolManager {
   clearState(): void {
     this.readFiles.clear();
     this.duplicateDetector.clear();
+  }
+
+  /**
+   * Get delegation context manager for delegation state tracking
+   */
+  getDelegationContextManager(): DelegationContextManager {
+    return this.delegationContextManager;
   }
 }

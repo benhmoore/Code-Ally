@@ -17,7 +17,7 @@ import * as fs from 'fs/promises';
 type LineOperation = 'insert' | 'delete' | 'replace';
 
 export class LineEditTool extends BaseTool {
-  readonly name = 'line_edit';
+  readonly name = 'line-edit';
   readonly description =
     'Edit files by line number with insert, delete, and replace operations';
   readonly requiresConfirmation = true; // Destructive operation
@@ -122,7 +122,7 @@ export class LineEditTool extends BaseTool {
         const modifiedContent = modifiedLines.join(lineEnding);
         return { oldContent: fileContent, newContent: modifiedContent };
       },
-      'line_edit'
+      'line-edit'
     );
   }
 
@@ -142,7 +142,7 @@ export class LineEditTool extends BaseTool {
       return this.formatErrorResponse(
         'file_path parameter is required',
         'validation_error',
-        'Example: line_edit(file_path="src/main.ts", operation="replace", line_number=10, content="new line")'
+        'Example: line-edit(file_path="src/main.ts", operation="replace", line_number=10, content="new line")'
       );
     }
 
@@ -281,7 +281,7 @@ export class LineEditTool extends BaseTool {
 
       // Capture the operation as a patch for undo functionality
       const patchNumber = await this.captureOperationPatch(
-        'line_edit',
+        'line-edit',
         absolutePath,
         fileContent,
         modifiedContent
@@ -383,7 +383,7 @@ export class LineEditTool extends BaseTool {
   }
 
   /**
-   * Custom result preview for line_edit tool
+   * Custom result preview for line-edit tool
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {
     if (!result.success) {

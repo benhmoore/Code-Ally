@@ -90,10 +90,10 @@
       "visible_to": ["math-expert"]
     },
     {
-      "name": "cannot_calculate",
+      "name": "cannot-calculate",
       "description": "Call this when you cannot perform the requested calculation with your available arithmetic tools (add, subtract, multiply, divide)",
       "command": "python3",
-      "args": ["tools/cannot_calculate.py"],
+      "args": ["tools/cannot-calculate.py"],
       "schema": {
         "type": "object",
         "properties": {
@@ -111,7 +111,7 @@
       "name": "math-expert",
       "description": "Expert mathematician specializing in arithmetic calculations",
       "system_prompt_file": "agents/math-expert.md",
-      "tools": ["add", "subtract", "multiply", "divide", "cannot_calculate"]
+      "tools": ["add", "subtract", "multiply", "divide", "cannot-calculate"]
     }
   ]
 }

@@ -73,8 +73,8 @@ unquoted: value`;
 disabled: false`;
 
         const result = parseFrontmatterYAML(yaml);
-        expect(result.enabled).toBe('true');
-        expect(result.disabled).toBe('false');
+        expect(result.enabled).toBe(true);
+        expect(result.disabled).toBe(false);
       });
 
       it('should parse numeric values', () => {
@@ -289,6 +289,32 @@ requirements:
           required_tools_one_of: ['Read', 'Grep'],
           max_retries: 3,
         });
+      });
+
+      it('should parse agent visibility and permission fields', () => {
+        const yaml = `name: "Restricted Agent"
+description: "Agent with visibility controls"
+visible_from_agents: ["explore", "plan"]
+can_delegate_to_agents: false
+can_see_agents: true`;
+
+        const result = parseFrontmatterYAML(yaml);
+        expect(result.name).toBe('Restricted Agent');
+        expect(result.description).toBe('Agent with visibility controls');
+        expect(result.visible_from_agents).toEqual(['explore', 'plan']);
+        expect(result.can_delegate_to_agents).toBe(false);
+        expect(result.can_see_agents).toBe(true);
+      });
+
+      it('should parse agent with empty visible_from_agents array', () => {
+        const yaml = `name: "Main Only Agent"
+visible_from_agents: []
+can_delegate_to_agents: true`;
+
+        const result = parseFrontmatterYAML(yaml);
+        expect(result.name).toBe('Main Only Agent');
+        expect(result.visible_from_agents).toEqual([]);
+        expect(result.can_delegate_to_agents).toBe(true);
       });
 
       it('should handle multiple nested objects', () => {

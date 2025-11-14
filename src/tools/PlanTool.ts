@@ -25,8 +25,8 @@ import { TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.j
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 
-// Planning tools: read-only tools + explore for nested research + todo_add for proposals
-const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo_add'];
+// Planning tools: read-only tools + explore for nested research + todo-add for proposals
+const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-add'];
 
 // Base prompt for planning (without thoroughness-specific guidelines)
 const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistant. You excel at researching codebases to create detailed, actionable implementation plans grounded in existing patterns and architecture.
@@ -87,7 +87,7 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 - \`/absolute/path/to/new.ts\` - [new file, purpose]
 
 #### Proposed Todos
-After providing the plan above, call todo_add() with proposed todos (status="proposed"):
+After providing the plan above, call todo-add() with proposed todos (status="proposed"):
 - Each todo: content (imperative like "Set up project"), status="proposed", activeForm (continuous like "Setting up project")
 - **Use dependencies** when tasks must complete in order (specify array of todo IDs that must finish first)
 - **Use subtasks** for hierarchical breakdown (nested array, max depth 1) when a task has clear sub-steps
@@ -100,7 +100,7 @@ Create comprehensive, actionable implementation plans that enable confident deve
 
 ## Important Constraints
 
-- You have READ-ONLY access plus todo_add - you cannot modify code files
+- You have READ-ONLY access plus todo-add - you cannot modify code files
 - All file paths in your response MUST be absolute, NOT relative
 - **For existing codebases**: Ground recommendations in actual patterns found via exploration
 - **For new projects**: Ground recommendations in modern best practices for the language/framework
@@ -108,7 +108,7 @@ Create comprehensive, actionable implementation plans that enable confident deve
 - Provide specific file references with line numbers when applicable
 - Include code examples from codebase when relevant (or from best practices if starting fresh)
 - Use explore() for complex multi-file pattern analysis (skip if empty project)
-- **MUST call todo_add() before completing** - planning without todos is incomplete
+- **MUST call todo-add() before completing** - planning without todos is incomplete
 - Avoid using emojis for clear communication`;
 
 const PLANNING_CLOSING = `
@@ -146,7 +146,7 @@ export class PlanTool extends BaseTool {
   readonly usageGuidance = `**When to use plan:**
 Implementation/refactoring with multiple steps (>3 steps), needs structured approach.
 Creates proposed todos with dependencies and subtasks for systematic execution.
-Use deny_proposal if plan doesn't align with user intent.
+Use deny-proposal if plan doesn't align with user intent.
 Skip for: Quick fixes, continuing existing plans, simple changes.`;
 
   private activeDelegations: Map<string, any> = new Map();
@@ -339,7 +339,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         taskPrompt: requirements,
         config: config,
         parentCallId: callId,
-        requiredToolCalls: ['todo_add'], // Planning agent MUST call todo_add before exiting
+        requiredToolCalls: ['todo-add'], // Planning agent MUST call todo-add before exiting
         maxDuration,
         agentType: 'plan',
       };
@@ -433,14 +433,14 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         const successResponse: Record<string, any> = {
           content,
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
-          system_reminder: `The plan has been automatically accepted and todos activated. If this plan doesn't align with user intent, use deny_proposal to reject it and explain why.`,
+          system_reminder: `The plan has been automatically accepted and todos activated. If this plan doesn't align with user intent, use deny-proposal to reject it and explain why.`,
         };
 
         // Always include agent_id when available
         if (agentId) {
           successResponse.agent_id = agentId;
-          // Append agent_ask reminder to existing system_reminder
-          successResponse.system_reminder += `\n\nAgent persists as ${agentId}. For related follow-ups, USE agent_ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
+          // Append agent-ask reminder to existing system_reminder
+          successResponse.system_reminder += `\n\nAgent persists as ${agentId}. For related follow-ups, USE agent-ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
         }
 
         return this.formatSuccessResponse(successResponse);

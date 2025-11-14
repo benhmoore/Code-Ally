@@ -136,7 +136,7 @@ export enum ActivityEventType {
   CONFIG_VIEW_RESPONSE = 'config_view_response',
   REWIND_REQUEST = 'rewind_request',
   REWIND_RESPONSE = 'rewind_response',
-  TODO_UPDATE = 'todo_update',
+  TODO_UPDATE = 'todo-update',
   UNDO_FILE_LIST_REQUEST = 'undo_file_list_request',
   UNDO_FILE_SELECTED = 'undo_file_selected',
   UNDO_FILE_BACK = 'undo_file_back',

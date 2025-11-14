@@ -33,7 +33,7 @@ export class ToolValidator {
     ['grep', ToolValidator.validateGrepArgs],
     ['write', ToolValidator.validateWriteArgs],
     ['edit', ToolValidator.validateEditArgs],
-    ['line_edit', ToolValidator.validateLineEditArgs],
+    ['line-edit', ToolValidator.validateLineEditArgs],
     ['agent', ToolValidator.validateAgentArgs],
   ]);
 

@@ -25,8 +25,8 @@ import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 
-// Tools available for exploration (read-only + write_temp for note-taking)
-const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'write_temp'];
+// Tools available for exploration (read-only + write-temp for note-taking)
+const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'write-temp'];
 
 // Base prompt for exploration (without thoroughness-specific guidelines)
 const EXPLORATION_BASE_PROMPT = `You are a specialized codebase exploration assistant. You excel at thoroughly navigating and exploring codebases to understand structure, find implementations, and analyze architecture.
@@ -52,7 +52,7 @@ const EXPLORATION_BASE_PROMPT = `You are a specialized codebase exploration assi
 
 ## Organizing Your Findings
 
-- WriteTemp creates temporary notes in /tmp (e.g., write_temp(content="...", filename="notes.txt"))
+- WriteTemp creates temporary notes in /tmp (e.g., write-temp(content="...", filename="notes.txt"))
 - Use separate files to organize by category: architecture.txt, patterns.txt, issues.txt
 - Read your notes before generating final response to ensure comprehensive coverage
 - Especially useful for medium/very thorough explorations with many findings
@@ -255,7 +255,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         });
       }
 
-      // Filter to exploration tools (read-only + write_temp)
+      // Filter to exploration tools (read-only + write-temp)
       logger.debug('[EXPLORE_TOOL] Filtering to exploration tools:', EXPLORATION_TOOLS);
       const allowedToolNames = new Set(EXPLORATION_TOOLS);
       const allTools = toolManager.getAllTools();
@@ -378,7 +378,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         // Always include agent_id when available
         if (agentId) {
           successResponse.agent_id = agentId;
-          successResponse.system_reminder = `Agent persists as ${agentId}. For related follow-ups, USE agent_ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
+          successResponse.system_reminder = `Agent persists as ${agentId}. For related follow-ups, USE agent-ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
         }
 
         return this.formatSuccessResponse(successResponse);
@@ -435,11 +435,11 @@ Note: Multiple independent explorations can be batched for efficiency.`;
       case 'quick':
         thoroughnessGuidelines = `**Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
-- You CAN write temporary notes to /tmp using write_temp to organize findings
+- You CAN write temporary notes to /tmp using write-temp to organize findings
 - **Time limit: ~1 minute maximum** - System reminders will notify you of remaining time
 - Be efficient and focused (aim for 2-5 tool calls)
 - Prioritize grep/glob over extensive file reading
-- Use write_temp if you need to track findings across searches
+- Use write-temp if you need to track findings across searches
 - Provide quick, concise summaries of findings
 - Focus on speed over comprehensiveness
 - If you can't find something quickly, explain what you searched`;
@@ -448,10 +448,10 @@ Note: Multiple independent explorations can be batched for efficiency.`;
       case 'medium':
         thoroughnessGuidelines = `**Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
-- You CAN write temporary notes to /tmp using write_temp to organize findings
+- You CAN write temporary notes to /tmp using write-temp to organize findings
 - **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
 - Be thorough but efficient with tool usage (aim for 5-10 tool calls)
-- Consider using write_temp to organize findings by category as you discover them
+- Consider using write-temp to organize findings by category as you discover them
 - Review your notes before summarizing to ensure comprehensive coverage
 - Always provide clear, structured summaries of findings
 - Highlight key files, patterns, and architectural decisions
@@ -461,10 +461,10 @@ Note: Multiple independent explorations can be batched for efficiency.`;
       case 'very thorough':
         thoroughnessGuidelines = `**Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
-- You CAN write temporary notes to /tmp using write_temp to organize findings
+- You CAN write temporary notes to /tmp using write-temp to organize findings
 - **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
 - Be comprehensive and meticulous (aim for 10-20 tool calls)
-- Use write_temp extensively to organize findings as you discover them
+- Use write-temp extensively to organize findings as you discover them
 - Create separate note files for different aspects (architecture.txt, patterns.txt, dependencies.txt)
 - Check multiple locations and consider various naming conventions
 - Trace dependencies deeply and understand complete call chains
@@ -480,10 +480,10 @@ Note: Multiple independent explorations can be batched for efficiency.`;
       default:
         thoroughnessGuidelines = `**Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
-- You CAN write temporary notes to /tmp using write_temp to organize findings
+- You CAN write temporary notes to /tmp using write-temp to organize findings
 - **No time limit imposed** - Take the time needed to do a thorough job
 - Be comprehensive and systematic with tool usage
-- Use write_temp to organize extensive findings into separate note files
+- Use write-temp to organize extensive findings into separate note files
 - Review your accumulated notes before generating final response
 - Always provide clear, structured summaries of findings
 - Highlight key files, patterns, and architectural decisions

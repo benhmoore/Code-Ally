@@ -30,7 +30,7 @@ Plugin agents are custom AI assistants defined in your plugin that can be delega
   "description": "Plugin with custom agent",
   "tools": [
     {
-      "name": "my_tool",
+      "name": "my-tool",
       "description": "My specialized tool",
       "command": "python3",
       "args": ["tool.py"]
@@ -56,7 +56,7 @@ name: my-agent
 description: Specialized agent for database operations
 model: claude-3-5-sonnet-20241022
 temperature: 0.3
-tools: ["read", "write", "my_tool"]
+tools: ["read", "write", "my-tool"]
 ---
 
 You are a specialized database operations agent.
@@ -193,7 +193,7 @@ Bind tools to specific agents using `visible_to`:
 ```json
 {
   "tools": [{
-    "name": "database_query",
+    "name": "database-query",
     "description": "Execute database queries",
     "visible_to": ["database-agent"],
     "command": "python3",
@@ -206,7 +206,7 @@ Bind tools to specific agents using `visible_to`:
 - Tool is only visible and executable by agents in the `visible_to` array
 - Empty or missing array = visible to all agents (including main Ally)
 - Non-empty array = tool is filtered out for agents not in the list
-- Other agents get clear error: "Tool 'database_query' is only visible to agents: [database-agent]"
+- Other agents get clear error: "Tool 'database-query' is only visible to agents: [database-agent]"
 - Ensures tools run in correct context with appropriate safeguards
 
 **Use Cases:**
@@ -247,12 +247,12 @@ Ensure agents use their tools before completing tasks with the `requirements` fi
 ```markdown
 ---
 name: math-expert
-tools: ["add", "subtract", "multiply", "divide", "cannot_calculate"]
+tools: ["add", "subtract", "multiply", "divide", "cannot-calculate"]
 requirements:
-  required_tools_one_of: ["add", "subtract", "multiply", "divide", "cannot_calculate"]
+  required_tools_one_of: ["add", "subtract", "multiply", "divide", "cannot-calculate"]
   require_tool_use: true
   max_retries: 2
-  reminder_message: "You must use your arithmetic tools or call cannot_calculate if unable"
+  reminder_message: "You must use your arithmetic tools or call cannot-calculate if unable"
 ---
 ```
 
@@ -284,7 +284,7 @@ requirements:
 **Example - Require All:**
 ```yaml
 requirements:
-  required_tools_all: ["validate_schema", "execute_query"]
+  required_tools_all: ["validate-schema", "execute-query"]
   reminder_message: "You must validate the schema before executing the query"
 ```
 
@@ -361,7 +361,7 @@ Result: User version loads
   "description": "Analytics tools with specialized agent",
 
   "tools": [{
-    "name": "run_query",
+    "name": "run-query",
     "description": "Execute analytics query",
     "command": "python3",
     "args": ["query.py"],
@@ -418,7 +418,7 @@ Priority: `plugin.json` > `agent.md` frontmatter
 ```markdown
 # Good: Explicit, minimal tools
 ---
-tools: ["read", "grep", "my_analysis_tool"]
+tools: ["read", "grep", "my-analysis-tool"]
 ---
 
 # Bad: Too permissive
@@ -445,7 +445,7 @@ You are an API testing specialist.
 When testing APIs:
 1. Read the API specification
 2. Generate test cases covering edge cases
-3. Execute tests using the http_request tool
+3. Execute tests using the http-request tool
 4. Report results with specific failure details
 
 Always validate responses against schema.
@@ -491,11 +491,11 @@ reasoning_effort: medium
     "system_prompt_file": "database-agent.md"
   }],
   "tools": [{
-    "name": "execute_query",
+    "name": "execute-query",
     "description": "Execute SQL query",
     "command": "python3",
     "args": ["query.py"],
-    "visible_to": [ "database-agent"
+    "visible_to": ["database-agent"]
   }]
 }
 ```
@@ -506,7 +506,7 @@ reasoning_effort: medium
 name: database-agent
 description: SQL query optimization and execution specialist
 temperature: 0.2
-tools: ["read", "execute_query"]
+tools: ["read", "execute-query"]
 ---
 
 You are a database specialist with expertise in SQL.
@@ -528,7 +528,7 @@ Never execute destructive queries without explicit confirmation.
 name: api-tester
 description: REST API testing and validation specialist
 temperature: 0.3
-tools: ["read", "http_request", "write"]
+tools: ["read", "http-request", "write"]
 reasoning_effort: medium
 ---
 
@@ -537,7 +537,7 @@ You are an API testing expert.
 Testing workflow:
 1. Read API specification (OpenAPI/Swagger)
 2. Generate comprehensive test cases
-3. Execute requests with http_request tool
+3. Execute requests with http-request tool
 4. Validate responses against schema
 5. Document failures with reproduction steps
 
@@ -590,7 +590,7 @@ Provide specific line references and actionable suggestions.
 
 ### Tool Binding Error
 
-**Problem:** `Tool 'my_tool' requires agent 'other-agent'`
+**Problem:** `Tool 'my-tool' requires agent 'other-agent'`
 
 **Solutions:**
 1. Use correct agent: `agent(agent_name="other-agent", ...)`
@@ -635,18 +635,18 @@ Tools can be shared across agents with different constraints:
 {
   "tools": [
     {
-      "name": "query_db",
+      "name": "query-db",
       "description": "Read-only query",
       "command": "python3",
       "args": ["query.py", "--readonly"]
       // Available to all agents
     },
     {
-      "name": "modify_db",
+      "name": "modify-db",
       "description": "Write to database",
       "command": "python3",
       "args": ["query.py", "--write"],
-      "visible_to": [ "admin-agent"
+      "visible_to": ["admin-agent"]
       // Only admin-agent can use
     }
   ]

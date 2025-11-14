@@ -10,7 +10,8 @@
  *
  * Supports:
  * - Simple key-value pairs (string, number, boolean)
- * - JSON arrays (e.g., tools: ["Read", "Write"])
+ * - JSON arrays (e.g., tools: ["Read", "Write"], visible_from_agents: ["explore", "plan"])
+ * - Boolean values (e.g., can_delegate_to_agents: true, can_see_agents: false)
  * - Multiline strings using pipe syntax (key: |)
  * - Nested objects with 2-space indentation
  *
@@ -22,12 +23,17 @@
  * const frontmatter = `
  * name: "My Agent"
  * tools: ["Read", "Write"]
+ * visible_from_agents: ["explore", "plan"]
+ * can_delegate_to_agents: false
+ * can_see_agents: true
  * requirements:
  *   require_tool_use: true
  *   max_retries: 2
  * `;
  * const metadata = parseFrontmatterYAML(frontmatter);
- * // { name: "My Agent", tools: ["Read", "Write"], requirements: { require_tool_use: true, max_retries: 2 } }
+ * // { name: "My Agent", tools: ["Read", "Write"], visible_from_agents: ["explore", "plan"],
+ * //   can_delegate_to_agents: false, can_see_agents: true,
+ * //   requirements: { require_tool_use: true, max_retries: 2 } }
  * ```
  */
 export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
@@ -67,7 +73,7 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
           metadata[key] = multilineContent.join('\n').trim();
           continue; // Don't increment i again, already done
         }
-        // Handle JSON arrays (for tools field)
+        // Handle JSON arrays (for tools, visible_from_agents fields)
         else if (value.trim().startsWith('[')) {
           try {
             metadata[key] = JSON.parse(value);
@@ -75,6 +81,13 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
             // If JSON parse fails, treat as string
             metadata[key] = value.replace(/^["']|["']$/g, '');
           }
+        }
+        // Handle boolean values (for can_delegate_to_agents, can_see_agents fields)
+        else if (value.trim() === 'true') {
+          metadata[key] = true;
+        }
+        else if (value.trim() === 'false') {
+          metadata[key] = false;
         }
         // Handle nested objects (requirements: or other future nested fields)
         else if (value.trim() === '' || value.trim() === ':') {

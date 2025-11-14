@@ -13,7 +13,7 @@ import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 
 export class TodoListTool extends BaseTool {
-  readonly name = 'todo_list';
+  readonly name = 'todo-list';
   readonly description =
     'List all current todos with their status, dependencies, and subtasks. Use this to view the current todo list without modifying it.';
   readonly requiresConfirmation = false;

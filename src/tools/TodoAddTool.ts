@@ -17,7 +17,7 @@ interface TodoInput {
 }
 
 export class TodoAddTool extends BaseTool {
-  readonly name = 'todo_add';
+  readonly name = 'todo-add';
   readonly description =
     'Add new todos to existing list. Validates at most ONE in_progress task.';
   readonly requiresConfirmation = false;

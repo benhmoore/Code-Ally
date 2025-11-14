@@ -58,19 +58,19 @@ Usage patterns:
 - Independent parallel investigations → consider batching
 
 Follow-up questions (IMPORTANT):
-- Related questions → agent_ask (agent has built context, much more efficient)
+- Related questions → agent-ask (agent has built context, much more efficient)
 - Unrelated problems → new agent (fresh context needed)
-- When uncertain → agent_ask first (agent can clarify if different context needed)
+- When uncertain → agent-ask first (agent can clarify if different context needed)
 
 Examples needing explore:
 "Where are errors handled?" / "How does auth work?" / "Find all user roles" / "What's the codebase structure?" / "Trace all X implementations"
 
 Planning: Multi-step features/refactors. Skip quick fixes.
-Agents: Auto-persist. Reusable via agent_ask.`;
+Agents: Auto-persist. Reusable via agent-ask.`;
 
 // Additional guidelines that apply to all agents
 const GENERAL_GUIDELINES = `Code: Check existing patterns before creating new code.
-Files: Use incremental edits (edit, line_edit). Ephemeral reads only for large files.
+Files: Use incremental edits (edit, line-edit). Ephemeral reads only for large files.
 Prohibited: No commits without request. No unsolicited explanations.`;
 
 // Complete directives for main Ally assistant
@@ -187,8 +187,9 @@ export async function getContextInfo(options: {
   tokenManager?: TokenManager;
   toolResultManager?: ToolResultManager;
   reasoningEffort?: string;
+  callingAgentName?: string;
 } = {}): Promise<string> {
-  const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager, reasoningEffort } = options;
+  const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager, reasoningEffort, callingAgentName } = options;
 
   const currentDate = new Date().toISOString().replace('T', ' ').slice(0, TEXT_LIMITS.ISO_DATETIME_LENGTH);
   const workingDir = process.cwd();
@@ -223,7 +224,7 @@ ${allyContent}`;
       if (serviceRegistry && serviceRegistry.hasService('agent_manager')) {
         const agentManager = serviceRegistry.get<any>('agent_manager');
         if (agentManager && typeof agentManager.getAgentsForSystemPrompt === 'function') {
-          const agentsSection = await agentManager.getAgentsForSystemPrompt();
+          const agentsSection = await agentManager.getAgentsForSystemPrompt(callingAgentName);
 
           if (agentsSection && !agentsSection.includes('No specialized agents available')) {
             agentsInfo = `
@@ -378,14 +379,15 @@ ${context}${todoContext}`;
 /**
  * Generate a system prompt for specialized agents
  */
-export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string): Promise<string> {
-  // Get context without agent information and project instructions to avoid recursion
+export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string, callingAgentName?: string): Promise<string> {
+  // Get context with agent information filtered by calling agent name
   const context = await getContextInfo({
-    includeAgents: false,
+    includeAgents: true,
     includeProjectInstructions: false,
     tokenManager,
     toolResultManager,
     reasoningEffort,
+    callingAgentName,
   });
 
   // Get context budget reminder (only shown at 75%+)

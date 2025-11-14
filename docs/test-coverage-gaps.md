@@ -179,7 +179,7 @@ describe('PatchManager - Integrity Validation', () => {
 - Interjection (new message): Continue gracefully, handle in-flight tools
 - Interaction with tool execution state
 - Race between interrupt and tool completion
-- Nested agent interrupts (agent_ask, explore, plan)
+- Nested agent interrupts (agent-ask, explore, plan)
 
 **What Should Be Tested:**
 - Interjection during tool execution
@@ -207,7 +207,7 @@ describe('Agent - Interruption Flows', () => {
   });
 
   it('should propagate interrupts to nested agents', async () => {
-    // Start agent_ask
+    // Start agent-ask
     // Interrupt main agent
     // Verify nested agent interrupted
   });
@@ -258,9 +258,9 @@ describe('ToolResultManager - Metadata Integration', () => {
 
 ### 7. AgentAskTool Silent Mode Integration
 
-**Area:** agent_ask tool with visibleInChat=false (Phase 3.8)
+**Area:** agent-ask tool with visibleInChat=false (Phase 3.8)
 
-**Current Coverage:** AgentTool tests exist but no agent_ask specific tests
+**Current Coverage:** AgentTool tests exist but no agent-ask specific tests
 
 **Gap:** Silent tool behavior has UI and logging implications:
 - Tool call not shown in UI
@@ -270,7 +270,7 @@ describe('ToolResultManager - Metadata Integration', () => {
 - Activity stream event filtering
 
 **What Should Be Tested:**
-- agent_ask tool calls not displayed in UI
+- agent-ask tool calls not displayed in UI
 - Events still emitted for internal tracking
 - Results correctly returned to agent
 - No duplicate messaging in UI
@@ -282,12 +282,12 @@ describe('ToolResultManager - Metadata Integration', () => {
 ```typescript
 describe('AgentAskTool - Silent Mode', () => {
   it('should not display tool calls in UI', async () => {
-    // Execute agent_ask
+    // Execute agent-ask
     // Verify no UI events for tool call display
   });
 
   it('should still emit tracking events', async () => {
-    // Execute agent_ask
+    // Execute agent-ask
     // Verify internal events emitted
   });
 });
@@ -592,7 +592,7 @@ describe('Performance - Session Operations', () => {
 
 4. **Agent delegation flow:**
    - Create explore agent
-   - Ask follow-up with agent_ask
+   - Ask follow-up with agent-ask
    - Interrupt nested agent
    - Verify cleanup
 
@@ -622,7 +622,7 @@ describe('E2E - User Workflows', () => {
 ### Short Term (Medium Priority)
 6. Add session resume integration tests
 7. Add timestamp operation boundary tests
-8. Add agent_ask silent mode tests
+8. Add agent-ask silent mode tests
 9. Add concurrent tool execution tests
 10. Add tool metadata integration tests
 

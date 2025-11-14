@@ -483,7 +483,7 @@ Long-running tools:
 ### Permission system
 
 File operations require confirmation:
-- write, edit, line_edit → permission prompt
+- write, edit, line-edit → permission prompt
 - User can allow once or always for session
 - Extremely dangerous commands always prompt
 

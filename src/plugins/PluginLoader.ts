@@ -36,6 +36,7 @@ import type { EventSubscriptionManager } from './EventSubscriptionManager.js';
 import type { AgentDefinition } from './interfaces.js';
 import type { AgentData } from '../services/AgentManager.js';
 import { parseFrontmatterYAML, extractFrontmatter } from '../utils/yamlUtils.js';
+import { validateToolName, validateAgentName } from '../utils/namingValidation.js';
 
 /**
  * Plugin manifest schema
@@ -352,6 +353,16 @@ export class PluginLoader {
 
     // Validate tools
     manifest.tools?.forEach((tool, index) => {
+      // Validate tool name format (kebab-case)
+      if (!tool.name) {
+        errors.push(`Tool at index ${index} missing required 'name' field`);
+      } else {
+        const validation = validateToolName(tool.name);
+        if (!validation.valid) {
+          errors.push(`Plugin '${manifest.name}': ${validation.error}`);
+        }
+      }
+
       const toolType = tool.type || 'executable';
 
       if (toolType === 'background_rpc') {
@@ -374,11 +385,26 @@ export class PluginLoader {
       }
 
       // Common tool validations
-      if (!tool.name) {
-        errors.push(`Tool at index ${index} missing required 'name' field`);
-      }
       if (!tool.description) {
         warnings.push(`Tool '${tool.name}' missing recommended 'description' field`);
+      }
+    });
+
+    // Validate agents (if present)
+    manifest.agents?.forEach((agent, index) => {
+      // Validate agent name format (kebab-case)
+      if (!agent.name) {
+        errors.push(`Agent at index ${index} missing required 'name' field`);
+      } else {
+        const validation = validateAgentName(agent.name);
+        if (!validation.valid) {
+          errors.push(`Plugin '${manifest.name}': ${validation.error}`);
+        }
+      }
+
+      // Validate required fields
+      if (!agent.system_prompt_file) {
+        errors.push(`Agent '${agent.name}' missing required 'system_prompt_file' field`);
       }
     });
 
@@ -962,7 +988,7 @@ export class PluginLoader {
       );
       manifest.tools = [
         {
-          name: manifest.name.replace(/-/g, '_'),
+          name: manifest.name,
           description: manifest.description,
           command: manifest.command,
           args: manifest.args,
@@ -1278,6 +1304,9 @@ export class PluginLoader {
           reasoning_effort: agentDef.reasoning_effort || parsedAgent.reasoning_effort,
           tools: agentDef.tools || parsedAgent.tools,
           usage_guidelines: agentDef.usage_guidelines || parsedAgent.usage_guidelines,
+          visible_from_agents: agentDef.visible_from_agents !== undefined ? agentDef.visible_from_agents : parsedAgent.visible_from_agents,
+          can_delegate_to_agents: agentDef.can_delegate_to_agents !== undefined ? agentDef.can_delegate_to_agents : parsedAgent.can_delegate_to_agents,
+          can_see_agents: agentDef.can_see_agents !== undefined ? agentDef.can_see_agents : parsedAgent.can_see_agents,
           // Add plugin tracking metadata
           _pluginName: manifest.name,
         };
@@ -1338,6 +1367,9 @@ export class PluginLoader {
         requirements: metadata.requirements, // Agent requirements object
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
+        visible_from_agents: metadata.visible_from_agents, // Agent visibility controls
+        can_delegate_to_agents: metadata.can_delegate_to_agents,
+        can_see_agents: metadata.can_see_agents,
       };
     } catch {
       return null;

@@ -27,6 +27,7 @@ import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import type { AgentData } from '../services/AgentManager.js';
 
 // Read-only tools for session analysis
 const SESSION_ANALYSIS_TOOLS = ['read', 'glob', 'grep'];
@@ -93,6 +94,21 @@ export class SessionsTool extends BaseTool {
     this.activityStream.subscribe(ActivityEventType.INTERRUPT_ALL, () => {
       this.interruptAll();
     });
+  }
+
+  /**
+   * Get agent metadata for registration with AgentManager
+   */
+  getAgentMetadata(): AgentData {
+    return {
+      name: 'sessions',
+      description: 'Session analysis agent - sandboxed to .ally-sessions/ directory',
+      system_prompt: SESSION_ANALYSIS_PROMPT, // Use the existing constant
+      tools: ['read', 'glob', 'grep'], // Read-only tools, no agent delegation
+      visible_from_agents: [], // Only main assistant can use (hidden from agents)
+      can_delegate_to_agents: false, // Cannot delegate (sandboxed)
+      can_see_agents: false, // Cannot see other agents (focused on sessions only)
+    };
   }
 
   /**
@@ -330,7 +346,7 @@ export class SessionsTool extends BaseTool {
         // Always include agent_id when available
         if (agentId) {
           successResponse.agent_id = agentId;
-          successResponse.system_reminder = `Agent persists as ${agentId}. For related follow-ups, USE agent_ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
+          successResponse.system_reminder = `Agent persists as ${agentId}. For related follow-ups, USE agent-ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
         }
 
         return this.formatSuccessResponse(successResponse);
@@ -375,7 +391,7 @@ export class SessionsTool extends BaseTool {
         contextNote += '\n\n**Note:** The current active session is automatically excluded from your analysis - you only have access to historical sessions.';
       }
 
-      const result = await getAgentSystemPrompt(SESSION_ANALYSIS_PROMPT + contextNote, task);
+      const result = await getAgentSystemPrompt(SESSION_ANALYSIS_PROMPT + contextNote, task, undefined, undefined, undefined, 'sessions');
       logger.debug('[SESSIONS_TOOL] System prompt created, length:', result?.length || 0);
       return result;
     } catch (error) {

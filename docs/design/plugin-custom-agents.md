@@ -201,7 +201,7 @@ description: SQL query optimization specialist
 model: claude-3-5-sonnet-20241022
 temperature: 0.2
 reasoning_effort: high
-tools: ["read", "query_db", "explain_query"]
+tools: ["read", "query-db", "explain-query"]
 created_at: "2024-01-01T00:00:00Z"
 updated_at: "2024-01-15T12:00:00Z"
 ---
@@ -404,9 +404,9 @@ if (toolDef.visible_to && toolDef.visible_to !== currentAgentName) {
 ```json
 {
   "tools": [{
-    "name": "execute_sql",
+    "name": "execute-sql",
     "description": "Execute SQL queries",
-    "visible_to": "database-agent",
+    "visible_to": ["database-agent"],
     "command": "python3",
     "args": ["sql.py"]
   }]
@@ -755,7 +755,7 @@ class ToolOrchestrator {
 {
   "name": "my-plugin",
   "tools": [{
-    "name": "my_tool",
+    "name": "my-tool",
     "command": "python3",
     "args": ["tool.py"]
   }]
@@ -768,10 +768,10 @@ class ToolOrchestrator {
 {
   "name": "my-plugin",
   "tools": [{
-    "name": "my_tool",
+    "name": "my-tool",
     "command": "python3",
     "args": ["tool.py"],
-    "visible_to": "my-agent"
+    "visible_to": ["my-agent"]
   }],
   "agents": [{
     "name": "my-agent",
@@ -787,7 +787,7 @@ class ToolOrchestrator {
 ---
 name: my-agent
 description: Specialized agent
-tools: ["read", "write", "my_tool"]
+tools: ["read", "write", "my-tool"]
 ---
 
 You are a specialized agent for my domain.

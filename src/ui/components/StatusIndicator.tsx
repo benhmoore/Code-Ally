@@ -44,19 +44,19 @@ interface StatusIndicatorProps {
 }
 
 /**
- * Helper function to detect active agent_ask tool and extract display name
- * Returns agent name if ask_agent is currently executing, null otherwise
+ * Helper function to detect active agent-ask tool and extract display name
+ * Returns agent name if agent-ask is currently executing, null otherwise
  *
  * This shows "Discussing with [agent_name]..." when the main agent (Ally)
- * is consulting a subagent in the background via ask_agent.
+ * is consulting a subagent in the background via agent-ask.
  *
  * Note: Direct calls to explore/plan/agent do NOT trigger this - those are
  * user interactions and should show normal task status.
  */
 const getActiveAgentName = (toolCalls: ToolCallState[]): string | null => {
-  // Find executing ask_agent tool
+  // Find executing agent-ask tool
   const activeAskAgentTool = toolCalls.find(tc =>
-    tc.status === 'executing' && tc.toolName === 'agent_ask'
+    tc.status === 'executing' && tc.toolName === 'agent-ask'
   );
 
   if (!activeAskAgentTool) return null;

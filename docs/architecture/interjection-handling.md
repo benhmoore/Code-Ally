@@ -83,12 +83,12 @@ The system distinguishes between tools that should receive interjections and tho
 - `plan` - Implementation planning sessions
 
 **Non-injectable tools** (interjections route to main agent):
-- `agent_ask` - Quick queries to existing agents
+- `agent-ask` - Quick queries to existing agents
 - All other tools (bash, read, write, etc.)
 
-### Why agent_ask is Non-Injectable
+### Why agent-ask is Non-Injectable
 
-`agent_ask` is intentionally excluded from interjection routing because:
+`agent-ask` is intentionally excluded from interjection routing because:
 
 1. **Query semantics**: It's designed for quick, one-off questions to persistent agents
 2. **Main conversation continues**: The main agent is driving the conversation
@@ -98,7 +98,7 @@ The system distinguishes between tools that should receive interjections and tho
 Example:
 ```
 Main Agent: "Let me ask the exploration agent about that..."
-[agent_ask is executing]
+[agent-ask is executing]
 User: "Actually, never mind, do something else"
 → Routes to main agent (not the exploration agent being queried)
 ```
@@ -168,18 +168,18 @@ Is there an active injectable tool?
 15. ExploreTool returns to main agent
 ```
 
-### Interjection During agent_ask (Non-Injectable)
+### Interjection During agent-ask (Non-Injectable)
 
 ```
 1. User: "Ask the explore agent about error handling"
-2. Main Agent: [Calls agent_ask]
+2. Main Agent: [Calls agent-ask]
 3. AgentAskTool queries persistent explore agent
 4. Explore agent: [Processing query...]
 5. User: [Submits interjection] "Never mind, do X instead"
 6. InputPrompt.onInterjection() called
 7. useInputHandlers.handleInterjection()
 8. ToolManager.getActiveInjectableTool() → undefined
-   (agent_ask is NOT in injectable list)
+   (agent-ask is NOT in injectable list)
 9. MainAgent.addUserInterjection("Never mind, do X instead")
 10. MainAgent.interrupt('interjection')
 11. Main agent handles the redirection
@@ -426,12 +426,12 @@ actions.addMessage({
 });
 ```
 
-### Scenario 3: Interjection During agent_ask (Routes to Main)
+### Scenario 3: Interjection During agent-ask (Routes to Main)
 
 **User flow:**
 ```
 User: "Ask the explore agent about error handling patterns"
-Agent: [Calls agent_ask]
+Agent: [Calls agent-ask]
 Agent Ask: Querying explore agent...
 User: [Presses Enter] "Actually, let's move on to testing"
 ```
@@ -444,7 +444,7 @@ AgentAskTool.currentPooledAgent = queriedAgent  // Set during execution
 // 2. ToolManager checks for injectable tools
 const activeTool = toolManager.getActiveInjectableTool();
 // Returns: undefined
-// (agent_ask is not in ['explore', 'plan', 'agent'])
+// (agent-ask is not in ['explore', 'plan', 'agent'])
 
 // 3. Routes to main agent
 agent.addUserInterjection("Actually, let's move on to testing");
@@ -458,7 +458,7 @@ actions.addMessage({
 });
 
 // 5. Main agent handles the redirection
-// (agent_ask call may complete or be cancelled)
+// (agent-ask call may complete or be cancelled)
 ```
 
 ## Testing Considerations
@@ -473,7 +473,7 @@ actions.addMessage({
 
 2. **Tool type distinction:**
    - Injectable tools (explore, plan, agent) receive interjections
-   - Non-injectable tools (agent_ask, etc.) don't receive interjections
+   - Non-injectable tools (agent-ask, etc.) don't receive interjections
 
 3. **State management:**
    - currentPooledAgent lifecycle
@@ -517,8 +517,8 @@ describe('Interjection routing', () => {
       .toHaveBeenCalledWith('interjection');
   });
 
-  it('routes to main agent during agent_ask', async () => {
-    const agentAskTool = toolManager.getTool('agent_ask');
+  it('routes to main agent during agent-ask', async () => {
+    const agentAskTool = toolManager.getTool('agent-ask');
     agentAskTool.currentPooledAgent = mockQueriedAgent;
 
     const message = 'Never mind';

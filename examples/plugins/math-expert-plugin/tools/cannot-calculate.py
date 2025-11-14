@@ -13,7 +13,7 @@ def main():
         print(json.dumps({
             "success": True,
             "result": f"I cannot perform this calculation with my available tools. {reason}",
-            "cannot_calculate": True
+            "cannot-calculate": True
         }))
 
     except json.JSONDecodeError as e:

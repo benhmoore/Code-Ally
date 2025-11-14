@@ -17,7 +17,7 @@ import * as path from 'path';
 
 export class WriteTool extends BaseTool {
   readonly name = 'write';
-  readonly description = 'Create a new file with the specified content. FAILS if file already exists. Use edit or line_edit to modify existing files.';
+  readonly description = 'Create a new file with the specified content. FAILS if file already exists. Use edit or line-edit to modify existing files.';
   readonly requiresConfirmation = true; // Destructive operation
 
   constructor(activityStream: ActivityStream) {
@@ -136,7 +136,7 @@ export class WriteTool extends BaseTool {
         return this.formatErrorResponse(
           `File already exists: ${absolutePath}`,
           'file_error',
-          'Use edit or line_edit to modify existing files. The write tool only creates new files.'
+          'Use edit or line-edit to modify existing files. The write tool only creates new files.'
         );
       }
 

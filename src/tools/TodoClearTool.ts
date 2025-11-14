@@ -11,7 +11,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { autoSaveTodos } from '../utils/todoUtils.js';
 
 export class TodoClearTool extends BaseTool {
-  readonly name = 'todo_clear';
+  readonly name = 'todo-clear';
   readonly description =
     'Clear all todos. Use when starting fresh or when all work is complete and you want to clean up.';
   readonly requiresConfirmation = false;

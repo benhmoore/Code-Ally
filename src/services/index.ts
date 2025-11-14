@@ -15,6 +15,7 @@ export { TodoManager, TodoItem } from './TodoManager.js';
 export { FocusManager, FocusResult } from './FocusManager.js';
 export { AgentManager, AgentData, AgentInfo } from './AgentManager.js';
 export { AgentPoolService, AgentPoolConfig, AgentMetadata, PooledAgent } from './AgentPoolService.js';
+export { DelegationContextManager, DelegationContext, DelegationState, ActiveDelegation } from './DelegationContextManager.js';
 export { CommandHistory } from './CommandHistory.js';
 export { CompletionProvider } from './CompletionProvider.js';
 export { FuzzyFilePathMatcher } from './FuzzyFilePathMatcher.js';

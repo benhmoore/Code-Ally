@@ -69,7 +69,7 @@ describe('WriteTool', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('already exists');
-      expect(result.suggestion).toContain('edit or line_edit');
+      expect(result.suggestion).toContain('edit or line-edit');
     });
 
     it('should write multi-line content', async () => {

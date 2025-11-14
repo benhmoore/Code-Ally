@@ -465,7 +465,7 @@ describe('LineEditTool', () => {
 
   describe('tool metadata', () => {
     it('should have correct tool name', () => {
-      expect(lineEditTool.name).toBe('line_edit');
+      expect(lineEditTool.name).toBe('line-edit');
     });
 
     it('should require confirmation', () => {
@@ -476,7 +476,7 @@ describe('LineEditTool', () => {
       const def = lineEditTool.getFunctionDefinition();
 
       expect(def.type).toBe('function');
-      expect(def.function.name).toBe('line_edit');
+      expect(def.function.name).toBe('line-edit');
       expect(def.function.parameters.required).toContain('file_path');
       expect(def.function.parameters.required).toContain('operation');
       expect(def.function.parameters.required).toContain('line_number');

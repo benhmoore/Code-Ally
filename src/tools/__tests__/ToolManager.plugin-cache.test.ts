@@ -209,21 +209,21 @@ describe('ToolManager - Plugin Cache Consistency', () => {
 
     // Register a new tool
     const newTool = new CoreTool(activityStream);
-    newTool.name = 'new_core_tool' as any; // Override name for test
+    newTool.name = 'new-core-tool' as any; // Override name for test
     toolManager.registerTool(newTool);
 
     // Should include the new tool
     const defs2 = toolManager.getFunctionDefinitions();
     expect(defs2).toHaveLength(3);
-    expect(defs2.map(d => d.function.name)).toContain('new_core_tool');
+    expect(defs2.map(d => d.function.name)).toContain('new-core-tool');
 
     // Unregister the tool
-    toolManager.unregisterTool('new_core_tool');
+    toolManager.unregisterTool('new-core-tool');
 
     // Should not include the removed tool
     const defs3 = toolManager.getFunctionDefinitions();
     expect(defs3).toHaveLength(2);
-    expect(defs3.map(d => d.function.name)).not.toContain('new_core_tool');
+    expect(defs3.map(d => d.function.name)).not.toContain('new-core-tool');
   });
 
   it('should handle activation state changes between multiple plugin combinations', () => {

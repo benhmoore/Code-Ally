@@ -11,7 +11,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { autoSaveTodos } from '../utils/todoUtils.js';
 
 export class TodoRemoveTool extends BaseTool {
-  readonly name = 'todo_remove';
+  readonly name = 'todo-remove';
   readonly description =
     'Remove specific todos from the list by id or content matching. Use when cleaning up completed tasks or removing no-longer-relevant todos.';
   readonly requiresConfirmation = false;

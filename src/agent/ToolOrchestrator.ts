@@ -108,7 +108,7 @@ export class ToolOrchestrator {
 
   /**
    * Update the parent call ID for nested tool calls
-   * Used by agent_ask to temporarily reparent tool calls under the current call
+   * Used by agent-ask to temporarily reparent tool calls under the current call
    *
    * @param parentCallId - New parent call ID
    */
@@ -970,7 +970,7 @@ export class ToolOrchestrator {
         }
       }
 
-      reminder += `\n\nStay on task. Use todo_update to mark todos as complete when finished.`;
+      reminder += `\n\nStay on task. Use todo-update to mark todos as complete when finished.`;
 
       return reminder;
     } catch (error) {

@@ -3,7 +3,7 @@
  *
  * Safely marks todos as completed or updates their status by reading current
  * state from TodoManager. Prevents race conditions where stale state overwrites
- * recent changes (e.g., after plan or todo_add).
+ * recent changes (e.g., after plan or todo-add).
  */
 
 import { BaseTool } from './BaseTool.js';
@@ -15,7 +15,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { autoSaveTodos } from '../utils/todoUtils.js';
 
 export class TodoUpdateTool extends BaseTool {
-  readonly name = 'todo_update';
+  readonly name = 'todo-update';
   readonly description =
     'Update todo status by id or content. Safer than rewriting entire list.';
   readonly requiresConfirmation = false;

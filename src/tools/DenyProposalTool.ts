@@ -14,7 +14,7 @@ import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 
 export class DenyProposalTool extends BaseTool {
-  readonly name = 'deny_proposal';
+  readonly name = 'deny-proposal';
   readonly description =
     'Deny and remove proposed todos. Clears proposed todos from the list. Optionally provide a reason for denying. No-ops gracefully if no proposals exist.';
   readonly requiresConfirmation = false; // Only modifies todo list (internal state)

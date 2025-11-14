@@ -73,3 +73,26 @@ export function indentByLevel(level: number): string {
 export function isAgentDelegation(toolName: string): boolean {
   return (AGENT_DELEGATION_TOOLS as readonly string[]).includes(toolName);
 }
+
+/**
+ * Formats an agent name for display by converting kebab/snake case to Title Case
+ *
+ * Transforms agent names from their internal format (lowercase with hyphens/underscores)
+ * to a human-readable format with proper capitalization.
+ *
+ * @param agentName - The internal agent name (e.g., "math-expert", "explore")
+ * @returns The formatted display name (e.g., "Math Expert", "Explore")
+ *
+ * @example
+ * ```typescript
+ * formatAgentName('math-expert');      // Returns: 'Math Expert'
+ * formatAgentName('explore');          // Returns: 'Explore'
+ * formatAgentName('my_custom_agent');  // Returns: 'My Custom Agent'
+ * ```
+ */
+export function formatAgentName(agentName: string): string {
+  return agentName
+    .split(/[-_]/)  // Split by hyphens or underscores
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())  // Capitalize each word
+    .join(' ');  // Join with spaces
+}

@@ -257,7 +257,7 @@ describe('diffUtils', () => {
     });
 
     it('should handle different operation types', () => {
-      const operationTypes = ['write', 'edit', 'line_edit', 'delete'];
+      const operationTypes = ['write', 'edit', 'line-edit', 'delete'];
 
       operationTypes.forEach((opType) => {
         const patchContent = createPatchFileContent(

@@ -379,7 +379,7 @@ export class Agent {
   }
 
   /**
-   * Get the tool orchestrator (used by agent_ask to update parent call ID)
+   * Get the tool orchestrator (used by agent-ask to update parent call ID)
    */
   getToolOrchestrator(): ToolOrchestrator {
     return this.toolOrchestrator;
@@ -411,6 +411,13 @@ export class Agent {
    */
   getAgentCallStack(): string[] {
     return this.agentCallStack;
+  }
+
+  /**
+   * Get the agent configuration (used by AgentTool for permission checks)
+   */
+  getAgentConfig(): AgentConfig {
+    return this.config;
   }
 
   /**
@@ -574,7 +581,7 @@ export class Agent {
         let reminderContent = '<system-reminder>\n';
 
         if (todos.length === 0) {
-          reminderContent += 'Todo list empty. For multi-step tasks, use todo_add to track progress.\n';
+          reminderContent += 'Todo list empty. For multi-step tasks, use todo-add to track progress.\n';
         } else {
           reminderContent += 'Current todos:\n';
           todos.forEach((todo: any, idx: number) => {
@@ -791,7 +798,7 @@ export class Agent {
 
   /**
    * Set the maximum duration for this agent in minutes
-   * Allows updating the time budget for individual turns (e.g., in agent_ask)
+   * Allows updating the time budget for individual turns (e.g., in agent-ask)
    * @param minutes - Maximum duration in minutes
    */
   setMaxDuration(minutes: number | undefined): void {

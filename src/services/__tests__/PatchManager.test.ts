@@ -223,13 +223,13 @@ describe('PatchManager', () => {
       const original = 'Hello\n';
       const modified = 'World\n';
 
-      await patchManager.captureOperation('line_edit', filePath, original, modified);
+      await patchManager.captureOperation('line-edit', filePath, original, modified);
 
       const patchPath = path.join(getPatchesDir(), 'patch_001.diff');
       const content = await fs.readFile(patchPath, 'utf-8');
 
       expect(content).toContain('# Code Ally Patch File');
-      expect(content).toContain('# Operation: line_edit');
+      expect(content).toContain('# Operation: line-edit');
       expect(content).toContain(`# File: ${filePath}`);
       expect(content).toContain('# Timestamp:');
       expect(content).toContain('===================================================================');

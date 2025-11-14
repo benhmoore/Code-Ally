@@ -458,8 +458,8 @@ export class TodoManager {
 
     const tasksText = lines.join('\n');
     const helperText = proposed.length > 0
-      ? '*Manage todos with todo_add/todo_update/todo_remove/todo_clear. Proposed todos must be confirmed, modified, or declined. Blocked todos cannot be in_progress until dependencies complete. Completing all subtasks auto-completes the parent.*'
-      : '*Manage todos with todo_add/todo_update/todo_remove/todo_clear. Blocked todos cannot be in_progress until dependencies complete. Completing all subtasks auto-completes the parent.*';
+      ? '*Manage todos with todo-add/todo-update/todo-remove/todo-clear. Proposed todos must be confirmed, modified, or declined. Blocked todos cannot be in_progress until dependencies complete. Completing all subtasks auto-completes the parent.*'
+      : '*Manage todos with todo-add/todo-update/todo-remove/todo-clear. Blocked todos cannot be in_progress until dependencies complete. Completing all subtasks auto-completes the parent.*';
     return `**Your Current Tasks:**\n${tasksText}\n\n${helperText}`;
   }
 
@@ -603,7 +603,7 @@ export class TodoManager {
     if (blockedInProgress.length > 0 && blockedInProgress[0]) {
       const todo = blockedInProgress[0];
       const depNames = this.getDependencyNames(todo.id);
-      return `Cannot mark blocked todo as in_progress: "${todo.task}" (id: ${todo.id}). Complete dependencies first: ${depNames.join(', ')}. Use todo_update to mark this as pending until dependencies complete.`;
+      return `Cannot mark blocked todo as in_progress: "${todo.task}" (id: ${todo.id}). Complete dependencies first: ${depNames.join(', ')}. Use todo-update to mark this as pending until dependencies complete.`;
     }
 
     return null;
@@ -652,7 +652,7 @@ export class TodoManager {
       const taskDetails = inProgressTodos
         .map(t => `"${t.task}" (id: ${t.id})`)
         .join(', ');
-      return `Only ONE task can be "in_progress" at a time. Found ${inProgressCount} in_progress tasks: ${taskDetails}. Use todo_update to mark all but one as pending.`;
+      return `Only ONE task can be "in_progress" at a time. Found ${inProgressCount} in_progress tasks: ${taskDetails}. Use todo-update to mark all but one as pending.`;
     }
 
     return null;

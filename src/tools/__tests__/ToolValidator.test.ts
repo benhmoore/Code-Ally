@@ -241,7 +241,7 @@ describe('ToolValidator', () => {
     const lineEditFunctionDef: FunctionDefinition = {
       type: 'function',
       function: {
-        name: 'line_edit',
+        name: 'line-edit',
         description: 'Edit files by line',
         parameters: {
           type: 'object',
@@ -258,7 +258,7 @@ describe('ToolValidator', () => {
     };
 
     it('should reject line_number < 1', () => {
-      mockTool.name = 'line_edit';
+      mockTool.name = 'line-edit';
       const result = validator.validateArguments(mockTool, lineEditFunctionDef, {
         file_path: 'test.txt',
         operation: 'replace',
@@ -272,7 +272,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject unreasonably large line_number', () => {
-      mockTool.name = 'line_edit';
+      mockTool.name = 'line-edit';
       const result = validator.validateArguments(mockTool, lineEditFunctionDef, {
         file_path: 'test.txt',
         operation: 'replace',
@@ -285,7 +285,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject negative num_lines for delete', () => {
-      mockTool.name = 'line_edit';
+      mockTool.name = 'line-edit';
       const result = validator.validateArguments(mockTool, lineEditFunctionDef, {
         file_path: 'test.txt',
         operation: 'delete',
@@ -298,7 +298,7 @@ describe('ToolValidator', () => {
     });
 
     it('should accept valid line edit', () => {
-      mockTool.name = 'line_edit';
+      mockTool.name = 'line-edit';
       const result = validator.validateArguments(mockTool, lineEditFunctionDef, {
         file_path: 'test.txt',
         operation: 'replace',
