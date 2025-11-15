@@ -278,7 +278,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Format arguments (filter out agent_name for agent tool)
   const argsPreview = formatArgsPreview(toolCall.arguments, toolCall.toolName);
 
-  // Extract subtext for display (pass isAgentDelegation to prevent truncation)
+  // Extract subtext for display (pass isAgentDelegation to prevent truncation in extractSubtext)
+  // We'll handle truncation for completed agents separately in the rendering
   const subtext = extractSubtext(toolCall, toolCall.toolName, isAgentDelegation);
 
   // Indent based on level
@@ -330,13 +331,20 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       {/* Agent subtext - displayed on indented lines below header */}
       {isAgentDelegation && subtext && (
         <Box flexDirection="column">
-          {subtext.split('\n').map((line, idx) => (
-            <Box key={idx}>
-              <Text>{indent}    </Text>
-              <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>
-              <Text>{line}</Text>
-            </Box>
-          ))}
+          {(() => {
+            // Truncate to 80 chars (77 + "...") when agent is complete
+            const displaySubtext = !isRunning && subtext.length > 80
+              ? subtext.slice(0, 77) + '...'
+              : subtext;
+
+            return displaySubtext.split('\n').map((line, idx) => (
+              <Box key={idx}>
+                <Text>{indent}    </Text>
+                <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>
+                <Text>{line}</Text>
+              </Box>
+            ));
+          })()}
         </Box>
       )}
 

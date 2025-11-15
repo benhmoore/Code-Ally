@@ -498,14 +498,14 @@ function formatInlineMarkdown(text: string): string | StyledSegment[] {
   // No formatting - return plain string with simple transformations
   let formatted = text;
 
-  // Handle LaTeX math expressions
-  formatted = formatted.replace(/\\\(([^)]+)\\\)/g, (_match, mathContent) => {
+  // Handle LaTeX math expressions (use non-greedy matching to allow nested delimiters)
+  formatted = formatted.replace(/\\\((.+?)\\\)/g, (_match, mathContent) => {
     return convertLatexToUnicode(mathContent);
   });
-  formatted = formatted.replace(/\\\[([^\]]+)\\\]/g, (_match, mathContent) => {
+  formatted = formatted.replace(/\\\[(.+?)\\\]/g, (_match, mathContent) => {
     return convertLatexToUnicode(mathContent);
   });
-  formatted = formatted.replace(/\$\$([^$]+)\$\$/g, (_match, mathContent) => {
+  formatted = formatted.replace(/\$\$(.+?)\$\$/g, (_match, mathContent) => {
     return convertLatexToUnicode(mathContent);
   });
 
@@ -519,7 +519,7 @@ function formatInlineMarkdown(text: string): string | StyledSegment[] {
 
 /**
  * Parse text with markdown formatting into styled segments
- * Supports: colors, bold, italic, strikethrough, code
+ * Supports: colors, bold, italic, strikethrough, code, LaTeX
  */
 function parseStyledText(text: string): StyledSegment[] {
   const segments: StyledSegment[] = [];
@@ -530,7 +530,25 @@ function parseStyledText(text: string): StyledSegment[] {
 
   for (const token of tokens) {
     if (token.text) {
-      segments.push(token);
+      // Process LaTeX in the text segment (but not in code segments)
+      if (!token.code) {
+        let processedText = token.text;
+
+        // Handle LaTeX math expressions
+        processedText = processedText.replace(/\\\((.+?)\\\)/g, (_match, mathContent) => {
+          return convertLatexToUnicode(mathContent);
+        });
+        processedText = processedText.replace(/\\\[(.+?)\\\]/g, (_match, mathContent) => {
+          return convertLatexToUnicode(mathContent);
+        });
+        processedText = processedText.replace(/\$\$(.+?)\$\$/g, (_match, mathContent) => {
+          return convertLatexToUnicode(mathContent);
+        });
+
+        segments.push({ ...token, text: processedText });
+      } else {
+        segments.push(token);
+      }
     }
   }
 
@@ -720,14 +738,14 @@ function stripInlineMarkdown(text: string): string {
   // Remove inline code
   stripped = stripped.replace(/`([^`]+)`/g, '$1');
 
-  // Handle LaTeX math expressions
-  stripped = stripped.replace(/\\\(([^)]+)\\\)/g, (_match, mathContent) => {
+  // Handle LaTeX math expressions (use non-greedy matching to allow nested delimiters)
+  stripped = stripped.replace(/\\\((.+?)\\\)/g, (_match, mathContent) => {
     return convertLatexToUnicode(mathContent);
   });
-  stripped = stripped.replace(/\\\[([^\]]+)\\\]/g, (_match, mathContent) => {
+  stripped = stripped.replace(/\\\[(.+?)\\\]/g, (_match, mathContent) => {
     return convertLatexToUnicode(mathContent);
   });
-  stripped = stripped.replace(/\$\$([^$]+)\$\$/g, (_match, mathContent) => {
+  stripped = stripped.replace(/\$\$(.+?)\$\$/g, (_match, mathContent) => {
     return convertLatexToUnicode(mathContent);
   });
 

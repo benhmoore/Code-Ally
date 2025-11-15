@@ -94,6 +94,46 @@
       "subtext": "{a} ÷ {b}"
     },
     {
+      "name": "calculate",
+      "description": "Evaluate a mathematical expression. Supports arithmetic operators (+, -, *, /, **, //, %), mathematical functions (sqrt, sin, cos, tan, log, exp, abs, ceil, floor), and constants (pi, e). Use this for complex expressions that require multiple operations.",
+      "command": "python3",
+      "args": ["tools/calculate.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "Mathematical expression to evaluate (e.g., '2 * (3 + 4)', 'sqrt(16) + 3', 'sin(pi/2)')"
+          }
+        },
+        "required": ["expression"]
+      },
+      "visible_to": ["math-expert"],
+      "subtext": "{expression}"
+    },
+    {
+      "name": "solve-equation",
+      "description": "Solve algebraic equations symbolically using SymPy. Supports linear equations (2*x + 3 = 7), quadratic equations (x**2 - 5*x + 6 = 0), rational equations (1/x + 2 = 3), and more. Returns all solutions including complex numbers when applicable.",
+      "command": "python3",
+      "args": ["tools/solve-equation.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "equation": {
+            "type": "string",
+            "description": "Algebraic equation to solve (e.g., '2*x + 3 = 7', 'x**2 - 5*x + 6 = 0', 'y**2 = 16')"
+          },
+          "variable": {
+            "type": "string",
+            "description": "Variable to solve for (default: x)"
+          }
+        },
+        "required": ["equation"]
+      },
+      "visible_to": ["math-expert"],
+      "subtext": "{equation}"
+    },
+    {
       "name": "cannot-calculate",
       "description": "Call this when you cannot perform the requested calculation with your available arithmetic tools (add, subtract, multiply, divide)",
       "command": "python3",
@@ -116,7 +156,7 @@
       "name": "math-expert",
       "description": "Expert mathematician specializing in arithmetic calculations",
       "system_prompt_file": "agents/math-expert.md",
-      "tools": ["add", "subtract", "multiply", "divide", "cannot-calculate"]
+      "tools": ["add", "subtract", "multiply", "divide", "calculate", "solve-equation", "cannot-calculate"]
     }
   ]
 }
