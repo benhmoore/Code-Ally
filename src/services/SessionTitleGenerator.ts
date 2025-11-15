@@ -85,6 +85,7 @@ export class SessionTitleGenerator implements CancellableService {
         [{ role: 'user', content: titlePrompt }],
         {
           stream: false,
+          suppressThinking: true, // Don't show thinking for background title generation
         }
       );
 

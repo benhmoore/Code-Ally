@@ -176,6 +176,7 @@ export class IdleMessageGenerator implements CancellableService {
         {
           stream: false,
           temperature: 1.2, // Higher temperature for more creative/surprising messages
+          suppressThinking: true, // Don't show thinking for background idle message generation
         }
       );
 

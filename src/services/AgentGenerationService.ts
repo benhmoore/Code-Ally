@@ -39,7 +39,10 @@ export class AgentGenerationService implements CancellableService {
       // Call the model (non-streaming)
       const response = await this.modelClient.send(
         [{ role: 'user', content: prompt }],
-        { stream: false }
+        {
+          stream: false,
+          suppressThinking: true, // Don't show thinking for background agent generation
+        }
       );
 
       const result = this.parseResponse(response.content);

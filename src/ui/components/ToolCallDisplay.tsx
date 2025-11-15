@@ -378,6 +378,15 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
+      {/* Thinking content - displayed inline for agent delegations when show_thinking_in_chat is enabled */}
+      {/* Only show while agent is running - cleared when complete */}
+      {isAgentDelegation && toolCall.thinking && config?.show_thinking_in_chat && isRunning && (
+        <Box>
+          <Text>{indent}    </Text>
+          <Text dimColor italic>∴ {toolCall.thinking}</Text>
+        </Box>
+      )}
+
       {/* Diff preview (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
       {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && toolCall.diffPreview && (
         <Box flexDirection="column" paddingLeft={indent.length + 4}>

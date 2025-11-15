@@ -208,6 +208,7 @@ export interface ToolCallState {
   collapsed?: boolean; // For tools that should hide their children immediately
   shouldCollapse?: boolean; // For tools that should collapse after completion
   hideOutput?: boolean; // For tools that should never show output
+  thinking?: string; // Thinking content for agent tools (when show_thinking_in_chat is enabled)
   diffPreview?: {
     oldContent: string;
     newContent: string;

@@ -918,6 +918,8 @@ export class Agent {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
         stream: !this.config.isSpecializedAgent && this.config.config.parallel_tools,
+        // Pass parentCallId for associating thinking events with tool calls
+        parentId: this.config.parentCallId,
       });
 
       // Remove system-reminder messages after receiving response

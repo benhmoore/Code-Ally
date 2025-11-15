@@ -172,7 +172,7 @@ export class OllamaClient extends ModelClient {
    * @returns Promise resolving to the LLM's response
    */
   async send(messages: Message[], options: SendOptions = {}): Promise<LLMResponse> {
-    const { functions, stream = false, maxRetries: _maxRetries = 3, temperature } = options;
+    const { functions, stream = false, maxRetries: _maxRetries = 3, temperature, parentId, suppressThinking = false } = options;
     const maxRetries = _maxRetries;
 
     // Generate unique request ID for this request
@@ -188,7 +188,7 @@ export class OllamaClient extends ModelClient {
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           // Execute request with cancellation support
-          const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt);
+          const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, parentId, suppressThinking);
 
           // Validate and repair tool calls (ALL responses, not just non-streaming)
           if (result.tool_calls && result.tool_calls.length > 0) {
@@ -315,7 +315,9 @@ export class OllamaClient extends ModelClient {
     requestId: string,
     payload: OllamaPayload,
     stream: boolean,
-    attempt: number
+    attempt: number,
+    parentId?: string,
+    suppressThinking?: boolean
   ): Promise<LLMResponse> {
     // Create abort controller for this request
     const abortController = new AbortController();
@@ -357,14 +359,14 @@ export class OllamaClient extends ModelClient {
 
       // Process response
       if (stream) {
-        return await this.processStreamingResponse(requestId, response, abortController);
+        return await this.processStreamingResponse(requestId, response, abortController, parentId, suppressThinking);
       } else {
         // Non-streaming mode - parse response
         // GAP 2: For non-streaming, the entire response arrives at once, so HTTP errors
         // happen before we get any data. However, we still wrap in try-catch to maintain
         // consistency with streaming error handling.
         const data = await response.json();
-        return this.parseNonStreamingResponse(data);
+        return this.parseNonStreamingResponse(data, requestId, parentId, suppressThinking);
       }
     } catch (error) {
       // Re-throw to be handled by send()
@@ -378,7 +380,9 @@ export class OllamaClient extends ModelClient {
   private async processStreamingResponse(
     requestId: string,
     response: Response,
-    abortController: AbortController
+    abortController: AbortController,
+    parentId?: string,
+    suppressThinking?: boolean
   ): Promise<LLMResponse> {
     if (!response.body) {
       throw new Error('Response body is null');
@@ -459,11 +463,13 @@ export class OllamaClient extends ModelClient {
             } else if (hadThinking && !thinkingComplete) {
               // First chunk without thinking after having thinking = thinking block complete
               thinkingComplete = true;
-              if (this.activityStream && aggregatedThinking) {
+              // Only emit if thinking display is not suppressed
+              if (this.activityStream && aggregatedThinking && !suppressThinking) {
                 this.activityStream.emit({
                   id: `thinking-complete-${requestId}`,
                   type: ActivityEventType.THOUGHT_COMPLETE,
                   timestamp: Date.now(),
+                  parentId: parentId, // Associate thinking with agent/tool call
                   data: { thinking: aggregatedThinking },
                 });
               }
@@ -542,7 +548,7 @@ export class OllamaClient extends ModelClient {
   /**
    * Parse non-streaming response from Ollama
    */
-  private parseNonStreamingResponse(data: any): LLMResponse {
+  private parseNonStreamingResponse(data: any, requestId: string, parentId?: string, suppressThinking?: boolean): LLMResponse {
     const message = data.message || {};
 
     const response: LLMResponse = {
@@ -552,6 +558,18 @@ export class OllamaClient extends ModelClient {
 
     if (message.thinking) {
       response.thinking = message.thinking;
+
+      // Emit THOUGHT_COMPLETE event for non-streaming responses
+      // Only emit if thinking display is not suppressed
+      if (this.activityStream && !suppressThinking) {
+        this.activityStream.emit({
+          id: `thinking-complete-${requestId}`,
+          type: ActivityEventType.THOUGHT_COMPLETE,
+          timestamp: Date.now(),
+          parentId: parentId, // Associate thinking with agent/tool call
+          data: { thinking: message.thinking },
+        });
+      }
     }
 
     if (message.tool_calls) {

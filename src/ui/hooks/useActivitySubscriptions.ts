@@ -241,12 +241,20 @@ export const useActivitySubscriptions = (
     const thinking = event.data?.thinking || '';
 
     if (state.config?.show_thinking_in_chat && thinking) {
-      actions.addMessage({
-        role: 'assistant',
-        content: '',
-        thinking: thinking,
-        timestamp: Date.now(),
-      });
+      // If event has parentId, associate thinking with that tool call (subagent)
+      // Otherwise, add as a standalone message (root agent)
+      if (event.parentId) {
+        // Find the tool call and update it with thinking content
+        actions.updateToolCall(event.parentId, { thinking });
+      } else {
+        // Root agent thinking - add as message
+        actions.addMessage({
+          role: 'assistant',
+          content: '',
+          thinking: thinking,
+          timestamp: Date.now(),
+        });
+      }
     }
   });
 

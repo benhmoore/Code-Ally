@@ -25,6 +25,10 @@ export interface SendOptions {
   maxRetries?: number;
   /** Temperature for response generation (0.0 to 2.0, higher = more creative) */
   temperature?: number;
+  /** Parent call ID for associating events with specific agents/tool calls */
+  parentId?: string;
+  /** Suppress thinking display (for background services like title generation) */
+  suppressThinking?: boolean;
 }
 
 /**
