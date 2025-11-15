@@ -22,6 +22,7 @@ export class ExecutableToolWrapper extends BaseTool {
 	name: string;
 	description: string;
 	requiresConfirmation: boolean;
+	displayName?: string;
 	usageGuidance?: string;
 	pluginName?: string;
 
@@ -33,6 +34,7 @@ export class ExecutableToolWrapper extends BaseTool {
 	private readonly config?: any;
 	private readonly manifest: PluginManifest;
 	private readonly envManager: PluginEnvironmentManager;
+	private readonly subtextTemplate?: string;
 
 	/**
 	 * Creates a new ExecutableToolWrapper instance.
@@ -61,6 +63,7 @@ export class ExecutableToolWrapper extends BaseTool {
 		this.name = toolDef.name;
 		this.description = toolDef.description || '';
 		this.requiresConfirmation = toolDef.requiresConfirmation ?? false;
+		this.displayName = toolDef.display_name;
 		this.usageGuidance = toolDef.usageGuidance;
 		this.pluginName = manifest.name;
 
@@ -81,6 +84,7 @@ export class ExecutableToolWrapper extends BaseTool {
 		this.config = config;
 		this.manifest = manifest;
 		this.envManager = envManager;
+		this.subtextTemplate = toolDef.subtext;
 	}
 
 	/**
@@ -407,5 +411,102 @@ Stderr: ${stderr || '(none)'}`,
 				'plugin_error'
 			);
 		}
+	}
+
+	/**
+	 * Extracts parameter names from a subtext template string.
+	 * Finds all placeholders in the format {paramName} and returns unique parameter names.
+	 *
+	 * @param template - Template string containing {param} placeholders
+	 * @returns Array of unique parameter names found in the template
+	 * @example
+	 * extractTemplateParams("{a} + {b} = {a}") // Returns ["a", "b"]
+	 */
+	private extractTemplateParams(template: string): string[] {
+		const regex = /\{(\w+)\}/g;
+		const params = new Set<string>();
+		let match: RegExpExecArray | null;
+
+		while ((match = regex.exec(template)) !== null) {
+			if (match[1]) {
+				params.add(match[1]);
+			}
+		}
+
+		return Array.from(params);
+	}
+
+	/**
+	 * Format subtext for display in the UI using the plugin's subtext template.
+	 *
+	 * If a subtext template is defined, this method performs parameter substitution
+	 * by replacing {paramName} placeholders with actual argument values.
+	 * Missing parameters are shown as <paramName> for debugging.
+	 *
+	 * If no template is defined, falls back to the default behavior (showing description).
+	 *
+	 * @param args - Tool arguments passed to execute()
+	 * @returns Formatted subtext string or null if template is empty or all parameters are missing
+	 * @example
+	 * // Template: "{file_path} → {destination}"
+	 * // Args: {file_path: "/foo/bar.txt", destination: "/baz/bar.txt"}
+	 * // Result: "/foo/bar.txt → /baz/bar.txt"
+	 */
+	formatSubtext(args: Record<string, any>): string | null {
+		// If no template, use default behavior (returns description)
+		if (!this.subtextTemplate) {
+			return super.formatSubtext(args);
+		}
+
+		// Perform parameter substitution
+		let result = this.subtextTemplate;
+		const params = this.extractTemplateParams(this.subtextTemplate);
+
+		// Track if any parameters were successfully substituted
+		let hasValidSubstitution = false;
+
+		for (const paramName of params) {
+			if (paramName in args && args[paramName] !== undefined && args[paramName] !== null) {
+				// Convert value to string and replace
+				result = result.replace(new RegExp(`\\{${paramName}\\}`, 'g'), String(args[paramName]));
+				hasValidSubstitution = true;
+			} else {
+				// Show missing parameter for debugging
+				result = result.replace(new RegExp(`\\{${paramName}\\}`, 'g'), `<${paramName}>`);
+			}
+		}
+
+		// Return null if template is empty after substitution or no valid parameters found
+		if (!result.trim() || !hasValidSubstitution) {
+			return null;
+		}
+
+		return result;
+	}
+
+	/**
+	 * Get list of parameter names that are shown in subtext.
+	 *
+	 * If a subtext template is defined, extracts parameter names from the template
+	 * and returns them along with 'description' (which is always included to maintain
+	 * compatibility with the default behavior).
+	 *
+	 * These parameters are filtered from the args preview in the UI to avoid
+	 * showing the same information twice.
+	 *
+	 * @returns Array of parameter names that are displayed in subtext
+	 * @example
+	 * // Template: "{file_path} → {destination}"
+	 * // Result: ["description", "file_path", "destination"]
+	 */
+	getSubtextParameters(): string[] {
+		// If no template, use default behavior (returns ['description'])
+		if (!this.subtextTemplate) {
+			return super.getSubtextParameters();
+		}
+
+		// Extract parameters from template and always include 'description'
+		const params = this.extractTemplateParams(this.subtextTemplate);
+		return ['description', ...params];
 	}
 }

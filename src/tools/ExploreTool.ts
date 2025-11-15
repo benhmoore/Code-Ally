@@ -629,18 +629,13 @@ Note: Multiple independent explorations can be batched for efficiency.`;
 
   /**
    * Format subtext for display in UI
-   * Shows: [task_prompt] (truncated to 80 chars)
+   * Shows full task_prompt (no truncation - displayed on separate indented lines)
    */
   formatSubtext(args: Record<string, any>): string | null {
     const taskPrompt = args.task_prompt as string;
 
     if (!taskPrompt) {
       return null;
-    }
-
-    // Truncate to 80 chars if needed
-    if (taskPrompt.length > 80) {
-      return taskPrompt.substring(0, 77) + '...';
     }
 
     return taskPrompt;

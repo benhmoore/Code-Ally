@@ -115,9 +115,10 @@ function formatArgsPreview(args: any, toolName?: string): string {
  *
  * @param toolCall - Tool call state
  * @param toolName - Internal tool name (not display name)
+ * @param isAgentTool - Whether this is an agent delegation tool (skips truncation)
  * @returns Truncated subtext string or empty string
  */
-function extractSubtext(toolCall: ToolCallState, toolName: string): string {
+function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: boolean = false): string {
   const args = toolCall.arguments;
   if (!args || typeof args !== 'object') {
     return '';
@@ -159,8 +160,9 @@ function extractSubtext(toolCall: ToolCallState, toolName: string): string {
     }
   }
 
-  // Truncate to reasonable length (80 chars)
-  if (subtext.length > 80) {
+  // Truncate to reasonable length (80 chars) - but not for agent tools
+  // Agent tools display subtext on separate lines, so they can show full text
+  if (!isAgentTool && subtext.length > 80) {
     subtext = subtext.slice(0, 77) + '...';
   }
 
@@ -254,17 +256,30 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Check if this is an agent delegation
   const isAgentDelegation = AGENT_DELEGATION_TOOLS.includes(toolCall.toolName as any);
 
-  // For agent tool, show formatted agent_name as the tool name
-  // For other tools, format the tool name (kebab-case to Title Case)
-  const displayName = isAgentDelegation && toolCall.arguments?.agent_name
-    ? formatDisplayName(toolCall.arguments.agent_name)
-    : formatDisplayName(toolCall.toolName);
+  // Determine display name:
+  // 1. For agent tools: use the agent_name parameter
+  // 2. For tools with custom displayName: use that
+  // 3. Otherwise: auto-format the tool name
+  let displayName: string;
+  if (isAgentDelegation && toolCall.arguments?.agent_name) {
+    displayName = formatDisplayName(toolCall.arguments.agent_name);
+  } else {
+    // Try to get custom displayName from tool instance
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const toolManager = registry.get<ToolManager>('tool_manager');
+      const tool = toolManager?.getTool(toolCall.toolName);
+      displayName = tool?.displayName || formatDisplayName(toolCall.toolName);
+    } catch {
+      displayName = formatDisplayName(toolCall.toolName);
+    }
+  }
 
   // Format arguments (filter out agent_name for agent tool)
   const argsPreview = formatArgsPreview(toolCall.arguments, toolCall.toolName);
 
-  // Extract subtext for display
-  const subtext = extractSubtext(toolCall, toolCall.toolName);
+  // Extract subtext for display (pass isAgentDelegation to prevent truncation)
+  const subtext = extractSubtext(toolCall, toolCall.toolName, isAgentDelegation);
 
   // Indent based on level
   const indent = '    '.repeat(level);
@@ -296,9 +311,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           {displayName}
         </Text>
 
-        {/* Subtext - contextual information */}
-        {subtext && (
-          <Text dimColor> - {subtext}</Text>
+        {/* Subtext - contextual information (not shown inline for agents) */}
+        {subtext && !isAgentDelegation && (
+          <Text dimColor> · {subtext}</Text>
         )}
 
         {/* Arguments preview - only show if config enabled */}
@@ -306,11 +321,24 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           <Text dimColor> ({argsPreview})</Text>
         )}
 
-        {/* Duration - only show if > 5 seconds */}
-        {duration > 5000 && (
+        {/* Duration - always show for agents, show for others if > 5 seconds */}
+        {(isAgentDelegation || duration > 5000) && (
           <Text dimColor> · {durationStr}</Text>
         )}
       </Box>
+
+      {/* Agent subtext - displayed on indented lines below header */}
+      {isAgentDelegation && subtext && (
+        <Box flexDirection="column">
+          {subtext.split('\n').map((line, idx) => (
+            <Box key={idx}>
+              <Text>{indent}    </Text>
+              <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>
+              <Text>{line}</Text>
+            </Box>
+          ))}
+        </Box>
+      )}
 
       {/* Diff preview (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
       {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && toolCall.diffPreview && (

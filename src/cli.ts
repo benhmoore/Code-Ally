@@ -111,36 +111,103 @@ async function handleConfigCommands(
     return false;
   }
 
-  // Show current configuration
-  if (options.configShow) {
-    console.log(JSON.stringify(configManager.getConfig(), null, 2));
-    return true;
-  }
-
-  // Reset configuration to defaults
-  if (options.configReset) {
-    await configManager.reset();
-    console.log('✓ Configuration reset to defaults\n');
-    return true;
-  }
-
-  // Save current settings as new defaults
+  // Handle --config subcommand
   if (options.config) {
-    const newConfig: any = {};
+    // Parse the subcommand: "show [field]", "set field value", "reset [field]"
+    const parts = options.config.trim().split(/\s+/);
+    const subcommand = parts[0]?.toLowerCase();
 
-    if (options.model !== undefined) newConfig.model = options.model;
-    if (options.endpoint !== undefined) newConfig.endpoint = options.endpoint;
-    if (options.temperature !== undefined)
-      newConfig.temperature = options.temperature;
-    if (options.contextSize !== undefined)
-      newConfig.context_size = options.contextSize;
-    if (options.maxTokens !== undefined)
-      newConfig.max_tokens = options.maxTokens;
-    if (options.autoConfirm !== undefined)
-      newConfig.auto_confirm = options.autoConfirm;
+    // Handle "show" subcommand
+    if (subcommand === 'show') {
+      const field = parts[1]; // Optional field name
 
-    await configManager.setValues(newConfig);
-    console.log('✓ Configuration saved successfully\n');
+      if (field) {
+        // Show specific field
+        if (!configManager.hasKey(field)) {
+          console.error(`Unknown config field: ${field}`);
+          const suggestions = configManager.getSimilarKeys(field);
+          if (suggestions.length > 0) {
+            console.error(`Did you mean: ${suggestions.join(', ')}?`);
+          }
+          return true;
+        }
+
+        const value = configManager.getValue(field as any);
+        console.log(`${field}: ${JSON.stringify(value, null, 2)}`);
+        return true;
+      } else {
+        // Show entire config
+        console.log(JSON.stringify(configManager.getConfig(), null, 2));
+      }
+
+      return true;
+    }
+
+    // Handle "set" subcommand
+    if (subcommand === 'set') {
+      // Format: "set field value"
+      if (parts.length < 3) {
+        console.error('Usage: --config "set <field> <value>"');
+        return true;
+      }
+
+      const field = parts[1];
+      const value = parts.slice(2).join(' ');
+      const kvInput = `${field}=${value}`;
+
+      try {
+        const result = await configManager.setFromString(kvInput);
+        console.log(`✓ Configuration updated: ${result.key}`);
+        console.log(`  Old value: ${JSON.stringify(result.oldValue)}`);
+        console.log(`  New value: ${JSON.stringify(result.newValue)}`);
+      } catch (error: any) {
+        console.error(`Error: ${error.message}`);
+      }
+
+      return true;
+    }
+
+    // Handle "reset" subcommand
+    if (subcommand === 'reset') {
+      const field = parts[1]; // Optional field name
+
+      if (field) {
+        // Reset specific field
+        if (!configManager.hasKey(field)) {
+          console.error(`Unknown config field: ${field}`);
+          const suggestions = configManager.getSimilarKeys(field);
+          if (suggestions.length > 0) {
+            console.error(`Did you mean: ${suggestions.join(', ')}?`);
+          }
+          return true;
+        }
+
+        try {
+          const result = await configManager.resetField(field as any);
+          console.log(`✓ Reset ${result.key} to default`);
+          console.log(`  Old value: ${JSON.stringify(result.oldValue)}`);
+          console.log(`  New value: ${JSON.stringify(result.newValue)}`);
+        } catch (error: any) {
+          console.error(`Error: ${error.message}`);
+        }
+      } else {
+        // Reset entire config
+        const changes = await configManager.reset();
+        const changedKeys = Object.keys(changes);
+
+        if (changedKeys.length === 0) {
+          console.log('Configuration is already at default values.');
+        } else {
+          console.log(`✓ Configuration reset to defaults (${changedKeys.length} settings changed)`);
+        }
+      }
+
+      return true;
+    }
+
+    // Unknown subcommand
+    console.error(`Unknown config subcommand: ${subcommand}`);
+    console.error('Usage: --config "show [field]" | "set <field> <value>" | "reset [field]"');
     return true;
   }
 
@@ -375,10 +442,10 @@ async function main() {
     // Check if critical config is missing - force setup wizard if so
     const forceSetup = needsSetup(config);
 
-    // Validate Ollama connectivity and model availability (skip if needs setup or in --once mode)
+    // Validate Ollama connectivity and model availability (skip if needs setup, in --once mode, or --init mode)
     let forceModelSelector = false;
     let availableModels: any[] | undefined;
-    if (!options.once && !forceSetup) {
+    if (!options.once && !forceSetup && !options.init) {
       const validationResult = await runStartupValidation(config);
 
       // Critical error: Ollama not connected - exit immediately

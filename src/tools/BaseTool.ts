@@ -30,6 +30,12 @@ export abstract class BaseTool {
   abstract readonly requiresConfirmation: boolean;
 
   /**
+   * Optional custom display name for UI presentation
+   * If not set, the tool name will be auto-formatted (e.g., 'ls' -> 'Ls', 'read-file' -> 'Read File')
+   */
+  readonly displayName?: string;
+
+  /**
    * Whether to suppress the standard execution animation
    * Set to true if tool manages its own display (e.g., AgentTool)
    */

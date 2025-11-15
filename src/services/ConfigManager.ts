@@ -259,4 +259,154 @@ export class ConfigManager implements IService {
       throw error;
     }
   }
+
+  /**
+   * Parse key-value input supporting multiple formats
+   *
+   * Supports three input formats:
+   * 1. key=value
+   * 2. key = value (with spaces around =)
+   * 3. key value (space-separated)
+   *
+   * @param input - The key-value string to parse
+   * @returns Object with key and valueString, or null if invalid format
+   */
+  parseKeyValue(input: string): { key: string; valueString: string } | null {
+    if (!input || !input.trim()) {
+      return null;
+    }
+
+    // Try format 1 & 2: key=value or key = value
+    const equalsMatch = input.match(/^([^=]+)=(.+)$/);
+    if (equalsMatch && equalsMatch[1] && equalsMatch[2]) {
+      const key = equalsMatch[1].trim();
+      const valueString = equalsMatch[2].trim();
+      if (key && valueString) {
+        return { key, valueString };
+      }
+    }
+
+    // Try format 3: key value (space-separated)
+    const spaceMatch = input.match(/^(\S+)\s+(.+)$/);
+    if (spaceMatch && spaceMatch[1] && spaceMatch[2]) {
+      const key = spaceMatch[1].trim();
+      const valueString = spaceMatch[2].trim();
+      if (key && valueString) {
+        return { key, valueString };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get similar configuration keys for typo suggestions
+   *
+   * Finds keys that start with or contain the input string (case-insensitive).
+   * Results are sorted by relevance (prefix matches first, then contains).
+   *
+   * @param input - The input string to match against
+   * @param limit - Maximum number of suggestions to return (default: 3)
+   * @returns Array of similar configuration keys
+   */
+  getSimilarKeys(input: string, limit: number = 3): string[] {
+    const lowerInput = input.toLowerCase();
+    const allKeys = this.getKeys() as string[];
+
+    // Find keys that start with the input or contain it
+    const matches = allKeys.filter(key => {
+      const lowerKey = key.toLowerCase();
+      return lowerKey.startsWith(lowerInput) || lowerKey.includes(lowerInput);
+    });
+
+    // Sort by relevance (exact prefix match first, then contains)
+    return matches
+      .sort((a, b) => {
+        const aStr = a.toLowerCase();
+        const bStr = b.toLowerCase();
+        const aStarts = aStr.startsWith(lowerInput);
+        const bStarts = bStr.startsWith(lowerInput);
+
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        return aStr.localeCompare(bStr);
+      })
+      .slice(0, limit);
+  }
+
+  /**
+   * Set a configuration value from a key-value string
+   *
+   * High-level method that parses input, validates the key, parses the value,
+   * and sets the configuration.
+   *
+   * @param kvInput - Key-value input string (e.g., "key=value", "key value")
+   * @returns Object with key, oldValue, and newValue
+   * @throws Error if input format is invalid, key is unknown, or validation fails
+   */
+  async setFromString(kvInput: string): Promise<{ key: string; oldValue: any; newValue: any }> {
+    // Parse the input
+    const parsed = this.parseKeyValue(kvInput);
+
+    if (!parsed) {
+      throw new Error('Invalid format. Use key=value, key = value, or key value');
+    }
+
+    const { key, valueString } = parsed;
+
+    // Validate key exists
+    if (!this.hasKey(key)) {
+      const suggestions = this.getSimilarKeys(key);
+
+      if (suggestions.length > 0) {
+        let errorMsg = `Unknown configuration key: ${key}.`;
+        errorMsg += '\n\nDid you mean one of these?';
+        for (const suggestedKey of suggestions) {
+          const currentValue = this.getValue(suggestedKey as keyof Config);
+          errorMsg += `\n  ${suggestedKey} (current: ${JSON.stringify(currentValue)})`;
+        }
+        throw new Error(errorMsg);
+      }
+
+      throw new Error(`Unknown configuration key: ${key}. Use getKeys() to see all options.`);
+    }
+
+    // Parse value (try JSON first, fallback to string)
+    let value: any = valueString;
+    try {
+      value = JSON.parse(valueString);
+    } catch {
+      // Keep as string if not valid JSON
+      value = valueString;
+    }
+
+    // Get old value before setting
+    const oldValue = this.getValue(key as keyof Config);
+
+    // Set the value (this validates and saves)
+    await this.setValue(key as keyof Config, value);
+
+    return { key, oldValue, newValue: value };
+  }
+
+  /**
+   * Reset a single configuration field to its default value
+   *
+   * @param key - Configuration key to reset
+   * @returns Object with key, oldValue, and newValue (default)
+   * @throws Error if key doesn't exist
+   */
+  async resetField(key: keyof Config): Promise<{ key: string; oldValue: any; newValue: any }> {
+    if (!this.hasKey(key as string)) {
+      throw new Error(`Unknown configuration key: ${key}`);
+    }
+
+    const oldValue = this.getValue(key);
+    const newValue = DEFAULT_CONFIG[key];
+
+    (this._config as any)[key] = newValue;
+    await this.saveConfig();
+
+    return { key: key as string, oldValue, newValue };
+  }
 }

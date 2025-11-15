@@ -21,9 +21,7 @@ export interface CLIOptions {
 
   // Configuration management
   init?: boolean;
-  config?: boolean;
-  configShow?: boolean;
-  configReset?: boolean;
+  config?: string;
 
   // Logging
   verbose?: boolean;
@@ -85,8 +83,7 @@ Use '/help' for complete interactive command reference.
       .option('--model <name>', 'The model to use')
       .option(
         '--endpoint <url>',
-        'The Ollama API endpoint URL',
-        'http://localhost:11434'
+        'The Ollama API endpoint URL'
       )
       .option(
         '--temperature <float>',
@@ -112,11 +109,9 @@ Use '/help' for complete interactive command reference.
     this.program
       .option('--init', 'Run interactive setup wizard')
       .option(
-        '--config',
-        'Save the current command line options as config defaults'
-      )
-      .option('--config-show', 'Show the current configuration')
-      .option('--config-reset', 'Reset configuration to defaults');
+        '--config <subcommand>',
+        'Manage configuration (subcommands: show [field], set <field> <value>, reset [field])'
+      );
 
     // Logging
     this.program
@@ -172,8 +167,6 @@ Use '/help' for complete interactive command reference.
       // Configuration
       init: opts.init,
       config: opts.config,
-      configShow: opts.configShow,
-      configReset: opts.configReset,
 
       // Logging
       verbose: opts.verbose,

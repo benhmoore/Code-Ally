@@ -36,6 +36,7 @@ interface FileCount {
 
 export class GrepTool extends BaseTool {
   readonly name = 'grep';
+  readonly displayName = 'Search';
   readonly description =
     'Search files for text patterns with multiple output modes. Use for finding code patterns, text search across files, regex matching. Supports files_with_matches (default), content (with context), and count modes. Supports multiline regex patterns.';
   readonly requiresConfirmation = false; // Read-only operation

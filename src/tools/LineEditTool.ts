@@ -18,6 +18,7 @@ type LineOperation = 'insert' | 'delete' | 'replace';
 
 export class LineEditTool extends BaseTool {
   readonly name = 'line-edit';
+  readonly displayName = 'Edit Line';
   readonly description =
     'Edit files by line number with insert, delete, and replace operations';
   readonly requiresConfirmation = true; // Destructive operation

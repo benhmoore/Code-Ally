@@ -130,6 +130,9 @@ export interface ToolDefinition {
   /** Tool name (will be exposed to LLM) */
   name: string;
 
+  /** Optional custom display name for UI presentation (e.g., "List" instead of "Ls") */
+  display_name?: string;
+
   /** Tool description for LLM */
   description: string;
 
@@ -159,6 +162,13 @@ export interface ToolDefinition {
 
   /** Optional array of agent names this tool is visible to (empty or missing = visible to all) */
   visible_to?: string[];
+
+  /**
+   * Optional subtext template string with {param} placeholders for parameter substitution.
+   * When a tool is executed, parameter names in curly braces will be replaced with their actual values.
+   * Example: "{a} + {b}" will display "5 + 3" when a=5 and b=3
+   */
+  subtext?: string;
 }
 
 /**

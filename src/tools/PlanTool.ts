@@ -729,18 +729,13 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
 
   /**
    * Format subtext for display in UI
-   * Shows: [requirements] (truncated to 80 chars)
+   * Shows full requirements (no truncation - displayed on separate indented lines)
    */
   formatSubtext(args: Record<string, any>): string | null {
     const requirements = args.requirements as string;
 
     if (!requirements) {
       return null;
-    }
-
-    // Truncate to 80 chars if needed
-    if (requirements.length > 80) {
-      return requirements.substring(0, 77) + '...';
     }
 
     return requirements;

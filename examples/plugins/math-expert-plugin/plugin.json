@@ -24,7 +24,8 @@
         },
         "required": ["a", "b"]
       },
-      "visible_to": ["math-expert"]
+      "visible_to": ["math-expert"],
+      "subtext": "{a} + {b}"
     },
     {
       "name": "subtract",
@@ -45,7 +46,8 @@
         },
         "required": ["a", "b"]
       },
-      "visible_to": ["math-expert"]
+      "visible_to": ["math-expert"],
+      "subtext": "{a} - {b}"
     },
     {
       "name": "multiply",
@@ -66,7 +68,8 @@
         },
         "required": ["a", "b"]
       },
-      "visible_to": ["math-expert"]
+      "visible_to": ["math-expert"],
+      "subtext": "{a} × {b}"
     },
     {
       "name": "divide",
@@ -87,7 +90,8 @@
         },
         "required": ["a", "b"]
       },
-      "visible_to": ["math-expert"]
+      "visible_to": ["math-expert"],
+      "subtext": "{a} ÷ {b}"
     },
     {
       "name": "cannot-calculate",
@@ -103,7 +107,8 @@
           }
         }
       },
-      "visible_to": ["math-expert"]
+      "visible_to": ["math-expert"],
+      "subtext": "{reason}"
     }
   ],
   "agents": [

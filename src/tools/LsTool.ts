@@ -28,6 +28,7 @@ interface FileEntry {
 
 export class LsTool extends BaseTool {
   readonly name = 'ls';
+  readonly displayName = 'List';
   readonly description =
     'List files and directories with sizes, types, and modification times';
   readonly requiresConfirmation = false; // Read-only operation
