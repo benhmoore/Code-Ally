@@ -246,7 +246,10 @@ export class AgentTool extends BaseTool implements InjectableTool {
         // Execute read tool
         const result = await toolManager.executeTool(
           'read',
-          { file_paths: contextFiles },
+          {
+            file_paths: contextFiles,
+            description: 'Load context files for agent',
+          },
           toolCallId,
           false, // isRetry
           undefined, // abort signal (agent doesn't exist yet)

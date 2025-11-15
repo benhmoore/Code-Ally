@@ -212,7 +212,10 @@ export const useInputHandlers = (
           });
 
           // Execute bash command with ID for streaming output
-          const result = await bashTool.execute({ command: bashCommand }, toolCallId);
+          const result = await bashTool.execute({
+            command: bashCommand,
+            description: 'Execute user command',
+          }, toolCallId);
 
           // Emit TOOL_CALL_END event to complete the tool call
           activityStream.emit({
@@ -392,7 +395,10 @@ export const useInputHandlers = (
           // Execute read tool via ToolManager.executeTool() for proper integration
           const result = await toolManager.executeTool(
             'read',
-            { file_paths: filteredMentions.files },
+            {
+              file_paths: filteredMentions.files,
+              description: 'Read mentioned files',
+            },
             toolCallId,
             false, // isRetry
             agent.getToolAbortSignal?.(),

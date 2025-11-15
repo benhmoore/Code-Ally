@@ -715,7 +715,12 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.REWIND_REQUEST, (event) => {
     const { requestId } = event.data;
 
-    if (state.isThinking || state.activeToolCalls.length > 0) {
+    // Check if there are any running tool calls (not just completed ones)
+    const runningToolCalls = state.activeToolCalls.filter(
+      (tc) => tc.status === 'executing' || tc.status === 'pending' || tc.status === 'validating'
+    );
+
+    if (state.isThinking || runningToolCalls.length > 0) {
       actions.addMessage({
         role: 'assistant',
         content: 'Cannot rewind while agent is processing. Please wait for current operation to complete.',

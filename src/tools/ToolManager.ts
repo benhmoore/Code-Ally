@@ -16,6 +16,7 @@ import { logger } from '../services/Logger.js';
 import { validateToolName } from '../utils/namingValidation.js';
 import { DelegationContextManager } from '../services/DelegationContextManager.js';
 import { isInjectableTool } from './InjectableTool.js';
+import { AGENT_DELEGATION_TOOLS } from '../config/constants.js';
 
 /**
  * Tool with custom function definition
@@ -306,7 +307,10 @@ export class ToolManager {
       };
 
       // Add to required array if it exists
-      if (functionDef.function.parameters.required && Array.isArray(functionDef.function.parameters.required)) {
+      // Exception: agent delegation tools have description as optional
+      const isAgentDelegationTool = AGENT_DELEGATION_TOOLS.includes(tool.name as any);
+
+      if (!isAgentDelegationTool && functionDef.function.parameters.required && Array.isArray(functionDef.function.parameters.required)) {
         functionDef.function.parameters.required.push('description');
       }
     }
