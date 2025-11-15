@@ -345,7 +345,8 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         },
       });
 
-      // Create agent configuration
+      // Create agent configuration with unique pool key per invocation
+      // This ensures each plan() call gets its own persistent agent
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
         allowTodoManagement: true, // Planning agent can create proposed todos
@@ -355,6 +356,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         taskPrompt: requirements,
         config: config,
         parentCallId: callId,
+        _poolKey: `plan-${callId}`, // Unique key per invocation
         requiredToolCalls: ['todo-add'], // Planning agent MUST call todo-add before exiting
         maxDuration,
         agentType: 'plan',

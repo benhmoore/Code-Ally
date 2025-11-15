@@ -641,9 +641,10 @@ export class AgentTool extends BaseTool implements InjectableTool {
       // IMPORTANT: Create unique pool key for this agent config
       // Must include agent_name to avoid mixing different custom agents
       // For plugin agents, include plugin name to avoid conflicts across plugins
+      // Include callId to ensure each invocation gets its own persistent agent
       const poolKey = agentData._pluginName
-        ? `plugin-${agentData._pluginName}-${agentData.name}`
-        : `agent-${agentData.name}`;
+        ? `plugin-${agentData._pluginName}-${agentData.name}-${callId}`
+        : `agent-${agentData.name}-${callId}`;
 
       // Create config with pool metadata
       const agentConfig: AgentConfig = {

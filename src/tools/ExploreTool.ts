@@ -296,7 +296,8 @@ Note: Multiple independent explorations can be batched for efficiency.`;
       // Map thoroughness to max duration
       const maxDuration = getThoroughnessDuration(thoroughness as any);
 
-      // Create agent configuration
+      // Create agent configuration with unique pool key per invocation
+      // This ensures each explore() call gets its own persistent agent
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
         verbose: false,
@@ -305,6 +306,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         taskPrompt: taskPrompt,
         config: config,
         parentCallId: callId,
+        _poolKey: `explore-${callId}`, // Unique key per invocation
         maxDuration,
         agentType: 'explore',
       };
