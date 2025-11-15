@@ -51,12 +51,7 @@ export function getAgentDisplayName(agentType: string): string {
 }
 
 /**
- * Extract agent type from agent metadata with backward compatibility
- *
- * Priority:
- * 1. Explicit agentType field (new)
- * 2. Pattern matching on baseAgentPrompt (backward compatible)
- * 3. Default fallback
+ * Extract agent type from agent metadata
  *
  * @param metadata - Agent metadata or wrapper with config
  * @returns Agent type string
@@ -70,21 +65,6 @@ export function getAgentType(metadata: AgentMetadata | { config?: AgentConfig })
     return AGENT_TYPES.AGENT;
   }
 
-  // 1. Check explicit agentType field (new system)
-  if (config.agentType) {
-    return config.agentType;
-  }
-
-  // 2. Backward compatibility: pattern match on baseAgentPrompt
-  const baseAgentPrompt = config.baseAgentPrompt;
-  if (baseAgentPrompt) {
-    if (baseAgentPrompt.includes('codebase exploration')) {
-      return AGENT_TYPES.EXPLORE;
-    } else if (baseAgentPrompt.includes('implementation planning')) {
-      return AGENT_TYPES.PLAN;
-    }
-  }
-
-  // 3. Default fallback
-  return AGENT_TYPES.AGENT;
+  // Use explicit agentType field
+  return config.agentType || AGENT_TYPES.AGENT;
 }

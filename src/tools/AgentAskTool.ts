@@ -27,13 +27,14 @@ import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
 export class AgentAskTool extends BaseTool {
   readonly name = 'agent-ask';
   private currentPooledAgent: PooledAgent | null = null;
+  readonly displayName = 'Follow Up';
   readonly description =
     'Continue conversation with a persistent agent created by explore/plan/agent. Send additional messages to the same agent instance. All agents automatically persist and can be queried later. Use when you need follow-up questions or iterative refinement.';
   readonly requiresConfirmation = false; // Read-only operation (for explore agents) or planning operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
-  readonly hideOutput = true; // Hide detailed output
-  readonly visibleInChat = false; // Silent tool call - not shown in UI
+  readonly hideOutput = false; // Show output (but controlled by formatSubtext)
+  readonly visibleInChat = true; // Show in UI with "Follow Up" display name
 
   readonly usageGuidance = `**When to use agent-ask:**
 DEFAULT for ANY follow-up to explore/plan/agent. Agent already has context → dramatically more efficient than starting fresh.
@@ -335,6 +336,28 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
       logger.debug('[ASK_AGENT_TOOL] Error extracting summary:', error);
       return null;
     }
+  }
+
+  /**
+   * Format subtext for display in UI
+   * Shows the message being sent to the agent
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const message = args.message as string;
+
+    if (!message) {
+      return null;
+    }
+
+    return message;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   * AgentAskTool shows 'message' in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['message'];
   }
 
   /**

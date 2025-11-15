@@ -22,6 +22,8 @@ import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { ToolManager } from '@tools/ToolManager.js';
+import { AgentPoolService } from '@services/AgentPoolService.js';
+import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -70,6 +72,11 @@ function formatArgsPreview(args: any, toolName?: string): string {
     // Special case: agent_name is shown as tool name for agent tool, not in subtext
     if (toolName === 'agent') {
       paramsToFilter.add('agent_name');
+    }
+
+    // Special case: agent_id is shown as part of display name for agent-ask, not in subtext
+    if (toolName === 'agent-ask') {
+      paramsToFilter.add('agent_id');
     }
   }
 
@@ -258,11 +265,34 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
   // Determine display name:
   // 1. For agent tools: use the agent_name parameter
-  // 2. For tools with custom displayName: use that
-  // 3. Otherwise: auto-format the tool name
+  // 2. For agent-ask: look up agent from pool and show "Follow Up: {AgentName}"
+  // 3. For tools with custom displayName: use that
+  // 4. Otherwise: auto-format the tool name
   let displayName: string;
   if (isAgentDelegation && toolCall.arguments?.agent_name) {
     displayName = formatDisplayName(toolCall.arguments.agent_name);
+  } else if (toolCall.toolName === 'agent-ask' && toolCall.arguments?.agent_id) {
+    // Special handling for agent-ask: look up agent name from pool
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+      const agentId = toolCall.arguments.agent_id;
+
+      if (agentPoolService && agentPoolService.hasAgent(agentId)) {
+        const metadata = agentPoolService.getAgentMetadata(agentId);
+        if (metadata) {
+          const agentType = getAgentType(metadata);
+          const agentName = getAgentDisplayName(agentType);
+          displayName = `Follow Up: ${agentName}`;
+        } else {
+          displayName = 'Follow Up';
+        }
+      } else {
+        displayName = 'Follow Up';
+      }
+    } catch {
+      displayName = 'Follow Up';
+    }
   } else {
     // Try to get custom displayName from tool instance
     try {
