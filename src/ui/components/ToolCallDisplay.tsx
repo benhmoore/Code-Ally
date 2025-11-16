@@ -69,10 +69,6 @@ function formatArgsPreview(args: any, toolName?: string): string {
       // ServiceRegistry not available (e.g., in tests) - use default fallback
     }
 
-    // Special case: agent_name is shown as tool name for agent tool, not in subtext
-    if (toolName === 'agent') {
-      paramsToFilter.add('agent_name');
-    }
 
     // Special case: agent_id is shown as part of display name for agent-ask, not in subtext
     if (toolName === 'agent-ask') {
@@ -264,13 +260,25 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const isAgentDelegation = AGENT_DELEGATION_TOOLS.includes(toolCall.toolName as any);
 
   // Determine display name:
-  // 1. For agent tools: use the agent_name parameter
+  // 1. For agent tools: Use agent_type (foundational value) and transform to Title Case
   // 2. For agent-ask: look up agent from pool and show "Follow Up: {AgentName}"
   // 3. For tools with custom displayName: use that
   // 4. Otherwise: auto-format the tool name
   let displayName: string;
-  if (isAgentDelegation && toolCall.arguments?.agent_name) {
-    displayName = formatDisplayName(toolCall.arguments.agent_name);
+  if (isAgentDelegation) {
+    // Determine agent_type from tool and transform to Title Case
+    let agentType: string;
+
+    // For 'agent' tool, check agent_type parameter (or default to 'task')
+    if (toolCall.toolName === 'agent') {
+      agentType = toolCall.arguments?.agent_type || 'task';
+    }
+    // For 'explore' and 'plan' tools, the tool name IS the agent type
+    else {
+      agentType = toolCall.toolName; // 'explore' or 'plan'
+    }
+
+    displayName = formatDisplayName(agentType);
   } else if (toolCall.toolName === 'agent-ask' && toolCall.arguments?.agent_id) {
     // Special handling for agent-ask: look up agent name from pool
     try {
@@ -305,7 +313,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
     }
   }
 
-  // Format arguments (filter out agent_name for agent tool)
+  // Format arguments
   const argsPreview = formatArgsPreview(toolCall.arguments, toolCall.toolName);
 
   // Extract subtext for display (pass isAgentDelegation to prevent truncation in extractSubtext)
@@ -378,12 +386,21 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Thinking content - displayed inline for agent delegations when show_thinking_in_chat is enabled */}
+      {/* Thinking content - displayed inline for agent delegations */}
       {/* Only show while agent is running - cleared when complete */}
-      {isAgentDelegation && toolCall.thinking && config?.show_thinking_in_chat && isRunning && (
+      {isAgentDelegation && toolCall.thinking && isRunning && (
         <Box>
           <Text>{indent}    </Text>
-          <Text dimColor italic>∴ {toolCall.thinking}</Text>
+          <Text dimColor italic>
+            {config?.show_thinking_in_chat ? (
+              `∴ ${toolCall.thinking}`
+            ) : (
+              // Show truncated version when show_thinking_in_chat is false
+              toolCall.startTime
+                ? `∴ Thought for ${formatDuration(Date.now() - toolCall.startTime)}`
+                : '∴ Thought'
+            )}
+          </Text>
         </Box>
       )}
 
@@ -399,20 +416,17 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Error output as threaded child (hidden if collapsed, but always show errors even with hideOutput) */}
-      {/* Hide validation_error type - these are model-directed messages, not user errors */}
-      {!toolCall.collapsed && trimmedError && toolCall.error_type !== 'validation_error' && (
+      {/* Error output as threaded child - ALWAYS show errors even when collapsed or hideOutput is true */}
+      {trimmedError && (
         <Box flexDirection="column">
           <Box>
             <Text>{indent}    </Text>
-            <Text color="red">→ </Text>
-            <Text color="red" dimColor>Error</Text>
+            <Text color={UI_COLORS.ERROR}>→ </Text>
+            <Text color={UI_COLORS.ERROR}>Error</Text>
           </Box>
           <Box paddingLeft={indent.length + 8}>
-            <Text color="red" dimColor>
-              {config?.show_full_tool_output || trimmedError.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
-                ? trimmedError
-                : `${trimmedError.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
+            <Text color={UI_COLORS.ERROR}>
+              {trimmedError}
             </Text>
           </Box>
         </Box>

@@ -462,10 +462,11 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
           content += `\n\nActivated todos:\n${todoSummary}`;
         }
 
-        // Build response with agent_id (always returned since agents always persist)
+        // Build response with agent_used
         const successResponse: Record<string, any> = {
           content,
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
+          agent_used: 'plan',
           system_reminder: `The plan has been automatically accepted and todos activated. If this plan doesn't align with user intent, use deny-proposal to reject it and explain why.`,
         };
 
@@ -523,7 +524,9 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
     } catch (error) {
       return this.formatErrorResponse(
         `Planning failed: ${formatError(error)}`,
-        'execution_error'
+        'execution_error',
+        undefined,
+        { agent_used: 'plan' }
       );
     }
   }

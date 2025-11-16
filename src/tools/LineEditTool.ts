@@ -58,7 +58,7 @@ export class LineEditTool extends BaseTool {
             },
             num_lines: {
               type: 'integer',
-              description: 'Number of lines to delete (only for delete operation, default: 1)',
+              description: 'Number of lines to delete/replace (for delete and replace operations, default: 1)',
             },
           },
           required: ['file_path', 'operation', 'line_number'],
@@ -114,7 +114,11 @@ export class LineEditTool extends BaseTool {
             modifiedLines = deleteResult.lines!;
             break;
           case 'replace':
-            modifiedLines = this.performReplace(lines, lineNumber, content);
+            const replacePreviewResult = this.performReplace(lines, lineNumber, content, numLines, lines.length);
+            if (replacePreviewResult.error) {
+              throw new Error('Replace operation would fail'); // Skip preview
+            }
+            modifiedLines = replacePreviewResult.lines!;
             break;
           default:
             throw new Error('Invalid operation');
@@ -263,8 +267,14 @@ export class LineEditTool extends BaseTool {
           break;
 
         case 'replace':
-          modifiedLines = this.performReplace(lines, lineNumber, content);
-          operationDescription = `Replaced line ${lineNumber}`;
+          const replaceResult = this.performReplace(lines, lineNumber, content, numLines, totalLines);
+          if (replaceResult.error) {
+            return this.formatErrorResponse(replaceResult.error, 'validation_error');
+          }
+          modifiedLines = replaceResult.lines!;
+          operationDescription = numLines === 1
+            ? `Replaced line ${lineNumber}`
+            : `Replaced ${numLines} line(s) starting at line ${lineNumber}`;
           break;
 
         default:
@@ -351,13 +361,28 @@ export class LineEditTool extends BaseTool {
   }
 
   /**
-   * Replace line at the specified position
+   * Replace lines at the specified position
    */
-  private performReplace(lines: string[], lineNumber: number, content: string): string[] {
+  private performReplace(
+    lines: string[],
+    lineNumber: number,
+    content: string,
+    numLines: number = 1,
+    totalLines: number
+  ): { lines?: string[]; error?: string } {
+    const endLine = lineNumber + numLines - 1;
+
+    if (endLine > totalLines) {
+      const context = this.getLineContext(lines, totalLines, Math.max(1, totalLines - TEXT_LIMITS.LINE_EDIT_CONTEXT_LINES));
+      return {
+        error: `Cannot replace ${numLines} line(s) starting at line ${lineNumber} (file has ${totalLines} line${totalLines !== 1 ? 's' : ''}).\n\nLast lines of file:\n${context}\n\nUse the Read tool to see the actual file content.`,
+      };
+    }
+
     const newLines = content.split('\n');
     const beforeLines = lines.slice(0, lineNumber - 1);
-    const afterLines = lines.slice(lineNumber);
-    return [...beforeLines, ...newLines, ...afterLines];
+    const afterLines = lines.slice(lineNumber + numLines - 1);
+    return { lines: [...beforeLines, ...newLines, ...afterLines] };
   }
 
   /**

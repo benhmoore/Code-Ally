@@ -51,10 +51,7 @@ export class ConfigManager implements IService {
    */
   private async loadConfig(): Promise<void> {
     try {
-      // Check if config file exists
-      await fs.access(this._configPath);
-
-      // Read and parse config file
+      // Try to read config file directly (combines existence check + read)
       const content = await fs.readFile(this._configPath, 'utf-8');
       const fileConfig = JSON.parse(content);
 
@@ -84,12 +81,17 @@ export class ConfigManager implements IService {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        // Config file doesn't exist - use defaults and create it
+        // Config file doesn't exist - create it with defaults
+        logger.info(`Config file not found at ${this._configPath} - creating with defaults`);
         await this.saveConfig();
       } else if (error instanceof SyntaxError) {
-        logger.error('Error parsing config file - using defaults:', error.message);
+        // Invalid JSON - log but don't overwrite (user can fix manually)
+        logger.error(`Error parsing config file (invalid JSON) - using defaults: ${error.message}`);
+        logger.error(`Config file at ${this._configPath} contains invalid JSON. Fix it or delete it to reset.`);
       } else {
-        logger.error('Error loading config - using defaults:', error);
+        // Other error (permissions, etc.) - log but don't overwrite
+        logger.error(`Error loading config from ${this._configPath}:`, error);
+        logger.error('Using default config values. Config file was not modified.');
       }
     }
   }

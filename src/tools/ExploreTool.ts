@@ -402,10 +402,11 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         // Append note that user cannot see this
         const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this output! You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
 
-        // Build response with agent_id (always returned since agents always persist)
+        // Build response with agent_used
         const successResponse: Record<string, any> = {
           content: result,
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
+          agent_used: 'explore',
         };
 
         // Always include agent_id when available
@@ -461,7 +462,9 @@ Note: Multiple independent explorations can be batched for efficiency.`;
     } catch (error) {
       return this.formatErrorResponse(
         `Exploration failed: ${formatError(error)}`,
-        'execution_error'
+        'execution_error',
+        undefined,
+        { agent_used: 'explore' }
       );
     }
   }

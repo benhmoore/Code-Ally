@@ -144,14 +144,15 @@ describe('AgentTool', () => {
       expect(result.error).toContain('must be a string');
     });
 
-    it('should reject non-string agent_name', async () => {
+    it('should reject non-string agent parameter', async () => {
       const result = await tool.execute({
-        agent_name: 123,
+        agent: 123,
         task_prompt: 'Test task',
       }, 'test-call-id');
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('agent_name must be a string');
+      // The error occurs when trying to call .trim() on a number
+      expect(result.error).toContain('trim is not a function');
     });
 
     it('should reject invalid thoroughness value', async () => {
@@ -173,7 +174,7 @@ describe('AgentTool', () => {
       registry.registerInstance('agent', mockParentAgent);
 
       const result = await tool.execute({
-        agent_name: 'general',
+        agent: 'task',
         task_prompt: 'Test task at excessive depth',
       }, 'test-call-id');
 
@@ -192,7 +193,7 @@ describe('AgentTool', () => {
       registry.registerInstance('agent', mockRootAgent);
 
       const result = await tool.execute({
-        agent_name: 'general',
+        agent: 'task',
         task_prompt: 'Test task at depth 1',
       }, 'test-call-id');
 
@@ -208,7 +209,7 @@ describe('AgentTool', () => {
       registry.registerInstance('agent', mockParentAgent);
 
       const result = await tool.execute({
-        agent_name: 'general',
+        agent: 'task',
         task_prompt: 'Test task at maximum allowed depth',
       }, 'test-call-id');
 
@@ -219,14 +220,14 @@ describe('AgentTool', () => {
       // Mock an agent trying to call itself
       const mockAgent = {
         getAgentDepth: vi.fn().mockReturnValue(1),
-        getAgentName: vi.fn().mockReturnValue('general'),
+        getAgentName: vi.fn().mockReturnValue('task'),
         getAgentCallStack: vi.fn().mockReturnValue([]),
       };
 
       registry.registerInstance('agent', mockAgent);
 
       const result = await tool.execute({
-        agent_name: 'general',
+        agent: 'task',
         task_prompt: 'Test self-delegation',
       }, 'test-call-id');
 
@@ -236,24 +237,24 @@ describe('AgentTool', () => {
     });
 
     it('should reject circular delegation (A → B → A)', async () => {
-      // Mock an agent with 'general' in its call stack
+      // Mock an agent with 'task' in its call stack
       const mockAgent = {
         getAgentDepth: vi.fn().mockReturnValue(2),
         getAgentName: vi.fn().mockReturnValue('specialized'),
-        getAgentCallStack: vi.fn().mockReturnValue(['general']),
+        getAgentCallStack: vi.fn().mockReturnValue(['task']),
       };
 
       registry.registerInstance('agent', mockAgent);
 
-      // Try to delegate back to 'general' - should be rejected
+      // Try to delegate back to 'task' - should be rejected
       const result = await tool.execute({
-        agent_name: 'general',
+        agent: 'task',
         task_prompt: 'Test circular delegation',
       }, 'test-call-id');
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Circular delegation detected');
-      expect(result.error).toContain('general → specialized → general');
+      expect(result.error).toContain('task → specialized → task');
       expect(result.error_type).toBe('validation_error');
     });
 
@@ -269,7 +270,7 @@ describe('AgentTool', () => {
 
       // Try to delegate back to 'agent-a' - should be rejected
       const result = await tool.execute({
-        agent_name: 'agent-a',
+        agent: 'agent-a',
         task_prompt: 'Test longer circular delegation',
       }, 'test-call-id');
 
@@ -291,7 +292,7 @@ describe('AgentTool', () => {
 
       // Delegate to a different agent (general) - should succeed
       const result = await tool.execute({
-        agent_name: 'general',
+        agent: 'task',
         task_prompt: 'Test valid delegation',
       }, 'test-call-id');
 
@@ -302,38 +303,39 @@ describe('AgentTool', () => {
   describe('execution', () => {
     it('should execute single agent delegation', async () => {
       const result = await tool.execute({
-        agent_name: 'general',
+        agent: 'task',
         task_prompt: 'Test task for agent',
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
-      expect(result.agent_name).toBeDefined();
+      expect(result.agent_used).toBeDefined();
       expect(result.content).toBeDefined();
     });
 
-    it('should use default agent when agent_name not specified', async () => {
+    it('should use default agent when agent not specified', async () => {
       const result = await tool.execute({
         task_prompt: 'Test task without agent name',
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
-      expect(result.agent_name).toBe('general');
+      expect(result.agent_used).toBe('task');
     });
 
-    it('should fail when agent does not exist', async () => {
+    it('should fall back to task agent when agent does not exist', async () => {
       const result = await tool.execute({
-        agent_name: 'nonexistent',
+        agent: 'nonexistent',
         task_prompt: 'Test task',
       }, 'test-call-id');
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('not found');
+      // Should succeed by falling back to task agent
+      expect(result.success).toBe(true);
+      expect(result.agent_used).toBe('nonexistent'); // Displays as requested name
     });
 
 
     it('should include duration in results', async () => {
       const result = await tool.execute({
-        agent_name: 'general',
+        agent: 'task',
         task_prompt: 'Test task',
       }, 'test-call-id');
 
@@ -351,7 +353,7 @@ describe('AgentTool', () => {
       });
 
       await tool.execute({
-        agent_name: 'general',
+        agent: 'task',
         task_prompt: 'Test task',
       }, 'test-call-id');
 

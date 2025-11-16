@@ -78,7 +78,7 @@ ally
 "Delegate to my-agent: analyze the database schema in schema.sql"
 ```
 
-The main agent will call `agent(agent_name="my-agent", task_prompt="...")` and delegate the task.
+The main agent will call `agent(agent="my-agent", task_prompt="...")` and delegate the task.
 
 ## Agent Definition File Format
 
@@ -308,12 +308,12 @@ Each agent configuration gets a unique pool key:
 
 **User agents:**
 ```
-agent-{agent_name}
+agent-{agent}
 ```
 
 **Plugin agents:**
 ```
-plugin-{plugin_name}-{agent_name}
+plugin-{plugin_name}-{agent}
 ```
 
 **Why pool keys matter:**
@@ -348,9 +348,9 @@ Lowest priority, default agents
 **Example:**
 
 ```
-User creates: ~/.ally/agents/general.md
-Plugin provides: agents[{name: "general", ...}]
-Built-in: dist/agents/general.md
+User creates: ~/.ally/agents/task.md
+Plugin provides: agents[{name: "task", ...}]
+Built-in: dist/agents/task.md
 
 Result: User version loads
 ```
@@ -598,7 +598,7 @@ Provide specific line references and actionable suggestions.
 **Problem:** `Tool 'my-tool' requires agent 'other-agent'`
 
 **Solutions:**
-1. Use correct agent: `agent(agent_name="other-agent", ...)`
+1. Use correct agent: `agent(agent="other-agent", ...)`
 2. Remove `visible_to` constraint from tool (or leave array empty)
 3. Verify agent name matches exactly
 

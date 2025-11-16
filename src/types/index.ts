@@ -16,6 +16,8 @@ export interface Message {
   tool_call_id?: string;
   tool_calls?: ToolCall[];
   thinking?: string; // Native reasoning/thinking content from model
+  thinkingStartTime?: number; // When thinking started (for duration calculation)
+  thinkingEndTime?: number; // When thinking completed (for duration calculation)
   timestamp?: number; // For chronological ordering with tool calls
   metadata?: MessageMetadata; // Presentation hints and command metadata
 }
@@ -209,6 +211,7 @@ export interface ToolCallState {
   shouldCollapse?: boolean; // For tools that should collapse after completion
   hideOutput?: boolean; // For tools that should never show output
   thinking?: string; // Thinking content for agent tools (when show_thinking_in_chat is enabled)
+  agentId?: string; // Pool agent ID for agent delegations (used to look up agent type)
   diffPreview?: {
     oldContent: string;
     newContent: string;

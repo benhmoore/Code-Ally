@@ -124,7 +124,7 @@ describe('CommandHandler', () => {
     });
 
     it('should handle /agent show', async () => {
-      const result = await commandHandler.handleCommand('/agent show general', []);
+      const result = await commandHandler.handleCommand('/agent show task', []);
       expect(result.handled).toBe(true);
     });
 

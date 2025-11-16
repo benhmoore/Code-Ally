@@ -38,7 +38,7 @@ export class TodoAddTool extends BaseTool {
           properties: {
             todos: {
               type: 'array',
-              description: 'Array of new todos',
+              description: 'Array of new todos. Each todo must have "content", "status", and "activeForm" fields.',
               items: {
                 type: 'object',
                 properties: {

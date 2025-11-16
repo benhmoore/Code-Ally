@@ -320,7 +320,7 @@ describe('ToolValidator', () => {
           type: 'object',
           properties: {
             task_prompt: { type: 'string' },
-            agent_name: { type: 'string' },
+            agent: { type: 'string' },
           },
           required: ['task_prompt'],
         },

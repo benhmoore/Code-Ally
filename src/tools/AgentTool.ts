@@ -77,9 +77,9 @@ export class AgentTool extends BaseTool implements InjectableTool {
               type: 'string',
               description: 'Task instructions. For concurrent tasks, make multiple agent() calls.',
             },
-            agent_name: {
+            agent_type: {
               type: 'string',
-              description: 'Agent name (default: task)',
+              description: "Agent type to use (e.g., 'plan', 'explore', 'refactor-expert'). Defaults to 'task'.",
             },
             thoroughness: {
               type: 'string',
@@ -102,7 +102,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
   protected async executeImpl(args: any): Promise<ToolResult> {
     this.captureParams(args);
 
-    const agentName = args.agent_name || 'task';
+    const agentType = (args.agent_type || 'task').trim();
     const taskPrompt = args.task_prompt;
     const thoroughness = args.thoroughness ?? 'uncapped';
     const contextFiles = args.context_files;
@@ -116,10 +116,18 @@ export class AgentTool extends BaseTool implements InjectableTool {
       );
     }
 
-    // Validate agent_name if provided
-    if (args.agent_name && typeof args.agent_name !== 'string') {
+    // Validate agent_type if provided
+    if (args.agent_type && typeof args.agent_type !== 'string') {
       return this.formatErrorResponse(
-        'agent_name must be a string',
+        'agent_type must be a string',
+        'validation_error'
+      );
+    }
+
+    // Validate agent_type is not empty after trimming
+    if (agentType.length === 0) {
+      return this.formatErrorResponse(
+        'agent_type cannot be empty',
         'validation_error'
       );
     }
@@ -162,31 +170,31 @@ export class AgentTool extends BaseTool implements InjectableTool {
     // Validate depth limit
     if (newDepth > AGENT_CONFIG.MAX_AGENT_DEPTH) {
       return this.formatErrorResponse(
-        `Cannot delegate to agent '${agentName}': maximum nesting depth (${AGENT_CONFIG.MAX_AGENT_DEPTH}) exceeded. Current depth: ${currentDepth}, attempted depth: ${newDepth}. Maximum structure: Ally → Agent1 → Agent2 → Agent3.`,
+        `Cannot delegate to agent '${agentType}': maximum nesting depth (${AGENT_CONFIG.MAX_AGENT_DEPTH}) exceeded. Current depth: ${currentDepth}, attempted depth: ${newDepth}. Maximum structure: Ally → Agent1 → Agent2 → Agent3.`,
         'depth_limit_exceeded'
       );
     }
 
     // Prevent self-delegation (agent calling itself)
     const currentAgentName = currentAgent?.getAgentName?.();
-    if (currentAgentName && agentName === currentAgentName) {
+    if (currentAgentName && agentType === currentAgentName) {
       return this.formatErrorResponse(
-        `Agent '${agentName}' cannot delegate to itself. Please choose a different agent.`,
+        `Agent '${agentType}' cannot delegate to itself. Please choose a different agent.`,
         'validation_error'
       );
     }
 
     // Prevent circular delegation (detect cycles in agent call chain)
     const currentCallStack = currentAgent?.getAgentCallStack?.() ?? [];
-    if (currentCallStack.includes(agentName)) {
+    if (currentCallStack.includes(agentType)) {
       // Build chain visualization for error message
       // Include current agent name if available to show full chain
       const fullChain = currentAgentName
-        ? [...currentCallStack, currentAgentName, agentName]
-        : [...currentCallStack, agentName];
+        ? [...currentCallStack, currentAgentName, agentType]
+        : [...currentCallStack, agentType];
       const chainVisualization = fullChain.join(' → ');
       return this.formatErrorResponse(
-        `Circular delegation detected: agent '${agentName}' is already in the call chain (${chainVisualization}). Choose a different agent to break the cycle.`,
+        `Circular delegation detected: agent '${agentType}' is already in the call chain (${chainVisualization}). Choose a different agent to break the cycle.`,
         'validation_error'
       );
     }
@@ -294,14 +302,14 @@ export class AgentTool extends BaseTool implements InjectableTool {
       }
     }
 
-    return await this.executeSingleAgentWrapper(agentName, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
+    return await this.executeSingleAgentWrapper(agentType, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
   }
 
   /**
    * Execute a single agent and format the result
    */
   private async executeSingleAgentWrapper(
-    agentName: string,
+    agentType: string,
     taskPrompt: string,
     thoroughness: string,
     callId: string,
@@ -309,16 +317,16 @@ export class AgentTool extends BaseTool implements InjectableTool {
     currentAgentName: string | undefined,
     initialMessages?: Message[]
   ): Promise<ToolResult> {
-    logger.debug('[AGENT_TOOL] Executing single agent:', agentName, 'callId:', callId, 'thoroughness:', thoroughness);
+    logger.debug('[AGENT_TOOL] Executing single agent:', agentType, 'callId:', callId, 'thoroughness:', thoroughness);
 
     try {
-      const result = await this.executeSingleAgent(agentName, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
+      const result = await this.executeSingleAgent(agentType, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
 
       if (result.success) {
         // Build response with agent_id (always returned since agents always persist)
         const successResponse: Record<string, any> = {
           content: result.result, // Human-readable output for LLM
-          agent_name: result.agent_used,
+          agent_used: result.agent_used,
           duration_seconds: result.duration_seconds,
         };
 
@@ -332,13 +340,21 @@ export class AgentTool extends BaseTool implements InjectableTool {
       } else {
         return this.formatErrorResponse(
           result.error || 'Agent execution failed',
-          'execution_error'
+          result.error_type || 'execution_error',
+          undefined,
+          {
+            agent_used: result.agent_used,
+          }
         );
       }
     } catch (error) {
       return this.formatErrorResponse(
         `Agent execution failed: ${formatError(error)}`,
-        'execution_error'
+        'execution_error',
+        undefined,
+        {
+          agent_used: agentType,
+        }
       );
     }
   }
@@ -349,7 +365,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
    * Agents always persist in the agent pool for reuse.
    */
   private async executeSingleAgent(
-    agentName: string,
+    agentType: string,
     taskPrompt: string,
     thoroughness: string,
     callId: string,
@@ -357,7 +373,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
     currentAgentName: string | undefined,
     initialMessages?: Message[]
   ): Promise<any> {
-    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentName, 'callId:', callId, 'thoroughness:', thoroughness);
+    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentType, 'callId:', callId, 'thoroughness:', thoroughness);
     const startTime = Date.now();
 
     try {
@@ -367,16 +383,26 @@ export class AgentTool extends BaseTool implements InjectableTool {
 
       // Load agent data (from built-in or user directory)
       // Pass current agent name for visibility filtering
-      logger.debug('[AGENT_TOOL] Loading agent:', agentName, 'caller:', currentAgentName || 'main');
-      const agentData = await agentManager.loadAgent(agentName, currentAgentName);
+      logger.debug('[AGENT_TOOL] Loading agent:', agentType, 'caller:', currentAgentName || 'main');
+      let agentData = await agentManager.loadAgent(agentType, currentAgentName);
       logger.debug('[AGENT_TOOL] Agent data loaded:', agentData ? 'success' : 'null');
 
       if (!agentData) {
-        return {
-          success: false,
-          error: `Agent '${agentName}' not found`,
-          agent_used: agentName,
-        };
+        // Fall back to task agent - allowing the model to create named aliases
+        logger.debug('[AGENT_TOOL] Agent not found, creating alias for task agent with name:', agentType);
+        const taskAgentData = await agentManager.loadAgent('task', currentAgentName);
+
+        if (!taskAgentData) {
+          return {
+            success: false,
+            error: `Agent '${agentType}' not found and fallback to 'task' agent also failed`,
+            agent_used: agentType,
+          };
+        }
+
+        // Use task agent but preserve requested agent type name (creating an alias)
+        agentData = { ...taskAgentData, name: agentType };
+        logger.debug('[AGENT_TOOL] Created alias:', agentType, '-> task');
       }
 
       // Check if current agent has permission to delegate to sub-agents
@@ -390,7 +416,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
             success: false,
             error: `Agent '${currentAgentName}' cannot delegate to sub-agents (can_delegate_to_agents: false)`,
             error_type: 'permission_denied',
-            agent_used: agentName,
+            agent_used: agentType,
           };
         }
       }
@@ -401,14 +427,14 @@ export class AgentTool extends BaseTool implements InjectableTool {
         type: ActivityEventType.AGENT_START,
         timestamp: Date.now(),
         data: {
-          agentName,
+          agentName: agentType,
           taskPrompt,
         },
       });
 
       // Execute the agent task
       logger.debug('[AGENT_TOOL] Executing agent task...');
-      const taskResult = await this.executeAgentTask(agentData, taskPrompt, thoroughness, callId, newDepth, initialMessages);
+      const taskResult = await this.executeAgentTask(agentData, agentType, taskPrompt, thoroughness, callId, newDepth, initialMessages);
       logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
 
       const duration = (Date.now() - startTime) / 1000;
@@ -419,7 +445,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
         type: ActivityEventType.AGENT_END,
         timestamp: Date.now(),
         data: {
-          agentName,
+          agentName: agentType,
           result: taskResult.result,
           duration,
         },
@@ -428,7 +454,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
       const response: any = {
         success: true,
         result: taskResult.result,
-        agent_used: agentName,
+        agent_used: agentType,
         duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
       };
 
@@ -442,7 +468,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
       return {
         success: false,
         error: `Error executing agent task: ${formatError(error)}`,
-        agent_used: agentName,
+        agent_used: agentType,
       };
     }
   }
@@ -454,6 +480,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
    */
   private async executeAgentTask(
     agentData: any,
+    agentType: string,
     taskPrompt: string,
     thoroughness: string,
     callId: string,
@@ -547,7 +574,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
         agentData.system_prompt,
         taskPrompt,
         resolvedReasoningEffort,
-        agentData.name
+        agentType
       );
       logger.debug('[AGENT_TOOL] Specialized prompt created, length:', specializedPrompt?.length || 0);
     } catch (error) {
@@ -626,7 +653,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
         parentCallId: callId,
         maxDuration,
         initialMessages,
-        agentType: agentData.name || 'agent',
+        agentType: agentType,
         requirements: agentData.requirements,
         agentDepth: newDepth,
         agentCallStack: newCallStack,
@@ -642,12 +669,12 @@ export class AgentTool extends BaseTool implements InjectableTool {
       );
     } else {
       // IMPORTANT: Create unique pool key for this agent config
-      // Must include agent_name to avoid mixing different custom agents
+      // Must include agent type to avoid mixing different custom agents
       // For plugin agents, include plugin name to avoid conflicts across plugins
       // Include callId to ensure each invocation gets its own persistent agent
       const poolKey = agentData._pluginName
-        ? `plugin-${agentData._pluginName}-${agentData.name}-${callId}`
-        : `agent-${agentData.name}-${callId}`;
+        ? `plugin-${agentData._pluginName}-${agentType}-${callId}`
+        : `agent-${agentType}-${callId}`;
 
       // Create config with pool metadata
       const agentConfig: AgentConfig = {
@@ -661,7 +688,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
         _poolKey: poolKey, // CRITICAL: Add this for pool matching
         maxDuration,
         initialMessages,
-        agentType: agentData.name || 'agent',
+        agentType: agentType,
         requirements: agentData.requirements,
         agentDepth: newDepth,
         agentCallStack: newCallStack,
@@ -690,13 +717,13 @@ export class AgentTool extends BaseTool implements InjectableTool {
         logger.debug(`[AGENT_TOOL] Delegation registration skipped: ${error}`);
       }
 
-      logger.debug(`[AGENT_TOOL] Using pooled agent ${agentId} for ${agentData.name}`);
+      logger.debug(`[AGENT_TOOL] Using pooled agent ${agentId} for ${agentType}`);
     }
 
     // Track active delegation
     this.activeDelegations.set(callId, {
       subAgent,
-      agentName: agentData.name,
+      agentName: agentType,
       taskPrompt,
       startTime: Date.now(),
     });
@@ -712,7 +739,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
       // Ensure we have a substantial response
       if (!response || response.trim().length === 0) {
         logger.debug('[AGENT_TOOL] Sub-agent returned empty response, attempting to extract summary from conversation');
-        const summary = this.extractSummaryFromConversation(subAgent, agentData.name);
+        const summary = this.extractSummaryFromConversation(subAgent, agentType);
         if (summary) {
           finalResponse = summary;
         } else {
@@ -725,18 +752,18 @@ export class AgentTool extends BaseTool implements InjectableTool {
             if (explicitSummary && explicitSummary.trim().length > 0) {
               finalResponse = explicitSummary;
             } else {
-              finalResponse = `Agent '${agentData.name}' completed the task but did not provide a summary.`;
+              finalResponse = `Agent '${agentType}' completed the task but did not provide a summary.`;
             }
           } catch (summaryError) {
             logger.debug('[AGENT_TOOL] Failed to get explicit summary:', summaryError);
-            finalResponse = `Agent '${agentData.name}' completed the task but did not provide a summary.`;
+            finalResponse = `Agent '${agentType}' completed the task but did not provide a summary.`;
           }
         }
       } else {
         // Check if response is just an interruption or error message
         if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
           logger.debug('[AGENT_TOOL] Sub-agent response seems incomplete, attempting to extract summary');
-          const summary = this.extractSummaryFromConversation(subAgent, agentData.name);
+          const summary = this.extractSummaryFromConversation(subAgent, agentType);
           if (summary && summary.length > response.length) {
             finalResponse = summary;
           } else {
@@ -950,10 +977,6 @@ export class AgentTool extends BaseTool implements InjectableTool {
 
     const lines: string[] = [];
 
-    // Show agent name if available
-    if (result.agent_name) {
-      lines.push(`Agent: ${result.agent_name}`);
-    }
 
     // Show duration if available
     if (result.duration_seconds !== undefined) {

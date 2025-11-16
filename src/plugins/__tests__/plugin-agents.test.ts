@@ -545,7 +545,7 @@ Agent prompt.`;
         visible_to: ['data-analyst'],
       };
 
-      const currentAgent = 'general';
+      const currentAgent = 'task';
 
       // Validation should fail
       expect(toolDef.visible_to).not.toContain(currentAgent);
@@ -576,7 +576,7 @@ Agent prompt.`;
       expect(result1.valid).toBe(true);
 
       // Should fail with wrong agent
-      const result2 = validateToolForAgent(toolDef, 'general');
+      const result2 = validateToolForAgent(toolDef, 'task');
       expect(result2.valid).toBe(false);
       expect(result2.error).toContain("only visible to agents:");
     });
@@ -584,7 +584,7 @@ Agent prompt.`;
     it('should provide clear error message for mismatched agent', () => {
       const toolName = 'database_query';
       const visibleTo = ['database-agent'];
-      const currentAgent = 'general';
+      const currentAgent = 'task';
 
       const errorMessage = `Tool '${toolName}' is only visible to agents: [${visibleTo.join(', ')}]. Current agent is '${currentAgent}'`;
 
@@ -902,7 +902,7 @@ You are a complete agent for integration testing.`;
       // Try to delegate to target-agent from restricted-agent
       const result = await agentTool.execute(
         {
-          agent_name: 'target-agent',
+          agent: 'target-agent',
           task_prompt: 'Do something',
         },
         'test-call-id'
@@ -968,7 +968,7 @@ You are a complete agent for integration testing.`;
       // Try to delegate - should NOT get permission_denied error
       const result = await agentTool.execute(
         {
-          agent_name: 'target-agent-2',
+          agent: 'target-agent-2',
           task_prompt: 'Do something',
         },
         'test-call-id-2'
@@ -1058,7 +1058,7 @@ You are a complete agent for integration testing.`;
       // Execute agent task
       await agentTool.execute(
         {
-          agent_name: 'no-see-agent',
+          agent: 'no-see-agent',
           task_prompt: 'Do something',
         },
         'test-call-id-3'
@@ -1154,7 +1154,7 @@ You are a complete agent for integration testing.`;
 
       await agentTool.execute(
         {
-          agent_name: 'can-see-agent',
+          agent: 'can-see-agent',
           task_prompt: 'Do something',
         },
         'test-call-id-4'

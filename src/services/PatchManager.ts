@@ -226,7 +226,7 @@ export class PatchManager implements IService {
       // Run cleanup to enforce limits
       await this.cleanupManager.runAutomaticCleanup();
 
-      logger.info(`Captured ${operationType} for ${filePath} as patch ${patchNumber}`);
+      logger.debug(`Captured ${operationType} for ${filePath} as patch ${patchNumber}`);
       return patchNumber;
     } catch (error) {
       logger.error('Failed to capture operation:', error);

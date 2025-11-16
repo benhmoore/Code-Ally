@@ -47,7 +47,7 @@ interface StatusIndicatorProps {
  * Helper function to detect active agent-ask tool and extract display name
  * Returns agent name if agent-ask is currently executing, null otherwise
  *
- * This shows "Checking with [agent_name]..." when the main agent (Ally)
+ * This shows "Checking with [AgentName]..." when the main agent (Ally)
  * is consulting a subagent in the background via agent-ask.
  *
  * Note: Direct calls to explore/plan/agent do NOT trigger this - those are

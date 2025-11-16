@@ -4,6 +4,7 @@ import { Message } from '@shared/index.js';
 import { MarkdownText } from './MarkdownText.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { formatDuration } from '../utils/timeUtils.js';
 
 interface MessageDisplayProps {
   /** Message to display */
@@ -59,10 +60,17 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
 
     return (
       <Box flexDirection="column">
-        {showThinking && thinking && (
+        {thinking && (
           <Box>
             <Text dimColor italic>
-              ∴ {thinking}
+              {showThinking ? (
+                `∴ ${thinking}`
+              ) : (
+                // Show truncated version when show_thinking_in_chat is false
+                message.thinkingStartTime && message.thinkingEndTime
+                  ? `∴ Thought for ${formatDuration(message.thinkingEndTime - message.thinkingStartTime)}`
+                  : '∴ Thought'
+              )}
             </Text>
           </Box>
         )}

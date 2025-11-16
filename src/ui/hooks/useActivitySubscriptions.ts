@@ -68,6 +68,9 @@ export const useActivitySubscriptions = (
   // Streaming content accumulator (use ref to avoid stale closure in event handlers)
   const streamingContentRef = useRef<string>('');
 
+  // Track thinking start times (keyed by parentId or 'root' for main agent)
+  const thinkingStartTimes = useRef<Map<string, number>>(new Map());
+
   // Track active background agents (subagents, todo generator, etc.)
   const [activeAgentsCount, setActiveAgentsCount] = useState(0);
 
@@ -183,6 +186,11 @@ export const useActivitySubscriptions = (
       error_type: event.data.result?.error_type,
     };
 
+    // Extract agent_id from result for agent delegations
+    if (event.data.result?.agent_id) {
+      updates.agentId = event.data.result.agent_id;
+    }
+
     // Clear diff preview on failure (operation didn't complete)
     if (!event.data.success) {
       updates.diffPreview = undefined;
@@ -236,25 +244,47 @@ export const useActivitySubscriptions = (
     }
   });
 
+  // Thinking start (track start time for duration calculation)
+  useActivityEvent(ActivityEventType.THOUGHT_CHUNK, (event) => {
+    // Track start time when we see the "Thinking..." indicator
+    if (event.data?.thinking === true) {
+      const key = event.parentId || 'root';
+      // Only set if not already tracking (to capture first chunk time)
+      if (!thinkingStartTimes.current.has(key)) {
+        thinkingStartTimes.current.set(key, event.timestamp);
+      }
+    }
+  });
+
   // Thinking complete
   useActivityEvent(ActivityEventType.THOUGHT_COMPLETE, (event) => {
     const thinking = event.data?.thinking || '';
+    const key = event.parentId || 'root';
+    const startTime = thinkingStartTimes.current.get(key);
+    const endTime = event.timestamp;
 
-    if (state.config?.show_thinking_in_chat && thinking) {
+    // Always track thinking (not just when show_thinking_in_chat is true)
+    // This allows us to show truncated version when setting is false
+    if (thinking) {
       // If event has parentId, associate thinking with that tool call (subagent)
       // Otherwise, add as a standalone message (root agent)
       if (event.parentId) {
         // Find the tool call and update it with thinking content
         actions.updateToolCall(event.parentId, { thinking });
       } else {
-        // Root agent thinking - add as message
+        // Root agent thinking - add as message with timing info
         actions.addMessage({
           role: 'assistant',
           content: '',
           thinking: thinking,
+          thinkingStartTime: startTime,
+          thinkingEndTime: endTime,
           timestamp: Date.now(),
         });
       }
+
+      // Clear the tracked start time
+      thinkingStartTimes.current.delete(key);
     }
   });
 
@@ -517,7 +547,7 @@ export const useActivitySubscriptions = (
 
         actions.addMessage({
           role: 'assistant',
-          content: `✓ Agent '${name}' has been created successfully!\n\nYou can use it with:\n  • agent(task_prompt="...", agent_name="${name}")\n  • /agent use ${name} <task>`,
+          content: `✓ Agent '${name}' has been created successfully!\n\nYou can use it with:\n  • agent(task_prompt="...", agent_type="${name}")\n  • /agent use ${name} <task>`,
         });
       } catch (error) {
         actions.addMessage({
@@ -564,7 +594,6 @@ export const useActivitySubscriptions = (
     try {
       const result = await agentTool.execute({
         task_prompt: taskPrompt,
-        agent_name: agentName,
       });
 
       if (result.success) {

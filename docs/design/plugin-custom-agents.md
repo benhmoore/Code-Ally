@@ -125,7 +125,7 @@ Plugins needed a way to provide domain-specific AI agents that:
    └─ Log registration
 
 3. Agent Execution
-   agent(agent_name="my-agent", ...) → AgentTool.execute()
+   agent(agent="my-agent", ...) → AgentTool.execute()
    ├─ Load agent from AgentManager
    │   Priority: User > Plugin > Builtin
    ├─ Generate pool key
