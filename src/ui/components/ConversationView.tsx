@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, Static } from 'ink';
-import { Message, ToolCallState } from '@shared/index.js';
+import { Message, ToolCallState, SessionInfo } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
 import { CompactionNotice, RewindNotice } from '../contexts/AppContext.js';
@@ -12,6 +12,9 @@ import { BUFFER_SIZES, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
 import { createDivider } from '../utils/uiHelpers.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { formatRelativeTime } from '../utils/timeUtils.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import type { SessionManager } from '@services/SessionManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -223,6 +226,29 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     setGitBranch(branch);
   }, []);
 
+  // Get recent sessions on mount
+  const [recentSessions, setRecentSessions] = useState<SessionInfo[]>([]);
+  useEffect(() => {
+    const fetchRecentSessions = async () => {
+      try {
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
+        if (sessionManager) {
+          const sessions = await sessionManager.getSessionsInfoByDirectory();
+          // Sort by last modified descending and take top 3
+          const sortedSessions = sessions
+            .sort((a, b) => b.last_modified_timestamp - a.last_modified_timestamp)
+            .slice(0, 3);
+          setRecentSessions(sortedSessions);
+        }
+      } catch (error) {
+        // Silently handle errors by setting empty array
+        setRecentSessions([]);
+      }
+    };
+    fetchRecentSessions();
+  }, []);
+
   // Memoize toolCallTree to prevent unnecessary recalculations
   const toolCallTree = React.useMemo(() => buildToolCallTree(activeToolCalls), [activeToolCalls]);
 
@@ -408,6 +434,19 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
               )}
             </Box>
           </Box>
+          {recentSessions.length > 0 && (
+            <Box flexDirection="column" marginTop={1} marginLeft={12}>
+              <Text>Recent Activity</Text>
+              {recentSessions.map((session) => (
+                <Box key={session.session_id}>
+                  <Text dimColor>
+                    {session.display_name} ({formatRelativeTime(session.last_modified_timestamp)})
+                  </Text>
+                </Box>
+              ))}
+              <Text dimColor>/resume for more</Text>
+            </Box>
+          )}
           <Box marginTop={1}>
             <Text dimColor>{headerDivider}</Text>
           </Box>

@@ -40,6 +40,7 @@ import { ProjectCommand } from './commands/ProjectCommand.js';
 import { TodoCommand } from './commands/TodoCommand.js';
 import { AgentCommand } from './commands/AgentCommand.js';
 import { PluginCommand } from './commands/PluginCommand.js';
+import { ResumeCommand } from './commands/ResumeCommand.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -71,6 +72,7 @@ export class CommandHandler {
     this.registerCommand(new TodoCommand());
     this.registerCommand(new AgentCommand());
     this.registerCommand(new PluginCommand());
+    this.registerCommand(new ResumeCommand());
   }
 
   /**
@@ -191,6 +193,7 @@ Core Commands:
   /clear                   - Clear conversation history
   /compact                 - Compact conversation history
   /rewind                  - Rewind conversation to a previous message
+  /resume                  - Resume a previous session
   /undo [count]            - Undo last N file operations (default: 1)
   /exit, /quit             - Exit the application
 

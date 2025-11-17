@@ -928,6 +928,28 @@ export const useActivitySubscriptions = (
     modal.setUndoSelectedIndex(0);
   });
 
+  // Session select request
+  useActivityEvent(ActivityEventType.SESSION_SELECT_REQUEST, async (event) => {
+    const { requestId } = event.data;
+
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
+
+    if (!sessionManager) return;
+
+    try {
+      const sessions = await sessionManager.getSessionsInfoByDirectory();
+
+      modal.setSessionSelectRequest({
+        requestId,
+        sessions,
+        selectedIndex: 0,
+      });
+    } catch (error) {
+      logger.error('Failed to fetch sessions:', error);
+    }
+  });
+
   // Session select response
   useActivityEvent(ActivityEventType.SESSION_SELECT_RESPONSE, async (event) => {
     const { sessionId, cancelled } = event.data;
