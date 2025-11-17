@@ -84,6 +84,40 @@ export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme }) =>
 };
 
 /**
+ * Process nested paragraph tokens to handle line breaks properly
+ * Converts br tokens to newline characters
+ */
+function processParagraphTokens(tokens: any[]): string {
+  let result = '';
+
+  for (const token of tokens) {
+    if (token.type === 'text') {
+      result += token.text;
+    } else if (token.type === 'strong') {
+      // Handle bold text - wrap in markdown
+      result += '**' + token.text + '**';
+    } else if (token.type === 'em') {
+      // Handle italic text - wrap in markdown
+      result += '*' + token.text + '*';
+    } else if (token.type === 'codespan') {
+      // Handle inline code - wrap in backticks
+      result += '`' + token.text + '`';
+    } else if (token.type === 'br') {
+      // Convert br to actual newline
+      result += '\n';
+    } else if (token.type === 'link') {
+      // Handle links - use markdown format
+      result += '[' + token.text + '](' + token.href + ')';
+    } else if (token.raw) {
+      // Fallback - use raw content
+      result += token.raw;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Parse marked tokens into our simplified node structure
  */
 function parseTokens(tokens: any[]): ParsedNode[] {
@@ -129,10 +163,19 @@ function parseTokens(tokens: any[]): ParsedNode[] {
         })),
       });
     } else if (token.type === 'paragraph') {
-      nodes.push({
-        type: 'paragraph',
-        content: token.text,
-      });
+      // Process nested tokens to properly handle line breaks
+      if (token.tokens && Array.isArray(token.tokens)) {
+        const processedContent = processParagraphTokens(token.tokens);
+        nodes.push({
+          type: 'paragraph',
+          content: processedContent,
+        });
+      } else {
+        nodes.push({
+          type: 'paragraph',
+          content: token.text,
+        });
+      }
     } else if (token.type === 'hr') {
       nodes.push({
         type: 'hr',
@@ -210,31 +253,74 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
   }
 
   if (node.type === 'paragraph') {
-    const formatted = formatInlineMarkdown(node.content || '');
+    const content = node.content || '';
 
-    // Handle styled text segments
-    if (Array.isArray(formatted)) {
+    // Split content by newlines to handle hard line breaks
+    const lines = content.split('\n');
+
+    // If only one line, render as before
+    if (lines.length === 1) {
+      const formatted = formatInlineMarkdown(content);
+
+      // Handle styled text segments
+      if (Array.isArray(formatted)) {
+        return (
+          <Box>
+            {formatted.map((segment, idx) => (
+              <Text
+                key={idx}
+                color={segment.color}
+                bold={segment.bold}
+                italic={segment.italic}
+                strikethrough={segment.strikethrough}
+              >
+                {segment.text}
+              </Text>
+            ))}
+          </Box>
+        );
+      }
+
+      // Handle plain string
       return (
         <Box>
-          {formatted.map((segment, idx) => (
-            <Text
-              key={idx}
-              color={segment.color}
-              bold={segment.bold}
-              italic={segment.italic}
-              strikethrough={segment.strikethrough}
-            >
-              {segment.text}
-            </Text>
-          ))}
+          <Text>{formatted}</Text>
         </Box>
       );
     }
 
-    // Handle plain string
+    // Multiple lines - render each line separately
     return (
-      <Box>
-        <Text>{formatted}</Text>
+      <Box flexDirection="column">
+        {lines.map((line, lineIdx) => {
+          const formatted = formatInlineMarkdown(line);
+
+          // Handle styled text segments
+          if (Array.isArray(formatted)) {
+            return (
+              <Box key={lineIdx}>
+                {formatted.map((segment, segIdx) => (
+                  <Text
+                    key={segIdx}
+                    color={segment.color}
+                    bold={segment.bold}
+                    italic={segment.italic}
+                    strikethrough={segment.strikethrough}
+                  >
+                    {segment.text}
+                  </Text>
+                ))}
+              </Box>
+            );
+          }
+
+          // Handle plain string
+          return (
+            <Box key={lineIdx}>
+              <Text>{formatted}</Text>
+            </Box>
+          );
+        })}
       </Box>
     );
   }

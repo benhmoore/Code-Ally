@@ -243,16 +243,18 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    * Calculate cursor line and position within that line
    */
   const getCursorLineInfo = (text: string, cursorPos: number): { line: number; posInLine: number; charsBeforeLine: number } => {
+    // Clamp cursor position to valid range
+    const clampedPos = Math.max(0, Math.min(cursorPos, text.length));
     const lines = text.split('\n');
     let charCount = 0;
 
     for (let i = 0; i < lines.length; i++) {
       const lineLength = (lines[i] || '').length;
       // Check if cursor is on this line (including end of line position)
-      if (charCount + lineLength >= cursorPos) {
+      if (charCount + lineLength >= clampedPos) {
         return {
           line: i,
-          posInLine: cursorPos - charCount,
+          posInLine: Math.min(clampedPos - charCount, lineLength),
           charsBeforeLine: charCount,
         };
       }
@@ -1341,7 +1343,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         {lines.map((line, index) => {
           const isFirstLine = index === 0;
           const prompt = isFirstLine ? promptText : '';
-          const displayText = line || (isEmpty && isFirstLine ? placeholder : '');
+          // Fix for multiple consecutive line breaks: use !== '' instead of || to preserve empty lines
+          // Empty lines should render as a space to maintain proper height
+          const displayText = line !== '' ? line : (isEmpty && isFirstLine ? placeholder : ' ');
           const textColor = isEmpty && isFirstLine ? 'gray' : 'white';
           const isCursorLine = index === cursorLine;
 
@@ -1357,7 +1361,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
           return (
             <Box key={`line-${index}`}>
-              <Text color={promptColor} bold={isCommandMode || isBashMode}>
+              <Text wrap="wrap" color={promptColor} bold={isCommandMode || isBashMode}>
                 {prompt}
               </Text>
 
@@ -1366,6 +1370,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                 <>
                   {segments.map((segment, segIdx) => (
                     <Text
+                      wrap="wrap"
                       key={segIdx}
                       color={getSegmentColor(segment.highlightType)}
                       dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
@@ -1385,22 +1390,26 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                     const segmentEnd = segmentStart + segment.text.length;
                     const segmentColor = getSegmentColor(segment.highlightType);
 
+                    // Adjust cursor position for empty lines: if original line is empty but displayText is ' '
+                    // we need to ensure cursor position maps correctly
+                    const adjustedCursorPos = line === '' && displayText === ' ' && cursorPosInLine === 0 ? 0 : cursorPosInLine;
+
                     // Check if cursor is in this segment
-                    if (cursorPosInLine >= segmentStart && cursorPosInLine < segmentEnd) {
-                      const localCursorPos = cursorPosInLine - segmentStart;
+                    if (adjustedCursorPos >= segmentStart && adjustedCursorPos < segmentEnd) {
+                      const localCursorPos = adjustedCursorPos - segmentStart;
                       const before = segment.text.slice(0, localCursorPos);
                       const at = segment.text[localCursorPos] || ' ';
                       const after = segment.text.slice(localCursorPos + 1);
 
                       return (
                         <React.Fragment key={segIdx}>
-                          <Text color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
+                          <Text wrap="wrap" color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
                             {before}
                           </Text>
-                          <Text color={UI_COLORS.TEXT_CONTRAST} backgroundColor={UI_COLORS.PRIMARY}>
+                          <Text wrap="wrap" color={UI_COLORS.TEXT_CONTRAST} backgroundColor={UI_COLORS.PRIMARY}>
                             {at}
                           </Text>
-                          <Text color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
+                          <Text wrap="wrap" color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
                             {after}
                           </Text>
                         </React.Fragment>
@@ -1410,6 +1419,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                     // Cursor not in this segment
                     return (
                       <Text
+                        wrap="wrap"
                         key={segIdx}
                         color={segmentColor}
                         dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
@@ -1418,9 +1428,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                       </Text>
                     );
                   })}
-                  {/* Handle cursor at end of line */}
+                  {/* Handle cursor at end of line - only show if cursor is beyond all displayed segments */}
                   {cursorPosInLine >= displayText.length && (
-                    <Text color={UI_COLORS.TEXT_CONTRAST} backgroundColor={UI_COLORS.PRIMARY}>
+                    <Text wrap="wrap" color={UI_COLORS.TEXT_CONTRAST} backgroundColor={UI_COLORS.PRIMARY}>
                       {' '}
                     </Text>
                   )}
