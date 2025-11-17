@@ -197,6 +197,8 @@ export class ToolManager {
 
     const functionDefs: FunctionDefinition[] = [];
     const excludeSet = new Set(excludeTools || []);
+    const visibleTools: string[] = [];
+    const filteredByAgent: string[] = [];
 
     for (const tool of this.tools.values()) {
       // Skip excluded tools
@@ -218,15 +220,21 @@ export class ToolManager {
       if (tool.visibleTo && tool.visibleTo.length > 0) {
         // Non-empty array = only visible to specified agents
         if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
-          logger.debug(
-            `[ToolManager] Filtering out tool '${tool.name}' - only visible to agents: [${tool.visibleTo.join(', ')}], current agent is '${currentAgentName || 'none'}'`
-          );
+          filteredByAgent.push(tool.name);
           continue;
         }
       }
 
       const functionDef = this.generateFunctionDefinition(tool);
       functionDefs.push(functionDef);
+      visibleTools.push(tool.name);
+    }
+
+    // Log consolidated tool visibility summary (only if agent filtering occurred)
+    if (filteredByAgent.length > 0) {
+      logger.debug(
+        `[ToolManager] Agent '${currentAgentName || 'none'}' - Visible tools: [${visibleTools.join(', ')}] (${filteredByAgent.length} agent-specific tools filtered)`
+      );
     }
 
     // Cache the result with the activation-aware key

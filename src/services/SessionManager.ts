@@ -531,6 +531,7 @@ export class SessionManager implements IService {
     todos: TodoItem[];
     idleMessages: string[];
     projectContext: Session['project_context'] | null;
+    metadata: Session['metadata'] | null;
   }> {
     const session = await this.loadSession(sessionName);
 
@@ -540,6 +541,7 @@ export class SessionManager implements IService {
         todos: [],
         idleMessages: [],
         projectContext: null,
+        metadata: null,
       };
     }
 
@@ -548,6 +550,7 @@ export class SessionManager implements IService {
       todos: session.todos ?? [],
       idleMessages: session.idle_messages ?? [],
       projectContext: session.project_context ?? null,
+      metadata: session.metadata ?? null,
     };
   }
 

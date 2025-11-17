@@ -1068,10 +1068,16 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           setBuffer(before + '\n' + after);
           setCursorPosition(currentCursor + 1);
         } else {
-          // Check if agent is processing - if so, this is an interjection
           const message = buffer.trim();
           if (!message) return;
 
+          // Slash commands always execute immediately, even during agent processing
+          if (message.startsWith('/')) {
+            handleSubmit();
+            return;
+          }
+
+          // Check if agent is processing - if so, this is an interjection
           if (agent && agent.isProcessing()) {
             // This is an interjection mid-response
             if (onInterjection) {

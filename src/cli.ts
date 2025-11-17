@@ -800,6 +800,11 @@ async function main() {
     // Interactive mode - Render the Ink UI
     // IMPORTANT: exitOnCtrlC must be false to allow custom Ctrl+C handling in InputPrompt
     inkUIStarted = true;
+
+    // Set default terminal title
+    const { setTerminalTitle } = await import('./utils/terminal.js');
+    setTerminalTitle('New Session');
+
     const { waitUntilExit } = render(
       React.createElement(App, {
         config,

@@ -13,6 +13,7 @@ import { IdleMessageGenerator, IdleContext } from './IdleMessageGenerator.js';
 import { SessionManager } from './SessionManager.js';
 import { Message, IService } from '../types/index.js';
 import { logger } from './Logger.js';
+import { setTerminalTitle } from '../utils/terminal.js';
 
 /**
  * IdleTaskCoordinator manages priority-based execution of background tasks
@@ -220,9 +221,20 @@ export class IdleTaskCoordinator implements IService {
       currentSession,
       messages,
       sessionsDir,
-      () => {
+      async () => {
         // Notify coordinator that title generation completed
         this.notifyTitleGenerated();
+
+        // Update terminal title with new session title
+        try {
+          const session = await this.sessionManager.loadSession(currentSession);
+          if (session?.metadata?.title) {
+            setTerminalTitle(session.metadata.title);
+            logger.debug(`[IDLE_COORD] Updated terminal title: ${session.metadata.title}`);
+          }
+        } catch (error) {
+          logger.debug('[IDLE_COORD] Failed to update terminal title:', error);
+        }
       }
     );
 

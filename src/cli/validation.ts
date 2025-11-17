@@ -114,7 +114,7 @@ export async function runStartupValidation(config: any): Promise<StartupValidati
 
   if (!ollamaCheck.ok) {
     logger.error(`Cannot connect to Ollama at ${config.endpoint}: ${ollamaCheck.error}`);
-    logger.error('Fix: Start Ollama with "ollama serve"');
+    logger.error('Start Ollama with: ollama serve');
     return {
       ok: false,
       ollamaConnected: false,
@@ -127,13 +127,13 @@ export async function runStartupValidation(config: any): Promise<StartupValidati
   const modelCheck = await validateModelAvailable(config.endpoint, config.model);
 
   if (!modelCheck.ok) {
-    logger.error(`Model '${config.model}' not found in Ollama`);
+    logger.error(`Model '${config.model}' not found`);
 
     if (modelCheck.data?.similar?.length > 0) {
       logger.error(`Similar models: ${modelCheck.data.similar.join(', ')}`);
     }
 
-    logger.error(`Fix: Select a model from the list, or pull it with "ollama pull ${config.model}"`);
+    logger.error(`Pull with: ollama pull ${config.model}`);
 
     // Fetch available models for the selector
     const availableModels = ollamaCheck.data?.models || [];

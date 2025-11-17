@@ -20,6 +20,7 @@ import { TEXT_LIMITS, FORMATTING } from '@config/constants.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { logger } from '@services/Logger.js';
 
 // Table rendering constants (specific to markdown table formatting)
 const TABLE_FORMATTING = {
@@ -262,21 +263,12 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
     if (lines.length === 1) {
       const formatted = formatInlineMarkdown(content);
 
-      // Handle styled text segments
+      // Handle styled text segments - convert to ANSI string for proper wrapping
       if (Array.isArray(formatted)) {
+        const styledText = segmentsToAnsiString(formatted);
         return (
           <Box>
-            {formatted.map((segment, idx) => (
-              <Text
-                key={idx}
-                color={segment.color}
-                bold={segment.bold}
-                italic={segment.italic}
-                strikethrough={segment.strikethrough}
-              >
-                {segment.text}
-              </Text>
-            ))}
+            <Text>{styledText}</Text>
           </Box>
         );
       }
@@ -295,21 +287,12 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
         {lines.map((line, lineIdx) => {
           const formatted = formatInlineMarkdown(line);
 
-          // Handle styled text segments
+          // Handle styled text segments - convert to ANSI string for proper wrapping
           if (Array.isArray(formatted)) {
+            const styledText = segmentsToAnsiString(formatted);
             return (
               <Box key={lineIdx}>
-                {formatted.map((segment, segIdx) => (
-                  <Text
-                    key={segIdx}
-                    color={segment.color}
-                    bold={segment.bold}
-                    italic={segment.italic}
-                    strikethrough={segment.strikethrough}
-                  >
-                    {segment.text}
-                  </Text>
-                ))}
+                <Text>{styledText}</Text>
               </Box>
             );
           }
@@ -380,18 +363,37 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
 const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ header, rows }) => {
   const terminalWidth = useContentWidth();
 
+  // Validate table structure
+  if (!header || header.length === 0) {
+    return <Text dimColor>Empty table</Text>;
+  }
+
+  // Filter rows with mismatched column counts
+  const expectedCols = header.length;
+  const validRows = useMemo(() => {
+    return rows.filter((row) => {
+      if (row.length !== expectedCols) {
+        logger.warn(`Table row has ${row.length} columns, expected ${expectedCols}`);
+        return false;
+      }
+      return true;
+    });
+  }, [rows, expectedCols]);
+
   // Calculate optimal column widths with terminal width constraints
   const columnWidths = useMemo(() => {
 
-    // Helper to get max line length for cells with line breaks
+    // Helper to get max line length for cells with line breaks (visual length, no ANSI codes)
     const getMaxLineLength = (text: string): number => {
-      const lines = text.split('\n');
+      // Strip ANSI codes for accurate length calculation
+      const stripped = text.replace(/\x1b\[[0-9;]*m/g, '');
+      const lines = stripped.split('\n');
       return Math.max(...lines.map(line => line.length));
     };
 
     // Calculate natural widths (what content actually needs)
     const naturalWidths = header.map((h) => getMaxLineLength(h));
-    rows.forEach((row) => {
+    validRows.forEach((row) => {
       row.forEach((cell, colIdx) => {
         naturalWidths[colIdx] = Math.max(naturalWidths[colIdx] || 0, getMaxLineLength(cell));
       });
@@ -437,9 +439,24 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
       const proportionalBonus = Math.floor((excess / totalExcess) * remainingSpace);
       return minWidth + proportionalBonus;
     });
-  }, [header, rows, terminalWidth]);
+  }, [header, validRows, terminalWidth]);
 
-  // Wrap text to fit within specified width
+  // Process cell text with inline markdown and convert to ANSI
+  const processCellMarkdown = (text: string): string => {
+    // Parse inline markdown into styled segments
+    const segments = parseStyledText(text);
+    // Convert to ANSI string
+    return segmentsToAnsiString(segments);
+  };
+
+  // Get visual length of text (excluding ANSI escape codes)
+  const getVisualLength = (text: string): number => {
+    // Remove ANSI escape codes to get actual displayed length
+    // ANSI codes follow pattern: \x1b[...m
+    return text.replace(/\x1b\[[0-9;]*m/g, '').length;
+  };
+
+  // Wrap text to fit within specified width (ANSI-aware)
   const wrapText = (text: string, width: number): string[] => {
     // First, split on explicit line breaks (\n)
     const explicitLines = text.split('\n');
@@ -447,25 +464,50 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
 
     // Then wrap each line individually if needed
     for (const line of explicitLines) {
-      if (line.length <= width) {
+      const visualLen = getVisualLength(line);
+      if (visualLen <= width) {
         wrappedLines.push(line);
         continue;
       }
 
       let remaining = line;
       while (remaining.length > 0) {
-        if (remaining.length <= width) {
+        const remainingVisualLen = getVisualLength(remaining);
+        if (remainingVisualLen <= width) {
           wrappedLines.push(remaining);
           break;
         }
 
-        // Try to break at a space
-        let breakPoint = width;
-        const lastSpace = remaining.lastIndexOf(' ', width);
+        // Find break point based on visual length
+        // We need to iterate through the string accounting for ANSI codes
+        let visualPos = 0;
+        let actualPos = 0;
+        let lastSpaceVisual = -1;
+        let lastSpaceActual = -1;
 
-        if (lastSpace > width * TEXT_LIMITS.WORD_BOUNDARY_THRESHOLD) {
-          // Good break point found (not too early)
-          breakPoint = lastSpace;
+        while (actualPos < remaining.length && visualPos <= width) {
+          // Check for ANSI escape sequence
+          if (remaining.substring(actualPos).startsWith('\x1b[')) {
+            // Skip entire ANSI sequence
+            const endPos = remaining.indexOf('m', actualPos);
+            if (endPos !== -1) {
+              actualPos = endPos + 1;
+              continue;
+            }
+          }
+
+          if (remaining[actualPos] === ' ') {
+            lastSpaceVisual = visualPos;
+            lastSpaceActual = actualPos;
+          }
+
+          visualPos++;
+          actualPos++;
+        }
+
+        let breakPoint = actualPos;
+        if (lastSpaceVisual > width * TEXT_LIMITS.WORD_BOUNDARY_THRESHOLD) {
+          breakPoint = lastSpaceActual;
         }
 
         wrappedLines.push(remaining.substring(0, breakPoint));
@@ -476,9 +518,11 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
     return wrappedLines;
   };
 
-  // Pad a cell to the specified width
+  // Pad a cell to the specified width (ANSI-aware)
   const padCell = (text: string, width: number): string => {
-    return text.padEnd(width, ' ');
+    const visualLen = getVisualLength(text);
+    const paddingNeeded = Math.max(0, width - visualLen);
+    return text + ' '.repeat(paddingNeeded);
   };
 
   // Create horizontal separator lines with proper connectors
@@ -501,7 +545,10 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
 
       {/* Header row */}
       {(() => {
-        const headerLines = header.map((h, idx) => wrapText(h, columnWidths[idx] || 0));
+        const headerLines = header.map((h, idx) => {
+          const formatted = processCellMarkdown(h);
+          return wrapText(formatted, columnWidths[idx] || 0);
+        });
         const maxHeaderLines = Math.max(...headerLines.map(lines => lines.length));
 
         return (
@@ -511,7 +558,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
                 <Text dimColor>│ </Text>
                 {headerLines.map((lines, colIdx) => (
                   <React.Fragment key={colIdx}>
-                    <Text bold>{padCell(lines[lineIdx] || '', columnWidths[colIdx] || 0)}</Text>
+                    <Text>{padCell(lines[lineIdx] || '', columnWidths[colIdx] || 0)}</Text>
                     <Text dimColor> │ </Text>
                   </React.Fragment>
                 ))}
@@ -525,12 +572,14 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
       <Text dimColor>{createMiddleSeparator()}</Text>
 
       {/* Data rows */}
-      {rows.map((row, rowIdx) => {
-        // Wrap each cell in the row
-        const wrappedCells = row.map((cell, colIdx) =>
-          wrapText(cell, columnWidths[colIdx] || 0)
-        );
+      {validRows.map((row, rowIdx) => {
+        // Process and wrap each cell in the row
+        const wrappedCells = row.map((cell, colIdx) => {
+          const formatted = processCellMarkdown(cell);
+          return wrapText(formatted, columnWidths[colIdx] || 0);
+        });
         const maxLines = Math.max(...wrappedCells.map(lines => lines.length));
+        const isLastRow = rowIdx === validRows.length - 1;
 
         return (
           <React.Fragment key={rowIdx}>
@@ -545,6 +594,8 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
                 ))}
               </Box>
             ))}
+            {/* Row separator (except after last row) */}
+            {!isLastRow && <Text dimColor>{createMiddleSeparator()}</Text>}
           </React.Fragment>
         );
       })}
@@ -584,16 +635,8 @@ function formatInlineMarkdown(text: string): string | StyledSegment[] {
   // No formatting - return plain string with simple transformations
   let formatted = text;
 
-  // Handle LaTeX math expressions (use non-greedy matching to allow nested delimiters)
-  formatted = formatted.replace(/\\\((.+?)\\\)/g, (_match, mathContent) => {
-    return convertLatexToUnicode(mathContent);
-  });
-  formatted = formatted.replace(/\\\[(.+?)\\\]/g, (_match, mathContent) => {
-    return convertLatexToUnicode(mathContent);
-  });
-  formatted = formatted.replace(/\$\$(.+?)\$\$/g, (_match, mathContent) => {
-    return convertLatexToUnicode(mathContent);
-  });
+  // Handle LaTeX math expressions
+  formatted = processLatex(formatted);
 
   // Handle markdown links - just show the text
   formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, _url) => {
@@ -601,6 +644,116 @@ function formatInlineMarkdown(text: string): string | StyledSegment[] {
   });
 
   return formatted;
+}
+
+/**
+ * Convert styled segments to a single string with ANSI escape codes
+ * This avoids Ink's Text component wrapping issues by pre-rendering styles
+ */
+function segmentsToAnsiString(segments: StyledSegment[]): string {
+  let result = '';
+
+  for (const segment of segments) {
+    let text = segment.text;
+
+    // Apply color
+    if (segment.color) {
+      const colorCode = getAnsiColorCode(segment.color);
+      if (colorCode) {
+        text = `\x1b[${colorCode}m${text}\x1b[39m`;
+      }
+    }
+
+    // Apply bold
+    if (segment.bold) {
+      text = `\x1b[1m${text}\x1b[22m`;
+    }
+
+    // Apply italic
+    if (segment.italic) {
+      text = `\x1b[3m${text}\x1b[23m`;
+    }
+
+    // Apply strikethrough
+    if (segment.strikethrough) {
+      text = `\x1b[9m${text}\x1b[29m`;
+    }
+
+    result += text;
+  }
+
+  return result;
+}
+
+/**
+ * Get ANSI color code for a color name
+ */
+function getAnsiColorCode(color: string): string | null {
+  const colorMap: Record<string, string> = {
+    'red': '31',
+    'green': '32',
+    'yellow': '33',
+    'blue': '34',
+    'magenta': '35',
+    'cyan': '36',
+    'white': '37',
+    'gray': '90',
+    'grey': '90',
+    '#00A0E4': '36', // UI_COLORS.PRIMARY maps to cyan
+  };
+  return colorMap[color] || null;
+}
+
+/**
+ * Merge consecutive segments with identical styling
+ * This reduces the number of Text components and improves wrapping behavior
+ */
+function mergeSegments(segments: StyledSegment[]): StyledSegment[] {
+  if (segments.length <= 1) return segments;
+  if (!segments[0]?.text) return segments;
+
+  const merged: StyledSegment[] = [];
+  let currentText = segments[0].text;
+  let currentStyle: Omit<StyledSegment, 'text'> = {
+    color: segments[0].color,
+    bold: segments[0].bold,
+    italic: segments[0].italic,
+    strikethrough: segments[0].strikethrough,
+    code: segments[0].code,
+  };
+
+  for (let i = 1; i < segments.length; i++) {
+    const next = segments[i];
+    if (!next?.text) continue;
+
+    // Check if styling is identical
+    const sameStyle =
+      currentStyle.color === next.color &&
+      currentStyle.bold === next.bold &&
+      currentStyle.italic === next.italic &&
+      currentStyle.strikethrough === next.strikethrough &&
+      currentStyle.code === next.code;
+
+    if (sameStyle) {
+      // Merge text into current segment
+      currentText += next.text;
+    } else {
+      // Style changed - push current and start new segment
+      merged.push({ text: currentText, ...currentStyle });
+      currentText = next.text;
+      currentStyle = {
+        color: next.color,
+        bold: next.bold,
+        italic: next.italic,
+        strikethrough: next.strikethrough,
+        code: next.code,
+      };
+    }
+  }
+
+  // Push the last segment
+  merged.push({ text: currentText, ...currentStyle });
+  return merged;
 }
 
 /**
@@ -618,19 +771,7 @@ function parseStyledText(text: string): StyledSegment[] {
     if (token.text) {
       // Process LaTeX in the text segment (but not in code segments)
       if (!token.code) {
-        let processedText = token.text;
-
-        // Handle LaTeX math expressions
-        processedText = processedText.replace(/\\\((.+?)\\\)/g, (_match, mathContent) => {
-          return convertLatexToUnicode(mathContent);
-        });
-        processedText = processedText.replace(/\\\[(.+?)\\\]/g, (_match, mathContent) => {
-          return convertLatexToUnicode(mathContent);
-        });
-        processedText = processedText.replace(/\$\$(.+?)\$\$/g, (_match, mathContent) => {
-          return convertLatexToUnicode(mathContent);
-        });
-
+        const processedText = processLatex(token.text);
         segments.push({ ...token, text: processedText });
       } else {
         segments.push(token);
@@ -638,13 +779,42 @@ function parseStyledText(text: string): StyledSegment[] {
     }
   }
 
-  return segments.length > 0 ? segments : [{ text }];
+  // Merge consecutive segments with same styling
+  const result = segments.length > 0 ? mergeSegments(segments) : [{ text }];
+  return result;
+}
+
+/**
+ * Extract color name and content from color tag match
+ * Handles both <color>text</color> and <span color="color">text</span> formats
+ */
+function extractColorFromMatch(match: RegExpMatchArray): { color: string; content: string } | null {
+  // Handle <color>text</color> format (match[2] = color, match[3] = content)
+  if (match[2] && match[3]) {
+    const color = match[2].toLowerCase() === 'orange' ? UI_COLORS.WARNING : match[2].toLowerCase();
+    return { color, content: match[3] };
+  }
+  // Handle <span color="color">text</span> format (match[4] = color, match[5] = content)
+  if (match[4] && match[5]) {
+    const color = match[4].toLowerCase() === 'orange' ? UI_COLORS.WARNING : match[4].toLowerCase();
+    return { color, content: match[5] };
+  }
+  return null;
 }
 
 /**
  * Tokenize text into formatted segments
+ * @param text - Text to tokenize
+ * @param depth - Current recursion depth (prevents stack overflow)
  */
-function tokenizeFormatting(text: string): StyledSegment[] {
+function tokenizeFormatting(text: string, depth: number = 0): StyledSegment[] {
+  const MAX_DEPTH = 10;
+
+  // Prevent stack overflow from deeply nested formatting
+  if (depth > MAX_DEPTH) {
+    return [{ text }];
+  }
+
   const segments: StyledSegment[] = [];
   let pos = 0;
 
@@ -667,50 +837,45 @@ function tokenizeFormatting(text: string): StyledSegment[] {
     if (match[1]) {
       // Inline code: `text` - render with primary color for distinction
       segments.push({ text: match[1], code: true, color: UI_COLORS.PRIMARY });
-    } else if (match[2] && match[3]) {
-      // Color tag: <red>text</red>
-      const color = match[2].toLowerCase() === 'orange' ? UI_COLORS.WARNING : match[2].toLowerCase();
-      // Recursively parse nested formatting
-      const nested = tokenizeFormatting(match[3]);
-      for (const seg of nested) {
-        segments.push({ ...seg, color });
-      }
-    } else if (match[4] && match[5]) {
-      // Color tag: <span color="red">text</span>
-      const color = match[4].toLowerCase() === 'orange' ? UI_COLORS.WARNING : match[4].toLowerCase();
-      const nested = tokenizeFormatting(match[5]);
-      for (const seg of nested) {
-        segments.push({ ...seg, color });
-      }
-    } else if (match[6]) {
-      // Strikethrough: ~~text~~
-      const nested = tokenizeFormatting(match[6]);
-      for (const seg of nested) {
-        segments.push({ ...seg, strikethrough: true });
-      }
-    } else if (match[7]) {
-      // Bold: **text**
-      const nested = tokenizeFormatting(match[7]);
-      for (const seg of nested) {
-        segments.push({ ...seg, bold: true });
-      }
-    } else if (match[8]) {
-      // Bold: __text__
-      const nested = tokenizeFormatting(match[8]);
-      for (const seg of nested) {
-        segments.push({ ...seg, bold: true });
-      }
-    } else if (match[9]) {
-      // Italic: *text*
-      const nested = tokenizeFormatting(match[9]);
-      for (const seg of nested) {
-        segments.push({ ...seg, italic: true });
-      }
-    } else if (match[10]) {
-      // Italic: _text_
-      const nested = tokenizeFormatting(match[10]);
-      for (const seg of nested) {
-        segments.push({ ...seg, italic: true });
+    } else {
+      // Try to extract color tag (handles both <color> and <span color="color"> formats)
+      const colorMatch = extractColorFromMatch(match);
+      if (colorMatch) {
+        // Recursively parse nested formatting
+        const nested = tokenizeFormatting(colorMatch.content, depth + 1);
+        for (const seg of nested) {
+          segments.push({ ...seg, color: colorMatch.color });
+        }
+      } else if (match[6]) {
+        // Strikethrough: ~~text~~
+        const nested = tokenizeFormatting(match[6], depth + 1);
+        for (const seg of nested) {
+          segments.push({ ...seg, strikethrough: true });
+        }
+      } else if (match[7]) {
+        // Bold: **text**
+        const nested = tokenizeFormatting(match[7], depth + 1);
+        for (const seg of nested) {
+          segments.push({ ...seg, bold: true });
+        }
+      } else if (match[8]) {
+        // Bold: __text__
+        const nested = tokenizeFormatting(match[8], depth + 1);
+        for (const seg of nested) {
+          segments.push({ ...seg, bold: true });
+        }
+      } else if (match[9]) {
+        // Italic: *text*
+        const nested = tokenizeFormatting(match[9], depth + 1);
+        for (const seg of nested) {
+          segments.push({ ...seg, italic: true });
+        }
+      } else if (match[10]) {
+        // Italic: _text_
+        const nested = tokenizeFormatting(match[10], depth + 1);
+        for (const seg of nested) {
+          segments.push({ ...seg, italic: true });
+        }
       }
     }
 
@@ -723,6 +888,17 @@ function tokenizeFormatting(text: string): StyledSegment[] {
   }
 
   return segments;
+}
+
+/**
+ * Process LaTeX expressions in text, converting them to Unicode
+ * Handles all three LaTeX delimiter styles: \(...\), \[...\], and $$...$$
+ */
+function processLatex(text: string): string {
+  return text
+    .replace(/\\\((.+?)\\\)/g, (_match, mathContent) => convertLatexToUnicode(mathContent))
+    .replace(/\\\[(.+?)\\\]/g, (_match, mathContent) => convertLatexToUnicode(mathContent))
+    .replace(/\$\$(.+?)\$\$/g, (_match, mathContent) => convertLatexToUnicode(mathContent));
 }
 
 /**
@@ -824,16 +1000,8 @@ function stripInlineMarkdown(text: string): string {
   // Remove inline code
   stripped = stripped.replace(/`([^`]+)`/g, '$1');
 
-  // Handle LaTeX math expressions (use non-greedy matching to allow nested delimiters)
-  stripped = stripped.replace(/\\\((.+?)\\\)/g, (_match, mathContent) => {
-    return convertLatexToUnicode(mathContent);
-  });
-  stripped = stripped.replace(/\\\[(.+?)\\\]/g, (_match, mathContent) => {
-    return convertLatexToUnicode(mathContent);
-  });
-  stripped = stripped.replace(/\$\$(.+?)\$\$/g, (_match, mathContent) => {
-    return convertLatexToUnicode(mathContent);
-  });
+  // Handle LaTeX math expressions
+  stripped = processLatex(stripped);
 
   // Remove bold
   stripped = stripped.replace(/\*\*([^*]+)\*\*/g, '$1');

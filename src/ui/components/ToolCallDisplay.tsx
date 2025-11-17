@@ -320,6 +320,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // We'll handle truncation for completed agents separately in the rendering
   const subtext = extractSubtext(toolCall, toolCall.toolName, isAgentDelegation);
 
+  // Extract thoroughness for agent delegation tools
+  const thoroughness = isAgentDelegation ? toolCall.arguments?.thoroughness : null;
+
   // Indent based on level
   const indent = '    '.repeat(level);
 
@@ -350,6 +353,11 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           {displayName}
         </Text>
 
+        {/* Thoroughness - show for agent delegations */}
+        {thoroughness && (
+          <Text dimColor> · {thoroughness}</Text>
+        )}
+
         {/* Subtext - contextual information (not shown inline for agents) */}
         {subtext && !isAgentDelegation && (
           <Text dimColor> · {subtext}</Text>
@@ -378,7 +386,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
             return displaySubtext.split('\n').map((line, idx) => (
               <Box key={idx}>
                 <Text>{indent}    </Text>
-                <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>
+                {idx === 0 && <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>}
+                {idx > 0 && <Text>  </Text>}
                 <Text>{line}</Text>
               </Box>
             ));

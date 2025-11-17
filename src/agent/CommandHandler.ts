@@ -16,7 +16,7 @@ import { Agent } from './Agent.js';
 import { ConfigManager } from '../services/ConfigManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TokenManager } from './TokenManager.js';
-import { logger } from '../services/Logger.js';
+import { logger, LogLevel } from '../services/Logger.js';
 import { Message, ActivityEventType } from '../types/index.js';
 import { ID_GENERATION } from '../config/constants.js';
 import {
@@ -188,7 +188,7 @@ Core Commands:
   /config set <key>=<val>  - Set a configuration value
   /config reset            - Reset all settings to defaults
   /model [ally|service] [name] - Switch model or show current model
-  /debug [system|tokens|context|chat] - Show debug information
+  /debug [enable|disable|system|tokens|context|chat] - Debug commands
   /context                 - Show context usage (token count)
   /clear                   - Clear conversation history
   /compact                 - Compact conversation history
@@ -302,6 +302,8 @@ Plugin Commands:
       return {
         handled: true,
         response: `Debug Commands:
+  /debug enable    - Enable debug-level logging
+  /debug disable   - Disable debug-level logging
   /debug system    - Show system prompt and tool definitions
   /debug tokens    - Show token usage and memory stats
   /debug context   - Show conversation context
@@ -317,6 +319,10 @@ Plugin Commands:
     }
 
     switch (subcommand.toLowerCase()) {
+      case 'enable':
+        return this.debugEnable();
+      case 'disable':
+        return this.debugDisable();
       case 'system':
         return this.debugSystem(messages);
       case 'tokens':
@@ -328,9 +334,31 @@ Plugin Commands:
       default:
         return {
           handled: true,
-          response: `Unknown debug subcommand: ${subcommand}. Available: system, tokens, context, chat`,
+          response: `Unknown debug subcommand: ${subcommand}. Available: enable, disable, system, tokens, context, chat`,
         };
     }
+  }
+
+  /**
+   * Debug: Enable debug-level logging
+   */
+  private async debugEnable(): Promise<CommandResult> {
+    logger.setLevel(LogLevel.DEBUG);
+    return {
+      handled: true,
+      response: 'Debug logging enabled. Use /debug disable to turn it off.',
+    };
+  }
+
+  /**
+   * Debug: Disable debug-level logging (reset to INFO)
+   */
+  private async debugDisable(): Promise<CommandResult> {
+    logger.setLevel(LogLevel.INFO);
+    return {
+      handled: true,
+      response: 'Debug logging disabled.',
+    };
   }
 
   /**

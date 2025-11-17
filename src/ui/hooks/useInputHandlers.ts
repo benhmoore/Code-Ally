@@ -19,6 +19,7 @@ import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ActivityEventType } from '@shared/index.js';
 import { logger } from '@services/Logger.js';
 import { PERMISSION_MESSAGES } from '@config/constants.js';
+import { sendTerminalNotification } from '../../utils/terminal.js';
 
 /**
  * Input handler functions
@@ -530,12 +531,18 @@ export const useInputHandlers = (
             actions.setContextUsage(contextUsage);
           }
         }
+
+        // Send terminal bell/badge notification
+        sendTerminalNotification();
       } catch (error) {
         // Add error message
         actions.addMessage({
           role: 'assistant',
           content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         });
+
+        // Send terminal bell/badge notification
+        sendTerminalNotification();
       } finally {
         // Clear thinking state
         actions.setIsThinking(false);

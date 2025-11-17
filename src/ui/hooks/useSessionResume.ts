@@ -15,6 +15,7 @@ import { ToolManager } from '@tools/ToolManager.js';
 import { AppActions } from '../contexts/AppContext.js';
 import { Message, ToolCallState } from '@shared/index.js';
 import { SessionSelectRequest } from './useModalState.js';
+import { setTerminalTitle } from '../../utils/terminal.js';
 
 /**
  * Reconstruct USER_INTERJECTION events from message history
@@ -212,6 +213,11 @@ export async function loadSessionData(
     (tokenManager as any).updateTokenCount(agent.getMessages());
     const contextUsage = (tokenManager as any).getContextUsagePercentage();
     actions.setContextUsage(contextUsage);
+  }
+
+  // Update terminal title with session title
+  if (sessionData.metadata?.title) {
+    setTerminalTitle(sessionData.metadata.title);
   }
 }
 

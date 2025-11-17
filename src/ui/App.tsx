@@ -34,7 +34,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { FocusManager } from '../services/FocusManager.js';
 import { PluginConfigManager } from '../plugins/PluginConfigManager.js';
-import { logger } from '../services/Logger.js';
+import { logger, LogLevel } from '../services/Logger.js';
 import { useServiceInitialization } from './hooks/useServiceInitialization.js';
 import { useModalState } from './hooks/useModalState.js';
 import { useSessionResume } from './hooks/useSessionResume.js';
@@ -162,6 +162,81 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // State for patches to pass to RewindSelector
   const [patches, setPatches] = useState<PatchMetadata[]>([]);
 
+  // Track debug mode state and stats
+  const [isDebugMode, setIsDebugMode] = useState<boolean>(logger.getLevel() === LogLevel.DEBUG);
+  const [debugStats, setDebugStats] = useState<{
+    sessionId: string;
+    heapMB: number;
+    rssMB: number;
+    tokensUsed: number;
+    tokensTotal: number;
+    todoPending: number;
+    todoCompleted: number;
+    todoTotal: number;
+  }>({
+    sessionId: '',
+    heapMB: 0,
+    rssMB: 0,
+    tokensUsed: 0,
+    tokensTotal: 0,
+    todoPending: 0,
+    todoCompleted: 0,
+    todoTotal: 0,
+  });
+
+  // Poll logger level and collect debug stats
+  useEffect(() => {
+    const updateDebugStats = () => {
+      const debugMode = logger.getLevel() === LogLevel.DEBUG;
+      setIsDebugMode(debugMode);
+
+      if (debugMode) {
+        try {
+          const registry = ServiceRegistry.getInstance();
+
+          // Get session ID
+          const sessionManager = registry.get<any>('session_manager');
+          const sessionId = sessionManager?.getCurrentSession() || 'none';
+
+          // Get memory stats
+          const memUsage = process.memoryUsage();
+          const heapMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+          const rssMB = Math.round(memUsage.rss / 1024 / 1024);
+
+          // Get token stats
+          const tokenManager = registry.get<any>('token_manager');
+          const tokensUsed = tokenManager?.getCurrentTokenCount() || 0;
+          const tokensTotal = tokenManager?.contextSize || 200000;
+
+          // Get todo stats
+          const todoManager = registry.get<any>('todo_manager');
+          const todos = todoManager?.getTodos() || [];
+          const todoPending = todos.filter((t: any) => t.status === 'pending').length;
+          const todoCompleted = todos.filter((t: any) => t.status === 'completed').length;
+          const todoTotal = todos.length;
+
+          setDebugStats({
+            sessionId,
+            heapMB,
+            rssMB,
+            tokensUsed,
+            tokensTotal,
+            todoPending,
+            todoCompleted,
+            todoTotal,
+          });
+        } catch (error) {
+          // Silently handle errors
+        }
+      }
+    };
+
+    updateDebugStats();
+    const interval = setInterval(updateDebugStats, 1000); // Update every second
+
+    return () => clearInterval(interval);
+  }, []);
+
   // Fetch patches when rewind request is shown
   useEffect(() => {
     if (modal.rewindRequest) {
@@ -241,6 +316,21 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   // Get content width with max width constraint for readability
   const contentWidth = useContentWidth();
 
+  // Create debug-enhanced config when debug mode is active
+  const effectiveConfig = useMemo(() => {
+    if (!isDebugMode) {
+      return state.config;
+    }
+
+    // Override debug-related settings when in debug mode
+    return {
+      ...state.config,
+      show_tool_parameters_in_chat: true,
+      show_full_tool_output: true,
+      show_thinking_in_chat: true,
+    };
+  }, [isDebugMode, state.config]);
+
   return (
     <Box flexDirection="column" padding={1} width={contentWidth}>
       {/* Conversation View - contains header + all conversation history */}
@@ -253,7 +343,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         compactionNotices={state.compactionNotices}
         rewindNotices={state.rewindNotices}
         staticRemountKey={state.staticRemountKey}
-        config={state.config}
+        config={effectiveConfig}
         activePluginCount={activePluginCount}
         totalPluginCount={totalPluginCount}
       />
@@ -832,17 +922,40 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       )}
 
       {/* Footer / Help */}
-      <Box marginTop={1}>
-        <Text dimColor>
-          <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> · <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} · Model: {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
-          {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
-            <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
-          ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
-            <Text color="yellow">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - consider /compact</Text>
-          ) : (
-            <Text>Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining</Text>
-          )}
-        </Text>
+      <Box marginTop={1} flexDirection="column">
+        {isDebugMode ? (
+          <>
+            {/* Debug Mode: Line 1 - Session and Memory */}
+            <Text dimColor>
+              <Text color="yellow">DEBUG MODE</Text>
+              <Text> · Session: {debugStats.sessionId}</Text>
+              <Text> · Memory: {debugStats.heapMB} MB heap / {debugStats.rssMB} MB RSS</Text>
+            </Text>
+            {/* Debug Mode: Line 2 - Tokens, Todos, Model, Exit */}
+            <Text dimColor>
+              <Text>Tokens: {debugStats.tokensUsed.toLocaleString()}/{debugStats.tokensTotal.toLocaleString()} ({state.contextUsage}%)</Text>
+              {debugStats.todoTotal > 0 && (
+                <Text> · Todos: {debugStats.todoPending} pending, {debugStats.todoCompleted} done, {debugStats.todoTotal} total</Text>
+              )}
+              <Text> · Model: {state.config.model || 'none'}</Text>
+              {currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>}
+              {activeAgentsCount > 0 && <Text> · <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>}
+              <Text> · <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text></Text>
+            </Text>
+          </>
+        ) : (
+          /* Normal Mode: Single line */
+          <Text dimColor>
+            <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> · <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} · Model: {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
+            {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
+              <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
+            ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
+              <Text color="yellow">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - consider /compact</Text>
+            ) : (
+              <Text>Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining</Text>
+            )}
+          </Text>
+        )}
       </Box>
     </Box>
   );

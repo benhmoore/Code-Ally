@@ -105,6 +105,8 @@ const PLUGIN_SUBCOMMANDS = [
  * Debug subcommands
  */
 const DEBUG_SUBCOMMANDS = [
+  { name: 'enable', description: 'Enable debug-level logging' },
+  { name: 'disable', description: 'Disable debug-level logging' },
   { name: 'system', description: 'Show system prompt and tool definitions' },
   { name: 'tokens', description: 'Show token usage and memory stats' },
   { name: 'context', description: 'Show conversation context' },
@@ -354,22 +356,6 @@ export class CompletionProvider {
       if (configKey) {
         return await this.getConfigValueCompletions(configKey, context.currentWord);
       }
-    }
-
-    // Complete subcommands for /debug (user typed "/debug ")
-    if (command === '/debug' && wordCount === 2) {
-      const debugSubcommands = [
-        { name: 'system', description: 'Show system prompt and tools' },
-        { name: 'tokens', description: 'Show token usage stats' },
-        { name: 'context', description: 'Show conversation context' },
-      ];
-      const prefix = subcommand || '';
-      return debugSubcommands.filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
     }
 
     // Complete subcommands for /memory (user typed "/memory ")
