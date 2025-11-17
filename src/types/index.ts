@@ -353,4 +353,5 @@ export interface SessionInfo {
   last_modified_timestamp: number;
   message_count: number;
   working_dir: string;
+  lastUserMessage?: string;
 }

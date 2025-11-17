@@ -16,11 +16,8 @@ import { ActivityEventType, ToolCallState } from '@shared/index.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
 import { formatElapsed } from '../utils/timeUtils.js';
-import { getGitBranch } from '@utils/gitUtils.js';
 import { logger } from '@services/Logger.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
-import * as os from 'os';
-import * as path from 'path';
 import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '@config/constants.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -146,9 +143,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
   const [allTodos, setAllTodos] = useState<TodoItem[]>([]);
 
-  // Generate idle message on startup
+  // Display idle messages on startup (rotation only - generation handled by IdleTaskCoordinator)
   useEffect(() => {
-    // Don't generate if session hasn't loaded yet
+    // Don't display if session hasn't loaded yet
     if (!sessionLoaded) return;
 
     // Check if we're resuming and have cached messages
@@ -164,120 +161,21 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           if (queueSize > 0 && message !== 'Idle') {
             setIdleMessage(message);
             logger.debug(`[MASCOT] Displaying cached message on resume: "${message}"`);
-            return; // Don't generate
+            return;
           }
 
           // If resuming but no cached messages (old session), show static message
-          // Don't generate new ones to avoid model client conflicts
           logger.debug(`[MASCOT] Resuming but no cached messages found, showing static message`);
           setIdleMessage('Ready to help!');
         }
       } catch {
         // Silently handle errors
       }
-      return; // Don't generate when resuming
+      return;
     }
 
-    let fastPollInterval: NodeJS.Timeout | null = null;
-    let normalPollInterval: NodeJS.Timeout | null = null;
-
-    const initIdleMessages = async () => {
-      try {
-        const registry = ServiceRegistry.getInstance();
-        const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
-        const todoManager = registry.get<TodoManager>('todo_manager');
-
-        if (idleMessageGenerator) {
-          // Get git branch if available
-          const gitBranch = getGitBranch() || undefined;
-
-          // Get home directory name
-          const homeDir = os.homedir();
-          const homeDirectory = path.basename(homeDir);
-
-          // Get session manager
-          const sessionManager = registry.get<any>('session_manager');
-
-          // Get or detect project context
-          const projectContextDetector = registry.get<any>('project_context_detector');
-          let projectContext = undefined;
-
-          if (projectContextDetector) {
-            try {
-              // Try to load cached context from session first
-              const cachedContext = await sessionManager?.getProjectContext();
-
-              if (cachedContext && !projectContextDetector.isStale(cachedContext)) {
-                // Use cached context if not stale
-                projectContext = cachedContext;
-                projectContextDetector.setCached(cachedContext);
-              } else {
-                // Detect new context if stale or missing
-                projectContext = await projectContextDetector.detect();
-              }
-            } catch {
-              // Silently handle errors
-            }
-          }
-
-          // Gather context for idle message generation
-          // Filter out proposed todos (drafts awaiting acceptance)
-          const context: any = {
-            cwd: process.cwd(),
-            todos: todoManager ? todoManager.getTodos().filter(t => t.status !== 'proposed') : [],
-            gitBranch,
-            homeDirectory,
-            projectContext,
-          };
-
-          // Check if we need immediate generation
-          const needsImmediate = idleMessageGenerator.getQueueSize() <= 1;
-
-          // Trigger background generation with context on startup
-          idleMessageGenerator.generateMessageBackground(recentMessagesRef.current as any, context, needsImmediate);
-
-          // If we triggered immediate generation, poll frequently until first message arrives
-          if (needsImmediate) {
-            logger.debug(`[MASCOT] Setting up fast polling (needsImmediate=${needsImmediate}, queueSize=${idleMessageGenerator.getQueueSize()})`);
-            fastPollInterval = setInterval(() => {
-              try {
-                const registry = ServiceRegistry.getInstance();
-                const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
-                if (idleMessageGenerator) {
-                  const message = idleMessageGenerator.getCurrentMessage();
-                  const queueSize = idleMessageGenerator.getQueueSize();
-
-                  logger.debug(`[MASCOT] Fast polling check - message: "${message}", queueSize: ${queueSize}`);
-
-                  // Update immediately when first non-default message is available
-                  if (message !== 'Idle') {
-                    const queue = idleMessageGenerator.getQueue();
-                    const queuePreview = queue.slice(0, BUFFER_SIZES.DEFAULT_LIST_PREVIEW).map((msg, i) => `${i + 1}. ${msg}`).join('\n  ');
-                    logger.debug(`[MASCOT] Displaying message from queue (${queueSize} messages available): "${message}"\n  Queue:\n  ${queuePreview}`);
-                    setIdleMessage(message);
-                    // Stop fast polling once we have a real message
-                    if (fastPollInterval) {
-                      clearInterval(fastPollInterval);
-                      fastPollInterval = null;
-                    }
-                  }
-                }
-              } catch (err) {
-                logger.debug(`[MASCOT] Fast polling error: ${err}`);
-              }
-            }, POLLING_INTERVALS.STATUS_FAST);
-          }
-        }
-      } catch (error) {
-        // Silently handle errors
-      }
-    };
-
-    // Start async initialization
-    initIdleMessages();
-
-    // Normal polling - cycle through queue every minute
-    normalPollInterval = setInterval(() => {
+    // Rotation polling - cycle through queue every 2 seconds
+    const rotationInterval = setInterval(() => {
       try {
         const registry = ServiceRegistry.getInstance();
         const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
@@ -302,65 +200,10 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     }, POLLING_INTERVALS.STATUS_POLLING);
 
     return () => {
-      if (fastPollInterval) clearInterval(fastPollInterval);
-      if (normalPollInterval) clearInterval(normalPollInterval);
+      clearInterval(rotationInterval);
     };
   }, [sessionLoaded, isResuming]); // Run when session loads
 
-  // Continuous idle message generation - generate new message every minute when idle
-  useEffect(() => {
-    // Only run when completely idle (not processing, not compacting, and has started at least once)
-    if (isProcessing || isCompacting || !hasStartedRef.current) {
-      return;
-    }
-
-    // Helper function to generate idle message with fresh context
-    const generateIdleMessage = async () => {
-      try {
-        const registry = ServiceRegistry.getInstance();
-        const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
-        const todoManager = registry.get<TodoManager>('todo_manager');
-
-        if (idleMessageGenerator) {
-          // Get git branch if available
-          const gitBranch = getGitBranch() || undefined;
-
-          // Get home directory name
-          const homeDir = os.homedir();
-          const homeDirectory = path.basename(homeDir);
-
-          // Get cached project context
-          const projectContextDetector = registry.get<any>('project_context_detector');
-          const projectContext = projectContextDetector?.getCached();
-
-          // Gather context for idle message generation
-          // Filter out proposed todos (drafts awaiting acceptance)
-          const context: any = {
-            cwd: process.cwd(),
-            todos: todoManager ? todoManager.getTodos().filter(t => t.status !== 'proposed') : [],
-            gitBranch,
-            homeDirectory,
-            projectContext,
-          };
-
-          // Trigger background generation with context
-          idleMessageGenerator.generateMessageBackground(recentMessagesRef.current as any, context);
-        }
-      } catch (error) {
-        // Silently handle errors
-      }
-    };
-
-    // Generate immediately when becoming idle
-    generateIdleMessage();
-
-    // Then generate continuously while idle
-    const continuousInterval = setInterval(() => {
-      generateIdleMessage();
-    }, POLLING_INTERVALS.STATUS_POLLING);
-
-    return () => clearInterval(continuousInterval);
-  }, [isProcessing, isCompacting]);
 
   // Track processing state changes to mark when processing has started
   useEffect(() => {

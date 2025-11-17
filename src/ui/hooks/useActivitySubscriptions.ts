@@ -11,7 +11,7 @@ import { ActivityEventType, Message, ToolCallState } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
-import { reconstructInterjectionsFromMessages, reconstructToolCallsFromMessages, loadSessionData } from './useSessionResume.js';
+import { reconstructInterjectionsFromMessages, loadSessionData } from './useSessionResume.js';
 import { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -1058,9 +1058,11 @@ export const useActivitySubscriptions = (
         // Reset conversation view (this will clear terminal and set new messages)
         actions.resetConversationView(rewindedMessages);
 
-        // Reconstruct tool calls and interjections after view is reset
-        const reconstructedToolCalls = reconstructToolCallsFromMessages(rewindedMessages, serviceRegistry);
-        reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
+        // NOTE: Do NOT reconstruct completed tool calls into activeToolCalls
+        // Completed tool calls already exist in the messages (as tool_calls field)
+        // Reconstructing them creates duplication in the timeline rendering
+        // activeToolCalls is ONLY for tracking currently-running tool calls
+        // On rewind, all tool calls are completed and in message history
 
         reconstructInterjectionsFromMessages(rewindedMessages, activityStream);
 

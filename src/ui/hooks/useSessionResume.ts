@@ -181,6 +181,12 @@ export async function loadSessionData(
     (projectContextDetector as any).setCached(sessionData.projectContext);
   }
 
+  // Initialize idle task coordinator from session metadata
+  const coordinator = serviceRegistry.get('idle_task_coordinator');
+  if (coordinator && typeof (coordinator as any).initializeFromSession === 'function') {
+    (coordinator as any).initializeFromSession(sessionData);
+  }
+
   // Clear tool calls first
   actions.clearToolCalls();
 
@@ -191,9 +197,11 @@ export async function loadSessionData(
   // This prevents Static component from accumulating renders
   actions.resetConversationView(userMessages);
 
-  // Reconstruct tool call states from message history for proper rendering
-  const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
-  reconstructedToolCalls.forEach(tc => actions.addToolCall(tc));
+  // NOTE: Do NOT reconstruct completed tool calls into activeToolCalls
+  // Completed tool calls already exist in the messages (as tool_calls field)
+  // Reconstructing them creates duplication in the timeline rendering
+  // activeToolCalls is ONLY for tracking currently-running tool calls
+  // On resume, all tool calls are completed and in message history
 
   // Reconstruct interjection events from message history
   reconstructInterjectionsFromMessages(userMessages, activityStream);

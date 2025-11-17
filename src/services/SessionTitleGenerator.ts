@@ -157,19 +157,79 @@ export class SessionTitleGenerator implements CancellableService {
   }
 
   /**
+   * Regenerate title for an existing session based on recent conversation
+   *
+   * Unlike generateTitleBackground, this method:
+   * - Uses the last 5-10 messages for context (not just first message)
+   * - ALWAYS regenerates (ignores existing title)
+   * - Calls onComplete callback when done
+   * - Notifies coordinator of completion
+   *
+   * @param sessionName - Name of the session
+   * @param messages - Full message array from the conversation
+   * @param sessionsDir - Directory where sessions are stored
+   * @param onComplete - Callback to execute when regeneration completes (coordinator notification)
+   */
+  regenerateTitleBackground(
+    sessionName: string,
+    messages: Message[],
+    sessionsDir: string,
+    onComplete?: () => void
+  ): void {
+    // Prevent duplicate regenerations
+    if (this.pendingGenerations.has(sessionName)) {
+      logger.debug(`[TITLE_GEN] ⏭️  Skipping - already regenerating title for ${sessionName}`);
+      return;
+    }
+
+    logger.debug(`[TITLE_GEN] 🔄 Starting background title regeneration for session ${sessionName}`);
+    this.pendingGenerations.add(sessionName);
+    this.isGenerating = true;
+
+    // Run in background
+    this.generateAndSaveTitleAsync(sessionName, messages, sessionsDir, true)
+      .catch(error => {
+        // Ignore abort/interrupt errors (expected when cancelled)
+        if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
+          logger.debug(`[TITLE_GEN] ⚠️  Regeneration cancelled for ${sessionName}`);
+        } else {
+          logger.error(`[TITLE_GEN] ❌ Regeneration failed for ${sessionName}:`, error);
+        }
+      })
+      .finally(() => {
+        this.pendingGenerations.delete(sessionName);
+        this.isGenerating = false;
+        logger.debug(`[TITLE_GEN] ✅ Regeneration completed for ${sessionName}`);
+        if (onComplete) {
+          onComplete();
+        }
+      });
+  }
+
+  /**
    * Generate and save title asynchronously
    */
   private async generateAndSaveTitleAsync(
     sessionName: string,
-    firstUserMessage: string,
-    sessionsDir: string
+    messagesOrFirstMessage: Message[] | string,
+    sessionsDir: string,
+    forceRegenerate: boolean = false
   ): Promise<void> {
     const sessionPath = join(sessionsDir, `${sessionName}.json`);
 
-    // Generate title
-    const title = await this.generateTitle([
-      { role: 'user', content: firstUserMessage },
-    ]);
+    // Generate title based on whether this is initial generation or regeneration
+    let title: string;
+    if (forceRegenerate && Array.isArray(messagesOrFirstMessage)) {
+      logger.debug(`[TITLE_GEN] 🔄 Regenerating title from ${messagesOrFirstMessage.length} messages`);
+      title = await this.regenerateTitle(messagesOrFirstMessage);
+    } else {
+      const firstMessage = typeof messagesOrFirstMessage === 'string'
+        ? messagesOrFirstMessage
+        : messagesOrFirstMessage[0]?.content || '';
+      title = await this.generateTitle([
+        { role: 'user', content: firstMessage },
+      ]);
+    }
     logger.debug(`[TITLE_GEN] 📝 Generated title: "${title}"`);
 
     // Load session and update title
@@ -177,10 +237,11 @@ export class SessionTitleGenerator implements CancellableService {
       const content = await fs.readFile(sessionPath, 'utf-8');
       const session = JSON.parse(content);
 
-      // Only update if no title exists yet
-      if (!session.metadata?.title) {
+      // Only update if no title exists yet (unless forcing regeneration)
+      if (forceRegenerate || !session.metadata?.title) {
         session.metadata = session.metadata || {};
         session.metadata.title = title;
+        session.metadata.lastTitleGeneratedAt = Date.now();
         session.updated_at = new Date().toISOString();
 
         await fs.writeFile(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
@@ -195,12 +256,92 @@ export class SessionTitleGenerator implements CancellableService {
   }
 
   /**
-   * Build the prompt for title generation
+   * Regenerate title based on recent conversation context
+   *
+   * @param messages - Full conversation messages
+   * @returns Regenerated title
+   */
+  private async regenerateTitle(messages: Message[]): Promise<string> {
+    if (messages.length === 0) {
+      return 'New Session';
+    }
+
+    // Get last 5-10 user/assistant messages (filter out system/tool messages)
+    const relevantMessages = messages
+      .filter(msg => msg.role === 'user' || msg.role === 'assistant')
+      .slice(-10);
+
+    if (relevantMessages.length === 0) {
+      return 'New Session';
+    }
+
+    const titlePrompt = this.buildRegenerationPrompt(relevantMessages);
+
+    try {
+      const response = await this.modelClient.send(
+        [{ role: 'user', content: titlePrompt }],
+        {
+          stream: false,
+          suppressThinking: true, // Don't show thinking for background title generation
+        }
+      );
+
+      // Check if response was interrupted or had an error - don't process it
+      if ((response as any).interrupted || (response as any).error) {
+        logger.debug('[TITLE_GEN] ⚠️  Response was interrupted/error, skipping title regeneration');
+        throw new Error('Regeneration interrupted or failed');
+      }
+
+      const title = response.content.trim();
+
+      // Clean up title - remove quotes, limit length
+      let cleanTitle = title.replace(/^["']|["']$/g, '').trim();
+      if (cleanTitle.length > TEXT_LIMITS.SESSION_TITLE_MAX) {
+        cleanTitle = cleanTitle.slice(0, TEXT_LIMITS.SESSION_TITLE_MAX - 3) + '...';
+      }
+
+      return cleanTitle || 'New Session';
+    } catch (error) {
+      logger.debug('[TITLE_GEN] ❌ Failed to regenerate session title:', error);
+      // Fallback: use first user message
+      const firstUserMessage = relevantMessages.find(msg => msg.role === 'user');
+      if (firstUserMessage) {
+        const content = firstUserMessage.content.trim();
+        const cleanContent = content.replace(/\s+/g, ' ');
+        return cleanContent.length > TEXT_LIMITS.COMMAND_DISPLAY_MAX
+          ? cleanContent.slice(0, TEXT_LIMITS.COMMAND_DISPLAY_MAX) + '...'
+          : cleanContent;
+      }
+      return 'New Session';
+    }
+  }
+
+  /**
+   * Build the prompt for title generation (initial)
    */
   private buildTitlePrompt(firstMessage: string): string {
     return `Generate a very concise, descriptive title (max 8 words) for a conversation that starts with:
 
 "${firstMessage.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX)}"
+
+Reply with ONLY the title, nothing else. No quotes, no punctuation at the end.`;
+  }
+
+  /**
+   * Build the prompt for title regeneration based on conversation context
+   */
+  private buildRegenerationPrompt(messages: Message[]): string {
+    // Build context summary from recent messages
+    const context = messages
+      .map(msg => {
+        const preview = msg.content.slice(0, 150).replace(/\s+/g, ' ');
+        return `${msg.role}: ${preview}`;
+      })
+      .join('\n');
+
+    return `Generate a concise, descriptive title (max 8 words) for this conversation based on the recent discussion:
+
+${context}
 
 Reply with ONLY the title, nothing else. No quotes, no punctuation at the end.`;
   }

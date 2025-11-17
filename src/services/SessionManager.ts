@@ -567,6 +567,21 @@ export class SessionManager implements IService {
       // Ensure backward compatibility - initialize messages array if undefined
       const messages = session.messages ?? [];
 
+      // Find the last user message for preview
+      let lastUserMessage: string | undefined;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (message && message.role === 'user' && message.content) {
+          const content = message.content.trim();
+          const cleanContent = content.replace(/\s+/g, ' ');
+          // Truncate to ~60 characters for preview
+          lastUserMessage = cleanContent.length > 60
+            ? cleanContent.slice(0, 60) + '...'
+            : cleanContent;
+          break;
+        }
+      }
+
       // Determine display name - prefer title, fallback to first message snippet
       let displayName = session.metadata?.title;
       if (!displayName) {
@@ -590,6 +605,7 @@ export class SessionManager implements IService {
         last_modified_timestamp: updatedAt.getTime(),
         message_count: messages.length,
         working_dir: session.working_dir,
+        lastUserMessage,
         timestamp: updatedAt.getTime(),
       });
     }

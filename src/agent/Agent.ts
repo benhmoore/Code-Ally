@@ -576,6 +576,15 @@ export class Agent {
       );
     }
 
+    // Notify idle coordinator about user message and set Ollama active
+    const registry = ServiceRegistry.getInstance();
+    const coordinator = registry.get('idle_task_coordinator');
+    if (coordinator) {
+      (coordinator as any).notifyUserMessage();
+      (coordinator as any).setOllamaActive(true);
+      logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Notified idle coordinator: user message, Ollama active');
+    }
+
     // Add user message
     const userMessage: Message = {
       role: 'user',
@@ -666,6 +675,22 @@ export class Agent {
       // Note: processLLMResponse handles interruptions internally (both cancel and interjection types)
       const finalResponse = await this.processLLMResponse(response);
 
+      // Notify idle coordinator that Ollama is idle and check for idle tasks
+      if (coordinator) {
+        (coordinator as any).setOllamaActive(false);
+        logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Ollama inactive, checking for idle tasks');
+
+        // Trigger idle tasks with recent messages and context
+        const projectContextDetector = registry.get('project_context_detector');
+        (coordinator as any).checkAndRunIdleTasks(
+          this.conversationManager.getMessages(),
+          {
+            cwd: process.cwd(),
+            projectContext: projectContextDetector ? (projectContextDetector as any).getCached() : undefined
+          }
+        );
+      }
+
       return finalResponse;
     } catch (error) {
       // Treat permission denial as critical interruption
@@ -734,6 +759,14 @@ export class Agent {
     this.requestInProgress = false;
     this.interruptionManager.cleanup();
     this.stopActivityMonitoring();
+
+    // Ensure Ollama active flag is reset
+    const registry = ServiceRegistry.getInstance();
+    const coordinator = registry.get('idle_task_coordinator');
+    if (coordinator) {
+      (coordinator as any).setOllamaActive(false);
+      logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Ollama inactive (cleanup)');
+    }
   }
 
   /**

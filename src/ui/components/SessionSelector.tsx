@@ -142,6 +142,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
           const displayName = truncateDisplayName(session.display_name);
           const workingDir = shortenPath(session.working_dir);
           const relativeTime = formatRelativeTime(session.last_modified_timestamp);
+          const lastMessage = session.lastUserMessage || '(no messages)';
 
           return (
             <Box key={session.session_id} flexDirection="column">
@@ -149,7 +150,10 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
                 {displayName}
                 <Text dimColor> ({session.message_count} msgs, {relativeTime})</Text>
               </SelectionIndicator>
-              <Box marginLeft={2}>
+              <Box marginLeft={2} flexDirection="column">
+                <Text color={isSelected ? UI_COLORS.PRIMARY : undefined} dimColor={!isSelected}>
+                  {lastMessage}
+                </Text>
                 <Text color={isSelected ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DIM} dimColor={!isSelected}>
                   {workingDir}
                 </Text>

@@ -16,7 +16,8 @@ import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { CACHE_TIMEOUTS, BUFFER_SIZES, REASONING_EFFORT_API_VALUES, API_TIMEOUTS } from '../config/constants.js';
 import { FuzzyFilePathMatcher, FuzzyMatchResult } from './FuzzyFilePathMatcher.js';
-import type { Config } from '../types/index.js';
+import { formatRelativeTime } from '../ui/utils/timeUtils.js';
+import type { Config, SessionInfo } from '../types/index.js';
 
 /**
  * Interface for ConfigManager methods used by CompletionProvider
@@ -59,6 +60,7 @@ const SLASH_COMMANDS = [
   { name: '/clear', description: 'Clear conversation history' },
   { name: '/compact', description: 'Compact conversation context' },
   { name: '/rewind', description: 'Rewind conversation' },
+  { name: '/resume', description: 'Resume a previous session' },
   { name: '/undo', description: 'Undo file operations' },
   { name: '/agent', description: 'Manage specialized agents' },
   { name: '/focus', description: 'Set focus to a specific path' },
@@ -410,6 +412,11 @@ export class CompletionProvider {
       return await this.getFileCompletions(context);
     }
 
+    // Complete session names for /resume (user typed "/resume ")
+    if (command === '/resume' && wordCount === 2) {
+      return await this.getSessionNameCompletions(context.currentWord);
+    }
+
     // Complete subcommands for /plugin (user typed "/plugin ")
     if (command === '/plugin' && wordCount === 2) {
       const prefix = subcommand || '';
@@ -466,6 +473,39 @@ export class CompletionProvider {
         description: 'Specialized agent',
         type: 'option' as const,
       }));
+  }
+
+  /**
+   * Get session name completions for /resume command
+   */
+  private async getSessionNameCompletions(prefix: string): Promise<Completion[]> {
+    try {
+      const { ServiceRegistry } = await import('./ServiceRegistry.js');
+      const registry = ServiceRegistry.getInstance();
+      const sessionManager = registry.get('session_manager');
+
+      if (!sessionManager) {
+        return [];
+      }
+
+      const sessions = await (sessionManager as any).getSessionsInfoByDirectory();
+
+      // Sort by most recent first
+      const sorted = sessions
+        .sort((a: SessionInfo, b: SessionInfo) => b.last_modified_timestamp - a.last_modified_timestamp)
+        .filter((s: SessionInfo) => s.display_name.toLowerCase().includes(prefix.toLowerCase()))
+        .slice(0, 20);
+
+      return sorted.map((session: SessionInfo) => ({
+        value: session.display_name,
+        description: `(${formatRelativeTime(session.last_modified_timestamp)})`,
+        type: 'option' as const,
+        insertText: session.session_id,
+      }));
+    } catch (error) {
+      logger.debug(`Unable to get session completions: ${formatError(error)}`);
+      return [];
+    }
   }
 
   /**

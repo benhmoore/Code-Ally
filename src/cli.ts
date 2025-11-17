@@ -532,6 +532,11 @@ async function main() {
     // Configure session manager with service model client for title generation
     sessionManager.setModelClient(serviceModelClient);
 
+    // Create session title generator for idle task coordination
+    const { SessionTitleGenerator } = await import('./services/SessionTitleGenerator.js');
+    const sessionTitleGenerator = new SessionTitleGenerator(serviceModelClient);
+    registry.registerInstance('session_title_generator', sessionTitleGenerator);
+
     // Create message history
     const messageHistory = new MessageHistory({
       maxTokens: config.context_size,
@@ -544,6 +549,16 @@ async function main() {
       minInterval: 10000, // Generate new message every 10 seconds when idle
     });
     registry.registerInstance('idle_message_generator', idleMessageGenerator);
+
+    // Create idle task coordinator (requires sessionManager, titleGenerator, and idleMessageGenerator)
+    const { IdleTaskCoordinator } = await import('./services/IdleTaskCoordinator.js');
+    const idleTaskCoordinator = new IdleTaskCoordinator(
+      sessionTitleGenerator,
+      idleMessageGenerator,
+      sessionManager
+    );
+    await idleTaskCoordinator.initialize();
+    registry.registerInstance('idle_task_coordinator', idleTaskCoordinator);
 
     // Create project context detector
     const { ProjectContextDetector } = await import('./services/ProjectContextDetector.js');
