@@ -204,7 +204,8 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
       // Map thoroughness to max duration for this turn
       const maxDuration = getThoroughnessDuration(thoroughness as any);
       agent.setMaxDuration(maxDuration);
-      logger.debug('[ASK_AGENT_TOOL] Set agent maxDuration to', maxDuration, 'minutes for thoroughness:', thoroughness);
+      agent.setThoroughness(thoroughness);
+      logger.debug('[ASK_AGENT_TOOL] Set agent maxDuration to', maxDuration, 'minutes and thoroughness to', thoroughness);
 
       // Save original parent call ID and temporarily update to current call ID
       // This ensures tool calls made by the agent nest under the current agent-ask call

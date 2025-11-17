@@ -253,12 +253,17 @@ export class PluginCommand extends Command {
       if (result.hadExistingConfig) {
         const toolsCount = result.tools?.length || 0;
         const agentsCount = result.agents?.length || 0;
-        const toolsText = `${toolsCount} tool(s)`;
-        const agentsText = agentsCount > 0 ? ` and ${agentsCount} agent(s)` : '';
-        const successMessage = `✓ Plugin '${result.pluginName}' updated successfully with ${toolsText}${agentsText}\nYour existing configuration has been preserved. To reconfigure, run:\n  /plugin config ${result.pluginName}`;
+        const toolsText = `${toolsCount} tool${toolsCount === 1 ? '' : 's'}`;
+        const agentsText = agentsCount > 0 ? ` and ${agentsCount} agent${agentsCount === 1 ? '' : 's'}` : '';
+
         return {
           handled: true,
-          response: successMessage,
+          response: [
+            `✓ Plugin '${result.pluginName}' updated successfully with ${toolsText}${agentsText}`,
+            '',
+            `Your existing configuration has been preserved.`,
+            `To reconfigure, run: /plugin config ${result.pluginName}`,
+          ].join('\n'),
         };
       }
 

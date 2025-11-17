@@ -18,6 +18,7 @@ import { getGitBranch } from '../utils/gitUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import type { TokenManager } from '../agent/TokenManager.js';
 import type { ToolResultManager } from '../services/ToolResultManager.js';
+import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
 
 // --- Core Agent Identity and Directives ---
 
@@ -31,6 +32,7 @@ Core behavior:
 - Use tools directly, never delegate to users
 - Be concise (1-3 sentences). No emoji.
 - Use markdown formatting in responses: *italic*, ~~strikethrough~~, **bold**. For emphasis, use color tags: <red>, <green>, <yellow>, <cyan>, <blue>, <orange>
+- Avoid LaTeX formatting (e.g., $$, \frac{}, \LaTeX). Use plain text or markdown for mathematical expressions
 - Use todos for multi-step tasks
 - Retry with adjustments after failures
 - Batch independent tools when efficient
@@ -379,8 +381,16 @@ ${context}${todoContext}`;
 
 /**
  * Generate a system prompt for specialized agents
+ * @param agentSystemPrompt - The base system prompt for the agent
+ * @param taskPrompt - The task to execute
+ * @param tokenManager - Token manager for context tracking
+ * @param toolResultManager - Tool result manager for estimating remaining calls
+ * @param reasoningEffort - Reasoning effort level
+ * @param callingAgentName - Name of the agent calling this function (for filtering available agents)
+ * @param thoroughness - Optional thoroughness level for dynamic regeneration: 'quick', 'medium', 'very thorough', 'uncapped'
+ * @param agentType - Optional agent type identifier (e.g., 'explore', 'plan') for thoroughness adjustments
  */
-export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string, callingAgentName?: string): Promise<string> {
+export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string, callingAgentName?: string, thoroughness?: string, agentType?: string): Promise<string> {
   // Get context with agent information filtered by calling agent name
   const context = await getContextInfo({
     includeAgents: true,
@@ -394,12 +404,25 @@ export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt
   // Get context budget reminder (only shown at 75%+)
   const contextBudgetReminder = getContextBudgetReminder(tokenManager);
 
-  return `**Primary Identity:**
+  // Build the base prompt with behavioral directives and general guidelines
+  let promptWithDirectives = `**Primary Identity:**
 ${agentSystemPrompt}
 
 ${BEHAVIORAL_DIRECTIVES}
 
-${GENERAL_GUIDELINES}
+${GENERAL_GUIDELINES}`;
+
+  // Apply thoroughness-specific adjustments if available
+  // Thoroughness adjustments are inserted between base prompt and final execution guidelines
+  let thoroughnessSection = '';
+  if (thoroughness && agentType) {
+    const thoroughnessGuidelines = getThoroughnessGuidelines(agentType, thoroughness);
+    if (thoroughnessGuidelines) {
+      thoroughnessSection = `\n\n${thoroughnessGuidelines}`;
+    }
+  }
+
+  return `${promptWithDirectives}${thoroughnessSection}
 
 **Current Task:**
 ${taskPrompt}

@@ -175,26 +175,23 @@ export class AgentTool extends BaseTool implements InjectableTool {
       );
     }
 
-    // Prevent self-delegation (agent calling itself)
+    // Prevent deep cycles (allow cycles up to MAX_AGENT_CYCLE_DEPTH)
+    // Example allowed (with MAX=2): explore → explore (depth 2)
+    // Example blocked (with MAX=2): explore → explore → explore (depth 3)
     const currentAgentName = currentAgent?.getAgentName?.();
-    if (currentAgentName && agentType === currentAgentName) {
-      return this.formatErrorResponse(
-        `Agent '${agentType}' cannot delegate to itself. Please choose a different agent.`,
-        'validation_error'
-      );
-    }
-
-    // Prevent circular delegation (detect cycles in agent call chain)
     const currentCallStack = currentAgent?.getAgentCallStack?.() ?? [];
-    if (currentCallStack.includes(agentType)) {
-      // Build chain visualization for error message
-      // Include current agent name if available to show full chain
+
+    // Count how many times the target agent already appears in the call stack
+    const occurrenceCount = currentCallStack.filter((name: string) => name === agentType).length;
+
+    if (occurrenceCount >= AGENT_CONFIG.MAX_AGENT_CYCLE_DEPTH) {
+      // Agent already appears MAX_AGENT_CYCLE_DEPTH+ times, adding it again would exceed limit
       const fullChain = currentAgentName
         ? [...currentCallStack, currentAgentName, agentType]
         : [...currentCallStack, agentType];
       const chainVisualization = fullChain.join(' → ');
       return this.formatErrorResponse(
-        `Circular delegation detected: agent '${agentType}' is already in the call chain (${chainVisualization}). Choose a different agent to break the cycle.`,
+        `Cannot delegate to agent '${agentType}': it already appears ${occurrenceCount} times in the call chain (${chainVisualization}). Maximum cycle depth is ${AGENT_CONFIG.MAX_AGENT_CYCLE_DEPTH}.`,
         'validation_error'
       );
     }
@@ -434,7 +431,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
 
       // Execute the agent task
       logger.debug('[AGENT_TOOL] Executing agent task...');
-      const taskResult = await this.executeAgentTask(agentData, agentType, taskPrompt, thoroughness, callId, newDepth, initialMessages);
+      const taskResult = await this.executeAgentTask(agentData, agentType, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
       logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
 
       const duration = (Date.now() - startTime) / 1000;
@@ -485,6 +482,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
     thoroughness: string,
     callId: string,
     newDepth: number,
+    currentAgentName: string | undefined,
     initialMessages?: Message[]
   ): Promise<{ result: string; agent_id?: string }> {
     logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
@@ -574,6 +572,8 @@ export class AgentTool extends BaseTool implements InjectableTool {
         agentData.system_prompt,
         taskPrompt,
         resolvedReasoningEffort,
+        currentAgentName,
+        thoroughness,
         agentType
       );
       logger.debug('[AGENT_TOOL] Specialized prompt created, length:', specializedPrompt?.length || 0);
@@ -622,7 +622,6 @@ export class AgentTool extends BaseTool implements InjectableTool {
 
     // Build updated agent call stack for circular delegation detection
     const currentAgent = registry.get<any>('agent');
-    const currentAgentName = currentAgent?.getAgentName?.();
     const currentCallStack = currentAgent?.getAgentCallStack?.() ?? [];
     const newCallStack = currentAgentName
       ? [...currentCallStack, currentAgentName]
@@ -652,6 +651,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
         config: config,
         parentCallId: callId,
         maxDuration,
+        thoroughness: thoroughness, // Store for dynamic regeneration
         initialMessages,
         agentType: agentType,
         requirements: agentData.requirements,
@@ -687,6 +687,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
         parentCallId: callId,
         _poolKey: poolKey, // CRITICAL: Add this for pool matching
         maxDuration,
+        thoroughness: thoroughness, // Store for dynamic regeneration
         initialMessages,
         agentType: agentType,
         requirements: agentData.requirements,
@@ -832,12 +833,12 @@ export class AgentTool extends BaseTool implements InjectableTool {
   /**
    * Create specialized system prompt for agent
    */
-  private async createAgentSystemPrompt(agentPrompt: string, taskPrompt: string, reasoningEffort?: string, agentName?: string): Promise<string> {
+  private async createAgentSystemPrompt(agentPrompt: string, taskPrompt: string, reasoningEffort?: string, agentName?: string, thoroughness?: string, agentType?: string): Promise<string> {
     logger.debug('[AGENT_TOOL] Importing systemMessages module...');
     try {
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
       logger.debug('[AGENT_TOOL] Calling getAgentSystemPrompt...');
-      const result = await getAgentSystemPrompt(agentPrompt, taskPrompt, undefined, undefined, reasoningEffort, agentName);
+      const result = await getAgentSystemPrompt(agentPrompt, taskPrompt, undefined, undefined, reasoningEffort, agentName, thoroughness, agentType);
       logger.debug('[AGENT_TOOL] getAgentSystemPrompt returned, length:', result?.length || 0);
       return result;
     } catch (error) {

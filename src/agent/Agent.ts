@@ -69,6 +69,8 @@ export interface AgentConfig {
   requirements?: import('./RequirementTracker.js').AgentRequirements;
   /** Maximum duration in minutes the agent should run before wrapping up (optional) */
   maxDuration?: number;
+  /** Dynamic thoroughness level for agent execution (for regeneration in agent-ask): 'quick', 'medium', 'very thorough', 'uncapped' */
+  thoroughness?: string;
   /** Internal: Unique key for pool matching (used by AgentTool to distinguish custom agents) */
   _poolKey?: string;
   /** Directory to restrict this agent's file operations to (optional) */
@@ -870,6 +872,25 @@ export class Agent {
   }
 
   /**
+   * Set the thoroughness level for this agent
+   * Used by agent-ask to update thoroughness for follow-up interactions
+   * @param thoroughness - Thoroughness level: 'quick', 'medium', 'very thorough', or 'uncapped'
+   */
+  setThoroughness(thoroughness: string | undefined): void {
+    // Validate thoroughness value
+    if (thoroughness !== undefined) {
+      const validValues = ['quick', 'medium', 'very thorough', 'uncapped'];
+      if (!validValues.includes(thoroughness)) {
+        logger.warn('[AGENT_THOROUGHNESS]', this.instanceId, 'Invalid thoroughness value:', thoroughness, '- ignoring');
+        return;
+      }
+    }
+
+    this.config.thoroughness = thoroughness;
+    logger.debug('[AGENT_THOROUGHNESS]', this.instanceId, 'Set thoroughness to:', thoroughness || 'undefined');
+  }
+
+  /**
    * Get response from LLM
    *
    * @returns LLM response with potential tool calls
@@ -905,7 +926,11 @@ export class Agent {
           this.config.baseAgentPrompt,
           this.config.taskPrompt,
           this.tokenManager,
-          this.toolResultManager
+          this.toolResultManager,
+          this.config.config.reasoning_effort,
+          this.agentName,
+          this.config.thoroughness,
+          this.config.agentType
         );
         logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent prompt regenerated with current context');
       } else {

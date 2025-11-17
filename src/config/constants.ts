@@ -657,6 +657,12 @@ export const AGENT_CONFIG = {
   MAX_AGENT_DEPTH: 3,
 
   /**
+   * Maximum cycle depth for same-type agents (how many times same agent can appear in call chain)
+   * Example: 2 allows explore → explore (2 occurrences) but blocks explore → explore → explore (3 occurrences)
+   */
+  MAX_AGENT_CYCLE_DEPTH: 2,
+
+  /**
    * Maximum recursion depth for delegation context search (prevents stack overflow)
    *
    * IMPORTANT: Should be MAX_AGENT_DEPTH + 1 to allow searching entire delegation tree.

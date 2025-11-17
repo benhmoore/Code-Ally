@@ -522,14 +522,14 @@ export class PluginLoader {
       try {
         await fs.access(targetPath);
         isUpdate = true;
-        logger.info(`[PluginLoader] Updating existing plugin '${manifest.name}'`);
+        logger.debug(`[PluginLoader] Updating existing plugin '${manifest.name}'`);
 
         // Check if there's an existing config file to preserve
         const configPath = join(targetPath, PLUGIN_FILES.CONFIG);
         try {
           savedConfig = await fs.readFile(configPath, 'utf-8');
           hadExistingConfig = true;
-          logger.info(`[PluginLoader] Preserving existing configuration for '${manifest.name}'`);
+          logger.debug(`[PluginLoader] Preserving existing configuration for '${manifest.name}'`);
         } catch {
           // No config file exists - that's okay
           logger.debug(`[PluginLoader] No existing config to preserve for '${manifest.name}'`);
@@ -541,7 +541,7 @@ export class PluginLoader {
       }
 
       // Copy plugin directory to plugins folder
-      logger.info(
+      logger.debug(
         `[PluginLoader] ${isUpdate ? 'Updating' : 'Installing'} plugin '${manifest.name}' from ${sourcePath}`
       );
       await this.copyDirectory(sourcePath, targetPath);
@@ -550,7 +550,7 @@ export class PluginLoader {
       if (savedConfig) {
         const configPath = join(targetPath, PLUGIN_FILES.CONFIG);
         await fs.writeFile(configPath, savedConfig, 'utf-8');
-        logger.info(`[PluginLoader] Restored existing configuration for '${manifest.name}'`);
+        logger.debug(`[PluginLoader] Restored existing configuration for '${manifest.name}'`);
       }
 
       // Load the plugin (this triggers dependency installation)
@@ -592,8 +592,8 @@ export class PluginLoader {
       const agentsCount = agents.length;
       const toolsText = `${toolsCount} tool(s)`;
       const agentsText = agentsCount > 0 ? ` and ${agentsCount} agent(s)` : '';
-      logger.info(
-        `[PluginLoader] ✓ Plugin '${manifest.name}' installed successfully with ${toolsText}${agentsText}`
+      logger.debug(
+        `[PluginLoader] Plugin '${manifest.name}' installed successfully with ${toolsText}${agentsText}`
       );
 
       return {

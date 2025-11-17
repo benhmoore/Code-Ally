@@ -647,7 +647,7 @@ export class ResponseProcessor {
         // Requirements not met - check if we should retry or allow exit
         if (this.requirementValidator.hasExceededMaxRetries()) {
           // Max retries exceeded - allow exit anyway
-          logger.warn('[REQUIREMENT_VALIDATOR]', context.instanceId,
+          logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId,
             'Requirements not met but max retries exceeded. Allowing exit. Reason:', reason);
         } else {
           // Inject reminder and retry

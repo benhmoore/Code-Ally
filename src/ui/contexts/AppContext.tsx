@@ -314,14 +314,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   }, []);
 
   const resetConversationView = useCallback((newMessages: Message[]) => {
-    // Clear terminal using ANSI escape sequence that actually works
-    // \x1B[2J = Clear entire screen
-    // \x1B[3J = Clear scrollback buffer
-    // \x1B[H = Move cursor to home (0,0)
-    process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
-
-    // Atomically update messages first, THEN increment remount key
-    // This ensures the Static component remounts with the new message set
+    // Add metadata and deduplicate messages
     const messagesWithMetadata = newMessages.map((msg, idx) => ({
       ...msg,
       id: msg.id || generateMessageId(),
@@ -337,10 +330,22 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       return true;
     });
 
-    // Update messages FIRST, then remount key
-    // React will batch these together but the order matters
-    setMessages(deduplicated);
+    // CRITICAL: Clear messages and remount key FIRST, then clear terminal, then set new messages
+    // This ensures the old Static component unmounts cleanly before terminal clear
+    setMessages([]);
     setStaticRemountKey((prev) => prev + 1);
+
+    // Use setImmediate to ensure React has processed the empty state before we clear and set new content
+    setImmediate(() => {
+      // Clear terminal AFTER old Static has unmounted
+      // \x1B[2J = Clear entire screen
+      // \x1B[3J = Clear scrollback buffer
+      // \x1B[H = Move cursor to home (0,0)
+      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+
+      // Now set the new messages
+      setMessages(deduplicated);
+    });
   }, []);
 
   // Memoize state object to prevent unnecessary context updates

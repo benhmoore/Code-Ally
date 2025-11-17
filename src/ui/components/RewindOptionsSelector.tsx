@@ -64,53 +64,54 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
   onConfirm,
   visible = true,
 }) => {
+  // Build options array dynamically based on file count
+  const hasFiles = fileChanges.fileCount > 0;
+
+  // Define options with labels - only show "Restore Conversation and Code Changes" if files exist
+  const options = [
+    {
+      label: 'Restore Conversation',
+      description: hasFiles ? 'Rewind conversation only, keep files as-is' : 'Rewind conversation',
+      choice: 'conversation-only' as RewindChoice,
+    },
+    // Only include code changes option if files exist
+    ...(hasFiles ? [{
+      label: 'Restore Conversation and Code Changes',
+      description: `Rewind conversation and restore ${fileChanges.fileCount} file${fileChanges.fileCount === 1 ? '' : 's'}`,
+      choice: 'conversation-and-files' as RewindChoice,
+    }] : []),
+    {
+      label: 'Cancel',
+      description: 'Return to message selector',
+      choice: 'cancel' as RewindChoice,
+    },
+  ];
+
   // Default selection:
   // - If files exist: "conversation-and-files" (index 1) for backward compatibility
-  // - If no files: "conversation-only" (index 0) since restoring files has no effect
-  // Options: 0 = conversation-only, 1 = conversation-and-files, 2 = cancel
-  const [selectedOption, setSelectedOption] = useState(
-    fileChanges.fileCount > 0 ? 1 : 0
-  );
+  // - If no files: "conversation-only" (index 0)
+  const [selectedOption, setSelectedOption] = useState(hasFiles ? 1 : 0);
 
   // Handle keyboard input
   useInput(
     (_input, key) => {
-      const hasFiles = fileChanges.fileCount > 0;
-
-      // Up arrow - navigate to previous option (skip disabled options)
+      // Up arrow - navigate to previous option
       if (key.upArrow) {
-        let newIndex = selectedOption - 1;
-        // If no files and trying to move to index 1 (disabled option), skip to index 0
-        if (!hasFiles && newIndex === 1) {
-          newIndex = 0;
-        }
-        setSelectedOption(Math.max(0, newIndex));
+        setSelectedOption(prev => Math.max(0, prev - 1));
         return;
       }
 
-      // Down arrow - navigate to next option (skip disabled options)
+      // Down arrow - navigate to next option
       if (key.downArrow) {
-        let newIndex = selectedOption + 1;
-        // If no files and trying to move to index 1 (disabled option), skip to index 2
-        if (!hasFiles && newIndex === 1) {
-          newIndex = 2;
-        }
-        setSelectedOption(Math.min(2, newIndex));
+        setSelectedOption(prev => Math.min(options.length - 1, prev + 1));
         return;
       }
 
-      // Enter - confirm selection (prevent selecting disabled options)
+      // Enter - confirm selection
       if (key.return) {
-        const choices: RewindChoice[] = ['conversation-only', 'conversation-and-files', 'cancel'];
-        const choice = choices[selectedOption];
-
-        // Prevent confirming disabled "conversation-and-files" option when no files
-        if (choice === 'conversation-and-files' && !hasFiles) {
-          return;
-        }
-
-        if (choice) {
-          onConfirm(choice);
+        const selectedChoice = options[selectedOption]?.choice;
+        if (selectedChoice) {
+          onConfirm(selectedChoice);
         }
         return;
       }
@@ -137,25 +138,6 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     return filename;
   });
   const hasMoreFiles = fileChanges.fileCount > 3;
-
-  // Define options with labels
-  const options = [
-    {
-      label: 'Restore Conversation',
-      description: fileChanges.fileCount > 0 ? 'Rewind conversation only, keep files as-is' : 'Rewind conversation (no files to restore)',
-    },
-    {
-      label: 'Restore Conversation and Code Changes',
-      description: fileChanges.fileCount > 0
-        ? `Rewind conversation and restore ${fileChanges.fileCount} file${fileChanges.fileCount === 1 ? '' : 's'}`
-        : 'No files to restore',
-      dimmed: fileChanges.fileCount === 0,
-    },
-    {
-      label: 'Cancel',
-      description: 'Return to message selector',
-    },
-  ];
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -204,18 +186,12 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
       <Box flexDirection="column" marginBottom={1}>
         {options.map((option, index) => {
           const isSelected = index === selectedOption;
-          const isDimmed = option.dimmed;
 
           return (
             <Box key={index} flexDirection="column" marginBottom={index < options.length - 1 ? 1 : 0}>
               {/* Option label */}
               <SelectionIndicator isSelected={isSelected}>
-                <Text
-                  color={isDimmed ? 'gray' : undefined}
-                  dimColor={isDimmed}
-                >
-                  {option.label}
-                </Text>
+                <Text>{option.label}</Text>
               </SelectionIndicator>
               {/* Option description */}
               {option.description && (

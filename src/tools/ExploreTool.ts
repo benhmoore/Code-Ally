@@ -25,9 +25,10 @@ import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
+import { getThoroughnessGuidelines } from '../prompts/thoroughnessAdjustments.js';
 
-// Tools available for exploration (read-only + write-temp for note-taking)
-const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'write-temp'];
+// Tools available for exploration (read-only + write-temp for note-taking + explore for delegation)
+const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp', 'explore'];
 
 // Base prompt for exploration (without thoroughness-specific guidelines)
 const EXPLORATION_BASE_PROMPT = `You are a specialized codebase exploration assistant. You excel at thoroughly navigating and exploring codebases to understand structure, find implementations, and analyze architecture.
@@ -39,6 +40,52 @@ const EXPLORATION_BASE_PROMPT = `You are a specialized codebase exploration assi
 - Reading and analyzing file contents
 - Understanding directory structures with tree visualization
 - Executing parallel operations for efficiency
+- Delegating sub-explorations to protect your context
+
+## Strategic Delegation (CRITICAL)
+
+**At every step, evaluate whether breaking down the exploration would be more efficient and comprehensive.**
+
+Delegating to other explore agents via explore() PROTECTS YOUR CONTEXT and should be PREFERRED whenever an exploration can be broken down efficiently.
+
+### When to Delegate:
+
+- **Multiple distinct areas**: Authentication AND error handling AND API patterns (3 separate explore calls)
+- **Parallel investigations**: Frontend components, backend services, database schema (3 parallel calls)
+- **Deep dives after overview**: First explore structure, then delegate deep dives into specific subsystems
+- **Complex multi-part tasks**: Break into logical sub-explorations that can run independently
+
+### Benefits of Delegation:
+
+- Protects your token budget - each sub-agent has its own context
+- Enables true parallelization - multiple investigations simultaneously
+- Maintains focus - you orchestrate, sub-agents handle details
+- Scales better - distribute work across multiple agents
+
+### Delegation Patterns:
+
+**Pattern 1 - Parallel Areas:**
+\`\`\`
+explore(task_prompt="Find authentication implementation", thoroughness="medium")
+explore(task_prompt="Find error handling patterns", thoroughness="medium")
+explore(task_prompt="Find API endpoint structure", thoroughness="medium")
+\`\`\`
+
+**Pattern 2 - Overview then Deep Dive:**
+\`\`\`
+1. First: Use tree/glob/grep yourself to understand high-level structure
+2. Then: Delegate detailed investigations of each major component
+\`\`\`
+
+**Pattern 3 - Divide and Conquer:**
+\`\`\`
+Large codebase? Split by directory:
+explore(task_prompt="Explore src/frontend/* for user interface patterns")
+explore(task_prompt="Explore src/backend/* for service architecture")
+explore(task_prompt="Explore src/shared/* for common utilities")
+\`\`\`
+
+**Remember**: You can delegate up to 2 levels deep. If a task can be split into independent sub-tasks, DELEGATE.
 
 ## Tool Usage Guidelines
 
@@ -47,8 +94,8 @@ const EXPLORATION_BASE_PROMPT = `You are a specialized codebase exploration assi
 - Use Grep for searching file contents with regex patterns
 - Use Read when you know specific file paths you need to examine
 - Use Ls for listing directory contents when exploring structure
-- Use Batch to execute multiple operations in parallel for efficiency
 - Use WriteTemp to save temporary notes for organizing findings during exploration
+- Use Explore to delegate distinct sub-explorations (PREFER THIS - it protects your context)
 - Adapt your search approach based on the thoroughness level specified
 
 ## Organizing Your Findings
@@ -75,12 +122,20 @@ Complete the exploration request efficiently and report your findings clearly wi
 const EXPLORATION_SYSTEM_PROMPT = EXPLORATION_BASE_PROMPT + `
 
 **Execution Guidelines:**
-- Be thorough but efficient with tool usage (aim for 5-10 tool calls)
-- Start with structure (tree/ls) before diving into specific files
-- Use parallel operations (batch) when searching multiple patterns
+
+**FIRST: Assess Delegation Strategy**
+- Can this task be split into 2+ independent sub-explorations? If YES → delegate via explore()
+- Will investigating multiple areas consume significant context? If YES → delegate each area
+- Is this a complex multi-part exploration? If YES → break it down and delegate
+
+**THEN: Execute Your Approach**
+- If delegating: Launch explore() calls (can be parallel) and synthesize results
+- If exploring directly: Be efficient (aim for 5-10 tool calls), start with structure (tree/ls)
 - Always provide clear, structured summaries of findings
 - Highlight key files, patterns, and architectural decisions
 - If you can't find something, explain what you searched and what was missing
+
+**Remember**: Delegation is not a fallback - it's a primary strategy for context protection and efficiency.
 
 Execute your exploration systematically and provide comprehensive results.`;
 
@@ -99,7 +154,7 @@ Multi-file synthesis: Understanding patterns, relationships, or architecture acr
 Preserves your context - investigation happens in separate agent context.
 NOT for: Known file paths, single-file questions, simple lookups.
 
-Note: Multiple independent explorations can be batched for efficiency.`;
+Note: Explore agents can delegate to other explore agents (max 2 levels deep) for distinct sub-investigations.`;
 
   private activeDelegations: Map<string, any> = new Map();
   private _currentPooledAgent: PooledAgent | null = null;
@@ -308,6 +363,7 @@ Note: Multiple independent explorations can be batched for efficiency.`;
         parentCallId: callId,
         _poolKey: `explore-${callId}`, // Unique key per invocation
         maxDuration,
+        thoroughness: thoroughness, // Store for dynamic regeneration
         agentType: 'explore',
       };
 
@@ -492,67 +548,10 @@ Note: Multiple independent explorations can be batched for efficiency.`;
    * Adjust exploration system prompt based on thoroughness level
    */
   private adjustPromptForThoroughness(thoroughness: string): string {
-    let thoroughnessGuidelines: string;
-
-    switch (thoroughness) {
-      case 'quick':
-        thoroughnessGuidelines = `**Important Guidelines:**
-- You have READ-ONLY access to codebase - you cannot modify project files
-- You CAN write temporary notes to /tmp using write-temp to organize findings
-- **Time limit: ~1 minute maximum** - System reminders will notify you of remaining time
-- Be efficient and focused (aim for 2-5 tool calls)
-- Prioritize grep/glob over extensive file reading
-- Use write-temp if you need to track findings across searches
-- Provide quick, concise summaries of findings
-- Focus on speed over comprehensiveness
-- If you can't find something quickly, explain what you searched`;
-        break;
-
-      case 'medium':
-        thoroughnessGuidelines = `**Important Guidelines:**
-- You have READ-ONLY access to codebase - you cannot modify project files
-- You CAN write temporary notes to /tmp using write-temp to organize findings
-- **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
-- Be thorough but efficient with tool usage (aim for 5-10 tool calls)
-- Consider using write-temp to organize findings by category as you discover them
-- Review your notes before summarizing to ensure comprehensive coverage
-- Always provide clear, structured summaries of findings
-- Highlight key files, patterns, and architectural decisions
-- If you can't find something, explain what you searched and what was missing`;
-        break;
-
-      case 'very thorough':
-        thoroughnessGuidelines = `**Important Guidelines:**
-- You have READ-ONLY access to codebase - you cannot modify project files
-- You CAN write temporary notes to /tmp using write-temp to organize findings
-- **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
-- Be comprehensive and meticulous (aim for 10-20 tool calls)
-- Use write-temp extensively to organize findings as you discover them
-- Create separate note files for different aspects (architecture.txt, patterns.txt, dependencies.txt)
-- Check multiple locations and consider various naming conventions
-- Trace dependencies deeply and understand complete call chains
-- Read extensively to build complete understanding
-- Cross-reference findings across multiple files
-- Investigate edge cases and alternative implementations
-- Review and synthesize all notes before providing final detailed summary
-- Always provide detailed, structured summaries with extensive context
-- Document all patterns, architectural decisions, and relationships found`;
-        break;
-
-      case 'uncapped':
-      default:
-        thoroughnessGuidelines = `**Important Guidelines:**
-- You have READ-ONLY access to codebase - you cannot modify project files
-- You CAN write temporary notes to /tmp using write-temp to organize findings
-- **No time limit imposed** - Take the time needed to do a thorough job
-- Be comprehensive and systematic with tool usage
-- Use write-temp to organize extensive findings into separate note files
-- Review your accumulated notes before generating final response
-- Always provide clear, structured summaries of findings
-- Highlight key files, patterns, and architectural decisions
-- If you can't find something, explain what you searched and what was missing`;
-        break;
-    }
+    // Get thoroughness-specific guidelines from shared utility
+    // Default to 'uncapped' if thoroughness is not recognized
+    const thoroughnessGuidelines = getThoroughnessGuidelines('explore', thoroughness) ??
+                                   getThoroughnessGuidelines('explore', 'uncapped');
 
     // Compose the full prompt with thoroughness-specific guidelines
     return EXPLORATION_BASE_PROMPT + '\n\n' + thoroughnessGuidelines + '\n\nExecute your exploration systematically and provide comprehensive results.';

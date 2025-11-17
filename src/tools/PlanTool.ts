@@ -25,6 +25,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
+import { getThoroughnessGuidelines } from '../prompts/thoroughnessAdjustments.js';
 
 // Planning tools: read-only tools + explore for nested research + todo-add for proposals
 const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-add'];
@@ -359,6 +360,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         _poolKey: `plan-${callId}`, // Unique key per invocation
         requiredToolCalls: ['todo-add'], // Planning agent MUST call todo-add before exiting
         maxDuration,
+        thoroughness: thoroughness, // Store for dynamic regeneration
         agentType: 'plan',
       };
 
@@ -539,61 +541,9 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
     try {
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
 
-      // Create thoroughness-specific guidelines
-      let thoroughnessGuidelines: string;
-      switch (thoroughness) {
-        case 'quick':
-          thoroughnessGuidelines = `**Important Guidelines:**
-- **Time limit: ~1 minute maximum** - System reminders will notify you of remaining time
-- Be efficient in research (use 5-10 tool calls depending on codebase complexity)
-- **For existing codebases**: Ground recommendations in existing patterns, provide file references
-- **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
-- **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly
-- Provide specific file references with line numbers when applicable
-- Use explore() for complex multi-file pattern analysis (skip if empty project)
-- Focus on speed and efficiency`;
-          break;
-        case 'medium':
-          thoroughnessGuidelines = `**Important Guidelines:**
-- **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
-- Be efficient in research (use 10-15 tool calls depending on codebase complexity)
-- **For existing codebases**: Ground recommendations in existing patterns, provide file references
-- **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
-- **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly
-- Provide specific file references with line numbers when applicable
-- Include code examples from codebase when relevant (or from best practices if starting fresh)
-- Use explore() for complex multi-file pattern analysis (skip if empty project)
-- Ensure plan is complete but not over-engineered
-- Focus on artful implementation that fits the existing architecture (or establishes good architecture)`;
-          break;
-        case 'very thorough':
-          thoroughnessGuidelines = `**Important Guidelines:**
-- **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
-- Be thorough in research (use 15-20+ tool calls for comprehensive analysis)
-- **For existing codebases**: Ground recommendations in existing patterns, provide file references
-- **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
-- **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly
-- Provide specific file references with line numbers when applicable
-- Include code examples from codebase when relevant (or from best practices if starting fresh)
-- Use explore() for complex multi-file pattern analysis (skip if empty project)
-- Ensure plan is complete and comprehensive
-- Focus on artful implementation that fits the existing architecture (or establishes good architecture)`;
-          break;
-        case 'uncapped':
-        default:
-          thoroughnessGuidelines = `**Important Guidelines:**
-- **No time limit imposed** - Take the time needed to create a comprehensive plan
-- Be thorough in research (use as many tool calls as needed for complete analysis)
-- **For existing codebases**: Ground recommendations in existing patterns, provide file references
-- **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
-- **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly
-- Provide specific file references with line numbers when applicable
-- Include code examples from codebase when relevant (or from best practices if starting fresh)
-- Use explore() for complex multi-file pattern analysis (skip if empty project)
-- Ensure plan is complete and comprehensive
-- Focus on artful implementation that fits the existing architecture (or establishes good architecture)`;
-          break;
-      }
+      // Get thoroughness-specific guidelines from shared utility
+      const thoroughnessGuidelines = getThoroughnessGuidelines('plan', thoroughness) ||
+        getThoroughnessGuidelines('plan', 'uncapped')!; // Fallback to uncapped if null
 
       // Compose the full prompt with thoroughness-specific guidelines
       const modifiedPrompt = PLANNING_BASE_PROMPT + '\n\n' + thoroughnessGuidelines + '\n\n' + PLANNING_CLOSING;

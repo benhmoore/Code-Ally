@@ -1074,16 +1074,21 @@ export const useActivitySubscriptions = (
           actions.setContextUsage(contextUsage);
         }
 
-        // Add rewind notice at the target message timestamp (or slightly after if no timestamp)
-        // This ensures the notice appears at the rewind point in the timeline, not at the end
-        const noticeTimestamp = targetTimestamp ? targetTimestamp + 1 : Date.now();
+        // CRITICAL: Defer rewind notice addition until after resetConversationView completes
+        // resetConversationView uses setImmediate, so we need to wait for it to finish
+        // Otherwise the notice gets added while terminal is clearing, causing rendering issues
+        setImmediate(() => {
+          // Add rewind notice at the target message timestamp (or slightly after if no timestamp)
+          // This ensures the notice appears at the rewind point in the timeline, not at the end
+          const noticeTimestamp = targetTimestamp ? targetTimestamp + 1 : Date.now();
 
-        actions.addRewindNotice({
-          id: `rewind_${Date.now()}`,
-          timestamp: noticeTimestamp,
-          targetMessageIndex: selectedIndex,
-          restoredFiles: restoredFiles.length > 0 ? restoredFiles : undefined,
-          failedRestorations: failedRestorations.length > 0 ? failedRestorations : undefined,
+          actions.addRewindNotice({
+            id: `rewind_${Date.now()}`,
+            timestamp: noticeTimestamp,
+            targetMessageIndex: selectedIndex,
+            restoredFiles: restoredFiles.length > 0 ? restoredFiles : undefined,
+            failedRestorations: failedRestorations.length > 0 ? failedRestorations : undefined,
+          });
         });
 
         modal.setInputPrefillText(targetMessageContent);
