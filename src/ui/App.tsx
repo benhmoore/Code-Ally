@@ -922,9 +922,9 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       )}
 
       {/* Footer / Help */}
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} width={contentWidth - 2}>
         {isDebugMode ? (
-          <>
+          <Box flexDirection="column">
             {/* Debug Mode: Line 1 - Session and Memory */}
             <Text dimColor>
               <Text color="yellow">DEBUG MODE</Text>
@@ -937,22 +937,22 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               {debugStats.todoTotal > 0 && (
                 <Text> · Todos: {debugStats.todoPending} pending, {debugStats.todoCompleted} done, {debugStats.todoTotal} total</Text>
               )}
-              <Text> · Model: {state.config.model || 'none'}</Text>
+              <Text> · {state.config.model || 'none'}</Text>
               {currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>}
               {activeAgentsCount > 0 && <Text> · <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>}
               <Text> · <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text></Text>
             </Text>
-          </>
+          </Box>
         ) : (
           /* Normal Mode: Single line */
           <Text dimColor>
-            <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> · <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} · Model: {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
+            <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> · <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} · {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
             {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
-              <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
+              <Text color="red">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact</Text>
             ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
-              <Text color="yellow">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - consider /compact</Text>
+              <Text color="yellow">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - consider /compact</Text>
             ) : (
-              <Text>Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining</Text>
+              <Text>{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left</Text>
             )}
           </Text>
         )}

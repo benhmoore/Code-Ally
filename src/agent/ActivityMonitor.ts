@@ -158,7 +158,7 @@ export class ActivityMonitor {
       const elapsedSeconds = Math.round(elapsedMs / 1000);
       const timeoutSeconds = this.config.timeoutMs / 1000;
 
-      logger.warn(
+      logger.debug(
         '[ACTIVITY_MONITOR]',
         this.config.instanceId,
         `Timeout detected: ${elapsedSeconds}s since last activity (limit: ${timeoutSeconds}s)`
