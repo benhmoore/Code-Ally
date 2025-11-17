@@ -148,6 +148,7 @@ export class PlanTool extends BaseTool implements InjectableTool {
   readonly usageGuidance = `**When to use plan:**
 Implementation/refactoring with multiple steps (>3 steps), needs structured approach.
 Creates proposed todos with dependencies and subtasks for systematic execution.
+CRITICAL: Agent CANNOT see current conversation - include ALL context in requirements (goals, constraints, files involved).
 Use deny-proposal if plan doesn't align with user intent.
 Skip for: Quick fixes, continuing existing plans, simple changes.`;
 
@@ -192,7 +193,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
           properties: {
             requirements: {
               type: 'string',
-              description: 'Task or feature requirements. Can be minimal - planning agent will research and fill in details.',
+              description: 'Complete requirements with ALL necessary context. Agent cannot see current conversation - include goals, constraints, affected files, and background. Can be high-level - planning agent will research details.',
             },
             thoroughness: {
               type: 'string',

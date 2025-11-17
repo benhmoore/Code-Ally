@@ -730,10 +730,10 @@ export class ResponseProcessor {
       }
     } else if (!content.trim() && isRetry) {
       // Still empty after continuation attempt - use fallback
-      logger.error('[AGENT_RESPONSE]', context.instanceId, 'Still empty after continuation attempt - using fallback message');
+      logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Still empty after continuation attempt - using fallback message');
       const fallbackContent = context.isSpecializedAgent
         ? 'Task completed. Tool results are available in the conversation history.'
-        : 'I apologize, but I encountered an issue generating a response. The requested operations have been completed.';
+        : 'I apologize, but I encountered an issue generating a response.';
 
       const assistantMessage: Message = {
         role: 'assistant',

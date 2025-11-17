@@ -44,7 +44,10 @@ Core behavior:
 User interjections: Respond directly to what they said, then continue work incorporating their guidance.`;
 
 // Agent delegation guidelines for main assistant
-const AGENT_DELEGATION_GUIDELINES = `CRITICAL - Context Preservation:
+const AGENT_DELEGATION_GUIDELINES = `CRITICAL - Agent Context Isolation:
+Agents (explore, plan, agent) CANNOT see the current conversation. They ONLY receive the task_prompt parameter. You MUST include ALL necessary context in task_prompt - file paths, error messages, requirements, background information. Don't reference "the bug we discussed" or "the file mentioned earlier" - agents can't see that.
+
+CRITICAL - Context Preservation:
 When exploring codebases or answering questions that aren't needle queries for specific files/classes/functions, you MUST use explore() instead of grep/read directly. Multi-step grep/read rapidly consumes your context, reducing remaining tool calls and forcing premature restart.
 
 Tool selection:

@@ -836,7 +836,18 @@ function tokenizeFormatting(text: string, depth: number = 0): StyledSegment[] {
     // Determine what was matched and create appropriate segment
     if (match[1]) {
       // Inline code: `text` - render with primary color for distinction
-      segments.push({ text: match[1], code: true, color: UI_COLORS.PRIMARY });
+      // Process escape sequences in code blocks
+      // Use placeholder to handle \\ correctly
+      const BACKSLASH_PLACEHOLDER = '\x00BACKSLASH\x00';
+      const codeText = match[1]
+        .replace(/\\\\/g, BACKSLASH_PLACEHOLDER)  // Temporarily replace \\
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\r/g, '\r')
+        .replace(/\\"/g, '"')
+        .replace(/\\'/g, "'")
+        .replace(new RegExp(BACKSLASH_PLACEHOLDER, 'g'), '\\');  // Restore \
+      segments.push({ text: codeText, code: true, color: UI_COLORS.PRIMARY });
     } else {
       // Try to extract color tag (handles both <color> and <span color="color"> formats)
       const colorMatch = extractColorFromMatch(match);

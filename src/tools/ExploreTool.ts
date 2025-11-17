@@ -152,6 +152,7 @@ export class ExploreTool extends BaseTool implements InjectableTool {
 Unknown scope/location: Don't know where to start or how much code is involved.
 Multi-file synthesis: Understanding patterns, relationships, or architecture across codebase.
 Preserves your context - investigation happens in separate agent context.
+CRITICAL: Agent CANNOT see current conversation - include ALL context in task_prompt (what to find, where to look, why).
 NOT for: Known file paths, single-file questions, simple lookups.
 
 Note: Explore agents can delegate to other explore agents (max 2 levels deep) for distinct sub-investigations.`;
@@ -197,7 +198,7 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
           properties: {
             task_prompt: {
               type: 'string',
-              description: 'Description of what to explore or find in the codebase. Be specific about what you want to understand.',
+              description: 'Complete exploration instructions with ALL necessary context. Agent cannot see current conversation - include what to find, where to look, and why. Be specific about what you want to understand.',
             },
             thoroughness: {
               type: 'string',

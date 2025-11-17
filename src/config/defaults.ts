@@ -26,7 +26,7 @@ export const DEFAULT_CONFIG: Config = {
   endpoint: 'http://localhost:11434', // Ollama API endpoint
   context_size: 16384, // Context window size in tokens
   temperature: 0.3, // Generation temperature (0.0-1.0)
-  max_tokens: 10000, // Max tokens to generate per response (or 90% of context_size, whichever is lower)
+  max_tokens: 16384, // Max tokens to generate per response (or 90% of context_size, whichever is lower)
   reasoning_effort: REASONING_EFFORT.LOW, // Reasoning level for gpt-oss and reasoning models
 
   // ==========================================

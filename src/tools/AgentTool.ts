@@ -32,6 +32,10 @@ export class AgentTool extends BaseTool implements InjectableTool {
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion - hide output and nested tools
   readonly hideOutput = false; // Show agent tool output in chat
+  readonly usageGuidance = `**When to use agent:**
+Complex tasks requiring specialized expertise or distinct workflows.
+CRITICAL: Agent CANNOT see current conversation - include ALL context in task_prompt (file paths, errors, requirements).
+NOT for: Exploration (use explore), planning (use plan), tasks needing conversation context.`;
 
   private agentManager: AgentManager | null = null;
   private activeDelegations: Map<string, any> = new Map();
@@ -75,7 +79,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
           properties: {
             task_prompt: {
               type: 'string',
-              description: 'Task instructions. For concurrent tasks, make multiple agent() calls.',
+              description: 'Complete task instructions with ALL necessary context. Agent cannot see current conversation - include file paths, errors, requirements, and background. For concurrent tasks, make multiple agent() calls.',
             },
             agent_type: {
               type: 'string',
