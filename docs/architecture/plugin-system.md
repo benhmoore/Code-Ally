@@ -381,9 +381,12 @@ async execute(args: any, callId: string): Promise<ToolResult> {
 
 **Venv injection:**
 ```typescript
+import { join } from 'path';
+import { getPluginEnvsDir } from '../../config/paths.js';
+
 // If plugin has Python runtime
 if (manifest.runtime === 'python3') {
-  const venvPython = `${PLUGIN_ENVS_DIR}/${pluginName}/bin/python3`;
+  const venvPython = join(getPluginEnvsDir(), pluginName, 'bin', 'python3');
   if (fs.existsSync(venvPython)) {
     command = venvPython; // Use venv Python instead
   }

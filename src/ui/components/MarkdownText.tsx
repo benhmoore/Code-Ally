@@ -42,7 +42,7 @@ export interface MarkdownTextProps {
 }
 
 interface ParsedNode {
-  type: 'text' | 'code' | 'heading' | 'list' | 'list-item' | 'paragraph' | 'strong' | 'em' | 'codespan' | 'link' | 'table' | 'hr' | 'space';
+  type: 'text' | 'code' | 'heading' | 'list' | 'list-item' | 'paragraph' | 'strong' | 'em' | 'codespan' | 'link' | 'table' | 'hr' | 'space' | 'blockquote';
   content?: string;
   language?: string;
   depth?: number;
@@ -154,6 +154,13 @@ function parseTokens(tokens: any[]): ParsedNode[] {
         rows,
         align: token.align || [],
       });
+    } else if (token.type === 'blockquote') {
+      // Parse nested tokens within the blockquote
+      const nestedNodes = token.tokens ? parseTokens(token.tokens) : [];
+      nodes.push({
+        type: 'blockquote',
+        children: nestedNodes,
+      });
     } else if (token.type === 'list') {
       nodes.push({
         type: 'list',
@@ -187,11 +194,26 @@ function parseTokens(tokens: any[]): ParsedNode[] {
         type: 'space',
       });
     } else {
-      // Fallback for unknown token types
-      nodes.push({
-        type: 'text',
-        content: (token as any).raw || '',
-      });
+      // Fallback for unknown token types - handle gracefully
+      // Try to extract content intelligently rather than dumping raw markdown
+      if ((token as any).tokens && Array.isArray((token as any).tokens)) {
+        // Has nested tokens - parse them recursively
+        const nestedNodes = parseTokens((token as any).tokens);
+        nodes.push(...nestedNodes);
+      } else if ((token as any).text) {
+        // Has text content - render as paragraph
+        nodes.push({
+          type: 'paragraph',
+          content: (token as any).text,
+        });
+      } else if ((token as any).raw) {
+        // Last resort - use raw content but warn about unsupported token
+        logger.warn(`Unsupported markdown token type: ${(token as any).type}`);
+        nodes.push({
+          type: 'text',
+          content: (token as any).raw,
+        });
+      }
     }
   }
 
@@ -247,6 +269,14 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
         ))}
       </Box>
     );
+  }
+
+  if (node.type === 'blockquote') {
+    // Convert blockquote content to plain text and prefix each line
+    // This ensures consistent formatting across all nested content
+    const textContent = nodeToPlainText(node.children || []);
+
+    return <BlockquoteRenderer content={textContent} />;
   }
 
   if (node.type === 'table') {
@@ -352,6 +382,74 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
   }
 
   return null;
+};
+
+/**
+ * Blockquote Renderer Component
+ *
+ * Renders blockquote content with consistent left border prefix (│) on every line,
+ * including lines that wrap due to terminal width constraints.
+ */
+const BlockquoteRenderer: React.FC<{ content: string }> = ({ content }) => {
+  const terminalWidth = useContentWidth();
+
+  // Account for the prefix width: "│ " = 2 characters
+  const PREFIX_WIDTH = 2;
+  const availableWidth = terminalWidth - PREFIX_WIDTH;
+
+  // Wrap text to terminal width
+  const wrappedLines = useMemo(() => {
+    const lines: string[] = [];
+    const contentLines = content.split('\n');
+
+    for (const line of contentLines) {
+      if (line.length === 0) {
+        // Preserve empty lines
+        lines.push('');
+        continue;
+      }
+
+      if (line.length <= availableWidth) {
+        // Line fits - add as-is
+        lines.push(line);
+        continue;
+      }
+
+      // Line is too long - wrap it
+      let remaining = line;
+      while (remaining.length > 0) {
+        if (remaining.length <= availableWidth) {
+          lines.push(remaining);
+          break;
+        }
+
+        // Find a good break point (prefer breaking at spaces)
+        let breakPoint = availableWidth;
+        const lastSpace = remaining.lastIndexOf(' ', availableWidth);
+
+        // Break at space if it's not too far back (within 70% of available width)
+        if (lastSpace > availableWidth * TEXT_LIMITS.WORD_BOUNDARY_THRESHOLD) {
+          breakPoint = lastSpace;
+        }
+
+        lines.push(remaining.substring(0, breakPoint));
+        remaining = remaining.substring(breakPoint).trimStart();
+      }
+    }
+
+    return lines;
+  }, [content, availableWidth]);
+
+  return (
+    <Box flexDirection="column">
+      {wrappedLines.map((line, idx) => (
+        <Box key={idx}>
+          <Text dimColor>│ </Text>
+          <Text>{line}</Text>
+        </Box>
+      ))}
+    </Box>
+  );
 };
 
 /**
@@ -997,6 +1095,54 @@ function convertLatexToUnicode(latex: string): string {
   converted = converted.trim();
 
   return converted;
+}
+
+/**
+ * Convert parsed nodes to plain text representation
+ * Used for blockquotes to ensure consistent line prefixing
+ */
+function nodeToPlainText(nodes: ParsedNode[]): string {
+  const parts: string[] = [];
+
+  for (const node of nodes) {
+    if (node.type === 'code') {
+      // Code blocks - preserve as-is with language indicator
+      const langLabel = node.language ? `[${node.language}]` : '[code]';
+      parts.push(`${langLabel}\n${node.content || ''}`);
+    } else if (node.type === 'heading') {
+      // Headings - render as bold text
+      parts.push(node.content || '');
+    } else if (node.type === 'list') {
+      // Lists - render with appropriate bullets
+      const items = node.children?.map((item, idx) => {
+        const bullet = node.ordered ? `${idx + 1}. ` : '  • ';
+        return bullet + stripInlineMarkdown(item.content || '');
+      }) || [];
+      parts.push(items.join('\n'));
+    } else if (node.type === 'paragraph') {
+      // Paragraphs - preserve inline formatting
+      parts.push(stripInlineMarkdown(node.content || ''));
+    } else if (node.type === 'table') {
+      // Tables - simplified text representation
+      parts.push('[Table content omitted in blockquote]');
+    } else if (node.type === 'hr') {
+      // Horizontal rules
+      parts.push('─'.repeat(40));
+    } else if (node.type === 'blockquote') {
+      // Nested blockquotes - recursively flatten
+      if (node.children) {
+        parts.push(nodeToPlainText(node.children));
+      }
+    } else if (node.type === 'text') {
+      // Plain text
+      parts.push(stripInlineMarkdown(node.content || ''));
+    } else if (node.type === 'space') {
+      // Space nodes represent blank lines - add empty string to preserve spacing
+      parts.push('');
+    }
+  }
+
+  return parts.join('\n');
 }
 
 /**

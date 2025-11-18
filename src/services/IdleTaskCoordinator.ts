@@ -91,7 +91,9 @@ export class IdleTaskCoordinator implements IService {
    * @param messages - Current conversation messages
    * @param context - Additional context for idle message generation
    */
-  checkAndRunIdleTasks(messages: Message[], context?: IdleContext): void {
+  async checkAndRunIdleTasks(messages: Message[], context?: IdleContext): Promise<void> {
+    logger.debug('[IDLE_COORD] checkAndRunIdleTasks called');
+
     // Return immediately if Ollama is active
     if (this.isOllamaActive) {
       logger.debug('[IDLE_COORD] Skipping idle tasks - Ollama is active');
@@ -104,8 +106,10 @@ export class IdleTaskCoordinator implements IService {
       return;
     }
 
-    // Priority 1: Check if title needs regeneration
-    if (this.needsTitleRegeneration()) {
+    // Priority 1: Check if title needs generation or regeneration
+    logger.debug('[IDLE_COORD] Checking if title work needed...');
+    if (await this.needsTitleWork()) {
+      logger.debug('[IDLE_COORD] Title work needed, running regeneration');
       this.runTitleRegeneration(messages);
       return; // Only run one task at a time
     }
@@ -120,13 +124,14 @@ export class IdleTaskCoordinator implements IService {
   }
 
   /**
-   * Check if title regeneration is needed
+   * Check if title work is needed (generation or regeneration)
    *
-   * Title needs regeneration if:
-   * - User sent a message more recently than last title generation
+   * Title needs work if:
+   * - Session has no title (initial generation)
+   * - User sent a message more recently than last title generation (regeneration)
    * - Title generator exists and is not currently generating
    */
-  private needsTitleRegeneration(): boolean {
+  private async needsTitleWork(): Promise<boolean> {
     if (!this.sessionTitleGenerator) {
       return false;
     }
@@ -137,13 +142,31 @@ export class IdleTaskCoordinator implements IService {
       return false;
     }
 
-    // Check if there's a new user message since last title generation
+    const currentSessionName = this.sessionManager.getCurrentSession();
+    if (!currentSessionName) {
+      return false;
+    }
+
+    // Load session to check if it has a title
+    let hasNoTitle = false;
+    try {
+      const session = await this.sessionManager.loadSession(currentSessionName);
+      hasNoTitle = !session?.metadata?.title && !session?.title;
+    } catch (error) {
+      logger.debug('[IDLE_COORD] Failed to load session for title check:', error);
+      // On error, fall back to checking timestamp only
+    }
+
+    // Check if there's a new user message since last title generation (regeneration needed)
     const needsRegen = this.lastUserMessageTimestamp > this.lastTitleGenerationTimestamp;
-    if (needsRegen) {
+
+    if (hasNoTitle) {
+      logger.debug('[IDLE_COORD] Title generation needed - session has no title');
+    } else if (needsRegen) {
       logger.debug('[IDLE_COORD] Title regeneration needed - user message more recent than last generation');
     }
 
-    return needsRegen;
+    return hasNoTitle || needsRegen;
   }
 
   /**
@@ -209,19 +232,13 @@ export class IdleTaskCoordinator implements IService {
 
     logger.debug(`[IDLE_COORD] Starting title regeneration for session ${currentSession}`);
 
-    // Get sessions directory from SessionManager
-    const sessionsDir = (this.sessionManager as any).sessionsDir;
-    if (!sessionsDir) {
-      logger.warn('[IDLE_COORD] Sessions directory not available');
-      return;
-    }
-
     // Trigger background title regeneration with callback to notify coordinator
     this.sessionTitleGenerator.regenerateTitleBackground(
       currentSession,
       messages,
-      sessionsDir,
       async () => {
+        logger.debug(`[IDLE_COORD] Title generation callback fired for session ${currentSession}`);
+
         // Notify coordinator that title generation completed
         this.notifyTitleGenerated();
 
@@ -229,11 +246,14 @@ export class IdleTaskCoordinator implements IService {
         try {
           const session = await this.sessionManager.loadSession(currentSession);
           if (session?.metadata?.title) {
+            logger.debug(`[IDLE_COORD] Loaded session title: "${session.metadata.title}", updating terminal title`);
             setTerminalTitle(session.metadata.title);
-            logger.debug(`[IDLE_COORD] Updated terminal title: ${session.metadata.title}`);
+            logger.debug(`[IDLE_COORD] ✓ Terminal title updated successfully`);
+          } else {
+            logger.debug(`[IDLE_COORD] ⚠️  No title in session metadata (session: ${JSON.stringify(session?.metadata)})`);
           }
         } catch (error) {
-          logger.debug('[IDLE_COORD] Failed to update terminal title:', error);
+          logger.error('[IDLE_COORD] ❌ Failed to update terminal title:', error);
         }
       }
     );

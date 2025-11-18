@@ -6,12 +6,28 @@
 
 export { DEFAULT_CONFIG, CONFIG_TYPES, getConfigType, validateConfigValue } from './defaults.js';
 export {
+  // Global paths (constants)
   ALLY_HOME,
-  AGENTS_DIR,
-  CACHE_DIR,
-  COMPLETION_CACHE_DIR,
-  CONFIG_FILE,
   COMMAND_HISTORY_FILE,
-  STANDARD_DIRECTORIES,
+  ACTIVE_PROFILE_FILE,
+  PROFILES_DIR,
+  BUILTIN_AGENTS_DIR,
+
+  // Profile-aware path functions
+  getAgentsDir,
+  getPluginsDir,
+  getPluginEnvsDir,
+  getCacheDir,
+  getCompletionCacheDir,
+  getConfigFile,
+  getPromptsDir,
+  getBaseConfigFile,
+
+  // Profile context management
+  setActiveProfile,
+  getActiveProfile,
+
+  // Directory utilities
+  getStandardDirectories,
   ensureDirectories,
 } from './paths.js';

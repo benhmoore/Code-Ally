@@ -177,14 +177,14 @@ Located in `/src/config/paths.ts`:
 ```typescript
 import {
   ALLY_HOME,
-  CONFIG_FILE,
-  AGENTS_DIR,
+  getConfigFile,
+  getAgentsDir,
   ensureDirectories,
 } from '../config';
 
-// Use path constants
-console.log('Config file:', CONFIG_FILE); // ~/.ally/config.json
-console.log('Agents:', AGENTS_DIR); // ~/.ally/agents
+// Use path functions
+console.log('Config file:', getConfigFile()); // ~/.ally/profiles/default/config.json
+console.log('Agents:', getAgentsDir()); // ~/.ally/profiles/default/agents
 
 // Ensure all directories exist
 await ensureDirectories();

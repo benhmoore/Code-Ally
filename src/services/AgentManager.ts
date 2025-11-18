@@ -2,8 +2,10 @@
  * AgentManager - Agent storage and retrieval
  *
  * Manages specialized agent definitions stored as markdown files.
- * Loads from both built-in agents (dist/agents/) and user agents (~/.ally/agents/).
+ * Loads from both built-in agents (dist/agents/) and user agents (~/.ally/profiles/{profile}/agents/).
  * User agents can override built-in agents by using the same name.
+ *
+ * Profile-aware: Uses profile-specific agents directory via getAgentsDir()
  */
 
 import { readFile, writeFile, readdir, unlink, access } from 'fs/promises';
@@ -11,7 +13,7 @@ import { join } from 'path';
 import { constants } from 'fs';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { AGENTS_DIR, BUILTIN_AGENTS_DIR } from '../config/paths.js';
+import { getAgentsDir, BUILTIN_AGENTS_DIR } from '../config/paths.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
 import { AgentRequirements } from '../agent/RequirementTracker.js';
 import { parseFrontmatterYAML, extractFrontmatter } from '../utils/yamlUtils.js';
@@ -90,7 +92,10 @@ export class AgentManager {
   private builtInAgents: Map<string, AgentData> = new Map();
 
   constructor() {
-    this.userAgentsDir = AGENTS_DIR;
+    // Profile-aware: getAgentsDir() returns profile-specific agents directory
+    // This is captured at construction time (launch-time), so profile switching
+    // requires application restart
+    this.userAgentsDir = getAgentsDir();
     this.builtinAgentsDir = BUILTIN_AGENTS_DIR;
     this.pluginAgents = new Map<string, AgentData>();
   }
@@ -263,7 +268,7 @@ export class AgentManager {
 
   /**
    * Load an agent by name
-   * Priority: user agents (~/.ally/agents/) > plugin agents > built-in agents (dist/agents/)
+   * Priority: user agents (~/.ally/profiles/{profile}/agents/) > plugin agents > built-in agents (dist/agents/)
    *
    * @param agentName - Agent name
    * @param callingAgentName - Optional name of agent requesting to load this agent (undefined = main Ally)

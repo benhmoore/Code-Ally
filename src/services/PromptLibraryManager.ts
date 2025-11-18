@@ -2,13 +2,15 @@
  * PromptLibraryManager - Manages user's saved prompts library
  *
  * Handles creating, loading, saving, and deleting user prompts.
- * Prompts are stored as JSON in ~/.ally/prompts/library.json.
+ * Prompts are stored as JSON in ~/.ally/profiles/{profile}/prompts/library.json.
  *
  * Features:
  * - CRUD operations for prompts
  * - Atomic writes to prevent data corruption
  * - Tag-based organization
  * - Sorted by creation time (newest first)
+ *
+ * Profile-aware: Uses profile-specific prompts directory via getPromptsDir()
  */
 
 import { promises as fs } from 'fs';
@@ -16,7 +18,7 @@ import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { IService } from '../types/index.js';
 import { logger } from './Logger.js';
-import { ALLY_HOME } from '../config/paths.js';
+import { getPromptsDir } from '../config/paths.js';
 import { ID_GENERATION } from '../config/constants.js';
 
 /**
@@ -47,9 +49,11 @@ export class PromptLibraryManager implements IService {
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(baseDir?: string) {
-    // Prompts are stored in ~/.ally/prompts/ (or custom dir for testing)
-    const allyHome = baseDir ?? ALLY_HOME;
-    this.promptsDir = join(allyHome, 'prompts');
+    // Profile-aware: getPromptsDir() returns profile-specific prompts directory
+    // This is captured at construction time (launch-time), so profile switching
+    // requires application restart
+    // For testing: baseDir can override the default profile-specific directory
+    this.promptsDir = baseDir ?? getPromptsDir();
     this.libraryFile = join(this.promptsDir, 'library.json');
   }
 

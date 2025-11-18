@@ -27,6 +27,8 @@ import { logger } from './services/Logger.js';
 import { formatRelativeTime } from './ui/utils/timeUtils.js';
 import { AGENT_CONFIG } from './config/constants.js';
 import { runStartupValidation, needsSetup } from './cli/validation.js';
+import { ProfileManager } from './services/ProfileManager.js';
+import { setActiveProfile } from './config/paths.js';
 
 /**
  * Comprehensive terminal state reset
@@ -95,6 +97,34 @@ function configureLogging(verbose?: boolean, debug?: boolean): void {
 
 
 /**
+ * Handle --configs command (show cheatsheet)
+ */
+function handleConfigsCheatsheet(): void {
+  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('  Configuration Commands Cheatsheet');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+  console.log('  Show configuration:');
+  console.log('    ally --config-show           # Show all settings');
+  console.log('    ally --config-show model     # Show specific field\n');
+
+  console.log('  Set configuration:');
+  console.log('    ally --config-set model=llama3.2');
+  console.log('    ally --config-set temperature=0.5\n');
+
+  console.log('  Reset configuration:');
+  console.log('    ally --config-reset          # Reset all to defaults');
+  console.log('    ally --config-reset model    # Reset specific field\n');
+
+  console.log('  Initial setup:');
+  console.log('    ally --init                  # Interactive setup wizard\n');
+
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('\n  Configuration file: ~/.ally/profiles/<profile>/config.json');
+  console.log('  Documentation: docs/reference/configuration.md\n');
+}
+
+/**
  * Handle configuration commands (--init, --config-show, etc.)
  */
 async function handleConfigCommands(
@@ -111,107 +141,135 @@ async function handleConfigCommands(
     return false;
   }
 
-  // Handle --config subcommand
-  if (options.config) {
-    // Parse the subcommand: "show [field]", "set field value", "reset [field]"
-    const parts = options.config.trim().split(/\s+/);
-    const subcommand = parts[0]?.toLowerCase();
+  // Show cheatsheet
+  if (options.configs) {
+    handleConfigsCheatsheet();
+    return true;
+  }
 
-    // Handle "show" subcommand
-    if (subcommand === 'show') {
-      const field = parts[1]; // Optional field name
+  // Handle --config-show [field]
+  if (options.configShow !== undefined) {
+    // When no field provided, configShow is boolean true
+    // When field provided, configShow is the field name (string)
+    const field = typeof options.configShow === 'string' ? options.configShow : undefined;
 
-      if (field) {
-        // Show specific field
-        if (!configManager.hasKey(field)) {
-          console.error(`Unknown config field: ${field}`);
-          const suggestions = configManager.getSimilarKeys(field);
-          if (suggestions.length > 0) {
-            console.error(`Did you mean: ${suggestions.join(', ')}?`);
-          }
-          return true;
+    if (field) {
+      // Show specific field
+      if (!configManager.hasKey(field)) {
+        console.error(`\nError: Unknown config field: ${field}`);
+        const suggestions = configManager.getSimilarKeys(field);
+        if (suggestions.length > 0) {
+          console.error(`Did you mean: ${suggestions.join(', ')}?\n`);
         }
-
-        const value = configManager.getValue(field as any);
-        console.log(`${field}: ${JSON.stringify(value, null, 2)}`);
-        return true;
-      } else {
-        // Show entire config
-        console.log(JSON.stringify(configManager.getConfig(), null, 2));
+        process.exit(1);
       }
 
-      return true;
+      const value = configManager.getValue(field as any);
+      console.log(`\n${field}: ${JSON.stringify(value, null, 2)}\n`);
+    } else {
+      // Show entire config
+      console.log('\n' + JSON.stringify(configManager.getConfig(), null, 2) + '\n');
     }
 
-    // Handle "set" subcommand
-    if (subcommand === 'set') {
-      // Format: "set field value"
-      if (parts.length < 3) {
-        console.error('Usage: --config "set <field> <value>"');
-        return true;
-      }
+    return true;
+  }
 
-      const field = parts[1];
-      const value = parts.slice(2).join(' ');
-      const kvInput = `${field}=${value}`;
+  // Handle --config-set <field=value>
+  if (options.configSet) {
+    const kvInput = options.configSet;
+
+    // Validate format
+    if (!kvInput.includes('=')) {
+      console.error('\nError: Invalid format. Use: --config-set field=value\n');
+      console.error('Examples:');
+      console.error('  ally --config-set model=llama3.2');
+      console.error('  ally --config-set temperature=0.5\n');
+      process.exit(1);
+    }
+
+    try {
+      const result = await configManager.setFromString(kvInput);
+      console.log(`\n✓ Configuration updated: ${result.key}`);
+      console.log(`  Old value: ${JSON.stringify(result.oldValue)}`);
+      console.log(`  New value: ${JSON.stringify(result.newValue)}\n`);
+    } catch (error: any) {
+      console.error(`\nError: ${error.message}\n`);
+      process.exit(1);
+    }
+
+    return true;
+  }
+
+  // Handle --config-reset [field]
+  if (options.configReset !== undefined) {
+    // When no field provided, configReset is boolean true
+    // When field provided, configReset is the field name (string)
+    const field = typeof options.configReset === 'string' ? options.configReset : undefined;
+
+    if (field) {
+      // Reset specific field
+      if (!configManager.hasKey(field)) {
+        console.error(`\nError: Unknown config field: ${field}`);
+        const suggestions = configManager.getSimilarKeys(field);
+        if (suggestions.length > 0) {
+          console.error(`Did you mean: ${suggestions.join(', ')}?\n`);
+        }
+        process.exit(1);
+      }
 
       try {
-        const result = await configManager.setFromString(kvInput);
-        console.log(`✓ Configuration updated: ${result.key}`);
+        const result = await configManager.resetField(field as any);
+        console.log(`\n✓ Reset ${result.key} to default`);
         console.log(`  Old value: ${JSON.stringify(result.oldValue)}`);
-        console.log(`  New value: ${JSON.stringify(result.newValue)}`);
+        console.log(`  New value: ${JSON.stringify(result.newValue)}\n`);
       } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+        console.error(`\nError: ${error.message}\n`);
+        process.exit(1);
       }
+    } else {
+      // Reset entire config
+      const changes = await configManager.reset();
+      const changedKeys = Object.keys(changes);
 
-      return true;
-    }
-
-    // Handle "reset" subcommand
-    if (subcommand === 'reset') {
-      const field = parts[1]; // Optional field name
-
-      if (field) {
-        // Reset specific field
-        if (!configManager.hasKey(field)) {
-          console.error(`Unknown config field: ${field}`);
-          const suggestions = configManager.getSimilarKeys(field);
-          if (suggestions.length > 0) {
-            console.error(`Did you mean: ${suggestions.join(', ')}?`);
-          }
-          return true;
-        }
-
-        try {
-          const result = await configManager.resetField(field as any);
-          console.log(`✓ Reset ${result.key} to default`);
-          console.log(`  Old value: ${JSON.stringify(result.oldValue)}`);
-          console.log(`  New value: ${JSON.stringify(result.newValue)}`);
-        } catch (error: any) {
-          console.error(`Error: ${error.message}`);
-        }
+      if (changedKeys.length === 0) {
+        console.log('\nConfiguration is already at default values.\n');
       } else {
-        // Reset entire config
-        const changes = await configManager.reset();
-        const changedKeys = Object.keys(changes);
-
-        if (changedKeys.length === 0) {
-          console.log('Configuration is already at default values.');
-        } else {
-          console.log(`✓ Configuration reset to defaults (${changedKeys.length} settings changed)`);
-        }
+        console.log(`\n✓ Configuration reset to defaults (${changedKeys.length} settings changed)\n`);
       }
-
-      return true;
     }
 
-    // Unknown subcommand
-    console.error(`Unknown config subcommand: ${subcommand}`);
-    console.error('Usage: --config "show [field]" | "set <field> <value>" | "reset [field]"');
     return true;
   }
 
   return false;
+}
+
+/**
+ * Handle --sessions command (show cheatsheet)
+ */
+function handleSessionsCheatsheet(): void {
+  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('  Session Commands Cheatsheet');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+  console.log('  List sessions:');
+  console.log('    ally --session-list\n');
+
+  console.log('  Resume session:');
+  console.log('    ally --session <id>');
+  console.log('    ally --resume [id]      # Interactive picker if no id\n');
+
+  console.log('  Delete session:');
+  console.log('    ally --session-delete <id>\n');
+
+  console.log('  Disable sessions:');
+  console.log('    ally --no-session\n');
+
+  console.log('  One-off message:');
+  console.log('    ally --once "message"   # No session created\n');
+
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('\n  Sessions are stored in: ./.ally-sessions/\n');
 }
 
 /**
@@ -221,8 +279,14 @@ async function handleSessionCommands(
   options: CLIOptions,
   sessionManager: SessionManager
 ): Promise<boolean> {
+  // Show cheatsheet
+  if (options.sessions) {
+    handleSessionsCheatsheet();
+    return true;
+  }
+
   // List all sessions
-  if (options.listSessions) {
+  if (options.sessionList) {
     const sessions = await sessionManager.getSessionsInfo();
 
     if (sessions.length === 0) {
@@ -241,13 +305,13 @@ async function handleSessionCommands(
   }
 
   // Delete a session
-  if (options.deleteSession) {
-    const success = await sessionManager.deleteSession(options.deleteSession);
+  if (options.sessionDelete) {
+    const success = await sessionManager.deleteSession(options.sessionDelete);
 
     if (success) {
-      console.log(`✓ Session "${options.deleteSession}" deleted\n`);
+      console.log(`✓ Session "${options.sessionDelete}" deleted\n`);
     } else {
-      console.log(`✗ Session "${options.deleteSession}" not found\n`);
+      console.log(`✗ Session "${options.sessionDelete}" not found\n`);
     }
 
     return true;
@@ -394,6 +458,143 @@ async function handleOnceMode(
 let inkUIStarted = false;
 
 /**
+ * Handle --profiles command (show cheatsheet)
+ */
+function handleProfilesCheatsheet(): void {
+  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('  Profile Commands Cheatsheet');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+  console.log('  List profiles:');
+  console.log('    ally --profile-list\n');
+
+  console.log('  Create profile:');
+  console.log('    ally --profile-create <name>');
+  console.log('    ally --profile-create <name> --profile-from <source>\n');
+
+  console.log('  Switch profile:');
+  console.log('    ally --profile <name>\n');
+
+  console.log('  Profile info:');
+  console.log('    ally --profile-info <name>\n');
+
+  console.log('  Delete profile:');
+  console.log('    ally --profile-delete <name>');
+  console.log('    ally --profile-delete <name> --profile-delete-force\n');
+
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('\n  Profiles provide isolated configurations, plugins, agents, and prompts.');
+  console.log('  Stored in: ~/.ally/profiles/<profile-name>/\n');
+  console.log('  Documentation: docs/reference/profiles.md\n');
+}
+
+/**
+ * Handle --profile-list command
+ */
+async function handleProfileList(profileManager: ProfileManager): Promise<void> {
+  const profiles = await profileManager.listProfiles();
+
+  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('  Profiles');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+  for (const profile of profiles) {
+    const active = profile.is_active ? ' (active)' : '';
+    console.log(`  ${profile.name}${active}`);
+    if (profile.description) {
+      console.log(`    ${profile.description}`);
+    }
+    console.log(`    Created: ${formatRelativeTime(new Date(profile.created_at))}`);
+    console.log(`    Plugins: ${profile.plugin_count} | Agents: ${profile.agent_count} | Prompts: ${profile.prompt_count}\n`);
+  }
+
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('\nLaunch with specific profile: ally --profile <name>\n');
+}
+
+/**
+ * Handle --profile-info command
+ */
+async function handleProfileInfo(profileManager: ProfileManager, profileName: string): Promise<void> {
+  try {
+    const profile = await profileManager.loadProfile(profileName);
+    const stats = await profileManager.getProfileStats(profileName);
+    const activeProfile = await profileManager.getActiveProfile();
+
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`  Profile: ${profile.name}${profile.name === activeProfile ? ' (active)' : ''}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    if (profile.description) {
+      console.log(`  Description: ${profile.description}`);
+    }
+
+    console.log(`  Created: ${formatRelativeTime(new Date(profile.created_at))}`);
+    console.log(`  Updated: ${formatRelativeTime(new Date(profile.updated_at))}\n`);
+
+    console.log('  Statistics:');
+    console.log(`    Plugins: ${stats.plugin_count}`);
+    console.log(`    Agents: ${stats.agent_count}`);
+    console.log(`    Prompts: ${stats.prompt_count}`);
+    console.log(`    Config overrides: ${stats.config_overrides}\n`);
+
+    if (profile.tags && profile.tags.length > 0) {
+      console.log(`  Tags: ${profile.tags.join(', ')}\n`);
+    }
+
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+  } catch (error) {
+    console.error(`\nError: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Handle --profile-create command
+ */
+async function handleProfileCreate(
+  profileManager: ProfileManager,
+  name: string,
+  cloneFrom?: string
+): Promise<void> {
+  try {
+    await profileManager.createProfile(name, {
+      cloneFrom,
+    });
+
+    console.log(`\n✓ Profile '${name}' created successfully${cloneFrom ? ` (cloned from ${cloneFrom})` : ''}\n`);
+    console.log(`  Launch with: ally --profile ${name}\n`);
+  } catch (error) {
+    console.error(`\nError: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Handle --profile-delete command
+ */
+async function handleProfileDelete(
+  profileManager: ProfileManager,
+  name: string,
+  force?: boolean
+): Promise<void> {
+  try {
+    await profileManager.deleteProfile(name, force);
+    console.log(`\n✓ Profile '${name}' deleted successfully\n`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`\nError: ${errorMessage}\n`);
+
+    // If error mentions data, suggest force flag
+    if (errorMessage.includes('contains data')) {
+      console.error('  To force delete with data: ally --profile-delete ' + name + ' --profile-delete-force\n');
+    }
+
+    process.exit(1);
+  }
+}
+
+/**
  * Main entry point
  */
 async function main() {
@@ -402,7 +603,53 @@ async function main() {
     const parser = new ArgumentParser();
     const options = parser.parse();
 
-    // Initialize config manager
+    // Initialize ProfileManager EARLY (before any other services)
+    const profileManager = new ProfileManager();
+    await profileManager.initialize();
+
+    // Handle profile commands (these exit after completion)
+    if (options.profiles) {
+      handleProfilesCheatsheet();
+      process.exit(0);
+    }
+
+    if (options.profileList) {
+      await handleProfileList(profileManager);
+      process.exit(0);
+    }
+
+    if (options.profileInfo) {
+      await handleProfileInfo(profileManager, options.profileInfo);
+      process.exit(0);
+    }
+
+    if (options.profileCreate) {
+      await handleProfileCreate(profileManager, options.profileCreate, options.profileFrom);
+      process.exit(0);
+    }
+
+    if (options.profileDelete) {
+      await handleProfileDelete(profileManager, options.profileDelete, options.profileDeleteForce);
+      process.exit(0);
+    }
+
+    // Determine active profile (always defaults to 'default' if not specified)
+    let activeProfile = options.profile || 'default';
+
+    // Validate profile exists
+    if (!(await profileManager.profileExists(activeProfile))) {
+      console.error(`\nError: Profile '${activeProfile}' does not exist`);
+      console.error(`Available profiles:`);
+      const profiles = await profileManager.listProfiles();
+      profiles.forEach(p => console.error(`  • ${p.name}`));
+      console.error('');
+      process.exit(1);
+    }
+
+    // Set active profile in path system (CRITICAL - do this before creating any services)
+    setActiveProfile(activeProfile);
+
+    // Initialize config manager (now uses profile-specific paths)
     const configManager = new ConfigManager();
     await configManager.initialize();
 
@@ -462,6 +709,7 @@ async function main() {
 
     // Initialize service registry
     const registry = ServiceRegistry.getInstance();
+    registry.registerInstance('profile_manager', profileManager);
     registry.registerInstance('config_manager', configManager);
     registry.registerInstance('session_manager', sessionManager);
 
@@ -540,12 +788,13 @@ async function main() {
     });
     registry.registerInstance('service_model_client', serviceModelClient);
 
-    // Configure session manager with service model client for title generation
-    sessionManager.setModelClient(serviceModelClient);
-
     // Create session title generator for idle task coordination
     const { SessionTitleGenerator } = await import('./services/SessionTitleGenerator.js');
-    const sessionTitleGenerator = new SessionTitleGenerator(serviceModelClient);
+    const sessionTitleGenerator = new SessionTitleGenerator(
+    serviceModelClient,
+    sessionManager,
+    config.enable_session_title_generation
+  );
     registry.registerInstance('session_title_generator', sessionTitleGenerator);
 
     // Create message history
@@ -554,11 +803,11 @@ async function main() {
     });
     registry.registerInstance('message_history', messageHistory);
 
-    // Create idle message generator
+    // Create idle message generator (if enabled)
     const { IdleMessageGenerator } = await import('./services/IdleMessageGenerator.js');
-    const idleMessageGenerator = new IdleMessageGenerator(serviceModelClient, {
-      minInterval: 10000, // Generate new message every 10 seconds when idle
-    });
+    const idleMessageGenerator = config.enable_idle_messages
+      ? new IdleMessageGenerator(serviceModelClient)
+      : null;
     registry.registerInstance('idle_message_generator', idleMessageGenerator);
 
     // Create idle task coordinator (requires sessionManager, titleGenerator, and idleMessageGenerator)
@@ -634,10 +883,10 @@ async function main() {
       new FormatTool(activityStream),
     ];
 
-    // Load user plugins from ~/.ally/plugins
+    // Load user plugins from profile-specific plugins directory
     const { PluginLoader } = await import('./plugins/PluginLoader.js');
     const { PluginConfigManager } = await import('./plugins/PluginConfigManager.js');
-    const { PLUGINS_DIR } = await import('./config/paths.js');
+    const { getPluginsDir } = await import('./config/paths.js');
     const pluginConfigManager = new PluginConfigManager();
     registry.registerInstance('plugin_config_manager', pluginConfigManager);
     const pluginLoader = new PluginLoader(
@@ -648,7 +897,7 @@ async function main() {
       eventSubscriptionManager
     );
     registry.registerInstance('plugin_loader', pluginLoader);
-    const { tools: pluginTools, agents: pluginAgents, pluginCount } = await pluginLoader.loadPlugins(PLUGINS_DIR);
+    const { tools: pluginTools, agents: pluginAgents, pluginCount } = await pluginLoader.loadPlugins(getPluginsDir());
     logger.debug('[CLI] Plugins loaded successfully');
 
     // Start background plugin daemons
@@ -734,19 +983,14 @@ async function main() {
     const projectManager = new ProjectManager();
     registry.registerInstance('project_manager', projectManager);
 
-    // Get system prompt from prompts module
-    const { getMainSystemPrompt } = await import('./prompts/systemMessages.js');
-    const isOnceMode = !!options.once;
-    const systemPrompt = await getMainSystemPrompt(undefined, undefined, isOnceMode);
-
     // Create agent (creates its own TokenManager and ToolResultManager)
+    // System prompt is generated dynamically in sendMessage() with current context
     const agent = new Agent(
       modelClient,
       toolManager,
       activityStream,
       {
         config,
-        systemPrompt,
       },
       configManager, // For configurable token limits
       permissionManager
@@ -788,20 +1032,22 @@ async function main() {
 
     // Set up callback to save session when idle messages are generated
     // (Must be after agent is registered)
-    idleMessageGenerator.setOnQueueUpdated(() => {
-      // Trigger auto-save to persist newly generated idle messages
-      const todoManager = registry.get<any>('todo_manager');
+    if (idleMessageGenerator) {
+      idleMessageGenerator.setOnQueueUpdated(() => {
+        // Trigger auto-save to persist newly generated idle messages
+        const todoManager = registry.get<any>('todo_manager');
 
-      if (agent && sessionManager) {
-        const todos = todoManager?.getTodos();
-        const idleMessages = idleMessageGenerator.getQueue();
-        const projectContext = projectContextDetector?.getCached() ?? undefined;
+        if (agent && sessionManager) {
+          const todos = todoManager?.getTodos();
+          const idleMessages = idleMessageGenerator.getQueue();
+          const projectContext = projectContextDetector?.getCached() ?? undefined;
 
-        sessionManager.autoSave(agent.getMessages(), todos, idleMessages, projectContext).catch((error: Error) => {
-          logger.debug('[IDLE_MSG] Failed to auto-save after queue update:', error);
-        });
-      }
-    });
+          sessionManager.autoSave(agent.getMessages(), todos, idleMessages, projectContext).catch((error: Error) => {
+            logger.debug('[IDLE_MSG] Failed to auto-save after queue update:', error);
+          });
+        }
+      });
+    }
 
     // Handle --once mode (single message, non-interactive)
     if (options.once) {

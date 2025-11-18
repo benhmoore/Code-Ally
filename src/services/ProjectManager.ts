@@ -9,7 +9,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import type { IService } from '../types/index.js';
 import { BUFFER_SIZES } from '../config/constants.js';
-import { ALLY_HOME } from '../config/paths.js';
+import { PROFILES_DIR, getActiveProfile } from '../config/paths.js';
 import { logger } from './Logger.js';
 
 export interface ProjectContext {
@@ -27,7 +27,8 @@ export class ProjectManager implements IService {
   private initialized: boolean = false;
 
   constructor() {
-    this.storagePath = join(ALLY_HOME, 'project.json');
+    // Project context is profile-specific
+    this.storagePath = join(PROFILES_DIR, getActiveProfile(), 'project.json');
   }
 
   /**
@@ -87,7 +88,8 @@ export class ProjectManager implements IService {
 
     try {
       // Ensure directory exists
-      await fs.mkdir(ALLY_HOME, { recursive: true });
+      const profileDir = join(PROFILES_DIR, getActiveProfile());
+      await fs.mkdir(profileDir, { recursive: true });
 
       const data = {
         version: 1,

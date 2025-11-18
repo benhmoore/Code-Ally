@@ -33,6 +33,7 @@ import { AgentCommand } from './commands/AgentCommand.js';
 import { PluginCommand } from './commands/PluginCommand.js';
 import { ResumeCommand } from './commands/ResumeCommand.js';
 import { PromptCommand } from './commands/PromptCommand.js';
+import { ProfileCommand } from './commands/ProfileCommand.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -61,6 +62,7 @@ export class CommandHandler {
     this.registerCommand(new FocusShowCommand());
     this.registerCommand(new ModelCommand());
     this.registerCommand(new PluginCommand());
+    this.registerCommand(new ProfileCommand());
     this.registerCommand(new ProjectCommand());
     this.registerCommand(new PromptCommand());
     this.registerCommand(new ResumeCommand());
@@ -227,6 +229,11 @@ Todo Commands:
 
 Plugin Commands:
   /plugin config <name>    - Configure a plugin
+
+Profile Commands:
+  /profile                 - Show current profile
+  /profile list            - List all profiles
+  /profile info [name]     - Show profile information
 `;
 
     return { handled: true, response: helpText };

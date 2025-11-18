@@ -25,7 +25,6 @@ import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
-import { getThoroughnessGuidelines } from '../prompts/thoroughnessAdjustments.js';
 
 // Tools available for exploration (read-only + write-temp for note-taking + explore for delegation)
 const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp', 'explore'];
@@ -66,9 +65,9 @@ Delegating to other explore agents via explore() PROTECTS YOUR CONTEXT and shoul
 
 **Pattern 1 - Parallel Areas:**
 \`\`\`
-explore(task_prompt="Find authentication implementation", thoroughness="medium")
-explore(task_prompt="Find error handling patterns", thoroughness="medium")
-explore(task_prompt="Find API endpoint structure", thoroughness="medium")
+explore(task_prompt="Find authentication implementation")
+explore(task_prompt="Find error handling patterns")
+explore(task_prompt="Find API endpoint structure")
 \`\`\`
 
 **Pattern 2 - Overview then Deep Dive:**
@@ -103,7 +102,7 @@ explore(task_prompt="Explore src/shared/* for common utilities")
 - WriteTemp creates temporary notes in /tmp (e.g., write-temp(content="...", filename="notes.txt"))
 - Use separate files to organize by category: architecture.txt, patterns.txt, issues.txt
 - Read your notes before generating final response to ensure comprehensive coverage
-- Especially useful for medium/very thorough explorations with many findings
+- Especially useful for longer explorations with many findings
 
 ## Core Objective
 
@@ -335,8 +334,7 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
       const filteredToolManager = new ToolManager(filteredTools, this.activityStream);
       logger.debug('[EXPLORE_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
 
-      // Create specialized system prompt
-      const specializedPrompt = await this.createExplorationSystemPrompt(taskPrompt, thoroughness, resolvedReasoningEffort);
+      // System prompt will be generated dynamically in sendMessage()
 
       // Emit exploration start event
       this.emitEvent({
@@ -357,7 +355,6 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
         verbose: false,
-        systemPrompt: specializedPrompt,
         baseAgentPrompt: EXPLORATION_SYSTEM_PROMPT,
         taskPrompt: taskPrompt,
         config: config,
@@ -524,38 +521,6 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
         { agent_used: 'explore' }
       );
     }
-  }
-
-  /**
-   * Create specialized system prompt for exploration
-   */
-  private async createExplorationSystemPrompt(taskPrompt: string, thoroughness: string, reasoningEffort?: string): Promise<string> {
-    logger.debug('[EXPLORE_TOOL] Creating exploration system prompt with thoroughness:', thoroughness);
-    try {
-      // Adjust the base prompt based on thoroughness level
-      const adjustedPrompt = this.adjustPromptForThoroughness(thoroughness);
-
-      const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-      const result = await getAgentSystemPrompt(adjustedPrompt, taskPrompt, undefined, undefined, reasoningEffort);
-      logger.debug('[EXPLORE_TOOL] System prompt created, length:', result?.length || 0);
-      return result;
-    } catch (error) {
-      logger.debug('[EXPLORE_TOOL] ERROR creating system prompt:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Adjust exploration system prompt based on thoroughness level
-   */
-  private adjustPromptForThoroughness(thoroughness: string): string {
-    // Get thoroughness-specific guidelines from shared utility
-    // Default to 'uncapped' if thoroughness is not recognized
-    const thoroughnessGuidelines = getThoroughnessGuidelines('explore', thoroughness) ??
-                                   getThoroughnessGuidelines('explore', 'uncapped');
-
-    // Compose the full prompt with thoroughness-specific guidelines
-    return EXPLORATION_BASE_PROMPT + '\n\n' + thoroughnessGuidelines + '\n\nExecute your exploration systematically and provide comprehensive results.';
   }
 
   /**

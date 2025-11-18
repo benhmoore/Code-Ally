@@ -596,14 +596,15 @@ export class CompletionProvider {
    */
   private async getPluginNameCompletions(prefix: string): Promise<Completion[]> {
     try {
-      const { PLUGINS_DIR } = await import('../config/paths.js');
-      const entries = await fs.readdir(PLUGINS_DIR);
+      const { getPluginsDir } = await import('../config/paths.js');
+      const pluginsDir = getPluginsDir();
+      const entries = await fs.readdir(pluginsDir);
 
       // Filter directories that start with prefix
       const pluginNames: string[] = [];
       for (const entry of entries) {
         try {
-          const stat = await fs.stat(`${PLUGINS_DIR}/${entry}`);
+          const stat = await fs.stat(`${pluginsDir}/${entry}`);
           if (stat.isDirectory() && entry.startsWith(prefix)) {
             pluginNames.push(entry);
           }

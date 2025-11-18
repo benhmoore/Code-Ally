@@ -50,19 +50,34 @@ describe('ArgumentParser', () => {
       expect(options.init).toBe(true);
     });
 
-    it('should parse --config flag', () => {
-      const options = parser.parse(['node', 'ally', '--config']);
-      expect(options.config).toBe(true);
+    it('should parse --configs flag', () => {
+      const options = parser.parse(['node', 'ally', '--configs']);
+      expect(options.configs).toBe(true);
     });
 
-    it('should parse --config-show flag', () => {
+    it('should parse --config-show flag without field', () => {
       const options = parser.parse(['node', 'ally', '--config-show']);
       expect(options.configShow).toBe(true);
     });
 
-    it('should parse --config-reset flag', () => {
+    it('should parse --config-show flag with field', () => {
+      const options = parser.parse(['node', 'ally', '--config-show', 'model']);
+      expect(options.configShow).toBe('model');
+    });
+
+    it('should parse --config-set flag', () => {
+      const options = parser.parse(['node', 'ally', '--config-set', 'model=llama3.2']);
+      expect(options.configSet).toBe('model=llama3.2');
+    });
+
+    it('should parse --config-reset flag without field', () => {
       const options = parser.parse(['node', 'ally', '--config-reset']);
       expect(options.configReset).toBe(true);
+    });
+
+    it('should parse --config-reset flag with field', () => {
+      const options = parser.parse(['node', 'ally', '--config-reset', 'model']);
+      expect(options.configReset).toBe('model');
     });
   });
 
@@ -109,19 +124,19 @@ describe('ArgumentParser', () => {
       expect(options.once).toBe('Hello world');
     });
 
-    it('should parse --list-sessions flag', () => {
-      const options = parser.parse(['node', 'ally', '--list-sessions']);
-      expect(options.listSessions).toBe(true);
+    it('should parse --session-list flag', () => {
+      const options = parser.parse(['node', 'ally', '--session-list']);
+      expect(options.sessionList).toBe(true);
     });
 
-    it('should parse --delete-session flag', () => {
+    it('should parse --session-delete flag', () => {
       const options = parser.parse([
         'node',
         'ally',
-        '--delete-session',
+        '--session-delete',
         'old-session',
       ]);
-      expect(options.deleteSession).toBe('old-session');
+      expect(options.sessionDelete).toBe('old-session');
     });
 
     it('should parse --no-session flag', () => {

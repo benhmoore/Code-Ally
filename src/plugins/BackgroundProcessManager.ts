@@ -9,8 +9,8 @@
  * - PID file management and orphan cleanup
  *
  * Design decisions:
- * - PID files stored in {PLUGIN_ENVS_DIR}/{pluginName}/daemon.pid for isolation
- * - Socket paths at {PLUGIN_ENVS_DIR}/{pluginName}/daemon.sock for IPC
+ * - PID files stored in profile-specific plugin-envs directory for isolation
+ * - Socket paths defined by plugin manifests (typically in /tmp)
  * - Graceful shutdown: SIGTERM first, SIGKILL after grace period
  * - Health checks via socket connection (basic connectivity test)
  * - Auto-restart with linear backoff and retry limits
@@ -22,7 +22,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import * as net from 'net';
 import { logger } from '../services/Logger.js';
-import { PLUGIN_ENVS_DIR } from '../config/paths.js';
+import { getPluginEnvsDir } from '../config/paths.js';
 import { PLUGIN_TIMEOUTS, PLUGIN_CONSTRAINTS } from './constants.js';
 import { API_TIMEOUTS } from '../config/constants.js';
 
@@ -213,7 +213,7 @@ export class BackgroundProcessManager {
 
       // Write PID file after process is confirmed to be running
       const pidFile = this.getPidFilePath(pluginName);
-      await fs.mkdir(join(PLUGIN_ENVS_DIR, pluginName), { recursive: true });
+      await fs.mkdir(join(getPluginEnvsDir(), pluginName), { recursive: true });
       await fs.writeFile(pidFile, String(childProcess.pid));
       logger.debug(`[BackgroundProcessManager] Wrote PID file: ${pidFile}`);
 
@@ -370,7 +370,7 @@ export class BackgroundProcessManager {
    * Get PID file path for a plugin
    */
   private getPidFilePath(pluginName: string): string {
-    return join(PLUGIN_ENVS_DIR, pluginName, 'daemon.pid');
+    return join(getPluginEnvsDir(), pluginName, 'daemon.pid');
   }
 
   /**

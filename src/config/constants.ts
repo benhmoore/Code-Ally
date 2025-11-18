@@ -449,7 +449,7 @@ export const COMMAND_TIPS = [
   'Resume a conversation with `ally --resume`',
   '`/plugin list` to see all your plugins',
   '`/config set field=value` to customize Ally',
-  '`ally --list-sessions` shows conversations',
+  '`ally --session-list` shows conversations',
   '`/model` to switch AI models',
   'Press `Esc` to interrupt Ally anytime',
   '`/agent list` shows specialized agents',

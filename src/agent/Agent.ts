@@ -39,10 +39,8 @@ import { Message, ActivityEventType, Config } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { getAgentType, getAgentDisplayName } from '../utils/agentTypeUtils.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
-import * as crypto from 'crypto';
 
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
@@ -53,9 +51,7 @@ export interface AgentConfig {
   allowExplorationTools?: boolean;
   /** Enable verbose logging */
   verbose?: boolean;
-  /** System prompt to prepend (initial/static version) */
-  systemPrompt?: string;
-  /** Base agent prompt for specialized agents (for regeneration) */
+  /** Base agent prompt for specialized agents (dynamic regeneration in sendMessage) */
   baseAgentPrompt?: string;
   /** Task prompt for specialized agents (for regeneration) */
   taskPrompt?: string;
@@ -326,46 +322,8 @@ export class Agent {
       });
     }
 
-    // Initialize with system prompt if provided
-    if (config.systemPrompt) {
-      const systemMessage = {
-        role: 'system' as const,
-        content: config.systemPrompt,
-      };
-      this.conversationManager.addMessage(systemMessage);
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt added, length:', config.systemPrompt.length);
-
-      // Emit system prompt event if configured
-      // Use setImmediate to ensure UI listeners are attached first
-      if (config.config.show_system_prompt_in_chat) {
-        // Use centralized utility to determine agent type
-        const agentTypeKey = config.isSpecializedAgent
-          ? getAgentType({ config })
-          : 'main';
-        const agentTypeDisplay = config.isSpecializedAgent
-          ? getAgentDisplayName(agentTypeKey) + ' Agent'
-          : 'Main Agent (Ally)';
-
-        setImmediate(() => {
-          activityStream.emit({
-            id: crypto.randomUUID(),
-            type: ActivityEventType.SYSTEM_PROMPT_DISPLAY,
-            timestamp: Date.now(),
-            data: {
-              agentType: agentTypeDisplay,
-              systemPrompt: config.systemPrompt,
-              instanceId: this.instanceId,
-            },
-          });
-          logger.debug('[AGENT_CONTEXT]', this.instanceId, 'System prompt event emitted');
-        });
-      }
-
-      // Update token count with initial system message
-      this.contextCoordinator.updateTokenCount();
-      const initialUsage = this.contextCoordinator.getContextUsagePercentage();
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Initial context usage:', initialUsage + '%');
-    }
+    // System prompt is generated dynamically in sendMessage() with current context (todos, token usage, etc.)
+    // This ensures resumed sessions and pooled agents always have proper system prompts
 
     // Add initial messages if provided (e.g., context files for agents)
     if (config.initialMessages && config.initialMessages.length > 0) {
@@ -486,25 +444,6 @@ export class Agent {
   clearConversationHistory(): void {
     this.conversationManager.clearMessages();
     logger.debug(`[AGENT] Cleared conversation history for agent ${this.instanceId}`);
-  }
-
-  /**
-   * Update system prompt (used by AgentPoolService when reusing pooled agents)
-   *
-   * CRITICAL: When reusing a pooled agent for a new task, we must replace the old
-   * system prompt with the new one. Without this, after clearing conversation history,
-   * the agent has NO system prompt and exhibits undefined behavior (e.g., math-expert
-   * acting like an Explore agent).
-   *
-   * @param newSystemPrompt - The new system prompt for this task
-   */
-  updateSystemPrompt(newSystemPrompt: string): void {
-    const systemMessage = {
-      role: 'system' as const,
-      content: newSystemPrompt,
-    };
-    this.conversationManager.addMessage(systemMessage);
-    logger.debug(`[AGENT] Updated system prompt for agent ${this.instanceId}, length:`, newSystemPrompt.length);
   }
 
   /**
@@ -763,7 +702,9 @@ export class Agent {
             cwd: process.cwd(),
             projectContext: projectContextDetector ? (projectContextDetector as any).getCached() : undefined
           }
-        );
+        ).catch((error: Error) => {
+          logger.debug('[AGENT_IDLE_COORD] Error checking idle tasks:', error);
+        });
       }
 
       return finalResponse;
@@ -987,38 +928,52 @@ export class Agent {
       this.agentName  // Pass agent name for visible_to filtering
     );
 
-    // Regenerate system prompt with current context (todos, etc.) before each LLM call
+    // Generate or regenerate system prompt with current context (todos, etc.) before each LLM call
     // Works for both main agent and specialized agents
-    if (this.conversationManager.getSystemMessage()?.role === 'system') {
-      let updatedSystemPrompt: string;
+    // This ensures resumed sessions and new sessions both have proper system prompts
+    let updatedSystemPrompt: string;
 
-      if (this.config.isSpecializedAgent && this.config.baseAgentPrompt && this.config.taskPrompt) {
-        // Regenerate specialized agent prompt with current context
-        const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-        updatedSystemPrompt = await getAgentSystemPrompt(
-          this.config.baseAgentPrompt,
-          this.config.taskPrompt,
-          this.tokenManager,
-          this.toolResultManager,
-          this.config.config.reasoning_effort,
-          this.agentName,
-          this.config.thoroughness,
-          this.config.agentType
-        );
-        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent prompt regenerated with current context');
-      } else {
-        // Regenerate main agent prompt with current context
-        const { getMainSystemPrompt } = await import('../prompts/systemMessages.js');
-        updatedSystemPrompt = await getMainSystemPrompt(
-          this.tokenManager,
-          this.toolResultManager,
-          false,
-          this.config.config.reasoning_effort
-        );
-        logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Main agent prompt regenerated with current context');
-      }
+    if (this.config.isSpecializedAgent && this.config.baseAgentPrompt && this.config.taskPrompt) {
+      // Generate/regenerate specialized agent prompt with current context
+      const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
+      updatedSystemPrompt = await getAgentSystemPrompt(
+        this.config.baseAgentPrompt,
+        this.config.taskPrompt,
+        this.tokenManager,
+        this.toolResultManager,
+        this.config.config.reasoning_effort,
+        this.agentName,
+        this.config.thoroughness,
+        this.config.agentType
+      );
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent prompt regenerated with current context');
+    } else {
+      // Generate/regenerate main agent prompt with current context
+      const { getMainSystemPrompt } = await import('../prompts/systemMessages.js');
+      updatedSystemPrompt = await getMainSystemPrompt(
+        this.tokenManager,
+        this.toolResultManager,
+        false,
+        this.config.config.reasoning_effort
+      );
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Main agent prompt regenerated with current context');
+    }
 
-      this.conversationManager.getSystemMessage()!.content = updatedSystemPrompt;
+    // Update existing system message or create new one if missing
+    const existingSystemMessage = this.conversationManager.getSystemMessage();
+    if (existingSystemMessage?.role === 'system') {
+      existingSystemMessage.content = updatedSystemPrompt;
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Updated existing system prompt');
+    } else {
+      // No system message exists (e.g., after session resume) - create one
+      const systemMessage = {
+        role: 'system' as const,
+        content: updatedSystemPrompt,
+      };
+      // Prepend system message to the beginning of conversation
+      const currentMessages = this.conversationManager.getMessages();
+      this.conversationManager.setMessages([systemMessage, ...currentMessages]);
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created new system prompt (missing after session resume)');
     }
 
     // Auto-compaction: check if context usage exceeds threshold
@@ -1144,7 +1099,7 @@ export class Agent {
         if (canContinueAfterTimeout) {
           // Increment continuation counter
           this.timeoutContinuationAttempts++;
-          logger.warn('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId,
+          logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId,
             `Attempting continuation ${this.timeoutContinuationAttempts}/${BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS}`);
 
           // Add continuation prompt to conversation
@@ -1299,56 +1254,6 @@ export class Agent {
       // Auto-save after cleanup
       this.autoSaveSession();
     }
-  }
-
-  /**
-   * Generate system prompt with tool descriptions
-   *
-   * Creates a system prompt that includes descriptions of all available tools.
-   *
-   * @returns System prompt string
-   */
-  generateSystemPrompt(): string {
-    // Exclude restricted tools based on agent type
-    const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-    const allowExplorationTools = this.config.allowExplorationTools ?? this.config.isSpecializedAgent ?? false;
-
-    const excludeTools: string[] = [];
-    if (!allowTodoManagement) {
-      excludeTools.push(...TOOL_NAMES.TODO_MANAGEMENT_TOOLS);
-    }
-    if (!allowExplorationTools) {
-      excludeTools.push(...TOOL_NAMES.EXPLORATION_ONLY_TOOLS);
-    }
-
-    const functions = this.toolManager.getFunctionDefinitions(
-      excludeTools.length > 0 ? excludeTools : undefined,
-      this.agentName  // Pass agent name for visible_to filtering
-    );
-
-    let prompt = this.config.systemPrompt || 'You are a helpful AI assistant.';
-    prompt += '\n\nYou have access to the following tools:\n\n';
-
-    for (const func of functions) {
-      prompt += `- **${func.function.name}**: ${func.function.description}\n`;
-
-      // Add parameter descriptions
-      const params = func.function.parameters.properties;
-      if (params && Object.keys(params).length > 0) {
-        prompt += '  Parameters:\n';
-        for (const [paramName, paramSchema] of Object.entries(params)) {
-          const required = func.function.parameters.required?.includes(paramName) ? ' (required)' : '';
-          const desc = paramSchema.description || 'No description';
-          prompt += `    - ${paramName}${required}: ${desc}\n`;
-        }
-      }
-
-      prompt += '\n';
-    }
-
-    prompt += '\nUse these tools to complete tasks effectively.';
-
-    return prompt;
   }
 
   /**

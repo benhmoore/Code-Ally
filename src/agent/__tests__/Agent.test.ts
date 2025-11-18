@@ -76,9 +76,8 @@ describe('Agent - Interruption Handling', () => {
     // Create tool manager with empty tools array
     toolManager = new ToolManager([], activityStream);
 
-    // Create agent
+    // Create agent (system prompt generated dynamically in sendMessage)
     agent = new Agent(mockModelClient, toolManager, activityStream, {
-      systemPrompt: 'Test system prompt',
       config: mockConfig,
       isSpecializedAgent: false,
     });
@@ -215,7 +214,6 @@ describe('Agent - Interruption Handling', () => {
     it('should have separate TokenManagers for different agents', () => {
       // Create a second agent
       const agent2 = new Agent(mockModelClient, toolManager, activityStream, {
-        systemPrompt: 'Test system prompt 2',
         config: mockConfig,
         isSpecializedAgent: false,
       });
@@ -228,15 +226,13 @@ describe('Agent - Interruption Handling', () => {
     });
 
     it('should track context independently for each agent', async () => {
-      // Create two agents with different system prompts
+      // Create two agents
       const agent1 = new Agent(mockModelClient, toolManager, activityStream, {
-        systemPrompt: 'Short prompt',
         config: mockConfig,
         isSpecializedAgent: false,
       });
 
       const agent2 = new Agent(mockModelClient, toolManager, activityStream, {
-        systemPrompt: 'x'.repeat(5000), // Much longer system prompt
         config: mockConfig,
         isSpecializedAgent: false,
       });
@@ -264,7 +260,6 @@ describe('Agent - Interruption Handling', () => {
     it('should maintain separate context when creating specialized agents', () => {
       // Create a specialized agent (like AgentTool does)
       const specializedAgent = new Agent(mockModelClient, toolManager, activityStream, {
-        systemPrompt: 'Specialized agent prompt',
         config: mockConfig,
         isSpecializedAgent: true,
         baseAgentPrompt: 'Base prompt',

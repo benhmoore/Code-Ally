@@ -132,12 +132,18 @@ SubAgent.sendMessage()
 SERVICE BACKGROUND FLOWS
 ================================================================================
 
-Flow A: SessionTitleGenerator
-───────────────────────────────
-Session first message
+Flow A: SessionTitleGenerator (via IdleTaskCoordinator)
+────────────────────────────────────────────────────────
+Agent completes response
        |
        v
-SessionManager.generateTitle()
+Agent.checkAndRunIdleTasks() -> IdleTaskCoordinator.checkAndRunIdleTasks()
+       |
+       v
+IdleTaskCoordinator.needsTitleWork() (checks if title needs generation/regeneration)
+       |
+       v
+IdleTaskCoordinator.runTitleRegeneration() -> SessionTitleGenerator.regenerateTitleBackground()
        |
        v
 service_model_client.send(messages, { stream: false })

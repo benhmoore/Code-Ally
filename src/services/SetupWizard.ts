@@ -29,6 +29,9 @@ export interface SetupConfig {
   context_size: number;
   temperature: number;
   auto_confirm: boolean;
+  enable_idle_messages: boolean;
+  enable_session_title_generation: boolean;
+  tool_call_activity_timeout: number;
 }
 
 export class SetupWizard {
@@ -147,6 +150,9 @@ export class SetupWizard {
     await this.configManager.setValue('context_size', config.context_size);
     await this.configManager.setValue('temperature', config.temperature);
     await this.configManager.setValue('auto_confirm', config.auto_confirm);
+    await this.configManager.setValue('enable_idle_messages', config.enable_idle_messages);
+    await this.configManager.setValue('enable_session_title_generation', config.enable_session_title_generation);
+    await this.configManager.setValue('tool_call_activity_timeout', config.tool_call_activity_timeout);
 
     await this.markSetupCompleted();
   }

@@ -15,7 +15,7 @@ import { join } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../services/Logger.js';
-import { PLUGIN_ENVS_DIR } from '../config/paths.js';
+import { getPluginEnvsDir } from '../config/paths.js';
 import { PLUGIN_FILES, PLUGIN_TIMEOUTS, PluginEnvironmentStatus } from './constants.js';
 
 const execAsync = promisify(exec);
@@ -70,7 +70,7 @@ export class PluginEnvironmentManager {
     runtime: string,
     dependencies: PluginDependencies
   ): Promise<boolean> {
-    const envPath = join(PLUGIN_ENVS_DIR, pluginName);
+    const envPath = join(getPluginEnvsDir(), pluginName);
     const markerFile = join(envPath, PLUGIN_FILES.STATE_MARKER);
 
     // Check if already installed
@@ -258,7 +258,7 @@ export class PluginEnvironmentManager {
    * @returns Absolute path to the Python interpreter, or 'python3' if venv doesn't exist
    */
   getPythonPath(pluginName: string): string {
-    const venvPythonPath = join(PLUGIN_ENVS_DIR, pluginName, 'bin', 'python3');
+    const venvPythonPath = join(getPluginEnvsDir(), pluginName, 'bin', 'python3');
     logger.debug(`[PluginEnvironmentManager] getPythonPath - pluginName: ${pluginName}, checking: ${venvPythonPath}`);
 
     // Check if venv python exists synchronously
@@ -280,7 +280,7 @@ export class PluginEnvironmentManager {
    * @returns Absolute path to the node_modules directory
    */
   getNodeModulesPath(pluginName: string): string {
-    return join(PLUGIN_ENVS_DIR, pluginName, 'node_modules');
+    return join(getPluginEnvsDir(), pluginName, 'node_modules');
   }
 
   /**
@@ -290,14 +290,14 @@ export class PluginEnvironmentManager {
    * @returns Absolute path to the venv directory
    */
   getEnvPath(pluginName: string): string {
-    return join(PLUGIN_ENVS_DIR, pluginName);
+    return join(getPluginEnvsDir(), pluginName);
   }
 
   /**
    * Check if a plugin's environment is ready
    */
   async isReady(pluginName: string): Promise<boolean> {
-    const markerFile = join(PLUGIN_ENVS_DIR, pluginName, PLUGIN_FILES.STATE_MARKER);
+    const markerFile = join(getPluginEnvsDir(), pluginName, PLUGIN_FILES.STATE_MARKER);
     try {
       const content = await fs.readFile(markerFile, 'utf-8');
       const state: EnvironmentState = JSON.parse(content);
@@ -315,7 +315,7 @@ export class PluginEnvironmentManager {
    * @param pluginName - Name of the plugin
    */
   async removeEnvironment(pluginName: string): Promise<void> {
-    const envPath = join(PLUGIN_ENVS_DIR, pluginName);
+    const envPath = join(getPluginEnvsDir(), pluginName);
     try {
       await fs.rm(envPath, { recursive: true, force: true });
       logger.info(`[PluginEnvironmentManager] Removed environment for '${pluginName}'`);

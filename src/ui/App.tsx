@@ -45,6 +45,8 @@ import { useSessionResume } from './hooks/useSessionResume.js';
 import { useInputHandlers } from './hooks/useInputHandlers.js';
 import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
 import { useContentWidth } from './hooks/useContentWidth.js';
+import { getActiveProfile } from '../config/paths.js';
+import { UI_COLORS } from './constants/colors.js';
 
 
 /**
@@ -1089,7 +1091,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       )}
 
       {/* Footer / Help */}
-      <Box marginTop={1} width={contentWidth - 2}>
+      <Box width={contentWidth - 2} paddingLeft={1}>
         {isDebugMode ? (
           <Box flexDirection="column">
             {/* Debug Mode: Line 1 - Session and Memory */}
@@ -1099,20 +1101,34 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               <Text> · Memory: {debugStats.heapMB} MB heap / {debugStats.rssMB} MB RSS</Text>
             </Text>
             {/* Debug Mode: Line 2 - Tokens, Todos, Model, Exit */}
-            <Text dimColor>
-              <Text>Tokens: {debugStats.tokensUsed.toLocaleString()}/{debugStats.tokensTotal.toLocaleString()} ({state.contextUsage}%)</Text>
-              {debugStats.todoTotal > 0 && (
-                <Text> · Todos: {debugStats.todoPending} pending, {debugStats.todoCompleted} done, {debugStats.todoTotal} total</Text>
-              )}
-              <Text> · {state.config.model || 'none'}</Text>
-              {currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>}
-              <Text> · <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text></Text>
-            </Text>
+            {modal.isWaitingForExitConfirmation ? (
+              <Text>
+                <Text color={UI_COLORS.PRIMARY}>Ctrl+C again to exit</Text>
+              </Text>
+            ) : (
+              <Text dimColor>
+                <Text>Tokens: {debugStats.tokensUsed.toLocaleString()}/{debugStats.tokensTotal.toLocaleString()} ({state.contextUsage}%)</Text>
+                {debugStats.todoTotal > 0 && (
+                  <Text> · Todos: {debugStats.todoPending} pending, {debugStats.todoCompleted} done, {debugStats.todoTotal} total</Text>
+                )}
+                <Text> · {state.config.model || 'none'}</Text>
+                {currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>}
+                {(() => {
+                  const activeProfile = getActiveProfile();
+                  return activeProfile !== 'default' && <Text> · {activeProfile} (--profile to switch)</Text>;
+                })()}
+              </Text>
+            )}
           </Box>
+        ) : modal.isWaitingForExitConfirmation ? (
+          /* Exit Confirmation Mode */
+          <Text>
+            <Text color={UI_COLORS.PRIMARY}>Ctrl+C again to exit</Text>
+          </Text>
         ) : (
           /* Normal Mode: Single line */
           <Text dimColor>
-            <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text> · {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
+            {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
             {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
               <Text color="red">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact</Text>
             ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
@@ -1120,6 +1136,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             ) : (
               <Text>{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left</Text>
             )}
+            {(() => {
+              const activeProfile = getActiveProfile();
+              return activeProfile !== 'default' && <Text> · {activeProfile} (--profile to switch)</Text>;
+            })()}
           </Text>
         )}
       </Box>

@@ -16,26 +16,8 @@ import { join } from 'path';
 import { Session, SessionInfo, Message, IService } from '../types/index.js';
 import { generateShortId } from '../utils/id.js';
 import type { TodoItem } from './TodoManager.js';
-import { SessionTitleGenerator } from './SessionTitleGenerator.js';
 import { logger } from './Logger.js';
 import { TEXT_LIMITS, BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
-
-/**
- * Interface for ModelClient methods used by SessionManager
- */
-export interface IModelClientForSessionManager {
-  send(messages: any[], options?: any): Promise<any>;
-  modelName: string;
-  endpoint: string;
-}
-
-/**
- * Interface for SessionTitleGenerator
- */
-export interface ISessionTitleGenerator {
-  generateTitleBackground(sessionName: string, firstUserMessage: string, sessionsDir: string): void;
-  cleanup?(): Promise<void>;
-}
 
 /**
  * Configuration for SessionManager
@@ -43,8 +25,6 @@ export interface ISessionTitleGenerator {
 export interface SessionManagerConfig {
   /** Maximum number of sessions to keep before auto-cleanup */
   maxSessions?: number;
-  /** Model client for title generation (optional) */
-  modelClient?: IModelClientForSessionManager;
 }
 
 /**
@@ -54,7 +34,6 @@ export class SessionManager implements IService {
   private currentSession: string | null = null;
   private sessionsDir: string;
   private maxSessions: number;
-  private titleGenerator: ISessionTitleGenerator | null = null;
 
   // Write queue to serialize file operations and prevent race conditions
   // Uses pure promise chaining - each new write waits for the previous one to complete
@@ -65,9 +44,6 @@ export class SessionManager implements IService {
     // Sessions are stored in .ally-sessions/ within the current working directory
     this.sessionsDir = join(process.cwd(), '.ally-sessions');
     this.maxSessions = config.maxSessions ?? BUFFER_SIZES.MAX_SESSIONS_DEFAULT;
-    this.titleGenerator = config.modelClient
-      ? new SessionTitleGenerator(config.modelClient)
-      : null;
   }
 
   /**
@@ -182,20 +158,10 @@ export class SessionManager implements IService {
   }
 
   /**
-   * Set the model client for title generation
-   * Call this after service model client is created
-   */
-  setModelClient(modelClient: IModelClientForSessionManager): void {
-    this.titleGenerator = new SessionTitleGenerator(modelClient);
-  }
-
-  /**
    * Cleanup resources
    */
   async cleanup(): Promise<void> {
-    if (this.titleGenerator) {
-      await this.titleGenerator.cleanup?.();
-    }
+    // Reserved for future cleanup tasks
   }
 
   /**
@@ -901,20 +867,6 @@ export class SessionManager implements IService {
       session.updated_at = new Date().toISOString();
 
       await this.saveSessionData(name, session);
-
-      // Trigger title generation for new sessions
-      // Only generate title after BOTH user message AND assistant response
-      if (filteredMessages.length > 0 && !session.title && !session.metadata?.title) {
-        const firstUserMessage = filteredMessages.find(msg => msg.role === 'user');
-        const hasAssistantResponse = filteredMessages.some(msg => msg.role === 'assistant');
-        if (firstUserMessage && hasAssistantResponse && this.titleGenerator) {
-          this.titleGenerator.generateTitleBackground(
-            name,
-            firstUserMessage.content,
-            this.sessionsDir
-          );
-        }
-      }
 
       return true;
     } catch (error) {

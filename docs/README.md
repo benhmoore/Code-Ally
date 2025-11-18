@@ -17,6 +17,7 @@
 ## Reference
 
 - [Configuration](reference/configuration.md) - Configuration file options and CLI flags
+- [Profiles](reference/profiles.md) - Profile management and isolation
 - [UI Styling](STYLING.md) - UI constants, utilities, and component patterns
 
 ## Source Documentation
@@ -64,6 +65,7 @@ Code Ally documentation follows these principles:
 - **Understand the system:** Start with [Architecture Overview](architecture/overview.md)
 - **Create a plugin:** Read [Plugin Development Guide](guides/plugin-development.md)
 - **Configure Code Ally:** Check [Configuration Reference](reference/configuration.md)
+- **Use profiles:** Check [Profiles Reference](reference/profiles.md)
 - **Understand plugins:** Review [Plugin System Architecture](architecture/plugin-system.md)
 - **Work on core code:** See source READMEs (`src/*/README.md`)
 - **Add a new tool:** Check `src/tools/README.md`

@@ -9,7 +9,7 @@ import type { Message } from '@shared/index.js';
 import { ActivityEventType } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import { PLUGINS_DIR } from '@config/paths.js';
+import { getPluginsDir } from '@config/paths.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import type { PluginManifest } from '@plugins/PluginLoader.js';
@@ -85,14 +85,15 @@ export class PluginCommand extends Command {
 
     try {
       // Look up plugin directory
-      const pluginPath = join(PLUGINS_DIR, pluginName);
+      const pluginsDir = getPluginsDir();
+      const pluginPath = join(pluginsDir, pluginName);
 
       // Check if plugin directory exists
       try {
         await fs.access(pluginPath);
       } catch {
         return this.createError(
-          `Plugin '${pluginName}' not found in ${PLUGINS_DIR}. Check the plugin name and try again.`
+          `Plugin '${pluginName}' not found in ${pluginsDir}. Check the plugin name and try again.`
         );
       }
 
@@ -204,7 +205,7 @@ export class PluginCommand extends Command {
       }
 
       // Install the plugin
-      const result = await pluginLoader.installFromPath(resolvedPath, PLUGINS_DIR);
+      const result = await pluginLoader.installFromPath(resolvedPath, getPluginsDir());
 
       if (!result.success) {
         return this.createError(result.error || 'Failed to install plugin');
@@ -293,7 +294,7 @@ export class PluginCommand extends Command {
       }
 
       // Uninstall the plugin
-      const result = await pluginLoader.uninstall(pluginName, PLUGINS_DIR);
+      const result = await pluginLoader.uninstall(pluginName, getPluginsDir());
 
       if (!result.success) {
         return this.createError(result.error || 'Failed to uninstall plugin');

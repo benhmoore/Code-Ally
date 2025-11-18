@@ -2,7 +2,7 @@
  * AgentTool - Delegate tasks to specialized agents
  *
  * Creates and manages sub-agents with specialized system prompts.
- * Agents can be loaded from built-in library (dist/agents/) or user directory (~/.ally/agents/).
+ * Agents can be loaded from built-in library (dist/agents/) or user directory (~/.ally/profiles/{profile}/agents/).
  * Sub-agents run in isolated contexts with their own tools and message history.
  *
  * IMPORTANT: Sub-agents inherit the same permission screening as the main agent.
@@ -568,23 +568,8 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     const maxDuration = getThoroughnessDuration(thoroughness as any);
     logger.debug('[AGENT_TOOL] Set maxDuration to', maxDuration, 'minutes for thoroughness:', thoroughness);
 
-    // Create specialized system prompt
-    logger.debug('[AGENT_TOOL] Creating specialized prompt...');
-    let specializedPrompt: string;
-    try {
-      specializedPrompt = await this.createAgentSystemPrompt(
-        agentData.system_prompt,
-        taskPrompt,
-        resolvedReasoningEffort,
-        currentAgentName,
-        thoroughness,
-        agentType
-      );
-      logger.debug('[AGENT_TOOL] Specialized prompt created, length:', specializedPrompt?.length || 0);
-    } catch (error) {
-      logger.debug('[AGENT_TOOL] ERROR creating specialized prompt:', error);
-      throw error;
-    }
+    // System prompt will be generated dynamically in sendMessage() using baseAgentPrompt and taskPrompt
+    // This ensures current context (todos, token usage) is always included
 
     // Filter tools based on agent configuration and plugin context
     let filteredToolManager = toolManager;
@@ -649,7 +634,6 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
         verbose: false,
-        systemPrompt: specializedPrompt,
         baseAgentPrompt: agentData.system_prompt,
         taskPrompt: taskPrompt,
         config: config,
@@ -684,7 +668,6 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
         verbose: false,
-        systemPrompt: specializedPrompt,
         baseAgentPrompt: agentData.system_prompt,
         taskPrompt: taskPrompt,
         config: config,
@@ -833,23 +816,6 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     }
   }
 
-
-  /**
-   * Create specialized system prompt for agent
-   */
-  private async createAgentSystemPrompt(agentPrompt: string, taskPrompt: string, reasoningEffort?: string, agentName?: string, thoroughness?: string, agentType?: string): Promise<string> {
-    logger.debug('[AGENT_TOOL] Importing systemMessages module...');
-    try {
-      const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-      logger.debug('[AGENT_TOOL] Calling getAgentSystemPrompt...');
-      const result = await getAgentSystemPrompt(agentPrompt, taskPrompt, undefined, undefined, reasoningEffort, agentName, thoroughness, agentType);
-      logger.debug('[AGENT_TOOL] getAgentSystemPrompt returned, length:', result?.length || 0);
-      return result;
-    } catch (error) {
-      logger.debug('[AGENT_TOOL] ERROR in createAgentSystemPrompt:', error);
-      throw error;
-    }
-  }
 
   /**
    * Extract a summary from the subagent's conversation history

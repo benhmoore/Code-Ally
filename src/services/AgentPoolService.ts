@@ -225,11 +225,8 @@ export class AgentPoolService implements IService {
           );
         }
 
-        // CRITICAL: Clear conversation history and update system prompt before reusing agent
-        // When reusing a pooled agent, we must:
-        // 1. Clear conversation history to remove old messages
-        // 2. Update system prompt with the new task's prompt
-        // Without this, agents retain messages from unrelated previous delegations
+        // CRITICAL: Clear conversation history before reusing agent
+        // System prompt will be regenerated dynamically in sendMessage() with current context
         try {
           const agent = reserved.metadata.agent;
           if (typeof agent.clearConversationHistory === 'function') {
@@ -238,17 +235,9 @@ export class AgentPoolService implements IService {
               `[AGENT_POOL] Cleared conversation history for reused agent ${reserved.metadata.agentId}`
             );
           }
-
-          // Update system prompt if provided in new config
-          if (agentConfig.systemPrompt && typeof agent.updateSystemPrompt === 'function') {
-            agent.updateSystemPrompt(agentConfig.systemPrompt);
-            logger.debug(
-              `[AGENT_POOL] Updated system prompt for reused agent ${reserved.metadata.agentId}`
-            );
-          }
         } catch (error) {
           logger.warn(
-            `[AGENT_POOL] Failed to clear conversation history or update system prompt for agent ${reserved.metadata.agentId}:`,
+            `[AGENT_POOL] Failed to clear conversation history for agent ${reserved.metadata.agentId}:`,
             error
           );
         }

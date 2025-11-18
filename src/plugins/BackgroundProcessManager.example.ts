@@ -7,7 +7,7 @@
 
 import { BackgroundProcessManager, BackgroundProcessConfig, ProcessState } from './BackgroundProcessManager.js';
 import { PluginEnvironmentManager } from './PluginEnvironmentManager.js';
-import { PLUGIN_ENVS_DIR } from '../config/paths.js';
+import { getPluginEnvsDir } from '../config/paths.js';
 import { PLUGIN_TIMEOUTS } from './constants.js';
 import { join } from 'path';
 
@@ -33,7 +33,7 @@ async function example1_SimplePythonDaemon(): Promise<void> {
     pluginPath,
     command: pythonPath,
     args: ['daemon.py'], // Relative to pluginPath
-    socketPath: join(PLUGIN_ENVS_DIR, pluginName, 'daemon.sock'),
+    socketPath: join(getPluginEnvsDir(), pluginName, 'daemon.sock'),
     startupTimeout: PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_STARTUP,
     shutdownGracePeriod: PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_SHUTDOWN_GRACE_PERIOD,
     healthcheck: {
@@ -73,7 +73,7 @@ async function example2_WithEnvironmentVariables(): Promise<void> {
     pluginPath,
     command: envManager.getPythonPath(pluginName),
     args: ['server.py'],
-    socketPath: join(PLUGIN_ENVS_DIR, pluginName, 'daemon.sock'),
+    socketPath: join(getPluginEnvsDir(), pluginName, 'daemon.sock'),
     // Pass configuration via environment
     envVars: {
       PORT: '8080',
@@ -145,7 +145,7 @@ async function example5_CustomHealthChecks(): Promise<void> {
     pluginPath,
     command: envManager.getPythonPath(pluginName),
     args: ['daemon.py'],
-    socketPath: join(PLUGIN_ENVS_DIR, pluginName, 'daemon.sock'),
+    socketPath: join(getPluginEnvsDir(), pluginName, 'daemon.sock'),
     // More aggressive health monitoring for critical services
     healthcheck: {
       interval: 10000, // Check every 10 seconds
@@ -176,7 +176,7 @@ async function example6_ErrorHandling(): Promise<void> {
     pluginPath,
     command: envManager.getPythonPath(pluginName),
     args: ['daemon.py'],
-    socketPath: join(PLUGIN_ENVS_DIR, pluginName, 'daemon.sock'),
+    socketPath: join(getPluginEnvsDir(), pluginName, 'daemon.sock'),
     startupTimeout: 30000,
     shutdownGracePeriod: 5000,
   };
@@ -278,7 +278,7 @@ async function example8_PluginIntegration(): Promise<void> {
       pluginPath,
       command,
       args: manifest.daemon.args,
-      socketPath: join(PLUGIN_ENVS_DIR, manifest.name, 'daemon.sock'),
+      socketPath: join(getPluginEnvsDir(), manifest.name, 'daemon.sock'),
       healthcheck: manifest.daemon.healthcheck,
       startupTimeout: PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_STARTUP,
       shutdownGracePeriod: PLUGIN_TIMEOUTS.BACKGROUND_PROCESS_SHUTDOWN_GRACE_PERIOD,
@@ -330,7 +330,7 @@ async function example10_CompleteLifecycle(): Promise<void> {
       pluginPath,
       command: envManager.getPythonPath(pluginName),
       args: ['daemon.py'],
-      socketPath: join(PLUGIN_ENVS_DIR, pluginName, 'daemon.sock'),
+      socketPath: join(getPluginEnvsDir(), pluginName, 'daemon.sock'),
       envVars: {
         LOG_LEVEL: 'info',
       },

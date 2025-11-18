@@ -4,13 +4,13 @@ Extensible plugin architecture for Code Ally with automatic dependency managemen
 
 ## Overview
 
-The plugin system enables adding custom tools without modifying core code. Plugins are discovered automatically from `~/.ally/plugins/` and integrated into the tool execution pipeline.
+The plugin system enables adding custom tools without modifying core code. Plugins are discovered automatically from the active profile's plugins directory (e.g., `~/.ally/profiles/default/plugins/`) and integrated into the tool execution pipeline.
 
 ## Architecture
 
 ```
 PluginLoader
-    ├─ Discovers plugins in ~/.ally/plugins/
+    ├─ Discovers plugins in profile-specific directory
     ├─ Validates manifests (plugin.json)
     ├─ Manages dependencies (PluginEnvironmentManager)
     ├─ Creates tool wrappers
@@ -81,7 +81,7 @@ EventSubscriptionManager
 **File:** `PluginLoader.ts` (1,129 lines)
 
 **Responsibilities:**
-- Scans `~/.ally/plugins/` for subdirectories
+- Scans profile-specific plugins directory for subdirectories
 - Validates `plugin.json` manifests
 - Installs dependencies via PluginEnvironmentManager
 - Creates ExecutableToolWrapper or BackgroundToolWrapper instances
@@ -137,12 +137,12 @@ class PluginActivationManager {
 - Caches installations for instant subsequent loads
 
 **Process:**
-1. Check if `~/.ally/plugin-envs/plugin-name/.installed` exists
+1. Check if profile-specific environment marker exists (e.g., `~/.ally/profiles/default/plugin-envs/plugin-name/.installed`)
 2. If not:
-   - Create venv: `python3 -m venv ~/.ally/plugin-envs/plugin-name/`
+   - Create venv: `python3 -m venv <profile>/plugin-envs/plugin-name/`
    - Install: `pip install -r requirements.txt`
    - Create `.installed` marker
-3. Return venv Python path: `~/.ally/plugin-envs/plugin-name/bin/python3`
+3. Return venv Python path: `<profile>/plugin-envs/plugin-name/bin/python3`
 
 **Public API:**
 ```typescript
@@ -302,9 +302,12 @@ class EventSubscriptionManager {
 
 **Venv injection:**
 ```typescript
+import { join } from 'path';
+import { getPluginEnvsDir } from '../config/paths.js';
+
 // If plugin has Python runtime and venv exists
 if (manifest.runtime === 'python3') {
-  const venvPython = `${PLUGIN_ENVS_DIR}/${pluginName}/bin/python3`;
+  const venvPython = join(getPluginEnvsDir(), pluginName, 'bin', 'python3');
   if (fs.existsSync(venvPython)) {
     this.command = venvPython; // Use venv Python
   }

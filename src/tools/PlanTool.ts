@@ -25,7 +25,6 @@ import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
-import { getThoroughnessGuidelines } from '../prompts/thoroughnessAdjustments.js';
 
 // Planning tools: read-only tools + explore for nested research + todo-add for proposals
 const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-add'];
@@ -330,8 +329,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
       const filteredToolManager = new ToolManager(filteredTools, this.activityStream);
       logger.debug('[PLAN_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
 
-      // Create specialized system prompt
-      const specializedPrompt = await this.createPlanningSystemPrompt(requirements, thoroughness, resolvedReasoningEffort);
+      // System prompt will be generated dynamically in sendMessage()
 
       // Map thoroughness to max duration
       const maxDuration = getThoroughnessDuration(thoroughness as any);
@@ -353,7 +351,6 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         isSpecializedAgent: true,
         allowTodoManagement: true, // Planning agent can create proposed todos
         verbose: false,
-        systemPrompt: specializedPrompt,
         baseAgentPrompt: PLANNING_SYSTEM_PROMPT,
         taskPrompt: requirements,
         config: config,
@@ -531,30 +528,6 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         undefined,
         { agent_used: 'plan' }
       );
-    }
-  }
-
-  /**
-   * Create specialized system prompt for planning
-   */
-  private async createPlanningSystemPrompt(requirements: string, thoroughness: string, reasoningEffort?: string): Promise<string> {
-    logger.debug('[PLAN_TOOL] Creating planning system prompt with thoroughness:', thoroughness);
-    try {
-      const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-
-      // Get thoroughness-specific guidelines from shared utility
-      const thoroughnessGuidelines = getThoroughnessGuidelines('plan', thoroughness) ||
-        getThoroughnessGuidelines('plan', 'uncapped')!; // Fallback to uncapped if null
-
-      // Compose the full prompt with thoroughness-specific guidelines
-      const modifiedPrompt = PLANNING_BASE_PROMPT + '\n\n' + thoroughnessGuidelines + '\n\n' + PLANNING_CLOSING;
-
-      const result = await getAgentSystemPrompt(modifiedPrompt, requirements, undefined, undefined, reasoningEffort);
-      logger.debug('[PLAN_TOOL] System prompt created, length:', result?.length || 0);
-      return result;
-    } catch (error) {
-      logger.debug('[PLAN_TOOL] ERROR creating system prompt:', error);
-      throw error;
     }
   }
 

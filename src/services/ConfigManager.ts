@@ -7,10 +7,10 @@
  */
 
 import { promises as fs } from 'fs';
-import path from 'path';
+import { dirname } from 'path';
 import type { Config, IService } from '../types/index.js';
 import { DEFAULT_CONFIG, validateConfigValue } from '../config/defaults.js';
-import { CONFIG_FILE, ensureDirectories } from '../config/paths.js';
+import { getConfigFile, getBaseConfigFile, ensureDirectories } from '../config/paths.js';
 import { logger } from './Logger.js';
 
 export class ConfigManager implements IService {
@@ -18,7 +18,7 @@ export class ConfigManager implements IService {
   private _configPath: string;
 
   constructor(configPath?: string) {
-    this._configPath = configPath || CONFIG_FILE;
+    this._configPath = configPath || getConfigFile();
     this._config = { ...DEFAULT_CONFIG };
   }
 
@@ -40,76 +40,165 @@ export class ConfigManager implements IService {
   }
 
   /**
-   * Load configuration from disk
+   * Load base configuration (global defaults)
    *
-   * Priority:
-   * 1. Config file (~/.ally/config.json)
-   * 2. Default values
-   *
-   * Validates and coerces types during loading.
-   * Automatically removes unknown config keys and saves cleaned config.
+   * @returns Base config object or empty object if not found
    */
-  private async loadConfig(): Promise<void> {
+  private async loadBaseConfig(): Promise<Partial<Config>> {
     try {
-      // Try to read config file directly (combines existence check + read)
-      const content = await fs.readFile(this._configPath, 'utf-8');
-      const fileConfig = JSON.parse(content);
+      const baseConfigPath = getBaseConfigFile();
+      const content = await fs.readFile(baseConfigPath, 'utf-8');
+      const baseConfig = JSON.parse(content);
 
-      const unknownKeys: string[] = [];
-
-      // Merge with defaults, validating each value
-      for (const [key, value] of Object.entries(fileConfig)) {
+      // Validate and coerce types
+      const validatedConfig: Partial<Config> = {};
+      for (const [key, value] of Object.entries(baseConfig)) {
         if (key in DEFAULT_CONFIG) {
-          const validation = validateConfigValue(key as keyof Config, value);
-
-          if (validation.valid) {
-            (this._config as any)[key] = validation.coercedValue;
+          const validated = validateConfigValue(key as keyof Config, value);
+          if (validated.valid) {
+            validatedConfig[key as keyof Config] = validated.coercedValue;
           } else {
-            logger.warn(
-              `Invalid config value for '${key}': ${validation.error}. Using default.`
-            );
+            logger.warn(`[CONFIG] Invalid value for ${key} in base config: ${validated.error}`);
           }
         } else {
-          unknownKeys.push(key);
+          logger.warn(`[CONFIG] Unknown key '${key}' in base config, ignoring`);
         }
       }
 
-      // If unknown keys were found, clean the config file
-      if (unknownKeys.length > 0) {
-        await this.saveConfig();
-        logger.info(`\nConfig cleanup: Removed unknown keys: ${unknownKeys.join(', ')}\n`);
-      }
+      return validatedConfig;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        // Config file doesn't exist - create it with defaults
-        logger.info(`Config file not found at ${this._configPath} - creating with defaults`);
-        await this.saveConfig();
-      } else if (error instanceof SyntaxError) {
-        // Invalid JSON - log but don't overwrite (user can fix manually)
-        logger.error(`Error parsing config file (invalid JSON) - using defaults: ${error.message}`);
-        logger.error(`Config file at ${this._configPath} contains invalid JSON. Fix it or delete it to reset.`);
-      } else {
-        // Other error (permissions, etc.) - log but don't overwrite
-        logger.error(`Error loading config from ${this._configPath}:`, error);
-        logger.error('Using default config values. Config file was not modified.');
+        // Base config doesn't exist, return empty
+        return {};
       }
+      logger.warn('[CONFIG] Error loading base config:', error);
+      return {};
     }
   }
 
   /**
-   * Save configuration to disk
+   * Load configuration from disk with 3-tier inheritance
    *
-   * Writes the current configuration as pretty-printed JSON.
+   * Priority (highest to lowest):
+   * 1. Profile config (~/.ally/profiles/{profile}/config.json)
+   * 2. Base config (~/.ally/config.json)
+   * 3. Default values (DEFAULT_CONFIG)
+   *
+   * Validates and coerces types during loading.
+   * Automatically removes unknown config keys from profile config and saves cleaned version.
+   */
+  private async loadConfig(): Promise<void> {
+    try {
+      // Load base config first (global defaults)
+      const baseConfig = await this.loadBaseConfig();
+
+      // Load profile-specific config
+      let profileConfig: Partial<Config> = {};
+      const unknownKeys: string[] = [];
+
+      try {
+        const content = await fs.readFile(this._configPath, 'utf-8');
+        const rawProfileConfig = JSON.parse(content);
+
+        // Validate and coerce types for profile config
+        for (const [key, value] of Object.entries(rawProfileConfig)) {
+          if (key in DEFAULT_CONFIG) {
+            const validated = validateConfigValue(key as keyof Config, value);
+            if (validated.valid) {
+              profileConfig[key as keyof Config] = validated.coercedValue;
+            } else {
+              logger.warn(`[CONFIG] Invalid value for ${key} in profile config: ${validated.error}. Using inherited value.`);
+            }
+          } else {
+            unknownKeys.push(key);
+          }
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          logger.warn('[CONFIG] Error loading profile config:', error);
+        }
+        // Profile config doesn't exist or is invalid, that's ok
+      }
+
+      // Build final config with 3-tier inheritance
+      // Priority: profileConfig > baseConfig > DEFAULT_CONFIG
+      this._config = { ...DEFAULT_CONFIG };
+
+      // Apply base config
+      for (const key in baseConfig) {
+        if (key in DEFAULT_CONFIG) {
+          (this._config as any)[key] = baseConfig[key as keyof Config];
+        }
+      }
+
+      // Apply profile config (highest priority)
+      for (const key in profileConfig) {
+        if (key in DEFAULT_CONFIG) {
+          (this._config as any)[key] = profileConfig[key as keyof Config];
+        }
+      }
+
+      // If unknown keys were found, clean the profile config file
+      if (unknownKeys.length > 0) {
+        await this.saveConfig();
+        logger.info(`\nProfile config cleanup: Removed unknown keys: ${unknownKeys.join(', ')}\n`);
+      }
+    } catch (error) {
+      logger.error('[CONFIG] Error in loadConfig:', error);
+      // Return defaults on error
+      this._config = { ...DEFAULT_CONFIG };
+    }
+  }
+
+  /**
+   * Save configuration to disk (profile config only)
+   *
+   * Only saves values that differ from base config + defaults to keep
+   * profile config minimal. This ensures profile config only stores overrides.
    */
   async saveConfig(): Promise<void> {
     try {
-      // Ensure parent directory exists
-      await fs.mkdir(path.dirname(this._configPath), { recursive: true });
+      const profileConfigPath = this._configPath;
 
-      const content = JSON.stringify(this._config, null, 2);
-      await fs.writeFile(this._configPath, content, 'utf-8');
+      // Ensure profile config directory exists
+      const profileConfigDir = dirname(profileConfigPath);
+      await fs.mkdir(profileConfigDir, { recursive: true });
+
+      // Only save values that differ from base config + defaults
+      // This keeps profile config minimal
+      const baseConfig = await this.loadBaseConfig();
+      const configToSave: Partial<Config> = {};
+
+      for (const key in this._config) {
+        if (key in DEFAULT_CONFIG) {
+          const value = this._config[key as keyof Config];
+          const baseValue = baseConfig[key as keyof Config];
+          const defaultValue = DEFAULT_CONFIG[key as keyof Config];
+
+          // Save if different from both base and default
+          if (baseValue !== undefined) {
+            // Base config has this key, only save if different from base
+            if (JSON.stringify(value) !== JSON.stringify(baseValue)) {
+              (configToSave as any)[key] = value;
+            }
+          } else {
+            // No base config, save if different from default
+            if (JSON.stringify(value) !== JSON.stringify(defaultValue)) {
+              (configToSave as any)[key] = value;
+            }
+          }
+        }
+      }
+
+      await fs.writeFile(
+        profileConfigPath,
+        JSON.stringify(configToSave, null, 2),
+        'utf-8'
+      );
+
+      logger.debug('[CONFIG] Saved profile config');
     } catch (error) {
-      logger.error('Error saving config:', error);
+      logger.error('[CONFIG] Error saving config:', error);
       throw error;
     }
   }
@@ -299,6 +388,38 @@ export class ConfigManager implements IService {
     }
 
     return null;
+  }
+
+  /**
+   * Get the source of a configuration value
+   *
+   * @param key - Config key
+   * @returns 'profile' | 'base' | 'default'
+   */
+  async getConfigSource(key: keyof Config): Promise<'profile' | 'base' | 'default'> {
+    try {
+      // Check profile config
+      const profileConfigPath = this._configPath;
+      const profileContent = await fs.readFile(profileConfigPath, 'utf-8');
+      const profileConfig = JSON.parse(profileContent);
+      if (key in profileConfig) {
+        return 'profile';
+      }
+    } catch {
+      // Profile config doesn't exist or error reading
+    }
+
+    try {
+      // Check base config
+      const baseConfig = await this.loadBaseConfig();
+      if (key in baseConfig) {
+        return 'base';
+      }
+    } catch {
+      // Base config doesn't exist or error reading
+    }
+
+    return 'default';
   }
 
   /**

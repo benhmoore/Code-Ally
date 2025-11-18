@@ -28,6 +28,7 @@ enum SetupStep {
   WELCOME,
   ENDPOINT,
   VALIDATING_ENDPOINT,
+  LAPTOP_PREFERENCE,
   MODEL,
   VALIDATING_MODEL,
   AGENT_MODELS_CHOICE,
@@ -62,6 +63,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const [temperatureInput, setTemperatureInput] = useState('0.3');
   const [autoConfirm, setAutoConfirm] = useState(false);
   const [selectedAutoConfirmChoiceIndex, setSelectedAutoConfirmChoiceIndex] = useState(1); // Default to "No"
+  const [isLaptop, setIsLaptop] = useState(false);
+  const [selectedLaptopChoiceIndex, setSelectedLaptopChoiceIndex] = useState(1); // Default to "No"
   const [error, setError] = useState<string | null>(null);
   const [setupWizard] = useState(() => {
     const registry = ServiceRegistry.getInstance();
@@ -70,6 +73,17 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   });
 
   const contextSizeOptions = setupWizard.getContextSizeOptions();
+
+  // Check if endpoint is localhost/local
+  const isLocalEndpoint = (endpointUrl: string): boolean => {
+    try {
+      const url = new URL(endpointUrl);
+      const hostname = url.hostname.toLowerCase();
+      return hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('127.');
+    } catch {
+      return false;
+    }
+  };
 
   // Handle keyboard input for selection screens
   useInput((input, key) => {
@@ -164,7 +178,21 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       } else if (key.return) {
         const autoConfirmValue = selectedAutoConfirmChoiceIndex === 0; // Yes = true, No = false
         setAutoConfirm(autoConfirmValue);
-        applyConfiguration(autoConfirmValue);
+        applyConfiguration(autoConfirmValue, isLaptop);
+      }
+    } else if (step === SetupStep.LAPTOP_PREFERENCE) {
+      if (key.upArrow) {
+        setSelectedLaptopChoiceIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setSelectedLaptopChoiceIndex((prev) => Math.min(1, prev + 1));
+      } else if (key.return) {
+        const laptopValue = selectedLaptopChoiceIndex === 0; // Yes = true, No = false
+        setIsLaptop(laptopValue);
+        // Set context size based on laptop preference
+        if (laptopValue) {
+          setSelectedContextSizeIndex(0); // 16K for laptops
+        }
+        setStep(SetupStep.MODEL);
       }
     } else if (step === SetupStep.COMPLETED) {
       if (key.return) {
@@ -205,7 +233,16 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
 
     setAvailableModels(models);
     setSelectedModelIndex(0);
-    setStep(SetupStep.MODEL);
+
+    // Check if endpoint is local - if so, ask about laptop preference
+    if (isLocalEndpoint(endpoint)) {
+      setStep(SetupStep.LAPTOP_PREFERENCE);
+    } else {
+      // Remote endpoint - skip laptop question
+      setIsLaptop(false);
+      // Keep default context size (32K - index 1) for desktop/server
+      setStep(SetupStep.MODEL);
+    }
   };
 
   const validateModelToolSupport = async () => {
@@ -339,7 +376,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     setStep(SetupStep.AUTO_CONFIRM);
   };
 
-  const applyConfiguration = async (autoConfirmValue: boolean) => {
+  const applyConfiguration = async (autoConfirmValue: boolean, laptopValue: boolean) => {
     setStep(SetupStep.APPLYING);
 
     // Ensure we have a valid model
@@ -373,6 +410,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       context_size: selectedContextSize.value,
       temperature: parseFloat(temperature),
       auto_confirm: autoConfirmValue,
+      enable_idle_messages: !laptopValue, // Disable idle messages on laptops
+      enable_session_title_generation: !laptopValue, // Disable title generation on laptops
+      tool_call_activity_timeout: laptopValue ? 90 : 120, // Faster timeout on laptops
     };
 
     try {
@@ -492,7 +532,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 <ChickAnimation />
               </Text>
               <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Step 2: Model Selection
+                Step 3: Model Selection
               </Text>
             </Box>
             <Box marginBottom={1}>
@@ -694,7 +734,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 <ChickAnimation />
               </Text>
               <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Step 3: Context Size
+                Step 4: Context Size
               </Text>
             </Box>
             <Box marginBottom={1}>
@@ -725,7 +765,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 <ChickAnimation />
               </Text>
               <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Step 4: Temperature
+                Step 5: Temperature
               </Text>
             </Box>
             <Box marginBottom={1}>
@@ -757,7 +797,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 <ChickAnimation />
               </Text>
               <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Step 5: Auto-confirm Tools
+                Step 6: Auto-confirm Tools
               </Text>
             </Box>
             <Box marginBottom={1}>
@@ -777,6 +817,47 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                   No
                 </SelectionIndicator>
                 <Text dimColor> - Ask for confirmation before each tool execution</Text>
+              </Box>
+            </Box>
+            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+              <Text dimColor>Use ↑↓ arrow keys to navigate, Enter to select, ESC to cancel</Text>
+            </Box>
+          </>
+        )}
+
+        {/* Laptop Preference */}
+        {step === SetupStep.LAPTOP_PREFERENCE && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+                Step 2: Running on a Laptop?
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>
+                Are you running Code Ally on a laptop?
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text dimColor>
+                Optimizes settings to reduce heat and battery drain.
+              </Text>
+            </Box>
+            <Box flexDirection="column" marginBottom={1}>
+              <Box>
+                <SelectionIndicator isSelected={selectedLaptopChoiceIndex === 0}>
+                  Yes
+                </SelectionIndicator>
+                <Text dimColor> - Optimize for laptop use (disables background services)</Text>
+              </Box>
+              <Box>
+                <SelectionIndicator isSelected={selectedLaptopChoiceIndex === 1}>
+                  No
+                </SelectionIndicator>
+                <Text dimColor> - Standard settings (desktop/server)</Text>
               </Box>
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>

@@ -21,7 +21,10 @@ export interface CLIOptions {
 
   // Configuration management
   init?: boolean;
-  config?: string;
+  configs?: boolean;
+  configShow?: string;
+  configSet?: string;
+  configReset?: string;
 
   // Logging
   verbose?: boolean;
@@ -29,14 +32,25 @@ export interface CLIOptions {
 
   // Session management
   session?: string;
+  sessions?: boolean;
+  sessionList?: boolean;
+  sessionDelete?: string;
   once?: string;
-  listSessions?: boolean;
-  deleteSession?: string;
   noSession?: boolean;
   resume?: string | boolean;
 
   // Advanced settings
   autoConfirm?: boolean;
+
+  // Profile options
+  profile?: string;
+  profiles?: boolean;
+  profileCreate?: string;
+  profileFrom?: string;
+  profileList?: boolean;
+  profileInfo?: string;
+  profileDelete?: string;
+  profileDeleteForce?: boolean;
 }
 
 /**
@@ -108,10 +122,10 @@ Use '/help' for complete interactive command reference.
     // Configuration Management
     this.program
       .option('--init', 'Run interactive setup wizard')
-      .option(
-        '--config <subcommand>',
-        'Manage configuration (subcommands: show [field], set <field> <value>, reset [field])'
-      );
+      .option('--configs', 'Show configuration commands cheatsheet')
+      .option('--config-show [field]', 'Show configuration (all or specific field)')
+      .option('--config-set <field=value>', 'Set configuration value (e.g., model=llama3.2)')
+      .option('--config-reset [field]', 'Reset configuration (all or specific field)');
 
     // Logging
     this.program
@@ -124,12 +138,13 @@ Use '/help' for complete interactive command reference.
     // Session Management
     this.program
       .option('--session <name>', 'Resume or create named session')
+      .option('--sessions', 'Show session commands cheatsheet')
+      .option('--session-list', 'List all available sessions')
+      .option('--session-delete <name>', 'Delete a session')
       .option(
         '-1, --once <message>',
         'Single message to process in non-interactive mode'
       )
-      .option('--list-sessions', 'List all available sessions')
-      .option('--delete-session <name>', 'Delete a session')
       .option(
         '--no-session',
         'Disable automatic session creation and persistence'
@@ -142,6 +157,17 @@ Use '/help' for complete interactive command reference.
     // Advanced Settings
     this.program
       .option('--auto-confirm', 'Auto-confirm tool executions');
+
+    // Profile Management
+    this.program
+      .option('--profile <name>', 'Launch with specific profile')
+      .option('--profiles', 'Show profile commands cheatsheet')
+      .option('--profile-create <name>', 'Create a new profile')
+      .option('--profile-from <source>', 'Clone from existing profile (use with --profile-create)')
+      .option('--profile-list', 'List all profiles')
+      .option('--profile-info <name>', 'Show profile information')
+      .option('--profile-delete <name>', 'Delete a profile')
+      .option('--profile-delete-force', 'Force delete profile with data (use with --profile-delete)');
   }
 
   /**
@@ -166,7 +192,10 @@ Use '/help' for complete interactive command reference.
 
       // Configuration
       init: opts.init,
-      config: opts.config,
+      configs: opts.configs,
+      configShow: opts.configShow,
+      configSet: opts.configSet,
+      configReset: opts.configReset,
 
       // Logging
       verbose: opts.verbose,
@@ -174,14 +203,25 @@ Use '/help' for complete interactive command reference.
 
       // Session
       session: opts.session,
+      sessions: opts.sessions,
+      sessionList: opts.sessionList,
+      sessionDelete: opts.sessionDelete,
       once: opts.once,
-      listSessions: opts.listSessions,
-      deleteSession: opts.deleteSession,
       noSession: opts.session === false,
       resume: opts.resume,
 
       // Advanced
       autoConfirm: opts.autoConfirm,
+
+      // Profile
+      profile: opts.profile,
+      profiles: opts.profiles,
+      profileCreate: opts.profileCreate,
+      profileFrom: opts.profileFrom,
+      profileList: opts.profileList,
+      profileInfo: opts.profileInfo,
+      profileDelete: opts.profileDelete,
+      profileDeleteForce: opts.profileDeleteForce,
     };
   }
 

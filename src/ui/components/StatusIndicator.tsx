@@ -22,6 +22,7 @@ import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '@config/const
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { MarkdownText } from './MarkdownText.js';
+import { getActiveProfile } from '@config/paths.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -131,13 +132,16 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
             return message;
           }
         }
+        // Start with empty message while messages generate
+        return '';
+      } else {
+        // No idle message generator - use static message
+        return 'Idle';
       }
     } catch {
-      // Fall through to thinking animation
+      // Fall back to static idle message on error
+      return 'Idle';
     }
-
-    // Start with empty message while messages generate
-    return '';
   });
 
   // Use ref to track previous task for comparison without triggering effect re-runs
@@ -185,10 +189,23 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           // If resuming but no cached messages (old session), show static message
           logger.debug(`[MASCOT] Resuming but no cached messages found, showing static message`);
           setIdleMessage('Ready to help!');
+        } else {
+          // No idle message generator - use static message
+          setIdleMessage('Idle');
         }
       } catch {
         // Silently handle errors
       }
+      return;
+    }
+
+    // Check if idle message generator exists before setting up rotation
+    const registry = ServiceRegistry.getInstance();
+    const idleMessageGenerator = registry.get<IdleMessageGenerator>('idle_message_generator');
+
+    if (!idleMessageGenerator) {
+      // No generator - set static idle message and skip rotation
+      setIdleMessage('Idle');
       return;
     }
 
@@ -369,6 +386,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   // Detect if we're working with an agent (agent-ask or direct agent tool)
   const activeAgentName = getActiveAgentName(activeToolCalls);
 
+  // Get active profile for display
+  const activeProfile = getActiveProfile();
+
   // Show cancelling status if cancelling (highest priority)
   if (isCancelling) {
     return (
@@ -444,6 +464,12 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         ) : (
           <Box>
             <MarkdownText content={idleMessage} />
+            {activeProfile !== 'default' && (
+              <>
+                <Text dimColor> · </Text>
+                <Text dimColor>Profile: {activeProfile}</Text>
+              </>
+            )}
           </Box>
         )}
       </Box>

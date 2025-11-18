@@ -260,6 +260,8 @@ export interface Config {
   show_system_prompt_in_chat: boolean;
   show_full_tool_output: boolean;
   show_tool_parameters_in_chat: boolean; // Show tool parameter lists in chat UI
+  enable_idle_messages: boolean; // Enable auto-generated idle status messages
+  enable_session_title_generation: boolean; // Enable auto-generated session titles
 
   // Tool Call Retry Settings
   tool_call_retry_enabled: boolean;
@@ -315,6 +317,7 @@ export interface SessionMetadata {
   title?: string;
   tags?: string[];
   model?: string;
+  lastTitleGeneratedAt?: number; // Timestamp of last title generation
 }
 
 export interface Session {

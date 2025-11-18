@@ -27,7 +27,26 @@ ally --resume
 
 # Initial setup
 ally --init
+
+# Profiles (isolate configs, plugins, agents)
+ally --profiles          # Show profile commands
+ally --profile work      # Switch to work profile
 ```
+
+## Profiles
+
+Profiles provide isolated environments for different contexts (work, personal, projects):
+
+- **Separate:** Plugins, agents, prompts, configuration per profile
+- **Location:** `~/.ally/profiles/<profile-name>/`
+- **Quick start:** `ally --profiles` for cheatsheet
+
+```bash
+ally --profile-create work    # Create profile
+ally --profile work           # Switch to profile
+```
+
+See [docs/reference/profiles.md](docs/reference/profiles.md) for full documentation.
 
 ## What It Does
 

@@ -226,8 +226,7 @@ export class SessionsTool extends BaseTool {
       const filteredToolManager = new ToolManager(filteredTools, this.activityStream);
       logger.debug('[SESSIONS_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
 
-      // Create specialized system prompt
-      const specializedPrompt = await this.createSessionAnalysisSystemPrompt(task, currentSessionId);
+      // System prompt will be generated dynamically in sendMessage()
 
       // Emit session analysis start event
       this.emitEvent({
@@ -250,10 +249,10 @@ export class SessionsTool extends BaseTool {
       }
 
       // Create agent configuration with focusDirectory set to sessions dir
+      // System prompt will be generated dynamically in sendMessage()
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
         verbose: false,
-        systemPrompt: specializedPrompt,
         baseAgentPrompt: SESSION_ANALYSIS_PROMPT,
         taskPrompt: task,
         config: config,
@@ -372,31 +371,6 @@ export class SessionsTool extends BaseTool {
         `Session analysis failed: ${formatError(error)}`,
         'execution_error'
       );
-    }
-  }
-
-  /**
-   * Create specialized system prompt for session analysis
-   */
-  private async createSessionAnalysisSystemPrompt(task: string, currentSessionId: string | null): Promise<string> {
-    logger.debug('[SESSIONS_TOOL] Creating session analysis system prompt');
-    try {
-      const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-
-      // Add context note about focus constraint
-      let contextNote = '\n\n**Important:** You are sandboxed to the .ally-sessions/ directory. All file operations are automatically restricted to this directory.';
-
-      // Note that current session is excluded (enforced at file system level)
-      if (currentSessionId) {
-        contextNote += '\n\n**Note:** The current active session is automatically excluded from your analysis - you only have access to historical sessions.';
-      }
-
-      const result = await getAgentSystemPrompt(SESSION_ANALYSIS_PROMPT + contextNote, task, undefined, undefined, undefined, 'sessions');
-      logger.debug('[SESSIONS_TOOL] System prompt created, length:', result?.length || 0);
-      return result;
-    } catch (error) {
-      logger.debug('[SESSIONS_TOOL] ERROR creating system prompt:', error);
-      throw error;
     }
   }
 

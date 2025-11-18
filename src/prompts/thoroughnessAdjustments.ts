@@ -51,7 +51,9 @@ export function getThoroughnessGuidelines(agentType: string, thoroughness: strin
 function getExploreThoroughnessGuidelines(thoroughness: string): string | null {
   switch (thoroughness) {
     case 'quick':
-      return `**Important Guidelines:**
+      return `**Your Current Thoroughness Level: QUICK**
+
+**Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
 - You CAN write temporary notes to /tmp using write-temp to organize findings
 - **Time limit: ~1 minute maximum** - System reminders will notify you of remaining time
@@ -64,7 +66,9 @@ function getExploreThoroughnessGuidelines(thoroughness: string): string | null {
 - If you can't find something quickly, explain what you searched`;
 
     case 'medium':
-      return `**Important Guidelines:**
+      return `**Your Current Thoroughness Level: MEDIUM**
+
+**Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
 - You CAN write temporary notes to /tmp using write-temp to organize findings
 - **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
@@ -78,7 +82,9 @@ function getExploreThoroughnessGuidelines(thoroughness: string): string | null {
 - If you can't find something, explain what you searched and what was missing`;
 
     case 'very thorough':
-      return `**Important Guidelines:**
+      return `**Your Current Thoroughness Level: VERY THOROUGH**
+
+**Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
 - You CAN write temporary notes to /tmp using write-temp to organize findings
 - **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
@@ -99,7 +105,9 @@ function getExploreThoroughnessGuidelines(thoroughness: string): string | null {
 
     case 'uncapped':
     default:
-      return `**Important Guidelines:**
+      return `**Your Current Thoroughness Level: UNCAPPED**
+
+**Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
 - You CAN write temporary notes to /tmp using write-temp to organize findings
 - **No time limit imposed** - Take the time needed to do a thorough job
@@ -121,7 +129,9 @@ function getExploreThoroughnessGuidelines(thoroughness: string): string | null {
 function getPlanThoroughnessGuidelines(thoroughness: string): string | null {
   switch (thoroughness) {
     case 'quick':
-      return `**Important Guidelines:**
+      return `**Your Current Thoroughness Level: QUICK**
+
+**Important Guidelines:**
 - **Time limit: ~1 minute maximum** - System reminders will notify you of remaining time
 - Be efficient in research (use 5-10 tool calls depending on codebase complexity)
 - **For existing codebases**: Ground recommendations in existing patterns, provide file references
@@ -132,7 +142,9 @@ function getPlanThoroughnessGuidelines(thoroughness: string): string | null {
 - Focus on speed and efficiency`;
 
     case 'medium':
-      return `**Important Guidelines:**
+      return `**Your Current Thoroughness Level: MEDIUM**
+
+**Important Guidelines:**
 - **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
 - Be efficient in research (use 10-15 tool calls depending on codebase complexity)
 - **For existing codebases**: Ground recommendations in existing patterns, provide file references
@@ -145,7 +157,9 @@ function getPlanThoroughnessGuidelines(thoroughness: string): string | null {
 - Focus on artful implementation that fits the existing architecture (or establishes good architecture)`;
 
     case 'very thorough':
-      return `**Important Guidelines:**
+      return `**Your Current Thoroughness Level: VERY THOROUGH**
+
+**Important Guidelines:**
 - **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
 - Be thorough in research (use 15-20+ tool calls for comprehensive analysis)
 - **For existing codebases**: Ground recommendations in existing patterns, provide file references
@@ -159,7 +173,9 @@ function getPlanThoroughnessGuidelines(thoroughness: string): string | null {
 
     case 'uncapped':
     default:
-      return `**Important Guidelines:**
+      return `**Your Current Thoroughness Level: UNCAPPED**
+
+**Important Guidelines:**
 - **No time limit imposed** - Take the time needed to create a comprehensive plan
 - Be thorough in research (use as many tool calls as needed for complete analysis)
 - **For existing codebases**: Ground recommendations in existing patterns, provide file references

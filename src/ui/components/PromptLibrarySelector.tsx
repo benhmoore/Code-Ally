@@ -99,7 +99,7 @@ export const PromptLibrarySelector: React.FC<PromptLibrarySelectorProps> = ({
           </Box>
           <Text color={UI_COLORS.PRIMARY}>No saved prompts</Text>
           <Box marginTop={1}>
-            <Text dimColor>Add prompts by editing ~/.ally/prompts/library.json</Text>
+            <Text dimColor>Add prompts using the /prompt-save command</Text>
           </Box>
         </Box>
       </Box>

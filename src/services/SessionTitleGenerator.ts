@@ -8,10 +8,9 @@
 import { ModelClient } from '../llm/ModelClient.js';
 import { Message } from '../types/index.js';
 import { CancellableService } from '../types/CancellableService.js';
-import { promises as fs } from 'fs';
-import { join } from 'path';
 import { logger } from './Logger.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, API_TIMEOUTS } from '../config/constants.js';
+import type { SessionManager } from './SessionManager.js';
 
 /**
  * Configuration for SessionTitleGenerator
@@ -28,16 +27,44 @@ export interface SessionTitleGeneratorConfig {
  */
 export class SessionTitleGenerator implements CancellableService {
   private modelClient: ModelClient;
+  private sessionManager: SessionManager;
   private pendingGenerations = new Set<string>();
   private isGenerating: boolean = false;
 
+  private enableGeneration: boolean;
+
   constructor(
     modelClient: ModelClient,
+    sessionManager: SessionManager,
+    enableGeneration: boolean = true,
     _config: SessionTitleGeneratorConfig = {}
   ) {
     this.modelClient = modelClient;
+    this.sessionManager = sessionManager;
+    this.enableGeneration = enableGeneration;
     // Note: maxTokens and temperature are available in _config but not used directly
     // They could be passed to modelClient.send() if needed in the future
+  }
+
+  /**
+   * Create fallback title from last user message
+   * Uses last user message truncated to SESSION_TITLE_MAX
+   */
+  private createFallbackTitle(messages: Message[]): string {
+    // Find last user message (iterate backwards)
+    const lastUserMessage = [...messages].reverse().find(msg => msg.role === 'user');
+
+    if (!lastUserMessage) {
+      return 'New Session';
+    }
+
+    // Normalize whitespace and truncate to SESSION_TITLE_MAX
+    const content = lastUserMessage.content.trim();
+    const cleanContent = content.replace(/\s+/g, ' ');
+
+    return cleanContent.length > TEXT_LIMITS.SESSION_TITLE_MAX
+      ? cleanContent.slice(0, TEXT_LIMITS.SESSION_TITLE_MAX) + '...'
+      : cleanContent;
   }
 
   /**
@@ -68,6 +95,11 @@ export class SessionTitleGenerator implements CancellableService {
    * @returns Generated title
    */
   async generateTitle(messages: Message[]): Promise<string> {
+    // If generation is disabled, use fallback immediately
+    if (!this.enableGeneration) {
+      return this.createFallbackTitle(messages);
+    }
+
     if (messages.length === 0) {
       return 'New Session';
     }
@@ -106,12 +138,7 @@ export class SessionTitleGenerator implements CancellableService {
       return cleanTitle || 'New Session';
     } catch (error) {
       logger.debug('[TITLE_GEN] ❌ Failed to generate session title:', error);
-      // Fallback: use first 40 chars of first message
-      const content = firstUserMessage.content.trim();
-      const cleanContent = content.replace(/\s+/g, ' ');
-      return cleanContent.length > TEXT_LIMITS.COMMAND_DISPLAY_MAX
-        ? cleanContent.slice(0, TEXT_LIMITS.COMMAND_DISPLAY_MAX) + '...'
-        : cleanContent;
+      return this.createFallbackTitle(messages);
     }
   }
 
@@ -122,12 +149,10 @@ export class SessionTitleGenerator implements CancellableService {
    *
    * @param sessionName - Name of the session
    * @param firstUserMessage - First user message content
-   * @param sessionsDir - Directory where sessions are stored
    */
   generateTitleBackground(
     sessionName: string,
-    firstUserMessage: string,
-    sessionsDir: string
+    firstUserMessage: string
   ): void {
     // Prevent duplicate generations
     if (this.pendingGenerations.has(sessionName)) {
@@ -140,7 +165,7 @@ export class SessionTitleGenerator implements CancellableService {
     this.isGenerating = true;
 
     // Run in background
-    this.generateAndSaveTitleAsync(sessionName, firstUserMessage, sessionsDir)
+    this.generateAndSaveTitleAsync(sessionName, firstUserMessage)
       .catch(error => {
         // Ignore abort/interrupt errors (expected when cancelled)
         if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
@@ -167,13 +192,11 @@ export class SessionTitleGenerator implements CancellableService {
    *
    * @param sessionName - Name of the session
    * @param messages - Full message array from the conversation
-   * @param sessionsDir - Directory where sessions are stored
    * @param onComplete - Callback to execute when regeneration completes (coordinator notification)
    */
   regenerateTitleBackground(
     sessionName: string,
     messages: Message[],
-    sessionsDir: string,
     onComplete?: () => void
   ): void {
     // Prevent duplicate regenerations
@@ -187,7 +210,7 @@ export class SessionTitleGenerator implements CancellableService {
     this.isGenerating = true;
 
     // Run in background
-    this.generateAndSaveTitleAsync(sessionName, messages, sessionsDir, true)
+    this.generateAndSaveTitleAsync(sessionName, messages, true)
       .catch(error => {
         // Ignore abort/interrupt errors (expected when cancelled)
         if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
@@ -212,11 +235,8 @@ export class SessionTitleGenerator implements CancellableService {
   private async generateAndSaveTitleAsync(
     sessionName: string,
     messagesOrFirstMessage: Message[] | string,
-    sessionsDir: string,
     forceRegenerate: boolean = false
   ): Promise<void> {
-    const sessionPath = join(sessionsDir, `${sessionName}.json`);
-
     // Generate title based on whether this is initial generation or regeneration
     let title: string;
     if (forceRegenerate && Array.isArray(messagesOrFirstMessage)) {
@@ -232,22 +252,27 @@ export class SessionTitleGenerator implements CancellableService {
     }
     logger.debug(`[TITLE_GEN] 📝 Generated title: "${title}"`);
 
-    // Load session and update title
+    // Update session metadata using SessionManager's serialized write
     try {
-      const content = await fs.readFile(sessionPath, 'utf-8');
-      const session = JSON.parse(content);
+      // Check if we should skip (only if not forcing regeneration)
+      if (!forceRegenerate) {
+        const session = await this.sessionManager.loadSession(sessionName);
+        if (session?.metadata?.title) {
+          logger.debug(`[TITLE_GEN] ⏭️  Session ${sessionName} already has title, skipping save`);
+          return;
+        }
+      }
 
-      // Only update if no title exists yet (unless forcing regeneration)
-      if (forceRegenerate || !session.metadata?.title) {
-        session.metadata = session.metadata || {};
-        session.metadata.title = title;
-        session.metadata.lastTitleGeneratedAt = Date.now();
-        session.updated_at = new Date().toISOString();
+      // Use SessionManager's updateMetadata to ensure serialized writes
+      const success = await this.sessionManager.updateMetadata(sessionName, {
+        title,
+        lastTitleGeneratedAt: Date.now(),
+      });
 
-        await fs.writeFile(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
+      if (success) {
         logger.debug(`[TITLE_GEN] 💾 Saved title to session ${sessionName}`);
       } else {
-        logger.debug(`[TITLE_GEN] ⏭️  Session ${sessionName} already has title, skipping save`);
+        logger.error(`[TITLE_GEN] ❌ Failed to save title for ${sessionName}: updateMetadata returned false`);
       }
     } catch (error) {
       logger.error(`[TITLE_GEN] ❌ Failed to save title for ${sessionName}:`, error);
@@ -262,6 +287,11 @@ export class SessionTitleGenerator implements CancellableService {
    * @returns Regenerated title
    */
   private async regenerateTitle(messages: Message[]): Promise<string> {
+    // If generation is disabled, use fallback immediately
+    if (!this.enableGeneration) {
+      return this.createFallbackTitle(messages);
+    }
+
     if (messages.length === 0) {
       return 'New Session';
     }
@@ -303,16 +333,7 @@ export class SessionTitleGenerator implements CancellableService {
       return cleanTitle || 'New Session';
     } catch (error) {
       logger.debug('[TITLE_GEN] ❌ Failed to regenerate session title:', error);
-      // Fallback: use first user message
-      const firstUserMessage = relevantMessages.find(msg => msg.role === 'user');
-      if (firstUserMessage) {
-        const content = firstUserMessage.content.trim();
-        const cleanContent = content.replace(/\s+/g, ' ');
-        return cleanContent.length > TEXT_LIMITS.COMMAND_DISPLAY_MAX
-          ? cleanContent.slice(0, TEXT_LIMITS.COMMAND_DISPLAY_MAX) + '...'
-          : cleanContent;
-      }
-      return 'New Session';
+      return this.createFallbackTitle(messages);
     }
   }
 

@@ -1,8 +1,12 @@
 /**
- * Path constants for Code Ally
+ * Path configuration for Code Ally
  *
  * Defines all standard paths used by the application for configuration,
  * sessions, agents, patches, and caching.
+ *
+ * Path resolution is profile-aware:
+ * - Global paths (ALLY_HOME, COMMAND_HISTORY_FILE, etc.) are shared across profiles
+ * - Profile-specific paths (agents, plugins, config, etc.) resolve to the active profile
  */
 
 import { homedir } from 'os';
@@ -10,15 +14,59 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from '../services/Logger.js';
 
+// ============================================================================
+// Profile Context
+// ============================================================================
+
+/**
+ * Active profile name - internal state
+ * Default is 'default' profile
+ */
+let ACTIVE_PROFILE: string = 'default';
+
+/**
+ * Set the active profile for path resolution
+ * Should be called during CLI initialization before any services are created
+ *
+ * @param profileName - Profile name to activate
+ */
+export function setActiveProfile(profileName: string): void {
+  ACTIVE_PROFILE = profileName;
+  logger.debug(`[PATHS] Active profile set to: ${profileName}`);
+}
+
+/**
+ * Get the currently active profile name
+ *
+ * @returns Active profile name
+ */
+export function getActiveProfile(): string {
+  return ACTIVE_PROFILE;
+}
+
+// ============================================================================
+// Global Paths (NOT profile-specific)
+// ============================================================================
+
 /**
  * Base directory for all Code Ally data
  */
 export const ALLY_HOME = join(homedir(), '.ally');
 
 /**
- * Directory for custom agent definitions (user-created)
+ * Command history file path (shared across profiles)
  */
-export const AGENTS_DIR = join(ALLY_HOME, 'agents');
+export const COMMAND_HISTORY_FILE = join(ALLY_HOME, 'command_history');
+
+/**
+ * Active profile tracking file
+ */
+export const ACTIVE_PROFILE_FILE = join(ALLY_HOME, 'active_profile');
+
+/**
+ * Base directory for all profiles
+ */
+export const PROFILES_DIR = join(ALLY_HOME, 'profiles');
 
 /**
  * Built-in agent definitions shipped with the application
@@ -32,54 +80,98 @@ export const BUILTIN_AGENTS_DIR = (() => {
   return join(currentDir, '..', 'agents');
 })();
 
-/**
- * Plugins directory for custom tools
- */
-export const PLUGINS_DIR = join(ALLY_HOME, 'plugins');
+// ============================================================================
+// Profile-Specific Paths (Functions)
+// ============================================================================
 
 /**
- * Plugin virtual environments directory
- * Stores isolated Python/Node environments for each plugin
+ * Get the agents directory for the active profile
+ *
+ * @returns Path to profile-specific agents directory
  */
-export const PLUGIN_ENVS_DIR = join(ALLY_HOME, 'plugin-envs');
+export function getAgentsDir(): string {
+  return join(PROFILES_DIR, ACTIVE_PROFILE, 'agents');
+}
 
 /**
- * Base cache directory
+ * Get the plugins directory for the active profile
+ *
+ * @returns Path to profile-specific plugins directory
  */
-export const CACHE_DIR = join(ALLY_HOME, 'cache');
+export function getPluginsDir(): string {
+  return join(PROFILES_DIR, ACTIVE_PROFILE, 'plugins');
+}
 
 /**
- * Path completion cache directory
+ * Get the plugin environments directory for the active profile
+ *
+ * @returns Path to profile-specific plugin-envs directory
  */
-export const COMPLETION_CACHE_DIR = join(CACHE_DIR, 'completion');
+export function getPluginEnvsDir(): string {
+  return join(PROFILES_DIR, ACTIVE_PROFILE, 'plugin-envs');
+}
 
 /**
- * Main configuration file path
+ * Get the cache directory for the active profile
+ *
+ * @returns Path to profile-specific cache directory
  */
-export const CONFIG_FILE = join(ALLY_HOME, 'config.json');
+export function getCacheDir(): string {
+  return join(PROFILES_DIR, ACTIVE_PROFILE, 'cache');
+}
 
 /**
- * Command history file path
+ * Get the completion cache directory for the active profile
+ *
+ * @returns Path to profile-specific completion cache directory
  */
-export const COMMAND_HISTORY_FILE = join(ALLY_HOME, 'command_history');
+export function getCompletionCacheDir(): string {
+  return join(getCacheDir(), 'completion');
+}
 
 /**
- * Directory for saved prompts library
+ * Get the configuration file path for the active profile
+ *
+ * @returns Path to profile-specific config.json
  */
-export const PROMPTS_DIR = join(ALLY_HOME, 'prompts');
+export function getConfigFile(): string {
+  return join(PROFILES_DIR, ACTIVE_PROFILE, 'config.json');
+}
 
 /**
- * All standard directories that should be created during initialization
+ * Get the prompts directory for the active profile
+ *
+ * @returns Path to profile-specific prompts directory
  */
-export const STANDARD_DIRECTORIES = [
-  ALLY_HOME,
-  AGENTS_DIR,
-  PLUGINS_DIR,
-  PLUGIN_ENVS_DIR,
-  CACHE_DIR,
-  COMPLETION_CACHE_DIR,
-  PROMPTS_DIR,
-];
+export function getPromptsDir(): string {
+  return join(PROFILES_DIR, ACTIVE_PROFILE, 'prompts');
+}
+
+/**
+ * Get the base configuration file path (global defaults)
+ *
+ * @returns Path to base config.json
+ */
+export function getBaseConfigFile(): string {
+  return join(ALLY_HOME, 'config.json');
+}
+
+// ============================================================================
+// Directory Initialization
+// ============================================================================
+
+/**
+ * Get all standard directories that should be created during initialization
+ *
+ * @returns Array of directory paths
+ */
+export function getStandardDirectories(): string[] {
+  return [
+    ALLY_HOME,
+    PROFILES_DIR,
+    // Profile-specific directories are created by ProfileManager
+  ];
+}
 
 /**
  * Ensure all standard directories exist
@@ -87,7 +179,9 @@ export const STANDARD_DIRECTORIES = [
 export async function ensureDirectories(): Promise<void> {
   const fs = await import('fs/promises');
 
-  for (const dir of STANDARD_DIRECTORIES) {
+  const directories = getStandardDirectories();
+
+  for (const dir of directories) {
     try {
       await fs.mkdir(dir, { recursive: true });
     } catch (error) {
