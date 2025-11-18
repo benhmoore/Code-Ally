@@ -1,4 +1,4 @@
-// Updated first line
+/**
  * Agent - Main orchestrator for LLM conversation and tool execution
  *
  * Core responsibilities:
