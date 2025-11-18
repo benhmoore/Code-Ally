@@ -283,13 +283,13 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           );
         }
 
-        // Create tool result message
-        const toolResultMessage: Message = {
-          role: 'tool' as const,
-          content: JSON.stringify(result),
-          tool_call_id: toolCallId,
-          name: 'read',
-        };
+        // Create tool result message using centralized function
+        const { createToolResultMessage } = await import('../llm/FunctionCalling.js');
+        const toolResultMessage: Message = createToolResultMessage(
+          toolCallId,
+          'read',
+          result
+        );
 
         // Store messages to pass to agent creation
         initialMessages = [assistantMessage, toolResultMessage];

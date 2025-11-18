@@ -17,6 +17,7 @@ import { validateToolName } from '../utils/namingValidation.js';
 import { DelegationContextManager } from '../services/DelegationContextManager.js';
 import { isInjectableTool } from './InjectableTool.js';
 import { AGENT_DELEGATION_TOOLS } from '../config/constants.js';
+import { ConversationManager } from '../agent/ConversationManager.js';
 
 /**
  * Tool with custom function definition
@@ -41,9 +42,9 @@ export class ToolManager {
   private tools: Map<string, BaseTool>;
   private validator: ToolValidator;
   private duplicateDetector: DuplicateDetector;
-  private readFiles: Map<string, number> = new Map();
   private functionDefinitionsCache: Map<string, FunctionDefinition[]> = new Map();
   private delegationContextManager: DelegationContextManager;
+  private conversationManager?: ConversationManager;
 
   constructor(tools: BaseTool[], _activityStream: ActivityStream) {
     this.tools = new Map();
@@ -433,8 +434,6 @@ export class ToolManager {
     try {
       const result = await tool.execute(args, callId, abortSignal, isUserInitiated, isContextFile);
 
-      this.trackFileOperation(toolName, args, result);
-
       if (result.success) {
         this.duplicateDetector.recordCall(toolName, args);
 
@@ -465,52 +464,22 @@ export class ToolManager {
   }
 
   /**
-   * Track file operations for read-before-write validation
-   */
-  private trackFileOperation(
-    toolName: string,
-    args: Record<string, any>,
-    result: ToolResult
-  ): void {
-    if (!result.success) {
-      return;
-    }
-
-    if (toolName === 'read' && args.file_paths) {
-      const filePaths = Array.isArray(args.file_paths)
-        ? args.file_paths
-        : [args.file_paths];
-
-      const timestamp = Date.now();
-      for (const filePath of filePaths) {
-        this.readFiles.set(filePath, timestamp);
-      }
-    }
-
-    if (['write', 'edit', 'line-edit'].includes(toolName) && args.file_path) {
-      this.readFiles.set(args.file_path, Date.now());
-    }
-  }
-
-  /**
-   * Check if a file has been read
+   * Check if a file has been successfully read in the conversation.
+   *
+   * Delegates to ConversationManager to check if the file has been read
+   * with a successful outcome in the current conversation state.
+   *
+   * @param filePath - Absolute path to the file to check
+   * @returns true if file has been successfully read, false if not or if conversationManager not set
    */
   hasFileBeenRead(filePath: string): boolean {
-    return this.readFiles.has(filePath);
-  }
-
-  /**
-   * Get the timestamp when a file was last read
-   */
-  getFileReadTimestamp(filePath: string): number | undefined {
-    return this.readFiles.get(filePath);
+    return this.conversationManager?.hasSuccessfulReadFor(filePath) ?? false;
   }
 
   /**
    * Clear all tracked state
    */
   clearState(): void {
-    this.readFiles.clear();
     this.duplicateDetector.clear();
   }
 
@@ -519,5 +488,13 @@ export class ToolManager {
    */
   getDelegationContextManager(): DelegationContextManager {
     return this.delegationContextManager;
+  }
+
+  /**
+   * Set the conversation manager
+   * Called by Agent during initialization to provide access to conversation state
+   */
+  setConversationManager(manager: ConversationManager): void {
+    this.conversationManager = manager;
   }
 }

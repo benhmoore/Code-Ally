@@ -1,4 +1,4 @@
-/**
+// Updated first line
  * Agent - Main orchestrator for LLM conversation and tool execution
  *
  * Core responsibilities:
@@ -160,6 +160,10 @@ export class Agent {
   // Resets to 0 when a non-exploratory tool is called (e.g., write, edit)
   private currentExploratoryStreak: number = 0;
 
+  // Cleanup queue - tool call IDs to remove at end of turn
+  // cleanup-call queues IDs here, they're removed after model completes response
+  private pendingCleanupIds: string[] = [];
+
   // Focus management - tracks if this agent set focus and needs to restore it
   private previousFocus: string | null = null;
   private didSetFocus: boolean = false;
@@ -197,6 +201,9 @@ export class Agent {
       initialMessages: [], // Will add system prompt and initial messages below
     });
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'ConversationManager created');
+
+    // Connect ToolManager to ConversationManager for file tracking
+    this.toolManager.setConversationManager(this.conversationManager);
 
     // Create cycle detector
     this.cycleDetector = new CycleDetector({
@@ -429,6 +436,47 @@ export class Agent {
   }
 
   /**
+   * Get the conversation manager (used by CleanupCallTool for removing tool results)
+   */
+  getConversationManager(): ConversationManager {
+    return this.conversationManager;
+  }
+
+  /**
+   * Queue tool call IDs for cleanup at end of turn
+   * Used by cleanup-call tool to defer removals until after model's response completes
+   * @param toolCallIds - Tool call IDs to remove
+   */
+  queueCleanup(toolCallIds: string[]): void {
+    this.pendingCleanupIds.push(...toolCallIds);
+    logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Queued cleanup for IDs:', toolCallIds);
+  }
+
+  /**
+   * Execute queued cleanups at end of turn
+   * Removes tool results that were marked for cleanup during the turn
+   */
+  private executePendingCleanups(): void {
+    if (this.pendingCleanupIds.length === 0) {
+      return;
+    }
+
+    const idsToRemove = [...this.pendingCleanupIds];
+    this.pendingCleanupIds = [];
+
+    const result = this.conversationManager.removeToolResults(idsToRemove);
+    logger.debug(
+      '[AGENT_CLEANUP]',
+      this.instanceId,
+      'Executed pending cleanups:',
+      result.removed_count,
+      'removed,',
+      result.not_found_ids.length,
+      'not found'
+    );
+  }
+
+  /**
    * Clear conversation history (used by AgentPoolService when reusing pooled agents)
    *
    * CRITICAL: This must be called when reusing a pooled agent to prevent context
@@ -547,6 +595,9 @@ export class Agent {
     // Reset exploratory tool streak on new user input
     this.currentExploratoryStreak = 0;
 
+    // Reset cleanup queue on new user input
+    this.pendingCleanupIds = [];
+
     // Reset turn start time for specialized agents on each new turn
     if (this.config.isSpecializedAgent && this.turnManager.getMaxDuration() !== undefined) {
       this.turnManager.resetTurn();
@@ -661,16 +712,6 @@ export class Agent {
       }
     }
 
-    // Inject system reminder about exploratory tool usage (main agent only)
-    // Suggests using explore() when many read/grep/glob/ls/tree calls detected
-    if (!this.config.isSpecializedAgent) {
-      const exploratoryReminder = this.getExploratoryToolReminder();
-      if (exploratoryReminder) {
-        this.conversationManager.addMessage(exploratoryReminder);
-        logger.debug('[AGENT_EXPLORATORY_REMINDER]', this.instanceId, 'Injected exploratory tool reminder system message');
-      }
-    }
-
     // Emit user message event
     this.emitEvent({
       id: this.generateId(),
@@ -695,6 +736,10 @@ export class Agent {
       // Process response (handles both tool calls and text responses)
       // Note: processLLMResponse handles interruptions internally (both cancel and interjection types)
       const finalResponse = await this.processLLMResponse(response);
+
+      // Execute any pending cleanups before returning
+      // cleanup-call queues removals during turn, we execute them now that turn is complete
+      this.executePendingCleanups();
 
       // Notify idle coordinator that Ollama is idle and check for idle tasks
       if (coordinator) {
@@ -1635,46 +1680,39 @@ export class Agent {
    * Tracks consecutive exploratory tools (read, grep, glob, ls, tree).
    * When a non-exploratory tool is encountered, the streak resets to 0.
    *
+   * When the streak threshold is reached, injects a system reminder into
+   * the last exploratory tool result to suggest using explore().
+   *
    * This ensures we only trigger the explore() suggestion when the model
    * is actively exploring, not when exploratory tools are scattered
    * throughout normal workflow.
    *
-   * @param results - Tool execution results
+   * @param results - Tool execution results (will be modified to add system_reminder)
    */
   private incrementExploratoryToolCount(results: any[]): void {
-    for (const result of results) {
+    let lastExploratoryResultIndex = -1;
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
       if (!result || !result.tool_name) continue;
 
       const tool = this.toolManager.getTool(result.tool_name);
       if (tool?.isExploratoryTool) {
         // Exploratory tool - increment streak
         this.currentExploratoryStreak++;
+        lastExploratoryResultIndex = i;
       } else {
         // Non-exploratory tool (write, edit, etc.) - break the streak
         this.currentExploratoryStreak = 0;
+        lastExploratoryResultIndex = -1;
       }
     }
-  }
 
-  /**
-   * Generate exploratory tool usage reminder if threshold exceeded
-   *
-   * Checks if many consecutive exploratory tool calls have been made
-   * and returns a system reminder suggesting the use of explore() for better
-   * context management.
-   *
-   * @returns System reminder message or null if threshold not exceeded
-   */
-  private getExploratoryToolReminder(): Message | null {
+    // If streak threshold reached, inject system reminder into last exploratory result
     const threshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD;
-    if (this.currentExploratoryStreak < threshold) {
-      return null;
-    }
-
-    return {
-      role: 'system',
-      content: `<system-reminder>
-You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls (read/grep/glob/ls/tree). For complex multi-file investigations, consider using explore() instead - it delegates to a specialized agent with its own context budget, protecting your token budget and enabling more thorough investigation.
+    if (this.currentExploratoryStreak >= threshold && lastExploratoryResultIndex >= 0) {
+      const lastResult = results[lastExploratoryResultIndex];
+      lastResult.system_reminder = `You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls (read/grep/glob/ls/tree). For complex multi-file investigations, consider using explore() instead - it delegates to a specialized agent with its own context budget, protecting your token budget and enabling more thorough investigation.
 
 When to use explore():
 - Unknown scope/location - don't know where code is
@@ -1682,10 +1720,10 @@ When to use explore():
 - Complex architectural analysis
 - Any investigation requiring 5+ file operations
 
-Only use direct read/grep/glob when you know specific paths or need a quick lookup.
-</system-reminder>`,
-      timestamp: Date.now(),
-    };
+Only use direct read/grep/glob when you know specific paths or need a quick lookup.`;
+
+      logger.debug('[AGENT_EXPLORATORY_REMINDER]', this.instanceId, `Injected exploratory tool reminder after ${this.currentExploratoryStreak} consecutive calls`);
+    }
   }
 
   /**

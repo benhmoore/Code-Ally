@@ -234,7 +234,7 @@ describe('FunctionCalling', () => {
       expect(result.role).toBe('tool');
       expect(result.tool_call_id).toBe('call-123');
       expect(result.name).toBe('bash');
-      expect(result.content).toBe('Command output');
+      expect(result.content).toBe('[Tool Call ID: call-123]\nCommand output');
     });
 
     it('should create a tool result message with object result', () => {
@@ -242,7 +242,7 @@ describe('FunctionCalling', () => {
       const result = createToolResultMessage('call-123', 'bash', data);
 
       expect(result.role).toBe('tool');
-      expect(result.content).toBe(JSON.stringify(data, null, 2));
+      expect(result.content).toBe(`[Tool Call ID: call-123]\n${JSON.stringify(data, null, 2)}`);
     });
   });
 

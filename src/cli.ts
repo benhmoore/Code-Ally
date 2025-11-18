@@ -594,6 +594,7 @@ async function main() {
     const { PlanTool } = await import('./tools/PlanTool.js');
     const { AgentAskTool } = await import('./tools/AgentAskTool.js');
     const { BatchTool } = await import('./tools/BatchTool.js');
+    const { CleanupCallTool } = await import('./tools/CleanupCallTool.js');
     const { TodoAddTool } = await import('./tools/TodoAddTool.js');
     const { TodoRemoveTool } = await import('./tools/TodoRemoveTool.js');
     const { TodoUpdateTool } = await import('./tools/TodoUpdateTool.js');
@@ -621,6 +622,7 @@ async function main() {
       new PlanTool(activityStream),
       new AgentAskTool(activityStream),
       new BatchTool(activityStream),
+      new CleanupCallTool(activityStream),
       new TodoAddTool(activityStream),
       new TodoRemoveTool(activityStream),
       new TodoUpdateTool(activityStream),

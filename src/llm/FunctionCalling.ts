@@ -216,7 +216,10 @@ export function createToolResultMessage(
   name: string;
   content: string;
 } {
-  const content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+  let content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+
+  // Prepend tool call ID to content so model can reference it with cleanup-call
+  content = `[Tool Call ID: ${toolCallId}]\n${content}`;
 
   return {
     role: 'tool',

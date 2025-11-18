@@ -27,6 +27,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
 import { BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
 import { TOOL_NAMES } from '../config/toolDefaults.js';
+import { createToolResultMessage } from '../llm/FunctionCalling.js';
 
 /**
  * Tool call structure from LLM
@@ -759,7 +760,14 @@ export class ToolOrchestrator {
         : formattedResult;
     }
 
-    // Add tool result message to conversation with ephemeral metadata and tool status
+    // Create tool result message using centralized function
+    const toolResultMessage = createToolResultMessage(
+      toolCall.id,
+      toolCall.function.name,
+      finalContent
+    );
+
+    // Add ephemeral metadata and tool status
     const metadata: any = {};
     if (isEphemeral) {
       metadata.ephemeral = true;
@@ -768,10 +776,7 @@ export class ToolOrchestrator {
     metadata.tool_status = { [toolCall.id]: result.success ? 'success' : 'error' };
 
     this.agent.addMessage({
-      role: 'tool',
-      content: finalContent,
-      tool_call_id: toolCall.id,
-      name: toolCall.function.name,
+      ...toolResultMessage,
       metadata,
     });
 
