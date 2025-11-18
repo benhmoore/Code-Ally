@@ -16,6 +16,7 @@ export class TodoClearTool extends BaseTool {
     'Clear all todos. Use when starting fresh or when all work is complete and you want to clean up.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = false;
+  readonly breaksExploratoryStreak = false; // Task management, not productive work
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

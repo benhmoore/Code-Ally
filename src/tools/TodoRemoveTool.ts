@@ -16,6 +16,7 @@ export class TodoRemoveTool extends BaseTool {
     'Remove specific todos from the list by id or content matching. Use when cleaning up completed tasks or removing no-longer-relevant todos.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = false;
+  readonly breaksExploratoryStreak = false; // Task management, not productive work
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

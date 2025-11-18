@@ -20,6 +20,7 @@ export class TodoUpdateTool extends BaseTool {
     'Update todo status by id or content. Safer than rewriting entire list.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = true;
+  readonly breaksExploratoryStreak = false; // Task management, not productive work
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

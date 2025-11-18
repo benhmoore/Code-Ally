@@ -74,6 +74,7 @@ export interface IAgentForOrchestrator {
     getContextUsagePercentage(): number;
     trackToolResult(toolCallId: string, content: string): string | null;
   };
+  maybeInjectExploratoryReminder(toolCall: import('../types/index.js').ToolCall, result: any): void;
 }
 
 /**
@@ -407,6 +408,10 @@ export class ToolOrchestrator {
         const toolCall = toolCalls[i];
         const result = successfulResults[i];
         if (toolCall && result) {
+          // Inject exploratory tool reminder BEFORE processing result
+          // This ensures the system_reminder is present when formatToolResult() runs
+          this.agent.maybeInjectExploratoryReminder(toolCall, result);
+
           await this.processToolResult(toolCall, result);
         }
       }
@@ -453,6 +458,11 @@ export class ToolOrchestrator {
     const results: ToolResult[] = [];
     for (const toolCall of toolCalls) {
       const result = await this.executeSingleTool(toolCall);
+
+      // Inject exploratory tool reminder BEFORE processing result
+      // This ensures the system_reminder is present when formatToolResult() runs
+      this.agent.maybeInjectExploratoryReminder(toolCall, result);
+
       await this.processToolResult(toolCall, result);
       results.push(result);
     }

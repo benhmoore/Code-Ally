@@ -18,6 +18,7 @@ export class TodoListTool extends BaseTool {
     'List all current todos with their status, dependencies, and subtasks. Use this to view the current todo list without modifying it.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = true;
+  readonly breaksExploratoryStreak = false; // Task management, not productive work
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

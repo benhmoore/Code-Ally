@@ -35,7 +35,7 @@ import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
 import { SessionPersistence } from './SessionPersistence.js';
 import { AgentCompactor } from './AgentCompactor.js';
 import { ContextCoordinator } from './ContextCoordinator.js';
-import { Message, ActivityEventType, Config } from '../types/index.js';
+import { Message, ActivityEventType, Config, ToolCall } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -1190,8 +1190,8 @@ export class Agent {
         try {
           const results = await this.toolOrchestrator.executeToolCalls(toolCalls, cycles);
 
-          // Count exploratory tools executed in this batch
-          this.incrementExploratoryToolCount(results);
+          // Note: Exploratory tool tracking is now done inside ToolOrchestrator
+          // before each result is formatted (see maybeInjectExploratoryReminder)
 
           return results;
         } catch (error) {
@@ -1580,44 +1580,71 @@ export class Agent {
   }
 
   /**
-   * Increment exploratory tool streak based on tool results
+   * Maybe inject exploratory tool reminder into a single result
    *
+   * Called by ToolOrchestrator for each tool result BEFORE it's formatted.
    * Tracks consecutive exploratory tools (read, grep, glob, ls, tree).
    * When a non-exploratory tool is encountered, the streak resets to 0.
    *
    * When the streak threshold is reached, injects a system reminder into
-   * the last exploratory tool result to suggest using explore().
+   * the result to suggest using explore().
    *
    * This ensures we only trigger the explore() suggestion when the model
    * is actively exploring, not when exploratory tools are scattered
    * throughout normal workflow.
    *
-   * @param results - Tool execution results (will be modified to add system_reminder)
+   * @param toolCall - Tool call that was executed
+   * @param result - Tool execution result (will be modified to add system_reminder if threshold met)
    */
-  private incrementExploratoryToolCount(results: any[]): void {
-    let lastExploratoryResultIndex = -1;
-
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      if (!result || !result.tool_name) continue;
-
-      const tool = this.toolManager.getTool(result.tool_name);
-      if (tool?.isExploratoryTool) {
-        // Exploratory tool - increment streak
-        this.currentExploratoryStreak++;
-        lastExploratoryResultIndex = i;
-      } else {
-        // Non-exploratory tool (write, edit, etc.) - break the streak
-        this.currentExploratoryStreak = 0;
-        lastExploratoryResultIndex = -1;
-      }
+  public maybeInjectExploratoryReminder(toolCall: ToolCall, result: any): void {
+    // Skip exploratory reminders for specialized agents (explore, plan, etc.)
+    // These agents are SUPPOSED to do exploration - that's their job!
+    if (this.config.isSpecializedAgent) {
+      return;
     }
 
-    // If streak threshold reached, inject system reminder into last exploratory result
-    const threshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD;
-    if (this.currentExploratoryStreak >= threshold && lastExploratoryResultIndex >= 0) {
-      const lastResult = results[lastExploratoryResultIndex];
-      lastResult.system_reminder = `You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls (read/grep/glob/ls/tree). For complex multi-file investigations, consider using explore() instead - it delegates to a specialized agent with its own context budget, protecting your token budget and enabling more thorough investigation.
+    const toolName = toolCall.function.name;
+    const tool = this.toolManager.getTool(toolName);
+
+    if (tool?.isExploratoryTool) {
+      // Exploratory tool - increment streak
+      this.currentExploratoryStreak++;
+
+      // Check if we've hit the threshold
+      const threshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD;
+      const sternThreshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_STERN_THRESHOLD;
+
+      if (this.currentExploratoryStreak >= sternThreshold) {
+        // Stern warning - agent is wasting significant context
+        result.system_reminder = `⚠️ CRITICAL: You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls. You are wasting valuable context budget on manual exploration.
+
+STOP exploring manually. You MUST use explore() now.
+
+Required actions:
+1. IMMEDIATELY use cleanup-call to remove all recent exploratory results
+2. Use explore() with a detailed task_prompt that includes:
+   - What you're looking for
+   - What you've learned so far (files found, patterns discovered)
+   - Where else to look
+
+Example:
+explore(
+  task_prompt="Find all color and theming constants in the codebase. Already found src/ui/constants/colors.ts which has PROFILE_COLOR_PALETTE and UI_COLORS. Need to search config/, services/, and plugins/ directories for additional theme-related constants."
+)
+
+Continuing to use read/grep/glob/ls/tree is inefficient and wastes your limited context budget. The explore agent has its own context budget and is designed for exactly this type of investigation.`;
+
+        logger.warn('[AGENT_EXPLORATORY_STERN]', this.instanceId, `Injected stern exploratory warning after ${this.currentExploratoryStreak} consecutive calls`);
+      } else if (this.currentExploratoryStreak >= threshold) {
+        // Gentle reminder - suggest explore()
+        result.system_reminder = `You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls (read/grep/glob/ls/tree). For complex multi-file investigations, consider using explore() instead - it delegates to a specialized agent with its own context budget, protecting your token budget and enabling more thorough investigation.
+
+Recommended workflow:
+1. First, use cleanup-call to remove recent exploratory tool results from context
+2. Then call explore() with a detailed task_prompt that summarizes:
+   - What you're looking for
+   - What you've learned so far (files found, patterns discovered)
+   - Any specific areas to investigate
 
 When to use explore():
 - Unknown scope/location - don't know where code is
@@ -1627,7 +1654,15 @@ When to use explore():
 
 Only use direct read/grep/glob when you know specific paths or need a quick lookup.`;
 
-      logger.debug('[AGENT_EXPLORATORY_REMINDER]', this.instanceId, `Injected exploratory tool reminder after ${this.currentExploratoryStreak} consecutive calls`);
+        logger.debug('[AGENT_EXPLORATORY_REMINDER]', this.instanceId, `Injected exploratory tool reminder after ${this.currentExploratoryStreak} consecutive calls`);
+      }
+    } else {
+      // Non-exploratory tool - check if it breaks the streak
+      // Most tools break the streak (default behavior)
+      // Meta/housekeeping tools like cleanup-call have breaksExploratoryStreak=false
+      if (tool?.breaksExploratoryStreak !== false && this.currentExploratoryStreak > 0) {
+        this.currentExploratoryStreak = 0;
+      }
     }
   }
 

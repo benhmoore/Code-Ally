@@ -420,7 +420,15 @@ export const TOOL_GUIDANCE = {
    * When threshold is exceeded, agent receives a system reminder suggesting
    * the use of explore() for better context management.
    */
-  EXPLORATORY_TOOL_THRESHOLD: 5,
+  EXPLORATORY_TOOL_THRESHOLD: 4,
+
+  /**
+   * Number of exploratory tool calls before issuing a stern warning
+   *
+   * If the agent continues past this threshold, they receive a more urgent
+   * warning about context waste and inefficiency.
+   */
+  EXPLORATORY_TOOL_STERN_THRESHOLD: 6,
 } as const;
 
 // ===========================================

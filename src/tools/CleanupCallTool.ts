@@ -27,8 +27,9 @@ export class CleanupCallTool extends BaseTool {
   readonly description =
     'Remove tool result messages from conversation to free up context space. Useful for cleaning up large tool outputs after extracting the needed information.';
   readonly requiresConfirmation = false;
-  readonly visibleInChat = true;
-  readonly hideOutput = true; // Show tool call but hide output details
+  readonly visibleInChat = false; // Hidden from chat - internal context management
+  readonly hideOutput = true; // Hide output details
+  readonly breaksExploratoryStreak = false; // Part of cleanup → explore workflow
 
   /**
    * Usage guidance for LLM on when/how to use this tool

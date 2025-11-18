@@ -23,6 +23,7 @@ export class AllyWriteTool extends BaseTool {
     'ALLY.md contains project-specific notes and instructions ' +
     'that persist across conversation sessions.';
   readonly requiresConfirmation = false; // ALLY.md is a project file
+  readonly breaksExploratoryStreak = false; // Meta/housekeeping, not productive work
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

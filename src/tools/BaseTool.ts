@@ -105,6 +105,19 @@ export abstract class BaseTool {
   readonly isExploratoryTool: boolean = false;
 
   /**
+   * Whether this tool breaks the exploratory tool streak
+   *
+   * Most tools break the streak when called (they represent productive work).
+   * However, meta/housekeeping tools like cleanup-call should NOT break the streak
+   * since they're part of the prescribed workflow (cleanup → explore).
+   *
+   * Setting this to false means the tool neither increments nor resets the streak.
+   *
+   * Default: true (most tools break the streak)
+   */
+  readonly breaksExploratoryStreak: boolean = true;
+
+  /**
    * Optional array of agent names this tool is visible to (empty or missing = visible to all)
    * Set by plugin wrappers from manifest tool definition
    */

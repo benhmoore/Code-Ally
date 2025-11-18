@@ -22,6 +22,7 @@ export class TodoAddTool extends BaseTool {
     'Add new todos to existing list. Validates at most ONE in_progress task.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = true;
+  readonly breaksExploratoryStreak = false; // Task management, not productive work
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
