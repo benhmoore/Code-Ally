@@ -34,8 +34,8 @@ describe('PromptLibraryManager', () => {
 
   describe('initialization', () => {
     it('should create prompts directory', async () => {
-      const promptsDir = join(testDir, 'prompts');
-      const stats = await fs.stat(promptsDir);
+      // testDir is passed as baseDir to the constructor, so it IS the prompts directory
+      const stats = await fs.stat(testDir);
       expect(stats.isDirectory()).toBe(true);
     });
   });

@@ -657,7 +657,7 @@ describe('PatchManager', () => {
       const manifest = JSON.parse(manifestContent);
 
       expect(manifest.reason).toBe('orphaned_files_not_in_index');
-      expect(manifest.files).toContain('patch_9999.diff');
+      expect(manifest.moved_files).toContain('patch_9999.diff');
     });
 
     it('should handle multiple corrupted patches', async () => {

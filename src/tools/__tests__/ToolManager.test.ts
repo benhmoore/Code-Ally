@@ -105,6 +105,7 @@ describe('ToolManager', () => {
     it('should execute tool with valid arguments', async () => {
       const result = await toolManager.executeTool('test_tool', {
         required_param: 'test_value',
+        description: 'Test execution',
       });
 
       expect(result.success).toBe(true);
@@ -120,10 +121,11 @@ describe('ToolManager', () => {
     });
 
     it('should detect redundant calls in same turn', async () => {
-      await toolManager.executeTool('read', { file_paths: ['test.txt'] });
+      await toolManager.executeTool('read', { file_paths: ['test.txt'], description: 'Read test file' });
 
       const result = await toolManager.executeTool('read', {
         file_paths: ['test.txt'],
+        description: 'Read test file',
       });
 
       expect(result.success).toBe(false);
@@ -131,12 +133,13 @@ describe('ToolManager', () => {
     });
 
     it('should allow same call after clearing turn with warning', async () => {
-      await toolManager.executeTool('read', { file_paths: ['test.txt'] });
+      await toolManager.executeTool('read', { file_paths: ['test.txt'], description: 'Read test file' });
 
       toolManager.clearCurrentTurn();
 
       const result = await toolManager.executeTool('read', {
         file_paths: ['test.txt'],
+        description: 'Read test file',
       });
 
       expect(result.success).toBe(true);
@@ -144,12 +147,13 @@ describe('ToolManager', () => {
     });
 
     it('should include turn information in cross-turn warnings', async () => {
-      await toolManager.executeTool('read', { file_paths: ['data.json'] });
+      await toolManager.executeTool('read', { file_paths: ['data.json'], description: 'Read data file' });
 
       toolManager.clearCurrentTurn();
 
       const result = await toolManager.executeTool('read', {
         file_paths: ['data.json'],
+        description: 'Read data file',
       });
 
       expect(result.success).toBe(true);
@@ -159,41 +163,41 @@ describe('ToolManager', () => {
   });
 
   describe('file tracking', () => {
-    it('should track read files', async () => {
+    it('should return false for files when no ConversationManager is set', async () => {
       // Simulate read tool call
       await toolManager.executeTool('read', {
         file_paths: ['test.txt'],
+        description: 'Read test file',
       });
 
-      expect(toolManager.hasFileBeenRead('test.txt')).toBe(true);
+      // Without ConversationManager, hasFileBeenRead returns false
+      expect(toolManager.hasFileBeenRead('test.txt')).toBe(false);
     });
 
-    it('should track write files', async () => {
+    it('should return false for write files when no ConversationManager is set', async () => {
       // Simulate write tool call
       await toolManager.executeTool('write', {
         file_path: 'output.txt',
         content: 'test',
+        description: 'Write output file',
       });
 
-      expect(toolManager.hasFileBeenRead('output.txt')).toBe(true);
+      // Without ConversationManager, hasFileBeenRead returns false
+      expect(toolManager.hasFileBeenRead('output.txt')).toBe(false);
     });
 
-    it('should return timestamp for read files', async () => {
-      await toolManager.executeTool('read', {
-        file_paths: ['test.txt'],
-      });
-
-      const timestamp = toolManager.getFileReadTimestamp('test.txt');
-      expect(timestamp).toBeDefined();
-      expect(typeof timestamp).toBe('number');
+    it('should have file tracking delegated to ConversationManager', () => {
+      // This test verifies the delegation behavior exists
+      // Actual file tracking is tested in ConversationManager tests
+      expect(typeof toolManager.hasFileBeenRead).toBe('function');
     });
   });
 
   describe('clearState', () => {
     it('should clear all tracked state', async () => {
       // Execute some tool calls
-      await toolManager.executeTool('test_tool', { required_param: 'test1' });
-      await toolManager.executeTool('test_tool', { required_param: 'test2' });
+      await toolManager.executeTool('test_tool', { required_param: 'test1', description: 'Test 1' });
+      await toolManager.executeTool('test_tool', { required_param: 'test2', description: 'Test 2' });
 
       // Clear state
       toolManager.clearState();
@@ -201,6 +205,7 @@ describe('ToolManager', () => {
       // Should allow previously redundant calls
       const result = await toolManager.executeTool('test_tool', {
         required_param: 'test1',
+        description: 'Test 1',
       });
       expect(result.success).toBe(true);
     });

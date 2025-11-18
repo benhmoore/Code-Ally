@@ -1115,7 +1115,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                 {currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>}
                 {(() => {
                   const activeProfile = getActiveProfile();
-                  return activeProfile !== 'default' && <Text> · {activeProfile} (--profile to switch)</Text>;
+                  return activeProfile !== 'default' && <Text> · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)</Text>;
                 })()}
               </Text>
             )}
@@ -1128,17 +1128,22 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         ) : (
           /* Normal Mode: Single line */
           <Text dimColor>
-            {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
-            {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
-              <Text color="red">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact</Text>
-            ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
-              <Text color="yellow">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - consider /compact</Text>
-            ) : (
-              <Text>{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left</Text>
+            {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>}
+            {state.contextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
+              <>
+                {' · '}
+                {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
+                  <Text color="red">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact</Text>
+                ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
+                  <Text color="yellow">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - consider /compact</Text>
+                ) : (
+                  <Text>{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left</Text>
+                )}
+              </>
             )}
             {(() => {
               const activeProfile = getActiveProfile();
-              return activeProfile !== 'default' && <Text> · {activeProfile} (--profile to switch)</Text>;
+              return activeProfile !== 'default' && <Text> · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)</Text>;
             })()}
           </Text>
         )}

@@ -104,8 +104,8 @@ export class ProfileCommand extends Command {
       output += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
       for (const profile of profiles) {
-        const active = profile.name === activeProfileName ? ' (active)' : '';
-        output += `  ${profile.name}${active}\n`;
+        const current = profile.name === activeProfileName ? ' (current session)' : '';
+        output += `  ${profile.name}${current}\n`;
         if (profile.description) {
           output += `    ${profile.description}\n`;
         }

@@ -41,13 +41,52 @@ class MockModelClient extends ModelClient {
   }
 }
 
+// Mock SessionManager
+class MockSessionManager {
+  private sessionsDir: string | null = null;
+
+  setSessionsDir(dir: string) {
+    this.sessionsDir = dir;
+  }
+
+  async loadSession(sessionName: string) {
+    if (!this.sessionsDir) return null;
+
+    try {
+      const sessionPath = join(this.sessionsDir, `${sessionName}.json`);
+      const content = await fs.readFile(sessionPath, 'utf-8');
+      return JSON.parse(content);
+    } catch {
+      return null;
+    }
+  }
+
+  async updateMetadata(sessionName: string, metadata: any) {
+    if (!this.sessionsDir) return false;
+
+    try {
+      const sessionPath = join(this.sessionsDir, `${sessionName}.json`);
+      const session = await this.loadSession(sessionName);
+      if (!session) return false;
+
+      session.metadata = { ...session.metadata, ...metadata };
+      await fs.writeFile(sessionPath, JSON.stringify(session, null, 2));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 describe('SessionTitleGenerator', () => {
   let mockClient: MockModelClient;
+  let mockSessionManager: MockSessionManager;
   let generator: SessionTitleGenerator;
 
   beforeEach(() => {
     mockClient = new MockModelClient();
-    generator = new SessionTitleGenerator(mockClient);
+    mockSessionManager = new MockSessionManager();
+    generator = new SessionTitleGenerator(mockClient, mockSessionManager as any);
   });
 
   afterEach(async () => {
@@ -111,15 +150,15 @@ describe('SessionTitleGenerator', () => {
         throw new Error('API error');
       };
 
-      const errorGenerator = new SessionTitleGenerator(errorClient);
+      const errorGenerator = new SessionTitleGenerator(errorClient, mockSessionManager as any);
 
       const messages: Message[] = [
         { role: 'user', content: 'This is a test message that should be used as fallback' },
       ];
 
       const title = await errorGenerator.generateTitle(messages);
-      // Fallback uses first 40 chars
-      expect(title).toBe('This is a test message that should be us...');
+      // Fallback uses the message as-is (under 60 char limit)
+      expect(title).toBe('This is a test message that should be used as fallback');
     });
 
     it('should use first user message for fallback title', async () => {
@@ -128,7 +167,7 @@ describe('SessionTitleGenerator', () => {
         throw new Error('API error');
       };
 
-      const errorGenerator = new SessionTitleGenerator(errorClient);
+      const errorGenerator = new SessionTitleGenerator(errorClient, mockSessionManager as any);
 
       const messages: Message[] = [
         { role: 'assistant', content: 'Hello' },
@@ -146,7 +185,7 @@ describe('SessionTitleGenerator', () => {
         throw new Error('API error');
       };
 
-      const errorGenerator = new SessionTitleGenerator(errorClient);
+      const errorGenerator = new SessionTitleGenerator(errorClient, mockSessionManager as any);
 
       const messages: Message[] = [
         { role: 'user', content: 'Test\n   with\n\n   multiple    spaces' },
@@ -163,6 +202,9 @@ describe('SessionTitleGenerator', () => {
     beforeEach(async () => {
       tempDir = join(tmpdir(), `title-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
       await fs.mkdir(tempDir, { recursive: true });
+
+      // Set the sessions directory for the mock session manager
+      mockSessionManager.setSessionsDir(tempDir);
     });
 
     afterEach(async () => {

@@ -41,7 +41,8 @@ describe('OllamaClient', () => {
         maxTokens: 5000,
       });
 
-      expect(defaultClient.modelName).toBe('qwen2.5-coder:32b');
+      // When modelName is null, it defaults to empty string
+      expect(defaultClient.modelName).toBe('');
     });
   });
 
@@ -315,7 +316,8 @@ describe('OllamaClient', () => {
       const result = await promise;
 
       expect(result.interrupted).toBe(true);
-      expect(result.content).toContain('[Request cancelled by user]');
+      // Content is empty when cancelled to not pollute conversation history
+      expect(result.content).toBe('');
     });
   });
 

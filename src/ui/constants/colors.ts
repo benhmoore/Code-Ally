@@ -14,10 +14,32 @@
  */
 
 /**
+ * Profile color palette for user personalization
+ *
+ * This array defines 8 distinct terminal-safe colors that can be used for profile customization.
+ * Each profile can select a color from this palette to personalize their UI experience.
+ *
+ * Index 0 (yellow) is the default color for the primary profile.
+ */
+export const PROFILE_COLOR_PALETTE = [
+  'yellow',      // Index 0: Default profile color
+  'cyan',        // Index 1
+  '#50fa7b',     // Index 2: Green
+  '#bd93f9',     // Index 3: Purple
+  'magenta',     // Index 4
+  '#8be9fd',     // Index 5: Light cyan
+  '#f1fa8c',     // Index 6: Light yellow
+  '#ff79c6',     // Index 7: Pink
+] as const;
+
+/**
  * Core UI color palette
  *
  * Use these constants instead of hardcoded color strings to ensure consistency
  * and make future theme changes easier.
+ *
+ * Note: PRIMARY is mutable to support profile color customization.
+ * Use initializePrimaryColor() to set it during app initialization.
  */
 export const UI_COLORS = {
   // ============================================================================
@@ -26,6 +48,9 @@ export const UI_COLORS = {
 
   /**
    * Yellow - Primary application color
+   *
+   * This color is mutable and can be changed via initializePrimaryColor()
+   * to support profile color customization. Defaults to yellow.
    *
    * Usage:
    * - Mascot (chick/duck)
@@ -37,7 +62,7 @@ export const UI_COLORS = {
    * - File/plugin mentions
    * - Primary actions
    */
-  PRIMARY: 'yellow',
+  PRIMARY: 'yellow' as string,
 
   /**
    * Orange - Warning color (#ea800d)
@@ -48,7 +73,7 @@ export const UI_COLORS = {
    * - Caution states
    * - Attention-grabbing (non-critical)
    */
-  WARNING: '#ea800d',
+  WARNING: '#ea800d' as const,
 
   /**
    * Red - Error and critical states
@@ -61,7 +86,7 @@ export const UI_COLORS = {
    * - Destructive actions
    * - Diff deletions
    */
-  ERROR: 'red',
+  ERROR: 'red' as const,
 
   // ============================================================================
   // SECONDARY COLORS
@@ -78,7 +103,7 @@ export const UI_COLORS = {
    * - Body text
    * - Markdown content
    */
-  TEXT_DEFAULT: 'white',
+  TEXT_DEFAULT: 'white' as const,
 
   /**
    * Gray - Secondary/dim elements
@@ -94,7 +119,7 @@ export const UI_COLORS = {
    * - Unselected items
    * - Pending/validating/scheduled statuses
    */
-  TEXT_DIM: 'gray',
+  TEXT_DIM: 'gray' as const,
 
   /**
    * Black - Contrast text on yellow backgrounds
@@ -104,8 +129,8 @@ export const UI_COLORS = {
    * - Text on yellow selection backgrounds
    * - High contrast scenarios
    */
-  TEXT_CONTRAST: 'black',
-} as const;
+  TEXT_CONTRAST: 'black' as const,
+};
 
 // Type for color values
 export type UIColor = (typeof UI_COLORS)[keyof typeof UI_COLORS];
@@ -186,4 +211,29 @@ export function getTodoColorNew(
     default:
       return UI_COLORS.TEXT_DIM;
   }
+}
+
+/**
+ * Initialize the primary UI color
+ *
+ * This function sets UI_COLORS.PRIMARY to a custom color, enabling profile-specific
+ * color customization. It should be called early during application initialization,
+ * before any UI components are rendered.
+ *
+ * The color parameter should typically come from a profile's color preference,
+ * using one of the colors from PROFILE_COLOR_PALETTE.
+ *
+ * @param color - The color to use as the primary UI color (e.g., 'yellow', 'cyan', '#50fa7b')
+ *
+ * @example
+ * // During app initialization:
+ * const profileColor = PROFILE_COLOR_PALETTE[profileColorIndex];
+ * initializePrimaryColor(profileColor);
+ *
+ * @example
+ * // Using default color:
+ * initializePrimaryColor(PROFILE_COLOR_PALETTE[0]); // Yellow
+ */
+export function initializePrimaryColor(color: string): void {
+  UI_COLORS.PRIMARY = color;
 }

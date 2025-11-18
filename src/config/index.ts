@@ -9,7 +9,6 @@ export {
   // Global paths (constants)
   ALLY_HOME,
   COMMAND_HISTORY_FILE,
-  ACTIVE_PROFILE_FILE,
   PROFILES_DIR,
   BUILTIN_AGENTS_DIR,
 

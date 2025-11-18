@@ -59,11 +59,6 @@ export const ALLY_HOME = join(homedir(), '.ally');
 export const COMMAND_HISTORY_FILE = join(ALLY_HOME, 'command_history');
 
 /**
- * Active profile tracking file
- */
-export const ACTIVE_PROFILE_FILE = join(ALLY_HOME, 'active_profile');
-
-/**
  * Base directory for all profiles
  */
 export const PROFILES_DIR = join(ALLY_HOME, 'profiles');

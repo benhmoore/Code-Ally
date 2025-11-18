@@ -103,13 +103,13 @@ ally --profile-create <name> --profile-from <source>
 ally --profile <name>
 
 # Opens interactive session with that profile
-# Becomes the new default profile
+# Profile applies only to this session
 ```
 
-**Active profile tracking:**
-- Stored in `~/.ally/active_profile`
-- Persists across sessions
-- Defaults to `default` if not set
+**Profile selection:**
+- Specified via `--profile` flag at launch
+- Defaults to `default` if not specified
+- Does not persist across sessions
 
 ### Profile Info
 
@@ -121,7 +121,6 @@ Shows detailed information:
 - Description and tags
 - Creation and update timestamps
 - Statistics (plugins, agents, prompts, config overrides)
-- Active status
 
 ### Delete Profile
 
@@ -135,7 +134,6 @@ ally --profile-delete <name> --profile-delete-force
 
 **Protection:**
 - Cannot delete `default` profile
-- Cannot delete active profile (switch first)
 - Requires `--profile-delete-force` if profile has data
 - Moves to quarantine: `~/.ally/profiles/.deleted/<name>-<timestamp>/`
 
@@ -272,18 +270,13 @@ ally --profile work     # Opens session with work profile
 ally --profile personal # Opens session with personal profile
 ```
 
-**Method 2: Set as default**
+**Check current session's profile:**
 ```bash
-# Launch any profile once to make it default
-ally --profile work
-# Future sessions use 'work' profile automatically
-ally
-```
+# List all profiles (current session's profile marked)
+ally --profile-list
 
-**Check active profile:**
-```bash
-ally --profile-list  # Active profile marked with (active)
-cat ~/.ally/active_profile  # Shows profile name
+# Or use /profile command within the session
+/profile
 ```
 
 ## Profile Metadata
@@ -354,11 +347,15 @@ ally --profile-list
 ally --profile-create <name>
 ```
 
-### Active profile deleted
+### Profile doesn't exist
 
-System auto-falls back to `default` profile. Warning logged:
-```
-[WARN] Active profile 'work' not found, falling back to 'default'
+If you try to launch with a non-existent profile:
+```bash
+ally --profile nonexistent
+# Error: Profile 'nonexistent' does not exist
+# Available profiles:
+#   • default
+#   • work
 ```
 
 ### Profile corruption
@@ -373,13 +370,6 @@ ally --profile-create <name>
 ```
 
 ### Cannot delete profile
-
-**Error:** `Cannot delete active profile`
-```bash
-# Switch to another profile first
-ally --profile default
-ally --profile-delete old-profile
-```
 
 **Error:** `Profile contains data`
 ```bash

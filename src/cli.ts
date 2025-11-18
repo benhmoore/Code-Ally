@@ -9,6 +9,7 @@
 import React from 'react';
 import { render } from 'ink';
 import readline from 'readline';
+import chalk from 'chalk';
 import { ServiceRegistry } from './services/ServiceRegistry.js';
 import { ConfigManager } from './services/ConfigManager.js';
 import { SessionManager } from './services/SessionManager.js';
@@ -29,6 +30,7 @@ import { AGENT_CONFIG } from './config/constants.js';
 import { runStartupValidation, needsSetup } from './cli/validation.js';
 import { ProfileManager } from './services/ProfileManager.js';
 import { setActiveProfile } from './config/paths.js';
+import { initializePrimaryColor } from './ui/constants/colors.js';
 
 /**
  * Comprehensive terminal state reset
@@ -458,6 +460,25 @@ async function handleOnceMode(
 let inkUIStarted = false;
 
 /**
+ * Apply color to text using chalk
+ * Handles both named colors and hex colors
+ *
+ * @param text - Text to colorize
+ * @param color - Color name (e.g., 'yellow', 'cyan') or hex color (e.g., '#50fa7b')
+ * @returns Colored text
+ */
+function colorize(text: string, color: string): string {
+  // If it's a hex color (starts with #), use chalk.hex()
+  if (color.startsWith('#')) {
+    return chalk.hex(color)(text);
+  }
+
+  // Otherwise, use named color
+  // chalk supports: yellow, cyan, magenta, etc.
+  return (chalk as any)[color]?.(text) ?? text;
+}
+
+/**
  * Handle --profiles command (show cheatsheet)
  */
 function handleProfilesCheatsheet(): void {
@@ -484,6 +505,7 @@ function handleProfilesCheatsheet(): void {
 
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('\n  Profiles provide isolated configurations, plugins, agents, and prompts.');
+  console.log('  Each profile has a unique color that customizes the UI appearance.');
   console.log('  Stored in: ~/.ally/profiles/<profile-name>/\n');
   console.log('  Documentation: docs/reference/profiles.md\n');
 }
@@ -499,11 +521,19 @@ async function handleProfileList(profileManager: ProfileManager): Promise<void> 
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
   for (const profile of profiles) {
-    const active = profile.is_active ? ' (active)' : '';
-    console.log(`  ${profile.name}${active}`);
+    // Get profile color
+    let profileColor = 'yellow';
+    try {
+      profileColor = await profileManager.getProfileColor(profile.name);
+    } catch (error) {
+      // If we can't get the color, default to yellow
+    }
+
+    console.log(`  ${profile.name}`);
     if (profile.description) {
       console.log(`    ${profile.description}`);
     }
+    console.log(`    Color: ${colorize(profileColor, profileColor)}`);
     console.log(`    Created: ${formatRelativeTime(new Date(profile.created_at))}`);
     console.log(`    Plugins: ${profile.plugin_count} | Agents: ${profile.agent_count} | Prompts: ${profile.prompt_count}\n`);
   }
@@ -519,16 +549,24 @@ async function handleProfileInfo(profileManager: ProfileManager, profileName: st
   try {
     const profile = await profileManager.loadProfile(profileName);
     const stats = await profileManager.getProfileStats(profileName);
-    const activeProfile = await profileManager.getActiveProfile();
+
+    // Get profile color
+    let profileColor = 'yellow';
+    try {
+      profileColor = await profileManager.getProfileColor(profileName);
+    } catch (error) {
+      // If we can't get the color, default to yellow
+    }
 
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`  Profile: ${profile.name}${profile.name === activeProfile ? ' (active)' : ''}`);
+    console.log(`  Profile: ${profile.name}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
     if (profile.description) {
       console.log(`  Description: ${profile.description}`);
     }
 
+    console.log(`  Color: ${colorize(profileColor, profileColor)}`);
     console.log(`  Created: ${formatRelativeTime(new Date(profile.created_at))}`);
     console.log(`  Updated: ${formatRelativeTime(new Date(profile.updated_at))}\n`);
 
@@ -648,6 +686,17 @@ async function main() {
 
     // Set active profile in path system (CRITICAL - do this before creating any services)
     setActiveProfile(activeProfile);
+
+    // Initialize profile color (CRITICAL - must happen before any UI components are created)
+    try {
+      const profileColor = await profileManager.getProfileColor(activeProfile);
+      initializePrimaryColor(profileColor);
+      logger.debug(`[CLI] Initialized PRIMARY color to '${profileColor}' for profile '${activeProfile}'`);
+    } catch (error) {
+      // If we can't get the profile color, default to yellow and continue
+      logger.warn(`[CLI] Failed to load profile color for '${activeProfile}', defaulting to yellow:`, error);
+      initializePrimaryColor('yellow');
+    }
 
     // Initialize config manager (now uses profile-specific paths)
     const configManager = new ConfigManager();

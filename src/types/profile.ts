@@ -18,7 +18,6 @@ export interface ProfileInfo {
   plugin_count: number;
   agent_count: number;
   prompt_count: number;
-  is_active: boolean;
 }
 
 export interface CreateProfileOptions {

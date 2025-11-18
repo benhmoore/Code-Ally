@@ -234,7 +234,7 @@ setTimeout(() => {
         },
         tools: [
           {
-            name: 'test_tool',
+            name: 'test-tool',
             description: 'Test tool',
             type: 'background_rpc',
             method: 'test.method',

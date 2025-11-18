@@ -7,7 +7,6 @@
  * Features:
  * - Profile CRUD operations
  * - Profile cloning and deletion with quarantine
- * - Active profile tracking
  * - Profile statistics and validation
  */
 
@@ -18,14 +17,13 @@ import type { IService } from '../types/index.js';
 import type { Profile, ProfileInfo, CreateProfileOptions, ProfileStats } from '../types/profile.js';
 import { logger } from './Logger.js';
 import { FORMATTING } from '../config/constants.js';
+import { PROFILE_COLOR_PALETTE } from '../ui/constants/colors.js';
 
 /**
  * ProfileManager handles all profile operations
  */
 export class ProfileManager implements IService {
   private profilesDir: string;
-  private activeProfileFile: string;
-  private activeProfile: string | null = null;
 
   // Profile name validation constants
   private static readonly PROFILE_NAME_REGEX = /^[a-zA-Z0-9_-]{1,50}$/;
@@ -44,7 +42,6 @@ export class ProfileManager implements IService {
   constructor() {
     const allyHome = join(homedir(), '.ally');
     this.profilesDir = join(allyHome, 'profiles');
-    this.activeProfileFile = join(allyHome, 'active_profile');
   }
 
   /**
@@ -64,10 +61,20 @@ export class ProfileManager implements IService {
         description: 'Default profile',
       });
       logger.info('[PROFILE] Created default profile');
+    } else {
+      // Ensure existing default profile has yellow color set
+      try {
+        const defaultProfile = await this.loadProfile('default');
+        if (!defaultProfile.metadata?.color) {
+          defaultProfile.metadata = defaultProfile.metadata || {};
+          defaultProfile.metadata.color = 'yellow';
+          await this.saveProfile(defaultProfile);
+          logger.debug('[PROFILE] Migrated default profile to use yellow color');
+        }
+      } catch (error) {
+        logger.warn('[PROFILE] Could not migrate default profile color:', error);
+      }
     }
-
-    // Verify active profile exists (will fall back to 'default' if needed)
-    await this.getActiveProfile();
   }
 
   /**
@@ -295,6 +302,99 @@ export class ProfileManager implements IService {
   }
 
   /**
+   * Get the next available color from the profile color palette
+   *
+   * Scans all existing profiles to find which colors are currently in use,
+   * then returns the first unused color. If all colors are in use, returns
+   * colors in round-robin fashion (based on number of profiles % palette size).
+   *
+   * @returns Color string from PROFILE_COLOR_PALETTE
+   */
+  async getNextAvailableColor(): Promise<string> {
+    try {
+      // Get all profile directories
+      const entries = await fs.readdir(this.profilesDir, { withFileTypes: true });
+      const usedColors = new Set<string>();
+
+      // Collect all colors currently in use
+      for (const entry of entries) {
+        // Skip non-directories and hidden directories
+        if (!entry.isDirectory() || entry.name.startsWith('.')) {
+          continue;
+        }
+
+        try {
+          const profile = await this.loadProfile(entry.name);
+
+          // Check if profile has a color assigned
+          if (profile.metadata?.color && typeof profile.metadata.color === 'string') {
+            usedColors.add(profile.metadata.color);
+          }
+        } catch (error) {
+          // Skip profiles that can't be loaded
+          logger.debug(`[PROFILE] Could not load profile ${entry.name} for color scan:`, error);
+        }
+      }
+
+      // Find first unused color
+      for (const color of PROFILE_COLOR_PALETTE) {
+        if (!usedColors.has(color)) {
+          return color;
+        }
+      }
+
+      // All colors used, return round-robin
+      // Count existing profiles + 1 for the profile being created
+      const profileCount = entries.filter(e => e.isDirectory() && !e.name.startsWith('.')).length + 1;
+      const colorIndex = profileCount % PROFILE_COLOR_PALETTE.length;
+      // Modulo guarantees valid index, so we can safely assert non-null
+      return PROFILE_COLOR_PALETTE[colorIndex]!;
+    } catch (error) {
+      // If we can't read profiles directory, return default color (yellow)
+      logger.error('[PROFILE] Error scanning profiles for color allocation:', error);
+      return PROFILE_COLOR_PALETTE[0]!;
+    }
+  }
+
+  /**
+   * Get the color assigned to a profile
+   *
+   * Returns the color from profile.metadata.color, with special handling for
+   * the 'default' profile and backward compatibility for profiles without colors.
+   *
+   * @param profileName - Profile name
+   * @returns Color string from PROFILE_COLOR_PALETTE
+   * @throws Error if profile doesn't exist
+   */
+  async getProfileColor(profileName: string): Promise<string> {
+    // Default profile always returns yellow
+    if (profileName === 'default') {
+      return 'yellow';
+    }
+
+    try {
+      const profile = await this.loadProfile(profileName);
+
+      // Check if profile has a color assigned
+      if (profile.metadata?.color && typeof profile.metadata.color === 'string') {
+        return profile.metadata.color;
+      }
+
+      // Backward compatibility: profiles without color get yellow
+      return 'yellow';
+    } catch (error) {
+      // Re-throw profile not found errors
+      if ((error as Error).message.includes('does not exist')) {
+        throw error;
+      }
+
+      // For other errors (corrupted metadata, etc.), default to yellow
+      logger.error(`[PROFILE] Error loading color for profile ${profileName}:`, error);
+      return 'yellow';
+    }
+  }
+
+  /**
    * Create a new profile
    *
    * @param name - Profile name
@@ -335,6 +435,16 @@ export class ProfileManager implements IService {
       await this.copyProfileData(options.cloneFrom, name);
     }
 
+    // Determine color for the profile
+    let profileColor: string;
+    if (name === 'default') {
+      // Default profile always gets yellow
+      profileColor = 'yellow';
+    } else {
+      // All other profiles get the next available color
+      profileColor = await this.getNextAvailableColor();
+    }
+
     // Create profile metadata
     const profile: Profile = {
       name,
@@ -342,7 +452,9 @@ export class ProfileManager implements IService {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       tags: options.tags,
-      metadata: {},
+      metadata: {
+        color: profileColor,
+      },
     };
 
     await this.saveProfile(profile);
@@ -354,22 +466,16 @@ export class ProfileManager implements IService {
    * Delete a profile
    *
    * Moves profile to quarantine directory instead of permanent deletion.
-   * Prevents deletion of 'default' profile and active profile.
+   * Prevents deletion of 'default' profile.
    *
    * @param name - Profile name
    * @param force - If false, throw error if profile has data
-   * @throws Error if profile is default, active, or has data (when force=false)
+   * @throws Error if profile is default or has data (when force=false)
    */
   async deleteProfile(name: string, force: boolean = false): Promise<void> {
     // Prevent deletion of default profile
     if (ProfileManager.SPECIAL_PROFILES.includes(name)) {
       throw new Error(`Cannot delete '${name}' profile`);
-    }
-
-    // Prevent deletion of active profile
-    const activeProfile = await this.getActiveProfile();
-    if (name === activeProfile) {
-      throw new Error(`Cannot delete active profile '${name}'. Switch to another profile first.`);
     }
 
     // Check if profile exists
@@ -415,7 +521,6 @@ export class ProfileManager implements IService {
     try {
       const entries = await fs.readdir(this.profilesDir, { withFileTypes: true });
       const profiles: ProfileInfo[] = [];
-      const activeProfile = await this.getActiveProfile();
 
       for (const entry of entries) {
         // Skip non-directories and hidden directories
@@ -434,7 +539,6 @@ export class ProfileManager implements IService {
             plugin_count: stats.plugin_count,
             agent_count: stats.agent_count,
             prompt_count: stats.prompt_count,
-            is_active: entry.name === activeProfile,
           });
         } catch (error) {
           logger.warn(`[PROFILE] Failed to load profile ${entry.name}:`, error);
@@ -451,72 +555,6 @@ export class ProfileManager implements IService {
         return [];
       }
       throw error;
-    }
-  }
-
-  /**
-   * Get the active profile name
-   *
-   * Reads from ~/.ally/active_profile file.
-   * Defaults to 'default' if file doesn't exist or is invalid.
-   * Caches the result for performance.
-   *
-   * @returns Active profile name
-   */
-  async getActiveProfile(): Promise<string> {
-    // Return cached value if available
-    if (this.activeProfile !== null) {
-      return this.activeProfile;
-    }
-
-    try {
-      const content = await fs.readFile(this.activeProfileFile, 'utf-8');
-      const profileName = content.trim();
-
-      // Validate the profile exists
-      if (profileName && await this.profileExists(profileName)) {
-        this.activeProfile = profileName;
-        return profileName;
-      }
-
-      // Profile doesn't exist, fall back to default
-      logger.warn(`[PROFILE] Active profile '${profileName}' not found, falling back to 'default'`);
-      this.activeProfile = 'default';
-      return 'default';
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        // File doesn't exist, return default
-        this.activeProfile = 'default';
-        return 'default';
-      }
-
-      logger.error('[PROFILE] Error reading active profile file:', error);
-      this.activeProfile = 'default';
-      return 'default';
-    }
-  }
-
-  /**
-   * Set the active profile
-   *
-   * Writes to ~/.ally/active_profile file and updates cache.
-   *
-   * @param name - Profile name to activate
-   * @throws Error if profile doesn't exist
-   */
-  async setActiveProfile(name: string): Promise<void> {
-    // Validate profile exists
-    if (!(await this.profileExists(name))) {
-      throw new Error(`Profile '${name}' does not exist`);
-    }
-
-    try {
-      await fs.writeFile(this.activeProfileFile, name, 'utf-8');
-      this.activeProfile = name; // Update cache
-      logger.info(`[PROFILE] Set active profile to '${name}'`);
-    } catch (error) {
-      logger.error(`Failed to set active profile to ${name}:`, error);
-      throw new Error(`Failed to set active profile: ${(error as Error).message || error}`);
     }
   }
 

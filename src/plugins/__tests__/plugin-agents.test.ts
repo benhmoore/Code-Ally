@@ -93,7 +93,7 @@ You are a test agent specialized in testing.`;
         description: 'Test plugin with agents',
         tools: [
           {
-            name: 'test_tool',
+            name: 'test-tool',
             description: 'A test tool',
             command: 'echo',
             args: ['test'],
@@ -149,7 +149,7 @@ You have access to file operations and shell commands.`;
         description: 'Test plugin',
         tools: [
           {
-            name: 'test_tool',
+            name: 'test-tool',
             description: 'A test tool',
             command: 'echo',
             args: ['test'],
@@ -198,7 +198,7 @@ Agent prompt here.`;
         description: 'My plugin',
         tools: [
           {
-            name: 'my_tool',
+            name: 'my-tool',
             description: 'My tool',
             command: 'echo',
             args: ['test'],
@@ -230,7 +230,7 @@ Agent prompt here.`;
         description: 'Plugin with bad agent definition',
         tools: [
           {
-            name: 'test_tool',
+            name: 'test-tool',
             description: 'A test tool',
             command: 'echo',
             args: ['test'],
@@ -273,7 +273,7 @@ Agent prompt.`;
         description: 'Plugin with duplicate agents',
         tools: [
           {
-            name: 'test_tool',
+            name: 'test-tool',
             description: 'A test tool',
             command: 'echo',
             args: ['test'],
@@ -457,7 +457,7 @@ Agent prompt.`;
       // Create mock tools
       const coreTool1 = { name: 'read', pluginName: undefined };
       const coreTool2 = { name: 'write', pluginName: undefined };
-      const pluginTool1 = { name: 'my_tool', pluginName: 'my-plugin' };
+      const pluginTool1 = { name: 'my-tool', pluginName: 'my-plugin' };
       const pluginTool2 = { name: 'other_tool', pluginName: 'other-plugin' };
 
       const allTools = [coreTool1, coreTool2, pluginTool1, pluginTool2];
@@ -475,7 +475,7 @@ Agent prompt.`;
       const filteredTools = [...coreTools, ...pluginTools];
 
       expect(filteredTools).toHaveLength(3);
-      expect(filteredTools.map(t => t.name)).toEqual(['read', 'write', 'my_tool']);
+      expect(filteredTools.map(t => t.name)).toEqual(['read', 'write', 'my-tool']);
     });
 
     it('should scope tools with explicit tools list', () => {
@@ -483,14 +483,14 @@ Agent prompt.`;
         { name: 'read', pluginName: undefined },
         { name: 'write', pluginName: undefined },
         { name: 'bash', pluginName: undefined },
-        { name: 'my_tool', pluginName: 'my-plugin' },
+        { name: 'my-tool', pluginName: 'my-plugin' },
       ];
 
       // Agent explicitly specifies allowed tools
       const agentData = {
         name: 'restricted-agent',
         _pluginName: 'my-plugin',
-        tools: ['read', 'my_tool'], // Explicit allow list
+        tools: ['read', 'my-tool'], // Explicit allow list
       };
 
       // Filter logic from AgentTool.ts
@@ -498,14 +498,14 @@ Agent prompt.`;
       const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
 
       expect(filteredTools).toHaveLength(2);
-      expect(filteredTools.map(t => t.name)).toEqual(['read', 'my_tool']);
+      expect(filteredTools.map(t => t.name)).toEqual(['read', 'my-tool']);
     });
 
     it('should provide all tools to user agents', () => {
       const allTools = [
         { name: 'read', pluginName: undefined },
         { name: 'write', pluginName: undefined },
-        { name: 'plugin_tool', pluginName: 'some-plugin' },
+        { name: 'plugin-tool', pluginName: 'some-plugin' },
       ];
 
       // User agent (no _pluginName, no explicit tools)
@@ -627,7 +627,7 @@ name: complete-agent
 description: A complete test agent
 model: claude-3-5-sonnet-20241022
 temperature: 0.7
-tools: ["read", "write", "plugin_tool"]
+tools: ["read", "write", "plugin-tool"]
 ---
 
 You are a complete agent for integration testing.`;
@@ -640,7 +640,7 @@ You are a complete agent for integration testing.`;
         description: 'Complete plugin with agent',
         tools: [
           {
-            name: 'plugin_tool',
+            name: 'plugin-tool',
             description: 'A plugin tool',
             command: 'echo',
             args: ['test'],
@@ -678,7 +678,7 @@ You are a complete agent for integration testing.`;
       expect(loadedAgent?.name).toBe('complete-agent');
       expect(loadedAgent?.description).toBe('A complete test agent');
       expect(loadedAgent?._pluginName).toBe('complete-plugin');
-      expect(loadedAgent?.tools).toEqual(['read', 'write', 'plugin_tool']);
+      expect(loadedAgent?.tools).toEqual(['read', 'write', 'plugin-tool']);
     });
   });
 
@@ -912,10 +912,8 @@ You are a complete agent for integration testing.`;
       expect(result.success).toBe(false);
       expect(result.error).toContain('cannot delegate to sub-agents');
       expect(result.error).toContain('can_delegate_to_agents: false');
-      // Note: The wrapper currently converts all error_types to 'execution_error'
-      // The actual error_type from executeSingleAgent is 'permission_denied'
-      // but executeSingleAgentWrapper overwrites it
-      expect(result.error_type).toBe('execution_error');
+      // The error_type is now kept as 'permission_denied' (implementation changed)
+      expect(result.error_type).toBe('permission_denied');
     });
 
     it('should allow delegation when can_delegate_to_agents is true or undefined', async () => {
@@ -1058,7 +1056,7 @@ You are a complete agent for integration testing.`;
       // Execute agent task
       await agentTool.execute(
         {
-          agent: 'no-see-agent',
+          agent_type: 'no-see-agent',
           task_prompt: 'Do something',
         },
         'test-call-id-3'

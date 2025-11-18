@@ -22,7 +22,6 @@ import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '@config/const
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { MarkdownText } from './MarkdownText.js';
-import { getActiveProfile } from '@config/paths.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -386,9 +385,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   // Detect if we're working with an agent (agent-ask or direct agent tool)
   const activeAgentName = getActiveAgentName(activeToolCalls);
 
-  // Get active profile for display
-  const activeProfile = getActiveProfile();
-
   // Show cancelling status if cancelling (highest priority)
   if (isCancelling) {
     return (
@@ -464,12 +460,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         ) : (
           <Box>
             <MarkdownText content={idleMessage} />
-            {activeProfile !== 'default' && (
-              <>
-                <Text dimColor> · </Text>
-                <Text dimColor>Profile: {activeProfile}</Text>
-              </>
-            )}
           </Box>
         )}
       </Box>
