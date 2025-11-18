@@ -403,6 +403,27 @@ export const BUFFER_SIZES = {
 } as const;
 
 // ===========================================
+// TOOL USAGE GUIDANCE
+// ===========================================
+
+/**
+ * Thresholds and parameters for dynamic tool usage guidance
+ *
+ * These values control when the agent receives system reminders about
+ * alternative tool usage patterns to improve efficiency.
+ */
+export const TOOL_GUIDANCE = {
+  /**
+   * Number of exploratory tool calls in current turn before suggesting explore()
+   *
+   * Exploratory tools: read, grep, glob, ls, tree
+   * When threshold is exceeded, agent receives a system reminder suggesting
+   * the use of explore() for better context management.
+   */
+  EXPLORATORY_TOOL_THRESHOLD: 5,
+} as const;
+
+// ===========================================
 // IDLE MESSAGE GENERATION
 // ===========================================
 

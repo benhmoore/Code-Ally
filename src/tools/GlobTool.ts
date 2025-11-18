@@ -30,6 +30,7 @@ export class GlobTool extends BaseTool {
   readonly description =
     'Find files using glob patterns, sorted by modification time (newest first). Examples: \'*.ts\' (TypeScript files), \'**/*.test.js\' (test files recursively). Use * for wildcards, ** for recursive';
   readonly requiresConfirmation = false; // Read-only operation
+  readonly isExploratoryTool = true;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

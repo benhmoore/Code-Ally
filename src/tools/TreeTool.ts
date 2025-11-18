@@ -68,6 +68,7 @@ export class TreeTool extends BaseTool {
   readonly description =
     'Display directory tree structure for one or more paths. Automatically filters out build artifacts, dependencies, and temporary files. More efficient than multiple ls calls.';
   readonly requiresConfirmation = false; // Read-only operation
+  readonly isExploratoryTool = true;
 
   readonly usageGuidance = `**When to use tree:**
 Project structure overview, directory hierarchy, exploring multiple branches.

@@ -40,6 +40,7 @@ export class GrepTool extends BaseTool {
   readonly description =
     'Search files for text patterns with multiple output modes. Use for finding code patterns, text search across files, regex matching. Supports files_with_matches (default), content (with context), and count modes. Supports multiline regex patterns.';
   readonly requiresConfirmation = false; // Read-only operation
+  readonly isExploratoryTool = true;
   readonly usageGuidance = `**When to use grep:**
 Locate patterns across files or inspect matching lines with regex.
 Set output_mode="files_with_matches" for file lists (default), "content" for snippets with context, "count" for per-file totals.

@@ -40,7 +40,7 @@ import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentType, getAgentDisplayName } from '../utils/agentTypeUtils.js';
-import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION } from '../config/constants.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 import * as crypto from 'crypto';
 
@@ -154,6 +154,11 @@ export class Agent {
 
   // Timeout continuation tracking - counts attempts to continue after activity timeout
   private timeoutContinuationAttempts: number = 0;
+
+  // Exploratory tool tracking - counts consecutive streak of exploratory tool calls
+  // Used to suggest explore() when many consecutive read/grep/glob/ls/tree calls are made
+  // Resets to 0 when a non-exploratory tool is called (e.g., write, edit)
+  private currentExploratoryStreak: number = 0;
 
   // Focus management - tracks if this agent set focus and needs to restore it
   private previousFocus: string | null = null;
@@ -539,6 +544,9 @@ export class Agent {
     // Reset timeout continuation counter on new user input
     this.timeoutContinuationAttempts = 0;
 
+    // Reset exploratory tool streak on new user input
+    this.currentExploratoryStreak = 0;
+
     // Reset turn start time for specialized agents on each new turn
     if (this.config.isSpecializedAgent && this.turnManager.getMaxDuration() !== undefined) {
       this.turnManager.resetTurn();
@@ -650,6 +658,16 @@ export class Agent {
         };
         this.conversationManager.addMessage(systemReminder);
         logger.debug('[AGENT_TODO_REMINDER]', this.instanceId, 'Injected todo reminder system message');
+      }
+    }
+
+    // Inject system reminder about exploratory tool usage (main agent only)
+    // Suggests using explore() when many read/grep/glob/ls/tree calls detected
+    if (!this.config.isSpecializedAgent) {
+      const exploratoryReminder = this.getExploratoryToolReminder();
+      if (exploratoryReminder) {
+        this.conversationManager.addMessage(exploratoryReminder);
+        logger.debug('[AGENT_EXPLORATORY_REMINDER]', this.instanceId, 'Injected exploratory tool reminder system message');
       }
     }
 
@@ -1171,6 +1189,10 @@ export class Agent {
         // Permission denied errors need special handling by Agent.ts
         try {
           const results = await this.toolOrchestrator.executeToolCalls(toolCalls, cycles);
+
+          // Count exploratory tools executed in this batch
+          this.incrementExploratoryToolCount(results);
+
           return results;
         } catch (error) {
           // Check if this is a permission denied error that triggered interruption
@@ -1605,6 +1627,65 @@ export class Agent {
     } catch (error) {
       logger.warn('[AGENT_FOCUS]', this.instanceId, 'Error restoring focus:', error);
     }
+  }
+
+  /**
+   * Increment exploratory tool streak based on tool results
+   *
+   * Tracks consecutive exploratory tools (read, grep, glob, ls, tree).
+   * When a non-exploratory tool is encountered, the streak resets to 0.
+   *
+   * This ensures we only trigger the explore() suggestion when the model
+   * is actively exploring, not when exploratory tools are scattered
+   * throughout normal workflow.
+   *
+   * @param results - Tool execution results
+   */
+  private incrementExploratoryToolCount(results: any[]): void {
+    for (const result of results) {
+      if (!result || !result.tool_name) continue;
+
+      const tool = this.toolManager.getTool(result.tool_name);
+      if (tool?.isExploratoryTool) {
+        // Exploratory tool - increment streak
+        this.currentExploratoryStreak++;
+      } else {
+        // Non-exploratory tool (write, edit, etc.) - break the streak
+        this.currentExploratoryStreak = 0;
+      }
+    }
+  }
+
+  /**
+   * Generate exploratory tool usage reminder if threshold exceeded
+   *
+   * Checks if many consecutive exploratory tool calls have been made
+   * and returns a system reminder suggesting the use of explore() for better
+   * context management.
+   *
+   * @returns System reminder message or null if threshold not exceeded
+   */
+  private getExploratoryToolReminder(): Message | null {
+    const threshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD;
+    if (this.currentExploratoryStreak < threshold) {
+      return null;
+    }
+
+    return {
+      role: 'system',
+      content: `<system-reminder>
+You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls (read/grep/glob/ls/tree). For complex multi-file investigations, consider using explore() instead - it delegates to a specialized agent with its own context budget, protecting your token budget and enabling more thorough investigation.
+
+When to use explore():
+- Unknown scope/location - don't know where code is
+- Multi-file synthesis - understanding patterns across files
+- Complex architectural analysis
+- Any investigation requiring 5+ file operations
+
+Only use direct read/grep/glob when you know specific paths or need a quick lookup.
+</system-reminder>`,
+      timestamp: Date.now(),
+    };
   }
 
   /**

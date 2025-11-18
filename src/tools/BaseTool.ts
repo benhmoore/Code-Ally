@@ -91,6 +91,20 @@ export abstract class BaseTool {
   readonly internalTool: boolean = false;
 
   /**
+   * Whether this tool is exploratory in nature (reads/searches files without modifying them)
+   *
+   * Exploratory tools are used for investigating codebases through reading and searching.
+   * Examples: read, grep, glob, ls, tree
+   *
+   * When set to true, the agent will be reminded to consider using explore() instead
+   * if many exploratory tool calls are made in a single turn, as explore() delegates
+   * to a specialized agent with its own context budget.
+   *
+   * Default: false
+   */
+  readonly isExploratoryTool: boolean = false;
+
+  /**
    * Optional array of agent names this tool is visible to (empty or missing = visible to all)
    * Set by plugin wrappers from manifest tool definition
    */

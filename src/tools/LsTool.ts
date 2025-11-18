@@ -32,6 +32,7 @@ export class LsTool extends BaseTool {
   readonly description =
     'List files and directories with sizes, types, and modification times';
   readonly requiresConfirmation = false; // Read-only operation
+  readonly isExploratoryTool = true;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

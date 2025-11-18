@@ -24,6 +24,7 @@ export class ReadTool extends BaseTool {
   readonly description =
     'Read multiple file contents at once. Use for reading related files together, checking code before editing';
   readonly requiresConfirmation = false; // Read-only operation
+  readonly isExploratoryTool = true;
 
   readonly usageGuidance = `**When to use read:**
 Regular reads (default) keep file content in context for future reference - prefer this for most use cases.

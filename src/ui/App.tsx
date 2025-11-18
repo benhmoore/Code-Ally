@@ -107,7 +107,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   );
 
   // Subscribe to all activity events
-  const { activeAgentsCount, isCancelling } = useActivitySubscriptions(
+  const { isCancelling } = useActivitySubscriptions(
     state,
     actions,
     modal,
