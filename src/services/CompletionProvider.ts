@@ -68,6 +68,7 @@ const SLASH_COMMANDS = [
   { name: '/focus-show', description: 'Show current focus' },
   { name: '/project', description: 'Manage project configuration' },
   { name: '/plugin', description: 'Manage plugins' },
+  { name: '/prompt', description: 'Manage saved prompts' },
   { name: '/todo', description: 'Manage todo list' },
   { name: '/exit', description: 'Exit the application' },
 ];
@@ -102,15 +103,23 @@ const PLUGIN_SUBCOMMANDS = [
 ];
 
 /**
+ * Prompt subcommands
+ */
+const PROMPT_SUBCOMMANDS = [
+  { name: 'add', description: 'Create a new prompt' },
+  { name: 'edit', description: 'Edit an existing prompt' },
+  { name: 'delete', description: 'Delete a prompt by ID' },
+  { name: 'list', description: 'List all saved prompts' },
+  { name: 'clear', description: 'Clear all saved prompts' },
+];
+
+/**
  * Debug subcommands
  */
 const DEBUG_SUBCOMMANDS = [
   { name: 'enable', description: 'Enable debug-level logging' },
   { name: 'disable', description: 'Disable debug-level logging' },
-  { name: 'system', description: 'Show system prompt and tool definitions' },
-  { name: 'tokens', description: 'Show token usage and memory stats' },
-  { name: 'context', description: 'Show conversation context' },
-  { name: 'chat', description: 'Log full chat history as JSON to console' },
+  { name: 'calls', description: 'Show recent tool call history' },
 ];
 
 /**
@@ -403,6 +412,36 @@ export class CompletionProvider {
       return await this.getSessionNameCompletions(context.currentWord);
     }
 
+    // Complete subcommands and prompts for /prompt (user typed "/prompt ")
+    if (command === '/prompt' && wordCount === 2) {
+      const prefix = subcommand || '';
+
+      // Get subcommand completions
+      const subcommandCompletions = PROMPT_SUBCOMMANDS
+        .filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
+
+      // Get prompt completions
+      const promptCompletions = await this.getPromptLibraryCompletions(prefix);
+
+      // Return subcommands first, then prompts
+      return [...subcommandCompletions, ...promptCompletions];
+    }
+
+    // Complete prompt IDs for /prompt delete (user typed "/prompt delete ")
+    if (command === '/prompt' && subcommand === 'delete' && wordCount === 3) {
+      return await this.getPromptLibraryCompletions(context.currentWord);
+    }
+
+    // Complete prompt IDs for /prompt edit (user typed "/prompt edit ")
+    if (command === '/prompt' && subcommand === 'edit' && wordCount === 3) {
+      return await this.getPromptLibraryCompletions(context.currentWord);
+    }
+
     // Complete subcommands for /plugin (user typed "/plugin ")
     if (command === '/plugin' && wordCount === 2) {
       const prefix = subcommand || '';
@@ -490,6 +529,64 @@ export class CompletionProvider {
       }));
     } catch (error) {
       logger.debug(`Unable to get session completions: ${formatError(error)}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get prompt completions for /prompt command
+   */
+  private async getPromptLibraryCompletions(prefix: string): Promise<Completion[]> {
+    try {
+      const { ServiceRegistry } = await import('./ServiceRegistry.js');
+      const registry = ServiceRegistry.getInstance();
+      const promptLibraryManager = registry.getPromptLibraryManager();
+
+      if (!promptLibraryManager) {
+        return [];
+      }
+
+      const prompts = await promptLibraryManager.getPrompts();
+      const lowerPrefix = prefix.toLowerCase();
+
+      // Filter by title, content, ID, or tags matching prefix
+      const filtered = prompts.filter((p: any) => {
+        const titleMatch = p.title.toLowerCase().includes(lowerPrefix);
+        const contentMatch = p.content.toLowerCase().includes(lowerPrefix);
+        const idMatch = p.id.toLowerCase().includes(lowerPrefix);
+        const tagsMatch = p.tags && p.tags.some((tag: string) => tag.toLowerCase().includes(lowerPrefix));
+
+        return titleMatch || contentMatch || idMatch || tagsMatch;
+      });
+
+      // Sort by most recent first (already sorted by getPrompts, but ensure)
+      const sorted = filtered.slice(0, 20); // Limit to 20 results
+
+      return sorted.map((prompt: any) => {
+        // Determine what matched for better user feedback
+        const titleMatch = prompt.title.toLowerCase().includes(lowerPrefix);
+        const contentMatch = prompt.content.toLowerCase().includes(lowerPrefix);
+        const tagsMatch = prompt.tags && prompt.tags.some((tag: string) => tag.toLowerCase().includes(lowerPrefix));
+
+        let matchIndicator = '';
+        if (!titleMatch && contentMatch) {
+          matchIndicator = ' (content match)';
+        } else if (!titleMatch && tagsMatch) {
+          matchIndicator = ' (tag match)';
+        }
+
+        const timeStr = formatRelativeTime(prompt.createdAt);
+        const tagsStr = prompt.tags && prompt.tags.length > 0 ? ` • [${prompt.tags.join(', ')}]` : '';
+
+        return {
+          value: prompt.title,
+          description: `${timeStr}${tagsStr}${matchIndicator}`,
+          type: 'option' as const,
+          insertText: prompt.id,
+        };
+      });
+    } catch (error) {
+      logger.debug(`Unable to get prompt library completions: ${formatError(error)}`);
       return [];
     }
   }

@@ -21,7 +21,8 @@ import { logger } from '../services/Logger.js';
 export class SessionPersistence {
   constructor(
     private conversationManager: ConversationManager,
-    private instanceId: string
+    private instanceId: string,
+    private agentDepth: number = 0
   ) {}
 
   /**
@@ -34,8 +35,18 @@ export class SessionPersistence {
    * - Project context (if available)
    *
    * Creates a new session if none exists and we have user messages.
+   *
+   * Note: Only the root agent (depth 0) should save sessions.
+   * Sub-agents (depth > 0) have their own conversations that should not
+   * overwrite the main session.
    */
   async autoSave(): Promise<void> {
+    // Only root agent should save sessions
+    if (this.agentDepth > 0) {
+      logger.debug('[AGENT_SESSION]', this.instanceId, `Skipping auto-save for sub-agent (depth ${this.agentDepth})`);
+      return;
+    }
+
     const registry = ServiceRegistry.getInstance();
     const sessionManager = registry.get('session_manager');
     const todoManager = registry.get('todo_manager');

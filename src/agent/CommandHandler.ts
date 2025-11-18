@@ -13,24 +13,15 @@
  */
 
 import { Agent } from './Agent.js';
-import { ConfigManager } from '../services/ConfigManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { TokenManager } from './TokenManager.js';
-import { logger, LogLevel } from '../services/Logger.js';
 import { Message, ActivityEventType } from '../types/index.js';
-import { ID_GENERATION } from '../config/constants.js';
-import {
-  BUFFER_SIZES,
-  TEXT_LIMITS,
-  CONTEXT_SIZES,
-  FORMATTING,
-} from '../config/constants.js';
+import { ID_GENERATION, BUFFER_SIZES } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
-import { DEFAULT_CONFIG } from '../config/defaults.js';
 import type { MessageMetadata } from '../types/index.js';
 import { Command } from './commands/Command.js';
 import { UndoCommand } from './commands/UndoCommand.js';
 import { ClearCommand } from './commands/ClearCommand.js';
+import { DebugCommand } from './commands/DebugCommand.js';
 import { FocusCommand } from './commands/FocusCommand.js';
 import { DefocusCommand } from './commands/DefocusCommand.js';
 import { FocusShowCommand } from './commands/FocusShowCommand.js';
@@ -41,6 +32,7 @@ import { TodoCommand } from './commands/TodoCommand.js';
 import { AgentCommand } from './commands/AgentCommand.js';
 import { PluginCommand } from './commands/PluginCommand.js';
 import { ResumeCommand } from './commands/ResumeCommand.js';
+import { PromptCommand } from './commands/PromptCommand.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -55,24 +47,25 @@ export class CommandHandler {
 
   constructor(
     agent: Agent | null,
-    private configManager: ConfigManager,
     private serviceRegistry: ServiceRegistry
   ) {
     this.agent = agent;
 
     // Register class-based commands
-    this.registerCommand(new UndoCommand());
-    this.registerCommand(new ClearCommand());
-    this.registerCommand(new FocusCommand());
-    this.registerCommand(new DefocusCommand());
-    this.registerCommand(new FocusShowCommand());
-    this.registerCommand(new ConfigCommand());
-    this.registerCommand(new ModelCommand());
-    this.registerCommand(new ProjectCommand());
-    this.registerCommand(new TodoCommand());
     this.registerCommand(new AgentCommand());
+    this.registerCommand(new ClearCommand());
+    this.registerCommand(new ConfigCommand());
+    this.registerCommand(new DebugCommand());
+    this.registerCommand(new DefocusCommand());
+    this.registerCommand(new FocusCommand());
+    this.registerCommand(new FocusShowCommand());
+    this.registerCommand(new ModelCommand());
     this.registerCommand(new PluginCommand());
+    this.registerCommand(new ProjectCommand());
+    this.registerCommand(new PromptCommand());
     this.registerCommand(new ResumeCommand());
+    this.registerCommand(new TodoCommand());
+    this.registerCommand(new UndoCommand());
   }
 
   /**
@@ -111,8 +104,6 @@ export class CommandHandler {
       // Core commands
       case 'help':
         return await this.handleHelp();
-      case 'debug':
-        return await this.handleDebug(args, messages);
       case 'context':
         return await this.handleContext(messages);
       case 'compact':
@@ -188,13 +179,22 @@ Core Commands:
   /config set <key>=<val>  - Set a configuration value
   /config reset            - Reset all settings to defaults
   /model [ally|service] [name] - Switch model or show current model
-  /debug [enable|disable|system|tokens|context|chat] - Debug commands
+  /debug [calls] [n]       - Show tool call history
   /context                 - Show context usage (token count)
   /clear                   - Clear conversation history
   /compact                 - Compact conversation history
   /rewind                  - Rewind conversation to a previous message
   /resume                  - Resume a previous session
   /undo [count]            - Undo last N file operations (default: 1)
+
+Saved Prompts:
+  /prompt                  - Browse and insert saved prompts
+  /prompt <id>             - Insert specific prompt by ID
+  /prompt add              - Create a new prompt (select from messages or new)
+  /prompt edit <id>        - Edit an existing prompt
+  /prompt delete <id>      - Delete a prompt by ID
+  /prompt list             - List all saved prompts
+  /prompt clear            - Clear all saved prompts
   /exit, /quit             - Exit the application
 
 Agent Commands:
@@ -233,11 +233,13 @@ Plugin Commands:
   }
 
   /**
-   * Handle /context command - show context usage (alias for /debug tokens)
+   * Handle /context command - show context usage
    */
-  private async handleContext(messages: Message[]): Promise<CommandResult> {
-    // /context is a shortcut for /debug tokens
-    return this.debugTokens(messages);
+  private async handleContext(_messages: Message[]): Promise<CommandResult> {
+    return {
+      handled: true,
+      response: 'Use /debug calls [n] to view recent tool call history.',
+    };
   }
 
 
@@ -293,252 +295,6 @@ Plugin Commands:
     });
 
     return { handled: true }; // Handled via UI
-  }
-
-  private async handleDebug(args: string[], messages: Message[]): Promise<CommandResult> {
-    const argString = args.join(' ').trim();
-
-    if (!argString) {
-      return {
-        handled: true,
-        response: `Debug Commands:
-  /debug enable    - Enable debug-level logging
-  /debug disable   - Disable debug-level logging
-  /debug system    - Show system prompt and tool definitions
-  /debug tokens    - Show token usage and memory stats
-  /debug context   - Show conversation context
-  /debug chat      - Log full chat history as JSON to console
-`,
-      };
-    }
-
-    const parts = argString.split(/\s+/);
-    const subcommand = parts[0];
-    if (!subcommand) {
-      return { handled: true, response: 'Invalid debug command' };
-    }
-
-    switch (subcommand.toLowerCase()) {
-      case 'enable':
-        return this.debugEnable();
-      case 'disable':
-        return this.debugDisable();
-      case 'system':
-        return this.debugSystem(messages);
-      case 'tokens':
-        return this.debugTokens(messages);
-      case 'context':
-        return this.debugContext(messages);
-      case 'chat':
-        return this.debugChat(messages);
-      default:
-        return {
-          handled: true,
-          response: `Unknown debug subcommand: ${subcommand}. Available: enable, disable, system, tokens, context, chat`,
-        };
-    }
-  }
-
-  /**
-   * Debug: Enable debug-level logging
-   */
-  private async debugEnable(): Promise<CommandResult> {
-    logger.setLevel(LogLevel.DEBUG);
-    return {
-      handled: true,
-      response: 'Debug logging enabled. Use /debug disable to turn it off.',
-    };
-  }
-
-  /**
-   * Debug: Disable debug-level logging (reset to INFO)
-   */
-  private async debugDisable(): Promise<CommandResult> {
-    logger.setLevel(LogLevel.INFO);
-    return {
-      handled: true,
-      response: 'Debug logging disabled.',
-    };
-  }
-
-  /**
-   * Debug: Show system prompt and tool definitions
-   *
-   * Based on Python implementation in command_handler.py:992-1060
-   */
-  private async debugSystem(messages: Message[]): Promise<CommandResult> {
-    try {
-      // Find system prompt in messages
-      const systemMessage = messages.find(msg => msg.role === 'system');
-      const systemPrompt = systemMessage?.content || '';
-
-      if (!systemPrompt) {
-        return {
-          handled: true,
-          response: 'No system prompt found in messages',
-        };
-      }
-
-      // Get tool definitions if agent is available
-      let toolDefinitions = '';
-      if (this.agent) {
-        const toolManager = this.serviceRegistry.get('tool_manager');
-        if (toolManager && typeof toolManager === 'object' && 'getFunctionDefinitions' in toolManager) {
-          const defs = (toolManager as any).getFunctionDefinitions();
-          toolDefinitions = JSON.stringify(defs, null, 2);
-        }
-      }
-
-      // Format output
-      let output = '=== SYSTEM PROMPT ===\n\n';
-      output += systemPrompt;
-      output += '\n\n';
-
-      if (toolDefinitions) {
-        output += '=== TOOL DEFINITIONS ===\n\n';
-        output += toolDefinitions;
-      }
-
-      return {
-        handled: true,
-        response: output,
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        response: `Error displaying system prompt: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      };
-    }
-  }
-
-  /**
-   * Debug: Show token usage and memory stats
-   *
-   * Based on Python implementation in command_handler.py:1062-1091
-   */
-  private async debugTokens(messages: Message[]): Promise<CommandResult> {
-    try {
-      // Create a TokenManager instance for token counting
-      const config = this.configManager.getConfig();
-      const contextSize = config.context_size || CONTEXT_SIZES.XLARGE;
-      const tokenManager = new TokenManager(contextSize);
-
-      // Calculate token statistics
-      const totalTokens = tokenManager.estimateMessagesTokens(messages);
-      const percentUsed = ((totalTokens / contextSize) * 100).toFixed(
-        FORMATTING.PERCENTAGE_DECIMAL_PLACES
-      );
-
-      // Breakdown by message type
-      let userTokens = 0;
-      let assistantTokens = 0;
-      let systemTokens = 0;
-      let toolTokens = 0;
-
-      for (const msg of messages) {
-        const msgTokens = tokenManager.estimateMessageTokens(msg);
-        switch (msg.role) {
-          case 'user':
-            userTokens += msgTokens;
-            break;
-          case 'assistant':
-            assistantTokens += msgTokens;
-            break;
-          case 'system':
-            systemTokens += msgTokens;
-            break;
-          case 'tool':
-            toolTokens += msgTokens;
-            break;
-        }
-      }
-
-      // Format output as a simple table
-      let output = '=== TOKEN USAGE & MEMORY STATISTICS ===\n\n';
-      output += `Total Tokens:        ${totalTokens}\n`;
-      output += `Context Size:        ${contextSize}\n`;
-      output += `Usage:               ${percentUsed}%\n`;
-      output += `Remaining:           ${contextSize - totalTokens} tokens\n`;
-      output += '\n=== MESSAGE BREAKDOWN ===\n\n';
-      output += `Total Messages:      ${messages.length}\n`;
-      output += `User Messages:       ${messages.filter(m => m.role === 'user').length} (${userTokens} tokens)\n`;
-      output += `Assistant Messages:  ${messages.filter(m => m.role === 'assistant').length} (${assistantTokens} tokens)\n`;
-      output += `System Messages:     ${messages.filter(m => m.role === 'system').length} (${systemTokens} tokens)\n`;
-      output += `Tool Messages:       ${messages.filter(m => m.role === 'tool').length} (${toolTokens} tokens)\n`;
-
-      // Add model info if available
-      if (config.model) {
-        output += '\n=== MODEL INFO ===\n\n';
-        output += `Model:               ${config.model}\n`;
-        output += `Temperature:         ${config.temperature || 0.7}\n`;
-        output += `Max Tokens:          ${config.max_tokens || DEFAULT_CONFIG.max_tokens}\n`;
-      }
-
-      return {
-        handled: true,
-        response: output,
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        response: `Error displaying token usage: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      };
-    }
-  }
-
-  /**
-   * Debug: Show conversation context
-   *
-   * Based on Python implementation in command_handler.py:1093-1132
-   */
-  private async debugContext(messages: Message[]): Promise<CommandResult> {
-    try {
-      // Format messages as JSON for display
-      const contextData = messages.map(msg => ({
-        role: msg.role,
-        content: msg.content ? (msg.content.length > TEXT_LIMITS.CONTENT_PREVIEW_MAX ? msg.content.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3) + '...' : msg.content) : undefined,
-        tool_calls: msg.tool_calls,
-        tool_call_id: msg.tool_call_id,
-        name: msg.name,
-      }));
-
-      const jsonOutput = JSON.stringify(contextData, null, 2);
-
-      let output = '=== CONVERSATION CONTEXT ===\n\n';
-      output += `Total Messages: ${messages.length}\n\n`;
-      output += jsonOutput;
-
-      return {
-        handled: true,
-        response: output,
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        response: `Error displaying context: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      };
-    }
-  }
-
-  /**
-   * Debug: Log full chat history to console as JSON
-   */
-  private async debugChat(messages: Message[]): Promise<CommandResult> {
-    try {
-      logger.debug('\n=== FULL CHAT HISTORY (JSON) ===\n');
-      logger.debug(JSON.stringify(messages, null, 2));
-      logger.debug('\n=== END CHAT HISTORY ===\n');
-
-      return {
-        handled: true,
-        response: `Chat history logged to console (${messages.length} messages)`,
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        response: `Error logging chat history: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      };
-    }
   }
 
   private async handleCompact(

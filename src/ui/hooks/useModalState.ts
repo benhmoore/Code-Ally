@@ -12,12 +12,13 @@
  * - Rewind selector
  * - Undo prompts
  * - Session selector
+ * - Library selector
  */
 
 import { useState } from 'react';
 import { ModelOption } from '../components/ModelSelector.js';
 import { PermissionRequest } from '../components/PermissionPrompt.js';
-import type { SessionInfo, Message } from '@shared/index.js';
+import type { SessionInfo, Message, PromptInfo } from '@shared/index.js';
 import type { FileChangeStats } from '../components/RewindOptionsSelector.js';
 
 /**
@@ -107,6 +108,45 @@ export interface SessionSelectRequest {
 }
 
 /**
+ * Library select request
+ */
+export interface LibrarySelectRequest {
+  requestId: string;
+  prompts: PromptInfo[];
+  selectedIndex: number;
+}
+
+/**
+ * Message select request (for prompt creation from previous messages)
+ */
+export interface MessageSelectRequest {
+  requestId: string;
+  messages: Message[];
+  selectedIndex: number;
+}
+
+/**
+ * Prompt add request (wizard for creating/editing prompts)
+ */
+export interface PromptAddRequest {
+  requestId: string;
+  promptId?: string; // If present, this is an edit operation
+  title: string;
+  content: string;
+  tags: string;
+  focusedField: 'title' | 'content' | 'tags';
+}
+
+/**
+ * Library clear confirmation request
+ */
+export interface LibraryClearConfirmRequest {
+  requestId: string;
+  promptCount: number;
+  selectedIndex: number;
+}
+
+/**
  * All modal state
  */
 export interface ModalState {
@@ -169,6 +209,22 @@ export interface ModalState {
   // Session selector
   sessionSelectRequest?: SessionSelectRequest;
   setSessionSelectRequest: (request?: SessionSelectRequest) => void;
+
+  // Library selector
+  librarySelectRequest?: LibrarySelectRequest;
+  setLibrarySelectRequest: (request?: LibrarySelectRequest) => void;
+
+  // Message selector (for prompt creation)
+  messageSelectRequest?: MessageSelectRequest;
+  setMessageSelectRequest: (request?: MessageSelectRequest) => void;
+
+  // Prompt add wizard
+  promptAddRequest?: PromptAddRequest;
+  setPromptAddRequest: (request?: PromptAddRequest) => void;
+
+  // Library clear confirmation
+  libraryClearConfirmRequest?: LibraryClearConfirmRequest;
+  setLibraryClearConfirmRequest: (request?: LibraryClearConfirmRequest) => void;
 
   // Input buffer (preserve across modal renders)
   inputBuffer: string;
@@ -239,6 +295,18 @@ export const useModalState = (): ModalState => {
   // Session selector
   const [sessionSelectRequest, setSessionSelectRequest] = useState<SessionSelectRequest | undefined>(undefined);
 
+  // Library selector
+  const [librarySelectRequest, setLibrarySelectRequest] = useState<LibrarySelectRequest | undefined>(undefined);
+
+  // Message selector (for prompt creation)
+  const [messageSelectRequest, setMessageSelectRequest] = useState<MessageSelectRequest | undefined>(undefined);
+
+  // Prompt add wizard
+  const [promptAddRequest, setPromptAddRequest] = useState<PromptAddRequest | undefined>(undefined);
+
+  // Library clear confirmation
+  const [libraryClearConfirmRequest, setLibraryClearConfirmRequest] = useState<LibraryClearConfirmRequest | undefined>(undefined);
+
   // Input buffer
   const [inputBuffer, setInputBuffer] = useState<string>('');
 
@@ -305,6 +373,22 @@ export const useModalState = (): ModalState => {
     // Session selector
     sessionSelectRequest,
     setSessionSelectRequest,
+
+    // Library selector
+    librarySelectRequest,
+    setLibrarySelectRequest,
+
+    // Message selector
+    messageSelectRequest,
+    setMessageSelectRequest,
+
+    // Prompt add wizard
+    promptAddRequest,
+    setPromptAddRequest,
+
+    // Library clear confirmation
+    libraryClearConfirmRequest,
+    setLibraryClearConfirmRequest,
 
     // Input buffer
     inputBuffer,

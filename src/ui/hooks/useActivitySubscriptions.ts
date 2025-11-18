@@ -208,6 +208,21 @@ export const useActivitySubscriptions = (
     }
 
     scheduleToolUpdate.current(event.id, updates, true);
+
+    // Record completed tool call in history
+    if (toolCall) {
+      const completedCall: ToolCallState = {
+        ...toolCall,
+        ...updates,
+        output: event.data.result?.content || event.data.output,
+      };
+
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const toolCallHistory = serviceRegistry.getToolCallHistory();
+      if (toolCallHistory) {
+        toolCallHistory.addCall(completedCall);
+      }
+    }
   });
 
   // Tool execution start events
@@ -269,8 +284,12 @@ export const useActivitySubscriptions = (
       // If event has parentId, associate thinking with that tool call (subagent)
       // Otherwise, add as a standalone message (root agent)
       if (event.parentId) {
-        // Find the tool call and update it with thinking content
-        actions.updateToolCall(event.parentId, { thinking });
+        // Find the tool call and update it with thinking content and timing
+        actions.updateToolCall(event.parentId, {
+          thinking,
+          thinkingStartTime: startTime,
+          thinkingEndTime: endTime,
+        });
       } else {
         // Root agent thinking - add as message with timing info
         actions.addMessage({
@@ -619,7 +638,7 @@ export const useActivitySubscriptions = (
   // Plugin config request events
   useActivityEvent(ActivityEventType.PLUGIN_CONFIG_REQUEST, async (event) => {
     logger.debug('[App] Received PLUGIN_CONFIG_REQUEST event:', JSON.stringify(event.data, null, 2));
-    const { pluginName, pluginPath, schema, author, description, version, tools } = event.data;
+    const { pluginName, pluginPath, schema, author, description, version, tools, agents } = event.data;
 
     if (!pluginName || !pluginPath || !schema) {
       logger.error('[App] PLUGIN_CONFIG_REQUEST event missing required fields');
@@ -653,6 +672,7 @@ export const useActivitySubscriptions = (
       description,
       version,
       tools,
+      agents,
     });
     logger.debug(`[App] pluginConfigRequest state should now be set`);
   });
@@ -976,6 +996,200 @@ export const useActivitySubscriptions = (
         await loadSessionData(sessionData, agent, actions, activityStream);
       } catch (error) {
         console.error('Failed to load session:', error);
+      }
+    }
+  });
+
+  // Library select request
+  useActivityEvent(ActivityEventType.LIBRARY_SELECT_REQUEST, async () => {
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const promptLibraryManager = serviceRegistry.getPromptLibraryManager();
+
+    if (!promptLibraryManager) return;
+
+    try {
+      const prompts = await promptLibraryManager.getPrompts();
+
+      modal.setLibrarySelectRequest({
+        requestId: `library_select_${Date.now()}`,
+        prompts,
+        selectedIndex: 0,
+      });
+    } catch (error) {
+      logger.error('Failed to fetch prompts:', error);
+    }
+  });
+
+  // Library select response
+  useActivityEvent(ActivityEventType.LIBRARY_SELECT_RESPONSE, async (event) => {
+    const { promptId, cancelled } = event.data;
+
+    modal.setLibrarySelectRequest(undefined);
+
+    if (!cancelled && promptId) {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const promptLibraryManager = serviceRegistry.getPromptLibraryManager();
+
+      if (!promptLibraryManager) return;
+
+      try {
+        const prompt = await promptLibraryManager.getPrompt(promptId);
+
+        if (prompt) {
+          // Insert prompt content as a user message
+          modal.setInputPrefillText(prompt.content);
+        } else {
+          actions.addMessage({
+            role: 'assistant',
+            content: `Error: Prompt '${promptId}' not found`,
+          });
+        }
+      } catch (error) {
+        logger.error('Failed to load prompt:', error);
+        actions.addMessage({
+          role: 'assistant',
+          content: `Error loading prompt: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        });
+      }
+    }
+  });
+
+  // Message select request (show message selector for prompt creation)
+  useActivityEvent(ActivityEventType.PROMPT_MESSAGE_SELECT_REQUEST, (event) => {
+    const { requestId, messages, selectedIndex } = event.data;
+
+    modal.setMessageSelectRequest({
+      requestId,
+      messages,
+      selectedIndex,
+    });
+  });
+
+  // Message select response (show wizard with optional pre-filled content)
+  useActivityEvent(ActivityEventType.PROMPT_MESSAGE_SELECT_RESPONSE, (event) => {
+    const { selectedMessage, cancelled } = event.data;
+
+    // Close message selector
+    modal.setMessageSelectRequest(undefined);
+
+    if (cancelled) {
+      // User pressed Escape - cancel entire flow
+      return;
+    }
+
+    // Show prompt add wizard with optional pre-filled content
+    modal.setPromptAddRequest({
+      requestId: `prompt_add_${Date.now()}`,
+      title: '',
+      content: selectedMessage?.content || '', // Pre-filled or empty
+      tags: '',
+      focusedField: 'title', // Start on title field
+    });
+  });
+
+  // Prompt add request (show wizard)
+  useActivityEvent(ActivityEventType.PROMPT_ADD_REQUEST, (event) => {
+    const { requestId, promptId, title, content, tags, focusedField } = event.data;
+
+    modal.setPromptAddRequest({
+      requestId,
+      promptId, // Optional: present when editing
+      title: title || '',
+      content: content || '',
+      tags: tags || '',
+      focusedField: focusedField || 'title',
+    });
+  });
+
+  // Library clear confirmation request (show confirmation dialog)
+  useActivityEvent(ActivityEventType.LIBRARY_CLEAR_CONFIRM_REQUEST, (event) => {
+    const { requestId, promptCount, selectedIndex } = event.data;
+
+    modal.setLibraryClearConfirmRequest({
+      requestId,
+      promptCount,
+      selectedIndex: selectedIndex ?? 1, // Default to "Cancel" option (safer)
+    });
+  });
+
+  // Library clear confirmation response (actually clear or cancel)
+  useActivityEvent(ActivityEventType.LIBRARY_CLEAR_CONFIRM_RESPONSE, async (event) => {
+    const { confirmed, cancelled } = event.data;
+
+    modal.setLibraryClearConfirmRequest(undefined);
+
+    if (cancelled || !confirmed) {
+      // User cancelled - do nothing
+      return;
+    }
+
+    // User confirmed - clear all prompts
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const promptLibraryManager = serviceRegistry.getPromptLibraryManager();
+
+    if (!promptLibraryManager) return;
+
+    try {
+      const count = await promptLibraryManager.clearAllPrompts();
+
+      actions.addMessage({
+        role: 'assistant',
+        content: `Cleared ${count} saved prompt(s).`,
+      });
+    } catch (error) {
+      logger.error('Failed to clear prompts:', error);
+      actions.addMessage({
+        role: 'assistant',
+        content: `Error clearing prompts: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  });
+
+  // Prompt add response (save new or update existing prompt)
+  useActivityEvent(ActivityEventType.PROMPT_ADD_RESPONSE, async (event) => {
+    const { promptId, title, content, tags, cancelled } = event.data;
+
+    modal.setPromptAddRequest(undefined);
+
+    if (!cancelled && title && content) {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const promptLibraryManager = serviceRegistry.getPromptLibraryManager();
+
+      if (!promptLibraryManager) return;
+
+      try {
+        // Parse tags from comma-separated string
+        const tagArray = tags
+          ? tags.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0)
+          : undefined;
+
+        if (promptId) {
+          // Edit existing prompt
+          await promptLibraryManager.updatePrompt(promptId, {
+            title,
+            content,
+            tags: tagArray,
+          });
+
+          actions.addMessage({
+            role: 'assistant',
+            content: `Prompt updated: ${title}`,
+          });
+        } else {
+          // Create new prompt
+          const newPrompt = await promptLibraryManager.addPrompt(title, content, tagArray);
+
+          actions.addMessage({
+            role: 'assistant',
+            content: `Prompt saved: ${newPrompt.title} (ID: ${newPrompt.id})`,
+          });
+        }
+      } catch (error) {
+        logger.error('Failed to save prompt:', error);
+        actions.addMessage({
+          role: 'assistant',
+          content: `Error saving prompt: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        });
       }
     }
   });

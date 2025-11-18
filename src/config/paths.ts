@@ -64,6 +64,11 @@ export const CONFIG_FILE = join(ALLY_HOME, 'config.json');
 export const COMMAND_HISTORY_FILE = join(ALLY_HOME, 'command_history');
 
 /**
+ * Directory for saved prompts library
+ */
+export const PROMPTS_DIR = join(ALLY_HOME, 'prompts');
+
+/**
  * All standard directories that should be created during initialization
  */
 export const STANDARD_DIRECTORIES = [
@@ -73,6 +78,7 @@ export const STANDARD_DIRECTORIES = [
   PLUGIN_ENVS_DIR,
   CACHE_DIR,
   COMPLETION_CACHE_DIR,
+  PROMPTS_DIR,
 ];
 
 /**

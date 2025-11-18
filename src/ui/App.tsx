@@ -24,9 +24,13 @@ import { PluginConfigView } from './components/PluginConfigView.js';
 import { RewindSelector } from './components/RewindSelector.js';
 import { RewindOptionsSelector } from './components/RewindOptionsSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
+import { PromptLibrarySelector } from './components/PromptLibrarySelector.js';
+import { MessageSelector } from './components/MessageSelector.js';
+import { PromptAddWizard } from './components/PromptAddWizard.js';
 import { StatusIndicator } from './components/StatusIndicator.js';
 import { UndoPrompt } from './components/UndoPrompt.js';
 import { UndoFileList } from './components/UndoFileList.js';
+import { LibraryClearConfirmation } from './components/LibraryClearConfirmation.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { Agent } from '../agent/Agent.js';
 import { PatchManager, PatchMetadata } from '../services/PatchManager.js';
@@ -489,7 +493,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
 
                     // Write updated manifest
                     await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
-                    logger.info(`[App] Updated activation mode for '${request.pluginName}' to '${activationMode}'`);
+                    logger.debug(`[App] Updated activation mode for '${request.pluginName}' to '${activationMode}'`);
 
                     // Refresh PluginActivationManager to pick up the new mode
                     const pluginActivationManager = serviceRegistry.getPluginActivationManager();
@@ -518,7 +522,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                     // Register the new tools
                     toolManager.registerTools(newTools);
 
-                    logger.info(`Plugin '${request.pluginName}' reloaded successfully`);
+                    logger.debug(`Plugin '${request.pluginName}' reloaded successfully`);
 
                     // Start background process if plugin has background daemon enabled
                     const loadedPlugins = pluginLoader.getLoadedPlugins();
@@ -649,6 +653,134 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               onBufferChange={modal.setInputBuffer}
             />
           </Box>
+        </Box>
+      ) : /* Library Selector (replaces input when active) */
+      modal.librarySelectRequest ? (
+        <Box marginTop={1} flexDirection="column">
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+
+          <PromptLibrarySelector
+            prompts={modal.librarySelectRequest.prompts}
+            selectedIndex={modal.librarySelectRequest.selectedIndex}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              onInterjection={handleInterjection}
+              isActive={true}
+              commandHistory={commandHistory || undefined}
+              completionProvider={completionProvider || undefined}
+              librarySelectRequest={modal.librarySelectRequest}
+              onLibraryNavigate={(newIndex) => {
+                if (modal.librarySelectRequest) {
+                  modal.setLibrarySelectRequest({ ...modal.librarySelectRequest, selectedIndex: newIndex });
+                }
+              }}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={modal.inputPrefillText}
+              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
+              bufferValue={modal.inputBuffer}
+              onBufferChange={modal.setInputBuffer}
+            />
+          </Box>
+        </Box>
+      ) : /* Message Selector (for prompt creation) */
+      modal.messageSelectRequest ? (
+        <Box marginTop={1} flexDirection="column">
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+
+          <MessageSelector
+            messages={modal.messageSelectRequest.messages}
+            selectedIndex={modal.messageSelectRequest.selectedIndex}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              onInterjection={handleInterjection}
+              isActive={true}
+              commandHistory={commandHistory || undefined}
+              completionProvider={completionProvider || undefined}
+              messageSelectRequest={modal.messageSelectRequest}
+              onMessageNavigate={(newIndex) => {
+                if (modal.messageSelectRequest) {
+                  modal.setMessageSelectRequest({ ...modal.messageSelectRequest, selectedIndex: newIndex });
+                }
+              }}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={modal.inputPrefillText}
+              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
+              bufferValue={modal.inputBuffer}
+              onBufferChange={modal.setInputBuffer}
+            />
+          </Box>
+        </Box>
+      ) : /* Prompt Add Wizard (replaces input when active) */
+      modal.promptAddRequest ? (
+        <Box marginTop={1} flexDirection="column">
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+
+          <PromptAddWizard
+            title={modal.promptAddRequest.title}
+            content={modal.promptAddRequest.content}
+            tags={modal.promptAddRequest.tags}
+            focusedField={modal.promptAddRequest.focusedField}
+            onFieldChange={(field, value) => {
+              if (modal.promptAddRequest) {
+                modal.setPromptAddRequest({ ...modal.promptAddRequest, [field]: value });
+              }
+            }}
+            onFieldFocus={(field) => {
+              if (modal.promptAddRequest) {
+                modal.setPromptAddRequest({ ...modal.promptAddRequest, focusedField: field });
+              }
+            }}
+            onSubmit={() => {
+              if (modal.promptAddRequest && activityStream) {
+                const { promptId, title, content, tags } = modal.promptAddRequest;
+
+                // Validate required fields
+                if (!title.trim() || !content.trim()) {
+                  return; // Don't submit if fields are empty
+                }
+
+                activityStream.emit({
+                  id: `response_${modal.promptAddRequest.requestId}`,
+                  type: ActivityEventType.PROMPT_ADD_RESPONSE,
+                  timestamp: Date.now(),
+                  data: {
+                    requestId: modal.promptAddRequest.requestId,
+                    promptId, // Include promptId if editing
+                    title: title.trim(),
+                    content: content.trim(),
+                    tags: tags.trim(),
+                    cancelled: false,
+                  },
+                });
+              }
+            }}
+            onCancel={() => {
+              if (modal.promptAddRequest && activityStream) {
+                activityStream.emit({
+                  id: `response_${modal.promptAddRequest.requestId}_cancel`,
+                  type: ActivityEventType.PROMPT_ADD_RESPONSE,
+                  timestamp: Date.now(),
+                  data: {
+                    requestId: modal.promptAddRequest.requestId,
+                    cancelled: true,
+                  },
+                });
+              }
+            }}
+          />
         </Box>
       ) : /* Model Selector (replaces input when active) */
       modal.modelSelectRequest ? (
@@ -834,6 +966,41 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             />
           </Box>
         </Box>
+      ) : modal.libraryClearConfirmRequest ? (
+        /* Library Clear Confirmation */
+        <Box marginTop={1} flexDirection="column">
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+
+          <LibraryClearConfirmation
+            promptCount={modal.libraryClearConfirmRequest.promptCount}
+            selectedIndex={modal.libraryClearConfirmRequest.selectedIndex}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              onInterjection={handleInterjection}
+              isActive={true}
+              commandHistory={commandHistory || undefined}
+              completionProvider={completionProvider || undefined}
+              libraryClearConfirmRequest={modal.libraryClearConfirmRequest}
+              onLibraryClearConfirmNavigate={(newIndex) => {
+                modal.setLibraryClearConfirmRequest({
+                  ...modal.libraryClearConfirmRequest!,
+                  selectedIndex: newIndex,
+                });
+              }}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={modal.inputPrefillText}
+              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
+              bufferValue={modal.inputBuffer}
+              onBufferChange={modal.setInputBuffer}
+            />
+          </Box>
+        </Box>
       ) : modal.undoRequest ? (
         /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
         <Box marginTop={1} flexDirection="column">
@@ -939,14 +1106,13 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               )}
               <Text> · {state.config.model || 'none'}</Text>
               {currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>}
-              {activeAgentsCount > 0 && <Text> · <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>}
               <Text> · <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text></Text>
             </Text>
           </Box>
         ) : (
           /* Normal Mode: Single line */
           <Text dimColor>
-            <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> · <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} · {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
+            <Text color={modal.isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text> · {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>} ·{' '}
             {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
               <Text color="red">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact</Text>
             ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (

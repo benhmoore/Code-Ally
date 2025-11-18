@@ -383,32 +383,41 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
               ? subtext.slice(0, 77) + '...'
               : subtext;
 
-            return displaySubtext.split('\n').map((line, idx) => (
-              <Box key={idx}>
-                <Text>{indent}    </Text>
-                {idx === 0 && <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>}
-                {idx > 0 && <Text>  </Text>}
-                <Text>{line}</Text>
-              </Box>
-            ));
+            const lines = displaySubtext.split('\n');
+            const maxLines = 5;
+            const truncated = lines.length > maxLines;
+            const displayLines = truncated ? lines.slice(0, maxLines) : lines;
+
+            return (
+              <>
+                {displayLines.map((line, idx) => (
+                  <Box key={idx}>
+                    <Text>{indent}    </Text>
+                    {idx === 0 && <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>}
+                    {idx > 0 && <Text>  </Text>}
+                    <Text>{line}</Text>
+                  </Box>
+                ))}
+                {truncated && (
+                  <Box>
+                    <Text>{indent}    </Text>
+                    <Text dimColor>  ... ({lines.length - maxLines} more line{lines.length - maxLines === 1 ? '' : 's'})</Text>
+                  </Box>
+                )}
+              </>
+            );
           })()}
         </Box>
       )}
 
       {/* Thinking content - displayed inline for agent delegations */}
-      {/* Only show while agent is running - cleared when complete */}
-      {isAgentDelegation && toolCall.thinking && isRunning && (
+      {/* ALWAYS show truncated form for agents, regardless of config */}
+      {/* Only show after thinking completes (when thinkingEndTime is set) */}
+      {isAgentDelegation && toolCall.thinking && toolCall.thinkingStartTime && toolCall.thinkingEndTime && (
         <Box>
           <Text>{indent}    </Text>
           <Text dimColor italic>
-            {config?.show_thinking_in_chat ? (
-              `∴ ${toolCall.thinking}`
-            ) : (
-              // Show truncated version when show_thinking_in_chat is false
-              toolCall.startTime
-                ? `∴ Thought for ${formatDuration(Date.now() - toolCall.startTime)}`
-                : '∴ Thought'
-            )}
+            ∴ Thought for {formatDuration(toolCall.thinkingEndTime - toolCall.thinkingStartTime)}
           </Text>
         </Box>
       )}

@@ -41,50 +41,68 @@ interface StatusIndicatorProps {
 }
 
 /**
- * Helper function to detect active agent-ask tool and extract display name
- * Returns agent name if agent-ask is currently executing, null otherwise
+ * Helper function to detect active agent invocations and extract display name
+ * Returns agent name if any agent tool is currently executing, null otherwise
  *
- * This shows "Checking with [AgentName]..." when the main agent (Ally)
- * is consulting a subagent in the background via agent-ask.
+ * Handles both:
+ * - agent-ask: Background consultation (extracts agent_id, looks up in pool)
+ * - agent: Direct invocation (extracts agent_type from arguments)
  *
- * Note: Direct calls to explore/plan/agent do NOT trigger this - those are
- * user interactions and should show normal task status.
+ * This shows "Working with [AgentName]..." for any agent execution.
  */
 const getActiveAgentName = (toolCalls: ToolCallState[]): string | null => {
-  // Find executing agent-ask tool
+  // Check for agent-ask tool first
   const activeAskAgentTool = toolCalls.find(tc =>
     tc.status === 'executing' && tc.toolName === 'agent-ask'
   );
 
-  if (!activeAskAgentTool) return null;
+  if (activeAskAgentTool) {
+    // Extract agent_id from arguments
+    const agentId = activeAskAgentTool.arguments?.agent_id;
+    if (!agentId || typeof agentId !== 'string') {
+      return 'Assistant'; // Fallback if no agent_id
+    }
 
-  // Extract agent_id from arguments
-  const agentId = activeAskAgentTool.arguments?.agent_id;
-  if (!agentId || typeof agentId !== 'string') {
-    return 'Assistant'; // Fallback if no agent_id
+    // Look up agent metadata from pool to determine type
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const agentPoolService = registry.get<any>('agent_pool');
+
+      if (!agentPoolService) {
+        return 'Assistant'; // Fallback if pool not available
+      }
+
+      const metadata = agentPoolService.getAgentMetadata(agentId);
+      if (!metadata) {
+        return 'Assistant'; // Fallback if metadata not found
+      }
+
+      // Use centralized utility to determine agent type and get display name
+      const agentType = getAgentType(metadata);
+      return getAgentDisplayName(agentType);
+    } catch (error) {
+      // Silently handle errors and return fallback
+      return 'Assistant';
+    }
   }
 
-  // Look up agent metadata from pool to determine type
-  try {
-    const registry = ServiceRegistry.getInstance();
-    const agentPoolService = registry.get<any>('agent_pool');
+  // Check for direct agent tool invocation
+  const activeAgentTool = toolCalls.find(tc =>
+    tc.status === 'executing' && tc.toolName === 'agent'
+  );
 
-    if (!agentPoolService) {
-      return 'Assistant'; // Fallback if pool not available
+  if (activeAgentTool) {
+    // Extract agent_type from arguments
+    const agentType = activeAgentTool.arguments?.agent_type;
+    if (!agentType || typeof agentType !== 'string') {
+      return 'Agent'; // Fallback if no agent_type
     }
 
-    const metadata = agentPoolService.getAgentMetadata(agentId);
-    if (!metadata) {
-      return 'Assistant'; // Fallback if metadata not found
-    }
-
-    // Use centralized utility to determine agent type and get display name
-    const agentType = getAgentType(metadata);
+    // Get display name for this agent type
     return getAgentDisplayName(agentType);
-  } catch (error) {
-    // Silently handle errors and return fallback
-    return 'Assistant';
   }
+
+  return null;
 };
 
 export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting, isCancelling = false, recentMessages = [], sessionLoaded = true, isResuming = false, activeToolCalls = [] }) => {
@@ -348,7 +366,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   // Use elapsed seconds from state
   const elapsed = elapsedSeconds;
 
-  // Detect if we're checking with an agent
+  // Detect if we're working with an agent (agent-ask or direct agent tool)
   const activeAgentName = getActiveAgentName(activeToolCalls);
 
   // Show cancelling status if cancelling (highest priority)
@@ -403,15 +421,24 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         )}
         {isProcessing || isCompacting ? (
           <>
-            <ProgressIndicator type="arc" color={UI_COLORS.PRIMARY} />
+            <ProgressIndicator
+              type={activeAgentName ? 'dots' : 'arc'}
+              color={UI_COLORS.PRIMARY}
+            />
             <Text> </Text>
-            <Text>
-              {activeAgentName
-                ? `Checking with ${activeAgentName}...`
-                : allTodos.length === 0
-                  ? 'Thinking'
-                  : currentTask || 'Processing'}
-            </Text>
+            {activeAgentName ? (
+              <>
+                <Text>Working with </Text>
+                <Text color={UI_COLORS.PRIMARY} bold>
+                  {activeAgentName}
+                </Text>
+                <Text>...</Text>
+              </>
+            ) : (
+              <Text>
+                {allTodos.length === 0 ? 'Thinking' : currentTask || 'Processing'}
+              </Text>
+            )}
             <Text dimColor> (esc to interrupt · {formatElapsed(elapsed)})</Text>
           </>
         ) : (

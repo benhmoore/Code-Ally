@@ -484,6 +484,17 @@ async function main() {
     const todoManager = new TodoManager(activityStream);
     registry.registerInstance('todo_manager', todoManager);
 
+    // Create prompt library manager
+    const { PromptLibraryManager } = await import('./services/PromptLibraryManager.js');
+    const promptLibraryManager = new PromptLibraryManager();
+    await promptLibraryManager.initialize();
+    registry.setPromptLibraryManager(promptLibraryManager);
+
+    // Create tool call history
+    const { ToolCallHistory } = await import('./services/ToolCallHistory.js');
+    const toolCallHistory = new ToolCallHistory(100); // Keep last 100 tool calls
+    registry.setToolCallHistory(toolCallHistory);
+
     // Create path resolver
     const pathResolver = new PathResolver();
     registry.registerInstance('path_resolver', pathResolver);

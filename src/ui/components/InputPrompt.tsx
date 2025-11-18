@@ -55,6 +55,14 @@ interface InputPromptProps {
   sessionSelectRequest?: { requestId: string; sessions: import('@shared/index.js').SessionInfo[]; selectedIndex: number };
   /** Callback when session selection changes */
   onSessionNavigate?: (newIndex: number) => void;
+  /** Library selector data (if active) */
+  librarySelectRequest?: import('../hooks/useModalState.js').LibrarySelectRequest;
+  /** Callback when library selection changes */
+  onLibraryNavigate?: (newIndex: number) => void;
+  /** Message selector data (for prompt creation - if active) */
+  messageSelectRequest?: import('../hooks/useModalState.js').MessageSelectRequest;
+  /** Callback when message selection changes */
+  onMessageNavigate?: (newIndex: number) => void;
   /** Rewind selector data (if active) */
   rewindRequest?: { requestId: string; userMessagesCount: number; selectedIndex: number };
   /** Callback when rewind selection changes */
@@ -71,6 +79,10 @@ interface InputPromptProps {
   undoFileListRequest?: { requestId: string; fileList: any[]; selectedIndex: number };
   /** Callback when undo file list selection changes */
   onUndoFileListNavigate?: (newIndex: number) => void;
+  /** Library clear confirmation data (if active) */
+  libraryClearConfirmRequest?: import('../hooks/useModalState.js').LibraryClearConfirmRequest;
+  /** Callback when library clear confirmation selection changes */
+  onLibraryClearConfirmNavigate?: (newIndex: number) => void;
   /** Activity stream for emitting events */
   activityStream?: ActivityStream;
   /** Agent instance for interruption */
@@ -105,6 +117,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onModelNavigate,
   sessionSelectRequest,
   onSessionNavigate,
+  librarySelectRequest,
+  onLibraryNavigate,
+  messageSelectRequest,
+  onMessageNavigate,
   configViewerOpen = false,
   rewindRequest,
   onRewindNavigate,
@@ -114,6 +130,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onUndoNavigate,
   undoFileListRequest,
   onUndoFileListNavigate,
+  libraryClearConfirmRequest,
+  onLibraryClearConfirmNavigate,
   activityStream,
   agent,
   prefillText,
@@ -660,6 +678,159 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
+      // ===== Message Selector Navigation (for prompt creation) =====
+      if (messageSelectRequest && onMessageNavigate && activityStream) {
+        const messagesCount = messageSelectRequest.messages.length;
+        const currentIndex = messageSelectRequest.selectedIndex;
+
+        // Up arrow - navigate to previous message
+        if (key.upArrow) {
+          const newIndex = Math.max(0, currentIndex - 1);
+          onMessageNavigate(newIndex);
+          return;
+        }
+
+        // Down arrow - navigate to next message
+        if (key.downArrow) {
+          const newIndex = Math.min(messagesCount - 1, currentIndex + 1);
+          onMessageNavigate(newIndex);
+          return;
+        }
+
+        // Enter - select message and use for prompt content
+        if (key.return) {
+          try {
+            const selectedMessage = messageSelectRequest.messages[currentIndex];
+            if (selectedMessage) {
+              activityStream.emit({
+                id: `response_${messageSelectRequest.requestId}`,
+                type: ActivityEventType.PROMPT_MESSAGE_SELECT_RESPONSE,
+                timestamp: Date.now(),
+                data: {
+                  requestId: messageSelectRequest.requestId,
+                  selectedMessage: selectedMessage,
+                  cancelled: false,
+                },
+              });
+            }
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit message selection:', error);
+          }
+          return;
+        }
+
+        // 'N' key - create new prompt (skip message selection)
+        if (input.toLowerCase() === 'n') {
+          try {
+            activityStream.emit({
+              id: `response_${messageSelectRequest.requestId}_new`,
+              type: ActivityEventType.PROMPT_MESSAGE_SELECT_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: messageSelectRequest.requestId,
+                selectedMessage: undefined, // No message selected
+                cancelled: false,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit new prompt request:', error);
+          }
+          return;
+        }
+
+        // Escape or Ctrl+C - cancel entire flow
+        if (key.escape || (key.ctrl && input === 'c')) {
+          // Prevent duplicate cancellations for same request
+          if (lastCancelledIdRef.current === messageSelectRequest.requestId) return;
+          lastCancelledIdRef.current = messageSelectRequest.requestId;
+
+          try {
+            activityStream.emit({
+              id: `response_${messageSelectRequest.requestId}_cancel`,
+              type: ActivityEventType.PROMPT_MESSAGE_SELECT_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: messageSelectRequest.requestId,
+                cancelled: true,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit message selection cancellation:', error);
+          }
+          return;
+        }
+
+        // Block all other input when message selector is active
+        return;
+      }
+
+      // ===== Library Selector Navigation =====
+      if (librarySelectRequest && onLibraryNavigate && activityStream) {
+        const promptsCount = librarySelectRequest.prompts.length;
+        const currentIndex = librarySelectRequest.selectedIndex;
+
+        // Up arrow - navigate to previous prompt
+        if (key.upArrow) {
+          const newIndex = Math.max(0, currentIndex - 1);
+          onLibraryNavigate(newIndex);
+          return;
+        }
+
+        // Down arrow - navigate to next prompt
+        if (key.downArrow) {
+          const newIndex = Math.min(promptsCount - 1, currentIndex + 1);
+          onLibraryNavigate(newIndex);
+          return;
+        }
+
+        // Enter - submit selection (load prompt)
+        if (key.return) {
+          try {
+            const selectedPrompt = librarySelectRequest.prompts[currentIndex];
+            if (selectedPrompt) {
+              activityStream.emit({
+                id: `response_${librarySelectRequest.requestId}`,
+                type: ActivityEventType.LIBRARY_SELECT_RESPONSE,
+                timestamp: Date.now(),
+                data: {
+                  requestId: librarySelectRequest.requestId,
+                  promptId: selectedPrompt.id,
+                  cancelled: false,
+                },
+              });
+            }
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit library selection:', error);
+          }
+          return;
+        }
+
+        // Escape or Ctrl+C - cancel selection
+        if (key.escape || (key.ctrl && input === 'c')) {
+          // Prevent duplicate cancellations for same request
+          if (lastCancelledIdRef.current === librarySelectRequest.requestId) return;
+          lastCancelledIdRef.current = librarySelectRequest.requestId;
+
+          try {
+            activityStream.emit({
+              id: `response_${librarySelectRequest.requestId}_cancel`,
+              type: ActivityEventType.LIBRARY_SELECT_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: librarySelectRequest.requestId,
+                cancelled: true,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit library cancellation:', error);
+          }
+          return;
+        }
+
+        // Block all other input when library selector is active
+        return;
+      }
+
       // ===== Rewind Selector Navigation =====
       if (rewindRequest && onRewindNavigate) {
         const messagesCount = rewindRequest.userMessagesCount;
@@ -712,6 +883,72 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
 
         // Block all other input when rewind selector is active
+        return;
+      }
+
+      // ===== Library Clear Confirmation Navigation =====
+      if (libraryClearConfirmRequest && onLibraryClearConfirmNavigate && activityStream) {
+        const optionsCount = 2; // Confirm and Cancel
+        const currentIndex = libraryClearConfirmRequest.selectedIndex;
+
+        // Up arrow - navigate to previous option
+        if (key.upArrow) {
+          const newIndex = Math.max(0, currentIndex - 1);
+          onLibraryClearConfirmNavigate(newIndex);
+          return;
+        }
+
+        // Down arrow - navigate to next option
+        if (key.downArrow) {
+          const newIndex = Math.min(optionsCount - 1, currentIndex + 1);
+          onLibraryClearConfirmNavigate(newIndex);
+          return;
+        }
+
+        // Enter - submit selection
+        if (key.return) {
+          const confirmed = currentIndex === 0; // 0 = Confirm, 1 = Cancel
+          try {
+            activityStream.emit({
+              id: `response_${libraryClearConfirmRequest.requestId}`,
+              type: ActivityEventType.LIBRARY_CLEAR_CONFIRM_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: libraryClearConfirmRequest.requestId,
+                confirmed,
+                cancelled: false,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit library clear confirmation:', error);
+          }
+          return;
+        }
+
+        // Escape or Ctrl+C - cancel
+        if (key.escape || (key.ctrl && input === 'c')) {
+          // Prevent duplicate cancellations for same request
+          if (lastCancelledIdRef.current === libraryClearConfirmRequest.requestId) return;
+          lastCancelledIdRef.current = libraryClearConfirmRequest.requestId;
+
+          try {
+            activityStream.emit({
+              id: `response_${libraryClearConfirmRequest.requestId}_cancel`,
+              type: ActivityEventType.LIBRARY_CLEAR_CONFIRM_RESPONSE,
+              timestamp: Date.now(),
+              data: {
+                requestId: libraryClearConfirmRequest.requestId,
+                confirmed: false,
+                cancelled: true,
+              },
+            });
+          } catch (error) {
+            console.error('[InputPrompt] Failed to emit library clear cancellation:', error);
+          }
+          return;
+        }
+
+        // Block all other input when confirmation is active
         return;
       }
 

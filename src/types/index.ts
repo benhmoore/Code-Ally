@@ -168,6 +168,14 @@ export enum ActivityEventType {
   PLUGIN_CONFIG_CANCEL = 'plugin_config_cancel',
   USER_INTERJECTION = 'user_interjection',
   INTERJECTION_ACKNOWLEDGMENT = 'interjection_acknowledgment',
+  LIBRARY_SELECT_REQUEST = 'library_select_request',
+  LIBRARY_SELECT_RESPONSE = 'library_select_response',
+  PROMPT_MESSAGE_SELECT_REQUEST = 'prompt_message_select_request',
+  PROMPT_MESSAGE_SELECT_RESPONSE = 'prompt_message_select_response',
+  PROMPT_ADD_REQUEST = 'prompt_add_request',
+  PROMPT_ADD_RESPONSE = 'prompt_add_response',
+  LIBRARY_CLEAR_CONFIRM_REQUEST = 'library_clear_confirm_request',
+  LIBRARY_CLEAR_CONFIRM_RESPONSE = 'library_clear_confirm_response',
 }
 
 export interface ActivityEvent {
@@ -210,7 +218,9 @@ export interface ToolCallState {
   collapsed?: boolean; // For tools that should hide their children immediately
   shouldCollapse?: boolean; // For tools that should collapse after completion
   hideOutput?: boolean; // For tools that should never show output
-  thinking?: string; // Thinking content for agent tools (when show_thinking_in_chat is enabled)
+  thinking?: string; // Thinking content for agent tools
+  thinkingStartTime?: number; // When thinking started (for duration calculation)
+  thinkingEndTime?: number; // When thinking completed (for duration calculation)
   agentId?: string; // Pool agent ID for agent delegations (used to look up agent type)
   diffPreview?: {
     oldContent: string;
@@ -355,3 +365,9 @@ export interface SessionInfo {
   working_dir: string;
   lastUserMessage?: string;
 }
+
+// ===========================
+// Prompt Library Types
+// ===========================
+
+export type { PromptInfo } from '../services/PromptLibraryManager.js';

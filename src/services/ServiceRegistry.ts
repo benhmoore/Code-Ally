@@ -7,6 +7,8 @@
 
 import { ServiceLifecycle, IService } from '../types/index.js';
 import type { PluginActivationManager } from '../plugins/PluginActivationManager.js';
+import type { PromptLibraryManager } from './PromptLibraryManager.js';
+import type { ToolCallHistory } from './ToolCallHistory.js';
 import { logger } from './Logger.js';
 
 export class ServiceDescriptor<T = unknown> {
@@ -275,6 +277,40 @@ export class ServiceRegistry {
       throw new Error('PluginActivationManager not registered in ServiceRegistry');
     }
     return manager as PluginActivationManager;
+  }
+
+  /**
+   * Set the PromptLibraryManager instance
+   */
+  setPromptLibraryManager(manager: PromptLibraryManager): void {
+    this.registerInstance('prompt_library_manager', manager);
+  }
+
+  /**
+   * Get the PromptLibraryManager instance
+   * @throws Error if not registered
+   */
+  getPromptLibraryManager(): PromptLibraryManager {
+    const manager = this.get('prompt_library_manager');
+    if (!manager) {
+      throw new Error('PromptLibraryManager not registered in ServiceRegistry');
+    }
+    return manager as PromptLibraryManager;
+  }
+
+  /**
+   * Set the ToolCallHistory instance
+   */
+  setToolCallHistory(history: ToolCallHistory): void {
+    this.registerInstance('tool_call_history', history);
+  }
+
+  /**
+   * Get the ToolCallHistory instance
+   * @returns ToolCallHistory instance or undefined if not registered
+   */
+  getToolCallHistory(): ToolCallHistory | undefined {
+    return this.get('tool_call_history') as ToolCallHistory | undefined;
   }
 }
 

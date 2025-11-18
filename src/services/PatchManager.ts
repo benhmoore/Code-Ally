@@ -140,7 +140,6 @@ export class PatchManager implements IService {
    */
   async cleanup(): Promise<void> {
     // Nothing to clean up
-    logger.info('PatchManager cleaned up');
   }
 
   /**

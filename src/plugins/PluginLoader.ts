@@ -25,7 +25,7 @@ import { BaseTool } from '../tools/BaseTool.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
 import { PluginConfigManager } from './PluginConfigManager.js';
-import { PluginEnvironmentManager } from './PluginEnvironmentManager.js';
+import { PluginEnvironmentManager, type PluginDependencies } from './PluginEnvironmentManager.js';
 import { PLUGIN_FILES, PLUGIN_CONSTRAINTS, PLUGIN_TIMEOUTS } from './constants.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
@@ -263,6 +263,55 @@ export class PluginLoader {
   }
 
   /**
+   * Validate a tool's JSON schema definition
+   *
+   * Checks that the schema is properly formatted and all properties have required fields.
+   * This catches common errors like missing 'type' fields in schema properties.
+   *
+   * @param toolName - Name of the tool being validated
+   * @param schema - The JSON schema object to validate
+   * @returns Validation result with errors and warnings
+   */
+  private validateToolSchema(toolName: string, schema: any): { errors: string[]; warnings: string[] } {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    // Schema must be an object
+    if (typeof schema !== 'object' || schema === null) {
+      errors.push(`Tool '${toolName}' schema must be an object`);
+      return { errors, warnings };
+    }
+
+    // If schema has properties, validate them
+    if (schema.properties && typeof schema.properties === 'object') {
+      for (const [propName, propSchema] of Object.entries(schema.properties)) {
+        if (typeof propSchema !== 'object' || propSchema === null) {
+          errors.push(`Tool '${toolName}' schema property '${propName}' must be an object`);
+          continue;
+        }
+
+        // Check if property has a 'type' field
+        const propSchemaObj = propSchema as any;
+        if (!propSchemaObj.type) {
+          errors.push(
+            `Tool '${toolName}' schema property '${propName}' is missing required 'type' field. Valid types: string, number, integer, boolean, array, object`
+          );
+        }
+
+        // Validate type value if present
+        const validTypes = ['string', 'number', 'integer', 'boolean', 'array', 'object', 'null'];
+        if (propSchemaObj.type && !validTypes.includes(propSchemaObj.type)) {
+          errors.push(
+            `Tool '${toolName}' schema property '${propName}' has invalid type '${propSchemaObj.type}'. Valid types: ${validTypes.join(', ')}`
+          );
+        }
+      }
+    }
+
+    return { errors, warnings };
+  }
+
+  /**
    * Validates a plugin manifest for completeness and correctness
    *
    * Performs comprehensive validation of plugin configuration including:
@@ -270,6 +319,7 @@ export class PluginLoader {
    * - Plugin name format (must not start with + or -)
    * - Background daemon configuration (if enabled)
    * - Tool definitions and type-specific requirements
+   * - Tool schema validation (checks for missing type fields)
    * - Socket path length constraints
    * - Timeout and health check values
    *
@@ -397,6 +447,13 @@ export class PluginLoader {
       // Common tool validations
       if (!tool.description) {
         warnings.push(`Tool '${tool.name}' missing recommended 'description' field`);
+      }
+
+      // Validate tool schema if present
+      if (tool.schema) {
+        const schemaValidation = this.validateToolSchema(tool.name, tool.schema);
+        errors.push(...schemaValidation.errors);
+        warnings.push(...schemaValidation.warnings);
       }
     });
 
@@ -533,6 +590,26 @@ export class PluginLoader {
         } catch {
           // No config file exists - that's okay
           logger.debug(`[PluginLoader] No existing config to preserve for '${manifest.name}'`);
+        }
+
+        // Check if dependencies have changed - if so, rebuild virtual environment
+        if (manifest.runtime && manifest.dependencies) {
+          const dependenciesChanged = await this.haveDependenciesChanged(
+            targetPath,
+            sourcePath,
+            manifest.dependencies
+          );
+
+          if (dependenciesChanged) {
+            logger.info(
+              `[PluginLoader] Dependencies changed for '${manifest.name}', rebuilding virtual environment`
+            );
+            await this.envManager.removeEnvironment(manifest.name);
+          } else {
+            logger.debug(
+              `[PluginLoader] Dependencies unchanged for '${manifest.name}', keeping existing virtual environment`
+            );
+          }
         }
 
         await fs.rm(targetPath, { recursive: true, force: true });
@@ -922,13 +999,13 @@ export class PluginLoader {
    * @returns Array of loaded tool instances
    */
   async reloadPlugin(pluginName: string, pluginPath: string): Promise<BaseTool[]> {
-    logger.info(`[PluginLoader] Reloading plugin '${pluginName}' from ${pluginPath}`);
+    logger.debug(`[PluginLoader] Reloading plugin '${pluginName}' from ${pluginPath}`);
 
     try {
       const { tools, agents } = await this.loadPlugin(pluginPath);
 
       if (tools.length > 0 || agents.length > 0) {
-        logger.info(
+        logger.debug(
           `[PluginLoader] Successfully reloaded plugin '${pluginName}' with ${tools.length} tool(s) and ${agents.length} agent(s): ${tools.map(t => t.name).join(', ')}`
         );
       } else {
@@ -1013,7 +1090,6 @@ export class PluginLoader {
 
     if (!validation.valid) {
       const errorMsg = `Invalid plugin manifest for '${manifest.name}':\n${validation.errors.join('\n')}`;
-      logger.error(`[PluginLoader] ${errorMsg}`);
       throw new Error(errorMsg);
     }
 
@@ -1343,6 +1419,62 @@ export class PluginLoader {
     }
 
     return agents;
+  }
+
+  /**
+   * Check if dependencies have changed between old and new plugin versions
+   *
+   * Compares the dependencies file content to determine if the virtual
+   * environment needs to be rebuilt.
+   *
+   * @param oldPluginPath - Path to the currently installed plugin
+   * @param newPluginPath - Path to the new plugin version
+   * @param dependencies - Dependencies specification from manifest
+   * @returns True if dependencies changed, false if unchanged
+   */
+  private async haveDependenciesChanged(
+    oldPluginPath: string,
+    newPluginPath: string,
+    dependencies: PluginDependencies
+  ): Promise<boolean> {
+    try {
+      const oldDepsPath = join(oldPluginPath, dependencies.file);
+      const newDepsPath = join(newPluginPath, dependencies.file);
+
+      // Try to read both files
+      let oldContent: string;
+      let newContent: string;
+
+      try {
+        oldContent = await fs.readFile(oldDepsPath, 'utf-8');
+      } catch {
+        // Old dependencies file doesn't exist - treat as changed
+        logger.debug(`[PluginLoader] Old dependencies file not found, treating as changed`);
+        return true;
+      }
+
+      try {
+        newContent = await fs.readFile(newDepsPath, 'utf-8');
+      } catch {
+        // New dependencies file doesn't exist - treat as changed
+        logger.debug(`[PluginLoader] New dependencies file not found, treating as changed`);
+        return true;
+      }
+
+      // Normalize whitespace and compare
+      const oldNormalized = oldContent.trim();
+      const newNormalized = newContent.trim();
+
+      return oldNormalized !== newNormalized;
+    } catch (error) {
+      // If we can't determine, err on the side of caution and rebuild
+      logger.warn(
+        `[PluginLoader] Error comparing dependencies, will rebuild environment: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return true;
+    }
   }
 
   /**

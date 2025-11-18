@@ -4,6 +4,9 @@
   "description": "Example plugin with math expert agent and contextual tools",
   "author": "Claude Code Team",
   "runtime": "python3",
+  "dependencies": {
+    "file": "requirements.txt"
+  },
   "tools": [
     {
       "name": "add",
@@ -134,6 +137,92 @@
       "subtext": "{equation}"
     },
     {
+      "name": "differentiate",
+      "description": "Compute the derivative of a mathematical expression symbolically using SymPy. Supports polynomial, trigonometric, exponential, and logarithmic functions. Can compute higher-order derivatives.",
+      "command": "python3",
+      "args": ["tools/differentiate.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "Mathematical expression to differentiate (e.g., 'x**3', 'sin(x)', 'x**2 + 2*x + 1')"
+          },
+          "variable": {
+            "type": "string",
+            "description": "Variable to differentiate with respect to (default: x)"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Order of derivative (1 for first derivative, 2 for second, etc. - default: 1)"
+          }
+        },
+        "required": ["expression"]
+      },
+      "visible_to": ["math-expert"],
+      "subtext": "d/d{variable} {expression}"
+    },
+    {
+      "name": "integrate",
+      "description": "Compute the integral of a mathematical expression symbolically using SymPy. Supports both definite and indefinite integrals. For definite integrals, provide both lower_bound and upper_bound. For indefinite integrals, omit both bounds.",
+      "command": "python3",
+      "args": ["tools/integrate.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "Mathematical expression to integrate (e.g., 'x**2', '3*x**2 + 2*x + 1', 'sin(x)')"
+          },
+          "variable": {
+            "type": "string",
+            "description": "Variable to integrate with respect to (default: x)"
+          },
+          "lower_bound": {
+            "type": "string",
+            "description": "Lower bound for definite integral (number or expression like '0', 'pi')"
+          },
+          "upper_bound": {
+            "type": "string",
+            "description": "Upper bound for definite integral (number or expression like '1', '2*pi')"
+          }
+        },
+        "required": ["expression"]
+      },
+      "visible_to": ["math-expert"],
+      "subtext": "∫ {expression}"
+    },
+    {
+      "name": "limit",
+      "description": "Compute the limit of a mathematical expression as a variable approaches a point using SymPy. Supports limits at finite points, infinity, and one-sided limits.",
+      "command": "python3",
+      "args": ["tools/limit.py"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "Mathematical expression to compute limit of (e.g., 'sin(x)/x', '(x**2 - 1)/(x - 1)')"
+          },
+          "variable": {
+            "type": "string",
+            "description": "Variable in the limit (default: x)"
+          },
+          "point": {
+            "type": "string",
+            "description": "Point to approach (number, 'inf', or '-inf' - default: 0)"
+          },
+          "direction": {
+            "type": "string",
+            "description": "Direction of limit: '+' for right limit, '-' for left limit, omit for two-sided limit"
+          }
+        },
+        "required": ["expression"]
+      },
+      "visible_to": ["math-expert"],
+      "subtext": "lim {expression} as {variable}→{point}"
+    },
+    {
       "name": "cannot-calculate",
       "description": "Call this when you cannot perform the requested calculation with your available arithmetic tools (add, subtract, multiply, divide)",
       "command": "python3",
@@ -154,9 +243,9 @@
   "agents": [
     {
       "name": "math-expert",
-      "description": "Expert mathematician specializing in arithmetic calculations",
+      "description": "Expert mathematician specializing in arithmetic, algebra, and calculus",
       "system_prompt_file": "agents/math-expert.md",
-      "tools": ["add", "subtract", "multiply", "divide", "calculate", "solve-equation", "cannot-calculate"]
+      "tools": ["add", "subtract", "multiply", "divide", "calculate", "solve-equation", "differentiate", "integrate", "limit", "cannot-calculate"]
     }
   ]
 }

@@ -100,9 +100,9 @@ export const useServiceInitialization = (
         const provider = new CompletionProvider(agentManager, configManager || undefined);
         setCompletionProvider(provider);
 
-        // Create command handler with service registry and config manager
+        // Create command handler with service registry
         if (configManager) {
-          const handler = new CommandHandler(agent, configManager, serviceRegistry);
+          const handler = new CommandHandler(agent, serviceRegistry);
           commandHandler.current = handler;
         }
 

@@ -30,6 +30,10 @@ export interface IdleContext {
   gitBranch?: string;
   /** User's home directory name */
   homeDirectory?: string;
+  /** Operating system (e.g., 'darwin', 'linux', 'win32') */
+  os?: string;
+  /** Current session title */
+  sessionTitle?: string;
   /** Project context (languages, frameworks, etc.) */
   projectContext?: {
     languages: string[];
@@ -303,6 +307,16 @@ export class IdleMessageGenerator implements CancellableService {
    * Build the prompt for batch idle message generation
    */
   private buildBatchMessagePrompt(_recentMessages: Message[], context?: IdleContext): string {
+    // Add operating system context
+    const osContext = context?.os
+      ? `\n\nOperating System: ${context.os === 'darwin' ? 'macOS' : context.os === 'win32' ? 'Windows' : context.os === 'linux' ? 'Linux' : context.os}`
+      : '';
+
+    // Add session title context
+    const sessionContext = context?.sessionTitle
+      ? `\n\nCurrent Session: ${context.sessionTitle}`
+      : '';
+
     // Add working directory context
     const cwdContext = context?.cwd
       ? `\n\nWorking directory: ${context.cwd}`
@@ -407,7 +421,7 @@ Examples (be creative, don't copy these):
 - "<orange>Caution:</orange> might write good code" (playful warning)
 - "~~Procrastinating~~ *Strategizing*" (strikethrough + italic combo)
 - "**100%** ~~bug-free~~ code incoming!" (bold + strikethrough)
-${cwdContext}${gitBranchContext}${homeDirContext}${projectContext}
+${osContext}${sessionContext}${cwdContext}${gitBranchContext}${homeDirContext}${projectContext}
 
 Reply with ONLY the numbered list, nothing else. No quotes around messages, no punctuation unless natural.`;
   }

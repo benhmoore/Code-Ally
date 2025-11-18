@@ -45,7 +45,7 @@ describe('CommandHandler', () => {
     };
 
     // Create command handler
-    commandHandler = new CommandHandler(mockAgent, configManager, serviceRegistry);
+    commandHandler = new CommandHandler(mockAgent, serviceRegistry);
   });
 
   describe('parseCommand', () => {

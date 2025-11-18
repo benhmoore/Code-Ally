@@ -249,7 +249,8 @@ export class Agent {
     // Create session persistence handler
     this.sessionPersistence = new SessionPersistence(
       this.conversationManager,
-      this.instanceId
+      this.instanceId,
+      this.agentDepth
     );
 
     // Create activity monitor for detecting agents stuck generating tokens
@@ -684,9 +685,18 @@ export class Agent {
 
         // Trigger idle tasks with recent messages and context
         const projectContextDetector = registry.get('project_context_detector');
+        const sessionManager = registry.get('session_manager');
+        const currentSession = sessionManager ? (sessionManager as any).getCurrentSession() : null;
+
+        // Only include session title if it's meaningful (not undefined and not default session_* format)
+        const sessionTitle = currentSession?.title;
+        const hasMeaningfulTitle = sessionTitle && !sessionTitle.startsWith('session_');
+
         (coordinator as any).checkAndRunIdleTasks(
           this.conversationManager.getMessages(),
           {
+            os: process.platform,
+            sessionTitle: hasMeaningfulTitle ? sessionTitle : undefined,
             cwd: process.cwd(),
             projectContext: projectContextDetector ? (projectContextDetector as any).getCached() : undefined
           }
@@ -967,6 +977,7 @@ export class Agent {
       id: this.generateId(),
       type: ActivityEventType.THOUGHT_CHUNK,
       timestamp: Date.now(),
+      parentId: this.config.parentCallId,
       data: { text: 'Thinking...', thinking: true },
     });
 

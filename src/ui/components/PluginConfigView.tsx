@@ -13,6 +13,7 @@ import { ChickAnimation } from './ChickAnimation.js';
 import { PLUGIN_UI } from '@plugins/constants.js';
 import { ModalContainer } from './ModalContainer.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
 
 interface PluginConfigViewProps {
@@ -53,6 +54,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
   const [currentInput, setCurrentInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [selectedChoiceIndex, setSelectedChoiceIndex] = useState(0);
+  const [confirmSelectedIndex, setConfirmSelectedIndex] = useState(0); // 0 = Save, 1 = Cancel
 
   // Initialize field names and config values
   useEffect(() => {
@@ -161,10 +163,21 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
         }
       }
     } else if (step === ConfigStep.CONFIRM) {
-      if (PLUGIN_UI.BOOLEAN_YES.includes(input as any)) {
-        handleConfirm();
-      } else if (PLUGIN_UI.BOOLEAN_NO.includes(input as any)) {
-        onCancel();
+      // Up arrow - navigate to previous option
+      if (key.upArrow) {
+        setConfirmSelectedIndex(prev => Math.max(0, prev - 1));
+      }
+      // Down arrow - navigate to next option
+      else if (key.downArrow) {
+        setConfirmSelectedIndex(prev => Math.min(1, prev + 1));
+      }
+      // Enter - submit selection
+      else if (key.return) {
+        if (confirmSelectedIndex === 0) {
+          handleConfirm();
+        } else {
+          onCancel();
+        }
       }
     }
   });
@@ -270,22 +283,6 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
             </Box>
           )}
 
-          {tools && tools.length > 0 && (
-            <Box marginTop={1} flexDirection="column">
-              <Text bold>Tools ({tools.length}):</Text>
-              <Box marginTop={1} flexDirection="column" paddingLeft={2}>
-                {tools.map((tool: any, index: number) => (
-                  <Box key={index} marginBottom={0}>
-                    <Text dimColor>
-                      • <Text color={UI_COLORS.TEXT_DEFAULT}>{tool.name}</Text>
-                      {tool.description && <Text> - {tool.description}</Text>}
-                    </Text>
-                  </Box>
-                ))}
-              </Box>
-            </Box>
-          )}
-
           {agents && agents.length > 0 && (
             <Box marginTop={1} flexDirection="column">
               <Text bold>Agents ({agents.length}):</Text>
@@ -295,6 +292,22 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
                     <Text dimColor>
                       • <Text color={UI_COLORS.TEXT_DEFAULT}>{agent.name}</Text>
                       {agent.description && <Text> - {agent.description}</Text>}
+                    </Text>
+                  </Box>
+                ))}
+              </Box>
+            </Box>
+          )}
+
+          {tools && tools.length > 0 && (
+            <Box marginTop={1} flexDirection="column">
+              <Text bold>Tools ({tools.length}):</Text>
+              <Box marginTop={1} flexDirection="column" paddingLeft={2}>
+                {tools.map((tool: any, index: number) => (
+                  <Box key={index} marginBottom={0}>
+                    <Text dimColor>
+                      • <Text color={UI_COLORS.TEXT_DEFAULT}>{tool.name}</Text>
+                      {tool.description && <Text> - {tool.description}</Text>}
                     </Text>
                   </Box>
                 ))}
@@ -400,6 +413,8 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
   };
 
   const renderConfirmation = () => {
+    const options = ['Save', 'Cancel'];
+
     return (
       <>
         <Box marginBottom={1} flexDirection="row" gap={1}>
@@ -431,12 +446,19 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
           })}
         </Box>
 
-        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-          <Text>
-            Save this configuration? Press <Text color={UI_COLORS.PRIMARY}>Y</Text> for Yes or{' '}
-            <Text color={UI_COLORS.PRIMARY}>N</Text> to cancel
-          </Text>
+        {/* Options */}
+        <Box marginTop={1} flexDirection="column">
+          {options.map((option, index) => (
+            <Box key={option}>
+              <SelectionIndicator isSelected={confirmSelectedIndex === index}>
+                <Text bold={confirmSelectedIndex === index}>{option}</Text>
+              </SelectionIndicator>
+            </Box>
+          ))}
         </Box>
+
+        {/* Keyboard hints */}
+        <KeyboardHintFooter action="select" />
       </>
     );
   };

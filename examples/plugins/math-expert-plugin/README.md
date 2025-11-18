@@ -117,8 +117,17 @@ Divide one number by another.
 ## Installation
 
 1. Copy the entire `math-expert-plugin` directory to your plugins folder
-2. Load the plugin in your configuration
-3. The `math-expert` agent and its tools will become available
+2. Install Python dependencies (required for equation solving):
+   ```bash
+   cd math-expert-plugin
+   pip3 install -r requirements.txt
+   ```
+3. Load the plugin in your configuration
+4. The `math-expert` agent and its tools will become available
+
+**Dependencies:**
+- Python 3.x
+- SymPy 1.12+ (for symbolic equation solving)
 
 ## Usage Examples
 
