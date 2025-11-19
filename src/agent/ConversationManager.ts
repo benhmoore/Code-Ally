@@ -203,12 +203,125 @@ export class ConversationManager {
   }
 
   /**
-   * Remove system reminder messages (temporary context hints)
+   * Remove ephemeral system reminder messages from conversation history
    *
-   * @returns Number of reminders removed
+   * System reminders can be either ephemeral (cleaned up after each turn) or persistent
+   * (kept forever). This method removes only ephemeral reminders:
+   *
+   * 1. Standalone messages with role='system' or role='user' (continuation prompts) that contain
+   *    non-persistent <system-reminder> tags
+   * 2. <system-reminder> tags embedded in tool result content (role='tool') that lack persist="true"
+   *
+   * Reminders marked with persist="true" attribute are preserved in the conversation.
+   *
+   * Edge cases handled:
+   * - Multiple reminder tags in same message:
+   *   - For tool results: Each tag evaluated independently; only ephemeral tags removed
+   *   - For standalone messages: If ANY tag has persist="true", entire message is kept
+   * - Extra whitespace in tags and attributes (flexible regex matching)
+   * - Case variations: persist="true", persist="TRUE", persist="True" (all case-insensitive)
+   * - Attribute order: persist="true" works anywhere in opening tag (not just first)
+   * - Nested tags (though not recommended, outer tags are processed)
+   * - Malformed tags without closing tags (left as-is to avoid data corruption)
+   *
+   * Performance optimization: Uses .includes() pre-check before expensive regex operations.
+   *
+   * @returns Number of messages affected (standalone messages removed + tool results with tags stripped)
+   *          Note: A tool result with 5 ephemeral tags removed counts as 1 in the return value
+   *
+   * @example
+   * // Before:
+   * // Tool result: "Success\n\n<system-reminder>Check logs</system-reminder>"
+   * // System message: "<system-reminder persist=\"true\">Important</system-reminder>"
+   * // User message: "<system-reminder>Your response was interrupted</system-reminder>"
+   *
+   * // After removeEphemeralSystemReminders():
+   * // Tool result: "Success" (ephemeral tag stripped)
+   * // System message: "<system-reminder persist=\"true\">Important</system-reminder>" (preserved)
+   * // User message: (removed entirely - ephemeral continuation prompt)
+   */
+  removeEphemeralSystemReminders(): number {
+    let totalRemoved = 0;
+
+    // Part 1: Remove standalone messages with ephemeral <system-reminder> tags
+    // These are complete messages with role='system' or role='user' (continuation prompts)
+    // that contain non-persistent reminders
+    const standaloneRemoved = this.removeMessages(msg => {
+      if ((msg.role !== 'system' && msg.role !== 'user') || typeof msg.content !== 'string') {
+        return false;
+      }
+
+      // Quick pre-check: does this message contain any system-reminder tags?
+      if (!msg.content.includes('<system-reminder')) {
+        return false;
+      }
+
+      // Check if ALL reminder tags in this message are ephemeral (no persist="true")
+      // If ANY tag has persist="true", we keep the entire message
+      const hasPersistentTag = /persist\s*=\s*["']true["']/i.test(msg.content);
+
+      // Remove message only if it has reminder tags AND none are persistent
+      return !hasPersistentTag;
+    });
+
+    totalRemoved += standaloneRemoved;
+
+    // Part 2: Strip ephemeral <system-reminder> tags from tool result content
+    // These are embedded in tool results (role='tool') and need content modification
+    for (const msg of this.messages) {
+      if (msg.role !== 'tool' || typeof msg.content !== 'string') {
+        continue;
+      }
+
+      // Quick pre-check: does this content contain any system-reminder tags?
+      if (!msg.content.includes('<system-reminder')) {
+        continue;
+      }
+
+      // Remove only non-persistent <system-reminder> tags using regex
+      // Pattern explanation:
+      // - <system-reminder - Opening tag
+      // - (?![^>]*persist\s*=\s*["']true["']) - Negative lookahead: no persist="true" anywhere in opening tag
+      // - [^>]* - Any other attributes
+      // - > - Close opening tag
+      // - .*? - Content (non-greedy)
+      // - </system-reminder> - Closing tag
+      // The 's' flag makes . match newlines for multi-line content
+      // The 'i' flag makes it case-insensitive (matches persist="TRUE", persist="True", etc.)
+      const originalContent = msg.content;
+      msg.content = msg.content.replace(
+        /<system-reminder(?![^>]*persist\s*=\s*["']true["'])[^>]*>.*?<\/system-reminder>/gis,
+        ''
+      );
+
+      // Count this as a removal if content changed
+      if (msg.content !== originalContent) {
+        // Trim any extra blank lines left after tag removal
+        msg.content = msg.content.replace(/\n{3,}/g, '\n\n').trim();
+        totalRemoved++;
+      }
+    }
+
+    if (totalRemoved > 0) {
+      logger.debug(
+        '[CONVERSATION_MANAGER]',
+        this.instanceId,
+        `Removed ${totalRemoved} ephemeral system reminder(s) (${standaloneRemoved} standalone message(s), ${totalRemoved - standaloneRemoved} embedded tag(s))`
+      );
+    }
+
+    return totalRemoved;
+  }
+
+  /**
+   * @deprecated Use removeEphemeralSystemReminders() instead
+   *
+   * This method is kept for backward compatibility but delegates to the new implementation.
+   * All callers should migrate to removeEphemeralSystemReminders() which handles both
+   * ephemeral and persistent reminders correctly.
    */
   removeSystemReminders(): number {
-    return this.removeMessages(msg => msg.role === 'system' && msg.content.includes('<system-reminder>'));
+    return this.removeEphemeralSystemReminders();
   }
 
   /**

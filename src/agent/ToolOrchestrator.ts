@@ -841,24 +841,53 @@ export class ToolOrchestrator {
       resultStr += `\n\n⚠️  ${warning}`;
     }
 
-    // Helper to inject and log system reminders
-    const injectSystemReminder = (reminder: string, source: string) => {
-      resultStr += `\n\n<system-reminder>${reminder}</system-reminder>`;
+    /**
+     * Helper to inject and log system reminders
+     *
+     * System reminders can be either ephemeral (cleaned up after each turn) or persistent
+     * (kept forever in conversation history). By default, reminders are ephemeral.
+     *
+     * @param reminder - The reminder message content
+     * @param source - Source label for logging (e.g., 'Tool result', 'Cycle detection')
+     * @param persist - If true, reminder persists in history; if false (default), cleaned up after turn
+     */
+    const injectSystemReminder = (reminder: string, source: string, persist: boolean = false) => {
+      const persistAttr = persist ? ' persist="true"' : '';
+      resultStr += `\n\n<system-reminder${persistAttr}>${reminder}</system-reminder>`;
       logger.debug('[SYSTEM_REMINDER]', `${source} for ${toolName}:`, reminder.substring(0, 100) + (reminder.length > 100 ? '...' : ''));
     };
 
     // Inject system_reminder from tool result (if provided)
     // This allows tools to inject contextual reminders directly into their results
+    // PERSIST classification:
+    // - false (ephemeral): Exploratory tool warnings, agent persistence reminders, plan acceptance, temp file hints (temporary coaching)
+    // - true (persistent): Task context (explains agent purpose and constraints)
+    // - DEFAULT: false (ephemeral) for safety - unknown reminders should not pollute context
     if (systemReminder) {
-      injectSystemReminder(systemReminder, 'Tool result');
+      // Check if this is permanent metadata (persistent)
+      // Task context from agent-ask explains the specialized agent's purpose
+      const isTaskContext = systemReminder.includes('This agent is a') &&
+                           systemReminder.includes('created for:');
+
+      // Everything else defaults to ephemeral for safety
+      // This includes:
+      // - Exploratory tool warnings ("consecutive exploratory tool calls", "read/grep/glob/ls/tree")
+      // - Agent persistence coaching ("Agent persists as", "USE agent-ask")
+      // - Plan acceptance notifications ("plan has been automatically accepted")
+      // - Temp file hints ("You can read this file back")
+      // - Any future tool reminders (safe default)
+      const isPersistent = isTaskContext;
+
+      injectSystemReminder(systemReminder, 'Tool result', isPersistent);
     }
 
     // Inject time reminder if agent has max duration set
+    // PERSIST: false - Ephemeral, only current time matters (not past durations)
     const maxDuration = this.agent.getMaxDuration();
     if (maxDuration !== undefined && totalTurnDuration !== undefined) {
       const timeReminder = this.generateTimeReminder(maxDuration, totalTurnDuration);
       if (timeReminder) {
-        injectSystemReminder(timeReminder, `Time (${totalTurnDuration.toFixed(2)}/${maxDuration}min)`);
+        injectSystemReminder(timeReminder, `Time (${totalTurnDuration.toFixed(2)}/${maxDuration}min)`, false);
       }
     }
 
@@ -879,7 +908,8 @@ export class ToolOrchestrator {
         // Use issueType for label if provided, otherwise default to 'Cycle detection'
         const label = cycleInfo.issueType || 'Cycle detection';
 
-        injectSystemReminder(message, label);
+        // PERSIST: false - Ephemeral, once warned the agent moves past the cycle
+        injectSystemReminder(message, label, false);
       }
     }
 
@@ -897,15 +927,17 @@ export class ToolOrchestrator {
 
         const label = globalInfo.issueType || 'Pattern detection';
 
-        injectSystemReminder(message, label);
+        // PERSIST: false - Ephemeral, temporary hint about global patterns
+        injectSystemReminder(message, label, false);
       }
     }
 
     // Inject focus reminder in every tool result if there's an active todo (main agent only)
+    // PERSIST: false - Ephemeral, only current active task matters (not historical focus reminders)
     if (!this.config.isSpecializedAgent) {
       const focusReminder = this.generateFocusReminder();
       if (focusReminder) {
-        injectSystemReminder(focusReminder, 'Focus (todo)');
+        injectSystemReminder(focusReminder, 'Focus (todo)', false);
       }
     }
 

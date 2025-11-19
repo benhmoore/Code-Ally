@@ -169,6 +169,7 @@ export class ResponseProcessor {
         this.conversationManager.addMessage(assistantMessage);
 
         // Add continuation prompt mentioning the error
+        // PERSIST: false - Ephemeral, one-time continuation signal after HTTP error
         const continuationPrompt: Message = {
           role: 'user',
           content: `<system-reminder>\nYour previous response encountered an error and was interrupted: ${response.error_message || 'Unknown error'}. Please continue where you left off.\n</system-reminder>`,
@@ -293,6 +294,7 @@ export class ResponseProcessor {
       this.conversationManager.addMessage(assistantMessage);
 
       // Add generic continuation prompt
+      // PERSIST: false - Ephemeral, one-time continuation signal for incomplete response
       const continuationPrompt: Message = {
         role: 'user',
         content: '<system-reminder>\nYour response appears incomplete. Please continue where you left off.\n</system-reminder>',
@@ -418,9 +420,10 @@ export class ResponseProcessor {
       this.conversationManager.setMessages(this.conversationManager.getMessages().slice(0, -1));
 
       // Add a system reminder instructing the agent to provide final summary
+      // PERSIST: true - Persistent, explains why specialized agent stopped (constraint on result)
       const systemReminder: Message = {
         role: 'system',
-        content: '<system-reminder>\n' +
+        content: '<system-reminder persist="true">\n' +
           `Context usage at ${contextUsage}% - too high for specialized agent to execute more tools. ` +
           'You MUST provide your final summary now. Do NOT request any more tool calls. ' +
           'Summarize your work, findings, and recommendations based on the information you have gathered.\n' +

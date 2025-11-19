@@ -596,6 +596,7 @@ export class Agent {
 
     // If the previous request was interrupted, add a system reminder
     if (this.interruptionManager.wasRequestInterrupted()) {
+      // PERSIST: false - Ephemeral, one-time navigation signal after interruption
       const systemReminder: Message = {
         role: 'system',
         content: '<system-reminder>\nUser interrupted. Prioritize answering their new prompt over continuing your todo list. After responding, reassess if the todo list is still relevant. Do not blindly continue with pending todos.\n</system-reminder>',
@@ -641,6 +642,7 @@ export class Agent {
 
         reminderContent += '</system-reminder>';
 
+        // PERSIST: false - Ephemeral, todo list state is dynamic and updated each message
         const systemReminder: Message = {
           role: 'system',
           content: reminderContent,
@@ -1009,18 +1011,18 @@ export class Agent {
         parentId: this.config.parentCallId,
       });
 
-      // Remove system-reminder messages after receiving response
+      // Remove ephemeral system-reminder messages after receiving response
       // These are temporary context hints that should not persist
-      const removedCount = this.conversationManager.removeSystemReminders();
+      const removedCount = this.conversationManager.removeEphemeralSystemReminders();
       if (removedCount > 0) {
-        logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Removed system reminder after LLM response');
+        logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Removed ephemeral system reminder(s) after LLM response');
       }
 
       return response;
     } catch (error) {
-      // Remove system-reminder messages even on error
+      // Remove ephemeral system-reminder messages even on error
       // These should not persist in conversation history
-      this.conversationManager.removeSystemReminders();
+      this.conversationManager.removeEphemeralSystemReminders();
 
       // Emit error event
       this.emitEvent({
@@ -1616,6 +1618,7 @@ export class Agent {
 
       if (this.currentExploratoryStreak >= sternThreshold) {
         // Stern warning - agent is wasting significant context
+        // PERSIST: false - Ephemeral, temporary coaching that becomes irrelevant after the turn
         result.system_reminder = `⚠️ CRITICAL: You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls. You are wasting valuable context budget on manual exploration.
 
 STOP exploring manually. You MUST use explore() now.
@@ -1637,6 +1640,7 @@ Continuing to use read/grep/glob/ls/tree is inefficient and wastes your limited 
         logger.warn('[AGENT_EXPLORATORY_STERN]', this.instanceId, `Injected stern exploratory warning after ${this.currentExploratoryStreak} consecutive calls`);
       } else if (this.currentExploratoryStreak >= threshold) {
         // Gentle reminder - suggest explore()
+        // PERSIST: false - Ephemeral, temporary coaching that becomes irrelevant after the turn
         result.system_reminder = `You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls (read/grep/glob/ls/tree). For complex multi-file investigations, consider using explore() instead - it delegates to a specialized agent with its own context budget, protecting your token budget and enabling more thorough investigation.
 
 Recommended workflow:

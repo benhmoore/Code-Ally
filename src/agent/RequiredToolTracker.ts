@@ -187,6 +187,9 @@ export class RequiredToolTracker {
   /**
    * Create a warning message to prompt the agent to call required tools
    *
+   * PERSIST: false (ephemeral) - This is a one-time warning that the agent should act on immediately.
+   * No persist="true" attribute means it will be cleaned up after the turn.
+   *
    * @param missingTools - Array of tool names that need to be called
    * @returns Message object for conversation history
    */
