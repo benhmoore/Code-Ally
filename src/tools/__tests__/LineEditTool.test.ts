@@ -463,6 +463,91 @@ describe('LineEditTool', () => {
     });
   });
 
+  describe('show_updated_context parameter', () => {
+    it('should not include updated_content by default', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      const content = 'Line 1\nLine 2\nLine 3';
+      await fs.writeFile(filePath, content);
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'replace',
+        line_number: 2,
+        content: 'New Line 2',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBeUndefined();
+    });
+
+    it('should include updated_content when show_updated_context is true', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      const content = 'Line 1\nLine 2\nLine 3';
+      await fs.writeFile(filePath, content);
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'replace',
+        line_number: 2,
+        content: 'New Line 2',
+        show_updated_context: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBe('Line 1\nNew Line 2\nLine 3');
+    });
+
+    it('should not include updated_content when show_updated_context is false', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      const content = 'Line 1\nLine 2\nLine 3';
+      await fs.writeFile(filePath, content);
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'replace',
+        line_number: 2,
+        content: 'New Line 2',
+        show_updated_context: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBeUndefined();
+    });
+
+    it('should include updated_content for insert operation', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      const content = 'Line 1\nLine 3';
+      await fs.writeFile(filePath, content);
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'insert',
+        line_number: 2,
+        content: 'Line 2',
+        show_updated_context: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBe('Line 1\nLine 2\nLine 3');
+    });
+
+    it('should include updated_content for delete operation', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      const content = 'Line 1\nLine 2\nLine 3';
+      await fs.writeFile(filePath, content);
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'delete',
+        line_number: 2,
+        show_updated_context: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBe('Line 1\nLine 3');
+    });
+  });
+
   describe('tool metadata', () => {
     it('should have correct tool name', () => {
       expect(lineEditTool.name).toBe('line-edit');
@@ -482,6 +567,7 @@ describe('LineEditTool', () => {
       expect(def.function.parameters.required).toContain('line_number');
       expect(def.function.parameters.properties.content).toBeDefined();
       expect(def.function.parameters.properties.num_lines).toBeDefined();
+      expect(def.function.parameters.properties.show_updated_context).toBeDefined();
     });
 
     it('should provide custom result preview', () => {
@@ -518,6 +604,132 @@ describe('LineEditTool', () => {
         (line) => line.includes('10') && line.includes('12') && line.includes('+2')
       );
       expect(hasChangeInfo).toBe(true);
+    });
+  });
+
+  describe('Phase 2: Warning system and context window', () => {
+    it('should show warning on INSERT operation', async () => {
+      const filePath = join(tempDir, 'insert-warning.txt');
+      await fs.writeFile(filePath, 'Line 1\nLine 2\nLine 3');
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'insert',
+        line_number: 1,
+        content: 'New Line',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('⚠️');
+      expect(result.content).toContain('Re-read file');
+      expect(result.content).toContain('shifted down');
+    });
+
+    it('should show context_window when show_updated_context is false', async () => {
+      const filePath = join(tempDir, 'context-window.txt');
+      await fs.writeFile(filePath, 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5');
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'replace',
+        line_number: 3,
+        content: 'Modified',
+        show_updated_context: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.context_window).toBeDefined();
+      expect(result.updated_content).toBeUndefined();
+      expect(result.context_window).toContain('Modified');
+    });
+
+    it('should show updated_content when show_updated_context is true', async () => {
+      const filePath = join(tempDir, 'updated-content.txt');
+      await fs.writeFile(filePath, 'Line 1\nLine 2\nLine 3');
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'replace',
+        line_number: 2,
+        content: 'Modified',
+        show_updated_context: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBeDefined();
+      expect(result.context_window).toBeUndefined();
+      expect(result.updated_content).toContain('Modified');
+    });
+
+    it('should NOT show warning when line count unchanged', async () => {
+      const filePath = join(tempDir, 'no-warning.txt');
+      await fs.writeFile(filePath, 'Line 1\nLine 2\nLine 3');
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'replace',
+        line_number: 2,
+        content: 'Modified',
+        num_lines: 1,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).not.toContain('⚠️');
+      expect(result.content).not.toContain('shifted');
+    });
+
+    it('should NOT show warning when inserting at end of file (no lines to shift)', async () => {
+      const filePath = join(tempDir, 'insert-end-no-warning.txt');
+      await fs.writeFile(filePath, 'Line 1\nLine 2');
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'insert',
+        line_number: 3,
+        content: 'Line 3',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.lines_after).toBe(3);
+      // No warning because no existing lines were shifted
+      expect(result.content).not.toContain('⚠️');
+      expect(result.content).not.toContain('shifted');
+    });
+
+    it('should show context_window for DELETE operation', async () => {
+      const filePath = join(tempDir, 'delete-context.txt');
+      await fs.writeFile(filePath, 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5');
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'delete',
+        line_number: 3,
+        show_updated_context: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.context_window).toBeDefined();
+      expect(result.context_window).toContain('Line 1'); // context before
+      expect(result.context_window).toContain('Line 4'); // now at line 3 after deletion
+      expect(result.context_window).not.toContain('Line 3'); // deleted line
+    });
+
+    it('should handle deleting only line in file', async () => {
+      const filePath = join(tempDir, 'single-line.txt');
+      await fs.writeFile(filePath, 'Only line');
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'delete',
+        line_number: 1,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.lines_after).toBe(0);
+      expect(result.content).not.toContain('⚠️'); // No lines to shift
+
+      const newContent = await fs.readFile(filePath, 'utf-8');
+      expect(newContent).toBe('');
     });
   });
 });
