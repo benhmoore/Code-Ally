@@ -24,12 +24,8 @@ export interface ValidationResult {
   isValid: boolean;
   /** Whether this should trigger a retry */
   shouldRetry: boolean;
-  /** Whether max attempts have been exceeded */
-  maxAttemptsExceeded: boolean;
   /** Current attempt count */
   attemptCount: number;
-  /** Maximum allowed attempts */
-  maxAttempts: number;
   /** Validation error messages (if any) */
   errors?: string[];
 }
@@ -38,8 +34,6 @@ export interface ValidationResult {
  * Configuration for MessageValidator
  */
 export interface MessageValidatorConfig {
-  /** Maximum validation retry attempts (default: 2) */
-  maxAttempts?: number;
   /** Agent instance ID for logging */
   instanceId?: string;
 }
@@ -51,9 +45,6 @@ export class MessageValidator {
   /** Current validation attempt count */
   private attemptCount: number = 0;
 
-  /** Maximum allowed validation attempts */
-  private readonly maxAttempts: number;
-
   /** Agent instance ID for logging */
   private readonly instanceId: string;
 
@@ -63,7 +54,6 @@ export class MessageValidator {
    * @param config - Validator configuration
    */
   constructor(config: MessageValidatorConfig = {}) {
-    this.maxAttempts = config.maxAttempts ?? 2;
     this.instanceId = config.instanceId ?? 'unknown';
   }
 
@@ -73,7 +63,6 @@ export class MessageValidator {
    * This method checks if a response contains validation errors and determines:
    * - Whether the response is valid
    * - Whether a retry should be attempted
-   * - Whether max attempts have been exceeded
    *
    * @param response - LLM response to validate
    * @param isRetry - Whether this is already a retry attempt
@@ -88,9 +77,7 @@ export class MessageValidator {
       return {
         isValid: true,
         shouldRetry: false,
-        maxAttemptsExceeded: false,
         attemptCount: this.attemptCount,
-        maxAttempts: this.maxAttempts,
       };
     }
 
@@ -99,9 +86,7 @@ export class MessageValidator {
       return {
         isValid: false,
         shouldRetry: false,
-        maxAttemptsExceeded: false,
         attemptCount: this.attemptCount,
-        maxAttempts: this.maxAttempts,
         errors: response.validation_errors,
       };
     }
@@ -112,27 +97,14 @@ export class MessageValidator {
     logger.debug(
       `[AGENT_RESPONSE]`,
       this.instanceId,
-      `Tool call validation failed - attempt ${this.attemptCount}/${this.maxAttempts}`
+      `Tool call validation failed - attempt ${this.attemptCount} (will retry indefinitely)`
     );
     logger.debug(`[AGENT_RESPONSE] Validation errors:`, response.validation_errors?.join('; '));
 
-    // Check if max attempts exceeded
-    const maxExceeded = this.attemptCount > this.maxAttempts;
-
-    if (maxExceeded) {
-      logger.error(
-        `[AGENT_RESPONSE]`,
-        this.instanceId,
-        `Tool call validation failed after ${this.maxAttempts} attempts - returning error`
-      );
-    }
-
     return {
       isValid: false,
-      shouldRetry: !maxExceeded,
-      maxAttemptsExceeded: maxExceeded,
+      shouldRetry: true,
       attemptCount: this.attemptCount,
-      maxAttempts: this.maxAttempts,
       errors: response.validation_errors,
     };
   }
@@ -148,18 +120,9 @@ export class MessageValidator {
    */
   createValidationRetryMessage(errors?: string[]): Message {
     const errorList = errors || ['Unknown validation errors'];
+    // PERSIST: false - Ephemeral: One-time signal to retry with valid tool calls
+    // Cleaned up after turn since validation errors are turn-specific
     return createValidationErrorReminder(errorList);
-  }
-
-  /**
-   * Create an error message for max attempts exceeded
-   *
-   * @param errors - Validation error messages
-   * @returns Error message to return to user
-   */
-  createMaxAttemptsError(errors?: string[]): string {
-    const errorDetails = errors?.join('; ') || 'Unknown validation errors';
-    return `I attempted to call tools but encountered persistent validation errors after ${this.maxAttempts} attempts: ${errorDetails}`;
   }
 
   /**
@@ -177,15 +140,6 @@ export class MessageValidator {
   }
 
   /**
-   * Check if a retry can be attempted
-   *
-   * @returns True if attempts remain, false if max exceeded
-   */
-  canRetry(): boolean {
-    return this.attemptCount <= this.maxAttempts;
-  }
-
-  /**
    * Get current attempt count
    *
    * @returns Current number of validation attempts
@@ -195,22 +149,13 @@ export class MessageValidator {
   }
 
   /**
-   * Get maximum allowed attempts
-   *
-   * @returns Maximum validation attempts
-   */
-  getMaxAttempts(): number {
-    return this.maxAttempts;
-  }
-
-  /**
    * Log validation attempt for debugging
    *
    * @param errors - Validation error messages
    */
   logAttempt(errors?: string[]): void {
     logger.debug(
-      `[CONTINUATION] Gap 3: Tool call validation failed - prodding model to fix (attempt ${this.attemptCount}/${this.maxAttempts})`
+      `[CONTINUATION] Gap 3: Tool call validation failed - prodding model to fix (attempt ${this.attemptCount})`
     );
     logger.debug(`[CONTINUATION] Validation errors:`, errors?.join('; '));
   }

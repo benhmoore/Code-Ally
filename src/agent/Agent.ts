@@ -39,7 +39,7 @@ import { Message, ActivityEventType, Config, ToolCall } from '../types/index.js'
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE, TOKEN_MANAGEMENT } from '../config/constants.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE, TOKEN_MANAGEMENT } from '../config/constants.js';
 import {
   createInterruptionReminder,
   createEmptyTodoReminder,
@@ -254,7 +254,6 @@ export class Agent {
 
     // Create message validator
     this.messageValidator = new MessageValidator({
-      maxAttempts: AGENT_CONFIG.MAX_VALIDATION_ATTEMPTS,
       instanceId: this.instanceId,
     });
 
@@ -496,26 +495,18 @@ export class Agent {
   private handleActivityTimeout(elapsedMs: number): void {
     const elapsedSeconds = Math.round(elapsedMs / 1000);
 
-    // Check if we should attempt continuation or fail completely
-    const canContinue = this.timeoutContinuationAttempts < BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS;
-
-    // Set interruption context
+    // Set interruption context for continuation
+    // No longer limiting continuation attempts - will retry indefinitely
     this.interruptionManager.setInterruptionContext({
-      reason: canContinue
-        ? `Activity timeout: no tool calls for ${elapsedSeconds} seconds (attempt ${this.timeoutContinuationAttempts + 1}/${BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS})`
-        : `Agent stuck: no tool calls for ${elapsedSeconds} seconds (max continuation attempts exceeded)`,
+      reason: `Activity timeout: no tool calls for ${elapsedSeconds} seconds`,
       isTimeout: true,
-      canContinueAfterTimeout: canContinue,
+      canContinueAfterTimeout: true,
     });
 
     // Interrupt current request (cancels LLM streaming)
     this.interrupt();
 
-    // Only stop monitoring if we're failing completely
-    // Otherwise, monitoring will restart when we retry
-    if (!canContinue) {
-      this.stopActivityMonitoring();
-    }
+    // Monitoring will restart when we retry
   }
 
   /**
@@ -650,6 +641,8 @@ export class Agent {
         let systemReminder: Message;
 
         if (todos.length === 0) {
+          // PERSIST: false - Ephemeral: Dynamic todo state suggestion
+          // Cleaned up after turn since todo list regenerated each message
           systemReminder = createEmptyTodoReminder();
         } else {
           // Build todo summary
@@ -663,10 +656,11 @@ export class Agent {
           const currentTask = inProgressTodo ? inProgressTodo.task : null;
           const guidance = 'Keep list clean: remove irrelevant tasks, maintain ONE in_progress task.\nUpdate list now if needed based on user request.';
 
+          // PERSIST: false - Ephemeral: Current todo list state
+          // Cleaned up after turn since todo state is dynamic and updated each message
           systemReminder = createActiveTodoReminder(todoSummary, currentTask, guidance);
         }
 
-        // PERSIST: false - Ephemeral, todo list state is dynamic and updated each message
         this.conversationManager.addMessage(systemReminder);
         logger.debug('[AGENT_TODO_REMINDER]', this.instanceId, 'Injected todo reminder system message');
       }
@@ -1118,12 +1112,22 @@ export class Agent {
         const canContinueAfterTimeout = (context as any).canContinueAfterTimeout === true;
 
         if (canContinueAfterTimeout) {
-          // Increment continuation counter
+          // Increment continuation counter for logging/metrics
+          // No longer enforcing a maximum - will continue indefinitely
           this.timeoutContinuationAttempts++;
           logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId,
-            `Attempting continuation ${this.timeoutContinuationAttempts}/${BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS}`);
+            `Attempting continuation (attempt ${this.timeoutContinuationAttempts})`);
 
-          // Add continuation prompt to conversation
+          // Ensure context room before adding continuation message
+          const contextUsage = this.contextCoordinator.getContextUsagePercentage();
+          if (contextUsage >= this.config.config.compact_threshold) {
+            logger.debug('[AGENT_RETRY]', this.instanceId,
+              `Context at ${contextUsage}% (>= ${this.config.config.compact_threshold}%), triggering auto-compaction before timeout continuation`);
+            await this.checkAutoCompaction();
+          }
+
+          // PERSIST: false - Ephemeral: One-time prompt to continue after timeout
+          // Cleaned up after turn since timeout context not needed after continuation
           const continuationPrompt = createActivityTimeoutContinuationReminder();
           this.conversationManager.addMessage(continuationPrompt);
 
@@ -1261,6 +1265,16 @@ export class Agent {
       getContextUsagePercentage: () => this.contextCoordinator.getContextUsagePercentage(),
       contextWarningThreshold: CONTEXT_THRESHOLDS.WARNING,
       cleanupEphemeralMessages: () => this.cleanupEphemeralMessages(),
+      ensureContextRoom: async () => {
+        // Check if context usage is at or above compact threshold before adding retry messages
+        // This prevents infinite loops where retry messages fill up context
+        const contextUsage = this.contextCoordinator.getContextUsagePercentage();
+        if (contextUsage >= this.config.config.compact_threshold) {
+          logger.debug('[AGENT_RETRY]', this.instanceId,
+            `Context at ${contextUsage}% (>= ${this.config.config.compact_threshold}%), triggering auto-compaction before retry`);
+          await this.checkAutoCompaction();
+        }
+      },
     };
   }
 
@@ -1406,6 +1420,29 @@ export class Agent {
     // Checkpoint tracking is per-turn only, not based on historical messages
 
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages set, count:', this.conversationManager.getMessageCount());
+  }
+
+  /**
+   * Remove ephemeral system reminder messages
+   *
+   * Used to clean up ephemeral reminders after session restore.
+   *
+   * @returns Number of messages affected
+   */
+  removeEphemeralSystemReminders(): number {
+    return this.conversationManager.removeEphemeralSystemReminders();
+  }
+
+  /**
+   * Clean up stale persistent reminders older than specified age
+   *
+   * This is a defensive mechanism to prevent persistent reminder accumulation.
+   *
+   * @param maxAge - Maximum age in milliseconds (default: 30 minutes)
+   * @returns Number of stale persistent reminders removed
+   */
+  cleanupStaleReminders(maxAge?: number): number {
+    return this.conversationManager.cleanupStaleReminders(maxAge);
   }
 
   /**
@@ -1719,7 +1756,8 @@ export class Agent {
       TOOL_GUIDANCE.CHECKPOINT_MAX_PROMPT_TOKENS
     );
 
-    // Generate firm but professional reminder
+    // PERSIST: false - Ephemeral: One-time alignment verification checkpoint
+    // Cleaned up after turn since agent should course-correct immediately and move on
     const reminder = createCheckpointReminder(this.toolCallsSinceStart, truncatedPrompt);
 
     // Reset checkpoint counter

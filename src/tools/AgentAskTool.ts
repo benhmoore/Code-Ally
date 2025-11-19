@@ -304,6 +304,8 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
       const maxDurationNum = maxDuration ? getThoroughnessDuration(thoroughness as ThoroughnessLevel) || null : null;
       const maxDurationStr = maxDurationNum ? formatMinutesSeconds(maxDurationNum) : null;
 
+      // PERSIST: true - Persistent: Explains specialized agent's purpose and constraints
+      // Kept throughout agent's entire lifecycle to maintain role clarity
       return createAgentTaskContextReminder(displayName, taskPrompt, maxDurationStr, thoroughness);
     } catch (error) {
       logger.debug('[ASK_AGENT_TOOL] Error building task context:', error);

@@ -108,14 +108,12 @@ describe('RequiredToolTracker', () => {
       tracker.markCalled('tool2');
       const result = tracker.checkAndWarn();
       expect(result.shouldWarn).toBe(false);
-      expect(result.shouldFail).toBe(false);
       expect(result.missingTools).toEqual([]);
     });
 
     it('should issue warning on first check', () => {
       const result = tracker.checkAndWarn();
       expect(result.shouldWarn).toBe(true);
-      expect(result.shouldFail).toBe(false);
       expect(result.warningCount).toBe(1);
       expect(result.missingTools).toEqual(['tool1', 'tool2']);
     });
@@ -128,16 +126,13 @@ describe('RequiredToolTracker', () => {
       expect(result2.warningCount).toBe(2);
     });
 
-    it('should fail after max warnings', () => {
-      // First two warnings
-      tracker.checkAndWarn();
-      tracker.checkAndWarn();
-
-      // Third check should fail
-      const result = tracker.checkAndWarn();
-      expect(result.shouldWarn).toBe(false);
-      expect(result.shouldFail).toBe(true);
-      expect(result.warningCount).toBe(2);
+    it('should support infinite warnings', () => {
+      // Verify warnings can continue indefinitely
+      for (let i = 1; i <= 100; i++) {
+        const result = tracker.checkAndWarn();
+        expect(result.shouldWarn).toBe(true);
+        expect(result.warningCount).toBe(i);
+      }
     });
 
     it('should track warning message index', () => {
@@ -163,13 +158,6 @@ describe('RequiredToolTracker', () => {
       const message = tracker.createWarningMessage(['tool1', 'tool2']);
       expect(message.content).toContain('tool1, tool2');
       expect(message.content).toContain('these tools');
-    });
-
-    it('should create failure message', () => {
-      const message = tracker.createFailureMessage(['tool1', 'tool2']);
-      expect(message).toContain('failed to call required tools');
-      expect(message).toContain('tool1, tool2');
-      expect(message).toContain('2 warnings');
     });
   });
 

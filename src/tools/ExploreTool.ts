@@ -464,10 +464,13 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
           agent_used: 'explore',
         };
 
-        // Always include agent_id when available
+        // Always include agent_id when available (with explicit persistence flags)
         if (agentId) {
           successResponse.agent_id = agentId;
-          successResponse.system_reminder = createAgentPersistenceReminder(agentId);
+          // PERSIST: false - Ephemeral: Coaching about agent-ask for follow-ups
+          // Cleaned up after turn since agent should integrate advice, not need constant reminding
+          const reminder = createAgentPersistenceReminder(agentId);
+          Object.assign(successResponse, reminder);
         }
 
         return this.formatSuccessResponse(successResponse);

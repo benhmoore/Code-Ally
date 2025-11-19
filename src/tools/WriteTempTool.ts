@@ -115,11 +115,14 @@ export class WriteTempTool extends BaseTool {
 
       const successMessage = `Wrote ${stats.size} bytes to ${absolutePath}`;
 
+      // PERSIST: false - Ephemeral: Temporary hint about file location
+      // Cleaned up after turn since agent learns file path from response, doesn't need reminder
+      const reminder = createWriteTempHintReminder(absolutePath);
       return this.formatSuccessResponse({
         content: successMessage, // Human-readable output for LLM
         file_path: absolutePath,
         bytes_written: stats.size,
-        system_reminder: createWriteTempHintReminder(absolutePath),
+        ...reminder, // Spread to include both system_reminder and system_reminder_persist
       });
     } catch (error) {
       return this.formatErrorResponse(

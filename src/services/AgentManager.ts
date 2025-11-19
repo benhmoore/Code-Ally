@@ -593,9 +593,6 @@ export class AgentManager {
       if (reqs.require_tool_use !== undefined) {
         lines.push(`  require_tool_use: ${reqs.require_tool_use}`);
       }
-      if (reqs.max_retries !== undefined) {
-        lines.push(`  max_retries: ${reqs.max_retries}`);
-      }
       if (reqs.reminder_message) {
         lines.push(`  reminder_message: "${reqs.reminder_message}"`);
       }

@@ -10,7 +10,6 @@
  */
 
 import { logger } from '../services/Logger.js';
-import { AGENT_CONFIG } from '../config/constants.js';
 
 /**
  * Agent requirements specification
@@ -113,23 +112,6 @@ export interface AgentRequirements {
    */
   require_tool_use?: boolean;
 
-  /**
-   * Maximum number of reminder attempts before allowing exit anyway
-   *
-   * When requirements are not met, the agent receives a reminder message
-   * and continues. This parameter limits how many times this can happen.
-   * After max_retries is exceeded, the agent is allowed to exit even if
-   * requirements are not met.
-   *
-   * @default AGENT_CONFIG.DEFAULT_REQUIREMENT_MAX_RETRIES (2)
-   *
-   * @example
-   * ```typescript
-   * max_retries: 3
-   * // Allow up to 3 reminder attempts before giving up
-   * ```
-   */
-  max_retries?: number;
 
   /**
    * Custom reminder message (optional)
@@ -257,7 +239,7 @@ export class RequirementValidator {
    */
   incrementRetryCount(): number {
     this.retryCount++;
-    logger.debug('[REQUIREMENT_TRACKER]', this.instanceId, 'Retry count incremented to:', this.retryCount);
+    logger.debug('[REQUIREMENT_TRACKER]', this.instanceId, 'Retry count incremented to:', this.retryCount, '(will retry indefinitely)');
     return this.retryCount;
   }
 
@@ -267,22 +249,6 @@ export class RequirementValidator {
    */
   getRetryCount(): number {
     return this.retryCount;
-  }
-
-  /**
-   * Get the maximum number of retries allowed
-   * @returns Max retries (defaults to AGENT_CONFIG.DEFAULT_REQUIREMENT_MAX_RETRIES if not specified)
-   */
-  getMaxRetries(): number {
-    return this.requirements?.max_retries ?? AGENT_CONFIG.DEFAULT_REQUIREMENT_MAX_RETRIES;
-  }
-
-  /**
-   * Check if max retries have been exceeded
-   * @returns True if retry count >= max retries
-   */
-  hasExceededMaxRetries(): boolean {
-    return this.retryCount >= this.getMaxRetries();
   }
 
   /**

@@ -315,6 +315,49 @@ export class ConversationManager {
   }
 
   /**
+   * Clean up stale persistent reminders older than specified age
+   *
+   * This is a defensive mechanism to prevent persistent reminder accumulation.
+   * Persistent reminders should be rare and have limited lifetime.
+   *
+   * @param maxAge - Maximum age in milliseconds (default: 30 minutes)
+   * @returns Number of stale persistent reminders removed
+   */
+  cleanupStaleReminders(maxAge: number = 30 * 60 * 1000): number {
+    let removed = 0;
+    const cutoff = Date.now() - maxAge;
+
+    this.messages = this.messages.filter(msg => {
+      // Keep messages without system-reminder tags
+      if (!msg.content.includes(SYSTEM_REMINDER.OPENING_TAG)) {
+        return true;
+      }
+
+      // Keep ephemeral reminders (handled by removeEphemeralSystemReminders)
+      if (!SYSTEM_REMINDER.PERSIST_PATTERN.test(msg.content)) {
+        return true;
+      }
+
+      // Remove persistent reminders older than maxAge
+      if (msg.timestamp && msg.timestamp < cutoff) {
+        logger.debug(
+          `[CONVERSATION_MANAGER] Removing stale persistent reminder (age: ${Math.floor((Date.now() - msg.timestamp) / 1000)}s)`
+        );
+        removed++;
+        return false;
+      }
+
+      return true;
+    });
+
+    if (removed > 0) {
+      logger.debug(`[CONVERSATION_MANAGER] Cleaned up ${removed} stale persistent reminders`);
+    }
+
+    return removed;
+  }
+
+  /**
    * Clean up ephemeral messages from conversation history
    *
    * Ephemeral messages are marked with metadata.ephemeral = true

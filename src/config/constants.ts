@@ -63,6 +63,17 @@ export const API_TIMEOUTS = {
   PROCESS_KILL_GRACE_PERIOD: 2000,
 } as const;
 
+/**
+ * Retry configuration for LLM request error handling
+ */
+export const RETRY_CONFIG = {
+  /** Maximum backoff delay between retries (seconds) */
+  MAX_BACKOFF_SECONDS: 60,
+
+  /** Maximum LLM request timeout (milliseconds) */
+  MAX_LLM_TIMEOUT: 600000, // 10 minutes
+} as const;
+
 // ===========================================
 // POLLING & CLEANUP INTERVALS
 // ===========================================
@@ -348,12 +359,6 @@ export const BUFFER_SIZES = {
 
   /** Number of recent agent messages to include in summary */
   AGENT_RECENT_MESSAGES: 3,
-
-  /** Maximum warnings before required tool call failure */
-  AGENT_REQUIRED_TOOL_MAX_WARNINGS: 2,
-
-  /** Maximum continuation attempts after activity timeout before failing */
-  AGENT_TIMEOUT_MAX_CONTINUATIONS: 3,
 
   /** Maximum file paths to display in todo items */
   TODO_FILE_PATHS_DISPLAY: 2,
@@ -739,9 +744,6 @@ export const AGENT_CONFIG = {
   /** Number of identical tool calls that trigger cycle detection */
   CYCLE_THRESHOLD: 3,
 
-  /** Maximum retry attempts for message validation */
-  MAX_VALIDATION_ATTEMPTS: 2,
-
   /** Number of consecutive different tool calls to clear cycle history */
   CYCLE_BREAK_THRESHOLD: 3,
 
@@ -759,9 +761,6 @@ export const AGENT_CONFIG = {
 
   /** Minimum number of searches required before checking hit rate */
   MIN_SEARCHES_FOR_HIT_RATE: 5,
-
-  /** Default maximum retries for agent tool requirements before allowing exit */
-  DEFAULT_REQUIREMENT_MAX_RETRIES: 2,
 
   /** Maximum agent nesting depth (0=root Ally, 1-3=delegated agents) */
   MAX_AGENT_DEPTH: 3,

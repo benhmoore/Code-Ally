@@ -95,6 +95,8 @@ export interface ResponseContext {
   contextWarningThreshold: number;
   /** Callback to clean up ephemeral messages */
   cleanupEphemeralMessages: () => void;
+  /** Callback to ensure context room before adding retry/continuation messages */
+  ensureContextRoom: () => Promise<void>;
 }
 
 /**
@@ -210,15 +212,6 @@ export class ResponseProcessor {
       // Log the validation attempt
       this.messageValidator.logAttempt(validationResult.errors);
 
-      // Check if we've exceeded the max validation attempts
-      if (validationResult.maxAttemptsExceeded) {
-        // Reset counter for next request
-        this.messageValidator.reset();
-
-        // Return error message to user
-        return this.messageValidator.createMaxAttemptsError(validationResult.errors);
-      }
-
       // Add the assistant's response with malformed tool calls to conversation history
       const assistantMessage: Message = {
         role: 'assistant',
@@ -235,6 +228,9 @@ export class ResponseProcessor {
         timestamp: Date.now(),
       };
       this.conversationManager.addMessage(assistantMessage);
+
+      // Ensure context room before adding retry message
+      await context.ensureContextRoom();
 
       // Add continuation prompt with validation error details
       const continuationPrompt = this.messageValidator.createValidationRetryMessage(validationResult.errors);
@@ -295,6 +291,9 @@ export class ResponseProcessor {
         timestamp: Date.now(),
       };
       this.conversationManager.addMessage(assistantMessage);
+
+      // Ensure context room before adding retry message
+      await context.ensureContextRoom();
 
       // Add generic continuation prompt
       // PERSIST: false - Ephemeral, one-time continuation signal for incomplete response
@@ -563,28 +562,13 @@ export class ResponseProcessor {
       const result = this.requiredToolTracker.checkAndWarn();
       logger.debug(`[REQUIRED_TOOLS_DEBUG] Missing tools:`, result.missingTools);
 
-      if (result.shouldFail) {
-        // Exceeded max warnings - fail the operation
-        const errorMessage = this.requiredToolTracker.createFailureMessage(result.missingTools);
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] ✗ FAILING - exceeded max warnings (${result.warningCount}/${result.maxWarnings})`);
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] Error message:`, errorMessage);
-        logger.error('[AGENT_REQUIRED_TOOLS]', context.instanceId, errorMessage);
-
-        const assistantMessage: Message = {
-          role: 'assistant',
-          content: `[Error: ${errorMessage}]`,
-          timestamp: Date.now(),
-        };
-        this.conversationManager.addMessage(assistantMessage);
-        context.autoSaveSession();
-
-        return `[Error: ${errorMessage}]`;
-      }
-
       if (result.shouldWarn) {
         // Send reminder to call required tools
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${result.warningCount}/${result.maxWarnings}`);
+        logger.debug(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${result.warningCount} (will retry indefinitely)`);
         logger.debug(`[REQUIRED_TOOLS_DEBUG] Sending reminder to call: ${result.missingTools.join(', ')}`);
+
+        // Ensure context room before adding retry message
+        await context.ensureContextRoom();
 
         const reminderMessage = this.requiredToolTracker.createWarningMessage(result.missingTools);
         this.requiredToolTracker.setWarningMessageIndex(this.conversationManager.getMessageCount()); // Track index before push
@@ -635,46 +619,43 @@ export class ResponseProcessor {
       logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Checking requirements before agent exit');
       logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Successful tool calls:', this.requirementValidator.getSuccessfulToolCalls());
 
-      const { met, reason } = this.requirementValidator.checkRequirements();
+      const { met } = this.requirementValidator.checkRequirements();
 
       if (!met) {
-        // Requirements not met - check if we should retry or allow exit
-        if (this.requirementValidator.hasExceededMaxRetries()) {
-          // Max retries exceeded - allow exit anyway
-          logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId,
-            'Requirements not met but max retries exceeded. Allowing exit. Reason:', reason);
-        } else {
-          // Inject reminder and retry
-          this.requirementValidator.incrementRetryCount();
-          const retryCount = this.requirementValidator.getRetryCount();
-          const maxRetries = this.requirementValidator.getMaxRetries();
+        // Requirements not met - inject reminder and retry
+        this.requirementValidator.incrementRetryCount();
+        const retryCount = this.requirementValidator.getRetryCount();
 
-          logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId,
-            `Requirements not met. Injecting reminder (attempt ${retryCount}/${maxRetries})`);
+        logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId,
+          `Requirements not met. Injecting reminder (attempt ${retryCount}, will retry indefinitely)`);
 
-          const reminderMessage = createRequirementsNotMetReminder(
-            this.requirementValidator.getReminderMessage()
-          );
-          this.conversationManager.addMessage(reminderMessage);
-          context.autoSaveSession();
+        // Ensure context room before adding retry message
+        await context.ensureContextRoom();
 
-          // Check for interruption before retry
-          if (this.interruptionManager.isInterrupted()) {
-            logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Interrupted before requirements retry');
-            if (this.interruptionManager.getInterruptionType() === 'cancel') {
-              this.interruptionManager.markRequestAsInterrupted();
-              return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-            }
-            return '';
+        // PERSIST: false - Ephemeral: One-time requirement reminder
+        // Cleaned up after turn since agent should meet requirements immediately
+        const reminderMessage = createRequirementsNotMetReminder(
+          this.requirementValidator.getReminderMessage()
+        );
+        this.conversationManager.addMessage(reminderMessage);
+        context.autoSaveSession();
+
+        // Check for interruption before retry
+        if (this.interruptionManager.isInterrupted()) {
+          logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Interrupted before requirements retry');
+          if (this.interruptionManager.getInterruptionType() === 'cancel') {
+            this.interruptionManager.markRequestAsInterrupted();
+            return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
           }
-
-          // Get new response from LLM
-          logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Requesting LLM to meet requirements...');
-          const retryResponse = await context.getLLMResponse();
-
-          // Recursively process the response
-          return await this.processLLMResponse(retryResponse, context);
+          return '';
         }
+
+        // Get new response from LLM
+        logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Requesting LLM to meet requirements...');
+        const retryResponse = await context.getLLMResponse();
+
+        // Recursively process the response
+        return await this.processLLMResponse(retryResponse, context);
       } else {
         logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'All requirements met');
       }
@@ -690,7 +671,8 @@ export class ResponseProcessor {
         logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Empty response after tool execution - attempting continuation');
         logger.debug(`[AGENT_RESPONSE] Empty response after ${lastMessage.tool_calls?.length || 0} tool calls`);
 
-        // Add continuation prompt
+        // PERSIST: false - Ephemeral: One-time prompt to respond after tool execution
+        // Cleaned up after turn since tool execution context already in history
         const continuationPrompt = createEmptyAfterToolsReminder();
         this.conversationManager.addMessage(continuationPrompt);
 

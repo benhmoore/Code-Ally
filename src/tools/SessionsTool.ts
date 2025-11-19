@@ -343,10 +343,13 @@ export class SessionsTool extends BaseTool {
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
         };
 
-        // Always include agent_id when available
+        // Always include agent_id when available (with explicit persistence flags)
         if (agentId) {
           successResponse.agent_id = agentId;
-          successResponse.system_reminder = createAgentPersistenceReminder(agentId);
+          // PERSIST: false - Ephemeral: Coaching about agent-ask for follow-ups
+          // Cleaned up after turn since agent should integrate advice, not need constant reminding
+          const reminder = createAgentPersistenceReminder(agentId);
+          Object.assign(successResponse, reminder);
         }
 
         return this.formatSuccessResponse(successResponse);

@@ -15,21 +15,16 @@
  */
 
 import { Message } from '../types/index.js';
-import { BUFFER_SIZES } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
 import { createRequiredToolsWarning } from '../utils/messageUtils.js';
 
 export interface RequiredToolWarningResult {
   /** Whether a warning should be issued */
   shouldWarn: boolean;
-  /** Whether max warnings exceeded (should fail) */
-  shouldFail: boolean;
   /** Missing tools that still need to be called */
   missingTools: string[];
   /** Current warning count */
   warningCount: number;
-  /** Maximum allowed warnings */
-  maxWarnings: number;
 }
 
 /**
@@ -47,9 +42,6 @@ export class RequiredToolTracker {
 
   /** Index of the last warning message in conversation history (for removal) */
   private warningMessageIndex: number = -1;
-
-  /** Maximum warnings before failure */
-  private readonly maxWarnings: number = BUFFER_SIZES.AGENT_REQUIRED_TOOL_MAX_WARNINGS;
 
   /** Agent instance ID for logging */
   private readonly instanceId: string;
@@ -150,21 +142,8 @@ export class RequiredToolTracker {
     if (missingTools.length === 0) {
       return {
         shouldWarn: false,
-        shouldFail: false,
         missingTools: [],
         warningCount: this.warningCount,
-        maxWarnings: this.maxWarnings,
-      };
-    }
-
-    // Check if we've exceeded max warnings
-    if (this.warningCount >= this.maxWarnings) {
-      return {
-        shouldWarn: false,
-        shouldFail: true,
-        missingTools,
-        warningCount: this.warningCount,
-        maxWarnings: this.maxWarnings,
       };
     }
 
@@ -173,15 +152,13 @@ export class RequiredToolTracker {
     logger.debug(
       '[REQUIRED_TOOLS]',
       this.instanceId,
-      `Agent attempting to exit without calling required tools (warning ${this.warningCount}/${this.maxWarnings}). Missing: ${missingTools.join(', ')}`
+      `Agent attempting to exit without calling required tools (warning ${this.warningCount}, will retry indefinitely). Missing: ${missingTools.join(', ')}`
     );
 
     return {
       shouldWarn: true,
-      shouldFail: false,
       missingTools,
       warningCount: this.warningCount,
-      maxWarnings: this.maxWarnings,
     };
   }
 
@@ -196,16 +173,6 @@ export class RequiredToolTracker {
    */
   createWarningMessage(missingTools: string[]): Message {
     return createRequiredToolsWarning(missingTools);
-  }
-
-  /**
-   * Create an error message when max warnings exceeded
-   *
-   * @param missingTools - Array of tool names that were never called
-   * @returns Error message string
-   */
-  createFailureMessage(missingTools: string[]): string {
-    return `Agent failed to call required tools after ${this.maxWarnings} warnings. Missing tools: ${missingTools.join(', ')}`;
   }
 
   /**
@@ -250,15 +217,6 @@ export class RequiredToolTracker {
    */
   getWarningCount(): number {
     return this.warningCount;
-  }
-
-  /**
-   * Get maximum allowed warnings
-   *
-   * @returns Maximum warning count before failure
-   */
-  getMaxWarnings(): number {
-    return this.maxWarnings;
   }
 
   /**

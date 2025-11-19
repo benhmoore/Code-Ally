@@ -280,7 +280,6 @@ describe('RequirementValidator', () => {
     beforeEach(() => {
       validator.setRequirements({
         required_tools_one_of: ['tool1'],
-        max_retries: 3,
       });
     });
 
@@ -305,36 +304,12 @@ describe('RequirementValidator', () => {
       expect(count).toBe(1);
     });
 
-    it('should default max retries to 2', () => {
-      const defaultValidator = new RequirementValidator('test-default');
-      defaultValidator.setRequirements({
-        require_tool_use: true,
-      });
-      expect(defaultValidator.getMaxRetries()).toBe(2);
-    });
-
-    it('should use custom max retries', () => {
-      expect(validator.getMaxRetries()).toBe(3);
-    });
-
-    it('should not exceed max retries initially', () => {
-      expect(validator.hasExceededMaxRetries()).toBe(false);
-    });
-
-    it('should detect when max retries are reached', () => {
-      validator.incrementRetryCount();
-      validator.incrementRetryCount();
-      validator.incrementRetryCount();
-      expect(validator.hasExceededMaxRetries()).toBe(true);
-    });
-
-    it('should detect when max retries are exceeded', () => {
-      validator.incrementRetryCount();
-      validator.incrementRetryCount();
-      validator.incrementRetryCount();
-      validator.incrementRetryCount();
-      expect(validator.hasExceededMaxRetries()).toBe(true);
-      expect(validator.getRetryCount()).toBe(4);
+    it('should support infinite retries', () => {
+      // Increment many times to verify no max limit
+      for (let i = 0; i < 100; i++) {
+        validator.incrementRetryCount();
+      }
+      expect(validator.getRetryCount()).toBe(100);
     });
 
     it('should reset retry count on reset', () => {
@@ -342,7 +317,6 @@ describe('RequirementValidator', () => {
       validator.incrementRetryCount();
       validator.reset();
       expect(validator.getRetryCount()).toBe(0);
-      expect(validator.hasExceededMaxRetries()).toBe(false);
     });
   });
 
@@ -436,7 +410,6 @@ describe('RequirementValidator', () => {
     it('should preserve requirements', () => {
       validator.reset();
       expect(validator.hasRequirements()).toBe(true);
-      expect(validator.getMaxRetries()).toBe(3);
     });
 
     it('should allow new tracking after reset', () => {
@@ -537,35 +510,6 @@ describe('RequirementValidator', () => {
       });
       const result = validator.checkRequirements();
       expect(result.met).toBe(true);
-    });
-
-    it('should handle zero max_retries', () => {
-      validator.setRequirements({
-        require_tool_use: true,
-        max_retries: 0,
-      });
-      expect(validator.getMaxRetries()).toBe(0);
-      expect(validator.hasExceededMaxRetries()).toBe(true);
-    });
-
-    it('should handle negative max_retries', () => {
-      validator.setRequirements({
-        require_tool_use: true,
-        max_retries: -1,
-      });
-      expect(validator.getMaxRetries()).toBe(-1);
-      expect(validator.hasExceededMaxRetries()).toBe(true);
-    });
-
-    it('should handle very large retry counts', () => {
-      validator.setRequirements({
-        require_tool_use: true,
-        max_retries: 1000,
-      });
-      for (let i = 0; i < 1001; i++) {
-        validator.incrementRetryCount();
-      }
-      expect(validator.hasExceededMaxRetries()).toBe(true);
     });
 
     it('should handle empty string tool names', () => {

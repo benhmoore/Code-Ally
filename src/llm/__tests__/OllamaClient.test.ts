@@ -207,18 +207,6 @@ describe('OllamaClient', () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
-    it('should return error response after max retries', async () => {
-      mockFetch.mockRejectedValue(new TypeError('Network error'));
-
-      const messages: Message[] = [{ role: 'user', content: 'Test' }];
-
-      const result = await client.send(messages, { stream: false, maxRetries: 1 });
-
-      expect(result.error).toBe(true);
-      expect(result.content).toContain('Error communicating with Ollama');
-      expect(result.suggestions).toBeDefined();
-    });
-
     it('should handle HTTP errors', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
@@ -254,16 +242,6 @@ describe('OllamaClient', () => {
       const result = await client.send(messages, { stream: false, maxRetries: 1 });
 
       expect(result.content).toBe('Success');
-    });
-
-    it('should provide helpful suggestions for connection refused', async () => {
-      mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
-
-      const messages: Message[] = [{ role: 'user', content: 'Test' }];
-
-      const result = await client.send(messages, { stream: false, maxRetries: 0 });
-
-      expect(result.suggestions).toContain('Start Ollama service: `ollama serve`');
     });
 
     it('should provide helpful suggestions for 404 errors', async () => {

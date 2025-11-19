@@ -464,18 +464,28 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         }
 
         // Build response with agent_used
+        // PERSIST: false - Ephemeral: One-time notification about plan activation
+        // Cleaned up after turn since agent should acknowledge and move on
+        const planAcceptedReminder = createPlanAcceptedReminder();
         const successResponse: Record<string, any> = {
           content,
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
           agent_used: 'plan',
-          system_reminder: createPlanAcceptedReminder(),
         };
 
-        // Always include agent_id when available
+        // Add plan accepted reminder (with explicit persistence flags)
+        Object.assign(successResponse, planAcceptedReminder);
+
+        // Always include agent_id when available (with explicit persistence flags)
         if (agentId) {
           successResponse.agent_id = agentId;
-          // Append agent-ask reminder to existing system_reminder
-          successResponse.system_reminder += '\n\n' + createAgentPersistenceReminder(agentId);
+          // PERSIST: false - Ephemeral: Coaching about agent-ask for follow-ups
+          // Cleaned up after turn since agent should integrate advice, not need constant reminding
+          const agentReminder = createAgentPersistenceReminder(agentId);
+          // Append agent-ask reminder text to existing system_reminder
+          successResponse.system_reminder += '\n\n' + agentReminder.system_reminder;
+          // Keep system_reminder_persist from plan accepted (ephemeral)
+          // Both reminders are ephemeral, so persistence flag stays false
         }
 
         return this.formatSuccessResponse(successResponse);

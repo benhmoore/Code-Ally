@@ -194,6 +194,18 @@ export async function loadSessionData(
   // Bulk load messages into agent (doesn't trigger auto-save)
   agent.setMessages(userMessages);
 
+  // Clean up ephemeral reminders from loaded session
+  const removedEphemeral = agent.removeEphemeralSystemReminders();
+  if (removedEphemeral > 0) {
+    console.debug(`[SESSION] Cleaned up ${removedEphemeral} ephemeral reminders from loaded session`);
+  }
+
+  // Clean up stale persistent reminders (defensive - removes persistent reminders older than 30 minutes)
+  const removedStale = agent.cleanupStaleReminders();
+  if (removedStale > 0) {
+    console.debug(`[SESSION] Cleaned up ${removedStale} stale persistent reminders from loaded session`);
+  }
+
   // Atomically update UI with new messages AND increment remount key
   // This prevents Static component from accumulating renders
   actions.resetConversationView(userMessages);

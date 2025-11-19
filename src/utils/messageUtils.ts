@@ -118,21 +118,6 @@ export function createInterruptionReminder(): Message {
 }
 
 /**
- * Create activity timeout reminder
- */
-export function createActivityTimeoutReminder(
-  elapsedSeconds: number,
-  attempt: number,
-  maxAttempts: number
-): Message {
-  const config = SYSTEM_REMINDERS.INTERRUPTIONS.ACTIVITY_TIMEOUT;
-  const text = isReminderFunction(config.text)
-    ? config.text(elapsedSeconds, attempt, maxAttempts)
-    : config.text;
-  return createSystemReminder(text as string, config.persist);
-}
-
-/**
  * Create activity timeout continuation reminder
  */
 export function createActivityTimeoutContinuationReminder(): Message {

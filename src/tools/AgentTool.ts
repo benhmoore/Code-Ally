@@ -332,10 +332,13 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           duration_seconds: result.duration_seconds,
         };
 
-        // Always include agent_id when available
+        // Always include agent_id when available (with explicit persistence flags)
         if (result.agent_id) {
           successResponse.agent_id = result.agent_id;
-          successResponse.system_reminder = createAgentPersistenceReminder(result.agent_id);
+          // PERSIST: false - Ephemeral: Coaching about agent-ask for follow-ups
+          // Cleaned up after turn since agent should integrate advice, not need constant reminding
+          const reminder = createAgentPersistenceReminder(result.agent_id);
+          Object.assign(successResponse, reminder);
         }
 
         return this.formatSuccessResponse(successResponse);

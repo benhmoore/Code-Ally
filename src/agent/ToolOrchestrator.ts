@@ -905,34 +905,22 @@ export class ToolOrchestrator {
 
     // Inject system_reminder from tool result (if provided)
     // This allows tools to inject contextual reminders directly into their results
-    // PERSIST classification:
-    // - false (ephemeral): Exploratory tool warnings, agent persistence reminders, plan acceptance, temp file hints (temporary coaching)
-    // - true (persistent): Task context (explains agent purpose and constraints)
-    // - DEFAULT: false (ephemeral) for safety - unknown reminders should not pollute context
+    // Tools now explicitly declare persistence via system_reminder_persist flag
     if (systemReminder) {
-      // Check if this is permanent metadata (persistent)
-      // Task context from agent-ask explains the specialized agent's purpose
-      const isTaskContext = systemReminder.includes('This agent is a') &&
-                           systemReminder.includes('created for:');
-
-      // Everything else defaults to ephemeral for safety
-      // This includes:
-      // - Exploratory tool warnings ("consecutive exploratory tool calls", "read/grep/glob/ls/tree")
-      // - Agent persistence coaching ("Agent persists as", "USE agent-ask")
-      // - Plan acceptance notifications ("plan has been automatically accepted")
-      // - Temp file hints ("You can read this file back")
-      // - Any future tool reminders (safe default)
-      const isPersistent = isTaskContext;
+      // Use explicit persistence flag from tool result
+      // DEFAULT: false (ephemeral) for safety - if flag is not set, reminder is ephemeral
+      const isPersistent = (result as any).system_reminder_persist === true;
 
       injectSystemReminder(systemReminder, 'Tool result', isPersistent);
     }
 
     // Inject time reminder if agent has max duration set
-    // PERSIST: false - Ephemeral, only current time matters (not past durations)
     const maxDuration = this.agent.getMaxDuration();
     if (maxDuration !== undefined && totalTurnDuration !== undefined) {
       const timeReminder = this.generateTimeReminder(maxDuration, totalTurnDuration);
       if (timeReminder) {
+        // PERSIST: false - Ephemeral: Temporary time budget warning
+        // Cleaned up after turn since time state is dynamic and updated each turn
         injectSystemReminder(timeReminder, `Time (${totalTurnDuration.toFixed(2)}/${maxDuration}min)`, false);
       }
     }
@@ -979,10 +967,11 @@ export class ToolOrchestrator {
     }
 
     // Inject focus reminder in every tool result if there's an active todo (main agent only)
-    // PERSIST: false - Ephemeral, only current active task matters (not historical focus reminders)
     if (!this.config.isSpecializedAgent) {
       const focusReminder = this.generateFocusReminder();
       if (focusReminder) {
+        // PERSIST: false - Ephemeral: Temporary focus reminder based on current todo
+        // Cleaned up after turn since todo state is dynamic and updated each turn
         injectSystemReminder(focusReminder, 'Focus (todo)', false);
       }
     }

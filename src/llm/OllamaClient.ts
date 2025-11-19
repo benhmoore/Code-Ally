@@ -5,7 +5,8 @@
  * - Streaming and non-streaming responses
  * - Function calling (both legacy and modern formats)
  * - Tool call validation and repair
- * - Automatic retry with exponential backoff (network errors, HTTP 500/503, JSON errors, validation errors)
+ * - Infinite retry with capped exponential backoff (network errors, HTTP 500/503, JSON errors, stream timeouts)
+ * - Backoff capped at 60 seconds, timeout capped at 10 minutes
  * - Request cancellation via AbortController
  *
  * Based on the Python implementation with TypeScript improvements.
@@ -20,7 +21,7 @@ import {
 import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
-import { API_TIMEOUTS, TIME_UNITS, PERMISSION_MESSAGES, ID_GENERATION } from '../config/constants.js';
+import { API_TIMEOUTS, TIME_UNITS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 
 /**
  * Ollama API payload structure
@@ -164,8 +165,9 @@ export class OllamaClient extends ModelClient {
   /**
    * Send messages to Ollama and receive a response
    *
-   * Implements retry logic with exponential backoff and tool call validation.
-   * Both streaming and non-streaming responses support validation retry.
+   * Implements infinite retry logic with capped exponential backoff for network/HTTP/timeout/stream timeout errors.
+   * Backoff is capped at 60 seconds and timeout growth is capped at 10 minutes.
+   * Tool call validation is performed on all responses.
    *
    * @param messages - Conversation history
    * @param options - Send options
@@ -173,7 +175,6 @@ export class OllamaClient extends ModelClient {
    */
   async send(messages: Message[], options: SendOptions = {}): Promise<LLMResponse> {
     const { functions, stream = false, maxRetries: _maxRetries = 3, temperature, parentId, suppressThinking = false } = options;
-    const maxRetries = _maxRetries;
 
     // Generate unique request ID for this request
     // Generate request ID: req-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
@@ -184,8 +185,9 @@ export class OllamaClient extends ModelClient {
     const payload = this.preparePayload(messages, functions, stream, temperature);
 
     try {
-      // Retry loop with exponential backoff (network errors only)
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // Infinite retry loop with capped exponential backoff
+      let attempt = 0;
+      while (true) {
         try {
           // Execute request with cancellation support
           const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, parentId, suppressThinking);
@@ -229,40 +231,49 @@ export class OllamaClient extends ModelClient {
             };
           }
 
-          // Retry on network errors with exponential backoff (2^attempt seconds)
-          if (this.isNetworkError(error) && attempt < maxRetries) {
-            const waitTime = Math.pow(2, attempt);
-            await this.sleep(waitTime * TIME_UNITS.MS_PER_SECOND);
+          // Retry on network errors with capped exponential backoff
+          if (this.isNetworkError(error)) {
+            const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
+            logger.debug(`[OLLAMA_CLIENT] Network error on request ${requestId}, retrying in ${backoffSeconds}s...`);
+            await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
+            attempt++;
             continue;
           }
 
-          // Retry on HTTP 500/503 errors with exponential backoff (2^attempt seconds)
+          // Retry on HTTP 500/503 errors with capped exponential backoff
           // These are often transient errors (malformed tool calls, internal server errors)
-          if (this.isRetryableHttpError(error) && attempt < maxRetries) {
-            const waitTime = Math.pow(2, attempt);
-            logger.warn(`[OLLAMA_CLIENT] HTTP ${error.httpStatus} error on request ${requestId}, retrying in ${waitTime}s... (attempt ${attempt + 1}/${maxRetries})`);
-            await this.sleep(waitTime * TIME_UNITS.MS_PER_SECOND);
+          if (this.isRetryableHttpError(error)) {
+            const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
+            logger.debug(`[OLLAMA_CLIENT] HTTP ${error.httpStatus} error on request ${requestId}, retrying in ${backoffSeconds}s...`);
+            await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
+            attempt++;
             continue;
           }
 
-          // Retry on JSON errors with linear backoff ((1 + attempt) seconds)
-          if (error instanceof SyntaxError && attempt < maxRetries) {
-            const waitTime = (1 + attempt) * TIME_UNITS.MS_PER_SECOND;
-            await this.sleep(waitTime);
+          // Retry on JSON errors with capped linear backoff
+          if (error instanceof SyntaxError) {
+            const backoffSeconds = Math.min(1 + attempt, RETRY_CONFIG.MAX_BACKOFF_SECONDS);
+            logger.debug(`[OLLAMA_CLIENT] JSON parse error on request ${requestId}, retrying in ${backoffSeconds}s...`);
+            await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
+            attempt++;
             continue;
           }
 
-          // Return error response
-          return this.handleRequestError(error, attempt + 1);
+          // PHASE 3: Retry on stream timeout with capped exponential backoff
+          // Stream timeouts occur when streaming starts but hangs without closing
+          if (error.message?.includes('Stream read timeout')) {
+            const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
+            logger.debug(`[OLLAMA_CLIENT] Stream timeout on request ${requestId}, retrying in ${backoffSeconds}s (attempt ${attempt + 1})...`);
+            await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
+            attempt++;
+            continue;
+          }
+
+          // Non-retryable error - return error response
+          logger.debug(`[OLLAMA_CLIENT] Non-retryable error on request ${requestId}`);
+          return this.handleRequestError(error);
         }
       }
-
-      // Should never reach here due to loop logic
-      return {
-        role: 'assistant',
-        content: 'Maximum retry attempts exceeded',
-        error: true,
-      };
     } finally {
       // Always clean up request tracking
       logger.debug('[OLLAMA_CLIENT] Cleaning up request:', requestId);
@@ -324,8 +335,11 @@ export class OllamaClient extends ModelClient {
     this.activeRequests.set(requestId, abortController);
 
     try {
-      // Calculate adaptive timeout
-      const timeout = API_TIMEOUTS.LLM_REQUEST_BASE + attempt * API_TIMEOUTS.LLM_REQUEST_RETRY_INCREMENT;
+      // Calculate adaptive timeout with cap at 10 minutes
+      const timeout = Math.min(
+        API_TIMEOUTS.LLM_REQUEST_BASE + attempt * API_TIMEOUTS.LLM_REQUEST_RETRY_INCREMENT,
+        RETRY_CONFIG.MAX_LLM_TIMEOUT
+      );
 
       // Create timeout promise
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -397,6 +411,7 @@ export class OllamaClient extends ModelClient {
     let contentWasStreamed = false;
     let hadThinking = false; // Track if we've seen thinking chunks
     let thinkingComplete = false; // Track if thinking block completed
+    let streamTimedOut = false; // Track if stream timeout occurred
 
     try {
       while (true) {
@@ -501,39 +516,41 @@ export class OllamaClient extends ModelClient {
         };
       }
       if (error.message === 'Stream read timeout - no data received') {
-        logger.error('[OLLAMA_CLIENT] Stream hung - no data received for', API_TIMEOUTS.LLM_REQUEST_BASE / 1000, 'seconds on request:', requestId);
-        logger.error('[OLLAMA_CLIENT] Aggregated content before timeout:', aggregatedContent.length, 'chars');
-        // Return what we have so far rather than throwing
-        return {
-          role: 'assistant',
-          content: aggregatedContent || '[Stream timeout - model may have crashed]',
-          error: true,
-          _content_was_streamed: contentWasStreamed,
-        };
+        // PHASE 3: Stream timeout retry - mark for retry instead of returning error
+        logger.warn('[OLLAMA_CLIENT] Stream read timeout on request', requestId);
+        logger.debug('[OLLAMA_CLIENT] Partial content before timeout:', aggregatedContent.length, 'chars');
+        streamTimedOut = true;
+        // Don't return here - let it fall through to retry logic below
+      } else {
+        // GAP 2: HTTP errors during streaming - check if we have partial response
+        // If we received any content or tool calls before the error, return partial response
+        const hasPartialResponse = aggregatedContent.trim().length > 0 || (aggregatedMessage.tool_calls && aggregatedMessage.tool_calls.length > 0);
+
+        if (hasPartialResponse) {
+          logger.debug('[OLLAMA_CLIENT] HTTP error during streaming with partial response - returning partial data');
+          logger.debug('[OLLAMA_CLIENT] Partial content length:', aggregatedContent.length, 'Tool calls:', aggregatedMessage.tool_calls?.length || 0);
+
+          return {
+            role: 'assistant',
+            content: aggregatedContent,
+            tool_calls: aggregatedMessage.tool_calls,
+            thinking: aggregatedThinking || undefined,
+            error: true,
+            partial: true,
+            error_message: `Response interrupted: ${error.message}`,
+            _content_was_streamed: contentWasStreamed,
+          } as LLMResponse;
+        }
+
+        // No partial response - re-throw for full retry
+        throw error;
       }
+    }
 
-      // GAP 2: HTTP errors during streaming - check if we have partial response
-      // If we received any content or tool calls before the error, return partial response
-      const hasPartialResponse = aggregatedContent.trim().length > 0 || (aggregatedMessage.tool_calls && aggregatedMessage.tool_calls.length > 0);
-
-      if (hasPartialResponse) {
-        logger.debug('[OLLAMA_CLIENT] HTTP error during streaming with partial response - returning partial data');
-        logger.debug('[OLLAMA_CLIENT] Partial content length:', aggregatedContent.length, 'Tool calls:', aggregatedMessage.tool_calls?.length || 0);
-
-        return {
-          role: 'assistant',
-          content: aggregatedContent,
-          tool_calls: aggregatedMessage.tool_calls,
-          thinking: aggregatedThinking || undefined,
-          error: true,
-          partial: true,
-          error_message: `Response interrupted: ${error.message}`,
-          _content_was_streamed: contentWasStreamed,
-        } as LLMResponse;
-      }
-
-      // No partial response - re-throw for full retry
-      throw error;
+    // PHASE 3: If stream timed out, throw error to trigger retry
+    if (streamTimedOut) {
+      // Throw a retryable error that will be caught by send() retry loop
+      throw new Error('Stream read timeout - retrying request');
     }
 
     // Set streaming flags
@@ -707,7 +724,7 @@ export class OllamaClient extends ModelClient {
   /**
    * Handle request errors and generate user-friendly responses
    */
-  private handleRequestError(error: any, attempts: number): LLMResponse {
+  private handleRequestError(error: any): LLMResponse {
     const errorMsg = error.message || String(error);
 
     let suggestions: string[] = [];
@@ -744,7 +761,7 @@ export class OllamaClient extends ModelClient {
 
     return {
       role: 'assistant',
-      content: `Error communicating with Ollama after ${attempts} attempt(s): ${errorMsg}\n\nSuggested fixes:\n${suggestions.map(s => `- ${s}`).join('\n')}`,
+      content: `Error communicating with Ollama: ${errorMsg}\n\nSuggested fixes:\n${suggestions.map(s => `- ${s}`).join('\n')}`,
       error: true,
       suggestions,
     };
