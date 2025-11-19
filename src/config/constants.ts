@@ -429,6 +429,30 @@ export const TOOL_GUIDANCE = {
    * warning about context waste and inefficiency.
    */
   EXPLORATORY_TOOL_STERN_THRESHOLD: 6,
+
+  /**
+   * Checkpoint reminder interval (number of tool calls)
+   *
+   * After this many successful tool calls, the agent receives a progress
+   * checkpoint reminder to verify alignment with the original user request.
+   */
+  CHECKPOINT_INTERVAL: 8,
+
+  /**
+   * Minimum user prompt length in tokens to enable checkpoint reminders
+   *
+   * Skip checkpoint reminders if the initial user prompt is shorter than
+   * this threshold (~200 characters). Short prompts don't need progress tracking.
+   */
+  CHECKPOINT_MIN_PROMPT_TOKENS: 50,
+
+  /**
+   * Maximum user prompt length in tokens for checkpoint reminder truncation
+   *
+   * Truncate user prompts to this length (~600 characters) when displaying
+   * in checkpoint reminders to conserve context budget.
+   */
+  CHECKPOINT_MAX_PROMPT_TOKENS: 150,
 } as const;
 
 // ===========================================

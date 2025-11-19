@@ -39,7 +39,7 @@ import { Message, ActivityEventType, Config, ToolCall } from '../types/index.js'
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE } from '../config/constants.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE, TOKEN_MANAGEMENT } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 
 export interface AgentConfig {
@@ -159,6 +159,11 @@ export class Agent {
   // Cleanup queue - tool call IDs to remove at end of turn
   // cleanup-call queues IDs here, they're removed after model completes response
   private pendingCleanupIds: string[] = [];
+
+  // Checkpoint reminder tracking - monitors tool calls to inject progress reminders
+  private toolCallsSinceStart: number = 0;
+  private toolCallsSinceLastCheckpoint: number = 0;
+  private initialUserPrompt: string = '';
 
   // Focus management - tracks if this agent set focus and needs to restore it
   private previousFocus: string | null = null;
@@ -443,6 +448,7 @@ export class Agent {
    */
   clearConversationHistory(): void {
     this.conversationManager.clearMessages();
+    this.resetCheckpointTracking();
     logger.debug(`[AGENT] Cleared conversation history for agent ${this.instanceId}`);
   }
 
@@ -537,6 +543,14 @@ export class Agent {
     // Reset cleanup queue on new user input
     this.pendingCleanupIds = [];
 
+    // Reset checkpoint counters at turn start
+    // Ensures counters only track within this turn, not across turns
+    // Counters accumulate across all tool calls in this turn (including continuation loops)
+    this.toolCallsSinceStart = 0;
+    this.toolCallsSinceLastCheckpoint = 0;
+    console.log(`🔄 [CHECKPOINT] New turn - reset counters to 0`);
+    logger.debug('[AGENT_CHECKPOINT]', this.instanceId, 'Reset checkpoint counters for new turn');
+
     // Reset turn start time for specialized agents on each new turn
     if (this.config.isSpecializedAgent && this.turnManager.getMaxDuration() !== undefined) {
       this.turnManager.resetTurn();
@@ -585,6 +599,14 @@ export class Agent {
       (coordinator as any).setOllamaActive(true);
       logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Notified idle coordinator: user message, Ollama active');
     }
+
+    // Capture user prompt for this turn
+    // Used for checkpoint reminders to remind agent of current turn's goal
+    // Updated each turn since user messages provide natural cross-turn checkpoints
+    this.initialUserPrompt = message;
+    const preview = message.length > 80 ? message.substring(0, 80) + '...' : message;
+    console.log(`📝 [CHECKPOINT] Captured turn prompt: "${preview}"`);
+    logger.debug('[AGENT_CHECKPOINT]', this.instanceId, 'Captured user prompt for turn');
 
     // Add user message
     const userMessage: Message = {
@@ -1228,7 +1250,11 @@ export class Agent {
         }
       },
       detectCycles: (toolCalls) => this.cycleDetector.detectCycles(toolCalls),
-      recordToolCalls: (toolCalls, results) => this.cycleDetector.recordToolCalls(toolCalls, results),
+      recordToolCalls: (toolCalls, results) => {
+        this.cycleDetector.recordToolCalls(toolCalls, results);
+        // Increment checkpoint counters after successful tool execution
+        this.incrementToolCallCounters(toolCalls.length);
+      },
       clearCyclesIfBroken: () => this.cycleDetector.clearIfBroken(),
       clearCurrentTurn: () => this.toolManager.clearCurrentTurn(),
       startToolExecution: () => this.startToolExecution(),
@@ -1374,6 +1400,11 @@ export class Agent {
       ...msg,
       id: msg.id || generateMessageId(),
     })));
+
+    // Note: We do NOT extract initialUserPrompt from restored messages
+    // It will be set by the next sendMessage() call with the current turn's prompt
+    // Checkpoint tracking is per-turn only, not based on historical messages
+
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages set, count:', this.conversationManager.getMessageCount());
   }
 
@@ -1579,6 +1610,133 @@ export class Agent {
     } catch (error) {
       logger.warn('[AGENT_FOCUS]', this.instanceId, 'Error restoring focus:', error);
     }
+  }
+
+  /**
+   * Reset checkpoint tracking counters and initial prompt
+   * Called when conversation is cleared or agent is reset
+   */
+  private resetCheckpointTracking(): void {
+    this.toolCallsSinceStart = 0;
+    this.toolCallsSinceLastCheckpoint = 0;
+    this.initialUserPrompt = '';
+    console.log(`🔄 [CHECKPOINT] Reset checkpoint tracking (conversation cleared)`);
+    logger.debug('[AGENT_CHECKPOINT]', this.instanceId, 'Reset checkpoint tracking');
+  }
+
+  /**
+   * Increment tool call counters for checkpoint tracking
+   * Called after successful tool execution
+   * @param toolCallCount - Number of tool calls to increment by
+   */
+  private incrementToolCallCounters(toolCallCount: number): void {
+    if (toolCallCount < 1) {
+      logger.warn('[AGENT_CHECKPOINT]', this.instanceId, 'Invalid tool call count:', toolCallCount);
+      return;
+    }
+    this.toolCallsSinceStart += toolCallCount;
+    this.toolCallsSinceLastCheckpoint += toolCallCount;
+    console.log(`🔢 [CHECKPOINT] Tool calls: ${this.toolCallsSinceStart} total, ${this.toolCallsSinceLastCheckpoint} since last checkpoint`);
+    logger.debug('[AGENT_CHECKPOINT]', this.instanceId,
+      `Tool calls - Total: ${this.toolCallsSinceStart}, Since checkpoint: ${this.toolCallsSinceLastCheckpoint}`);
+  }
+
+  /**
+   * Check if a checkpoint reminder should be injected
+   * @returns true if checkpoint should be injected
+   */
+  private shouldInjectCheckpoint(): boolean {
+    // Skip for specialized agents
+    if (this.config.isSpecializedAgent) {
+      return false;
+    }
+
+    // Skip if no initial prompt captured
+    if (!this.initialUserPrompt) {
+      return false;
+    }
+
+    // Skip if prompt too short (using ~4 chars per token heuristic)
+    const estimatedTokens = Math.floor(this.initialUserPrompt.length / TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE);
+    if (estimatedTokens < TOOL_GUIDANCE.CHECKPOINT_MIN_PROMPT_TOKENS) {
+      return false;
+    }
+
+    // Check if we've hit the interval
+    if (this.toolCallsSinceLastCheckpoint < TOOL_GUIDANCE.CHECKPOINT_INTERVAL) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Truncate text to a token limit using smart truncation
+   * Tries to break at sentence boundaries (period, newline)
+   * @param text - Text to truncate
+   * @param maxTokens - Maximum tokens allowed
+   * @returns Truncated text
+   */
+  private truncateToTokenLimit(text: string, maxTokens: number): string {
+    const maxChars = maxTokens * TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE;
+
+    if (text.length <= maxChars) {
+      return text;
+    }
+
+    // Try to break at sentence boundary (period or newline)
+    const truncated = text.substring(0, maxChars);
+    const lastPeriod = truncated.lastIndexOf('.');
+    const lastNewline = truncated.lastIndexOf('\n');
+    const bestBoundary = Math.max(lastPeriod, lastNewline);
+
+    // If we found a good boundary in the last 40% of the truncated text, use it
+    if (bestBoundary > maxChars * 0.6) {
+      return truncated.substring(0, bestBoundary + 1).trim();
+    }
+
+    // Otherwise, truncate and add ellipsis
+    return truncated.trim() + '...';
+  }
+
+  /**
+   * Generate a checkpoint reminder for the agent
+   *
+   * NOTE: Phase 1 implementation - tracking and generation only
+   * Phase 2 will integrate this into the response flow by calling this method
+   * before tool execution and injecting the reminder into tool results
+   *
+   * @returns Checkpoint reminder string or null if not needed
+   */
+  public generateCheckpointReminder(): string | null {
+    if (!this.shouldInjectCheckpoint()) {
+      return null;
+    }
+
+    // Truncate user prompt to conserve context
+    const truncatedPrompt = this.truncateToTokenLimit(
+      this.initialUserPrompt,
+      TOOL_GUIDANCE.CHECKPOINT_MAX_PROMPT_TOKENS
+    );
+
+    // Generate firm but professional reminder
+    const reminder = `Progress checkpoint (${this.toolCallsSinceStart} tool calls):
+
+Original request: "${truncatedPrompt}"
+
+Verify alignment:
+- Are you still working toward this goal?
+- Have you drifted into unrelated improvements?
+- Course-correct now if off-track, or continue if aligned.`;
+
+    // Reset checkpoint counter
+    this.toolCallsSinceLastCheckpoint = 0;
+
+    console.log(`✅ [CHECKPOINT] Generated checkpoint reminder at ${this.toolCallsSinceStart} tool calls (counter reset to 0)`);
+    logger.debug('[AGENT_CHECKPOINT]', this.instanceId,
+      `Generated checkpoint reminder at ${this.toolCallsSinceStart} tool calls`);
+
+    return reminder;
   }
 
   /**

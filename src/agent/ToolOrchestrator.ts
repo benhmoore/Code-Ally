@@ -75,6 +75,11 @@ export interface IAgentForOrchestrator {
     trackToolResult(toolCallId: string, content: string): string | null;
   };
   maybeInjectExploratoryReminder(toolCall: import('../types/index.js').ToolCall, result: any): void;
+  /**
+   * Generate a checkpoint reminder if threshold reached
+   * @returns Non-empty checkpoint text, or null if not needed
+   */
+  generateCheckpointReminder(): string | null;
 }
 
 /**
@@ -404,13 +409,30 @@ export class ToolOrchestrator {
       }
 
       // If we got here, no permission was denied - process all results
+
+      // Generate checkpoint reminder once per batch (not per tool)
+      // NOTE: Checkpoint reminders are ephemeral (cleaned up after turn)
+      const checkpointReminder = this.agent.generateCheckpointReminder();
+
       for (let i = 0; i < toolCalls.length; i++) {
         const toolCall = toolCalls[i];
         const result = successfulResults[i];
         if (toolCall && result) {
-          // Inject exploratory tool reminder BEFORE processing result
+          // Inject exploratory tool reminder before processing result
           // This ensures the system_reminder is present when formatToolResult() runs
           this.agent.maybeInjectExploratoryReminder(toolCall, result);
+
+          // Inject checkpoint reminder into first result only
+          if (i === 0 && checkpointReminder) {
+            console.log(`💉 [CHECKPOINT] Injecting checkpoint into ${toolCall.function.name} tool result`);
+            logger.debug('[TOOL_ORCHESTRATOR]', 'Injecting checkpoint reminder into', toolCall.function.name);
+            if (result.system_reminder) {
+              // Append to existing reminder (e.g., exploratory warning)
+              result.system_reminder += '\n\n' + checkpointReminder;
+            } else {
+              result.system_reminder = checkpointReminder;
+            }
+          }
 
           await this.processToolResult(toolCall, result);
         }
@@ -456,12 +478,31 @@ export class ToolOrchestrator {
    */
   private async executeSequential(toolCalls: ToolCall[]): Promise<ToolResult[]> {
     const results: ToolResult[] = [];
+
+    // Generate checkpoint reminder once per batch (not per tool)
+    // NOTE: Checkpoint reminders are ephemeral (cleaned up after turn)
+    const checkpointReminder = this.agent.generateCheckpointReminder();
+
+    let isFirstTool = true;
     for (const toolCall of toolCalls) {
       const result = await this.executeSingleTool(toolCall);
 
-      // Inject exploratory tool reminder BEFORE processing result
+      // Inject exploratory tool reminder before processing result
       // This ensures the system_reminder is present when formatToolResult() runs
       this.agent.maybeInjectExploratoryReminder(toolCall, result);
+
+      // Inject checkpoint reminder into first result only
+      if (isFirstTool && checkpointReminder) {
+        console.log(`💉 [CHECKPOINT] Injecting checkpoint into ${toolCall.function.name} tool result`);
+        logger.debug('[TOOL_ORCHESTRATOR]', 'Injecting checkpoint reminder into', toolCall.function.name);
+        if (result.system_reminder) {
+          // Append to existing reminder (e.g., exploratory warning)
+          result.system_reminder += '\n\n' + checkpointReminder;
+        } else {
+          result.system_reminder = checkpointReminder;
+        }
+        isFirstTool = false;
+      }
 
       await this.processToolResult(toolCall, result);
       results.push(result);
