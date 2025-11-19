@@ -151,7 +151,7 @@ export class WriteTool extends BaseTool {
       // Track the written content as read (model knows what it wrote)
       // This allows immediate edits to the newly created file without requiring a separate read
       const readStateManager = registry.get<ReadStateManager>('read_state_manager');
-      if (readStateManager) {
+      if (readStateManager && content.length > 0) {
         const lines = content.split('\n');
         readStateManager.trackRead(absolutePath, 1, lines.length);
       }

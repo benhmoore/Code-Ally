@@ -10,6 +10,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { WriteTool } from '../WriteTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { ReadStateManager } from '@services/ReadStateManager.js';
 
 describe('WriteTool', () => {
   let tempDir: string;
@@ -27,7 +29,11 @@ describe('WriteTool', () => {
   });
 
   afterEach(async () => {
-    // Cleanup
+    // Cleanup registry
+    const registry = ServiceRegistry.getInstance();
+    (registry as any)._services?.clear();
+
+    // Cleanup temp files
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
     } catch (error) {
@@ -258,6 +264,64 @@ describe('WriteTool', () => {
 
       expect(preview).toContain('Wrote 123 bytes to /test/file.txt');
       expect(preview).toContain('Backup created: .bak');
+    });
+  });
+
+  describe('read state tracking', () => {
+    it('should track written content as read for non-empty files', async () => {
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'tracked.txt');
+      const content = 'line1\nline2\nline3';
+
+      await writeTool.execute({
+        file_path: filePath,
+        content,
+      });
+
+      // Verify read state was tracked
+      const readState = readStateManager.getReadState(filePath);
+      expect(readState).not.toBeNull();
+      expect(readState).toHaveLength(1);
+      expect(readState![0]).toEqual({ start: 1, end: 3 });
+
+      // Verify we can validate that lines were read
+      const validation = readStateManager.validateLinesRead(filePath, 1, 3);
+      expect(validation.success).toBe(true);
+    });
+
+    it('should not track read state for empty files', async () => {
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'empty.txt');
+      const content = '';
+
+      await writeTool.execute({
+        file_path: filePath,
+        content,
+      });
+
+      // Verify NO read state was tracked for empty file
+      const readState = readStateManager.getReadState(filePath);
+      expect(readState).toBeNull();
+    });
+
+    it('should work without ReadStateManager registered', async () => {
+      // Don't register ReadStateManager
+      const filePath = join(tempDir, 'no-manager.txt');
+      const content = 'test content';
+
+      const result = await writeTool.execute({
+        file_path: filePath,
+        content,
+      });
+
+      // Should succeed without ReadStateManager
+      expect(result.success).toBe(true);
     });
   });
 });
