@@ -206,10 +206,27 @@ export class EditTool extends BaseTool {
           }
 
           if (missingRanges.length > 0) {
+            // Check if this is likely due to previous edit invalidation
+            const readState = readStateManager.getReadState(absolutePath);
+            const hasPartialReadState = readState && readState.length > 0;
+
+            let guidanceMessage: string;
+            if (hasPartialReadState) {
+              // File has been read before - likely invalidated by previous edit
+              guidanceMessage = `The following lines containing old_string were invalidated by a previous edit: ${missingRanges.join(', ')}.
+
+Use one of these approaches:
+  • Re-read the file: read(file_paths=["${filePath}"])
+  • Use show_updated_context=true in your edits to see changes immediately`;
+            } else {
+              // File has never been read
+              guidanceMessage = `The following lines containing old_string have not been read: ${missingRanges.join(', ')}. Use the Read tool to read these lines first.`;
+            }
+
             return this.formatErrorResponse(
               `Cannot edit file: old_string found but not all occurrences have been read`,
               'validation_error',
-              `The following lines containing old_string have not been read: ${missingRanges.join(', ')}. Use the Read tool to read these lines first.`
+              guidanceMessage
             );
           }
         }
@@ -304,7 +321,17 @@ export class EditTool extends BaseTool {
         modifiedContent
       );
 
-      const successMessage = `Made ${replaceAll ? count : 1} replacement(s) in ${absolutePath}`;
+      // Build success message with proactive warning if needed
+      let successMessage = `Made ${replaceAll ? count : 1} replacement(s) in ${absolutePath}`;
+
+      // Add proactive warning if line count changed and context not shown
+      const oldLines = oldString.split('\n').length;
+      const newLines = newString.split('\n').length;
+      const lineDelta = newLines - oldLines;
+
+      if (lineDelta !== 0 && !showUpdatedContext) {
+        successMessage += `\n\n⚠️  Lines affected by this edit were invalidated. To edit again, either re-read the file or use show_updated_context=true`;
+      }
 
       const response = this.formatSuccessResponse({
         content: successMessage, // Human-readable output for LLM

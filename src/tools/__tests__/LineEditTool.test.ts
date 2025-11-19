@@ -690,4 +690,142 @@ describe('LineEditTool', () => {
       expect(newContent).toBe('');
     });
   });
+
+  describe('Phase 3: Enhanced error and success messages', () => {
+    it('should show invalidation guidance when edit fails after previous line-shifting edit', async () => {
+      const { ServiceRegistry } = await import('@services/ServiceRegistry.js');
+      const { ReadStateManager } = await import('@services/ReadStateManager.js');
+
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'invalidation-test.txt');
+      const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
+      await fs.writeFile(filePath, content);
+
+      // Track that we've read lines 1-5
+      readStateManager.trackRead(filePath, 1, 5);
+
+      // First edit: insert at line 2 (shifts lines 2+ down)
+      const result1 = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'insert',
+        line_number: 2,
+        content: 'New Line',
+      });
+
+      expect(result1.success).toBe(true);
+      expect(result1.content).toContain('invalidated');
+
+      // Second edit: try to edit line 3 (now invalidated)
+      const result2 = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'replace',
+        line_number: 3,
+        content: 'Modified Line',
+      });
+
+      expect(result2.success).toBe(false);
+      expect(result2.error_type).toBe('validation_error');
+      expect(result2.suggestion).toContain('invalidated by a previous edit');
+      expect(result2.suggestion).toContain('Re-read the file');
+      expect(result2.suggestion).toContain('show_updated_context=true');
+
+      // Cleanup
+      (registry as any)._services?.clear();
+    });
+
+    it('should show basic read guidance when file has never been read', async () => {
+      const { ServiceRegistry } = await import('@services/ServiceRegistry.js');
+      const { ReadStateManager } = await import('@services/ReadStateManager.js');
+
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'never-read.txt');
+      const content = 'Line 1\nLine 2\nLine 3';
+      await fs.writeFile(filePath, content);
+
+      // Don't track any read - file has never been read
+
+      // Try to edit
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'replace',
+        line_number: 2,
+        content: 'Modified',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error_type).toBe('validation_error');
+      expect(result.suggestion).not.toContain('invalidated');
+      expect(result.suggestion).toContain('Use read');
+
+      // Cleanup
+      (registry as any)._services?.clear();
+    });
+
+    it('should show proactive warning in success message when lines shift', async () => {
+      const { ServiceRegistry } = await import('@services/ServiceRegistry.js');
+      const { ReadStateManager } = await import('@services/ReadStateManager.js');
+
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'proactive-warning.txt');
+      const content = 'Line 1\nLine 2\nLine 3\nLine 4';
+      await fs.writeFile(filePath, content);
+
+      // Track read
+      readStateManager.trackRead(filePath, 1, 4);
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'insert',
+        line_number: 2,
+        content: 'New Line',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('⚠️');
+      expect(result.content).toContain('invalidated due to line shift');
+      expect(result.content).toContain('show_updated_context=true');
+
+      // Cleanup
+      (registry as any)._services?.clear();
+    });
+
+    it('should NOT show proactive warning when no lines shift (append to end)', async () => {
+      const { ServiceRegistry } = await import('@services/ServiceRegistry.js');
+      const { ReadStateManager } = await import('@services/ReadStateManager.js');
+
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'no-warning.txt');
+      const content = 'Line 1\nLine 2';
+      await fs.writeFile(filePath, content);
+
+      // Track read
+      readStateManager.trackRead(filePath, 1, 2);
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'insert',
+        line_number: 3,
+        content: 'Line 3',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).not.toContain('⚠️');
+      expect(result.content).not.toContain('invalidated');
+
+      // Cleanup
+      (registry as any)._services?.clear();
+    });
+  });
 });

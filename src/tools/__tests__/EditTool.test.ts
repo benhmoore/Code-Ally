@@ -987,4 +987,152 @@ describe('EditTool', () => {
       expect(validation2.success).toBe(true);
     });
   });
+
+  describe('Enhanced error and success messages', () => {
+    it('should show invalidation guidance when edit fails after previous edit', async () => {
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'invalidation-test.txt');
+      const content = 'line1\nfoo\nline3\nbar\nline5';
+      await fs.writeFile(filePath, content);
+
+      // Track that we've read entire file
+      readStateManager.trackRead(filePath, 1, 5);
+
+      // First edit: replace foo with multi-line (changes line count)
+      const result1 = await editTool.execute({
+        file_path: filePath,
+        old_string: 'foo',
+        new_string: 'foo\nnewline',
+      });
+
+      expect(result1.success).toBe(true);
+      expect(result1.content).toContain('invalidated');
+
+      // Second edit: try to edit bar (now on different line, invalidated)
+      const result2 = await editTool.execute({
+        file_path: filePath,
+        old_string: 'bar',
+        new_string: 'modified',
+      });
+
+      expect(result2.success).toBe(false);
+      expect(result2.error_type).toBe('validation_error');
+      expect(result2.suggestion).toContain('invalidated by a previous edit');
+      expect(result2.suggestion).toContain('Re-read the file');
+      expect(result2.suggestion).toContain('show_updated_context=true');
+
+      // Cleanup
+      (registry as any)._services?.clear();
+    });
+
+    it('should show basic read guidance when file has never been read', async () => {
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'never-read.txt');
+      const content = 'line1\nfoo\nline3';
+      await fs.writeFile(filePath, content);
+
+      // Don't track any read
+
+      // Try to edit
+      const result = await editTool.execute({
+        file_path: filePath,
+        old_string: 'foo',
+        new_string: 'bar',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error_type).toBe('validation_error');
+      expect(result.suggestion).not.toContain('invalidated');
+      expect(result.suggestion).toContain('Use the Read tool');
+
+      // Cleanup
+      (registry as any)._services?.clear();
+    });
+
+    it('should show proactive warning when line count changes', async () => {
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'proactive-warning.txt');
+      const content = 'line1\nfoo\nline3';
+      await fs.writeFile(filePath, content);
+
+      // Track read
+      readStateManager.trackRead(filePath, 1, 3);
+
+      const result = await editTool.execute({
+        file_path: filePath,
+        old_string: 'foo',
+        new_string: 'foo\nnewline',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('⚠️');
+      expect(result.content).toContain('invalidated');
+      expect(result.content).toContain('show_updated_context=true');
+
+      // Cleanup
+      (registry as any)._services?.clear();
+    });
+
+    it('should NOT show proactive warning when line count does not change', async () => {
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'no-warning.txt');
+      const content = 'line1\nfoo\nline3';
+      await fs.writeFile(filePath, content);
+
+      // Track read
+      readStateManager.trackRead(filePath, 1, 3);
+
+      const result = await editTool.execute({
+        file_path: filePath,
+        old_string: 'foo',
+        new_string: 'bar',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).not.toContain('⚠️');
+      expect(result.content).not.toContain('invalidated');
+
+      // Cleanup
+      (registry as any)._services?.clear();
+    });
+
+    it('should NOT show proactive warning when show_updated_context=true', async () => {
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = new ReadStateManager();
+      registry.registerInstance('read_state_manager', readStateManager);
+
+      const filePath = join(tempDir, 'with-context.txt');
+      const content = 'line1\nfoo\nline3';
+      await fs.writeFile(filePath, content);
+
+      // Track read
+      readStateManager.trackRead(filePath, 1, 3);
+
+      const result = await editTool.execute({
+        file_path: filePath,
+        old_string: 'foo',
+        new_string: 'foo\nnewline',
+        show_updated_context: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBeDefined();
+      expect(result.content).not.toContain('⚠️'); // No warning when context shown
+
+      // Cleanup
+      (registry as any)._services?.clear();
+    });
+  });
 });

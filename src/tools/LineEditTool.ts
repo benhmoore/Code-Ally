@@ -291,10 +291,28 @@ export class LineEditTool extends BaseTool {
             ? `line ${validationStartLine}`
             : `lines ${validationStartLine}-${validationEndLine}`;
 
+          // Check if this is likely due to previous edit invalidation
+          const readState = readStateManager.getReadState(absolutePath);
+          const hasPartialReadState = readState && readState.length > 0;
+
+          let guidanceMessage: string;
+          if (hasPartialReadState) {
+            // File has been read before - likely invalidated by previous edit
+            guidanceMessage = `Lines ${validationStartLine}-${validationEndLine} were invalidated by a previous edit.
+
+Use one of these approaches:
+  • Re-read the file: read(file_paths=["${filePath}"])
+  • Use show_updated_context=true in your edits to see changes immediately
+  • Read specific lines: read(file_path="${filePath}", offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1})`;
+          } else {
+            // File has never been read
+            guidanceMessage = `Use read(file_path="${filePath}", offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1}) to read ${rangeDesc} first.`;
+          }
+
           return this.formatErrorResponse(
             `Cannot ${operation} at line ${lineNumber}: ${validation.message}`,
             'validation_error',
-            `Use Read(file_path="${filePath}", offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1}) to read ${rangeDesc} first.`
+            guidanceMessage
           );
         }
       }
@@ -482,6 +500,9 @@ export class LineEditTool extends BaseTool {
         const direction = netChange > 0 ? 'down' : 'up';
         const absChange = Math.abs(netChange);
         parts.push(`Lines ${firstAffectedLine}+ shifted ${direction} by ${absChange} lines`);
+
+        // Proactive warning about invalidation
+        parts.push(`\n\n⚠️  Lines ${firstAffectedLine}+ were invalidated due to line shift. To edit these lines again, either re-read the file or use show_updated_context=true`);
       }
       // If appending to end, no warning needed (no lines to shift)
     }
