@@ -94,16 +94,6 @@ describe('AutoToolCleanupService', () => {
   let mockSessionManager: MockSessionManager;
   let service: AutoToolCleanupService;
 
-  // Helper to create messages with padding to exceed PRESERVE_RECENT_MESSAGES
-  const createMessagesWithPadding = (toolMessages: Message[]): Message[] => {
-    const recentMessages: Message[] = Array(AUTO_TOOL_CLEANUP.PRESERVE_RECENT_MESSAGES)
-      .fill(null)
-      .map((_, i) => ({
-        role: 'user',
-        content: `Recent message ${i}`,
-      }));
-    return [...toolMessages, ...recentMessages];
-  };
 
   beforeEach(() => {
     mockClient = new MockModelClient();
@@ -185,7 +175,7 @@ describe('AutoToolCleanupService', () => {
   describe('analyzeToolCalls', () => {
     it('should identify failed and retried tool calls', async () => {
       // Create messages with failed tool call followed by successful retry
-      // Add padding to exceed PRESERVE_RECENT_MESSAGES threshold
+      // Then add a recent assistant turn to ensure the old calls are analyzed
       const oldMessages: Message[] = [
         {
           role: 'assistant',
@@ -221,15 +211,27 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add recent messages to exceed PRESERVE_RECENT_MESSAGES
-      const recentMessages: Message[] = Array(AUTO_TOOL_CLEANUP.PRESERVE_RECENT_MESSAGES)
-        .fill(null)
-        .map((_, i) => ({
-          role: 'user',
-          content: `Recent message ${i}`,
-        }));
+      // Add a recent assistant turn (this turn will be excluded from analysis)
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work in progress',
+          tool_calls: [
+            {
+              id: 'call_recent',
+              type: 'function',
+              function: { name: 'read', arguments: { path: 'test.ts' } },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'File contents',
+          tool_call_id: 'call_recent',
+        },
+      ];
 
-      const messages = [...oldMessages, ...recentMessages];
+      const messages = [...oldMessages, ...recentTurn];
 
       mockClient.setMockAnalysis({ irrelevant_ids: ['call_1'] });
 
@@ -273,7 +275,15 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      const messages = createMessagesWithPadding(toolMessages);
+      // Add a recent assistant turn to ensure old calls are analyzed
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work',
+        },
+      ];
+
+      const messages = [...toolMessages, ...recentTurn];
 
       mockClient.setMockAnalysis({ irrelevant_ids: ['call_2'] });
 
@@ -282,10 +292,11 @@ describe('AutoToolCleanupService', () => {
     });
 
     it('should update session metadata with pendingToolCleanups', async () => {
+      // Need at least 2 tool calls in old turns so 50% = 1 call analyzed
       const toolMessages: Message[] = [
         {
           role: 'assistant',
-          content: 'Tool call',
+          content: 'First tool call',
           tool_calls: [
             {
               id: 'call_1',
@@ -296,12 +307,36 @@ describe('AutoToolCleanupService', () => {
         },
         {
           role: 'tool',
-          content: 'Result',
+          content: 'Result 1',
           tool_call_id: 'call_1',
+        },
+        {
+          role: 'assistant',
+          content: 'Second tool call',
+          tool_calls: [
+            {
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'grep', arguments: {} },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Result 2',
+          tool_call_id: 'call_2',
         },
       ];
 
-      const messages = createMessagesWithPadding(toolMessages);
+      // Add a recent assistant turn
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work',
+        },
+      ];
+
+      const messages = [...toolMessages, ...recentTurn];
 
       mockClient.setMockAnalysis({ irrelevant_ids: ['call_1'] });
       mockSessionManager.setSessionData({
@@ -326,10 +361,11 @@ describe('AutoToolCleanupService', () => {
     });
 
     it('should update lastCleanupAnalysisAt timestamp', async () => {
+      // Need at least 2 tool calls in old turns so 50% = 1 call analyzed
       const toolMessages: Message[] = [
         {
           role: 'assistant',
-          content: 'Tool call',
+          content: 'First tool call',
           tool_calls: [
             {
               id: 'call_1',
@@ -340,12 +376,36 @@ describe('AutoToolCleanupService', () => {
         },
         {
           role: 'tool',
-          content: 'Result',
+          content: 'Result 1',
           tool_call_id: 'call_1',
+        },
+        {
+          role: 'assistant',
+          content: 'Second tool call',
+          tool_calls: [
+            {
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'grep', arguments: {} },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Result 2',
+          tool_call_id: 'call_2',
         },
       ];
 
-      const messages = createMessagesWithPadding(toolMessages);
+      // Add a recent assistant turn
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work',
+        },
+      ];
+
+      const messages = [...toolMessages, ...recentTurn];
 
       mockClient.setMockAnalysis({ irrelevant_ids: ['call_1'] });
       mockSessionManager.setSessionData({
@@ -372,10 +432,11 @@ describe('AutoToolCleanupService', () => {
     });
 
     it('should filter to high-confidence only', async () => {
+      // Need at least 2 tool calls in old turns so 50% = 1 call analyzed
       const toolMessages: Message[] = [
         {
           role: 'assistant',
-          content: 'Tool call',
+          content: 'First tool call',
           tool_calls: [
             {
               id: 'call_1',
@@ -386,12 +447,36 @@ describe('AutoToolCleanupService', () => {
         },
         {
           role: 'tool',
-          content: 'Result',
+          content: 'Result 1',
           tool_call_id: 'call_1',
+        },
+        {
+          role: 'assistant',
+          content: 'Second tool call',
+          tool_calls: [
+            {
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'grep', arguments: {} },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Result 2',
+          tool_call_id: 'call_2',
         },
       ];
 
-      const messages = createMessagesWithPadding(toolMessages);
+      // Add a recent assistant turn
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work',
+        },
+      ];
+
+      const messages = [...toolMessages, ...recentTurn];
 
       // Model returns only high-confidence removals
       mockClient.setMockAnalysis({ irrelevant_ids: ['call_1'] });
@@ -571,10 +656,11 @@ describe('AutoToolCleanupService', () => {
     });
 
     it('should prevent duplicate analyses for same session', async () => {
+      // Need at least 2 tool calls in old turns so 50% = 1 call analyzed
       const toolMessages: Message[] = [
         {
           role: 'assistant',
-          content: 'Tool call',
+          content: 'First tool call',
           tool_calls: [
             {
               id: 'call_1',
@@ -585,12 +671,36 @@ describe('AutoToolCleanupService', () => {
         },
         {
           role: 'tool',
-          content: 'Result',
+          content: 'Result 1',
           tool_call_id: 'call_1',
+        },
+        {
+          role: 'assistant',
+          content: 'Second tool call',
+          tool_calls: [
+            {
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'grep', arguments: {} },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Result 2',
+          tool_call_id: 'call_2',
         },
       ];
 
-      const messages = createMessagesWithPadding(toolMessages);
+      // Add a recent assistant turn
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work',
+        },
+      ];
+
+      const messages = [...toolMessages, ...recentTurn];
 
       mockSessionManager.setSessionData({
         id: 'test',
@@ -718,7 +828,15 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      const messages = createMessagesWithPadding(toolMessages);
+      // Add a recent assistant turn
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work',
+        },
+      ];
+
+      const messages = [...toolMessages, ...recentTurn];
 
       mockClient.setMockAnalysis({ irrelevant_ids: ['call_1', 'call_2'] });
 
@@ -726,15 +844,16 @@ describe('AutoToolCleanupService', () => {
       expect(result.irrelevantToolCallIds.length).toBe(2);
     });
 
-    it('should preserve recent messages', async () => {
-      // Create messages where some are within PRESERVE_RECENT_MESSAGES threshold
+    it('should preserve last assistant turn', async () => {
+      // Create messages with old tool calls followed by a recent assistant turn
+      // Need at least 2 tool calls in old turns so 50% = 1 call analyzed
       const oldMessages: Message[] = [
         {
           role: 'assistant',
-          content: 'Old tool call',
+          content: 'First old tool call',
           tool_calls: [
             {
-              id: 'call_old',
+              id: 'call_old_1',
               type: 'function',
               function: { name: 'read', arguments: {} },
             },
@@ -742,35 +861,64 @@ describe('AutoToolCleanupService', () => {
         },
         {
           role: 'tool',
-          content: 'Old result',
-          tool_call_id: 'call_old',
+          content: 'Old result 1',
+          tool_call_id: 'call_old_1',
+        },
+        {
+          role: 'assistant',
+          content: 'Second old tool call',
+          tool_calls: [
+            {
+              id: 'call_old_2',
+              type: 'function',
+              function: { name: 'glob', arguments: {} },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Old result 2',
+          tool_call_id: 'call_old_2',
         },
       ];
 
-      // Add recent messages (within PRESERVE_RECENT_MESSAGES)
-      const recentMessages: Message[] = Array(AUTO_TOOL_CLEANUP.PRESERVE_RECENT_MESSAGES)
-        .fill(null)
-        .map((_, i) => ({
-          role: 'user',
-          content: `Recent message ${i}`,
-        }));
+      // Add last assistant turn with recent tool call (should be excluded from analysis)
+      const lastAssistantTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent tool call',
+          tool_calls: [
+            {
+              id: 'call_recent',
+              type: 'function',
+              function: { name: 'grep', arguments: { pattern: 'test' } },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Recent result',
+          tool_call_id: 'call_recent',
+        },
+      ];
 
-      const messages = [...oldMessages, ...recentMessages];
+      const messages = [...oldMessages, ...lastAssistantTurn];
 
-      mockClient.setMockAnalysis({ irrelevant_ids: ['call_old'] });
+      mockClient.setMockAnalysis({ irrelevant_ids: ['call_old_1'] });
 
       const result = await service.analyzeToolCalls(messages);
-      // Recent messages should be preserved, so only old calls are analyzed
-      expect(result.irrelevantToolCallIds).toEqual(['call_old']);
+      // Last assistant turn should be preserved, so only old calls are analyzed
+      expect(result.irrelevantToolCallIds).toEqual(['call_old_1']);
     });
   });
 
   describe('parseAnalysisResponse', () => {
     it('should parse valid JSON response', async () => {
+      // Need at least 2 tool calls in old turns so 50% = 1 call analyzed
       const toolMessages: Message[] = [
         {
           role: 'assistant',
-          content: 'Tool call',
+          content: 'First tool call',
           tool_calls: [
             {
               id: 'call_1',
@@ -781,12 +929,36 @@ describe('AutoToolCleanupService', () => {
         },
         {
           role: 'tool',
-          content: 'Result',
+          content: 'Result 1',
           tool_call_id: 'call_1',
+        },
+        {
+          role: 'assistant',
+          content: 'Second tool call',
+          tool_calls: [
+            {
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'grep', arguments: {} },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Result 2',
+          tool_call_id: 'call_2',
         },
       ];
 
-      const messages = createMessagesWithPadding(toolMessages);
+      // Add a recent assistant turn
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work',
+        },
+      ];
+
+      const messages = [...toolMessages, ...recentTurn];
 
       mockClient.setMockAnalysis({ irrelevant_ids: ['call_1'] });
 
@@ -825,10 +997,11 @@ describe('AutoToolCleanupService', () => {
     });
 
     it('should handle response with text around JSON', async () => {
+      // Need at least 2 tool calls in old turns so 50% = 1 call analyzed
       const toolMessages: Message[] = [
         {
           role: 'assistant',
-          content: 'Tool call',
+          content: 'First tool call',
           tool_calls: [
             {
               id: 'call_1',
@@ -839,12 +1012,36 @@ describe('AutoToolCleanupService', () => {
         },
         {
           role: 'tool',
-          content: 'Result',
+          content: 'Result 1',
           tool_call_id: 'call_1',
+        },
+        {
+          role: 'assistant',
+          content: 'Second tool call',
+          tool_calls: [
+            {
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'grep', arguments: {} },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Result 2',
+          tool_call_id: 'call_2',
         },
       ];
 
-      const messages = createMessagesWithPadding(toolMessages);
+      // Add a recent assistant turn
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work',
+        },
+      ];
+
+      const messages = [...toolMessages, ...recentTurn];
 
       // Set response with surrounding text
       mockClient.send = async () => ({
@@ -877,10 +1074,11 @@ describe('AutoToolCleanupService', () => {
         true
       );
 
+      // Need at least 2 tool calls in old turns so 50% = 1 call analyzed
       const toolMessages: Message[] = [
         {
           role: 'assistant',
-          content: 'Tool call',
+          content: 'First tool call',
           tool_calls: [
             {
               id: 'call_1',
@@ -891,12 +1089,36 @@ describe('AutoToolCleanupService', () => {
         },
         {
           role: 'tool',
-          content: 'Result',
+          content: 'Result 1',
           tool_call_id: 'call_1',
+        },
+        {
+          role: 'assistant',
+          content: 'Second tool call',
+          tool_calls: [
+            {
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'grep', arguments: {} },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Result 2',
+          tool_call_id: 'call_2',
         },
       ];
 
-      const messages = createMessagesWithPadding(toolMessages);
+      // Add a recent assistant turn
+      const recentTurn: Message[] = [
+        {
+          role: 'assistant',
+          content: 'Recent work',
+        },
+      ];
+
+      const messages = [...toolMessages, ...recentTurn];
 
       mockSessionManager.setSessionData({
         id: 'test',

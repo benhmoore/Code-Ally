@@ -922,6 +922,9 @@ export const AUTO_TOOL_CLEANUP = {
   /** Minimum interval between cleanup analyses (5 minutes) */
   MIN_INTERVAL: 5 * 60 * 1000,
 
-  /** Number of recent messages to preserve (never clean up) */
-  PRESERVE_RECENT_MESSAGES: 20,
+  /** Preserve all tool calls from the last assistant turn (boolean flag) */
+  PRESERVE_LAST_ASSISTANT_TURN: true,
+
+  /** Analyze oldest X% of eligible tool calls (0.5 = oldest 50%) */
+  ANALYSIS_RATIO: 0.5,
 } as const;

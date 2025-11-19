@@ -251,28 +251,42 @@ export class AutoToolCleanupService implements CancellableService {
   }
 
   /**
-   * Extract tool call information from messages
+   * Extract tool call information from messages using turn-based ratio approach
+   *
+   * Algorithm:
+   * 1. Find index of last assistant message in conversation
+   * 2. Extract all tool calls with their indices
+   * 3. Filter out tool calls >= lastAssistantIndex (preserve last turn)
+   * 4. Of remaining tool calls, calculate: eligibleCount = floor(count * ANALYSIS_RATIO)
+   * 5. Take the FIRST eligibleCount tool calls (oldest ones)
+   * 6. Return as ToolCallInfo[]
    */
   private extractToolCallInfos(messages: Message[]): ToolCallInfo[] {
-    const toolCallInfos: ToolCallInfo[] = [];
+    // Step 1: Find the last assistant message index
+    let lastAssistantIndex = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === 'assistant') {
+        lastAssistantIndex = i;
+        break;
+      }
+    }
 
-    // Skip recent messages (preserve recent context)
-    const messagesToAnalyze = messages.slice(0, -AUTO_TOOL_CLEANUP.PRESERVE_RECENT_MESSAGES);
-
-    for (let i = 0; i < messagesToAnalyze.length; i++) {
-      const msg = messagesToAnalyze[i];
+    // Step 2: Extract all tool calls with their indices
+    const allToolCalls: ToolCallInfo[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
       if (!msg) continue;
 
       // Look for assistant messages with tool calls
       if (msg.role === 'assistant' && msg.tool_calls) {
         for (const toolCall of msg.tool_calls) {
           // Find corresponding tool result
-          const toolResultMsg = messagesToAnalyze
+          const toolResultMsg = messages
             .slice(i + 1)
             .find(m => m.role === 'tool' && m.tool_call_id === toolCall.id);
 
           if (toolResultMsg) {
-            toolCallInfos.push({
+            allToolCalls.push({
               id: toolCall.id,
               name: toolCall.function.name,
               args: this.truncateForAnalysis(JSON.stringify(toolCall.function.arguments)),
@@ -284,7 +298,18 @@ export class AutoToolCleanupService implements CancellableService {
       }
     }
 
-    return toolCallInfos;
+    // Step 3: Filter out tool calls from last assistant turn (preserve active turn)
+    const eligibleToolCalls = lastAssistantIndex >= 0
+      ? allToolCalls.filter(tc => tc.messageIndex < lastAssistantIndex)
+      : allToolCalls;
+
+    // Step 4: Calculate how many of the eligible tool calls to analyze (oldest X%)
+    const eligibleCount = Math.floor(eligibleToolCalls.length * AUTO_TOOL_CLEANUP.ANALYSIS_RATIO);
+
+    // Step 5: Take the FIRST eligibleCount tool calls (oldest ones)
+    const toolCallsToAnalyze = eligibleToolCalls.slice(0, eligibleCount);
+
+    return toolCallsToAnalyze;
   }
 
   /**
