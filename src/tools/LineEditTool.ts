@@ -49,20 +49,20 @@ export class LineEditTool extends BaseTool {
             },
             line_number: {
               type: 'integer',
-              description: 'Line number to operate on (1-indexed). IMPORTANT: Line numbers shift after edits - if you add/remove lines, subsequent line numbers will change.',
+              description: 'Line number to operate on (1-indexed). Line numbers shift when edits change line count.',
             },
             content: {
               type: 'string',
               description:
-                'Content for insert/replace operations. Can contain \\n for multiple lines. For INSERT: content is inserted BEFORE line_number. For REPLACE: content REPLACES the num_lines being removed (new content can be any number of lines, independent of num_lines).',
+                'Content for insert/replace operations. Can contain \\n for multiple lines.',
             },
             num_lines: {
               type: 'integer',
-              description: 'For DELETE/REPLACE operations: Number of EXISTING lines to REMOVE from the file starting at line_number (default: 1). This is NOT the number of lines being added - the new content can be any number of lines. Example: num_lines=3 means "remove 3 lines starting at line_number", even if replacing with 1 or 5 lines.',
+              description: 'Number of existing lines to remove starting at line_number (default: 1). For replace, new content can be any number of lines.',
             },
             show_updated_context: {
               type: 'boolean',
-              description: 'Include the updated file content in the response (default: false). STRONGLY RECOMMENDED when making multiple edits to the same file to avoid using stale line numbers and prevent file corruption. If false, you must re-read the file before making additional edits.',
+              description: 'Include the updated file content in the response (default: false). Recommended when making multiple edits to avoid using stale line numbers.',
             },
           },
           required: ['file_path', 'operation', 'line_number'],
@@ -343,20 +343,6 @@ export class LineEditTool extends BaseTool {
       // Include updated file content if requested
       if (showUpdatedContext) {
         response.updated_content = modifiedContent;
-      } else {
-        // Otherwise, include a small context window around the edit
-        const contentLineCount = content.split('\n').length;
-        let endLine: number;
-        if (operation === 'insert') {
-          endLine = lineNumber + contentLineCount - 1;
-        } else if (operation === 'delete') {
-          // After deletion, show context around the line now at lineNumber position
-          endLine = lineNumber;
-        } else {
-          // REPLACE
-          endLine = lineNumber + contentLineCount - 1;
-        }
-        response.context_window = this.getEditContextWindow(modifiedLines, lineNumber, endLine);
       }
 
       // Check file for syntax/parse errors after modification
@@ -419,7 +405,6 @@ export class LineEditTool extends BaseTool {
         const direction = netChange > 0 ? 'down' : 'up';
         const absChange = Math.abs(netChange);
         parts.push(`Lines ${firstAffectedLine}+ shifted ${direction} by ${absChange} lines`);
-        parts.push(`⚠️ Lines ${firstAffectedLine}+ changed. Re-read file before further edits or use show_updated_context: true.`);
       }
       // If appending to end, no warning needed (no lines to shift)
     }
@@ -502,32 +487,6 @@ export class LineEditTool extends BaseTool {
       if (lineContent === undefined) continue; // Skip undefined lines
       const truncated =
         lineContent.length > TEXT_LIMITS.LINE_CONTENT_DISPLAY_MAX ? lineContent.substring(0, TEXT_LIMITS.LINE_CONTENT_DISPLAY_MAX - 3) + '...' : lineContent;
-      contextLines.push(`  ${String(i).padStart(FORMATTING.LINE_NUMBER_WIDTH)}: ${truncated}`);
-    }
-
-    return contextLines.join('\n');
-  }
-
-  /**
-   * Get context window showing ~5 lines around the edit
-   * Shows 2 lines before, edited lines, 2 lines after
-   */
-  private getEditContextWindow(
-    lines: string[],
-    startLine: number,
-    endLine: number
-  ): string {
-    const contextBefore = 2;
-    const contextAfter = 2;
-    const firstLine = Math.max(1, startLine - contextBefore);
-    const lastLine = Math.min(lines.length, endLine + contextAfter);
-    const contextLines: string[] = [];
-
-    for (let i = firstLine; i <= lastLine; i++) {
-      const lineContent = lines[i - 1];
-      if (lineContent === undefined) continue;
-      const truncated =
-        lineContent.length > 100 ? lineContent.substring(0, 97) + '...' : lineContent;
       contextLines.push(`  ${String(i).padStart(FORMATTING.LINE_NUMBER_WIDTH)}: ${truncated}`);
     }
 

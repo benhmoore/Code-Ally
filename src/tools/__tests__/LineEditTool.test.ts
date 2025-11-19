@@ -607,9 +607,9 @@ describe('LineEditTool', () => {
     });
   });
 
-  describe('Phase 2: Warning system and context window', () => {
-    it('should show warning on INSERT operation', async () => {
-      const filePath = join(tempDir, 'insert-warning.txt');
+  describe('Phase 2: Line shift tracking and updated context', () => {
+    it('should show line shift information on INSERT operation', async () => {
+      const filePath = join(tempDir, 'insert-shift.txt');
       await fs.writeFile(filePath, 'Line 1\nLine 2\nLine 3');
 
       const result = await lineEditTool.execute({
@@ -620,27 +620,7 @@ describe('LineEditTool', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.content).toContain('⚠️');
-      expect(result.content).toContain('Re-read file');
       expect(result.content).toContain('shifted down');
-    });
-
-    it('should show context_window when show_updated_context is false', async () => {
-      const filePath = join(tempDir, 'context-window.txt');
-      await fs.writeFile(filePath, 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5');
-
-      const result = await lineEditTool.execute({
-        file_path: filePath,
-        operation: 'replace',
-        line_number: 3,
-        content: 'Modified',
-        show_updated_context: false,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.context_window).toBeDefined();
-      expect(result.updated_content).toBeUndefined();
-      expect(result.context_window).toContain('Modified');
     });
 
     it('should show updated_content when show_updated_context is true', async () => {
@@ -657,12 +637,11 @@ describe('LineEditTool', () => {
 
       expect(result.success).toBe(true);
       expect(result.updated_content).toBeDefined();
-      expect(result.context_window).toBeUndefined();
       expect(result.updated_content).toContain('Modified');
     });
 
-    it('should NOT show warning when line count unchanged', async () => {
-      const filePath = join(tempDir, 'no-warning.txt');
+    it('should NOT show shift message when line count unchanged', async () => {
+      const filePath = join(tempDir, 'no-shift.txt');
       await fs.writeFile(filePath, 'Line 1\nLine 2\nLine 3');
 
       const result = await lineEditTool.execute({
@@ -674,12 +653,11 @@ describe('LineEditTool', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.content).not.toContain('⚠️');
       expect(result.content).not.toContain('shifted');
     });
 
-    it('should NOT show warning when inserting at end of file (no lines to shift)', async () => {
-      const filePath = join(tempDir, 'insert-end-no-warning.txt');
+    it('should NOT show shift message when inserting at end of file', async () => {
+      const filePath = join(tempDir, 'insert-end.txt');
       await fs.writeFile(filePath, 'Line 1\nLine 2');
 
       const result = await lineEditTool.execute({
@@ -691,27 +669,7 @@ describe('LineEditTool', () => {
 
       expect(result.success).toBe(true);
       expect(result.lines_after).toBe(3);
-      // No warning because no existing lines were shifted
-      expect(result.content).not.toContain('⚠️');
       expect(result.content).not.toContain('shifted');
-    });
-
-    it('should show context_window for DELETE operation', async () => {
-      const filePath = join(tempDir, 'delete-context.txt');
-      await fs.writeFile(filePath, 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5');
-
-      const result = await lineEditTool.execute({
-        file_path: filePath,
-        operation: 'delete',
-        line_number: 3,
-        show_updated_context: false,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.context_window).toBeDefined();
-      expect(result.context_window).toContain('Line 1'); // context before
-      expect(result.context_window).toContain('Line 4'); // now at line 3 after deletion
-      expect(result.context_window).not.toContain('Line 3'); // deleted line
     });
 
     it('should handle deleting only line in file', async () => {
@@ -726,7 +684,7 @@ describe('LineEditTool', () => {
 
       expect(result.success).toBe(true);
       expect(result.lines_after).toBe(0);
-      expect(result.content).not.toContain('⚠️'); // No lines to shift
+      expect(result.content).not.toContain('shifted');
 
       const newContent = await fs.readFile(filePath, 'utf-8');
       expect(newContent).toBe('');
