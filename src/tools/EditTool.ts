@@ -175,24 +175,43 @@ export class EditTool extends BaseTool {
 
       // Read file content
       const content = await fs.readFile(absolutePath, 'utf-8');
-      const lines = content.split('\n');
 
-      // Validate that entire file has been read
+      // Validate that lines containing matches have been read
       const readStateManager = registry.get<ReadStateManager>('read_state_manager');
 
       if (readStateManager) {
-        const validation = readStateManager.validateLinesRead(
-          absolutePath,
-          1,
-          lines.length
-        );
+        // Find all matches to determine which lines need validation
+        const matches = this.findAllMatches(content, oldString);
 
-        if (!validation.success) {
-          return this.formatErrorResponse(
-            `Cannot edit file: ${validation.message}`,
-            'validation_error',
-            `Use read(file_paths=["${filePath}"]) to read the entire file first, then retry the edit.`
-          );
+        if (matches.length === 0) {
+          // No matches found - will be handled by existing validation below
+          // Skip read validation since we'll error anyway
+        } else {
+          // Validate each match location was read
+          const missingRanges: string[] = [];
+
+          for (const match of matches) {
+            const validation = readStateManager.validateLinesRead(
+              absolutePath,
+              match.startLine,
+              match.endLine
+            );
+
+            if (!validation.success) {
+              const rangeStr = match.startLine === match.endLine
+                ? `line ${match.startLine}`
+                : `lines ${match.startLine}-${match.endLine}`;
+              missingRanges.push(rangeStr);
+            }
+          }
+
+          if (missingRanges.length > 0) {
+            return this.formatErrorResponse(
+              `Cannot edit file: old_string found but not all occurrences have been read`,
+              'validation_error',
+              `The following lines containing old_string have not been read: ${missingRanges.join(', ')}. Use the Read tool to read these lines first.`
+            );
+          }
         }
       }
 
@@ -236,9 +255,45 @@ export class EditTool extends BaseTool {
       // Write the modified content
       await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
 
-      // Clear read state (EditTool may change line count unpredictably)
+      // Invalidate read state surgically for each match
       if (readStateManager) {
-        readStateManager.clearFile(absolutePath);
+        // Calculate line delta from the replacement
+        const oldLines = oldString.split('\n').length;
+        const newLines = newString.split('\n').length;
+        const lineDelta = newLines - oldLines;
+
+        // Only invalidate if line count changed
+        if (lineDelta !== 0) {
+          // Get matches again to know where invalidation is needed
+          const matches = this.findAllMatches(content, oldString);
+
+          if (replaceAll) {
+            // Process matches in REVERSE order to handle multiple replacements correctly
+            // (later edits don't affect earlier line numbers)
+            for (let i = matches.length - 1; i >= 0; i--) {
+              const match = matches[i];
+              if (!match) continue;
+
+              // Invalidate from the start of this match
+              readStateManager.invalidateAfterEdit(
+                absolutePath,
+                match.startLine,
+                lineDelta
+              );
+            }
+          } else {
+            // Single replacement: invalidate only the FIRST match
+            const firstMatch = matches[0];
+            if (firstMatch) {
+              readStateManager.invalidateAfterEdit(
+                absolutePath,
+                firstMatch.startLine,
+                lineDelta
+              );
+            }
+          }
+        }
+        // If lineDelta === 0, no line shifts occurred, so read state remains valid
       }
 
       // Capture the operation as a patch for undo functionality
@@ -298,7 +353,6 @@ export class EditTool extends BaseTool {
    * @param searchString - String to find
    * @returns Array of match information with line positions
    */
-  // @ts-expect-error - Method will be used in Phase 2
   private findAllMatches(content: string, searchString: string): MatchInfo[] {
     const matches: MatchInfo[] = [];
     const lines = content.split('\n');
