@@ -801,6 +801,11 @@ async function main() {
     const focusManager = new FocusManager();
     registry.registerInstance('focus_manager', focusManager);
 
+    // Create read state manager (conversation-scoped)
+    const { ReadStateManager } = await import('./services/ReadStateManager.js');
+    const readStateManager = new ReadStateManager();
+    registry.registerInstance('read_state_manager', readStateManager);
+
     // Create patch manager for undo functionality (session-specific)
     const { PatchManager } = await import('./services/PatchManager.js');
     const patchManager = new PatchManager({

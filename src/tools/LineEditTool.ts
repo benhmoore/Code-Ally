@@ -13,6 +13,8 @@ import { resolvePath } from '../utils/pathUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import * as fs from 'fs/promises';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { ReadStateManager } from '../services/ReadStateManager.js';
 
 type LineOperation = 'insert' | 'delete' | 'replace';
 
@@ -252,6 +254,51 @@ export class LineEditTool extends BaseTool {
         );
       }
 
+      // Validate that target lines have been read
+      const registry = ServiceRegistry.getInstance();
+      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+
+      if (readStateManager) {
+        let validationStartLine: number;
+        let validationEndLine: number;
+
+        switch (operation) {
+          case 'insert':
+            // For insert, validate we've read the context around insertion point
+            validationStartLine = Math.max(1, lineNumber - 1);
+            validationEndLine = Math.min(totalLines, lineNumber);
+            break;
+
+          case 'delete':
+            validationStartLine = lineNumber;
+            validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
+            break;
+
+          case 'replace':
+            validationStartLine = lineNumber;
+            validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
+            break;
+        }
+
+        const validation = readStateManager.validateLinesRead(
+          absolutePath,
+          validationStartLine,
+          validationEndLine
+        );
+
+        if (!validation.success) {
+          const rangeDesc = validationStartLine === validationEndLine
+            ? `line ${validationStartLine}`
+            : `lines ${validationStartLine}-${validationEndLine}`;
+
+          return this.formatErrorResponse(
+            `Cannot ${operation} at line ${lineNumber}: ${validation.message}`,
+            'validation_error',
+            `Use Read(file_path="${filePath}", offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1}) to read ${rangeDesc} first.`
+          );
+        }
+      }
+
       // Perform the operation
       let modifiedLines: string[];
       let operationDescription: string;
@@ -318,6 +365,36 @@ export class LineEditTool extends BaseTool {
 
       // Write the modified content
       await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
+
+      // Invalidate affected line numbers after edit
+      if (readStateManager) {
+        // Calculate line delta based on operation
+        let lineDelta: number;
+
+        switch (operation) {
+          case 'insert':
+            const insertedLineCount = content.split('\n').length;
+            lineDelta = insertedLineCount;
+            break;
+
+          case 'delete':
+            lineDelta = -numLines;
+            break;
+
+          case 'replace':
+            const newLineCount = content.split('\n').length;
+            lineDelta = newLineCount - numLines;
+            break;
+
+          default:
+            lineDelta = 0;
+        }
+
+        // Invalidate if line count changed
+        if (lineDelta !== 0) {
+          readStateManager.invalidateAfterEdit(absolutePath, lineNumber, lineDelta);
+        }
+      }
 
       // Capture the operation as a patch for undo functionality
       const patchNumber = await this.captureOperationPatch(

@@ -9,6 +9,7 @@ import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { FocusManager } from '../services/FocusManager.js';
+import { ReadStateManager } from '../services/ReadStateManager.js';
 import { tokenCounter } from '../services/TokenCounter.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
@@ -334,6 +335,15 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
       const lineNum = startLine + index + 1;
       return `${String(lineNum).padStart(FORMATTING.LINE_NUMBER_WIDTH)}\t${line}`;
     });
+
+    // Track read state for validation by edit tools
+    const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+    if (readStateManager) {
+      // Track the lines that were read (1-indexed)
+      const startLineNumber = startLine + 1;
+      const endLineNumber = Math.min(endLine, totalLines);
+      readStateManager.trackRead(absolutePath, startLineNumber, endLineNumber);
+    }
 
     return `${header}\n${formattedLines.join('\n')}`;
   }

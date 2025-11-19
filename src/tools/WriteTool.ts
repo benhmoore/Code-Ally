@@ -9,6 +9,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { FocusManager } from '../services/FocusManager.js';
+import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
@@ -146,6 +147,14 @@ export class WriteTool extends BaseTool {
 
       // Write the file
       await fs.writeFile(absolutePath, content, 'utf-8');
+
+      // Track the written content as read (model knows what it wrote)
+      // This allows immediate edits to the newly created file without requiring a separate read
+      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      if (readStateManager) {
+        const lines = content.split('\n');
+        readStateManager.trackRead(absolutePath, 1, lines.length);
+      }
 
       // Capture the operation as a patch for undo functionality
       const patchNumber = await this.captureOperationPatch(

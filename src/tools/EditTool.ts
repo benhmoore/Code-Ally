@@ -9,12 +9,22 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { FocusManager } from '../services/FocusManager.js';
+import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import * as fs from 'fs/promises';
+
+interface MatchInfo {
+  /** Starting line number (1-indexed) */
+  startLine: number;
+  /** Ending line number (1-indexed) */
+  endLine: number;
+  /** Character offset in file where match starts */
+  offset: number;
+}
 
 export class EditTool extends BaseTool {
   readonly name = 'edit';
@@ -165,6 +175,26 @@ export class EditTool extends BaseTool {
 
       // Read file content
       const content = await fs.readFile(absolutePath, 'utf-8');
+      const lines = content.split('\n');
+
+      // Validate that entire file has been read
+      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+
+      if (readStateManager) {
+        const validation = readStateManager.validateLinesRead(
+          absolutePath,
+          1,
+          lines.length
+        );
+
+        if (!validation.success) {
+          return this.formatErrorResponse(
+            `Cannot edit file: ${validation.message}`,
+            'validation_error',
+            `Use read(file_paths=["${filePath}"]) to read the entire file first, then retry the edit.`
+          );
+        }
+      }
 
       // Check that old_string exists
       const count = this.countOccurrences(content, oldString);
@@ -205,6 +235,11 @@ export class EditTool extends BaseTool {
 
       // Write the modified content
       await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
+
+      // Clear read state (EditTool may change line count unpredictably)
+      if (readStateManager) {
+        readStateManager.clearFile(absolutePath);
+      }
 
       // Capture the operation as a patch for undo functionality
       const patchNumber = await this.captureOperationPatch(
@@ -254,6 +289,67 @@ export class EditTool extends BaseTool {
   private countOccurrences(text: string, substring: string): number {
     if (substring.length === 0) return 0;
     return text.split(substring).length - 1;
+  }
+
+  /**
+   * Find all occurrences of a string in content with line position information
+   *
+   * @param content - File content to search
+   * @param searchString - String to find
+   * @returns Array of match information with line positions
+   */
+  // @ts-expect-error - Method will be used in Phase 2
+  private findAllMatches(content: string, searchString: string): MatchInfo[] {
+    const matches: MatchInfo[] = [];
+    const lines = content.split('\n');
+
+    let searchOffset = 0;
+
+    while (true) {
+      const matchOffset = content.indexOf(searchString, searchOffset);
+      if (matchOffset === -1) break;
+
+      // Calculate which lines this match spans
+      let currentOffset = 0;
+      let startLine = 1;
+      let endLine = 1;
+
+      // Find start line
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line === undefined) break;
+        const lineLength = line.length + 1; // +1 for \n
+        if (currentOffset + lineLength > matchOffset) {
+          startLine = i + 1;
+          break;
+        }
+        currentOffset += lineLength;
+      }
+
+      // Find end line (match may span multiple lines)
+      const matchEnd = matchOffset + searchString.length;
+      currentOffset = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line === undefined) break;
+        const lineLength = line.length + 1;
+        currentOffset += lineLength;
+        if (currentOffset >= matchEnd) {
+          endLine = i + 1;
+          break;
+        }
+      }
+
+      matches.push({
+        startLine,
+        endLine,
+        offset: matchOffset,
+      });
+
+      searchOffset = matchOffset + 1; // Move past this match
+    }
+
+    return matches;
   }
 
   /**
