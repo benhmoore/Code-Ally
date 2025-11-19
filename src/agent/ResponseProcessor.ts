@@ -23,6 +23,13 @@ import { Message, ActivityEventType } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import {
+  createHttpErrorReminder,
+  createEmptyResponseReminder,
+  createEmptyAfterToolsReminder,
+  createContextUsageWarning,
+  createRequirementsNotMetReminder,
+} from '../utils/messageUtils.js';
 
 /**
  * Context needed for processing LLM responses
@@ -170,11 +177,7 @@ export class ResponseProcessor {
 
         // Add continuation prompt mentioning the error
         // PERSIST: false - Ephemeral, one-time continuation signal after HTTP error
-        const continuationPrompt: Message = {
-          role: 'user',
-          content: `<system-reminder>\nYour previous response encountered an error and was interrupted: ${response.error_message || 'Unknown error'}. Please continue where you left off.\n</system-reminder>`,
-          timestamp: Date.now(),
-        };
+        const continuationPrompt = createHttpErrorReminder(response.error_message || 'Unknown error');
         this.conversationManager.addMessage(continuationPrompt);
 
         // Check for interruption before requesting continuation
@@ -295,11 +298,7 @@ export class ResponseProcessor {
 
       // Add generic continuation prompt
       // PERSIST: false - Ephemeral, one-time continuation signal for incomplete response
-      const continuationPrompt: Message = {
-        role: 'user',
-        content: '<system-reminder>\nYour response appears incomplete. Please continue where you left off.\n</system-reminder>',
-        timestamp: Date.now(),
-      };
+      const continuationPrompt = createEmptyResponseReminder();
       this.conversationManager.addMessage(continuationPrompt);
 
       // Check for interruption before requesting continuation
@@ -421,15 +420,7 @@ export class ResponseProcessor {
 
       // Add a system reminder instructing the agent to provide final summary
       // PERSIST: true - Persistent, explains why specialized agent stopped (constraint on result)
-      const systemReminder: Message = {
-        role: 'system',
-        content: '<system-reminder persist="true">\n' +
-          `Context usage at ${contextUsage}% - too high for specialized agent to execute more tools. ` +
-          'You MUST provide your final summary now. Do NOT request any more tool calls. ' +
-          'Summarize your work, findings, and recommendations based on the information you have gathered.\n' +
-          '</system-reminder>',
-        timestamp: Date.now(),
-      };
+      const systemReminder = createContextUsageWarning(contextUsage);
       this.conversationManager.addMessage(systemReminder);
 
       // Check for interruption before requesting final summary
@@ -661,11 +652,9 @@ export class ResponseProcessor {
           logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId,
             `Requirements not met. Injecting reminder (attempt ${retryCount}/${maxRetries})`);
 
-          const reminderMessage: Message = {
-            role: 'system',
-            content: `<system-reminder>\n${this.requirementValidator.getReminderMessage()}\n</system-reminder>`,
-            timestamp: Date.now(),
-          };
+          const reminderMessage = createRequirementsNotMetReminder(
+            this.requirementValidator.getReminderMessage()
+          );
           this.conversationManager.addMessage(reminderMessage);
           context.autoSaveSession();
 
@@ -702,11 +691,7 @@ export class ResponseProcessor {
         logger.debug(`[AGENT_RESPONSE] Empty response after ${lastMessage.tool_calls?.length || 0} tool calls`);
 
         // Add continuation prompt
-        const continuationPrompt: Message = {
-          role: 'user',
-          content: '<system-reminder>\nYou just executed tool calls but did not provide any response. Please provide your response now based on the tool results.\n</system-reminder>',
-          timestamp: Date.now(),
-        };
+        const continuationPrompt = createEmptyAfterToolsReminder();
         this.conversationManager.addMessage(continuationPrompt);
 
         // Check for interruption before requesting continuation

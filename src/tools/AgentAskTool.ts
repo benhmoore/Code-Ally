@@ -22,7 +22,8 @@ import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentType, getAgentDisplayName } from '../utils/agentTypeUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
-import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
+import { getThoroughnessDuration, formatMinutesSeconds, type ThoroughnessLevel } from '../ui/utils/timeUtils.js';
+import { createAgentTaskContextReminder } from '../utils/messageUtils.js';
 
 export class AgentAskTool extends BaseTool {
   readonly name = 'agent-ask';
@@ -252,9 +253,9 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
         };
 
-        // Add task context reminder if available
+        // Add task context reminder if available (with explicit persistence flag)
         if (taskContext) {
-          successResponse.system_reminder = taskContext;
+          Object.assign(successResponse, taskContext);
         }
 
         return this.formatSuccessResponse(successResponse);
@@ -277,8 +278,12 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
    * Build task context reminder from agent metadata
    *
    * Includes original task/requirements for context
+   * Returns object with both system_reminder and system_reminder_persist
    */
-  private buildTaskContext(metadata: AgentMetadata): string | null {
+  private buildTaskContext(metadata: AgentMetadata): {
+    system_reminder: string;
+    system_reminder_persist: boolean;
+  } | null {
     try {
       const config = metadata.config;
 
@@ -293,7 +298,13 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
       const agentType = getAgentType(metadata);
       const displayName = getAgentDisplayName(agentType);
 
-      return `This agent is a ${displayName} created for: "${taskPrompt}"`;
+      // Extract optional context
+      const maxDuration = config.maxDuration;
+      const thoroughness = config.thoroughness || 'uncapped';
+      const maxDurationNum = maxDuration ? getThoroughnessDuration(thoroughness as ThoroughnessLevel) || null : null;
+      const maxDurationStr = maxDurationNum ? formatMinutesSeconds(maxDurationNum) : null;
+
+      return createAgentTaskContextReminder(displayName, taskPrompt, maxDurationStr, thoroughness);
     } catch (error) {
       logger.debug('[ASK_AGENT_TOOL] Error building task context:', error);
       return null;

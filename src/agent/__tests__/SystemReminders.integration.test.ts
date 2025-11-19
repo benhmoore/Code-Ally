@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ConversationManager } from '../ConversationManager.js';
 import { Message } from '../../types/index.js';
+import { SYSTEM_REMINDER } from '../../config/constants.js';
 
 describe('System Reminders Integration', () => {
   let manager: ConversationManager;
@@ -22,8 +23,8 @@ describe('System Reminders Integration', () => {
    * Helper to simulate injectSystemReminder behavior
    */
   function injectSystemReminder(resultStr: string, reminder: string, persist: boolean = false): string {
-    const persistAttr = persist ? ' persist="true"' : '';
-    return `${resultStr}\n\n<system-reminder${persistAttr}>${reminder}</system-reminder>`;
+    const persistAttr = persist ? ` ${SYSTEM_REMINDER.PERSIST_ATTRIBUTE}` : '';
+    return `${resultStr}\n\n${SYSTEM_REMINDER.OPENING_TAG}${persistAttr}>${reminder}${SYSTEM_REMINDER.CLOSING_TAG}`;
   }
 
   /**

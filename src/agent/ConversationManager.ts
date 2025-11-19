@@ -14,6 +14,7 @@
 import { Message } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
+import { SYSTEM_REMINDER } from '../config/constants.js';
 
 /**
  * Configuration for ConversationManager
@@ -252,13 +253,13 @@ export class ConversationManager {
       }
 
       // Quick pre-check: does this message contain any system-reminder tags?
-      if (!msg.content.includes('<system-reminder')) {
+      if (!msg.content.includes(SYSTEM_REMINDER.OPENING_TAG)) {
         return false;
       }
 
       // Check if ALL reminder tags in this message are ephemeral (no persist="true")
       // If ANY tag has persist="true", we keep the entire message
-      const hasPersistentTag = /persist\s*=\s*["']true["']/i.test(msg.content);
+      const hasPersistentTag = SYSTEM_REMINDER.PERSIST_PATTERN.test(msg.content);
 
       // Remove message only if it has reminder tags AND none are persistent
       return !hasPersistentTag;
@@ -274,25 +275,14 @@ export class ConversationManager {
       }
 
       // Quick pre-check: does this content contain any system-reminder tags?
-      if (!msg.content.includes('<system-reminder')) {
+      if (!msg.content.includes(SYSTEM_REMINDER.OPENING_TAG)) {
         continue;
       }
 
       // Remove only non-persistent <system-reminder> tags using regex
-      // Pattern explanation:
-      // - <system-reminder - Opening tag
-      // - (?![^>]*persist\s*=\s*["']true["']) - Negative lookahead: no persist="true" anywhere in opening tag
-      // - [^>]* - Any other attributes
-      // - > - Close opening tag
-      // - .*? - Content (non-greedy)
-      // - </system-reminder> - Closing tag
-      // The 's' flag makes . match newlines for multi-line content
-      // The 'i' flag makes it case-insensitive (matches persist="TRUE", persist="True", etc.)
+      // Uses EPHEMERAL_TAG_PATTERN from constants which matches tags without persist="true"
       const originalContent = msg.content;
-      msg.content = msg.content.replace(
-        /<system-reminder(?![^>]*persist\s*=\s*["']true["'])[^>]*>.*?<\/system-reminder>/gis,
-        ''
-      );
+      msg.content = msg.content.replace(SYSTEM_REMINDER.EPHEMERAL_TAG_PATTERN, '');
 
       // Count this as a removal if content changed
       if (msg.content !== originalContent) {

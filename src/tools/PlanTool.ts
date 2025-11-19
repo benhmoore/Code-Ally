@@ -25,6 +25,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
+import { createAgentPersistenceReminder, createPlanAcceptedReminder } from '../utils/messageUtils.js';
 
 // Planning tools: read-only tools + explore for nested research + todo-add for proposals
 const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-add'];
@@ -467,14 +468,14 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
           content,
           duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
           agent_used: 'plan',
-          system_reminder: `The plan has been automatically accepted and todos activated. If this plan doesn't align with user intent, use deny-proposal to reject it and explain why.`,
+          system_reminder: createPlanAcceptedReminder(),
         };
 
         // Always include agent_id when available
         if (agentId) {
           successResponse.agent_id = agentId;
           // Append agent-ask reminder to existing system_reminder
-          successResponse.system_reminder += `\n\nAgent persists as ${agentId}. For related follow-ups, USE agent-ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
+          successResponse.system_reminder += '\n\n' + createAgentPersistenceReminder(agentId);
         }
 
         return this.formatSuccessResponse(successResponse);

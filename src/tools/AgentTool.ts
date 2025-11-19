@@ -23,6 +23,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT, ID_GENERATION, AGENT_CONFIG } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
+import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 
 export class AgentTool extends BaseTool implements InjectableTool {
   readonly name = 'agent';
@@ -334,7 +335,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         // Always include agent_id when available
         if (result.agent_id) {
           successResponse.agent_id = result.agent_id;
-          successResponse.system_reminder = `Agent persists as ${result.agent_id}. For related follow-ups, USE agent-ask(agent_id="${result.agent_id}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
+          successResponse.system_reminder = createAgentPersistenceReminder(result.agent_id);
         }
 
         return this.formatSuccessResponse(successResponse);

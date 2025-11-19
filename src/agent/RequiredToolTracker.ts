@@ -17,6 +17,7 @@
 import { Message } from '../types/index.js';
 import { BUFFER_SIZES } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
+import { createRequiredToolsWarning } from '../utils/messageUtils.js';
 
 export interface RequiredToolWarningResult {
   /** Whether a warning should be issued */
@@ -194,15 +195,7 @@ export class RequiredToolTracker {
    * @returns Message object for conversation history
    */
   createWarningMessage(missingTools: string[]): Message {
-    return {
-      role: 'system',
-      content:
-        '<system-reminder>\n' +
-        `You must call the following required tool(s) before completing your task: ${missingTools.join(', ')}\n` +
-        `Please call ${missingTools.length === 1 ? 'this tool' : 'these tools'} now.\n` +
-        '</system-reminder>',
-      timestamp: Date.now(),
-    };
+    return createRequiredToolsWarning(missingTools);
   }
 
   /**

@@ -108,6 +108,8 @@ export interface ToolResult {
   error: string;
   error_type?: ErrorType;
   suggestion?: string;
+  system_reminder?: string;
+  system_reminder_persist?: boolean;
   [key: string]: any;
 }
 

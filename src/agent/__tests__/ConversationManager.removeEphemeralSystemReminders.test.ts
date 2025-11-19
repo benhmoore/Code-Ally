@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ConversationManager } from '../ConversationManager.js';
 import { Message } from '../../types/index.js';
+import { SYSTEM_REMINDER } from '../../config/constants.js';
 
 describe('ConversationManager.removeEphemeralSystemReminders', () => {
   let manager: ConversationManager;

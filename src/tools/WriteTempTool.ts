@@ -11,6 +11,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
+import { createWriteTempHintReminder } from '../utils/messageUtils.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -118,7 +119,7 @@ export class WriteTempTool extends BaseTool {
         content: successMessage, // Human-readable output for LLM
         file_path: absolutePath,
         bytes_written: stats.size,
-        system_reminder: 'You can read this file back with read(file_path="' + absolutePath + '") to review your notes.',
+        system_reminder: createWriteTempHintReminder(absolutePath),
       });
     } catch (error) {
       return this.formatErrorResponse(

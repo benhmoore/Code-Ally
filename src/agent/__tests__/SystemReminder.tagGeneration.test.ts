@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { SYSTEM_REMINDER } from '../../config/constants.js';
 
 describe('System Reminder Tag Generation', () => {
   /**
@@ -21,8 +22,8 @@ describe('System Reminder Tag Generation', () => {
    * but as a pure function for easier testing
    */
   function generateSystemReminderTag(resultStr: string, reminder: string, persist: boolean = false): string {
-    const persistAttr = persist ? ' persist="true"' : '';
-    const injectedStr = `${resultStr}\n\n<system-reminder${persistAttr}>${reminder}</system-reminder>`;
+    const persistAttr = persist ? ` ${SYSTEM_REMINDER.PERSIST_ATTRIBUTE}` : '';
+    const injectedStr = `${resultStr}\n\n${SYSTEM_REMINDER.OPENING_TAG}${persistAttr}>${reminder}${SYSTEM_REMINDER.CLOSING_TAG}`;
     return injectedStr;
   }
 
@@ -288,8 +289,7 @@ describe('System Reminder Tag Generation', () => {
       const ephemeralResult = generateSystemReminderTag('Output', 'Ephemeral note', false);
 
       // Verify the regex from removeEphemeralSystemReminders would match it
-      const ephemeralRegex = /<system-reminder(?![^>]*persist\s*=\s*["']true["'])[^>]*>.*?<\/system-reminder>/gis;
-      expect(ephemeralRegex.test(ephemeralResult)).toBe(true);
+      expect(SYSTEM_REMINDER.EPHEMERAL_TAG_PATTERN.test(ephemeralResult)).toBe(true);
     });
 
     it('should generate tags that are preserved by removeEphemeralSystemReminders', () => {
@@ -297,8 +297,7 @@ describe('System Reminder Tag Generation', () => {
       const persistentResult = generateSystemReminderTag('Output', 'Persistent note', true);
 
       // Verify the regex from removeEphemeralSystemReminders would NOT match it
-      const ephemeralRegex = /<system-reminder(?![^>]*persist\s*=\s*["']true["'])[^>]*>.*?<\/system-reminder>/gis;
-      expect(ephemeralRegex.test(persistentResult)).toBe(false);
+      expect(SYSTEM_REMINDER.EPHEMERAL_TAG_PATTERN.test(persistentResult)).toBe(false);
     });
   });
 });

@@ -25,7 +25,12 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
-import { BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
+import { BUFFER_SIZES, ID_GENERATION, SYSTEM_REMINDER } from '../config/constants.js';
+import {
+  createTimeReminder,
+  createFocusReminder,
+  createCycleWarning,
+} from '../utils/messageUtils.js';
 import { TOOL_NAMES } from '../config/toolDefaults.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
 
@@ -893,8 +898,8 @@ export class ToolOrchestrator {
      * @param persist - If true, reminder persists in history; if false (default), cleaned up after turn
      */
     const injectSystemReminder = (reminder: string, source: string, persist: boolean = false) => {
-      const persistAttr = persist ? ' persist="true"' : '';
-      resultStr += `\n\n<system-reminder${persistAttr}>${reminder}</system-reminder>`;
+      const persistAttr = persist ? ` ${SYSTEM_REMINDER.PERSIST_ATTRIBUTE}` : '';
+      resultStr += `\n\n${SYSTEM_REMINDER.OPENING_TAG}${persistAttr}>${reminder}${SYSTEM_REMINDER.CLOSING_TAG}`;
       logger.debug('[SYSTEM_REMINDER]', `${source} for ${toolName}:`, reminder.substring(0, 100) + (reminder.length > 100 ? '...' : ''));
     };
 
@@ -942,9 +947,9 @@ export class ToolOrchestrator {
       const shouldWarn = !cycleInfo.isValidRepeat || cycleInfo.severity === 'high';
 
       if (shouldWarn) {
-        // Use custom message if provided, otherwise fallback to default
+        // Use custom message if provided, otherwise fallback to default cycle warning
         const message = cycleInfo.customMessage ||
-          `You've called "${cycleInfo.toolName}" with identical arguments ${cycleInfo.count} times recently, getting the same results. This suggests you're stuck in a loop. Consider trying a different approach or re-reading previous results.`;
+          createCycleWarning(cycleInfo.toolName, cycleInfo.count);
 
         // Use issueType for label if provided, otherwise default to 'Cycle detection'
         const label = cycleInfo.issueType || 'Cycle detection';
@@ -1001,23 +1006,8 @@ export class ToolOrchestrator {
   private generateTimeReminder(maxDuration: number, currentDuration: number): string | null {
     const percentUsed = (currentDuration / maxDuration) * 100;
     const remainingMinutes = maxDuration - currentDuration;
-
-    if (percentUsed >= 100) {
-      // Critical: Time exceeded
-      return `⏰ TIME EXCEEDED! You have surpassed your allotted time. Wrap up your work immediately and summarize what is left, if any.`;
-    } else if (percentUsed >= 90) {
-      // Urgent: 90% time used
-      return `⏰ URGENT: You have ${formatMinutesSeconds(remainingMinutes)} left (${Math.round(100 - percentUsed)}% remaining). Finish your current work and prepare to wrap up.`;
-    } else if (percentUsed >= 75) {
-      // Warning: 75% time used
-      return `⏰ You have ${formatMinutesSeconds(remainingMinutes)} left (${Math.round(100 - percentUsed)}% remaining). Start wrapping up your exploration.`;
-    } else if (percentUsed >= 50) {
-      // Gentle reminder: 50% time used
-      return `You're halfway through your allotted time (${formatMinutesSeconds(remainingMinutes)} remaining). Keep your exploration focused and efficient.`;
-    }
-
-    // Below 50% - no reminder needed
-    return null;
+    const remaining = formatMinutesSeconds(remainingMinutes);
+    return createTimeReminder(percentUsed, remaining);
   }
 
   /**
@@ -1041,13 +1031,11 @@ export class ToolOrchestrator {
         return null;
       }
 
-      // Build reminder with tool call summary
-      let reminder = `Stay focused. You're working on: ${inProgressTodo.task}.`;
-
-      // Add tool call summary if any calls have been made
+      // Build tool call summary
+      let toolCallSummary = '';
       const toolCalls = inProgressTodo.toolCalls || [];
       if (toolCalls.length > 0) {
-        reminder += ` You've made ${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''} for this task:`;
+        toolCallSummary = ` You've made ${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''} for this task:`;
 
         // Group tool calls by tool name and show brief summary
         const callsByTool = new Map<string, string[]>();
@@ -1064,13 +1052,11 @@ export class ToolOrchestrator {
         for (const [toolName, argsList] of callsByTool) {
           const uniqueArgs = [...new Set(argsList)]; // Deduplicate
           const argStr = uniqueArgs.slice(0, BUFFER_SIZES.TOP_ITEMS_PREVIEW).join(', ') + (uniqueArgs.length > BUFFER_SIZES.TOP_ITEMS_PREVIEW ? '...' : '');
-          reminder += `\n- ${toolName}(${argStr})`;
+          toolCallSummary += `\n- ${toolName}(${argStr})`;
         }
       }
 
-      reminder += `\n\nStay on task. Use todo-update to mark todos as complete when finished.`;
-
-      return reminder;
+      return createFocusReminder(inProgressTodo.task, toolCallSummary);
     } catch (error) {
       logger.warn('[TOOL_ORCHESTRATOR] Failed to generate focus reminder:', formatError(error));
       return null;

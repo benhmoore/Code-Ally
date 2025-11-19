@@ -25,6 +25,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
+import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 
 // Tools available for exploration (read-only + write-temp for note-taking + explore for delegation)
 const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp', 'explore'];
@@ -466,7 +467,7 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
         // Always include agent_id when available
         if (agentId) {
           successResponse.agent_id = agentId;
-          successResponse.system_reminder = `Agent persists as ${agentId}. For related follow-ups, USE agent-ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`;
+          successResponse.system_reminder = createAgentPersistenceReminder(agentId);
         }
 
         return this.formatSuccessResponse(successResponse);

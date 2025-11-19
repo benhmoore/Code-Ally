@@ -14,6 +14,7 @@
 import { LLMResponse } from '../llm/ModelClient.js';
 import { Message } from '../types/index.js';
 import { logger } from '../services/Logger.js';
+import { createValidationErrorReminder } from '../utils/messageUtils.js';
 
 /**
  * Result of a validation check
@@ -146,13 +147,8 @@ export class MessageValidator {
    * @returns Message to add to conversation for retry
    */
   createValidationRetryMessage(errors?: string[]): Message {
-    const errorDetails = errors?.join('\n- ') || 'Unknown validation errors';
-
-    return {
-      role: 'user',
-      content: `<system-reminder>\nYour previous response contained tool call validation errors:\n- ${errorDetails}\n\nPlease try again with properly formatted tool calls.\n</system-reminder>`,
-      timestamp: Date.now(),
-    };
+    const errorList = errors || ['Unknown validation errors'];
+    return createValidationErrorReminder(errorList);
   }
 
   /**

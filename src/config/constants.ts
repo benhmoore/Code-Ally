@@ -453,6 +453,63 @@ export const TOOL_GUIDANCE = {
    * in checkpoint reminders to conserve context budget.
    */
   CHECKPOINT_MAX_PROMPT_TOKENS: 150,
+
+  /**
+   * Time reminder thresholds (percentages)
+   *
+   * Escalating urgency thresholds for agents with max duration:
+   * - 50%: Gentle reminder that time is half gone
+   * - 75%: Warning to start wrapping up
+   * - 90%: Urgent - finish current work
+   * - 100%: Critical - time exceeded, wrap up immediately
+   */
+  TIME_REMINDER_50_PERCENT: 50,
+  TIME_REMINDER_75_PERCENT: 75,
+  TIME_REMINDER_90_PERCENT: 90,
+  TIME_REMINDER_100_PERCENT: 100,
+} as const;
+
+// ===========================================
+// SYSTEM REMINDER TAGS
+// ===========================================
+
+/**
+ * System reminder XML tags and attributes
+ *
+ * System reminders are instructions injected into the conversation to guide
+ * agent behavior. They can be either ephemeral (cleaned up after each turn)
+ * or persistent (kept forever in conversation history).
+ *
+ * Usage:
+ * - Ephemeral: `${OPENING_TAG}>${content}${CLOSING_TAG}`
+ * - Persistent: `${OPENING_TAG} ${PERSIST_ATTRIBUTE}>${content}${CLOSING_TAG}`
+ */
+export const SYSTEM_REMINDER = {
+  /** Opening tag for system reminder messages (without closing bracket) */
+  OPENING_TAG: '<system-reminder',
+
+  /** Closing tag for system reminder messages */
+  CLOSING_TAG: '</system-reminder>',
+
+  /** Persist attribute for persistent reminders (kept forever in conversation history) */
+  PERSIST_ATTRIBUTE: 'persist="true"',
+
+  /**
+   * Regex pattern to match persist="true" attribute anywhere in opening tag
+   *
+   * Matches: persist="true", persist="TRUE", persist="True", persist='true', persist = "true"
+   * Flags: i (case-insensitive)
+   */
+  PERSIST_PATTERN: /persist\s*=\s*["']true["']/i,
+
+  /**
+   * Regex pattern to match and remove ephemeral system reminder tags
+   *
+   * Matches: <system-reminder>...</system-reminder> (without persist="true")
+   * Uses negative lookahead to exclude tags with persist="true"
+   * Flags: g (global), i (case-insensitive), s (dot matches newlines)
+   */
+  EPHEMERAL_TAG_PATTERN: /<system-reminder(?![^>]*persist\s*=\s*["']true["'])[^>]*>.*?<\/system-reminder>/gis,
 } as const;
 
 // ===========================================

@@ -40,6 +40,15 @@ import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, BUFFER_SIZES, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE, TOKEN_MANAGEMENT } from '../config/constants.js';
+import {
+  createInterruptionReminder,
+  createEmptyTodoReminder,
+  createActiveTodoReminder,
+  createCheckpointReminder,
+  createExploratoryGentleWarning,
+  createExploratorySternWarning,
+  createActivityTimeoutContinuationReminder,
+} from '../utils/messageUtils.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 
 export interface AgentConfig {
@@ -619,11 +628,7 @@ export class Agent {
     // If the previous request was interrupted, add a system reminder
     if (this.interruptionManager.wasRequestInterrupted()) {
       // PERSIST: false - Ephemeral, one-time navigation signal after interruption
-      const systemReminder: Message = {
-        role: 'system',
-        content: '<system-reminder>\nUser interrupted. Prioritize answering their new prompt over continuing your todo list. After responding, reassess if the todo list is still relevant. Do not blindly continue with pending todos.\n</system-reminder>',
-        timestamp: Date.now(),
-      };
+      const systemReminder = createInterruptionReminder();
       this.conversationManager.addMessage(systemReminder);
       logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Injected system reminder after interruption');
 
@@ -642,34 +647,26 @@ export class Agent {
 
       if (todoManager) {
         const todos = todoManager.getTodos();
-        let reminderContent = '<system-reminder>\n';
+        let systemReminder: Message;
 
         if (todos.length === 0) {
-          reminderContent += 'Todo list empty. For multi-step tasks, use todo-add to track progress.\n';
+          systemReminder = createEmptyTodoReminder();
         } else {
-          reminderContent += 'Current todos:\n';
+          // Build todo summary
+          let todoSummary = '';
           todos.forEach((todo: any, idx: number) => {
             const status = todo.status === 'completed' ? 'DONE' : todo.status === 'in_progress' ? 'ACTIVE' : 'PENDING';
-            reminderContent += `${idx + 1}. [${status}] ${todo.task}\n`;
+            todoSummary += `${idx + 1}. [${status}] ${todo.task}\n`;
           });
 
           const inProgressTodo = todos.find((t: any) => t.status === 'in_progress');
-          if (inProgressTodo) {
-            reminderContent += `\nCurrently working on: "${inProgressTodo.task}". Stay focused unless blocked.\n`;
-          }
+          const currentTask = inProgressTodo ? inProgressTodo.task : null;
+          const guidance = 'Keep list clean: remove irrelevant tasks, maintain ONE in_progress task.\nUpdate list now if needed based on user request.';
 
-          reminderContent += '\nKeep list clean: remove irrelevant tasks, maintain ONE in_progress task.\n';
-          reminderContent += 'Update list now if needed based on user request.\n';
+          systemReminder = createActiveTodoReminder(todoSummary, currentTask, guidance);
         }
 
-        reminderContent += '</system-reminder>';
-
         // PERSIST: false - Ephemeral, todo list state is dynamic and updated each message
-        const systemReminder: Message = {
-          role: 'system',
-          content: reminderContent,
-          timestamp: Date.now(),
-        };
         this.conversationManager.addMessage(systemReminder);
         logger.debug('[AGENT_TODO_REMINDER]', this.instanceId, 'Injected todo reminder system message');
       }
@@ -1127,11 +1124,7 @@ export class Agent {
             `Attempting continuation ${this.timeoutContinuationAttempts}/${BUFFER_SIZES.AGENT_TIMEOUT_MAX_CONTINUATIONS}`);
 
           // Add continuation prompt to conversation
-          const continuationPrompt: Message = {
-            role: 'user',
-            content: '<system-reminder>\nYou exceeded the activity timeout without making tool calls. Please continue your work and make progress by calling tools or providing a response.\n</system-reminder>',
-            timestamp: Date.now(),
-          };
+          const continuationPrompt = createActivityTimeoutContinuationReminder();
           this.conversationManager.addMessage(continuationPrompt);
 
           // Reset interruption state and retry
@@ -1158,6 +1151,13 @@ export class Agent {
     // Delegate to ResponseProcessor for remaining logic
     const context = this.buildResponseContext();
     const result = await this.responseProcessor.processLLMResponse(response, context, isRetry);
+
+    // Stop activity monitoring immediately after getting result
+    // This prevents race conditions where the watchdog timer fires after ResponseProcessor
+    // completes but before the interruption check below, which would replace valid responses
+    // with "Interrupted" message. Legitimate timeouts that occur DURING ResponseProcessor
+    // execution are still caught because the interruption flag is already set.
+    this.stopActivityMonitoring();
 
     // Check if an interruption happened during ResponseProcessor execution
     // This handles interjections that occur during tool execution or continuation logic
@@ -1720,14 +1720,7 @@ export class Agent {
     );
 
     // Generate firm but professional reminder
-    const reminder = `Progress checkpoint (${this.toolCallsSinceStart} tool calls):
-
-Original request: "${truncatedPrompt}"
-
-Verify alignment:
-- Are you still working toward this goal?
-- Have you drifted into unrelated improvements?
-- Course-correct now if off-track, or continue if aligned.`;
+    const reminder = createCheckpointReminder(this.toolCallsSinceStart, truncatedPrompt);
 
     // Reset checkpoint counter
     this.toolCallsSinceLastCheckpoint = 0;
@@ -1777,45 +1770,12 @@ Verify alignment:
       if (this.currentExploratoryStreak >= sternThreshold) {
         // Stern warning - agent is wasting significant context
         // PERSIST: false - Ephemeral, temporary coaching that becomes irrelevant after the turn
-        result.system_reminder = `⚠️ CRITICAL: You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls. You are wasting valuable context budget on manual exploration.
-
-STOP exploring manually. You MUST use explore() now.
-
-Required actions:
-1. IMMEDIATELY use cleanup-call to remove all recent exploratory results
-2. Use explore() with a detailed task_prompt that includes:
-   - What you're looking for
-   - What you've learned so far (files found, patterns discovered)
-   - Where else to look
-
-Example:
-explore(
-  task_prompt="Find all color and theming constants in the codebase. Already found src/ui/constants/colors.ts which has PROFILE_COLOR_PALETTE and UI_COLORS. Need to search config/, services/, and plugins/ directories for additional theme-related constants."
-)
-
-Continuing to use read/grep/glob/ls/tree is inefficient and wastes your limited context budget. The explore agent has its own context budget and is designed for exactly this type of investigation.`;
-
+        result.system_reminder = createExploratorySternWarning(this.currentExploratoryStreak);
         logger.warn('[AGENT_EXPLORATORY_STERN]', this.instanceId, `Injected stern exploratory warning after ${this.currentExploratoryStreak} consecutive calls`);
       } else if (this.currentExploratoryStreak >= threshold) {
         // Gentle reminder - suggest explore()
         // PERSIST: false - Ephemeral, temporary coaching that becomes irrelevant after the turn
-        result.system_reminder = `You've made ${this.currentExploratoryStreak} consecutive exploratory tool calls (read/grep/glob/ls/tree). For complex multi-file investigations, consider using explore() instead - it delegates to a specialized agent with its own context budget, protecting your token budget and enabling more thorough investigation.
-
-Recommended workflow:
-1. First, use cleanup-call to remove recent exploratory tool results from context
-2. Then call explore() with a detailed task_prompt that summarizes:
-   - What you're looking for
-   - What you've learned so far (files found, patterns discovered)
-   - Any specific areas to investigate
-
-When to use explore():
-- Unknown scope/location - don't know where code is
-- Multi-file synthesis - understanding patterns across files
-- Complex architectural analysis
-- Any investigation requiring 5+ file operations
-
-Only use direct read/grep/glob when you know specific paths or need a quick lookup.`;
-
+        result.system_reminder = createExploratoryGentleWarning(this.currentExploratoryStreak);
         logger.debug('[AGENT_EXPLORATORY_REMINDER]', this.instanceId, `Injected exploratory tool reminder after ${this.currentExploratoryStreak} consecutive calls`);
       }
     } else {
