@@ -149,7 +149,7 @@ describe('Checkpoint Reminder System', () => {
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).not.toBeNull();
       expect(checkpoint).toContain('Progress checkpoint');
-      expect(checkpoint).toContain('Original request:');
+      expect(checkpoint).toContain('Last user message you are responding to:');
     });
 
     it('should trigger when exceeding interval', () => {
@@ -187,8 +187,8 @@ describe('Checkpoint Reminder System', () => {
     });
   });
 
-  describe('Skip logic - specialized agents', () => {
-    it('should skip checkpoints for specialized agents', () => {
+  describe('Specialized agents', () => {
+    it('should ALLOW checkpoints for specialized agents (they need to stay on task)', () => {
       // Create a specialized agent config
       const specializedAgentConfig: AgentConfig = {
         config: mockConfig,
@@ -208,7 +208,11 @@ describe('Checkpoint Reminder System', () => {
       (specializedAgent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = specializedAgent.generateCheckpointReminder();
-      expect(checkpoint).toBeNull();
+
+      // Specialized agents (Plan, Explore) SHOULD get checkpoint reminders to stay on task
+      expect(checkpoint).not.toBeNull();
+      expect(checkpoint).toContain('Progress checkpoint');
+      expect(checkpoint).toContain('Last user message you are responding to:');
     });
   });
 
@@ -352,7 +356,7 @@ describe('Checkpoint Reminder System', () => {
     it('should include original request in quotes', () => {
       const checkpoint = agent.generateCheckpointReminder();
 
-      expect(checkpoint).toContain('Original request:');
+      expect(checkpoint).toContain('Last user message you are responding to:');
       expect(checkpoint).toMatch(/".*"/);
     });
 

@@ -88,6 +88,17 @@ export const UI_COLORS = {
    */
   ERROR: 'red' as const,
 
+  /**
+   * Green - Success and positive states (#50fa7b)
+   *
+   * Usage:
+   * - Success messages
+   * - Completed operations
+   * - Positive confirmations
+   * - Diff additions
+   */
+  SUCCESS: '#50fa7b' as const,
+
   // ============================================================================
   // SECONDARY COLORS
   // ============================================================================
@@ -156,7 +167,7 @@ export const SEMANTIC_COLORS = {
   ERROR_MESSAGE: UI_COLORS.ERROR,
 
   // Status
-  SUCCESS: UI_COLORS.TEXT_DEFAULT,
+  SUCCESS: UI_COLORS.SUCCESS,
   WARNING: UI_COLORS.WARNING,
   ERROR: UI_COLORS.ERROR,
   PENDING: UI_COLORS.TEXT_DIM,

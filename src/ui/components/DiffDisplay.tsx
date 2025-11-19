@@ -93,7 +93,7 @@ const DiffLine: React.FC<{ line: DiffLine }> = ({ line }) => {
   const getColor = (): string => {
     switch (line.type) {
       case 'add':
-        return UI_COLORS.TEXT_DEFAULT;
+        return UI_COLORS.SUCCESS;
       case 'remove':
         return UI_COLORS.ERROR;
       case 'header':
@@ -235,7 +235,7 @@ export const InlineDiff: React.FC<{ oldContent: string; newContent: string }> = 
   return (
     <Box flexDirection="column">
       <Text dimColor>
-        Changes: <Text color={UI_COLORS.TEXT_DEFAULT}>+{additions}</Text> <Text color={UI_COLORS.ERROR}>-{deletions}</Text>
+        Changes: <Text color={UI_COLORS.SUCCESS}>+{additions}</Text> <Text color={UI_COLORS.ERROR}>-{deletions}</Text>
       </Text>
     </Box>
   );

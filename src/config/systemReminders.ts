@@ -136,7 +136,7 @@ export const SYSTEM_REMINDERS = {
       text: (toolCallCount: number, originalPrompt: string) =>
         `Progress checkpoint (${toolCallCount} tool calls):
 
-Original request: "${originalPrompt}"
+Last user message you are responding to: "${originalPrompt}"
 
 Verify alignment:
 - Are you still working toward this goal?

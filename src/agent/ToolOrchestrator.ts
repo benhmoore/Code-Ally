@@ -429,7 +429,6 @@ export class ToolOrchestrator {
 
           // Inject checkpoint reminder into first result only
           if (i === 0 && checkpointReminder) {
-            console.log(`💉 [CHECKPOINT] Injecting checkpoint into ${toolCall.function.name} tool result`);
             logger.debug('[TOOL_ORCHESTRATOR]', 'Injecting checkpoint reminder into', toolCall.function.name);
             if (result.system_reminder) {
               // Append to existing reminder (e.g., exploratory warning)
@@ -498,7 +497,6 @@ export class ToolOrchestrator {
 
       // Inject checkpoint reminder into first result only
       if (isFirstTool && checkpointReminder) {
-        console.log(`💉 [CHECKPOINT] Injecting checkpoint into ${toolCall.function.name} tool result`);
         logger.debug('[TOOL_ORCHESTRATOR]', 'Injecting checkpoint reminder into', toolCall.function.name);
         if (result.system_reminder) {
           // Append to existing reminder (e.g., exploratory warning)

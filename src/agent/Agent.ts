@@ -548,7 +548,6 @@ export class Agent {
     // Counters accumulate across all tool calls in this turn (including continuation loops)
     this.toolCallsSinceStart = 0;
     this.toolCallsSinceLastCheckpoint = 0;
-    console.log(`🔄 [CHECKPOINT] New turn - reset counters to 0`);
     logger.debug('[AGENT_CHECKPOINT]', this.instanceId, 'Reset checkpoint counters for new turn');
 
     // Reset turn start time for specialized agents on each new turn
@@ -604,8 +603,6 @@ export class Agent {
     // Used for checkpoint reminders to remind agent of current turn's goal
     // Updated each turn since user messages provide natural cross-turn checkpoints
     this.initialUserPrompt = message;
-    const preview = message.length > 80 ? message.substring(0, 80) + '...' : message;
-    console.log(`📝 [CHECKPOINT] Captured turn prompt: "${preview}"`);
     logger.debug('[AGENT_CHECKPOINT]', this.instanceId, 'Captured user prompt for turn');
 
     // Add user message
@@ -1657,7 +1654,6 @@ export class Agent {
     this.toolCallsSinceStart = 0;
     this.toolCallsSinceLastCheckpoint = 0;
     this.initialUserPrompt = '';
-    console.log(`🔄 [CHECKPOINT] Reset checkpoint tracking (conversation cleared)`);
     logger.debug('[AGENT_CHECKPOINT]', this.instanceId, 'Reset checkpoint tracking');
   }
 
@@ -1673,7 +1669,6 @@ export class Agent {
     }
     this.toolCallsSinceStart += toolCallCount;
     this.toolCallsSinceLastCheckpoint += toolCallCount;
-    console.log(`🔢 [CHECKPOINT] Tool calls: ${this.toolCallsSinceStart} total, ${this.toolCallsSinceLastCheckpoint} since last checkpoint`);
     logger.debug('[AGENT_CHECKPOINT]', this.instanceId,
       `Tool calls - Total: ${this.toolCallsSinceStart}, Since checkpoint: ${this.toolCallsSinceLastCheckpoint}`);
   }
@@ -1683,11 +1678,6 @@ export class Agent {
    * @returns true if checkpoint should be injected
    */
   private shouldInjectCheckpoint(): boolean {
-    // Skip for specialized agents
-    if (this.config.isSpecializedAgent) {
-      return false;
-    }
-
     // Skip if no initial prompt captured
     if (!this.initialUserPrompt) {
       return false;
@@ -1763,7 +1753,6 @@ export class Agent {
     // Reset checkpoint counter
     this.toolCallsSinceLastCheckpoint = 0;
 
-    console.log(`✅ [CHECKPOINT] Generated checkpoint reminder at ${this.toolCallsSinceStart} tool calls (counter reset to 0)`);
     logger.debug('[AGENT_CHECKPOINT]', this.instanceId,
       `Generated checkpoint reminder at ${this.toolCallsSinceStart} tool calls`);
 
