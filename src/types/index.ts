@@ -320,6 +320,8 @@ export interface SessionMetadata {
   tags?: string[];
   model?: string;
   lastTitleGeneratedAt?: number; // Timestamp of last title generation
+  pendingToolCleanups?: string[]; // Tool call IDs identified as irrelevant, pending cleanup
+  lastCleanupAnalysisAt?: number; // Timestamp of last cleanup analysis
 }
 
 export interface Session {

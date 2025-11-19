@@ -1,15 +1,17 @@
 /**
  * IdleTaskCoordinator - Manages priority-based idle task execution
  *
- * Coordinates two background idle tasks with different priorities:
+ * Coordinates three background idle tasks with different priorities:
  * 1. Priority 1: Session title regeneration (when title needs updating)
  * 2. Priority 2: Idle message generation (when queue is low)
+ * 3. Priority 3: Tool cleanup analysis (when tool results accumulate)
  *
  * Only runs idle tasks when Ollama is not actively processing requests.
  */
 
 import { SessionTitleGenerator } from './SessionTitleGenerator.js';
 import { IdleMessageGenerator, IdleContext } from './IdleMessageGenerator.js';
+import { AutoToolCleanupService } from './AutoToolCleanupService.js';
 import { SessionManager } from './SessionManager.js';
 import { Message, IService } from '../types/index.js';
 import { logger } from './Logger.js';
@@ -26,6 +28,7 @@ export class IdleTaskCoordinator implements IService {
   constructor(
     private sessionTitleGenerator: SessionTitleGenerator | null,
     private idleMessageGenerator: IdleMessageGenerator | null,
+    private autoToolCleanup: AutoToolCleanupService | null,
     private sessionManager: SessionManager
   ) {}
 
@@ -87,6 +90,7 @@ export class IdleTaskCoordinator implements IService {
    *
    * Priority 1: Session title regeneration (if needed)
    * Priority 2: Idle message generation (if queue low)
+   * Priority 3: Tool cleanup analysis (if tool results accumulate)
    *
    * @param messages - Current conversation messages
    * @param context - Additional context for idle message generation
@@ -101,7 +105,7 @@ export class IdleTaskCoordinator implements IService {
     }
 
     // Check if generators are initialized
-    if (!this.sessionTitleGenerator && !this.idleMessageGenerator) {
+    if (!this.sessionTitleGenerator && !this.idleMessageGenerator && !this.autoToolCleanup) {
       logger.debug('[IDLE_COORD] No generators initialized, skipping idle tasks');
       return;
     }
@@ -117,6 +121,12 @@ export class IdleTaskCoordinator implements IService {
     // Priority 2: Check if idle messages needed
     if (this.needsIdleMessages()) {
       this.runIdleMessageGeneration(messages, context);
+      return;
+    }
+
+    // Priority 3: Check if tool cleanup needed
+    if (await this.needsToolCleanup(messages)) {
+      this.runToolCleanup(messages);
       return;
     }
 
@@ -285,6 +295,69 @@ export class IdleTaskCoordinator implements IService {
   }
 
   /**
+   * Check if tool cleanup is needed
+   *
+   * Tool cleanup needed if:
+   * - AutoToolCleanupService exists and is not currently analyzing
+   * - Service's shouldAnalyze method returns true (checks tool result count and time interval)
+   */
+  private async needsToolCleanup(messages: Message[]): Promise<boolean> {
+    if (!this.autoToolCleanup) {
+      return false;
+    }
+
+    // Check if service is already analyzing
+    if ((this.autoToolCleanup as any).isAnalyzing) {
+      console.log('[IDLE_COORD] Tool cleanup already running');
+      return false;
+    }
+
+    // Get last analysis timestamp from session
+    const currentSession = this.sessionManager.getCurrentSession();
+    if (!currentSession) {
+      return false;
+    }
+
+    // Load session to get lastCleanupAnalysisAt
+    let lastAnalysisAt: number | undefined;
+    try {
+      const session = await this.sessionManager.loadSession(currentSession);
+      lastAnalysisAt = session?.metadata?.lastCleanupAnalysisAt;
+    } catch (error) {
+      console.log('[IDLE_COORD] Could not load session for cleanup check:', error);
+      // If we can't load session, proceed without timestamp check
+    }
+
+    const shouldAnalyze = this.autoToolCleanup.shouldAnalyze(messages, lastAnalysisAt);
+    if (shouldAnalyze) {
+      const toolCount = messages.filter(msg => msg.role === 'tool').length;
+      console.log(`[IDLE_COORD] Tool cleanup needed - ${toolCount} tool results in conversation`);
+    }
+    return shouldAnalyze;
+  }
+
+  /**
+   * Run tool cleanup analysis
+   *
+   * @param messages - Current conversation messages
+   */
+  private runToolCleanup(messages: Message[]): void {
+    if (!this.autoToolCleanup) {
+      console.log('[IDLE_COORD] Tool cleanup service not initialized');
+      return;
+    }
+
+    const sessionName = this.sessionManager.getCurrentSession();
+    if (!sessionName) {
+      console.log('[IDLE_COORD] No current session, skipping tool cleanup');
+      return;
+    }
+
+    console.log('[IDLE_COORD] Starting tool cleanup analysis');
+    this.autoToolCleanup.cleanupBackground(sessionName, messages);
+  }
+
+  /**
    * Cancel all ongoing idle tasks
    *
    * Called when main agent needs exclusive access to resources
@@ -298,6 +371,10 @@ export class IdleTaskCoordinator implements IService {
 
     if (this.idleMessageGenerator && (this.idleMessageGenerator as any).isGenerating) {
       this.idleMessageGenerator.cancel();
+    }
+
+    if (this.autoToolCleanup && (this.autoToolCleanup as any).isAnalyzing) {
+      this.autoToolCleanup.cancel();
     }
   }
 }

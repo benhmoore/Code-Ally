@@ -13,6 +13,7 @@
  */
 
 import { logger } from '../services/Logger.js';
+import { formatElapsed } from '../ui/utils/timeUtils.js';
 
 /**
  * Configuration for TurnManager
@@ -183,18 +184,11 @@ export class TurnManager {
   /**
    * Get formatted duration string
    *
-   * @returns Human-readable duration (e.g., "2m 30s")
+   * @returns Human-readable duration (e.g., "1h 2m 30s", "2m 30s", "5s")
    */
   getFormattedDuration(): string {
     const elapsedMs = this.getElapsedMs();
     const seconds = Math.floor(elapsedMs / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-
-    if (minutes > 0) {
-      return `${minutes}m ${remainingSeconds}s`;
-    } else {
-      return `${seconds}s`;
-    }
+    return formatElapsed(seconds);
   }
 }

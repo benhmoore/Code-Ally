@@ -719,6 +719,36 @@ export class Agent {
         });
       }
 
+      // Check for queued tool cleanups from idle analysis
+      const autoToolCleanup = registry.get('auto_tool_cleanup');
+      if (autoToolCleanup) {
+        try {
+          const sessionManager = registry.get('session_manager');
+          const currentSession = sessionManager ? (sessionManager as any).getCurrentSession() : null;
+          if (currentSession) {
+            // Load session to check for pending cleanups
+            const session = await (sessionManager as any).loadSession(currentSession);
+            const pendingCleanups = session?.metadata?.pendingToolCleanups;
+
+            if (pendingCleanups && Array.isArray(pendingCleanups) && pendingCleanups.length > 0) {
+              console.log(`[AGENT] 🧹 Executing ${pendingCleanups.length} queued tool cleanups: ${pendingCleanups.join(', ')}`);
+
+              // Queue for cleanup (will execute at end of turn)
+              this.queueCleanup(pendingCleanups);
+
+              // Clear from session metadata
+              await (sessionManager as any).updateMetadata(currentSession, {
+                pendingToolCleanups: [],
+              });
+
+              console.log('[AGENT] ✅ Queued cleanups cleared from session metadata');
+            }
+          }
+        } catch (error) {
+          console.log('[AGENT] Error checking for pending tool cleanups:', error);
+        }
+      }
+
       return finalResponse;
     } catch (error) {
       // Treat permission denial as critical interruption

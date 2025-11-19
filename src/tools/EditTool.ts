@@ -53,6 +53,10 @@ export class EditTool extends BaseTool {
               type: 'boolean',
               description: 'Replace all occurrences instead of just one (default: false)',
             },
+            show_updated_context: {
+              type: 'boolean',
+              description: 'Include the updated file content in the response (default: false). Useful for verifying changes or making follow-up edits without a separate Read call.',
+            },
           },
           required: ['file_path', 'old_string', 'new_string'],
         },
@@ -100,6 +104,7 @@ export class EditTool extends BaseTool {
     const oldString = args.old_string as string;
     const newString = args.new_string as string;
     const replaceAll = args.replace_all === true; // Default is false
+    const showUpdatedContext = args.show_updated_context === true; // Default is false
 
     if (!filePath) {
       return this.formatErrorResponse(
@@ -220,6 +225,11 @@ export class EditTool extends BaseTool {
       // Add patch information to result if patch was captured
       if (patchNumber !== null) {
         response.patch_number = patchNumber;
+      }
+
+      // Include updated file content if requested
+      if (showUpdatedContext) {
+        response.updated_content = modifiedContent;
       }
 
       // Check file for syntax/parse errors after modification

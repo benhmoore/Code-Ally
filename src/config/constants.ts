@@ -907,3 +907,21 @@ export const REASONING_EFFORT_ALL_VALUES = [
   REASONING_EFFORT.MEDIUM,
   REASONING_EFFORT.HIGH,
 ] as const;
+
+// ===========================================
+// AUTO TOOL CLEANUP
+// ===========================================
+
+/**
+ * Configuration for automatic tool result cleanup service
+ */
+export const AUTO_TOOL_CLEANUP = {
+  /** Minimum tool results in conversation before triggering analysis */
+  MIN_TOOL_RESULTS: 30,
+
+  /** Minimum interval between cleanup analyses (5 minutes) */
+  MIN_INTERVAL: 5 * 60 * 1000,
+
+  /** Number of recent messages to preserve (never clean up) */
+  PRESERVE_RECENT_MESSAGES: 20,
+} as const;

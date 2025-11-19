@@ -22,7 +22,7 @@ import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentType, getAgentDisplayName } from '../utils/agentTypeUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
-import { getThoroughnessDuration, formatMinutesSeconds, type ThoroughnessLevel } from '../ui/utils/timeUtils.js';
+import { getThoroughnessDuration, formatMinutesSeconds, formatElapsed, type ThoroughnessLevel } from '../ui/utils/timeUtils.js';
 import { createAgentTaskContextReminder } from '../utils/messageUtils.js';
 
 export class AgentAskTool extends BaseTool {
@@ -391,7 +391,7 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
 
     // Show duration if available
     if (result.duration_seconds !== undefined) {
-      lines.push(`Responded in ${result.duration_seconds}s`);
+      lines.push(`Responded in ${formatElapsed(result.duration_seconds)}`);
     }
 
     // Show content preview

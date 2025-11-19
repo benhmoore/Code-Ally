@@ -74,14 +74,20 @@ export function formatDuration(ms: number): string {
  * Format elapsed time in seconds to a human-readable string
  *
  * @param seconds - Elapsed time in seconds
- * @returns Formatted time string (e.g., "1m 23s", "5s")
+ * @returns Formatted time string (e.g., "1h 23m 45s", "1m 23s", "5s")
  */
 export function formatElapsed(seconds: number): string {
   if (seconds < TIME_UNITS.SECONDS_PER_MINUTE) {
     return `${seconds}s`;
   }
-  const mins = Math.floor(seconds / TIME_UNITS.SECONDS_PER_MINUTE);
+
+  const hours = Math.floor(seconds / (TIME_UNITS.SECONDS_PER_MINUTE * TIME_UNITS.MINUTES_PER_HOUR));
+  const mins = Math.floor((seconds % (TIME_UNITS.SECONDS_PER_MINUTE * TIME_UNITS.MINUTES_PER_HOUR)) / TIME_UNITS.SECONDS_PER_MINUTE);
   const secs = seconds % TIME_UNITS.SECONDS_PER_MINUTE;
+
+  if (hours > 0) {
+    return `${hours}h ${mins}m ${secs}s`;
+  }
   return `${mins}m ${secs}s`;
 }
 

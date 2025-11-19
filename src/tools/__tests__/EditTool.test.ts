@@ -334,6 +334,72 @@ describe('EditTool', () => {
     });
   });
 
+  describe('show_updated_context parameter', () => {
+    it('should not include updated_content by default', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      const content = 'Hello World';
+      await fs.writeFile(filePath, content);
+
+      const result = await editTool.execute({
+        file_path: filePath,
+        old_string: 'World',
+        new_string: 'Universe',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBeUndefined();
+    });
+
+    it('should include updated_content when show_updated_context is true', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      const content = 'Hello World';
+      await fs.writeFile(filePath, content);
+
+      const result = await editTool.execute({
+        file_path: filePath,
+        old_string: 'World',
+        new_string: 'Universe',
+        show_updated_context: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBe('Hello Universe');
+    });
+
+    it('should not include updated_content when show_updated_context is false', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      const content = 'Hello World';
+      await fs.writeFile(filePath, content);
+
+      const result = await editTool.execute({
+        file_path: filePath,
+        old_string: 'World',
+        new_string: 'Universe',
+        show_updated_context: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBeUndefined();
+    });
+
+    it('should include updated_content with replace_all', async () => {
+      const filePath = join(tempDir, 'multiple.txt');
+      const content = 'foo bar foo baz foo';
+      await fs.writeFile(filePath, content);
+
+      const result = await editTool.execute({
+        file_path: filePath,
+        old_string: 'foo',
+        new_string: 'qux',
+        replace_all: true,
+        show_updated_context: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.updated_content).toBe('qux bar qux baz qux');
+    });
+  });
+
   describe('tool metadata', () => {
     it('should have correct tool name', () => {
       expect(editTool.name).toBe('edit');
@@ -352,6 +418,7 @@ describe('EditTool', () => {
       expect(def.function.parameters.required).toContain('old_string');
       expect(def.function.parameters.required).toContain('new_string');
       expect(def.function.parameters.properties.replace_all).toBeDefined();
+      expect(def.function.parameters.properties.show_updated_context).toBeDefined();
     });
 
     it('should provide custom result preview', () => {

@@ -5,6 +5,7 @@ import { OutputScroller } from './OutputScroller';
 import { AnimationTicker } from '@services/AnimationTicker.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { formatDisplayName } from '../utils/uiHelpers.js';
+import { formatElapsed } from '../utils/timeUtils.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
 
@@ -100,7 +101,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         {elapsedSeconds > 5 && (
           <Text color="gray" dimColor>
             {' '}
-            {elapsedSeconds}s
+            {formatElapsed(elapsedSeconds)}
           </Text>
         )}
         {toolCall.status === 'error' && toolCall.error && toolCall.error_type !== 'validation_error' && (

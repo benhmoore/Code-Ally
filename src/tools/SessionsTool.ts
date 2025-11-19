@@ -24,7 +24,7 @@ import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
-import { getThoroughnessDuration } from '../ui/utils/timeUtils.js';
+import { getThoroughnessDuration, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -464,7 +464,7 @@ export class SessionsTool extends BaseTool {
 
     // Show duration if available
     if (result.duration_seconds !== undefined) {
-      lines.push(`Analyzed in ${result.duration_seconds}s`);
+      lines.push(`Analyzed in ${formatElapsed(result.duration_seconds)}`);
     }
 
     // Show content preview

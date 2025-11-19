@@ -22,7 +22,7 @@ import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT, ID_GENERATION, AGENT_CONFIG } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
-import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
+import { getThoroughnessDuration, getThoroughnessMaxTokens, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 
 export class AgentTool extends BaseTool implements InjectableTool {
@@ -955,7 +955,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
 
     // Show duration if available
     if (result.duration_seconds !== undefined) {
-      lines.push(`Duration: ${result.duration_seconds}s`);
+      lines.push(`Duration: ${formatElapsed(result.duration_seconds)}`);
     }
 
     // Show content preview

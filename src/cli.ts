@@ -859,11 +859,20 @@ async function main() {
       : null;
     registry.registerInstance('idle_message_generator', idleMessageGenerator);
 
-    // Create idle task coordinator (requires sessionManager, titleGenerator, and idleMessageGenerator)
+    // Create AutoToolCleanupService
+    const { AutoToolCleanupService } = await import('./services/AutoToolCleanupService.js');
+    const autoToolCleanup = new AutoToolCleanupService(
+      serviceModelClient,
+      sessionManager
+    );
+    registry.registerInstance('auto_tool_cleanup', autoToolCleanup);
+
+    // Create idle task coordinator (requires sessionManager, titleGenerator, idleMessageGenerator, and autoToolCleanup)
     const { IdleTaskCoordinator } = await import('./services/IdleTaskCoordinator.js');
     const idleTaskCoordinator = new IdleTaskCoordinator(
       sessionTitleGenerator,
       idleMessageGenerator,
+      autoToolCleanup,
       sessionManager
     );
     await idleTaskCoordinator.initialize();

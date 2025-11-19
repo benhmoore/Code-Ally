@@ -34,6 +34,14 @@ describe('timeUtils', () => {
       expect(formatElapsed(83)).toBe('1m 23s');
       expect(formatElapsed(125)).toBe('2m 5s');
     });
+
+    it('should format hours, minutes, and seconds', () => {
+      expect(formatElapsed(3600)).toBe('1h 0m 0s');
+      expect(formatElapsed(3661)).toBe('1h 1m 1s');
+      expect(formatElapsed(3757)).toBe('1h 2m 37s');
+      expect(formatElapsed(7200)).toBe('2h 0m 0s');
+      expect(formatElapsed(7323)).toBe('2h 2m 3s');
+    });
   });
 
   describe('formatRelativeTime', () => {
