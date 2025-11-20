@@ -149,8 +149,10 @@ export class ActivityMonitor {
    * Safe to call when not started - will be a no-op.
    */
   pause(): void {
+    console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} pause() called. isRunning=${this.isRunning}, pauseCount=${this.pauseCount}`);
     // No-op if not started
     if (!this.isRunning) {
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} NOT running, pause() is no-op`);
       return;
     }
 
@@ -164,8 +166,10 @@ export class ActivityMonitor {
         this.watchdogInterval = null;
       }
       this.isRunning = false;
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} PAUSED watchdog (pauseCount: ${this.pauseCount})`);
       logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, `Paused (pauseCount: ${this.pauseCount})`);
     } else {
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} Pause count incremented (pauseCount: ${this.pauseCount})`);
       logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, `Pause count incremented (pauseCount: ${this.pauseCount})`);
     }
   }
@@ -184,13 +188,16 @@ export class ActivityMonitor {
    * Safe to call when not enabled - will be a no-op.
    */
   resume(): void {
+    console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} resume() called. enabled=${this.config.enabled}, pauseCount=${this.pauseCount}`);
     // No-op if monitoring is disabled
     if (!this.config.enabled) {
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} Monitoring disabled, resume() is no-op`);
       return;
     }
 
     // Skip if not paused
     if (this.pauseCount === 0) {
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} Not paused (pauseCount=0), resume() is no-op`);
       logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Not paused, ignoring resume()');
       return;
     }
@@ -200,14 +207,22 @@ export class ActivityMonitor {
 
     // Only restart the watchdog timer when pause count reaches zero
     if (this.pauseCount === 0) {
-      // Restart the watchdog interval (preserving lastActivityTime)
+      // Record progress on resume: delegation completion represents successful progress
+      // Semantic: "The delegating tool call I was waiting for has completed successfully"
+      // This prevents timeout after long delegations where wall-clock time advanced
+      this.lastActivityTime = Date.now();
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} Recording progress on resume (delegation completed)`);
+
+      // Restart the watchdog interval
       this.watchdogInterval = setInterval(() => {
         this.checkTimeout();
       }, this.config.checkIntervalMs);
 
       this.isRunning = true;
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} RESUMED watchdog (pauseCount: ${this.pauseCount})`);
       logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, `Resumed (pauseCount: ${this.pauseCount})`);
     } else {
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} Pause count decremented (pauseCount: ${this.pauseCount})`);
       logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, `Pause count decremented (pauseCount: ${this.pauseCount})`);
     }
   }
@@ -235,6 +250,7 @@ export class ActivityMonitor {
   checkTimeout(): void {
     // Skip timeout checks when paused
     if (this.pauseCount > 0) {
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} checkTimeout() skipped (paused, pauseCount=${this.pauseCount})`);
       return;
     }
 
@@ -244,6 +260,7 @@ export class ActivityMonitor {
       const elapsedSeconds = Math.round(elapsedMs / 1000);
       const timeoutSeconds = this.config.timeoutMs / 1000;
 
+      console.log(`[DEBUG-MONITOR-STATE] ${this.config.instanceId} TIMEOUT DETECTED! elapsed=${elapsedSeconds}s, limit=${timeoutSeconds}s, pauseCount=${this.pauseCount}`);
       logger.debug(
         '[ACTIVITY_MONITOR]',
         this.config.instanceId,

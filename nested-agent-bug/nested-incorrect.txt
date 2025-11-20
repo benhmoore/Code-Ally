@@ -1,0 +1,213 @@
+[DEBUG-INIT] agent-1763660959894-p14le0r Constructor: Deferring parent agent lookup until sendMessage() (lazy initialization)
+> Document the architecture of this codebase in chat. Use a task agent to coordinate the investigation, and make sure it uses explore agents to thoroughly analyze different parts of the system.
+[DEBUG-SEND-MSG] ========== agent-1763660959894-p14le0r sendMessage() START ==========
+[DEBUG-SEND-MSG] agent-1763660959894-p14le0r Depth: 0, isSpecialized: undefined
+[DEBUG-PAUSE] agent-1763660959894-p14le0r About to pause parent. this.parentAgent exists: false
+[DEBUG-PAUSE] agent-1763660959894-p14le0r NOT pausing (no parent or no method)
+
+∴ We need to document architecture. Use task agent to coordinate investigation, and use explore agents to analyze parts. So we need to invoke agent with type 'task', with description, task_prompt
+that includes instructions: "Document architecture of this codebase in chat. Use explore agents to thoroughly analyze different parts." We need to provide file paths? The task agent will coordinate.
+ We should include context: maybe mention that we want architecture overview, modules, interactions, etc. Provide thoroughness maybe "very thorough". The agent will likely spawn explore agents. We
+need to provide description. Let's do that.
+
+We need to call agent.
+[DEBUG-EXECUTION-MODE] executeToolCalls called with 1 tool calls:
+[DEBUG-EXECUTION-MODE]   Tools: agent
+[DEBUG-EXECUTION-MODE] After unwrapping: 1 tool calls
+[DEBUG-EXECUTION-MODE]   Unwrapped tools: agent
+[DEBUG-EXECUTION-MODE] Single tool - using SEQUENTIAL execution
+[DEBUG-TOOL-DISPLAY] Tool 'agent' (id: call_tpz2p00z)
+[DEBUG-TOOL-DISPLAY]   - isCollapsed (agent): false
+[DEBUG-TOOL-DISPLAY]   - shouldCollapse (tool): true
+[DEBUG-TOOL-DISPLAY]   - hideOutput (tool): false
+[DEBUG-TOOL-DISPLAY]   - emitStartEvent: true
+[DEBUG-TOOL-DISPLAY]   - effectiveParentId: undefined
+[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_START for 'agent' (id: call_tpz2p00z, parentId: undefined)
+[DEBUG-EVENT-EMIT]   - visibleInChat: true
+[DEBUG-EVENT-EMIT]   - collapsed: false
+[DEBUG-EVENT-EMIT]   - shouldCollapse: true
+[DEBUG-EVENT-EMIT]   - hideOutput: false
+[DEBUG-EVENT-EMIT] TOOL_CALL_START emitted successfully
+[DEBUG-AGENT-TOOL] ========== AGENT SPAWNING ==========
+[DEBUG-AGENT-TOOL] Creating agent type: task
+[DEBUG-AGENT-TOOL] CallId: call_tpz2p00z
+[DEBUG-AGENT-TOOL] New depth: 1
+[DEBUG-AGENT-TOOL] Parent from registry: agent-1763660959894-p14le0r
+[DEBUG-AGENT-TOOL] Parent depth: 0
+[DEBUG-AGENT-TOOL] Parent is specialized: N/A
+[DEBUG-INIT] agent-1763660986183-djhyrsg Constructor: isSpecializedAgent=true, parentCallId=call_tpz2p00z
+[DEBUG-INIT] agent-1763660986183-djhyrsg Constructor: agentDepth=1, agentType=task
+[DEBUG-INIT] agent-1763660986183-djhyrsg Constructor: Deferring parent agent lookup until sendMessage() (lazy initialization)
+[DEBUG-REGISTRY] Updated registry 'agent': agent-1763660959894-p14le0r → agent-1763660986183-djhyrsg
+[DEBUG-SEND-MSG] ========== agent-1763660986183-djhyrsg sendMessage() START ==========
+[DEBUG-SEND-MSG] agent-1763660986183-djhyrsg Depth: 1, isSpecialized: true
+[DEBUG-LAZY-INIT] agent-1763660986183-djhyrsg Setting parent agent from config
+[DEBUG-LAZY-INIT] agent-1763660986183-djhyrsg Parent agent: agent-1763660959894-p14le0r
+[DEBUG-LAZY-INIT] agent-1763660986183-djhyrsg Parent depth: 0
+[DEBUG-PAUSE] agent-1763660986183-djhyrsg About to pause parent. this.parentAgent exists: true
+[DEBUG-PAUSE] agent-1763660986183-djhyrsg Parent agent ID: agent-1763660959894-p14le0r
+[DEBUG-PAUSE] agent-1763660986183-djhyrsg Parent has pauseActivityMonitoring: true
+[DEBUG-PAUSE] agent-1763660986183-djhyrsg CALLING pauseActivityMonitoring on parent: agent-1763660959894-p14le0r
+[DEBUG-MONITOR] agent-1763660959894-p14le0r pauseActivityMonitoring() called
+[DEBUG-MONITOR-STATE] agent-1763660959894-p14le0r pause() called. isRunning=false, pauseCount=0
+[DEBUG-MONITOR-STATE] agent-1763660959894-p14le0r NOT running, pause() is no-op
+[DEBUG-EXECUTION-MODE] executeToolCalls called with 1 tool calls:
+[DEBUG-EXECUTION-MODE]   Tools: tree
+[DEBUG-EXECUTION-MODE] After unwrapping: 1 tool calls
+[DEBUG-EXECUTION-MODE]   Unwrapped tools: tree
+[DEBUG-EXECUTION-MODE] Single tool - using SEQUENTIAL execution
+[DEBUG-TOOL-DISPLAY] Tool 'tree' (id: call_iq9vcb3x)
+[DEBUG-TOOL-DISPLAY]   - isCollapsed (agent): true
+[DEBUG-TOOL-DISPLAY]   - shouldCollapse (tool): false
+[DEBUG-TOOL-DISPLAY]   - hideOutput (tool): false
+[DEBUG-TOOL-DISPLAY]   - emitStartEvent: true
+[DEBUG-TOOL-DISPLAY]   - effectiveParentId: call_tpz2p00z
+[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_START for 'tree' (id: call_iq9vcb3x, parentId: call_tpz2p00z)
+[DEBUG-EVENT-EMIT]   - visibleInChat: true
+[DEBUG-EVENT-EMIT]   - collapsed: true
+[DEBUG-EVENT-EMIT]   - shouldCollapse: false
+[DEBUG-EVENT-EMIT]   - hideOutput: false
+[DEBUG-EVENT-EMIT] TOOL_CALL_START emitted successfully
+[DEBUG-PROGRESS] Tool 'tree' completed successfully - activity timer reset
+[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_END for 'tree' (id: call_iq9vcb3x)
+[DEBUG-EVENT-EMIT]   - success: true
+[DEBUG-EVENT-EMIT]   - shouldShowInChat: true
+[DEBUG-EVENT-EMIT]   - parentId: call_tpz2p00z
+[DEBUG-EXECUTION-MODE] executeToolCalls called with 1 tool calls:
+[DEBUG-EXECUTION-MODE]   Tools: agent
+[DEBUG-EXECUTION-MODE] After unwrapping: 1 tool calls
+[DEBUG-EXECUTION-MODE]   Unwrapped tools: agent
+[DEBUG-EXECUTION-MODE] Single tool - using SEQUENTIAL execution
+[DEBUG-TOOL-DISPLAY] Tool 'agent' (id: call_grabqo8w)
+[DEBUG-TOOL-DISPLAY]   - isCollapsed (agent): true
+[DEBUG-TOOL-DISPLAY]   - shouldCollapse (tool): true
+[DEBUG-TOOL-DISPLAY]   - hideOutput (tool): false
+[DEBUG-TOOL-DISPLAY]   - emitStartEvent: true
+[DEBUG-TOOL-DISPLAY]   - effectiveParentId: call_tpz2p00z
+[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_START for 'agent' (id: call_grabqo8w, parentId: call_tpz2p00z)
+[DEBUG-EVENT-EMIT]   - visibleInChat: true
+[DEBUG-EVENT-EMIT]   - collapsed: true
+[DEBUG-EVENT-EMIT]   - shouldCollapse: true
+[DEBUG-EVENT-EMIT]   - hideOutput: false
+[DEBUG-EVENT-EMIT] TOOL_CALL_START emitted successfully
+[DEBUG-AGENT-TOOL] ========== AGENT SPAWNING ==========
+[DEBUG-AGENT-TOOL] Creating agent type: explore
+[DEBUG-AGENT-TOOL] CallId: call_grabqo8w
+[DEBUG-AGENT-TOOL] New depth: 2
+[DEBUG-AGENT-TOOL] Parent from registry: agent-1763660986183-djhyrsg
+[DEBUG-AGENT-TOOL] Parent depth: 1
+[DEBUG-AGENT-TOOL] Parent is specialized: true
+[DEBUG-INIT] agent-1763661009796-1hl50nu Constructor: isSpecializedAgent=true, parentCallId=call_grabqo8w
+[DEBUG-INIT] agent-1763661009796-1hl50nu Constructor: agentDepth=2, agentType=explore
+[DEBUG-INIT] agent-1763661009796-1hl50nu Constructor: Deferring parent agent lookup until sendMessage() (lazy initialization)
+[DEBUG-REGISTRY] Updated registry 'agent': agent-1763660986183-djhyrsg → agent-1763661009796-1hl50nu
+[DEBUG-SEND-MSG] ========== agent-1763661009796-1hl50nu sendMessage() START ==========
+[DEBUG-SEND-MSG] agent-1763661009796-1hl50nu Depth: 2, isSpecialized: true
+[DEBUG-LAZY-INIT] agent-1763661009796-1hl50nu Setting parent agent from config
+[DEBUG-LAZY-INIT] agent-1763661009796-1hl50nu Parent agent: agent-1763660986183-djhyrsg
+[DEBUG-LAZY-INIT] agent-1763661009796-1hl50nu Parent depth: 1
+[DEBUG-PAUSE] agent-1763661009796-1hl50nu About to pause parent. this.parentAgent exists: true
+[DEBUG-PAUSE] agent-1763661009796-1hl50nu Parent agent ID: agent-1763660986183-djhyrsg
+[DEBUG-PAUSE] agent-1763661009796-1hl50nu Parent has pauseActivityMonitoring: true
+[DEBUG-PAUSE] agent-1763661009796-1hl50nu CALLING pauseActivityMonitoring on parent: agent-1763660986183-djhyrsg
+[DEBUG-MONITOR] agent-1763660986183-djhyrsg pauseActivityMonitoring() called
+[DEBUG-MONITOR-STATE] agent-1763660986183-djhyrsg pause() called. isRunning=true, pauseCount=0
+[DEBUG-MONITOR-STATE] agent-1763660986183-djhyrsg PAUSED watchdog (pauseCount: 1)
+[DEBUG-EXECUTION-MODE] executeToolCalls called with 1 tool calls:
+[DEBUG-EXECUTION-MODE]   Tools: agent
+[DEBUG-EXECUTION-MODE] After unwrapping: 1 tool calls
+[DEBUG-EXECUTION-MODE]   Unwrapped tools: agent
+[DEBUG-EXECUTION-MODE] Single tool - using SEQUENTIAL execution
+[DEBUG-TOOL-DISPLAY] Tool 'agent' (id: call_gbezppdx)
+[DEBUG-TOOL-DISPLAY]   - isCollapsed (agent): true
+[DEBUG-TOOL-DISPLAY]   - shouldCollapse (tool): true
+[DEBUG-TOOL-DISPLAY]   - hideOutput (tool): false
+[DEBUG-TOOL-DISPLAY]   - emitStartEvent: true
+[DEBUG-TOOL-DISPLAY]   - effectiveParentId: call_grabqo8w
+[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_START for 'agent' (id: call_gbezppdx, parentId: call_grabqo8w)
+[DEBUG-EVENT-EMIT]   - visibleInChat: true
+[DEBUG-EVENT-EMIT]   - collapsed: true
+[DEBUG-EVENT-EMIT]   - shouldCollapse: true
+[DEBUG-EVENT-EMIT]   - hideOutput: false
+[DEBUG-EVENT-EMIT] TOOL_CALL_START emitted successfully
+[DEBUG-AGENT-TOOL] ========== AGENT SPAWNING ==========
+[DEBUG-AGENT-TOOL] Creating agent type: explore
+[DEBUG-AGENT-TOOL] CallId: call_gbezppdx
+[DEBUG-AGENT-TOOL] New depth: 3
+[DEBUG-AGENT-TOOL] Parent from registry: agent-1763661009796-1hl50nu
+[DEBUG-AGENT-TOOL] Parent depth: 2
+[DEBUG-AGENT-TOOL] Parent is specialized: true
+[DEBUG-INIT] agent-1763661014566-lsn44gh Constructor: isSpecializedAgent=true, parentCallId=call_gbezppdx
+[DEBUG-INIT] agent-1763661014566-lsn44gh Constructor: agentDepth=3, agentType=explore
+[DEBUG-INIT] agent-1763661014566-lsn44gh Constructor: Deferring parent agent lookup until sendMessage() (lazy initialization)
+[DEBUG-REGISTRY] Updated registry 'agent': agent-1763661009796-1hl50nu → agent-1763661014566-lsn44gh
+[DEBUG-SEND-MSG] ========== agent-1763661014566-lsn44gh sendMessage() START ==========
+[DEBUG-SEND-MSG] agent-1763661014566-lsn44gh Depth: 3, isSpecialized: true
+[DEBUG-LAZY-INIT] agent-1763661014566-lsn44gh Setting parent agent from config
+[DEBUG-LAZY-INIT] agent-1763661014566-lsn44gh Parent agent: agent-1763661009796-1hl50nu
+[DEBUG-LAZY-INIT] agent-1763661014566-lsn44gh Parent depth: 2
+[DEBUG-PAUSE] agent-1763661014566-lsn44gh About to pause parent. this.parentAgent exists: true
+[DEBUG-PAUSE] agent-1763661014566-lsn44gh Parent agent ID: agent-1763661009796-1hl50nu
+[DEBUG-PAUSE] agent-1763661014566-lsn44gh Parent has pauseActivityMonitoring: true
+[DEBUG-PAUSE] agent-1763661014566-lsn44gh CALLING pauseActivityMonitoring on parent: agent-1763661009796-1hl50nu
+[DEBUG-MONITOR] agent-1763661009796-1hl50nu pauseActivityMonitoring() called
+[DEBUG-MONITOR-STATE] agent-1763661009796-1hl50nu pause() called. isRunning=true, pauseCount=0
+[DEBUG-MONITOR-STATE] agent-1763661009796-1hl50nu PAUSED watchdog (pauseCount: 1)
+[DEBUG-EXECUTION-MODE] executeToolCalls called with 1 tool calls:
+[DEBUG-EXECUTION-MODE]   Tools: agent
+[DEBUG-EXECUTION-MODE] After unwrapping: 1 tool calls
+[DEBUG-EXECUTION-MODE]   Unwrapped tools: agent
+[DEBUG-EXECUTION-MODE] Single tool - using SEQUENTIAL execution
+[DEBUG-TOOL-DISPLAY] Tool 'agent' (id: call_g2in2sgi)
+[DEBUG-TOOL-DISPLAY]   - isCollapsed (agent): true
+[DEBUG-TOOL-DISPLAY]   - shouldCollapse (tool): true
+[DEBUG-TOOL-DISPLAY]   - hideOutput (tool): false
+[DEBUG-TOOL-DISPLAY]   - emitStartEvent: true
+[DEBUG-TOOL-DISPLAY]   - effectiveParentId: call_gbezppdx
+[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_START for 'agent' (id: call_g2in2sgi, parentId: call_gbezppdx)
+[DEBUG-EVENT-EMIT]   - visibleInChat: true
+[DEBUG-EVENT-EMIT]   - collapsed: true
+[DEBUG-EVENT-EMIT]   - shouldCollapse: true
+[DEBUG-EVENT-EMIT]   - hideOutput: false
+[DEBUG-EVENT-EMIT] TOOL_CALL_START emitted successfully
+[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_END for 'agent' (id: call_g2in2sgi)
+[DEBUG-EVENT-EMIT]   - success: false
+[DEBUG-EVENT-EMIT]   - error: agent(agent_type="explore", description="Explore src directory for architecture", task_prompt="Explore the src directory of the repo...", thoroughness="medium"): Cannot delegate to agent 'explore': maximum nesting depth (3) exceeded. Current depth: 3, attempted depth: 4. Maximum structure: Ally → Agent1 → Agent2 → Agent3.
+[DEBUG-EVENT-EMIT]   - error_type: depth_limit_exceeded
+[DEBUG-EVENT-EMIT]   - shouldShowInChat: true
+[DEBUG-EVENT-EMIT]   - parentId: call_gbezppdx
+[DEBUG-EXECUTION-MODE] executeToolCalls called with 1 tool calls:
+[DEBUG-EXECUTION-MODE]   Tools: tree
+[DEBUG-EXECUTION-MODE] After unwrapping: 1 tool calls
+[DEBUG-EXECUTION-MODE]   Unwrapped tools: tree
+[DEBUG-EXECUTION-MODE] Single tool - using SEQUENTIAL execution
+[DEBUG-TOOL-DISPLAY] Tool 'tree' (id: call_e0u8ry2n)
+[DEBUG-TOOL-DISPLAY]   - isCollapsed (agent): true
+[DEBUG-TOOL-DISPLAY]   - shouldCollapse (tool): false
+[DEBUG-TOOL-DISPLAY]   - hideOutput (tool): false
+[DEBUG-TOOL-DISPLAY]   - emitStartEvent: true
+[DEBUG-TOOL-DISPLAY]   - effectiveParentId: call_gbezppdx
+[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_START for 'tree' (id: call_e0u8ry2n, parentId: call_gbezppdx)
+[DEBUG-EVENT-EMIT]   - visibleInChat: true
+[DEBUG-EVENT-EMIT]   - collapsed: true
+[DEBUG-EVENT-EMIT]   - shouldCollapse: false
+[DEBUG-EVENT-EMIT]   - hideOutput: false
+[DEBUG-EVENT-EMIT] TOOL_CALL_START emitted successfully
+[DEBUG-PROGRESS] Tool 'tree' completed successfully - activity timer reset
+[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_END for 'tree' (id: call_e0u8ry2n)
+[DEBUG-EVENT-EMIT]   - success: true
+[DEBUG-EVENT-EMIT]   - shouldShowInChat: true
+[DEBUG-EVENT-EMIT]   - parentId: call_gbezppdx
+
+ → Task · very thorough · 43s
+    > You are a task agent tasked with documenting the architecture of the codebase located at /Users/bhm128/CodeAlly. The goal is to produce a comprehensive architecture overview in chat. The
+      investigation should be coordinated by this agent, which will spawn explore agents to analyze different parts of the system. The final output should be a clear, organized description of the
+      main components, their responsibilities, interactions, and any architectural patterns used. Ensure thoroughness and include references to key files or directories where appropriate. The agent
+      should manage the process and provide the final documentation as a response.
+     ∴ Thought for 7s
+     ✓ Tree · Show project tree
+       Explore · medium · 19s
+        > Analyze the src directory of the repository at /Users/bhm128/CodeAlly to identify main components, their responsibilities, interactions, and architectural patterns. Provide a summary of key
+           files and directories, and note any design patterns or frameworks used. The exploration should cover subdirectories such as agent, agents, cli, config, llm, plugins, prompts, services,
+          tools, ui, etc. Return a concise report with references to important files.
+         ∴ Thought for 5s

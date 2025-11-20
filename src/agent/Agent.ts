@@ -68,6 +68,8 @@ export interface AgentConfig {
   config: Config;
   /** Parent tool call ID (for nested agents) */
   parentCallId?: string;
+  /** Parent agent instance (for activity monitor pause/resume) */
+  parentAgent?: any;
   /** Required tool calls that must be executed before agent can exit */
   requiredToolCalls?: string[];
   /** Agent requirements specification (new requirements system) */
@@ -110,6 +112,9 @@ export class Agent {
 
   // Interruption management - delegated to InterruptionManager
   private interruptionManager: InterruptionManager;
+
+  // Parent agent reference (for activity monitor pause/resume)
+  private parentAgent: any = null;
 
   // Context tracking (isolated per agent)
   private tokenManager: TokenManager;
@@ -291,6 +296,16 @@ export class Agent {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Activity monitor enabled:', activityTimeoutMs, 'ms');
     }
 
+    // Parent agent reference for sub-agents (used for activity monitor pause/resume)
+    // NOTE: Actual lookup is deferred until sendMessage() to avoid timing issues with
+    // DelegationContextManager registration. The delegation must be registered before
+    // the lookup can succeed, but registration happens AFTER agent construction in AgentTool.
+    // See lazy initialization in sendMessage() method.
+    console.log(`[DEBUG-INIT] ${this.instanceId} Constructor: isSpecializedAgent=${config.isSpecializedAgent}, parentCallId=${config.parentCallId}`);
+    console.log(`[DEBUG-INIT] ${this.instanceId} Constructor: agentDepth=${config.agentDepth ?? 'undefined'}, agentType=${config.agentType ?? 'undefined'}`);
+    console.log(`[DEBUG-INIT] ${this.instanceId} Constructor: Deferring parent agent lookup until sendMessage() (lazy initialization)`);
+    // this.parentAgent remains null until first sendMessage() call
+
     // Create agent's own TokenManager for isolated context tracking
     this.tokenManager = new TokenManager(config.config.context_size);
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'TokenManager created with context size:', config.config.context_size);
@@ -413,6 +428,7 @@ export class Agent {
     return this.conversationManager;
   }
 
+
   /**
    * Queue tool call IDs for cleanup at end of turn
    * Used by cleanup-call tool to defer removals until after model's response completes
@@ -478,6 +494,7 @@ export class Agent {
    * Safe to call multiple times - subsequent calls are ignored if already paused.
    */
   pauseActivityMonitoring(): void {
+    console.log(`[DEBUG-MONITOR] ${this.instanceId} pauseActivityMonitoring() called`);
     this.activityMonitor.pause();
   }
 
@@ -491,6 +508,7 @@ export class Agent {
    * Safe to call multiple times - subsequent calls are ignored if already running.
    */
   resumeActivityMonitoring(): void {
+    console.log(`[DEBUG-MONITOR] ${this.instanceId} resumeActivityMonitoring() called`);
     this.activityMonitor.resume();
   }
 
@@ -548,32 +566,42 @@ export class Agent {
    * @returns Promise resolving to the assistant's final response
    */
   async sendMessage(message: string): Promise<string> {
+    console.log(`[DEBUG-SEND-MSG] ========== ${this.instanceId} sendMessage() START ==========`);
+    console.log(`[DEBUG-SEND-MSG] ${this.instanceId} Depth: ${this.agentDepth}, isSpecialized: ${this.config.isSpecializedAgent}`);
+
     // Wait for focus to be ready if it was set during construction
     if (this.focusReady) {
       await this.focusReady;
       this.focusReady = null; // Clear after first use
     }
 
-    // Detect if this is a sub-agent and get parent agent reference for pause/resume
-    // Sub-agents are detected by having BOTH isSpecializedAgent and parentCallId set
-    const isSubAgent = this.config.isSpecializedAgent && this.config.parentCallId;
-    let parentAgent: any = null;
-
-    if (isSubAgent) {
-      try {
-        const registry = ServiceRegistry.getInstance();
-        parentAgent = registry.get<any>('agent');
-      } catch (error) {
-        // Graceful degradation - parent agent not available
-        logger.debug('[AGENT]', this.instanceId, 'Could not get parent agent from registry:', error);
+    // Lazy initialization: Set parent agent on first sendMessage() call
+    // Parent agent must be provided directly in config by the calling tool
+    if (this.config.isSpecializedAgent && !this.parentAgent) {
+      if (this.config.parentAgent) {
+        console.log(`[DEBUG-LAZY-INIT] ${this.instanceId} Setting parent agent from config`);
+        this.parentAgent = this.config.parentAgent;
+        console.log(`[DEBUG-LAZY-INIT] ${this.instanceId} Parent agent:`, this.parentAgent?.instanceId || 'null');
+        console.log(`[DEBUG-LAZY-INIT] ${this.instanceId} Parent depth:`, this.parentAgent?.getAgentDepth?.() ?? 'N/A');
+      } else {
+        console.log(`[DEBUG-LAZY-INIT] ${this.instanceId} WARNING: isSpecializedAgent=true but no parentAgent in config!`);
       }
     }
 
     // Pause parent agent's activity monitoring before sub-agent execution
     // This prevents false timeout triggers while the sub-agent is actively working
-    if (parentAgent && typeof parentAgent.pauseActivityMonitoring === 'function') {
-      parentAgent.pauseActivityMonitoring();
-      logger.debug('[AGENT]', this.instanceId, 'Pausing parent agent activity monitoring (sub-agent starting)');
+    console.log(`[DEBUG-PAUSE] ${this.instanceId} About to pause parent. this.parentAgent exists:`, !!this.parentAgent);
+    if (this.parentAgent) {
+      console.log(`[DEBUG-PAUSE] ${this.instanceId} Parent agent ID:`, this.parentAgent.instanceId);
+      console.log(`[DEBUG-PAUSE] ${this.instanceId} Parent has pauseActivityMonitoring:`, typeof this.parentAgent.pauseActivityMonitoring === 'function');
+    }
+    if (this.parentAgent && typeof this.parentAgent.pauseActivityMonitoring === 'function') {
+      console.log(`[DEBUG-PAUSE] ${this.instanceId} CALLING pauseActivityMonitoring on parent:`, this.parentAgent.instanceId);
+      this.parentAgent.pauseActivityMonitoring();
+      logger.debug('[AGENT]', this.instanceId,
+        `Pausing parent agent activity monitoring (parent: ${this.parentAgent.instanceId || 'unknown'})`);
+    } else {
+      console.log(`[DEBUG-PAUSE] ${this.instanceId} NOT pausing (no parent or no method)`);
     }
 
     // Start activity monitoring for specialized agents
@@ -834,9 +862,18 @@ export class Agent {
       // Resume parent agent's activity monitoring after sub-agent completes
       // This must be in finally block to guarantee execution even if sendMessage throws
       // Ensures parent agent continues monitoring for activity timeouts
-      if (parentAgent && typeof parentAgent.resumeActivityMonitoring === 'function') {
-        parentAgent.resumeActivityMonitoring();
-        logger.debug('[AGENT]', this.instanceId, 'Resuming parent agent activity monitoring (sub-agent completed)');
+      console.log(`[DEBUG-RESUME] ${this.instanceId} About to resume parent. this.parentAgent exists:`, !!this.parentAgent);
+      if (this.parentAgent) {
+        console.log(`[DEBUG-RESUME] ${this.instanceId} Parent agent ID:`, this.parentAgent.instanceId);
+        console.log(`[DEBUG-RESUME] ${this.instanceId} Parent has resumeActivityMonitoring:`, typeof this.parentAgent.resumeActivityMonitoring === 'function');
+      }
+      if (this.parentAgent && typeof this.parentAgent.resumeActivityMonitoring === 'function') {
+        console.log(`[DEBUG-RESUME] ${this.instanceId} CALLING resumeActivityMonitoring on parent:`, this.parentAgent.instanceId);
+        this.parentAgent.resumeActivityMonitoring();
+        logger.debug('[AGENT]', this.instanceId,
+          `Resuming parent agent activity monitoring (parent: ${this.parentAgent.instanceId || 'unknown'})`);
+      } else {
+        console.log(`[DEBUG-RESUME] ${this.instanceId} NOT resuming (no parent or no method)`);
       }
     }
   }
@@ -1230,6 +1267,7 @@ export class Agent {
         }
 
         // Regular cancel - mark as interrupted for next request
+        console.log(`[DEBUG-INTERRUPT] ${this.instanceId} Returning USER_FACING_INTERRUPTION (regular cancel after timeout, no canContinueAfterTimeout)`);
         this.interruptionManager.markRequestAsInterrupted();
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
@@ -1273,6 +1311,7 @@ export class Agent {
         return await this.processLLMResponse(continuationResponse);
       } else {
         // Regular cancel - mark as interrupted for next request
+        console.log(`[DEBUG-INTERRUPT] ${this.instanceId} Returning USER_FACING_INTERRUPTION (interrupted after ResponseProcessor, no canContinueAfterInterjection)`);
         this.interruptionManager.markRequestAsInterrupted();
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }

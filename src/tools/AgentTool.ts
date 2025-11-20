@@ -20,7 +20,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT, ID_GENERATION, AGENT_CONFIG } from '../config/constants.js';
+import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT, ID_GENERATION, AGENT_CONFIG, PERMISSION_MESSAGES } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
@@ -31,8 +31,8 @@ export class AgentTool extends BaseTool implements InjectableTool {
     'Delegate task to specialized agent. Each call runs ONE agent. For concurrent execution, make multiple agent() calls in same response';
   readonly requiresConfirmation = false; // Non-destructive: task delegation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
-  readonly shouldCollapse = true; // Collapse after completion - hide output and nested tools
-  readonly hideOutput = false; // Show agent tool output in chat
+  readonly shouldCollapse = true; // Collapse after completion
+  readonly hideOutput = true; // Hide nested non-agent tool outputs (agent tools still shown)
   readonly usageGuidance = `**When to use agent:**
 Complex tasks requiring specialized expertise or distinct workflows.
 CRITICAL: Agent CANNOT see current conversation - include ALL context in task_prompt (file paths, errors, requirements).
@@ -668,6 +668,17 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         ? `plugin-${agentData._pluginName}-${agentType}-${callId}`
         : `agent-${agentType}-${callId}`;
 
+      // Get parent agent - the agent currently executing this tool
+      // At this point, registry.get('agent') IS the parent agent
+      const parentAgent = registry.get<any>('agent');
+      console.log(`[DEBUG-AGENT-TOOL] ========== AGENT SPAWNING ==========`);
+      console.log(`[DEBUG-AGENT-TOOL] Creating agent type: ${agentType}`);
+      console.log(`[DEBUG-AGENT-TOOL] CallId: ${callId}`);
+      console.log(`[DEBUG-AGENT-TOOL] New depth: ${newDepth}`);
+      console.log(`[DEBUG-AGENT-TOOL] Parent from registry:`, parentAgent?.instanceId || 'null');
+      console.log(`[DEBUG-AGENT-TOOL] Parent depth:`, parentAgent?.getAgentDepth?.() ?? 'N/A');
+      console.log(`[DEBUG-AGENT-TOOL] Parent is specialized:`, parentAgent?.config?.isSpecializedAgent ?? 'N/A');
+
       // Create config with pool metadata
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
@@ -676,6 +687,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         taskPrompt: taskPrompt,
         config: config,
         parentCallId: callId,
+        parentAgent: parentAgent, // Direct reference to parent agent
         _poolKey: poolKey, // CRITICAL: Add this for pool matching
         maxDuration,
         thoroughness: thoroughness, // Store for dynamic regeneration
@@ -721,10 +733,17 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     });
 
     try {
-      // Execute the task
-      logger.debug('[AGENT_TOOL] Sending message to sub-agent...');
-      const response = await subAgent.sendMessage(`Execute this task: ${taskPrompt}`);
-      logger.debug('[AGENT_TOOL] Sub-agent response received, length:', response?.length || 0);
+      // Update registry to point to sub-agent during its execution
+      // This ensures nested tool calls (agent spawning agent) get correct parent
+      const previousAgent = registry.get<any>('agent');
+      registry.registerInstance('agent', subAgent);
+      console.log(`[DEBUG-REGISTRY] Updated registry 'agent': ${(previousAgent as any)?.instanceId} → ${(subAgent as any)?.instanceId}`);
+
+      try {
+        // Execute the task
+        logger.debug('[AGENT_TOOL] Sending message to sub-agent...');
+        const response = await subAgent.sendMessage(`Execute this task: ${taskPrompt}`);
+        logger.debug('[AGENT_TOOL] Sub-agent response received, length:', response?.length || 0);
 
       let finalResponse: string;
 
@@ -753,15 +772,35 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         }
       } else {
         // Check if response is just an interruption or error message
-        if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
+        console.log(`[DEBUG-DETECTION] Response length: ${response.length}, first 100 chars: "${response.substring(0, 100)}"`);
+        console.log(`[DEBUG-DETECTION] Checking interruption patterns...`);
+        console.log(`[DEBUG-DETECTION]   - includes '[Request interrupted': ${response.includes('[Request interrupted')}`);
+        console.log(`[DEBUG-DETECTION]   - includes 'Interrupted. Tell Ally': ${response.includes('Interrupted. Tell Ally what to do instead.')}`);
+        console.log(`[DEBUG-DETECTION]   - includes 'Permission denied': ${response.includes('Permission denied. Tell Ally what to do instead.')}`);
+        console.log(`[DEBUG-DETECTION]   - equals USER_FACING_INTERRUPTION: ${response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION}`);
+        console.log(`[DEBUG-DETECTION]   - equals USER_FACING_DENIAL: ${response === PERMISSION_MESSAGES.USER_FACING_DENIAL}`);
+        console.log(`[DEBUG-DETECTION]   - length < MIN (${TEXT_LIMITS.AGENT_RESPONSE_MIN}): ${response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN}`);
+
+        if (
+          response.includes('[Request interrupted') ||
+          response.includes('Interrupted. Tell Ally what to do instead.') ||
+          response.includes('Permission denied. Tell Ally what to do instead.') ||
+          response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION ||
+          response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
+          response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN
+        ) {
+          console.log(`[DEBUG-DETECTION] DETECTED interruption/incomplete response - attempting to extract summary`);
           logger.debug('[AGENT_TOOL] Sub-agent response seems incomplete, attempting to extract summary');
           const summary = this.extractSummaryFromConversation(subAgent, agentType);
           if (summary && summary.length > response.length) {
+            console.log(`[DEBUG-DETECTION] Using extracted summary (length: ${summary.length})`);
             finalResponse = summary;
           } else {
+            console.log(`[DEBUG-DETECTION] No better summary found, using original response`);
             finalResponse = response;
           }
         } else {
+          console.log(`[DEBUG-DETECTION] Response looks valid, using as-is`);
           finalResponse = response;
         }
       }
@@ -775,6 +814,11 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         returnValue.agent_id = agentId;
       }
       return returnValue;
+      } finally {
+        // Restore previous agent in registry
+        registry.registerInstance('agent', previousAgent);
+        console.log(`[DEBUG-REGISTRY] Restored registry 'agent': ${(subAgent as any)?.instanceId} → ${(previousAgent as any)?.instanceId}`);
+      }
     } catch (error) {
       logger.debug('[AGENT_TOOL] ERROR during sub-agent execution:', error);
       throw error;

@@ -146,7 +146,7 @@ export class ExploreTool extends BaseTool implements InjectableTool {
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
-  readonly hideOutput = false; // Show detailed output
+  readonly hideOutput = true; // Hide nested non-agent tool outputs (agent tools still shown)
 
   readonly usageGuidance = `**When to use explore:**
 Unknown scope/location: Don't know where to start or how much code is involved.
@@ -351,6 +351,13 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
       // Map thoroughness to max duration
       const maxDuration = getThoroughnessDuration(thoroughness as any);
 
+      // Get parent agent - the agent currently executing this tool
+      const parentAgent = registry.get<any>('agent');
+
+      // Calculate agent depth for nesting
+      const currentDepth = parentAgent?.getAgentDepth?.() ?? 0;
+      const newDepth = currentDepth + 1;
+
       // Create agent configuration with unique pool key per invocation
       // This ensures each explore() call gets its own persistent agent
       const agentConfig: AgentConfig = {
@@ -360,10 +367,12 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
         taskPrompt: taskPrompt,
         config: config,
         parentCallId: callId,
+        parentAgent: parentAgent, // Direct reference to parent agent
         _poolKey: `explore-${callId}`, // Unique key per invocation
         maxDuration,
         thoroughness: thoroughness, // Store for dynamic regeneration
         agentType: 'explore',
+        agentDepth: newDepth,
       };
 
       // Always use pooled agent for persistence
@@ -418,6 +427,12 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
         taskPrompt,
         startTime: Date.now(),
       });
+
+      // Update registry to point to sub-agent during its execution
+      // This ensures nested tool calls (explore spawning explore) get correct parent
+      const previousAgent = registry.get<any>('agent');
+      registry.registerInstance('agent', explorationAgent);
+      console.log(`[DEBUG-REGISTRY] Updated registry 'agent': ${(previousAgent as any)?.instanceId} → ${(explorationAgent as any)?.instanceId}`);
 
       try {
         // Execute exploration
@@ -475,6 +490,10 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
 
         return this.formatSuccessResponse(successResponse);
       } finally {
+        // Restore previous agent in registry
+        registry.registerInstance('agent', previousAgent);
+        console.log(`[DEBUG-REGISTRY] Restored registry 'agent': ${(explorationAgent as any)?.instanceId} → ${(previousAgent as any)?.instanceId}`);
+
         // Clean up delegation tracking
         logger.debug('[EXPLORE_TOOL] Cleaning up exploration agent...');
         this.activeDelegations.delete(callId);

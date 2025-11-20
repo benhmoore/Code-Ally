@@ -143,7 +143,7 @@ export class PlanTool extends BaseTool implements InjectableTool {
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
-  readonly hideOutput = false; // Show detailed output
+  readonly hideOutput = true; // Hide nested non-agent tool outputs (agent tools still shown)
 
   readonly usageGuidance = `**When to use plan:**
 Implementation/refactoring with multiple steps (>3 steps), needs structured approach.
@@ -346,6 +346,13 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         },
       });
 
+      // Get parent agent - the agent currently executing this tool
+      const parentAgent = registry.get<any>('agent');
+
+      // Calculate agent depth for nesting
+      const currentDepth = parentAgent?.getAgentDepth?.() ?? 0;
+      const newDepth = currentDepth + 1;
+
       // Create agent configuration with unique pool key per invocation
       // This ensures each plan() call gets its own persistent agent
       const agentConfig: AgentConfig = {
@@ -356,11 +363,13 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         taskPrompt: requirements,
         config: config,
         parentCallId: callId,
+        parentAgent: parentAgent, // Direct reference to parent agent
         _poolKey: `plan-${callId}`, // Unique key per invocation
         requiredToolCalls: ['todo-add'], // Planning agent MUST call todo-add before exiting
         maxDuration,
         thoroughness: thoroughness, // Store for dynamic regeneration
         agentType: 'plan',
+        agentDepth: newDepth,
       };
 
       // Always use pooled agent for persistence
@@ -415,6 +424,12 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         requirements,
         startTime: Date.now(),
       });
+
+      // Update registry to point to sub-agent during its execution
+      // This ensures nested tool calls (plan spawning other agents) get correct parent
+      const previousAgent = registry.get<any>('agent');
+      registry.registerInstance('agent', planningAgent);
+      console.log(`[DEBUG-REGISTRY] Updated registry 'agent': ${(previousAgent as any)?.instanceId} → ${(planningAgent as any)?.instanceId}`);
 
       try {
         // Execute planning
@@ -490,6 +505,10 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
 
         return this.formatSuccessResponse(successResponse);
       } finally {
+        // Restore previous agent in registry
+        registry.registerInstance('agent', previousAgent);
+        console.log(`[DEBUG-REGISTRY] Restored registry 'agent': ${(planningAgent as any)?.instanceId} → ${(previousAgent as any)?.instanceId}`);
+
         // Clean up delegation tracking
         logger.debug('[PLAN_TOOL] Cleaning up planning agent...');
         this.activeDelegations.delete(callId);

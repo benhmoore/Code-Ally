@@ -60,7 +60,8 @@ const SAFE_CONCURRENT_TOOLS = new Set([
   'git_log',
   'git_diff',
   'web_fetch',
-  'agent', // Agent delegations are context-isolated
+  // NOTE: 'agent' is NOT included - agent delegation tools need sequential execution
+  // to ensure proper START event emission and UI display hierarchy
 ]);
 
 /**
@@ -160,6 +161,8 @@ export class ToolOrchestrator {
     cycles?: Map<string, import('./CycleDetector.js').CycleInfo>
   ): Promise<ToolResult[]> {
     logger.debug('[TOOL_ORCHESTRATOR] executeToolCalls called with', toolCalls.length, 'tool calls');
+    console.log(`[DEBUG-EXECUTION-MODE] executeToolCalls called with ${toolCalls.length} tool calls:`);
+    console.log(`[DEBUG-EXECUTION-MODE]   Tools: ${toolCalls.map(tc => tc.function.name).join(', ')}`);
 
     if (toolCalls.length === 0) {
       return [];
@@ -171,13 +174,26 @@ export class ToolOrchestrator {
     // Unwrap batch tool calls into individual tool calls
     const unwrappedCalls = this.unwrapBatchCalls(toolCalls);
     logger.debug('[TOOL_ORCHESTRATOR] After unwrapping batch calls:', unwrappedCalls.length, 'tool calls');
+    console.log(`[DEBUG-EXECUTION-MODE] After unwrapping: ${unwrappedCalls.length} tool calls`);
+    console.log(`[DEBUG-EXECUTION-MODE]   Unwrapped tools: ${unwrappedCalls.map(tc => tc.function.name).join(', ')}`);
 
     // Determine execution mode
+    // IMPORTANT: Single tools always use sequential execution
+    // Concurrent execution is only beneficial for multiple tools running in parallel
+    if (unwrappedCalls.length === 1) {
+      console.log(`[DEBUG-EXECUTION-MODE] Single tool - using SEQUENTIAL execution`);
+      return await this.executeSequential(unwrappedCalls);
+    }
+
     const canRunConcurrently = this.canRunConcurrently(unwrappedCalls);
+    console.log(`[DEBUG-EXECUTION-MODE] canRunConcurrently: ${canRunConcurrently}`);
+    console.log(`[DEBUG-EXECUTION-MODE] parallel_tools config: ${this.config.config.parallel_tools}`);
 
     if (canRunConcurrently && this.config.config.parallel_tools) {
+      console.log(`[DEBUG-EXECUTION-MODE] Using CONCURRENT execution`);
       return await this.executeConcurrent(unwrappedCalls);
     } else {
+      console.log(`[DEBUG-EXECUTION-MODE] Using SEQUENTIAL execution`);
       return await this.executeSequential(unwrappedCalls);
     }
   }
@@ -258,6 +274,12 @@ export class ToolOrchestrator {
     const groupId = this.generateId('tool-group');
     logger.debug('[TOOL_ORCHESTRATOR] executeConcurrent - groupId:', groupId, 'parentCallId:', this.parentCallId, 'toolCount:', toolCalls.length);
     logger.debug('[TOOL_ORCHESTRATOR] Tools in group:', toolCalls.map(tc => `${tc.function.name}(${JSON.stringify(tc.function.arguments)})`).join(', '));
+
+    console.log(`[DEBUG-TOOL-GROUP] Emitting TOOL_GROUP_START (id: ${groupId})`);
+    console.log(`[DEBUG-TOOL-GROUP]   - toolCount: ${toolCalls.length}`);
+    console.log(`[DEBUG-TOOL-GROUP]   - tools: ${toolCalls.map(tc => tc.function.name).join(', ')}`);
+    console.log(`[DEBUG-TOOL-GROUP]   - parentId: ${this.parentCallId}`);
+
     this.emitEvent({
       id: groupId,
       type: ActivityEventType.TOOL_CALL_START,
@@ -273,7 +295,6 @@ export class ToolOrchestrator {
     // IMPORTANT: Emit START events for all tools BEFORE execution begins
     // This ensures batch tool calls are visible in UI immediately, not when they start executing
     const effectiveParentId = this.parentCallId || groupId;
-    const isCollapsed = this.config.isSpecializedAgent === true;
 
     for (const toolCall of toolCalls) {
       const tool = this.toolManager.getTool(toolCall.function.name);
@@ -290,7 +311,7 @@ export class ToolOrchestrator {
           arguments: toolCall.function.arguments,
           visibleInChat: tool?.visibleInChat ?? true,
           isTransparent: tool?.isTransparentWrapper || false,
-          collapsed: isCollapsed,
+          collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
           shouldCollapse,
           hideOutput,
         },
@@ -335,7 +356,6 @@ export class ToolOrchestrator {
 
               const toolResult = results[j];
               const tool = this.toolManager.getTool(toolCall.function.name);
-              const isCollapsed = this.config.isSpecializedAgent === true;
               const shouldCollapse = (tool as any)?.shouldCollapse || false;
               const hideOutput = (tool as any)?.hideOutput || false;
 
@@ -378,7 +398,7 @@ export class ToolOrchestrator {
                   error: resultData.success ? undefined : resultData.error,
                   visibleInChat: true, // Always show in group with permission denial
                   isTransparent: tool?.isTransparentWrapper || false,
-                  collapsed: isCollapsed,
+                  collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
                   shouldCollapse,
                   hideOutput,
                 },
@@ -443,6 +463,12 @@ export class ToolOrchestrator {
       }
 
       // Emit group end event (with parent context if nested)
+      const groupSuccess = successfulResults.every(r => r?.success);
+      console.log(`[DEBUG-TOOL-GROUP] Emitting TOOL_GROUP_END (id: ${groupId})`);
+      console.log(`[DEBUG-TOOL-GROUP]   - toolCount: ${toolCalls.length}`);
+      console.log(`[DEBUG-TOOL-GROUP]   - success: ${groupSuccess}`);
+      console.log(`[DEBUG-TOOL-GROUP]   - parentId: ${this.parentCallId}`);
+
       this.emitEvent({
         id: groupId,
         type: ActivityEventType.TOOL_CALL_END,
@@ -451,7 +477,7 @@ export class ToolOrchestrator {
         data: {
           groupExecution: true,
           toolCount: toolCalls.length,
-          success: successfulResults.every(r => r?.success),
+          success: groupSuccess,
         },
       });
 
@@ -551,9 +577,6 @@ export class ToolOrchestrator {
     const effectiveParentId = this.parentCallId || parentId;
     logger.debug('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId, 'emitStartEvent:', emitStartEvent);
 
-    // Reset tool call activity timer to prevent timeout
-    this.agent.resetToolCallActivity();
-
     // Auto-promote first pending todo to in_progress
     // This helps the agent track progress through the todo list
     if (!(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(toolName)) {
@@ -577,13 +600,23 @@ export class ToolOrchestrator {
     }
 
     // Prepare tool display properties (needed for both START and END events)
-    const isCollapsed = this.config.isSpecializedAgent === true;
     const shouldCollapse = (tool as any)?.shouldCollapse || false;
     const hideOutput = (tool as any)?.hideOutput || false;
+
+    console.log(`[DEBUG-TOOL-DISPLAY] Tool '${toolName}' (id: ${id})`);
+    console.log(`[DEBUG-TOOL-DISPLAY]   - shouldCollapse (tool): ${shouldCollapse}`);
+    console.log(`[DEBUG-TOOL-DISPLAY]   - hideOutput (tool): ${hideOutput}`);
+    console.log(`[DEBUG-TOOL-DISPLAY]   - emitStartEvent: ${emitStartEvent}`);
+    console.log(`[DEBUG-TOOL-DISPLAY]   - effectiveParentId: ${effectiveParentId}`);
 
     // Emit start event FIRST (creates tool call in UI state)
     // Skip if already emitted (for concurrent execution)
     if (emitStartEvent) {
+      console.log(`[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_START for '${toolName}' (id: ${id}, parentId: ${effectiveParentId})`);
+      console.log(`[DEBUG-EVENT-EMIT]   - visibleInChat: ${tool?.visibleInChat ?? true}`);
+      console.log(`[DEBUG-EVENT-EMIT]   - shouldCollapse: ${shouldCollapse}`);
+      console.log(`[DEBUG-EVENT-EMIT]   - hideOutput: ${hideOutput}`);
+
       this.emitEvent({
         id,
         type: ActivityEventType.TOOL_CALL_START,
@@ -594,11 +627,15 @@ export class ToolOrchestrator {
           arguments: args,
           visibleInChat: tool?.visibleInChat ?? true,
           isTransparent: tool?.isTransparentWrapper || false,
-          collapsed: isCollapsed, // Collapse tools from subagents immediately
+          collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
           shouldCollapse, // Collapse after completion (for AgentTool)
           hideOutput, // Never show output (for AgentTool)
         },
       });
+
+      console.log(`[DEBUG-EVENT-EMIT] TOOL_CALL_START emitted successfully`);
+    } else {
+      console.log(`[DEBUG-EVENT-EMIT] Skipping TOOL_CALL_START for '${toolName}' (emitStartEvent=false)`);
     }
 
     // CRITICAL: After TOOL_CALL_START, we MUST emit TOOL_CALL_END
@@ -664,6 +701,13 @@ export class ToolOrchestrator {
         (result as any).total_turn_duration = elapsedMinutes;
       }
 
+      // Record progress after successful tool execution
+      // This is the correct semantic: "The agent just made progress by completing a tool call"
+      if (result.success) {
+        this.agent.resetToolCallActivity();
+        console.log(`[DEBUG-PROGRESS] Tool '${toolName}' completed successfully - activity timer reset`);
+      }
+
       // Record successful tool call for in-progress todo tracking (main agent only)
       if (result.success && !this.config.isSpecializedAgent && !(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(toolName)) {
         const registry = ServiceRegistry.getInstance();
@@ -709,7 +753,7 @@ export class ToolOrchestrator {
             error: error.message || 'Permission denied',
             visibleInChat: true, // Always show permission denials
             isTransparent: tool?.isTransparentWrapper || false,
-            collapsed: isCollapsed,
+            collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
             shouldCollapse,
             hideOutput,
           },
@@ -753,6 +797,15 @@ export class ToolOrchestrator {
         // Show silent tools in chat if they error (for debugging)
         const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
 
+        console.log(`[DEBUG-EVENT-EMIT] Emitting TOOL_CALL_END for '${toolName}' (id: ${id})`);
+        console.log(`[DEBUG-EVENT-EMIT]   - success: ${result.success}`);
+        if (!result.success) {
+          console.log(`[DEBUG-EVENT-EMIT]   - error: ${result.error}`);
+          console.log(`[DEBUG-EVENT-EMIT]   - error_type: ${result.error_type}`);
+        }
+        console.log(`[DEBUG-EVENT-EMIT]   - shouldShowInChat: ${shouldShowInChat}`);
+        console.log(`[DEBUG-EVENT-EMIT]   - parentId: ${effectiveParentId}`);
+
         this.emitEvent({
           id,
           type: ActivityEventType.TOOL_CALL_END,
@@ -765,7 +818,7 @@ export class ToolOrchestrator {
             error: result.success ? undefined : result.error,
             visibleInChat: shouldShowInChat,
             isTransparent: tool?.isTransparentWrapper || false,
-            collapsed: isCollapsed, // Use same collapsed state as TOOL_CALL_START
+            collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
             shouldCollapse, // Pass through for completion-triggered collapse
             hideOutput, // Pass through for output visibility control
           },
