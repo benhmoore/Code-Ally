@@ -603,6 +603,51 @@ export class ToolOrchestrator {
     const shouldCollapse = (tool as any)?.shouldCollapse || false;
     const hideOutput = (tool as any)?.hideOutput || false;
 
+    /**
+     * COLLAPSED FLAG STATE MACHINE
+     * ============================
+     *
+     * The collapsed flag controls tool call visibility in the UI through a state machine:
+     *
+     * STATE DIAGRAM:
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ START STATE (TOOL_CALL_START event)                                  │
+     * │   collapsed: false                    ← Tool always starts visible   │
+     * │   shouldCollapse: true/false          ← Flag stored for later        │
+     * └────────────────────┬─────────────────────────────────────────────────┘
+     *                      │
+     *                      ▼
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ EXECUTION STATE (tool executing)                                     │
+     * │   - User can see tool call arguments and watch execution             │
+     * │   - Tool output streams in (if not hideOutput)                       │
+     * │   - Nested tools may appear (e.g., agent delegating)                 │
+     * └────────────────────┬─────────────────────────────────────────────────┘
+     *                      │
+     *                      ▼
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ END STATE (TOOL_CALL_END event)                                      │
+     * │   collapsed: false                    ← Still not collapsed yet      │
+     * │   shouldCollapse: true/false          ← Flag passed to UI            │
+     * └────────────────────┬─────────────────────────────────────────────────┘
+     *                      │
+     *                      ▼
+     * ┌──────────────────────────────────────────────────────────────────────┐
+     * │ UI TRANSITION (handled by ToolCallDisplay.tsx)                       │
+     * │   - If shouldCollapse=true: collapse after short delay               │
+     * │   - If shouldCollapse=false: stay expanded                           │
+     * │   - User can manually expand/collapse at any time                    │
+     * └──────────────────────────────────────────────────────────────────────┘
+     *
+     * KEY POINTS:
+     * - collapsed is NEVER true in START/END events (tools always start visible)
+     * - shouldCollapse is a declarative flag that tells UI what to do post-completion
+     * - UI handles the actual collapse transition (see ToolCallDisplay.tsx)
+     * - This ensures users always see what tools are running before they collapse
+     *
+     * REFERENCE: ToolCallDisplay.tsx component handles the collapse transition
+     */
+
     console.log(`[DEBUG-TOOL-DISPLAY] Tool '${toolName}' (id: ${id})`);
     console.log(`[DEBUG-TOOL-DISPLAY]   - shouldCollapse (tool): ${shouldCollapse}`);
     console.log(`[DEBUG-TOOL-DISPLAY]   - hideOutput (tool): ${hideOutput}`);

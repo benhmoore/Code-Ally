@@ -81,7 +81,7 @@ export class SessionsTool extends BaseTool {
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
-  readonly hideOutput = true; // Hide detailed output
+  readonly hideOutput = false; // Agents never hide their own output
   readonly persistAgent = true; // Keep agent alive in pool for follow-up questions
   // visibleInChat defaults to true from BaseTool
 

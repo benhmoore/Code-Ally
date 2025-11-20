@@ -143,7 +143,7 @@ export class PlanTool extends BaseTool implements InjectableTool {
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
-  readonly hideOutput = true; // Hide nested non-agent tool outputs (agent tools still shown)
+  readonly hideOutput = false; // Agents never hide their own output
 
   readonly usageGuidance = `**When to use plan:**
 Implementation/refactoring with multiple steps (>3 steps), needs structured approach.
@@ -429,7 +429,6 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
       // This ensures nested tool calls (plan spawning other agents) get correct parent
       const previousAgent = registry.get<any>('agent');
       registry.registerInstance('agent', planningAgent);
-      console.log(`[DEBUG-REGISTRY] Updated registry 'agent': ${(previousAgent as any)?.instanceId} → ${(planningAgent as any)?.instanceId}`);
 
       try {
         // Execute planning
@@ -506,8 +505,13 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         return this.formatSuccessResponse(successResponse);
       } finally {
         // Restore previous agent in registry
-        registry.registerInstance('agent', previousAgent);
-        console.log(`[DEBUG-REGISTRY] Restored registry 'agent': ${(planningAgent as any)?.instanceId} → ${(previousAgent as any)?.instanceId}`);
+        try {
+          registry.registerInstance('agent', previousAgent);
+          logger.debug(`[PLAN_TOOL] Restored registry 'agent': ${(previousAgent as any)?.instanceId || 'null'}`);
+        } catch (registryError) {
+          logger.error(`[PLAN_TOOL] CRITICAL: Failed to restore registry agent:`, registryError);
+          // Don't throw - continue with other cleanup
+        }
 
         // Clean up delegation tracking
         logger.debug('[PLAN_TOOL] Cleaning up planning agent...');

@@ -520,6 +520,13 @@ export class OllamaClient extends ModelClient {
             } else if (hadThinking && !thinkingComplete) {
               // First chunk without thinking after having thinking = thinking block complete
               thinkingComplete = true;
+
+              // DEBUG: Log complete thinking
+              console.log(`[THINKING-COMPLETE] Full thinking (${aggregatedThinking.length} chars):`);
+              console.log(`[THINKING-COMPLETE] ========== START ==========`);
+              console.log(aggregatedThinking);
+              console.log(`[THINKING-COMPLETE] ========== END ==========`);
+
               // Only emit if thinking display is not suppressed
               if (this.activityStream && aggregatedThinking && !suppressThinking) {
                 this.activityStream.emit({
@@ -601,6 +608,14 @@ export class OllamaClient extends ModelClient {
       aggregatedMessage._should_replace_streaming = true;
     }
 
+    // DEBUG: Log final response summary
+    console.log(`[RESPONSE-FINAL] Content length: ${(aggregatedMessage.content || '').length} chars`);
+    console.log(`[RESPONSE-FINAL] Thinking length: ${(aggregatedMessage.thinking || '').length} chars`);
+    console.log(`[RESPONSE-FINAL] Tool calls: ${aggregatedMessage.tool_calls?.length || 0}`);
+    if (aggregatedMessage.thinking) {
+      console.log(`[RESPONSE-FINAL] Has thinking: true`);
+    }
+
     return aggregatedMessage as LLMResponse;
   }
 
@@ -617,6 +632,12 @@ export class OllamaClient extends ModelClient {
 
     if (message.thinking) {
       response.thinking = message.thinking;
+
+      // DEBUG: Log thinking for non-streaming responses
+      console.log(`[THINKING-COMPLETE-NONSTREAM] Full thinking (${message.thinking.length} chars):`);
+      console.log(`[THINKING-COMPLETE-NONSTREAM] ========== START ==========`);
+      console.log(message.thinking);
+      console.log(`[THINKING-COMPLETE-NONSTREAM] ========== END ==========`);
 
       // Emit THOUGHT_COMPLETE event for non-streaming responses
       // Only emit if thinking display is not suppressed

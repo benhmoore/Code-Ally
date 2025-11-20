@@ -32,6 +32,8 @@ interface ToolCallDisplayProps {
   level?: number;
   /** Config for output display preferences */
   config?: any;
+  /** Whether any ancestor is an agent tool (used to hide non-agent tool outputs) */
+  hasAgentAncestor?: boolean;
 }
 
 /**
@@ -92,9 +94,17 @@ function formatArgsPreview(args: any, toolName?: string): string {
     if (typeof value === 'string') {
       strValue = `"${value}"`;
     } else if (Array.isArray(value)) {
-      strValue = JSON.stringify(value);
+      try {
+        strValue = JSON.stringify(value);
+      } catch {
+        strValue = '[Circular]';
+      }
     } else if (typeof value === 'object' && value !== null) {
-      strValue = JSON.stringify(value);
+      try {
+        strValue = JSON.stringify(value);
+      } catch {
+        strValue = '[Circular]';
+      }
     } else {
       strValue = String(value);
     }
@@ -172,6 +182,28 @@ function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: 
   return subtext;
 }
 
+// Agent tools are imported from constants
+const AGENT_TYPE_TOOLS = new Set<string>(AGENT_DELEGATION_TOOLS);
+
+/**
+ * Determine if a child tool should be shown based on parent state and config
+ */
+function shouldShowChildTool(
+  _child: ToolCallState,
+  parentCollapsed: boolean | undefined,
+  _parentHideOutput: boolean | undefined,
+  config?: any
+): boolean {
+  // Override: always show if user enabled full output
+  if (config?.show_full_tool_output) {
+    return true;
+  }
+
+  // All child tools (agent and non-agent) are visible unless parent is collapsed
+  // hideOutput only affects the output TEXT, not child tool visibility
+  return !parentCollapsed;
+}
+
 /**
  * ToolCallDisplay Component (Internal)
  */
@@ -179,8 +211,13 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   toolCall,
   level = 0,
   config,
+  hasAgentAncestor = false,
 }) => {
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
+
+  // Check if this tool is an agent - if so, children should hide their output
+  const isAgentTool = AGENT_TYPE_TOOLS.has(toolCall.toolName);
+  const childrenHaveAgentAncestor = isAgentTool || hasAgentAncestor;
 
   // Track interjections for this tool call
   const [interjections, setInterjections] = useState<Array<{ message: string; timestamp: number }>>([]);
@@ -450,8 +487,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Output as threaded child (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
-      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && trimmedOutput && !toolCall.error && (
+      {/* Output as threaded child (hidden if collapsed, has agent ancestor, or own hideOutput, unless show_full_tool_output is enabled) */}
+      {!toolCall.collapsed && !hasAgentAncestor && (!toolCall.hideOutput || config?.show_full_tool_output) && trimmedOutput && !toolCall.error && (
         <Box flexDirection="column">
           <Box>
             <Text>{indent}    </Text>
@@ -469,8 +506,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       )}
 
       {/* Nested content: interleaved tool calls and interjections sorted by timestamp */}
-      {/* Render if: has interjections, not collapsed, or has children (inner logic handles hideOutput filtering) */}
-      {(interjections.length > 0 || !toolCall.collapsed || config?.show_full_tool_output || (toolCall.children && toolCall.children.length > 0)) && (() => {
+      {/* Render if: has interjections, not collapsed, or show_full_tool_output enabled */}
+      {(interjections.length > 0 || config?.show_full_tool_output || !toolCall.collapsed) && (() => {
         // Build combined list of children and interjections
         type NestedItem =
           | { type: 'toolCall'; data: ToolCallState; timestamp: number }
@@ -478,29 +515,10 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
         const items: NestedItem[] = [];
 
-        // Agent-type tools that should always be shown even when parent has hideOutput=true
-        const AGENT_TYPE_TOOLS = new Set(['agent', 'explore', 'plan', 'sessions', 'agent_ask']);
-
         // Add nested tool calls with conditional visibility
         if (toolCall.children) {
           toolCall.children.forEach(child => {
-            const isAgentTool = AGENT_TYPE_TOOLS.has(child.toolName);
-
-            // Determine visibility based on tool type and parent state
-            let shouldShow: boolean;
-
-            if (config?.show_full_tool_output) {
-              // Override: always show if user enabled full output
-              shouldShow = true;
-            } else if (isAgentTool) {
-              // Agent tools: always show unless parent is collapsed
-              shouldShow = !toolCall.collapsed;
-            } else {
-              // Non-agent tools: only show if parent is not collapsed AND parent doesn't hide output
-              shouldShow = !toolCall.collapsed && !toolCall.hideOutput;
-            }
-
-            if (shouldShow) {
+            if (shouldShowChildTool(child, toolCall.collapsed, toolCall.hideOutput, config)) {
               items.push({
                 type: 'toolCall',
                 data: child,
@@ -562,6 +580,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
                     toolCall={item.data}
                     level={level + 1}
                     config={config}
+                    hasAgentAncestor={childrenHaveAgentAncestor}
                   />
                 );
               }

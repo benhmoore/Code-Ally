@@ -146,7 +146,7 @@ export class ExploreTool extends BaseTool implements InjectableTool {
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
-  readonly hideOutput = true; // Hide nested non-agent tool outputs (agent tools still shown)
+  readonly hideOutput = false; // Agents never hide their own output
 
   readonly usageGuidance = `**When to use explore:**
 Unknown scope/location: Don't know where to start or how much code is involved.
@@ -432,7 +432,6 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
       // This ensures nested tool calls (explore spawning explore) get correct parent
       const previousAgent = registry.get<any>('agent');
       registry.registerInstance('agent', explorationAgent);
-      console.log(`[DEBUG-REGISTRY] Updated registry 'agent': ${(previousAgent as any)?.instanceId} → ${(explorationAgent as any)?.instanceId}`);
 
       try {
         // Execute exploration
@@ -491,8 +490,13 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
         return this.formatSuccessResponse(successResponse);
       } finally {
         // Restore previous agent in registry
-        registry.registerInstance('agent', previousAgent);
-        console.log(`[DEBUG-REGISTRY] Restored registry 'agent': ${(explorationAgent as any)?.instanceId} → ${(previousAgent as any)?.instanceId}`);
+        try {
+          registry.registerInstance('agent', previousAgent);
+          logger.debug(`[EXPLORE_TOOL] Restored registry 'agent': ${(previousAgent as any)?.instanceId || 'null'}`);
+        } catch (registryError) {
+          logger.error(`[EXPLORE_TOOL] CRITICAL: Failed to restore registry agent:`, registryError);
+          // Don't throw - continue with other cleanup
+        }
 
         // Clean up delegation tracking
         logger.debug('[EXPLORE_TOOL] Cleaning up exploration agent...');

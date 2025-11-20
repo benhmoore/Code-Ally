@@ -28,11 +28,11 @@ import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 export class AgentTool extends BaseTool implements InjectableTool {
   readonly name = 'agent';
   readonly description =
-    'Delegate task to specialized agent. Each call runs ONE agent. For concurrent execution, make multiple agent() calls in same response';
+    'Delegate task to specialized agent. Each call runs ONE agent sequentially';
   readonly requiresConfirmation = false; // Non-destructive: task delegation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
-  readonly hideOutput = true; // Hide nested non-agent tool outputs (agent tools still shown)
+  readonly hideOutput = false; // Agents never hide their own output
   readonly usageGuidance = `**When to use agent:**
 Complex tasks requiring specialized expertise or distinct workflows.
 CRITICAL: Agent CANNOT see current conversation - include ALL context in task_prompt (file paths, errors, requirements).
@@ -80,7 +80,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           properties: {
             task_prompt: {
               type: 'string',
-              description: 'Complete task instructions with ALL necessary context. Agent cannot see current conversation - include file paths, errors, requirements, and background. For concurrent tasks, make multiple agent() calls.',
+              description: 'Complete task instructions with ALL necessary context. Agent cannot see current conversation - include file paths, errors, requirements, and background.',
             },
             agent_type: {
               type: 'string',
@@ -671,13 +671,6 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       // Get parent agent - the agent currently executing this tool
       // At this point, registry.get('agent') IS the parent agent
       const parentAgent = registry.get<any>('agent');
-      console.log(`[DEBUG-AGENT-TOOL] ========== AGENT SPAWNING ==========`);
-      console.log(`[DEBUG-AGENT-TOOL] Creating agent type: ${agentType}`);
-      console.log(`[DEBUG-AGENT-TOOL] CallId: ${callId}`);
-      console.log(`[DEBUG-AGENT-TOOL] New depth: ${newDepth}`);
-      console.log(`[DEBUG-AGENT-TOOL] Parent from registry:`, parentAgent?.instanceId || 'null');
-      console.log(`[DEBUG-AGENT-TOOL] Parent depth:`, parentAgent?.getAgentDepth?.() ?? 'N/A');
-      console.log(`[DEBUG-AGENT-TOOL] Parent is specialized:`, parentAgent?.config?.isSpecializedAgent ?? 'N/A');
 
       // Create config with pool metadata
       const agentConfig: AgentConfig = {
@@ -737,7 +730,6 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       // This ensures nested tool calls (agent spawning agent) get correct parent
       const previousAgent = registry.get<any>('agent');
       registry.registerInstance('agent', subAgent);
-      console.log(`[DEBUG-REGISTRY] Updated registry 'agent': ${(previousAgent as any)?.instanceId} → ${(subAgent as any)?.instanceId}`);
 
       try {
         // Execute the task
@@ -772,15 +764,6 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         }
       } else {
         // Check if response is just an interruption or error message
-        console.log(`[DEBUG-DETECTION] Response length: ${response.length}, first 100 chars: "${response.substring(0, 100)}"`);
-        console.log(`[DEBUG-DETECTION] Checking interruption patterns...`);
-        console.log(`[DEBUG-DETECTION]   - includes '[Request interrupted': ${response.includes('[Request interrupted')}`);
-        console.log(`[DEBUG-DETECTION]   - includes 'Interrupted. Tell Ally': ${response.includes('Interrupted. Tell Ally what to do instead.')}`);
-        console.log(`[DEBUG-DETECTION]   - includes 'Permission denied': ${response.includes('Permission denied. Tell Ally what to do instead.')}`);
-        console.log(`[DEBUG-DETECTION]   - equals USER_FACING_INTERRUPTION: ${response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION}`);
-        console.log(`[DEBUG-DETECTION]   - equals USER_FACING_DENIAL: ${response === PERMISSION_MESSAGES.USER_FACING_DENIAL}`);
-        console.log(`[DEBUG-DETECTION]   - length < MIN (${TEXT_LIMITS.AGENT_RESPONSE_MIN}): ${response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN}`);
-
         if (
           response.includes('[Request interrupted') ||
           response.includes('Interrupted. Tell Ally what to do instead.') ||
@@ -789,18 +772,14 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
           response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN
         ) {
-          console.log(`[DEBUG-DETECTION] DETECTED interruption/incomplete response - attempting to extract summary`);
           logger.debug('[AGENT_TOOL] Sub-agent response seems incomplete, attempting to extract summary');
           const summary = this.extractSummaryFromConversation(subAgent, agentType);
           if (summary && summary.length > response.length) {
-            console.log(`[DEBUG-DETECTION] Using extracted summary (length: ${summary.length})`);
             finalResponse = summary;
           } else {
-            console.log(`[DEBUG-DETECTION] No better summary found, using original response`);
             finalResponse = response;
           }
         } else {
-          console.log(`[DEBUG-DETECTION] Response looks valid, using as-is`);
           finalResponse = response;
         }
       }
@@ -816,8 +795,32 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       return returnValue;
       } finally {
         // Restore previous agent in registry
-        registry.registerInstance('agent', previousAgent);
-        console.log(`[DEBUG-REGISTRY] Restored registry 'agent': ${(subAgent as any)?.instanceId} → ${(previousAgent as any)?.instanceId}`);
+        try {
+          registry.registerInstance('agent', previousAgent);
+
+          // VALIDATION: Ensure registry restoration succeeded
+          // This prevents registry corruption where the wrong agent remains active
+          const restoredAgent = registry.get<any>('agent');
+          if (restoredAgent !== previousAgent) {
+            // CRITICAL: Registry corruption detected - fail fast
+            const error = new Error(
+              `[AGENT_TOOL] CRITICAL: Registry corruption detected! ` +
+              `Expected agent ${(previousAgent as any)?.instanceId || 'null'} ` +
+              `but registry contains ${(restoredAgent as any)?.instanceId || 'null'}. ` +
+              `This indicates a race condition or double-release bug in agent management.`
+            );
+            logger.error(error.message);
+            throw error;
+          }
+
+          logger.debug(`[AGENT_TOOL] Restored registry 'agent': ${(previousAgent as any)?.instanceId || 'null'}`);
+        } catch (registryError) {
+          logger.error(`[AGENT_TOOL] CRITICAL: Failed to restore registry agent:`, registryError);
+          // Don't throw on registry errors (let validation errors propagate) - continue with other cleanup
+          if (registryError instanceof Error && registryError.message.includes('Registry corruption')) {
+            throw registryError;
+          }
+        }
       }
     } catch (error) {
       logger.debug('[AGENT_TOOL] ERROR during sub-agent execution:', error);
