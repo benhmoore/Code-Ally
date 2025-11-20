@@ -828,4 +828,25 @@ describe('LineEditTool', () => {
       (registry as any)._services?.clear();
     });
   });
+
+  describe('diff output', () => {
+    it('should include unified diff in response', async () => {
+      const filePath = join(tempDir, 'diff-test.txt');
+      const content = 'Line 1\nLine 2\nLine 3\n';
+      await fs.writeFile(filePath, content);
+
+      const result = await lineEditTool.execute({
+        file_path: filePath,
+        operation: 'insert',
+        line_number: 2,
+        content: 'New Line',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.diff).toBeDefined();
+      expect(result.diff).toContain('--- a/diff-test.txt');
+      expect(result.diff).toContain('+++ b/diff-test.txt');
+      expect(result.diff).toContain('+New Line');
+    });
+  });
 });

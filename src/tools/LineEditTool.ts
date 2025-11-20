@@ -11,6 +11,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
+import { createUnifiedDiff } from '../utils/diffUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import * as fs from 'fs/promises';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -429,12 +430,16 @@ Use one of these approaches:
         modifiedContent
       );
 
+      // Generate unified diff to show what changed
+      const diff = createUnifiedDiff(fileContent, modifiedContent, absolutePath);
+
       const response = this.formatSuccessResponse({
         content: detailedDescription, // Human-readable output for LLM
         file_path: absolutePath,
         operation: operationDescription,
         lines_before: totalLines,
         lines_after: modifiedLines.length,
+        diff, // Include diff so model can see what changed
       });
 
       // Add patch information to result if patch was captured

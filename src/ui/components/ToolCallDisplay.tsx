@@ -460,8 +460,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Diff preview (hidden if collapsed or hideOutput, unless show_full_tool_output is enabled) */}
-      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && toolCall.diffPreview && (
+      {/* Diff preview (hidden only if collapsed; always shown regardless of hideOutput) */}
+      {!toolCall.collapsed && toolCall.diffPreview && (
         <Box flexDirection="column" paddingLeft={indent.length + 4}>
           <DiffDisplay
             oldContent={toolCall.diffPreview.oldContent}

@@ -228,22 +228,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
   highlighter,
 }) => {
   if (node.type === 'code') {
-    const highlighted = highlighter.highlight(node.content || '', {
-      language: node.language,
-    });
-
-    return (
-      <Box flexDirection="column" paddingLeft={2}>
-        <Text dimColor color={UI_COLORS.TEXT_DIM}>
-          {node.language ? `[${node.language}]` : '[code]'}
-        </Text>
-        <Box flexDirection="column" borderStyle="single" borderColor={UI_COLORS.TEXT_DIM} paddingX={1}>
-          {highlighted.split('\n').map((line, idx) => (
-            <Text key={idx}>{line}</Text>
-          ))}
-        </Box>
-      </Box>
-    );
+    return <CodeBlockRenderer content={node.content || ''} language={node.language} highlighter={highlighter} />;
   }
 
   if (node.type === 'heading') {
@@ -448,6 +433,114 @@ const BlockquoteRenderer: React.FC<{ content: string }> = ({ content }) => {
           <Text>{line}</Text>
         </Box>
       ))}
+    </Box>
+  );
+};
+
+/**
+ * Code Block Renderer Component
+ *
+ * Renders code blocks with fixed-width borders that don't shift based on content.
+ * Uses terminal width to ensure consistent border alignment regardless of content indentation.
+ */
+const CodeBlockRenderer: React.FC<{ content: string; language?: string; highlighter: SyntaxHighlighter }> = ({
+  content,
+  language,
+  highlighter,
+}) => {
+  const terminalWidth = useContentWidth();
+
+  // Account for: left padding (2) + border chars (2) + internal padding (2) + safety margin (4)
+  const CODE_BLOCK_OVERHEAD = 10;
+  const availableWidth = Math.max(40, terminalWidth - CODE_BLOCK_OVERHEAD);
+
+  // Highlight the code
+  const highlighted = highlighter.highlight(content, { language });
+  const lines = highlighted.split('\n');
+
+  // Helper to expand tabs to spaces (assuming 4-space tab stops)
+  const expandTabs = (text: string, tabWidth: number = 4): string => {
+    let result = '';
+    let column = 0;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+
+      // Check if we're in an ANSI escape sequence
+      if (char === '\x1b' && text[i + 1] === '[') {
+        // Find the end of the ANSI sequence
+        const endIdx = text.indexOf('m', i);
+        if (endIdx !== -1) {
+          // Copy the entire ANSI sequence without affecting column count
+          result += text.substring(i, endIdx + 1);
+          i = endIdx;
+          continue;
+        }
+      }
+
+      if (char === '\t') {
+        // Expand tab to reach next tab stop
+        const spacesToAdd = tabWidth - (column % tabWidth);
+        result += ' '.repeat(spacesToAdd);
+        column += spacesToAdd;
+      } else {
+        result += char;
+        column++;
+      }
+    }
+
+    return result;
+  };
+
+  // Helper to get visual length (strip ANSI codes and count expanded tabs)
+  const getVisualLength = (text: string): number => {
+    // First expand tabs, then strip ANSI codes
+    const expanded = expandTabs(text);
+    return expanded.replace(/\x1b\[[0-9;]*m/g, '').length;
+  };
+
+  // Helper to pad a line to the target width (ANSI-aware, tab-aware)
+  const padLine = (line: string, width: number): string => {
+    const visualLen = getVisualLength(line);
+    const paddingNeeded = Math.max(0, width - visualLen);
+    // Expand tabs in the display line as well
+    const expanded = expandTabs(line);
+    return expanded + ' '.repeat(paddingNeeded);
+  };
+
+  // Create border lines
+  const topBorder = UI_SYMBOLS.BORDER.TOP_LEFT + UI_SYMBOLS.BORDER.HORIZONTAL.repeat(availableWidth + 2) + UI_SYMBOLS.BORDER.TOP_RIGHT;
+  const bottomBorder = UI_SYMBOLS.BORDER.BOTTOM_LEFT + UI_SYMBOLS.BORDER.HORIZONTAL.repeat(availableWidth + 2) + UI_SYMBOLS.BORDER.BOTTOM_RIGHT;
+
+  return (
+    <Box flexDirection="column" paddingLeft={2}>
+      <Text dimColor color={UI_COLORS.TEXT_DIM}>
+        {language ? `[${language}]` : '[code]'}
+      </Text>
+      <Box flexDirection="column">
+        {/* Top border */}
+        <Text dimColor>{topBorder}</Text>
+
+        {/* Content lines */}
+        {lines.map((line, idx) => {
+          // Truncate if line is too long, otherwise pad to width
+          const visualLen = getVisualLength(line);
+          const displayLine = visualLen > availableWidth
+            ? line.substring(0, availableWidth - 3) + '...'
+            : padLine(line, availableWidth);
+
+          return (
+            <Box key={idx}>
+              <Text dimColor>│ </Text>
+              <Text>{displayLine}</Text>
+              <Text dimColor> │</Text>
+            </Box>
+          );
+        })}
+
+        {/* Bottom border */}
+        <Text dimColor>{bottomBorder}</Text>
+      </Box>
     </Box>
   );
 };

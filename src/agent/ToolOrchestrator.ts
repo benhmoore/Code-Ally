@@ -932,8 +932,9 @@ export class ToolOrchestrator {
     }
 
     // Apply context-aware truncation if ToolResultManager is available
+    // Pass the full result object so it can check for _non_truncatable flag
     if (this.toolResultManager) {
-      resultStr = this.toolResultManager.processToolResult(toolName, resultStr);
+      resultStr = this.toolResultManager.processToolResult(toolName, resultWithoutExtras);
     }
 
     // Append warning after truncation to ensure it's always visible

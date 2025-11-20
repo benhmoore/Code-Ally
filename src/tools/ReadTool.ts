@@ -42,6 +42,18 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
   }
 
   /**
+   * Get remaining context budget from TokenManager
+   * Uses same calculation as ToolResultManager
+   */
+  private getRemainingContext(tokenManager: any): number {
+    const totalContext = tokenManager.getContextSize();
+    const usedTokens = tokenManager.getCurrentTokenCount();
+    const bufferTokens = Math.floor(totalContext * TOKEN_MANAGEMENT.SAFETY_BUFFER_PERCENT); // 10% buffer for safety
+
+    return Math.max(0, totalContext - usedTokens - bufferTokens);
+  }
+
+  /**
    * Get the maximum allowed tokens for a read operation
    * Capped by both configured limit and context size
    */
@@ -140,6 +152,28 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
 
     const estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
 
+    // Check if we have enough remaining context for the non-truncatable result
+    // Get remaining context from ServiceRegistry's TokenManager if available
+    const registry = ServiceRegistry.getInstance();
+    const tokenManager = registry.get<any>('token_manager');
+    if (tokenManager) {
+      const remainingTokens = this.getRemainingContext(tokenManager);
+      if (remainingTokens < estimatedTokens) {
+        const examples = filePaths.length === 1
+          ? `read(file_paths=["${filePaths[0]}\"], limit=100) or read(file_paths=["${filePaths[0]}\"], offset=-100, limit=100) for last 100 lines`
+          : `read(file_paths=["${filePaths[0]}\"], limit=100) or read fewer files`;
+
+        return this.formatErrorResponse(
+          `Insufficient context available: read would require ${estimatedTokens.toFixed(1)} tokens but only ${remainingTokens.toFixed(1)} remain. ` +
+          `Read results cannot be truncated - you must reduce the read size. ` +
+          `Use limit/offset for targeted reading or search with grep/glob. ` +
+          `Example: ${examples}`,
+          'validation_error',
+          `Read operations require full context space - use limit/offset to read smaller sections`
+        );
+      }
+    }
+
     // Determine max tokens based on read type
     let maxTokens: number;
     if (isContextFile) {
@@ -213,6 +247,9 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
       files_failed: errors.length,
       partial_failure: errors.length > 0,
     });
+
+    // Mark result as non-truncatable - read results must never be truncated
+    (result as any)._non_truncatable = true;
 
     // Mark result as ephemeral if requested
     if (ephemeral) {

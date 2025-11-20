@@ -85,12 +85,31 @@ export class ToolResultManager {
    * Process tool result with context-aware truncation
    *
    * @param toolName Name of the tool that generated the result
-   * @param rawResult The raw tool result string
+   * @param rawResult The raw tool result string or ToolResult object
    * @returns Processed (potentially truncated) tool result
    */
-  processToolResult(toolName: string, rawResult: string): string {
-    if (!rawResult || rawResult.length === 0) {
-      return rawResult;
+  processToolResult(toolName: string, rawResult: string | any): string {
+    if (!rawResult) {
+      return '';
+    }
+
+    // Check if this is a non-truncatable result
+    const isNonTruncatable = typeof rawResult === 'object' && rawResult._non_truncatable === true;
+
+    // Extract string content from object if needed
+    const resultString = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+
+    if (!resultString || resultString.length === 0) {
+      return resultString;
+    }
+
+    // Update tool usage statistics
+    const actualTokens = this.tokenManager.estimateTokens(resultString);
+    this.updateToolStats(toolName, actualTokens);
+
+    // If result is marked as non-truncatable, never truncate it
+    if (isNonTruncatable) {
+      return resultString;
     }
 
     // Calculate dynamic max tokens based on remaining context
@@ -102,13 +121,9 @@ export class ToolResultManager {
     const contextPct = this.tokenManager.getContextUsagePercentage();
     const truncationLevel = this.getTruncationLevel(contextPct);
 
-    // Update tool usage statistics
-    const actualTokens = this.tokenManager.estimateTokens(rawResult);
-    this.updateToolStats(toolName, actualTokens);
-
     // Apply truncation if needed
     if (actualTokens <= maxTokens) {
-      return rawResult;
+      return resultString;
     }
 
     // Calculate percentage kept for the warning
@@ -128,14 +143,14 @@ export class ToolResultManager {
       contentTokens = maxTokens - minimalTokens;
 
       const truncatedResult = this.tokenManager.truncateContentToTokens(
-        rawResult,
+        resultString,
         contentTokens
       );
       return minimalNotice + '\n' + truncatedResult;
     }
 
     const truncatedResult = this.tokenManager.truncateContentToTokens(
-      rawResult,
+      resultString,
       contentTokens
     );
     return notice + '\n' + truncatedResult;

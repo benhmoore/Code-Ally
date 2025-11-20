@@ -110,6 +110,7 @@ export interface ToolResult {
   suggestion?: string;
   system_reminder?: string;
   system_reminder_persist?: boolean;
+  _non_truncatable?: boolean; // If true, this result should never be truncated - operation must fail if insufficient context
   [key: string]: any;
 }
 

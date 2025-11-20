@@ -630,4 +630,33 @@ describe('EditTool', () => {
       (registry as any)._services?.clear();
     });
   });
+
+  describe('diff output', () => {
+    it('should include unified diff in response', async () => {
+      const filePath = join(tempDir, 'diff-test.txt');
+      const content = 'Hello World\nLine 2\nLine 3';
+      await fs.writeFile(filePath, content);
+
+      // Track read to satisfy ReadStateManager (3 lines without trailing newline)
+      readStateManager.trackRead(filePath, 1, 3);
+
+      const result = await editTool.execute({
+        file_path: filePath,
+        old_string: 'Hello World',
+        new_string: 'Hello Universe',
+      });
+
+      if (!result.success) {
+        console.error('Edit failed:', result.error);
+        console.error('Full result:', JSON.stringify(result, null, 2));
+      }
+
+      expect(result.success).toBe(true);
+      expect(result.diff).toBeDefined();
+      expect(result.diff).toContain('--- a/diff-test.txt');
+      expect(result.diff).toContain('+++ b/diff-test.txt');
+      expect(result.diff).toContain('-Hello World');
+      expect(result.diff).toContain('+Hello Universe');
+    });
+  });
 });

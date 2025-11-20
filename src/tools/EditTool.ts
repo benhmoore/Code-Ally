@@ -14,6 +14,7 @@ import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
+import { createUnifiedDiff } from '../utils/diffUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import * as fs from 'fs/promises';
 
@@ -256,10 +257,14 @@ export class EditTool extends BaseTool {
         successMessage += `\n\n⚠️  Lines affected by this edit were invalidated. To edit again, either re-read the file or use show_updated_context=true`;
       }
 
+      // Generate unified diff to show what changed
+      const diff = createUnifiedDiff(content, modifiedContent, absolutePath);
+
       const response = this.formatSuccessResponse({
         content: successMessage, // Human-readable output for LLM
         file_path: absolutePath,
         replacements_made: replaceAll ? count : 1,
+        diff, // Include diff so model can see what changed
       });
 
       // Add patch information to result if patch was captured
