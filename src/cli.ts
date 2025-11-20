@@ -894,7 +894,6 @@ async function main() {
     const { ReadTool } = await import('./tools/ReadTool.js');
     const { WriteTool } = await import('./tools/WriteTool.js');
     const { WriteTempTool } = await import('./tools/WriteTempTool.js');
-    const { AllyWriteTool } = await import('./tools/AllyWriteTool.js');
     const { EditTool } = await import('./tools/EditTool.js');
     const { LineEditTool } = await import('./tools/LineEditTool.js');
     const { GlobTool } = await import('./tools/GlobTool.js');
@@ -922,7 +921,6 @@ async function main() {
       new ReadTool(activityStream, config),
       new WriteTool(activityStream),
       new WriteTempTool(activityStream), // Internal tool for explore agents
-      new AllyWriteTool(activityStream),
       new EditTool(activityStream),
       new LineEditTool(activityStream),
       new GlobTool(activityStream),

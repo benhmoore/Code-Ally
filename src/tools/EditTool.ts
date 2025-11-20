@@ -21,6 +21,7 @@ export class EditTool extends BaseTool {
   readonly name = 'edit';
   readonly description = 'Make edits to a single file using find-and-replace';
   readonly requiresConfirmation = true; // Destructive operation
+  readonly hideOutput = true; // Hide output from result preview
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

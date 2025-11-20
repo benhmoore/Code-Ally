@@ -27,6 +27,7 @@ export class IdleTaskCoordinator implements IService {
   private isOllamaActive: boolean = false;
   private lastModelResponseTimestamp: number = 0;
   private retryTimeoutId: NodeJS.Timeout | null = null;
+  private activeAgentCount: number = 0; // Track nested agent activity with reference counting
 
   constructor(
     private sessionTitleGenerator: SessionTitleGenerator | null,
@@ -52,23 +53,39 @@ export class IdleTaskCoordinator implements IService {
   /**
    * Set whether Ollama is currently active
    *
+   * Uses reference counting to track nested agent activity.
+   * Only marks as truly idle when all agents have completed.
+   *
    * @param active - True if Ollama is processing a request
    */
   setOllamaActive(active: boolean): void {
-    logger.debug(`[IDLE_COORD] Ollama active status changed: ${active}`);
-    this.isOllamaActive = active;
+    if (active) {
+      // Increment counter when any agent starts
+      this.activeAgentCount++;
+      logger.debug(`[IDLE_COORD] Agent started, active count: ${this.activeAgentCount}`);
 
-    // Record timestamp when model finishes responding
-    if (!active) {
-      this.lastModelResponseTimestamp = Date.now();
-      logger.debug(`[IDLE_COORD] Model response completed at: ${this.lastModelResponseTimestamp}`);
-    }
+      // Mark as active
+      this.isOllamaActive = true;
 
-    // If model becomes active, clear any pending retry
-    if (active && this.retryTimeoutId) {
-      logger.debug('[IDLE_COORD] Model became active, cancelling pending retry');
-      clearTimeout(this.retryTimeoutId);
-      this.retryTimeoutId = null;
+      // Clear any pending retry when new agent starts
+      if (this.retryTimeoutId) {
+        logger.debug('[IDLE_COORD] Agent started, cancelling pending retry');
+        clearTimeout(this.retryTimeoutId);
+        this.retryTimeoutId = null;
+      }
+    } else {
+      // Decrement counter when any agent finishes
+      this.activeAgentCount = Math.max(0, this.activeAgentCount - 1);
+      logger.debug(`[IDLE_COORD] Agent finished, active count: ${this.activeAgentCount}`);
+
+      // Only mark as truly idle when ALL agents have completed
+      if (this.activeAgentCount === 0) {
+        this.isOllamaActive = false;
+        this.lastModelResponseTimestamp = Date.now();
+        logger.debug(`[IDLE_COORD] All agents completed at: ${this.lastModelResponseTimestamp}`);
+      } else {
+        logger.debug(`[IDLE_COORD] Still ${this.activeAgentCount} active agent(s), remaining active`);
+      }
     }
   }
 
@@ -355,7 +372,7 @@ export class IdleTaskCoordinator implements IService {
 
     // Check if service is already analyzing
     if (this.autoToolCleanup.isActive) {
-      console.log('[IDLE_COORD] Tool cleanup already running');
+      logger.debug('[IDLE_COORD]', 'Tool cleanup already running');
       return false;
     }
 
@@ -371,14 +388,14 @@ export class IdleTaskCoordinator implements IService {
       const session = await this.sessionManager.loadSession(currentSession);
       lastAnalysisAt = session?.metadata?.lastCleanupAnalysisAt;
     } catch (error) {
-      console.log('[IDLE_COORD] Could not load session for cleanup check:', error);
+      logger.debug('[IDLE_COORD]', 'Could not load session for cleanup check:', error);
       // If we can't load session, proceed without timestamp check
     }
 
     const shouldAnalyze = this.autoToolCleanup.shouldAnalyze(messages, lastAnalysisAt);
     if (shouldAnalyze) {
       const toolCount = messages.filter(msg => msg.role === 'tool').length;
-      console.log(`[IDLE_COORD] Tool cleanup needed - ${toolCount} tool results in conversation`);
+      logger.debug('[IDLE_COORD]', `Tool cleanup needed - ${toolCount} tool results in conversation`);
     }
     return shouldAnalyze;
   }
@@ -390,17 +407,17 @@ export class IdleTaskCoordinator implements IService {
    */
   private runToolCleanup(messages: Message[]): void {
     if (!this.autoToolCleanup) {
-      console.log('[IDLE_COORD] Tool cleanup service not initialized');
+      logger.debug('[IDLE_COORD]', 'Tool cleanup service not initialized');
       return;
     }
 
     const sessionName = this.sessionManager.getCurrentSession();
     if (!sessionName) {
-      console.log('[IDLE_COORD] No current session, skipping tool cleanup');
+      logger.debug('[IDLE_COORD]', 'No current session, skipping tool cleanup');
       return;
     }
 
-    console.log('[IDLE_COORD] Starting tool cleanup analysis');
+    logger.debug('[IDLE_COORD]', 'Starting tool cleanup analysis');
     this.autoToolCleanup.cleanupBackground(sessionName, messages);
   }
 

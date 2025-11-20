@@ -14,7 +14,7 @@ import { ServiceRegistry } from '@services/ServiceRegistry.js';
 
 // Mock plugin tool
 class PluginToolA extends BaseTool {
-  readonly name = 'plugin_tool_a';
+  readonly name = 'plugin-tool-a';
   readonly description = 'A tool from plugin A';
   readonly requiresConfirmation = false;
   readonly pluginName = 'plugin-a'; // Mark as plugin tool
@@ -27,7 +27,7 @@ class PluginToolA extends BaseTool {
 }
 
 class PluginToolB extends BaseTool {
-  readonly name = 'plugin_tool_b';
+  readonly name = 'plugin-tool-b';
   readonly description = 'A tool from plugin B';
   readonly requiresConfirmation = false;
   readonly pluginName = 'plugin-b'; // Mark as plugin tool
@@ -40,7 +40,7 @@ class PluginToolB extends BaseTool {
 }
 
 class CoreTool extends BaseTool {
-  readonly name = 'core_tool';
+  readonly name = 'core-tool';
   readonly description = 'A core tool';
   readonly requiresConfirmation = false;
   // No pluginName - core tool
@@ -108,9 +108,9 @@ describe('ToolManager - Plugin Cache Consistency', () => {
     // First call - should include both plugin tools + core tool
     const defs1 = toolManager.getFunctionDefinitions();
     expect(defs1).toHaveLength(3);
-    expect(defs1.map(d => d.function.name)).toContain('plugin_tool_a');
-    expect(defs1.map(d => d.function.name)).toContain('plugin_tool_b');
-    expect(defs1.map(d => d.function.name)).toContain('core_tool');
+    expect(defs1.map(d => d.function.name)).toContain('plugin-tool-a');
+    expect(defs1.map(d => d.function.name)).toContain('plugin-tool-b');
+    expect(defs1.map(d => d.function.name)).toContain('core-tool');
 
     // Deactivate plugin A
     mockActivationManager.deactivate('plugin-a');
@@ -118,9 +118,9 @@ describe('ToolManager - Plugin Cache Consistency', () => {
     // Second call - should NOT include plugin A tool (BUG FIX)
     const defs2 = toolManager.getFunctionDefinitions();
     expect(defs2).toHaveLength(2);
-    expect(defs2.map(d => d.function.name)).not.toContain('plugin_tool_a');
-    expect(defs2.map(d => d.function.name)).toContain('plugin_tool_b');
-    expect(defs2.map(d => d.function.name)).toContain('core_tool');
+    expect(defs2.map(d => d.function.name)).not.toContain('plugin-tool-a');
+    expect(defs2.map(d => d.function.name)).toContain('plugin-tool-b');
+    expect(defs2.map(d => d.function.name)).toContain('core-tool');
   });
 
   it('should not return cached definitions with deactivated plugins', () => {
@@ -129,15 +129,15 @@ describe('ToolManager - Plugin Cache Consistency', () => {
 
     // First call - caches definitions with plugin A
     const defs1 = toolManager.getFunctionDefinitions();
-    expect(defs1.map(d => d.function.name)).toContain('plugin_tool_a');
+    expect(defs1.map(d => d.function.name)).toContain('plugin-tool-a');
 
     // Deactivate plugin A
     mockActivationManager.deactivate('plugin-a');
 
     // Second call - should generate new definitions WITHOUT plugin A
     const defs2 = toolManager.getFunctionDefinitions();
-    expect(defs2.map(d => d.function.name)).not.toContain('plugin_tool_a');
-    expect(defs2.map(d => d.function.name)).toContain('core_tool');
+    expect(defs2.map(d => d.function.name)).not.toContain('plugin-tool-a');
+    expect(defs2.map(d => d.function.name)).toContain('core-tool');
   });
 
   it('should cache separately for different activation states', () => {
@@ -151,32 +151,32 @@ describe('ToolManager - Plugin Cache Consistency', () => {
     mockActivationManager.activate('plugin-b');
     const defs2 = toolManager.getFunctionDefinitions();
     expect(defs2).toHaveLength(2); // plugin B + core
-    expect(defs2.map(d => d.function.name)).toContain('plugin_tool_b');
-    expect(defs2.map(d => d.function.name)).not.toContain('plugin_tool_a');
+    expect(defs2.map(d => d.function.name)).toContain('plugin-tool-b');
+    expect(defs2.map(d => d.function.name)).not.toContain('plugin-tool-a');
 
     // Back to State 1: Plugin A active again
     mockActivationManager.deactivate('plugin-b');
     mockActivationManager.activate('plugin-a');
     const defs3 = toolManager.getFunctionDefinitions();
     expect(defs3).toHaveLength(2); // plugin A + core
-    expect(defs3.map(d => d.function.name)).toContain('plugin_tool_a');
-    expect(defs3.map(d => d.function.name)).not.toContain('plugin_tool_b');
+    expect(defs3.map(d => d.function.name)).toContain('plugin-tool-a');
+    expect(defs3.map(d => d.function.name)).not.toContain('plugin-tool-b');
   });
 
   it('should always include core tools regardless of plugin state', () => {
     // No plugins active
     const defs1 = toolManager.getFunctionDefinitions();
-    expect(defs1.map(d => d.function.name)).toContain('core_tool');
+    expect(defs1.map(d => d.function.name)).toContain('core-tool');
 
     // Plugin A active
     mockActivationManager.activate('plugin-a');
     const defs2 = toolManager.getFunctionDefinitions();
-    expect(defs2.map(d => d.function.name)).toContain('core_tool');
+    expect(defs2.map(d => d.function.name)).toContain('core-tool');
 
     // Both plugins active
     mockActivationManager.activate('plugin-b');
     const defs3 = toolManager.getFunctionDefinitions();
-    expect(defs3.map(d => d.function.name)).toContain('core_tool');
+    expect(defs3.map(d => d.function.name)).toContain('core-tool');
   });
 
   it('should handle excludeTools with plugin activation changes', () => {
@@ -184,20 +184,20 @@ describe('ToolManager - Plugin Cache Consistency', () => {
     mockActivationManager.activate('plugin-b');
 
     // Get definitions excluding plugin_tool_b
-    const defs1 = toolManager.getFunctionDefinitions(['plugin_tool_b']);
+    const defs1 = toolManager.getFunctionDefinitions(['plugin-tool-b']);
     expect(defs1).toHaveLength(2);
-    expect(defs1.map(d => d.function.name)).toContain('plugin_tool_a');
-    expect(defs1.map(d => d.function.name)).not.toContain('plugin_tool_b');
+    expect(defs1.map(d => d.function.name)).toContain('plugin-tool-a');
+    expect(defs1.map(d => d.function.name)).not.toContain('plugin-tool-b');
 
     // Deactivate plugin A
     mockActivationManager.deactivate('plugin-a');
 
     // Should not include plugin A (deactivated) or plugin B (excluded)
-    const defs2 = toolManager.getFunctionDefinitions(['plugin_tool_b']);
+    const defs2 = toolManager.getFunctionDefinitions(['plugin-tool-b']);
     expect(defs2).toHaveLength(1);
-    expect(defs2.map(d => d.function.name)).toContain('core_tool');
-    expect(defs2.map(d => d.function.name)).not.toContain('plugin_tool_a');
-    expect(defs2.map(d => d.function.name)).not.toContain('plugin_tool_b');
+    expect(defs2.map(d => d.function.name)).toContain('core-tool');
+    expect(defs2.map(d => d.function.name)).not.toContain('plugin-tool-a');
+    expect(defs2.map(d => d.function.name)).not.toContain('plugin-tool-b');
   });
 
   it('should invalidate cache when tools are registered/unregistered', () => {
@@ -235,7 +235,7 @@ describe('ToolManager - Plugin Cache Consistency', () => {
     const defs1 = toolManager.getFunctionDefinitions();
     expect(defs1).toHaveLength(3);
     expect(defs1.map(d => d.function.name)).toEqual(
-      expect.arrayContaining(['plugin_tool_a', 'plugin_tool_b', 'core_tool'])
+      expect.arrayContaining(['plugin-tool-a', 'plugin-tool-b', 'core-tool'])
     );
 
     // Step 2: Plugin A is deactivated
@@ -245,8 +245,8 @@ describe('ToolManager - Plugin Cache Consistency', () => {
     const defs2 = toolManager.getFunctionDefinitions();
     expect(defs2).toHaveLength(2);
     expect(defs2.map(d => d.function.name)).toEqual(
-      expect.arrayContaining(['plugin_tool_b', 'core_tool'])
+      expect.arrayContaining(['plugin-tool-b', 'core-tool'])
     );
-    expect(defs2.map(d => d.function.name)).not.toContain('plugin_tool_a');
+    expect(defs2.map(d => d.function.name)).not.toContain('plugin-tool-a');
   });
 });

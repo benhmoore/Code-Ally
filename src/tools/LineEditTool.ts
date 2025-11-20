@@ -24,6 +24,7 @@ export class LineEditTool extends BaseTool {
   readonly description =
     'Edit files by line number with insert, delete, and replace operations. Line numbers are 1-indexed and will shift after edits that change line count.';
   readonly requiresConfirmation = true; // Destructive operation
+  readonly hideOutput = true; // Hide output from result preview
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

@@ -53,6 +53,11 @@ export class ToolManager {
     this.delegationContextManager = new DelegationContextManager();
 
     for (const tool of tools) {
+      // Validate tool name format (kebab-case)
+      const validation = validateToolName(tool.name);
+      if (!validation.valid) {
+        throw new Error(`Failed to initialize tool: ${validation.error}`);
+      }
       this.tools.set(tool.name, tool);
     }
   }

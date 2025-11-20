@@ -9,7 +9,7 @@ import { ToolResult } from '@shared/index.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 
 class TestTool extends BaseTool {
-  readonly name = 'test_tool';
+  readonly name = 'test-tool';
   readonly description = 'A test tool';
   readonly requiresConfirmation = false;
 
@@ -71,12 +71,12 @@ describe('ToolManager', () => {
 
   describe('getTool', () => {
     it('should retrieve registered tool by name', () => {
-      const retrieved = toolManager.getTool('test_tool');
+      const retrieved = toolManager.getTool('test-tool');
       expect(retrieved).toBe(tool);
     });
 
     it('should return undefined for unknown tool', () => {
-      const retrieved = toolManager.getTool('unknown_tool');
+      const retrieved = toolManager.getTool('unknown-tool');
       expect(retrieved).toBeUndefined();
     });
   });
@@ -96,14 +96,14 @@ describe('ToolManager', () => {
       const defs = toolManager.getFunctionDefinitions();
       expect(defs).toHaveLength(3);
       expect(defs[0].type).toBe('function');
-      expect(defs[0].function.name).toBe('test_tool');
+      expect(defs[0].function.name).toBe('test-tool');
       expect(defs[0].function.description).toBe('A test tool');
     });
   });
 
   describe('executeTool', () => {
     it('should execute tool with valid arguments', async () => {
-      const result = await toolManager.executeTool('test_tool', {
+      const result = await toolManager.executeTool('test-tool', {
         required_param: 'test_value',
         description: 'Test execution',
       });
@@ -196,14 +196,14 @@ describe('ToolManager', () => {
   describe('clearState', () => {
     it('should clear all tracked state', async () => {
       // Execute some tool calls
-      await toolManager.executeTool('test_tool', { required_param: 'test1', description: 'Test 1' });
-      await toolManager.executeTool('test_tool', { required_param: 'test2', description: 'Test 2' });
+      await toolManager.executeTool('test-tool', { required_param: 'test1', description: 'Test 1' });
+      await toolManager.executeTool('test-tool', { required_param: 'test2', description: 'Test 2' });
 
       // Clear state
       toolManager.clearState();
 
       // Should allow previously redundant calls
-      const result = await toolManager.executeTool('test_tool', {
+      const result = await toolManager.executeTool('test-tool', {
         required_param: 'test1',
         description: 'Test 1',
       });

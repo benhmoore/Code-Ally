@@ -228,7 +228,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 
 export class MyTool extends BaseTool {
-  readonly name = 'my_tool';
+  readonly name = 'my-tool';
   readonly description = 'What my tool does';
   readonly requiresConfirmation = false;  // true for destructive ops
 

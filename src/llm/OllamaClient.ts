@@ -605,14 +605,6 @@ export class OllamaClient extends ModelClient {
       aggregatedMessage._should_replace_streaming = true;
     }
 
-    // DEBUG: Log final response summary
-    console.log(`[RESPONSE-FINAL] Content length: ${(aggregatedMessage.content || '').length} chars`);
-    console.log(`[RESPONSE-FINAL] Thinking length: ${(aggregatedMessage.thinking || '').length} chars`);
-    console.log(`[RESPONSE-FINAL] Tool calls: ${aggregatedMessage.tool_calls?.length || 0}`);
-    if (aggregatedMessage.thinking) {
-      console.log(`[RESPONSE-FINAL] Has thinking: true`);
-    }
-
     return aggregatedMessage as LLMResponse;
   }
 

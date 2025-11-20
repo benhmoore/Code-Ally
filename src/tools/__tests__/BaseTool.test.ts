@@ -9,7 +9,7 @@ import { ActivityStream } from '@services/ActivityStream.js';
 
 // Mock tool implementation
 class MockTool extends BaseTool {
-  readonly name = 'mock_tool';
+  readonly name = 'mock-tool';
   readonly description = 'A mock tool for testing';
   readonly requiresConfirmation = false;
 
@@ -63,7 +63,7 @@ describe('BaseTool', () => {
 
       const result = await tool.execute({ shouldFail: true });
       expect(result.success).toBe(false);
-      expect(result.error).toContain('mock_tool');
+      expect(result.error).toContain('mock-tool');
       expect(result.error).toContain('Mock error');
     });
 

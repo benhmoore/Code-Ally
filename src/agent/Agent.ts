@@ -826,7 +826,7 @@ export class Agent {
             const pendingCleanups = session?.metadata?.pendingToolCleanups;
 
             if (pendingCleanups && Array.isArray(pendingCleanups) && pendingCleanups.length > 0) {
-              console.log(`[AGENT] 🧹 Executing ${pendingCleanups.length} queued tool cleanups: ${pendingCleanups.join(', ')}`);
+              logger.debug('[AGENT]', `Executing ${pendingCleanups.length} queued tool cleanups:`, pendingCleanups.join(', '));
 
               // Queue for cleanup (will execute at end of turn)
               this.queueCleanup(pendingCleanups);
@@ -836,11 +836,11 @@ export class Agent {
                 pendingToolCleanups: [],
               });
 
-              console.log('[AGENT] ✅ Queued cleanups cleared from session metadata');
+              logger.debug('[AGENT]', 'Queued cleanups cleared from session metadata');
             }
           }
         } catch (error) {
-          console.log('[AGENT] Error checking for pending tool cleanups:', error);
+          logger.debug('[AGENT]', 'Error checking for pending tool cleanups:', error);
         }
       }
 
