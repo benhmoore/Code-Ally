@@ -147,7 +147,7 @@ export class IdleTaskCoordinator implements IService {
     }
 
     // Check if generator is already running
-    if ((this.sessionTitleGenerator as any).isGenerating) {
+    if (this.sessionTitleGenerator.isActive) {
       logger.debug('[IDLE_COORD] Title generator already running');
       return false;
     }
@@ -192,7 +192,7 @@ export class IdleTaskCoordinator implements IService {
     }
 
     // Check if generator is already running
-    if ((this.idleMessageGenerator as any).isGenerating) {
+    if (this.idleMessageGenerator.isActive) {
       logger.debug('[IDLE_COORD] Idle message generator already running');
       return false;
     }
@@ -307,7 +307,7 @@ export class IdleTaskCoordinator implements IService {
     }
 
     // Check if service is already analyzing
-    if ((this.autoToolCleanup as any).isAnalyzing) {
+    if (this.autoToolCleanup.isActive) {
       console.log('[IDLE_COORD] Tool cleanup already running');
       return false;
     }
@@ -365,15 +365,15 @@ export class IdleTaskCoordinator implements IService {
   cancel(): void {
     logger.debug('[IDLE_COORD] Cancelling all idle tasks');
 
-    if (this.sessionTitleGenerator && (this.sessionTitleGenerator as any).isGenerating) {
+    if (this.sessionTitleGenerator && this.sessionTitleGenerator.isActive) {
       this.sessionTitleGenerator.cancel();
     }
 
-    if (this.idleMessageGenerator && (this.idleMessageGenerator as any).isGenerating) {
+    if (this.idleMessageGenerator && this.idleMessageGenerator.isActive) {
       this.idleMessageGenerator.cancel();
     }
 
-    if (this.autoToolCleanup && (this.autoToolCleanup as any).isAnalyzing) {
+    if (this.autoToolCleanup && this.autoToolCleanup.isActive) {
       this.autoToolCleanup.cancel();
     }
   }

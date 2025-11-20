@@ -925,6 +925,6 @@ export const AUTO_TOOL_CLEANUP = {
   /** Preserve all tool calls from the last assistant turn (boolean flag) */
   PRESERVE_LAST_ASSISTANT_TURN: true,
 
-  /** Analyze oldest X% of eligible tool calls (0.5 = oldest 50%) */
+  /** Analyze oldest X% of eligible tool calls (0.5 = oldest 50%) - recent calls more likely relevant */
   ANALYSIS_RATIO: 0.5,
 } as const;

@@ -32,7 +32,15 @@ import {
 } from '../utils/messageUtils.js';
 
 /**
- * Context needed for processing LLM responses
+ * Context for response processing containing all necessary callbacks and dependencies.
+ *
+ * Callbacks are organized into functional groups:
+ * - Identity & Persistence: generateId, autoSaveSession
+ * - LLM Communication: getLLMResponse
+ * - Tool Execution: unwrapBatchToolCalls, executeToolCalls, recordToolCalls
+ * - Cycle Detection: detectCycles, clearCyclesIfBroken
+ * - Context Management: getContextUsagePercentage, ensureContextRoom, cleanupEphemeralMessages
+ * - Turn Management: clearCurrentTurn, startToolExecution
  */
 export interface ResponseContext {
   /** Agent instance ID for logging */

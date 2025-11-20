@@ -6,7 +6,7 @@
  */
 
 import { ModelClient } from '../llm/ModelClient.js';
-import { Message } from '../types/index.js';
+import { Message, BackgroundTask } from '../types/index.js';
 import { CancellableService } from '../types/CancellableService.js';
 import { logger } from './Logger.js';
 import {
@@ -63,7 +63,7 @@ export interface IdleMessageGeneratorConfig {
 /**
  * IdleMessageGenerator auto-generates idle messages using LLM
  */
-export class IdleMessageGenerator implements CancellableService {
+export class IdleMessageGenerator implements CancellableService, BackgroundTask {
   private modelClient: ModelClient;
   private messageQueue: string[] = [];
   private currentMessageIndex: number = 0;
@@ -73,6 +73,10 @@ export class IdleMessageGenerator implements CancellableService {
   private readonly batchSize: number = BUFFER_SIZES.IDLE_MESSAGE_BATCH_SIZE;
   private readonly refillThreshold: number = BUFFER_SIZES.IDLE_MESSAGE_REFILL_THRESHOLD;
   private onQueueUpdated?: () => void;
+
+  get isActive(): boolean {
+    return this.isGenerating;
+  }
 
   constructor(
     modelClient: ModelClient,

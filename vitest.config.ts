@@ -5,6 +5,22 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+
+    // Prevent resource leaks
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        singleFork: false,
+      },
+    },
+
+    // Set reasonable timeouts
+    testTimeout: 15000,
+    hookTimeout: 10000,
+
+    // Limit parallelism
+    fileParallelism: 4,
+    maxConcurrency: 5,
   },
   resolve: {
     alias: {

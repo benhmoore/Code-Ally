@@ -6,7 +6,7 @@
  */
 
 import { ModelClient } from '../llm/ModelClient.js';
-import { Message } from '../types/index.js';
+import { Message, BackgroundTask } from '../types/index.js';
 import { CancellableService } from '../types/CancellableService.js';
 import { POLLING_INTERVALS, API_TIMEOUTS, AUTO_TOOL_CLEANUP } from '../config/constants.js';
 import type { SessionManager } from './SessionManager.js';
@@ -15,10 +15,10 @@ import type { SessionManager } from './SessionManager.js';
  * Configuration for AutoToolCleanupService
  */
 export interface AutoToolCleanupConfig {
-  /** Maximum tokens for analysis */
-  maxTokens?: number;
-  /** Temperature for analysis (lower = more deterministic) */
-  temperature?: number;
+  /** Ratio of eligible tool calls to analyze (0.0-1.0) */
+  analysisRatio?: number;
+  /** Max chars of tool result to include in analysis */
+  maxTruncationLength?: number;
 }
 
 /**
@@ -48,25 +48,31 @@ interface CleanupAnalysis {
 /**
  * AutoToolCleanupService auto-identifies irrelevant tool results using LLM
  */
-export class AutoToolCleanupService implements CancellableService {
+export class AutoToolCleanupService implements CancellableService, BackgroundTask {
   private modelClient: ModelClient;
   private sessionManager: SessionManager;
   private pendingAnalyses = new Set<string>();
   private isAnalyzing: boolean = false;
 
   private enableCleanup: boolean;
+  private analysisRatio: number;
+  private maxTruncationLength: number;
+
+  get isActive(): boolean {
+    return this.isAnalyzing;
+  }
 
   constructor(
     modelClient: ModelClient,
     sessionManager: SessionManager,
     enableCleanup: boolean = true,
-    _config: AutoToolCleanupConfig = {}
+    config: AutoToolCleanupConfig = {}
   ) {
     this.modelClient = modelClient;
     this.sessionManager = sessionManager;
     this.enableCleanup = enableCleanup;
-    // Note: maxTokens and temperature are available in _config but not used directly
-    // They could be passed to modelClient.send() if needed in the future
+    this.analysisRatio = config.analysisRatio ?? AUTO_TOOL_CLEANUP.ANALYSIS_RATIO;
+    this.maxTruncationLength = config.maxTruncationLength ?? 500;
   }
 
   /**
@@ -255,58 +261,69 @@ export class AutoToolCleanupService implements CancellableService {
    *
    * Algorithm:
    * 1. Find index of last assistant message in conversation
-   * 2. Extract all tool calls with their indices
-   * 3. Filter out tool calls >= lastAssistantIndex (preserve last turn)
-   * 4. Of remaining tool calls, calculate: eligibleCount = floor(count * ANALYSIS_RATIO)
-   * 5. Take the FIRST eligibleCount tool calls (oldest ones)
-   * 6. Return as ToolCallInfo[]
+   * 2. Build index of tool results for O(1) lookup
+   * 3. Extract all tool calls with their results
+   * 4. Filter out tool calls >= lastAssistantIndex (preserve last turn)
+   * 5. Of remaining tool calls, calculate: eligibleCount = floor(count * ANALYSIS_RATIO)
+   * 6. Take the FIRST eligibleCount tool calls (oldest ones)
    */
   private extractToolCallInfos(messages: Message[]): ToolCallInfo[] {
-    // Step 1: Find the last assistant message index
-    let lastAssistantIndex = -1;
+    // Step 1: Find the start of the last assistant turn (not just last assistant message)
+    // A turn includes all assistant messages and tool results since the last user message
+    let lastAssistantTurnStart = -1;
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i]?.role === 'assistant') {
-        lastAssistantIndex = i;
+      const msg = messages[i];
+      if (msg?.role === 'user') {
+        lastAssistantTurnStart = i + 1;
         break;
       }
     }
 
-    // Step 2: Extract all tool calls with their indices
+    // If no user message found, the entire conversation is one turn
+    if (lastAssistantTurnStart === -1) {
+      lastAssistantTurnStart = messages.length;
+    }
+
+    // Step 2: Build index of tool results for O(1) lookup
+    const toolResultMap = new Map<string, Message>();
+    for (const msg of messages) {
+      if (msg.role === 'tool' && msg.tool_call_id) {
+        toolResultMap.set(msg.tool_call_id, msg);
+      }
+    }
+
+    // Step 3: Extract all tool calls with their results
     const allToolCalls: ToolCallInfo[] = [];
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       if (!msg) continue;
 
       // Look for assistant messages with tool calls
-      if (msg.role === 'assistant' && msg.tool_calls) {
+      if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
         for (const toolCall of msg.tool_calls) {
-          // Find corresponding tool result
-          const toolResultMsg = messages
-            .slice(i + 1)
-            .find(m => m.role === 'tool' && m.tool_call_id === toolCall.id);
+          if (!toolCall || !toolCall.id) continue;
 
-          if (toolResultMsg) {
-            allToolCalls.push({
-              id: toolCall.id,
-              name: toolCall.function.name,
-              args: this.truncateForAnalysis(JSON.stringify(toolCall.function.arguments)),
-              result: this.truncateForAnalysis(toolResultMsg.content),
-              messageIndex: i,
-            });
-          }
+          // O(1) lookup instead of O(n) find
+          const toolResultMsg = toolResultMap.get(toolCall.id);
+
+          allToolCalls.push({
+            id: toolCall.id,
+            name: toolCall.function.name,
+            args: this.truncateForAnalysis(JSON.stringify(toolCall.function.arguments)),
+            result: toolResultMsg ? this.truncateForAnalysis(toolResultMsg.content) : '',
+            messageIndex: i,
+          });
         }
       }
     }
 
-    // Step 3: Filter out tool calls from last assistant turn (preserve active turn)
-    const eligibleToolCalls = lastAssistantIndex >= 0
-      ? allToolCalls.filter(tc => tc.messageIndex < lastAssistantIndex)
-      : allToolCalls;
+    // Step 4: Filter out tool calls from last assistant turn (preserve active turn)
+    const eligibleToolCalls = allToolCalls.filter(tc => tc.messageIndex < lastAssistantTurnStart);
 
-    // Step 4: Calculate how many of the eligible tool calls to analyze (oldest X%)
-    const eligibleCount = Math.floor(eligibleToolCalls.length * AUTO_TOOL_CLEANUP.ANALYSIS_RATIO);
+    // Step 5: Calculate how many of the eligible tool calls to analyze (oldest X%)
+    const eligibleCount = Math.floor(eligibleToolCalls.length * this.analysisRatio);
 
-    // Step 5: Take the FIRST eligibleCount tool calls (oldest ones)
+    // Step 6: Take the FIRST eligibleCount tool calls (oldest ones)
     const toolCallsToAnalyze = eligibleToolCalls.slice(0, eligibleCount);
 
     return toolCallsToAnalyze;
@@ -315,11 +332,11 @@ export class AutoToolCleanupService implements CancellableService {
   /**
    * Truncate content for analysis to save tokens
    */
-  private truncateForAnalysis(content: string, maxLength: number = 500): string {
-    if (content.length <= maxLength) {
+  private truncateForAnalysis(content: string): string {
+    if (content.length <= this.maxTruncationLength) {
       return content;
     }
-    return content.slice(0, maxLength) + '... [truncated]';
+    return content.slice(0, this.maxTruncationLength) + '... [truncated]';
   }
 
   /**

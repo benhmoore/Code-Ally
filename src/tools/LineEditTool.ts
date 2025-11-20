@@ -259,61 +259,67 @@ export class LineEditTool extends BaseTool {
       const readStateManager = registry.get<ReadStateManager>('read_state_manager');
 
       if (readStateManager) {
-        let validationStartLine: number;
-        let validationEndLine: number;
+        // Special case: inserting into an empty file
+        if (operation === 'insert' && fileContent.length === 0 && lineNumber === 1) {
+          // Skip validation for empty file insert at line 1
+        } else {
+          // Determine which lines need validation
+          let validationStartLine: number;
+          let validationEndLine: number;
 
-        switch (operation) {
-          case 'insert':
-            // For insert, validate we've read the context around insertion point
-            validationStartLine = Math.max(1, lineNumber - 1);
-            validationEndLine = Math.min(totalLines, lineNumber);
-            break;
+          switch (operation) {
+            case 'insert':
+              // For insert, validate we've read the context around insertion point
+              validationStartLine = Math.max(1, lineNumber - 1);
+              validationEndLine = Math.min(totalLines, lineNumber);
+              break;
 
-          case 'delete':
-            validationStartLine = lineNumber;
-            validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
-            break;
+            case 'delete':
+              validationStartLine = lineNumber;
+              validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
+              break;
 
-          case 'replace':
-            validationStartLine = lineNumber;
-            validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
-            break;
-        }
+            case 'replace':
+              validationStartLine = lineNumber;
+              validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
+              break;
+          }
 
-        const validation = readStateManager.validateLinesRead(
-          absolutePath,
-          validationStartLine,
-          validationEndLine
-        );
+          const validation = readStateManager.validateLinesRead(
+            absolutePath,
+            validationStartLine,
+            validationEndLine
+          );
 
-        if (!validation.success) {
-          const rangeDesc = validationStartLine === validationEndLine
-            ? `line ${validationStartLine}`
-            : `lines ${validationStartLine}-${validationEndLine}`;
+          if (!validation.success) {
+            const rangeDesc = validationStartLine === validationEndLine
+              ? `line ${validationStartLine}`
+              : `lines ${validationStartLine}-${validationEndLine}`;
 
-          // Check if this is likely due to previous edit invalidation
-          const readState = readStateManager.getReadState(absolutePath);
-          const hasPartialReadState = readState && readState.length > 0;
+            // Check if this is likely due to previous edit invalidation
+            const readState = readStateManager.getReadState(absolutePath);
+            const hasPartialReadState = readState && readState.length > 0;
 
-          let guidanceMessage: string;
-          if (hasPartialReadState) {
-            // File has been read before - likely invalidated by previous edit
-            guidanceMessage = `Lines ${validationStartLine}-${validationEndLine} were invalidated by a previous edit.
+            let guidanceMessage: string;
+            if (hasPartialReadState) {
+              // File has been read before - likely invalidated by previous edit
+              guidanceMessage = `Lines ${validationStartLine}-${validationEndLine} were invalidated by a previous edit.
 
 Use one of these approaches:
   • Re-read the file: read(file_paths=["${filePath}"])
   • Use show_updated_context=true in your edits to see changes immediately
   • Read specific lines: read(file_path="${filePath}", offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1})`;
-          } else {
-            // File has never been read
-            guidanceMessage = `Use read(file_path="${filePath}", offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1}) to read ${rangeDesc} first.`;
-          }
+            } else {
+              // File has never been read
+              guidanceMessage = `Use read(file_path="${filePath}", offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1}) to read ${rangeDesc} first.`;
+            }
 
-          return this.formatErrorResponse(
-            `Cannot ${operation} at line ${lineNumber}: ${validation.message}`,
-            'validation_error',
-            guidanceMessage
-          );
+            return this.formatErrorResponse(
+              `Cannot ${operation} at line ${lineNumber}: File has not been read`,
+              'validation_error',
+              guidanceMessage
+            );
+          }
         }
       }
 

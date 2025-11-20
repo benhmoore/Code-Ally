@@ -12,7 +12,7 @@
 
 import { Message } from '../types/index.js';
 import { SYSTEM_REMINDER } from '../config/constants.js';
-import { SYSTEM_REMINDERS, isReminderFunction } from '../config/systemReminders.js';
+import { SYSTEM_REMINDERS, SystemReminderConfig, isReminderFunction } from '../config/systemReminders.js';
 
 /**
  * Core helper - creates a system reminder message
@@ -33,6 +33,16 @@ export function createSystemReminder(
   };
 }
 
+function resolveReminderText<T extends any[]>(
+  config: SystemReminderConfig,
+  ...args: T
+): string {
+  if (isReminderFunction(config.text)) {
+    return config.text(...args);
+  }
+  return config.text;
+}
+
 // ===========================================
 // CONTINUATION REMINDERS
 // ===========================================
@@ -42,10 +52,10 @@ export function createSystemReminder(
  */
 export function createHttpErrorReminder(errorMessage: string): Message {
   const config = SYSTEM_REMINDERS.CONTINUATIONS.HTTP_ERROR;
-  const text = isReminderFunction(config.text)
-    ? config.text(errorMessage)
-    : config.text;
-  return createSystemReminder(text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config, errorMessage),
+    config.persist
+  );
 }
 
 /**
@@ -53,7 +63,10 @@ export function createHttpErrorReminder(errorMessage: string): Message {
  */
 export function createEmptyResponseReminder(): Message {
   const config = SYSTEM_REMINDERS.CONTINUATIONS.EMPTY_RESPONSE;
-  return createSystemReminder(config.text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config),
+    config.persist
+  );
 }
 
 /**
@@ -61,7 +74,10 @@ export function createEmptyResponseReminder(): Message {
  */
 export function createEmptyAfterToolsReminder(): Message {
   const config = SYSTEM_REMINDERS.CONTINUATIONS.EMPTY_AFTER_TOOLS;
-  return createSystemReminder(config.text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config),
+    config.persist
+  );
 }
 
 // ===========================================
@@ -73,10 +89,10 @@ export function createEmptyAfterToolsReminder(): Message {
  */
 export function createValidationErrorReminder(errors: string[]): Message {
   const config = SYSTEM_REMINDERS.VALIDATION.TOOL_CALL_ERRORS;
-  const text = isReminderFunction(config.text)
-    ? config.text(errors)
-    : config.text;
-  return createSystemReminder(text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config, errors),
+    config.persist
+  );
 }
 
 // ===========================================
@@ -88,10 +104,10 @@ export function createValidationErrorReminder(errors: string[]): Message {
  */
 export function createRequiredToolsWarning(missingTools: string[]): Message {
   const config = SYSTEM_REMINDERS.REQUIREMENTS.REQUIRED_TOOLS_WARNING;
-  const text = isReminderFunction(config.text)
-    ? config.text(missingTools)
-    : config.text;
-  return createSystemReminder(text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config, missingTools),
+    config.persist
+  );
 }
 
 /**
@@ -99,10 +115,10 @@ export function createRequiredToolsWarning(missingTools: string[]): Message {
  */
 export function createRequirementsNotMetReminder(reminderMessage: string): Message {
   const config = SYSTEM_REMINDERS.REQUIREMENTS.REQUIREMENTS_NOT_MET;
-  const text = isReminderFunction(config.text)
-    ? config.text(reminderMessage)
-    : config.text;
-  return createSystemReminder(text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config, reminderMessage),
+    config.persist
+  );
 }
 
 // ===========================================
@@ -114,7 +130,10 @@ export function createRequirementsNotMetReminder(reminderMessage: string): Messa
  */
 export function createInterruptionReminder(): Message {
   const config = SYSTEM_REMINDERS.INTERRUPTIONS.USER_INTERRUPTED;
-  return createSystemReminder(config.text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config),
+    config.persist
+  );
 }
 
 /**
@@ -122,7 +141,10 @@ export function createInterruptionReminder(): Message {
  */
 export function createActivityTimeoutContinuationReminder(): Message {
   const config = SYSTEM_REMINDERS.INTERRUPTIONS.ACTIVITY_TIMEOUT_CONTINUATION;
-  return createSystemReminder(config.text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config),
+    config.persist
+  );
 }
 
 // ===========================================
@@ -137,10 +159,7 @@ export function createCheckpointReminder(
   originalPrompt: string
 ): string {
   const config = SYSTEM_REMINDERS.PROGRESS.CHECKPOINT;
-  const text = isReminderFunction(config.text)
-    ? config.text(toolCallCount, originalPrompt)
-    : config.text;
-  return text as string;
+  return resolveReminderText(config, toolCallCount, originalPrompt);
 }
 
 // ===========================================
@@ -152,10 +171,7 @@ export function createCheckpointReminder(
  */
 export function createExploratoryGentleWarning(consecutiveCount: number): string {
   const config = SYSTEM_REMINDERS.EXPLORATORY.GENTLE_WARNING;
-  const text = isReminderFunction(config.text)
-    ? config.text(consecutiveCount)
-    : config.text;
-  return text as string;
+  return resolveReminderText(config, consecutiveCount);
 }
 
 /**
@@ -163,10 +179,7 @@ export function createExploratoryGentleWarning(consecutiveCount: number): string
  */
 export function createExploratorySternWarning(consecutiveCount: number): string {
   const config = SYSTEM_REMINDERS.EXPLORATORY.STERN_WARNING;
-  const text = isReminderFunction(config.text)
-    ? config.text(consecutiveCount)
-    : config.text;
-  return text as string;
+  return resolveReminderText(config, consecutiveCount);
 }
 
 // ===========================================
@@ -190,25 +203,16 @@ export function createTimeReminder(
 
   if (percentUsed >= 100) {
     const config = SYSTEM_REMINDERS.TIME.EXCEEDED_100;
-    return config.text as string;
+    return resolveReminderText(config);
   } else if (percentUsed >= 90) {
     const config = SYSTEM_REMINDERS.TIME.URGENT_90;
-    const text = isReminderFunction(config.text)
-      ? config.text(remaining, percentRemaining)
-      : config.text;
-    return text as string;
+    return resolveReminderText(config, remaining, percentRemaining);
   } else if (percentUsed >= 75) {
     const config = SYSTEM_REMINDERS.TIME.WARNING_75;
-    const text = isReminderFunction(config.text)
-      ? config.text(remaining, percentRemaining)
-      : config.text;
-    return text as string;
+    return resolveReminderText(config, remaining, percentRemaining);
   } else if (percentUsed >= 50) {
     const config = SYSTEM_REMINDERS.TIME.HALFWAY;
-    const text = isReminderFunction(config.text)
-      ? config.text(remaining)
-      : config.text;
-    return text as string;
+    return resolveReminderText(config, remaining);
   }
 
   return null;
@@ -226,10 +230,7 @@ export function createFocusReminder(
   toolCallSummary: string
 ): string {
   const config = SYSTEM_REMINDERS.FOCUS.TODO_FOCUS;
-  const text = isReminderFunction(config.text)
-    ? config.text(todoTask, toolCallSummary)
-    : config.text;
-  return text as string;
+  return resolveReminderText(config, todoTask, toolCallSummary);
 }
 
 // ===========================================
@@ -241,10 +242,7 @@ export function createFocusReminder(
  */
 export function createCycleWarning(toolName: string, count: number): string {
   const config = SYSTEM_REMINDERS.CYCLE_DETECTION.CYCLE_WARNING;
-  const text = isReminderFunction(config.text)
-    ? config.text(toolName, count)
-    : config.text;
-  return text as string;
+  return resolveReminderText(config, toolName, count);
 }
 
 /**
@@ -252,10 +250,7 @@ export function createCycleWarning(toolName: string, count: number): string {
  */
 export function createEmptySearchStreakWarning(streakCount: number): string {
   const config = SYSTEM_REMINDERS.CYCLE_DETECTION.EMPTY_SEARCH_STREAK;
-  const text = isReminderFunction(config.text)
-    ? config.text(streakCount)
-    : config.text;
-  return text as string;
+  return resolveReminderText(config, streakCount);
 }
 
 /**
@@ -263,10 +258,7 @@ export function createEmptySearchStreakWarning(streakCount: number): string {
  */
 export function createLowHitRateWarning(hitRate: number, searchCount: number): string {
   const config = SYSTEM_REMINDERS.CYCLE_DETECTION.LOW_HIT_RATE;
-  const text = isReminderFunction(config.text)
-    ? config.text(hitRate, searchCount)
-    : config.text;
-  return text as string;
+  return resolveReminderText(config, hitRate, searchCount);
 }
 
 // ===========================================
@@ -278,10 +270,10 @@ export function createLowHitRateWarning(hitRate: number, searchCount: number): s
  */
 export function createContextUsageWarning(contextUsage: number): Message {
   const config = SYSTEM_REMINDERS.CONTEXT.USAGE_WARNING;
-  const text = isReminderFunction(config.text)
-    ? config.text(contextUsage)
-    : config.text;
-  return createSystemReminder(text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config, contextUsage),
+    config.persist
+  );
 }
 
 // ===========================================
@@ -297,11 +289,8 @@ export function createAgentPersistenceReminder(agentId: string): {
   system_reminder_persist: boolean;
 } {
   const config = SYSTEM_REMINDERS.TOOLS.AGENT_PERSISTENCE;
-  const text = isReminderFunction(config.text)
-    ? config.text(agentId)
-    : config.text;
   return {
-    system_reminder: text as string,
+    system_reminder: resolveReminderText(config, agentId),
     system_reminder_persist: config.persist,
   };
 }
@@ -320,11 +309,8 @@ export function createAgentTaskContextReminder(
   system_reminder_persist: boolean;
 } {
   const config = SYSTEM_REMINDERS.TOOLS.AGENT_TASK_CONTEXT;
-  const text = isReminderFunction(config.text)
-    ? config.text(agentType, taskPrompt, maxDuration, thoroughness)
-    : config.text;
   return {
-    system_reminder: text as string,
+    system_reminder: resolveReminderText(config, agentType, taskPrompt, maxDuration, thoroughness),
     system_reminder_persist: config.persist,
   };
 }
@@ -339,7 +325,7 @@ export function createPlanAcceptedReminder(): {
 } {
   const config = SYSTEM_REMINDERS.TOOLS.PLAN_ACCEPTED;
   return {
-    system_reminder: config.text as string,
+    system_reminder: resolveReminderText(config),
     system_reminder_persist: config.persist,
   };
 }
@@ -353,11 +339,8 @@ export function createWriteTempHintReminder(filePath: string): {
   system_reminder_persist: boolean;
 } {
   const config = SYSTEM_REMINDERS.TOOLS.WRITE_TEMP_HINT;
-  const text = isReminderFunction(config.text)
-    ? config.text(filePath)
-    : config.text;
   return {
-    system_reminder: text as string,
+    system_reminder: resolveReminderText(config, filePath),
     system_reminder_persist: config.persist,
   };
 }
@@ -371,7 +354,10 @@ export function createWriteTempHintReminder(filePath: string): {
  */
 export function createEmptyTodoReminder(): Message {
   const config = SYSTEM_REMINDERS.TODO.EMPTY_LIST;
-  return createSystemReminder(config.text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config),
+    config.persist
+  );
 }
 
 /**
@@ -383,8 +369,8 @@ export function createActiveTodoReminder(
   guidance: string
 ): Message {
   const config = SYSTEM_REMINDERS.TODO.ACTIVE_LIST;
-  const text = isReminderFunction(config.text)
-    ? config.text(todoSummary, currentTask, guidance)
-    : config.text;
-  return createSystemReminder(text as string, config.persist);
+  return createSystemReminder(
+    resolveReminderText(config, todoSummary, currentTask, guidance),
+    config.persist
+  );
 }

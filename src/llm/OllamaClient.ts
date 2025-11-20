@@ -64,6 +64,12 @@ export class OllamaClient extends ModelClient {
   // Track active requests for cancellation (keyed by request ID)
   private activeRequests: Map<string, AbortController> = new Map();
 
+  private circuitBreakerFailures: number = 0;
+  private circuitBreakerOpenUntil: number = 0;
+
+  private readonly CIRCUIT_BREAKER_THRESHOLD = 10;
+  private readonly CIRCUIT_BREAKER_COOLDOWN = 5 * 60 * 1000;
+
   /**
    * Initialize the Ollama client
    *
@@ -187,7 +193,22 @@ export class OllamaClient extends ModelClient {
     try {
       // Infinite retry loop with capped exponential backoff
       let attempt = 0;
+      const startTime = Date.now();
+      const MAX_TOTAL_TIME = 30 * 60 * 1000;
+
       while (true) {
+        // Check circuit breaker
+        if (Date.now() < this.circuitBreakerOpenUntil) {
+          logger.error('[OLLAMA_CLIENT] Circuit breaker open - Ollama appears to be persistently failing');
+          return this.handleRequestError(new Error('Circuit breaker open - retries paused'));
+        }
+
+        // Check total time budget
+        if (Date.now() - startTime > MAX_TOTAL_TIME) {
+          logger.error('[OLLAMA_CLIENT] Maximum retry time exceeded (30 minutes)');
+          return this.handleRequestError(new Error('Request timeout after 30 minutes'));
+        }
+
         try {
           // Execute request with cancellation support
           const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, parentId, suppressThinking);
@@ -218,7 +239,8 @@ export class OllamaClient extends ModelClient {
             }
           }
 
-          // Validation passed or no tool calls - return result
+          // Validation passed or no tool calls - reset circuit breaker and return result
+          this.circuitBreakerFailures = 0;
           return result;
         } catch (error: any) {
           // Handle abort/interruption
@@ -233,6 +255,13 @@ export class OllamaClient extends ModelClient {
 
           // Retry on network errors with capped exponential backoff
           if (this.isNetworkError(error)) {
+            this.circuitBreakerFailures++;
+            if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
+              this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
+              logger.warn('[OLLAMA_CLIENT] Circuit breaker opened after 10 consecutive failures');
+              return this.handleRequestError(new Error('Too many consecutive failures'));
+            }
+
             const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
             logger.debug(`[OLLAMA_CLIENT] Network error on request ${requestId}, retrying in ${backoffSeconds}s...`);
             await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
@@ -243,6 +272,13 @@ export class OllamaClient extends ModelClient {
           // Retry on HTTP 500/503 errors with capped exponential backoff
           // These are often transient errors (malformed tool calls, internal server errors)
           if (this.isRetryableHttpError(error)) {
+            this.circuitBreakerFailures++;
+            if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
+              this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
+              logger.warn('[OLLAMA_CLIENT] Circuit breaker opened after 10 consecutive failures');
+              return this.handleRequestError(new Error('Too many consecutive failures'));
+            }
+
             const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
             logger.debug(`[OLLAMA_CLIENT] HTTP ${error.httpStatus} error on request ${requestId}, retrying in ${backoffSeconds}s...`);
             await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
@@ -252,6 +288,13 @@ export class OllamaClient extends ModelClient {
 
           // Retry on JSON errors with capped linear backoff
           if (error instanceof SyntaxError) {
+            this.circuitBreakerFailures++;
+            if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
+              this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
+              logger.warn('[OLLAMA_CLIENT] Circuit breaker opened after 10 consecutive failures');
+              return this.handleRequestError(new Error('Too many consecutive failures'));
+            }
+
             const backoffSeconds = Math.min(1 + attempt, RETRY_CONFIG.MAX_BACKOFF_SECONDS);
             logger.debug(`[OLLAMA_CLIENT] JSON parse error on request ${requestId}, retrying in ${backoffSeconds}s...`);
             await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
@@ -262,6 +305,13 @@ export class OllamaClient extends ModelClient {
           // PHASE 3: Retry on stream timeout with capped exponential backoff
           // Stream timeouts occur when streaming starts but hangs without closing
           if (error.message?.includes('Stream read timeout')) {
+            this.circuitBreakerFailures++;
+            if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
+              this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
+              logger.warn('[OLLAMA_CLIENT] Circuit breaker opened after 10 consecutive failures');
+              return this.handleRequestError(new Error('Too many consecutive failures'));
+            }
+
             const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
             logger.debug(`[OLLAMA_CLIENT] Stream timeout on request ${requestId}, retrying in ${backoffSeconds}s (attempt ${attempt + 1})...`);
             await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);

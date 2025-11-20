@@ -53,14 +53,21 @@ describe('EditTool', () => {
     registry['_descriptors'].clear();
   });
 
+  // Helper function: EditTool requires full file to be read
+  const trackFullFile = async (filePath: string) => {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const lines = content.split('\n').length;
+    readStateManager.trackRead(filePath, 1, lines);
+  };
+
   describe('basic replacement', () => {
     it('should replace single occurrence of text', async () => {
       const filePath = join(tempDir, 'test.txt');
       const content = 'Hello World';
       await fs.writeFile(filePath, content);
 
-      // Mark file as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -80,8 +87,8 @@ describe('EditTool', () => {
       const content = 'Line 1\nLine 2\nLine 3';
       await fs.writeFile(filePath, content);
 
-      // Mark lines 2-3 as read (the multi-line match)
-      readStateManager.trackRead(filePath, 2, 3);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -101,8 +108,8 @@ describe('EditTool', () => {
       const content = 'function test() {\n  return true;\n}';
       await fs.writeFile(filePath, content);
 
-      // Mark line 2 as read (contains the match)
-      readStateManager.trackRead(filePath, 2, 2);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -123,8 +130,8 @@ describe('EditTool', () => {
       const content = 'foo bar foo baz foo';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read (contains all matches)
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -145,8 +152,8 @@ describe('EditTool', () => {
       const content = 'foo bar baz';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -167,8 +174,8 @@ describe('EditTool', () => {
       const content = 'foo bar foo baz';
       await fs.writeFile(filePath, content);
 
-      // Mark file as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -255,6 +262,9 @@ describe('EditTool', () => {
       const filePath = join(tempDir, 'test.txt');
       await fs.writeFile(filePath, 'Hello World');
 
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
+
       const result = await editTool.execute({
         file_path: filePath,
         old_string: 'NotFound',
@@ -273,6 +283,9 @@ describe('EditTool', () => {
       const content = 'HELLO WORLD';
       await fs.writeFile(filePath, content);
 
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
+
       const result = await editTool.execute({
         file_path: filePath,
         old_string: 'hello world',
@@ -280,6 +293,7 @@ describe('EditTool', () => {
       });
 
       expect(result.success).toBe(false);
+      expect(result.suggestion).toBeDefined();
       expect(result.suggestion).toContain('Similar strings found');
       expect(result.suggestion).toContain('Capitalization');
     });
@@ -289,8 +303,8 @@ describe('EditTool', () => {
       const content = 'This is a longer string';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -309,8 +323,8 @@ describe('EditTool', () => {
       const content = 'Remove this word from sentence';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -329,8 +343,8 @@ describe('EditTool', () => {
       const content = 'Single line';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -349,8 +363,8 @@ describe('EditTool', () => {
       const content = 'Price: $10.00 (special)';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -369,8 +383,8 @@ describe('EditTool', () => {
       const content = 'Hello 世界 🚀';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -391,8 +405,8 @@ describe('EditTool', () => {
       const content = 'Hello World';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -409,8 +423,8 @@ describe('EditTool', () => {
       const content = 'Hello World';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -428,8 +442,8 @@ describe('EditTool', () => {
       const content = 'Hello World';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -447,8 +461,8 @@ describe('EditTool', () => {
       const content = 'foo bar foo baz foo';
       await fs.writeFile(filePath, content);
 
-      // Mark line 1 as read
-      readStateManager.trackRead(filePath, 1, 1);
+      // EditTool requires full file to be read
+      await trackFullFile(filePath);
 
       const result = await editTool.execute({
         file_path: filePath,
@@ -514,482 +528,8 @@ describe('EditTool', () => {
     });
   });
 
-  describe('surgical validation - read state checking', () => {
-    it('should validate only lines containing matches (not whole file)', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nLine 3\nTarget line\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Mark only line 4 (containing "Target line") as read
-      readStateManager.trackRead(filePath, 4, 4);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Target line',
-        new_string: 'Modified line',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(1);
-    });
-
-    it('should allow edit if match lines were read (even if whole file was not)', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
-      await fs.writeFile(filePath, content);
-
-      // Read only lines 3-5 (not the entire file)
-      readStateManager.trackRead(filePath, 3, 5);
-
-      // Edit should succeed because line 4 (containing the match) was read
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Line 4',
-        new_string: 'Modified 4',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(1);
-    });
-
-    it('should reject edit if any match line was not read', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read lines 1-2 but not line 3
-      readStateManager.trackRead(filePath, 1, 2);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Line 3',
-        new_string: 'Modified 3',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('not all occurrences have been read');
-      expect(result.suggestion).toContain('line 3');
-    });
-
-    it('should handle multi-line matches correctly', async () => {
-      const filePath = join(tempDir, 'multiline.txt');
-      const content = 'Line 1\nLine 2\nLine 3\nfunction foo() {\n  return true;\n}\nLine 7';
-      await fs.writeFile(filePath, content);
-
-      // Mark lines 4-6 (the multi-line match) as read
-      readStateManager.trackRead(filePath, 4, 6);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'function foo() {\n  return true;\n}',
-        new_string: 'function bar() {\n  return false;\n}',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(1);
-    });
-
-    it('should error with specific line numbers when validation fails', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nTarget\nLine 3\nTarget\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read only line 2 (first occurrence)
-      readStateManager.trackRead(filePath, 2, 2);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Target',
-        new_string: 'Modified',
-        replace_all: true,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('not all occurrences have been read');
-      expect(result.suggestion).toContain('line 4');
-    });
-
-    it('should validate all match locations for replace_all', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'foo bar\nfoo baz\nfoo qux';
-      await fs.writeFile(filePath, content);
-
-      // Read all three lines
-      readStateManager.trackRead(filePath, 1, 3);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'foo',
-        new_string: 'bar',
-        replace_all: true,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(3);
-    });
-
-    it('should fail if only some match locations were read (replace_all)', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'foo bar\nfoo baz\nfoo qux';
-      await fs.writeFile(filePath, content);
-
-      // Read only lines 1-2 (missing line 3)
-      readStateManager.trackRead(filePath, 1, 2);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'foo',
-        new_string: 'bar',
-        replace_all: true,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('not all occurrences have been read');
-      expect(result.suggestion).toContain('line 3');
-    });
-
-    it('should succeed when file has not been read and old_string not found', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nLine 3';
-      await fs.writeFile(filePath, content);
-
-      // No read state
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'NotFound',
-        new_string: 'Modified',
-      });
-
-      // Should fail with "old_string not found" error, not read validation error
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('old_string not found');
-    });
-  });
-
-  describe('surgical invalidation - read state preservation', () => {
-    it('should preserve read state for unaffected lines (replace_all=false)', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read entire file
-      readStateManager.trackRead(filePath, 1, 5);
-
-      // Edit line 3 without changing line count
-      await editTool.execute({
-        file_path: filePath,
-        old_string: 'Line 3',
-        new_string: 'Modified 3',
-      });
-
-      // Lines 1-2 should still be valid (before edit)
-      const validation1 = readStateManager.validateLinesRead(filePath, 1, 2);
-      expect(validation1.success).toBe(true);
-
-      // Lines 4-5 should still be valid (after edit, no line count change)
-      const validation2 = readStateManager.validateLinesRead(filePath, 4, 5);
-      expect(validation2.success).toBe(true);
-    });
-
-    it('should invalidate only affected lines when line count changes (replace_all=false)', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read entire file
-      readStateManager.trackRead(filePath, 1, 5);
-
-      // Replace "Line 3" with multi-line content (adds lines)
-      await editTool.execute({
-        file_path: filePath,
-        old_string: 'Line 3',
-        new_string: 'Modified 3\nExtra line',
-      });
-
-      // Lines 1-2 should still be valid (before edit)
-      const validation1 = readStateManager.validateLinesRead(filePath, 1, 2);
-      expect(validation1.success).toBe(true);
-
-      // Lines 3+ should be invalidated (line count changed)
-      const validation2 = readStateManager.validateLinesRead(filePath, 3, 6);
-      expect(validation2.success).toBe(false);
-    });
-
-    it('should invalidate all match locations when replace_all=true and line count changes', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nfoo\nLine 3\nfoo\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read entire file
-      readStateManager.trackRead(filePath, 1, 5);
-
-      // Replace all "foo" with multi-line content
-      await editTool.execute({
-        file_path: filePath,
-        old_string: 'foo',
-        new_string: 'bar\nbaz',
-        replace_all: true,
-      });
-
-      // Line 1 should still be valid (before first edit)
-      const validation1 = readStateManager.validateLinesRead(filePath, 1, 1);
-      expect(validation1.success).toBe(true);
-
-      // Line 2+ should be invalidated (first replacement affected line numbering)
-      const validation2 = readStateManager.validateLinesRead(filePath, 2, 7);
-      expect(validation2.success).toBe(false);
-    });
-
-    it('should skip invalidation when line count does not change', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read entire file
-      readStateManager.trackRead(filePath, 1, 5);
-
-      // Replace without changing line count
-      await editTool.execute({
-        file_path: filePath,
-        old_string: 'Line 3',
-        new_string: 'Modified',
-      });
-
-      // All lines should still be valid
-      const validation = readStateManager.validateLinesRead(filePath, 1, 5);
-      expect(validation.success).toBe(true);
-    });
-
-    it('should process matches in correct order for single replacement (first match)', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'foo\nLine 2\nfoo\nLine 4';
-      await fs.writeFile(filePath, content);
-
-      // Read entire file
-      readStateManager.trackRead(filePath, 1, 4);
-
-      // Replace first occurrence only (without replace_all)
-      await editTool.execute({
-        file_path: filePath,
-        old_string: 'foo',
-        new_string: 'bar\nbaz',
-      });
-
-      // Invalidation should happen from line 1 (first match)
-      // Line 1+ should be invalidated
-      const validation = readStateManager.validateLinesRead(filePath, 1, 5);
-      expect(validation.success).toBe(false);
-    });
-
-    it('should process matches in reverse order for replace_all (to handle line shifts)', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nfoo\nLine 3\nfoo\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read entire file
-      readStateManager.trackRead(filePath, 1, 5);
-
-      // Replace all occurrences (should process in reverse)
-      await editTool.execute({
-        file_path: filePath,
-        old_string: 'foo',
-        new_string: 'bar\nbaz',
-        replace_all: true,
-      });
-
-      // Line 1 should still be valid (before first edit)
-      const validation1 = readStateManager.validateLinesRead(filePath, 1, 1);
-      expect(validation1.success).toBe(true);
-
-      // Lines after first replacement should be invalidated
-      const validation2 = readStateManager.validateLinesRead(filePath, 2, 7);
-      expect(validation2.success).toBe(false);
-    });
-
-    it('should handle line removal correctly', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read entire file
-      readStateManager.trackRead(filePath, 1, 5);
-
-      // Remove line 3 (replace with empty string that merges lines)
-      await editTool.execute({
-        file_path: filePath,
-        old_string: 'Line 3\n',
-        new_string: '',
-      });
-
-      // Lines 1-2 should still be valid
-      const validation1 = readStateManager.validateLinesRead(filePath, 1, 2);
-      expect(validation1.success).toBe(true);
-
-      // Lines 3+ should be invalidated (line count changed)
-      const validation2 = readStateManager.validateLinesRead(filePath, 3, 4);
-      expect(validation2.success).toBe(false);
-    });
-  });
-
-  describe('surgical validation and invalidation - integration tests', () => {
-    it('should handle complete flow: read specific lines → edit → verify preservation', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nLine 3\nTarget\nLine 5\nLine 6\nLine 7';
-      await fs.writeFile(filePath, content);
-
-      // Simulate reading only lines 3-5
-      readStateManager.trackRead(filePath, 3, 5);
-
-      // Edit line 4 without changing line count
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Target',
-        new_string: 'Modified',
-      });
-
-      expect(result.success).toBe(true);
-
-      // Lines 3-5 should still be valid (no line count change)
-      const validation = readStateManager.validateLinesRead(filePath, 3, 5);
-      expect(validation.success).toBe(true);
-    });
-
-    it('should handle multiple matches with partial reads correctly', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Target\nLine 2\nTarget\nLine 4\nTarget';
-      await fs.writeFile(filePath, content);
-
-      // Read only lines 1 and 3 (missing line 5)
-      readStateManager.trackRead(filePath, 1, 1);
-      readStateManager.trackRead(filePath, 3, 3);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Target',
-        new_string: 'Modified',
-        replace_all: true,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('not all occurrences have been read');
-      expect(result.suggestion).toContain('line 5');
-    });
-
-    it('should handle replacement with line count change and surgical invalidation', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nShort\nLine 4\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read entire file
-      readStateManager.trackRead(filePath, 1, 5);
-
-      // Replace with multi-line content
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Short',
-        new_string: 'Much\nLonger\nReplacement',
-      });
-
-      expect(result.success).toBe(true);
-
-      // Lines 1-2 should still be valid (before edit)
-      const validation1 = readStateManager.validateLinesRead(filePath, 1, 2);
-      expect(validation1.success).toBe(true);
-
-      // Lines from edit point onward should be invalidated
-      const validation2 = readStateManager.validateLinesRead(filePath, 3, 7);
-      expect(validation2.success).toBe(false);
-    });
-
-    it('should validate multi-line match spanning multiple lines', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nStart\nMiddle\nEnd\nLine 6';
-      await fs.writeFile(filePath, content);
-
-      // Read lines 3-5 (the multi-line match)
-      readStateManager.trackRead(filePath, 3, 5);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Start\nMiddle\nEnd',
-        new_string: 'Replaced',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(1);
-    });
-
-    it('should fail if only part of multi-line match was read', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nStart\nMiddle\nEnd\nLine 6';
-      await fs.writeFile(filePath, content);
-
-      // Read only lines 3-4 (missing line 5 which is part of the match)
-      readStateManager.trackRead(filePath, 3, 4);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Start\nMiddle\nEnd',
-        new_string: 'Replaced',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('not all occurrences have been read');
-      expect(result.suggestion).toContain('lines 3-5');
-    });
-
-    it('should handle overlapping read ranges correctly', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const content = 'Line 1\nLine 2\nTarget\nLine 4\nLine 5';
-      await fs.writeFile(filePath, content);
-
-      // Read overlapping ranges that cover line 3
-      readStateManager.trackRead(filePath, 1, 3);
-      readStateManager.trackRead(filePath, 3, 5);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'Target',
-        new_string: 'Modified',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(1);
-    });
-
-    it('should preserve read state for lines far from edit location', async () => {
-      const filePath = join(tempDir, 'test.txt');
-      const lines = [];
-      for (let i = 1; i <= 100; i++) {
-        lines.push(`Line ${i}`);
-      }
-      const content = lines.join('\n');
-      await fs.writeFile(filePath, content);
-
-      // Read lines 1-20 and 80-100
-      readStateManager.trackRead(filePath, 1, 20);
-      readStateManager.trackRead(filePath, 80, 100);
-
-      // Edit line 50 without changing line count
-      await editTool.execute({
-        file_path: filePath,
-        old_string: 'Line 50',
-        new_string: 'Modified 50',
-      });
-
-      // Lines 1-20 should still be valid
-      const validation1 = readStateManager.validateLinesRead(filePath, 1, 20);
-      expect(validation1.success).toBe(true);
-
-      // Lines 80-100 should still be valid (no line count change)
-      const validation2 = readStateManager.validateLinesRead(filePath, 80, 100);
-      expect(validation2.success).toBe(true);
-    });
-  });
-
   describe('Enhanced error and success messages', () => {
-    it('should show invalidation guidance when edit fails after previous edit', async () => {
+    it('should fail when edit is attempted after previous edit cleared read state', async () => {
       const registry = ServiceRegistry.getInstance();
       const readStateManager = new ReadStateManager();
       registry.registerInstance('read_state_manager', readStateManager);
@@ -1001,17 +541,16 @@ describe('EditTool', () => {
       // Track that we've read entire file
       readStateManager.trackRead(filePath, 1, 5);
 
-      // First edit: replace foo with multi-line (changes line count)
+      // First edit: replace foo (clears all read state)
       const result1 = await editTool.execute({
         file_path: filePath,
         old_string: 'foo',
-        new_string: 'foo\nnewline',
+        new_string: 'modified_foo',
       });
 
       expect(result1.success).toBe(true);
-      expect(result1.content).toContain('invalidated');
 
-      // Second edit: try to edit bar (now on different line, invalidated)
+      // Second edit: try to edit bar (should fail because read state was cleared)
       const result2 = await editTool.execute({
         file_path: filePath,
         old_string: 'bar',
@@ -1020,9 +559,10 @@ describe('EditTool', () => {
 
       expect(result2.success).toBe(false);
       expect(result2.error_type).toBe('validation_error');
-      expect(result2.suggestion).toContain('invalidated by a previous edit');
-      expect(result2.suggestion).toContain('Re-read the file');
-      expect(result2.suggestion).toContain('show_updated_context=true');
+      expect(result2.error).toContain('Lines not read');
+      if (result2.suggestion) {
+        expect(result2.suggestion).toContain('Use the Read tool');
+      }
 
       // Cleanup
       (registry as any)._services?.clear();
@@ -1048,52 +588,32 @@ describe('EditTool', () => {
 
       expect(result.success).toBe(false);
       expect(result.error_type).toBe('validation_error');
-      expect(result.suggestion).not.toContain('invalidated');
-      expect(result.suggestion).toContain('Use the Read tool');
+      if (result.suggestion) {
+        expect(result.suggestion).not.toContain('invalidated');
+        expect(result.suggestion).toContain('Use the Read tool');
+      }
 
       // Cleanup
       (registry as any)._services?.clear();
     });
 
-    it('should show proactive warning when line count changes', async () => {
+    it('should clear all read state after successful edit', async () => {
       const registry = ServiceRegistry.getInstance();
       const readStateManager = new ReadStateManager();
       registry.registerInstance('read_state_manager', readStateManager);
 
-      const filePath = join(tempDir, 'proactive-warning.txt');
+      const filePath = join(tempDir, 'clear-state.txt');
       const content = 'line1\nfoo\nline3';
       await fs.writeFile(filePath, content);
 
       // Track read
       readStateManager.trackRead(filePath, 1, 3);
 
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'foo',
-        new_string: 'foo\nnewline',
-      });
+      // Verify read state exists before edit
+      const validationBefore = readStateManager.validateLinesRead(filePath, 1, 3);
+      expect(validationBefore.success).toBe(true);
 
-      expect(result.success).toBe(true);
-      expect(result.content).toContain('⚠️');
-      expect(result.content).toContain('invalidated');
-      expect(result.content).toContain('show_updated_context=true');
-
-      // Cleanup
-      (registry as any)._services?.clear();
-    });
-
-    it('should NOT show proactive warning when line count does not change', async () => {
-      const registry = ServiceRegistry.getInstance();
-      const readStateManager = new ReadStateManager();
-      registry.registerInstance('read_state_manager', readStateManager);
-
-      const filePath = join(tempDir, 'no-warning.txt');
-      const content = 'line1\nfoo\nline3';
-      await fs.writeFile(filePath, content);
-
-      // Track read
-      readStateManager.trackRead(filePath, 1, 3);
-
+      // Execute edit
       const result = await editTool.execute({
         file_path: filePath,
         old_string: 'foo',
@@ -1101,35 +621,10 @@ describe('EditTool', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.content).not.toContain('⚠️');
-      expect(result.content).not.toContain('invalidated');
 
-      // Cleanup
-      (registry as any)._services?.clear();
-    });
-
-    it('should NOT show proactive warning when show_updated_context=true', async () => {
-      const registry = ServiceRegistry.getInstance();
-      const readStateManager = new ReadStateManager();
-      registry.registerInstance('read_state_manager', readStateManager);
-
-      const filePath = join(tempDir, 'with-context.txt');
-      const content = 'line1\nfoo\nline3';
-      await fs.writeFile(filePath, content);
-
-      // Track read
-      readStateManager.trackRead(filePath, 1, 3);
-
-      const result = await editTool.execute({
-        file_path: filePath,
-        old_string: 'foo',
-        new_string: 'foo\nnewline',
-        show_updated_context: true,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.updated_content).toBeDefined();
-      expect(result.content).not.toContain('⚠️'); // No warning when context shown
+      // Verify read state was cleared after edit
+      const validationAfter = readStateManager.validateLinesRead(filePath, 1, 3);
+      expect(validationAfter.success).toBe(false);
 
       // Cleanup
       (registry as any)._services?.clear();

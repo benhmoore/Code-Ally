@@ -6,7 +6,7 @@
  */
 
 import { ModelClient } from '../llm/ModelClient.js';
-import { Message } from '../types/index.js';
+import { Message, BackgroundTask } from '../types/index.js';
 import { CancellableService } from '../types/CancellableService.js';
 import { logger } from './Logger.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, API_TIMEOUTS } from '../config/constants.js';
@@ -25,13 +25,17 @@ export interface SessionTitleGeneratorConfig {
 /**
  * SessionTitleGenerator auto-generates session titles using LLM
  */
-export class SessionTitleGenerator implements CancellableService {
+export class SessionTitleGenerator implements CancellableService, BackgroundTask {
   private modelClient: ModelClient;
   private sessionManager: SessionManager;
   private pendingGenerations = new Set<string>();
   private isGenerating: boolean = false;
 
   private enableGeneration: boolean;
+
+  get isActive(): boolean {
+    return this.isGenerating;
+  }
 
   constructor(
     modelClient: ModelClient,

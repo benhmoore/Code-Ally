@@ -17,15 +17,6 @@ import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import * as fs from 'fs/promises';
 
-interface MatchInfo {
-  /** Starting line number (1-indexed) */
-  startLine: number;
-  /** Ending line number (1-indexed) */
-  endLine: number;
-  /** Character offset in file where match starts */
-  offset: number;
-}
-
 export class EditTool extends BaseTool {
   readonly name = 'edit';
   readonly description = 'Make edits to a single file using find-and-replace';
@@ -145,6 +136,13 @@ export class EditTool extends BaseTool {
       );
     }
 
+    if (oldString.length === 0) {
+      return this.formatErrorResponse(
+        'old_string cannot be empty',
+        'validation_error'
+      );
+    }
+
     // Resolve absolute path
     const absolutePath = resolvePath(filePath);
 
@@ -176,59 +174,18 @@ export class EditTool extends BaseTool {
       // Read file content
       const content = await fs.readFile(absolutePath, 'utf-8');
 
-      // Validate that lines containing matches have been read
+      // EditTool requires reading the entire file for safe string-based operations
       const readStateManager = registry.get<ReadStateManager>('read_state_manager');
 
       if (readStateManager) {
-        // Find all matches to determine which lines need validation
-        const matches = this.findAllMatches(content, oldString);
+        const totalLines = content.split('\n').length;
+        const validation = readStateManager.validateLinesRead(absolutePath, 1, totalLines);
 
-        if (matches.length === 0) {
-          // No matches found - will be handled by existing validation below
-          // Skip read validation since we'll error anyway
-        } else {
-          // Validate each match location was read
-          const missingRanges: string[] = [];
-
-          for (const match of matches) {
-            const validation = readStateManager.validateLinesRead(
-              absolutePath,
-              match.startLine,
-              match.endLine
-            );
-
-            if (!validation.success) {
-              const rangeStr = match.startLine === match.endLine
-                ? `line ${match.startLine}`
-                : `lines ${match.startLine}-${match.endLine}`;
-              missingRanges.push(rangeStr);
-            }
-          }
-
-          if (missingRanges.length > 0) {
-            // Check if this is likely due to previous edit invalidation
-            const readState = readStateManager.getReadState(absolutePath);
-            const hasPartialReadState = readState && readState.length > 0;
-
-            let guidanceMessage: string;
-            if (hasPartialReadState) {
-              // File has been read before - likely invalidated by previous edit
-              guidanceMessage = `The following lines containing old_string were invalidated by a previous edit: ${missingRanges.join(', ')}.
-
-Use one of these approaches:
-  • Re-read the file: read(file_paths=["${filePath}"])
-  • Use show_updated_context=true in your edits to see changes immediately`;
-            } else {
-              // File has never been read
-              guidanceMessage = `The following lines containing old_string have not been read: ${missingRanges.join(', ')}. Use the Read tool to read these lines first.`;
-            }
-
-            return this.formatErrorResponse(
-              `Cannot edit file: old_string found but not all occurrences have been read`,
-              'validation_error',
-              guidanceMessage
-            );
-          }
+        if (!validation.success) {
+          return this.formatErrorResponse(
+            `Lines not read: EditTool requires reading the entire file before editing. Use the Read tool first: read(file_paths=["${filePath}"])`,
+            'validation_error'
+          );
         }
       }
 
@@ -272,45 +229,10 @@ Use one of these approaches:
       // Write the modified content
       await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
 
-      // Invalidate read state surgically for each match
+      // Clear read state after EditTool execution
+      // File content has changed, so cached read state is stale
       if (readStateManager) {
-        // Calculate line delta from the replacement
-        const oldLines = oldString.split('\n').length;
-        const newLines = newString.split('\n').length;
-        const lineDelta = newLines - oldLines;
-
-        // Only invalidate if line count changed
-        if (lineDelta !== 0) {
-          // Get matches again to know where invalidation is needed
-          const matches = this.findAllMatches(content, oldString);
-
-          if (replaceAll) {
-            // Process matches in REVERSE order to handle multiple replacements correctly
-            // (later edits don't affect earlier line numbers)
-            for (let i = matches.length - 1; i >= 0; i--) {
-              const match = matches[i];
-              if (!match) continue;
-
-              // Invalidate from the start of this match
-              readStateManager.invalidateAfterEdit(
-                absolutePath,
-                match.startLine,
-                lineDelta
-              );
-            }
-          } else {
-            // Single replacement: invalidate only the FIRST match
-            const firstMatch = matches[0];
-            if (firstMatch) {
-              readStateManager.invalidateAfterEdit(
-                absolutePath,
-                firstMatch.startLine,
-                lineDelta
-              );
-            }
-          }
-        }
-        // If lineDelta === 0, no line shifts occurred, so read state remains valid
+        readStateManager.clearFile(absolutePath);
       }
 
       // Capture the operation as a patch for undo functionality
@@ -371,66 +293,6 @@ Use one of these approaches:
   private countOccurrences(text: string, substring: string): number {
     if (substring.length === 0) return 0;
     return text.split(substring).length - 1;
-  }
-
-  /**
-   * Find all occurrences of a string in content with line position information
-   *
-   * @param content - File content to search
-   * @param searchString - String to find
-   * @returns Array of match information with line positions
-   */
-  private findAllMatches(content: string, searchString: string): MatchInfo[] {
-    const matches: MatchInfo[] = [];
-    const lines = content.split('\n');
-
-    let searchOffset = 0;
-
-    while (true) {
-      const matchOffset = content.indexOf(searchString, searchOffset);
-      if (matchOffset === -1) break;
-
-      // Calculate which lines this match spans
-      let currentOffset = 0;
-      let startLine = 1;
-      let endLine = 1;
-
-      // Find start line
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line === undefined) break;
-        const lineLength = line.length + 1; // +1 for \n
-        if (currentOffset + lineLength > matchOffset) {
-          startLine = i + 1;
-          break;
-        }
-        currentOffset += lineLength;
-      }
-
-      // Find end line (match may span multiple lines)
-      const matchEnd = matchOffset + searchString.length;
-      currentOffset = 0;
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line === undefined) break;
-        const lineLength = line.length + 1;
-        currentOffset += lineLength;
-        if (currentOffset >= matchEnd) {
-          endLine = i + 1;
-          break;
-        }
-      }
-
-      matches.push({
-        startLine,
-        endLine,
-        offset: matchOffset,
-      });
-
-      searchOffset = matchOffset + 1; // Move past this match
-    }
-
-    return matches;
   }
 
   /**

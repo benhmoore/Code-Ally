@@ -311,6 +311,10 @@ export interface IService {
   cleanup(): Promise<void>;
 }
 
+export interface BackgroundTask {
+  readonly isActive: boolean;
+}
+
 // ===========================
 // Session Types
 // ===========================

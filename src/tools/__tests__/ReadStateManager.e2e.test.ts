@@ -127,7 +127,7 @@ describe('ReadStateManager E2E Tests', () => {
       // Should FAIL (lines 20+ were invalidated)
       expect(replaceResult.success).toBe(false);
       expect(replaceResult.error_type).toBe('validation_error');
-      expect(replaceResult.error).toContain('Lines not read');
+      expect(replaceResult.error).toContain('File has not been read');
     });
   });
 
@@ -212,6 +212,43 @@ describe('ReadStateManager E2E Tests', () => {
       expect(lineEditResult.success).toBe(false);
       expect(lineEditResult.error_type).toBe('validation_error');
       expect(lineEditResult.error).toContain('File has not been read');
+    });
+
+    it('should handle EditTool with replace_all and multi-line replacement', async () => {
+      // Create test file with multiple instances of a pattern
+      const testContent = `function foo() {
+  return 'old';
+}
+
+function bar() {
+  return 'old';
+}
+
+function baz() {
+  return 'old';
+}`;
+
+      await fs.writeFile(testFile, testContent, 'utf-8');
+
+      // Read the entire file to track read state
+      await readTool.execute({
+        file_paths: [testFile],
+      });
+
+      // Replace all instances of "return 'old';" with multi-line replacement
+      const result = await editTool.execute({
+        file_path: testFile,
+        old_string: "return 'old';",
+        new_string: "const result = process();\n  return result;",
+        replace_all: true,
+      });
+
+      expect(result.success).toBe(true);
+
+      // Verify read state was completely cleared
+      // EditTool clears all read state after execution
+      const validation = readStateManager.validateLinesRead(testFile, 1, 11);
+      expect(validation.success).toBe(false); // All lines invalidated after EditTool
     });
   });
 

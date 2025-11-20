@@ -46,7 +46,7 @@ export class ReadStateManager {
   trackRead(filePath: string, startLine: number, endLine: number): void {
     // Validate inputs
     if (startLine < 1 || endLine < startLine) {
-      // Silently ignore invalid ranges
+      console.warn(`[ReadStateManager] Invalid range ignored: ${filePath} lines ${startLine}-${endLine}`);
       return;
     }
 
