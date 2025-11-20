@@ -11,12 +11,14 @@ import path from 'path';
 import { cwd } from 'process';
 import { logger } from '../services/Logger.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import type { ConfigManager } from '../services/ConfigManager.js';
 
 /**
- * Check if a path is within the current working directory
+ * Check if a path is within the current working directory or temp directory
  *
  * @param checkPath Path to validate
- * @returns true if path is within CWD, false otherwise
+ * @returns true if path is within CWD or temp directory, false otherwise
  */
 export function isPathWithinCwd(checkPath: string): boolean {
   try {
@@ -28,12 +30,33 @@ export function isPathWithinCwd(checkPath: string): boolean {
 
     // Get the absolute path and normalize it
     const absPath = path.resolve(checkPath);
+
     // Get the current working directory
     const workingDir = path.resolve(cwd());
 
     // Check if the path starts with CWD
-    // This ensures the path is within the current working directory or its subdirectories
-    return absPath.startsWith(workingDir);
+    if (absPath.startsWith(workingDir)) {
+      return true;
+    }
+
+    // Also allow access to configured temp directory
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const configManager = registry.get<ConfigManager>('config');
+      if (configManager) {
+        const config = configManager.getConfig();
+        const tempDir = path.resolve(config.temp_directory);
+        // Check if the path starts with temp directory
+        if (absPath.startsWith(tempDir)) {
+          return true;
+        }
+      }
+    } catch (error) {
+      // If we can't get config, just use CWD check
+      logger.debug(`Could not check temp directory: ${error}`);
+    }
+
+    return false;
   } catch (error) {
     logger.debug(`Error checking path traversal: ${error}`);
     // If there's an error, assume it's not safe

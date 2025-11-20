@@ -187,8 +187,9 @@ const AGENT_TYPE_TOOLS = new Set<string>(AGENT_DELEGATION_TOOLS);
 
 /**
  * Determine if a child tool should be shown based on parent state and config
+ * Exported for testing
  */
-function shouldShowChildTool(
+export function shouldShowChildTool(
   _child: ToolCallState,
   parentCollapsed: boolean | undefined,
   _parentHideOutput: boolean | undefined,

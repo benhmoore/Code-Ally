@@ -59,6 +59,11 @@ export const DEFAULT_CONFIG: Config = {
   tool_call_verbose_errors: false, // Show verbose error messages
 
   // ==========================================
+  // FILESYSTEM SETTINGS
+  // ==========================================
+  temp_directory: '/tmp', // Directory for temporary files (used by write-temp tool and explore agents)
+
+  // ==========================================
   // DIRECTORY TREE SETTINGS
   // ==========================================
   dir_tree_max_depth: 3, // Maximum depth for directory tree
@@ -133,6 +138,9 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   tool_call_max_retries: 'number',
   tool_call_repair_attempts: 'boolean',
   tool_call_verbose_errors: 'boolean',
+
+  // Filesystem Settings
+  temp_directory: 'string',
 
   // Directory Tree
   dir_tree_max_depth: 'number',

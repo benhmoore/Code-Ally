@@ -30,8 +30,11 @@ import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 // Tools available for exploration (read-only + write-temp for note-taking + explore for delegation)
 const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp', 'explore'];
 
-// Base prompt for exploration (without thoroughness-specific guidelines)
-const EXPLORATION_BASE_PROMPT = `You are a specialized codebase exploration assistant. You excel at thoroughly navigating and exploring codebases to understand structure, find implementations, and analyze architecture.
+/**
+ * Generate exploration base prompt with temp directory
+ */
+function getExplorationBasePrompt(tempDir: string): string {
+  return `You are a specialized codebase exploration assistant. You excel at thoroughly navigating and exploring codebases to understand structure, find implementations, and analyze architecture.
 
 ## Your Strengths
 
@@ -100,10 +103,14 @@ explore(task_prompt="Explore src/shared/* for common utilities")
 
 ## Organizing Your Findings
 
-- WriteTemp creates temporary notes in /tmp (e.g., write-temp(content="...", filename="notes.txt"))
+- WriteTemp creates temporary notes in ${tempDir} (e.g., write-temp(content="...", filename="notes.txt"))
 - Use separate files to organize by category: architecture.txt, patterns.txt, issues.txt
 - Read your notes before generating final response to ensure comprehensive coverage
 - Especially useful for longer explorations with many findings
+- **IMPORTANT:** Mention any temporary files you created in your final response
+  - Include full paths to temp files (e.g., "${tempDir}/architecture-notes.txt")
+  - These notes are valuable for ancestor agents who called you
+  - Example: "I've created detailed notes in ${tempDir}/findings.txt for further reference"
 
 ## Core Objective
 
@@ -116,10 +123,7 @@ Complete the exploration request efficiently and report your findings clearly wi
 - In your final response, always share relevant file names and code snippets
 - All file paths in your response MUST be absolute, NOT relative
 - Avoid using emojis for clear communication
-- Be systematic: trace dependencies, identify relationships, understand flow`;
-
-// System prompt optimized for exploration
-const EXPLORATION_SYSTEM_PROMPT = EXPLORATION_BASE_PROMPT + `
+- Be systematic: trace dependencies, identify relationships, understand flow
 
 **Execution Guidelines:**
 
@@ -138,6 +142,14 @@ const EXPLORATION_SYSTEM_PROMPT = EXPLORATION_BASE_PROMPT + `
 **Remember**: Delegation is not a fallback - it's a primary strategy for context protection and efficiency.
 
 Execute your exploration systematically and provide comprehensive results.`;
+}
+
+/**
+ * Generate full exploration system prompt with temp directory
+ */
+function getExplorationSystemPrompt(tempDir: string): string {
+  return getExplorationBasePrompt(tempDir);
+}
 
 export class ExploreTool extends BaseTool implements InjectableTool {
   readonly name = 'explore';
@@ -154,6 +166,10 @@ Multi-file synthesis: Understanding patterns, relationships, or architecture acr
 Preserves your context - investigation happens in separate agent context.
 CRITICAL: Agent CANNOT see current conversation - include ALL context in task_prompt (what to find, where to look, why).
 NOT for: Known file paths, single-file questions, simple lookups.
+
+**Output format:**
+Explore agents may create temporary note files during complex investigations.
+If temp file paths are mentioned in the response, you can read those files for additional detailed context.
 
 Note: Explore agents can delegate to other explore agents (max 2 levels deep) for distinct sub-investigations.`;
 
@@ -363,7 +379,7 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
         verbose: false,
-        baseAgentPrompt: EXPLORATION_SYSTEM_PROMPT,
+        baseAgentPrompt: getExplorationSystemPrompt(config.temp_directory),
         taskPrompt: taskPrompt,
         config: config,
         parentCallId: callId,

@@ -271,6 +271,9 @@ export interface Config {
   tool_call_repair_attempts: boolean;
   tool_call_verbose_errors: boolean;
 
+  // Filesystem Settings
+  temp_directory: string;
+
   // Directory Tree Settings
   dir_tree_max_depth: number;
   dir_tree_max_files: number;
