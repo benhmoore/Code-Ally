@@ -312,28 +312,38 @@ export class DelegationContextManager {
       return { delegation: context, depth: currentDepth };
     }
 
-    // Recursively check for nested active delegation
-    const nestedDelegation = nestedManager.getActiveDelegation();
+    // Check if nested manager has any active delegations
+    // IMPORTANT: Access contexts directly to avoid infinite recursion
+    // DO NOT call nestedManager.getActiveDelegation() - it would recurse back here!
+    const nestedContexts = Array.from((nestedManager as any).contexts?.values() || []).filter(
+      (ctx: DelegationContext) => ctx.state === 'executing'
+    );
 
-    if (!nestedDelegation) {
+    if (nestedContexts.length === 0) {
       // No nested delegation, current context is deepest
       return { delegation: context, depth: currentDepth };
     }
 
-    // Found nested delegation - construct nested context and recurse
-    // Get actual timestamp from nested manager using public API
-    const actualNestedContext = nestedManager.getContext(nestedDelegation.callId);
-    const actualTimestamp = actualNestedContext?.timestamp ?? nestedDelegation.timestamp;
+    // Find deepest among nested contexts
+    // Recurse using THIS manager's method on the nested contexts
+    // (we can't call nestedManager's private method)
+    let deepestNested: { delegation: DelegationContext; depth: number } | undefined;
 
-    const nestedContext: DelegationContext = {
-      callId: nestedDelegation.callId,
-      toolName: nestedDelegation.toolName,
-      state: 'executing', // Assumption: active delegation is executing
-      pooledAgent: nestedDelegation.pooledAgent,
-      timestamp: actualTimestamp, // Use actual timestamp from nested manager
-    };
+    for (const nestedContext of nestedContexts) {
+      const result = this.findDeepestDelegation(nestedContext, currentDepth + 1);
 
-    return this.findDeepestDelegation(nestedContext, currentDepth + 1);
+      if (result) {
+        // Prefer deeper delegations, or more recent if same depth
+        if (!deepestNested ||
+            result.depth > deepestNested.depth ||
+            (result.depth === deepestNested.depth && result.delegation.timestamp > deepestNested.delegation.timestamp)) {
+          deepestNested = result;
+        }
+      }
+    }
+
+    // Return the deepest we found (nested or current)
+    return deepestNested || { delegation: context, depth: currentDepth };
   }
 
   /**
