@@ -255,11 +255,9 @@ export class OllamaClient extends ModelClient {
 
           // Retry on network errors with capped exponential backoff
           if (this.isNetworkError(error)) {
-            this.circuitBreakerFailures++;
-            if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
-              this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
-              logger.warn('[OLLAMA_CLIENT] Circuit breaker opened after 10 consecutive failures');
-              return this.handleRequestError(new Error('Too many consecutive failures'));
+            const circuitError = this.incrementCircuitBreakerFailure();
+            if (circuitError) {
+              return this.handleRequestError(circuitError);
             }
 
             const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
@@ -272,11 +270,9 @@ export class OllamaClient extends ModelClient {
           // Retry on HTTP 500/503 errors with capped exponential backoff
           // These are often transient errors (malformed tool calls, internal server errors)
           if (this.isRetryableHttpError(error)) {
-            this.circuitBreakerFailures++;
-            if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
-              this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
-              logger.warn('[OLLAMA_CLIENT] Circuit breaker opened after 10 consecutive failures');
-              return this.handleRequestError(new Error('Too many consecutive failures'));
+            const circuitError = this.incrementCircuitBreakerFailure();
+            if (circuitError) {
+              return this.handleRequestError(circuitError);
             }
 
             const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
@@ -288,11 +284,9 @@ export class OllamaClient extends ModelClient {
 
           // Retry on JSON errors with capped linear backoff
           if (error instanceof SyntaxError) {
-            this.circuitBreakerFailures++;
-            if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
-              this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
-              logger.warn('[OLLAMA_CLIENT] Circuit breaker opened after 10 consecutive failures');
-              return this.handleRequestError(new Error('Too many consecutive failures'));
+            const circuitError = this.incrementCircuitBreakerFailure();
+            if (circuitError) {
+              return this.handleRequestError(circuitError);
             }
 
             const backoffSeconds = Math.min(1 + attempt, RETRY_CONFIG.MAX_BACKOFF_SECONDS);
@@ -305,11 +299,9 @@ export class OllamaClient extends ModelClient {
           // PHASE 3: Retry on stream timeout with capped exponential backoff
           // Stream timeouts occur when streaming starts but hangs without closing
           if (error.message?.includes('Stream read timeout')) {
-            this.circuitBreakerFailures++;
-            if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
-              this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
-              logger.warn('[OLLAMA_CLIENT] Circuit breaker opened after 10 consecutive failures');
-              return this.handleRequestError(new Error('Too many consecutive failures'));
+            const circuitError = this.incrementCircuitBreakerFailure();
+            if (circuitError) {
+              return this.handleRequestError(circuitError);
             }
 
             const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
@@ -770,6 +762,22 @@ export class OllamaClient extends ModelClient {
     return { valid: true, errors: [], repaired };
   }
 
+
+  /**
+   * Increments circuit breaker failure counter and opens circuit if threshold exceeded.
+   * @returns Error to return if circuit breaker opened, null otherwise
+   */
+  private incrementCircuitBreakerFailure(): Error | null {
+    this.circuitBreakerFailures++;
+    if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
+      this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
+      logger.warn(
+        `[OLLAMA_CLIENT] Circuit breaker opened after ${this.CIRCUIT_BREAKER_THRESHOLD} consecutive failures`
+      );
+      return new Error('Too many consecutive failures');
+    }
+    return null;
+  }
 
   /**
    * Handle request errors and generate user-friendly responses

@@ -68,6 +68,7 @@ export class ActivityMonitor {
   private lastActivityTime: number = Date.now();
   private watchdogInterval: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
+  private pauseCount: number = 0;
 
   /**
    * Create a new ActivityMonitor
@@ -129,7 +130,85 @@ export class ActivityMonitor {
       clearInterval(this.watchdogInterval);
       this.watchdogInterval = null;
       this.isRunning = false;
+      this.pauseCount = 0;
       logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Stopped');
+    }
+  }
+
+  /**
+   * Pause monitoring agent activity
+   *
+   * Temporarily stops the watchdog timer while preserving the lastActivityTime.
+   * This allows monitoring to be paused without losing track of when the last
+   * activity occurred, which is critical for accurate timeout tracking when resumed.
+   *
+   * Uses reference counting: multiple pause() calls require matching resume() calls.
+   * The watchdog timer is only stopped on the first pause() call.
+   *
+   * Safe to call multiple times - maintains a count of pause requests.
+   * Safe to call when not started - will be a no-op.
+   */
+  pause(): void {
+    // No-op if not started
+    if (!this.isRunning) {
+      return;
+    }
+
+    // Increment pause count
+    this.pauseCount++;
+
+    // Only stop the watchdog timer on the first pause
+    if (this.pauseCount === 1) {
+      if (this.watchdogInterval) {
+        clearInterval(this.watchdogInterval);
+        this.watchdogInterval = null;
+      }
+      this.isRunning = false;
+      logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, `Paused (pauseCount: ${this.pauseCount})`);
+    } else {
+      logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, `Pause count incremented (pauseCount: ${this.pauseCount})`);
+    }
+  }
+
+  /**
+   * Resume monitoring agent activity
+   *
+   * Restarts the watchdog timer after being paused, preserving the lastActivityTime.
+   * This ensures timeout tracking continues from where it was when paused, maintaining
+   * accurate elapsed time calculations.
+   *
+   * Uses reference counting: multiple pause() calls require matching resume() calls.
+   * The watchdog timer is only restarted when the pause count reaches zero.
+   *
+   * Safe to call multiple times - maintains a count of pause requests.
+   * Safe to call when not enabled - will be a no-op.
+   */
+  resume(): void {
+    // No-op if monitoring is disabled
+    if (!this.config.enabled) {
+      return;
+    }
+
+    // Skip if not paused
+    if (this.pauseCount === 0) {
+      logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Not paused, ignoring resume()');
+      return;
+    }
+
+    // Decrement pause count (ensure it doesn't go negative)
+    this.pauseCount = Math.max(0, this.pauseCount - 1);
+
+    // Only restart the watchdog timer when pause count reaches zero
+    if (this.pauseCount === 0) {
+      // Restart the watchdog interval (preserving lastActivityTime)
+      this.watchdogInterval = setInterval(() => {
+        this.checkTimeout();
+      }, this.config.checkIntervalMs);
+
+      this.isRunning = true;
+      logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, `Resumed (pauseCount: ${this.pauseCount})`);
+    } else {
+      logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, `Pause count decremented (pauseCount: ${this.pauseCount})`);
     }
   }
 
@@ -150,8 +229,15 @@ export class ActivityMonitor {
    * Called periodically by the watchdog timer. If elapsed time since last
    * activity exceeds the timeout threshold, invokes the timeout callback.
    * This method is exposed for testing purposes but is primarily used internally.
+   *
+   * Skips timeout checks when paused to avoid false positives during pause periods.
    */
   checkTimeout(): void {
+    // Skip timeout checks when paused
+    if (this.pauseCount > 0) {
+      return;
+    }
+
     const elapsedMs = Date.now() - this.lastActivityTime;
 
     if (elapsedMs > this.config.timeoutMs) {

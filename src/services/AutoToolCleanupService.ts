@@ -161,7 +161,7 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
       );
 
       // Check if response was interrupted or had an error - don't process it
-      if ((response as any).interrupted || (response as any).error) {
+      if (response.interrupted || response.error) {
         console.log('[AUTO_CLEANUP] ⚠️  Response was interrupted/error, skipping analysis');
         throw new Error('Analysis interrupted or failed');
       }
@@ -279,9 +279,9 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
       }
     }
 
-    // If no user message found, the entire conversation is one turn
+    // If no user message found, preserve entire conversation (all tool calls in current turn)
     if (lastAssistantTurnStart === -1) {
-      lastAssistantTurnStart = messages.length;
+      lastAssistantTurnStart = 0;
     }
 
     // Step 2: Build index of tool results for O(1) lookup

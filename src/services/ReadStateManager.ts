@@ -44,10 +44,12 @@ export class ReadStateManager {
    * @param endLine - Ending line number (1-indexed, inclusive)
    */
   trackRead(filePath: string, startLine: number, endLine: number): void {
-    // Validate inputs
-    if (startLine < 1 || endLine < startLine) {
-      console.warn(`[ReadStateManager] Invalid range ignored: ${filePath} lines ${startLine}-${endLine}`);
-      return;
+    // Validate inputs - fail fast for programming errors
+    if (startLine < 1) {
+      throw new Error(`Invalid start line ${startLine} for ${filePath}. Line numbers must be >= 1.`);
+    }
+    if (endLine < startLine) {
+      throw new Error(`Invalid line range for ${filePath}: end line ${endLine} is before start line ${startLine}.`);
     }
 
     // Get or create file state

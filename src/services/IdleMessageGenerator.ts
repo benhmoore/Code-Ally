@@ -189,7 +189,7 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
       );
 
       // Check if response was interrupted or had an error - don't process it
-      if ((response as any).interrupted || (response as any).error) {
+      if (response.interrupted || response.error) {
         logger.debug('[IDLE_MSG] ⚠️  Response was interrupted/error, keeping existing queue');
         throw new Error('Generation interrupted or failed');
       }

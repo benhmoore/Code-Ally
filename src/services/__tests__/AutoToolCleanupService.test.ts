@@ -211,8 +211,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn (this turn will be excluded from analysis)
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Now do something else',
+        },
         {
           role: 'assistant',
           content: 'Recent work in progress',
@@ -275,8 +279,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn to ensure old calls are analyzed
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Continue',
+        },
         {
           role: 'assistant',
           content: 'Recent work',
@@ -328,8 +336,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Next step',
+        },
         {
           role: 'assistant',
           content: 'Recent work',
@@ -397,8 +409,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Next step',
+        },
         {
           role: 'assistant',
           content: 'Recent work',
@@ -468,8 +484,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Next step',
+        },
         {
           role: 'assistant',
           content: 'Recent work',
@@ -692,8 +712,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Next step',
+        },
         {
           role: 'assistant',
           content: 'Recent work',
@@ -798,6 +822,52 @@ describe('AutoToolCleanupService', () => {
   });
 
   describe('extractToolCallInfos', () => {
+    it('should preserve all tool calls when no user messages exist', async () => {
+      // Test the edge case where conversation has only assistant and tool messages
+      // In this case, all tool calls should be preserved (none analyzed)
+      const messages: Message[] = [
+        {
+          role: 'assistant',
+          content: 'First tool call',
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'read', arguments: { path: 'test.ts' } },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'File contents',
+          tool_call_id: 'call_1',
+        },
+        {
+          role: 'assistant',
+          content: 'Second tool call',
+          tool_calls: [
+            {
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'grep', arguments: { pattern: 'test' } },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: 'Search results',
+          tool_call_id: 'call_2',
+        },
+      ];
+
+      mockClient.setMockAnalysis({ irrelevant_ids: ['call_1', 'call_2'] });
+
+      const result = await service.analyzeToolCalls(messages);
+      // Should return empty because no tool calls are eligible for analysis
+      // (entire conversation is treated as one turn and should be preserved)
+      expect(result.irrelevantToolCallIds).toEqual([]);
+    });
+
     it('should extract tool call information correctly', async () => {
       const toolMessages: Message[] = [
         {
@@ -828,8 +898,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Next step',
+        },
         {
           role: 'assistant',
           content: 'Recent work',
@@ -882,8 +956,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add last assistant turn with recent tool call (should be excluded from analysis)
+      // Add user message to separate turns, then last assistant turn with recent tool call (should be excluded from analysis)
       const lastAssistantTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Do something else',
+        },
         {
           role: 'assistant',
           content: 'Recent tool call',
@@ -950,8 +1028,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Next step',
+        },
         {
           role: 'assistant',
           content: 'Recent work',
@@ -1033,8 +1115,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Next step',
+        },
         {
           role: 'assistant',
           content: 'Recent work',
@@ -1110,8 +1196,12 @@ describe('AutoToolCleanupService', () => {
         },
       ];
 
-      // Add a recent assistant turn
+      // Add a user message to separate turns, then a recent assistant turn
       const recentTurn: Message[] = [
+        {
+          role: 'user',
+          content: 'Next step',
+        },
         {
           role: 'assistant',
           content: 'Recent work',

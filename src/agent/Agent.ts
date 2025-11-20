@@ -469,6 +469,32 @@ export class Agent {
   }
 
   /**
+   * Pause activity monitoring
+   *
+   * Temporarily pauses the activity watchdog timer while preserving the last activity time.
+   * This should be used when waiting for delegated work (e.g., nested agent execution) to
+   * prevent false timeout triggers while the delegated agent is actively working.
+   *
+   * Safe to call multiple times - subsequent calls are ignored if already paused.
+   */
+  pauseActivityMonitoring(): void {
+    this.activityMonitor.pause();
+  }
+
+  /**
+   * Resume activity monitoring
+   *
+   * Resumes the activity watchdog timer after delegated work completes.
+   * This should be called when delegated work finishes to continue monitoring
+   * the parent agent for activity timeouts.
+   *
+   * Safe to call multiple times - subsequent calls are ignored if already running.
+   */
+  resumeActivityMonitoring(): void {
+    this.activityMonitor.resume();
+  }
+
+  /**
    * Start activity monitoring
    *
    * Monitors specialized agents (subagents) for token generation without tool calls.
@@ -526,6 +552,28 @@ export class Agent {
     if (this.focusReady) {
       await this.focusReady;
       this.focusReady = null; // Clear after first use
+    }
+
+    // Detect if this is a sub-agent and get parent agent reference for pause/resume
+    // Sub-agents are detected by having BOTH isSpecializedAgent and parentCallId set
+    const isSubAgent = this.config.isSpecializedAgent && this.config.parentCallId;
+    let parentAgent: any = null;
+
+    if (isSubAgent) {
+      try {
+        const registry = ServiceRegistry.getInstance();
+        parentAgent = registry.get<any>('agent');
+      } catch (error) {
+        // Graceful degradation - parent agent not available
+        logger.debug('[AGENT]', this.instanceId, 'Could not get parent agent from registry:', error);
+      }
+    }
+
+    // Pause parent agent's activity monitoring before sub-agent execution
+    // This prevents false timeout triggers while the sub-agent is actively working
+    if (parentAgent && typeof parentAgent.pauseActivityMonitoring === 'function') {
+      parentAgent.pauseActivityMonitoring();
+      logger.debug('[AGENT]', this.instanceId, 'Pausing parent agent activity monitoring (sub-agent starting)');
     }
 
     // Start activity monitoring for specialized agents
@@ -782,6 +830,14 @@ export class Agent {
       throw error;
     } finally {
       this.cleanupRequestState();
+
+      // Resume parent agent's activity monitoring after sub-agent completes
+      // This must be in finally block to guarantee execution even if sendMessage throws
+      // Ensures parent agent continues monitoring for activity timeouts
+      if (parentAgent && typeof parentAgent.resumeActivityMonitoring === 'function') {
+        parentAgent.resumeActivityMonitoring();
+        logger.debug('[AGENT]', this.instanceId, 'Resuming parent agent activity monitoring (sub-agent completed)');
+      }
     }
   }
 

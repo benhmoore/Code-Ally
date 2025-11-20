@@ -126,7 +126,7 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
       );
 
       // Check if response was interrupted or had an error - don't process it
-      if ((response as any).interrupted || (response as any).error) {
+      if (response.interrupted || response.error) {
         logger.debug('[TITLE_GEN] ⚠️  Response was interrupted/error, skipping title generation');
         throw new Error('Generation interrupted or failed');
       }
@@ -321,7 +321,7 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
       );
 
       // Check if response was interrupted or had an error - don't process it
-      if ((response as any).interrupted || (response as any).error) {
+      if (response.interrupted || response.error) {
         logger.debug('[TITLE_GEN] ⚠️  Response was interrupted/error, skipping title regeneration');
         throw new Error('Regeneration interrupted or failed');
       }

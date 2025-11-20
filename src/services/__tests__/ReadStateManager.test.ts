@@ -61,15 +61,25 @@ describe('ReadStateManager', () => {
       expect(state).toEqual([{ start: 1, end: 30 }]);
     });
 
-    it('should ignore ranges with startLine < 1', () => {
-      manager.trackRead(testFile, 0, 10);
+    it('should throw error for startLine < 1', () => {
+      expect(() => {
+        manager.trackRead(testFile, 0, 10);
+      }).toThrow('Invalid start line 0');
+      expect(() => {
+        manager.trackRead(testFile, 0, 10);
+      }).toThrow('Line numbers must be >= 1');
 
       const state = manager.getReadState(testFile);
       expect(state).toBeNull();
     });
 
-    it('should ignore ranges with endLine < startLine', () => {
-      manager.trackRead(testFile, 10, 5);
+    it('should throw error for endLine < startLine', () => {
+      expect(() => {
+        manager.trackRead(testFile, 10, 5);
+      }).toThrow('Invalid line range');
+      expect(() => {
+        manager.trackRead(testFile, 10, 5);
+      }).toThrow('end line 5 is before start line 10');
 
       const state = manager.getReadState(testFile);
       expect(state).toBeNull();
@@ -477,6 +487,24 @@ describe('ReadStateManager', () => {
   });
 
   describe('edge cases and complex scenarios', () => {
+    it('should throw with clear error message for negative line numbers', () => {
+      expect(() => {
+        manager.trackRead(testFile, -1, 10);
+      }).toThrow('Invalid start line -1');
+      expect(() => {
+        manager.trackRead(testFile, -1, 10);
+      }).toThrow('Line numbers must be >= 1');
+    });
+
+    it('should throw with clear error for endLine < startLine', () => {
+      expect(() => {
+        manager.trackRead(testFile, 100, 50);
+      }).toThrow('Invalid line range');
+      expect(() => {
+        manager.trackRead(testFile, 100, 50);
+      }).toThrow('end line 50 is before start line 100');
+    });
+
     it('should handle large line numbers', () => {
       manager.trackRead(testFile, 1000000, 2000000);
 
