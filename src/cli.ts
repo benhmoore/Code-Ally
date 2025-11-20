@@ -999,6 +999,7 @@ async function main() {
     registry.registerInstance('tool_manager', toolManager);
 
     // Create trust manager for permission tracking
+    // Note: autoAllowModeGetter will be set after UI initialization
     const trustManager = new TrustManager(config.auto_confirm, activityStream);
     registry.registerInstance('trust_manager', trustManager);
 

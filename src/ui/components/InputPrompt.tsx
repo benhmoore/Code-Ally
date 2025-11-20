@@ -43,8 +43,16 @@ interface InputPromptProps {
   permissionSelectedIndex?: number;
   /** Callback when permission selection changes */
   onPermissionNavigate?: (newIndex: number) => void;
+  /** Callback to toggle auto-allow mode during permission prompts */
+  onAutoAllowToggle?: () => void;
   /** Model selector data (if active) */
-  modelSelectRequest?: { requestId: string; models: ModelOption[]; currentModel?: string; modelType?: 'ally' | 'service'; typeName?: string };
+  modelSelectRequest?: {
+    requestId: string;
+    models: ModelOption[];
+    currentModel?: string;
+    modelType?: 'ally' | 'service';
+    typeName?: string;
+  };
   /** Selected model index */
   modelSelectedIndex?: number;
   /** Callback when model selection changes */
@@ -52,7 +60,11 @@ interface InputPromptProps {
   /** Whether config viewer is open */
   configViewerOpen?: boolean;
   /** Session selector data (if active) */
-  sessionSelectRequest?: { requestId: string; sessions: import('@shared/index.js').SessionInfo[]; selectedIndex: number };
+  sessionSelectRequest?: {
+    requestId: string;
+    sessions: import('@shared/index.js').SessionInfo[];
+    selectedIndex: number;
+  };
   /** Callback when session selection changes */
   onSessionNavigate?: (newIndex: number) => void;
   /** Library selector data (if active) */
@@ -112,6 +124,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   permissionRequest,
   permissionSelectedIndex = 0,
   onPermissionNavigate,
+  onAutoAllowToggle,
   modelSelectRequest,
   modelSelectedIndex = 0,
   onModelNavigate,
@@ -260,7 +273,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   /**
    * Calculate cursor line and position within that line
    */
-  const getCursorLineInfo = (text: string, cursorPos: number): { line: number; posInLine: number; charsBeforeLine: number } => {
+  const getCursorLineInfo = (
+    text: string,
+    cursorPos: number
+  ): { line: number; posInLine: number; charsBeforeLine: number } => {
     // Clamp cursor position to valid range
     const clampedPos = Math.max(0, Math.min(cursorPos, text.length));
     const lines = text.split('\n');
@@ -1092,6 +1108,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       // ===== Permission Prompt Navigation =====
       if (permissionRequest && onPermissionNavigate && activityStream) {
+        console.log('[InputPrompt] Permission mode - key pressed:', {
+          input,
+          keys: Object.keys(key).filter(k => key[k as keyof typeof key]),
+          tab: key.tab,
+        });
         const optionsCount = permissionRequest.options.length;
 
         // Up arrow - navigate to previous option
@@ -1209,8 +1230,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // ===== Tab Completion =====
+      // ===== Tab - Completion or Auto-Allow Toggle =====
       if (key.tab) {
+        // Shift+Tab: Toggle auto-allow mode (global shortcut)
+        if (key.shift && onAutoAllowToggle) {
+          onAutoAllowToggle();
+          return;
+        }
+
+        // Tab alone: Completion (existing behavior)
         if (showCompletions && completions.length > 0) {
           applyCompletion();
         } else {
@@ -1514,9 +1542,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    * Parse text and identify mentioned file paths and plugins for highlighting
    * Returns array of segments with styling information
    */
-  const parseTextWithMentions = (
-    text: string
-  ): Array<{ text: string; highlightType: 'none' | 'file' | 'plugin' }> => {
+  const parseTextWithMentions = (text: string): Array<{ text: string; highlightType: 'none' | 'file' | 'plugin' }> => {
     if ((mentionedFiles.length === 0 && mentionedPlugins.length === 0) || !text) {
       return [{ text, highlightType: 'none' }];
     }
@@ -1576,19 +1602,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   return (
     <Box flexDirection="column" width="100%">
       {/* Input area */}
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor={promptColor}
-        paddingX={1}
-        width="100%"
-      >
+      <Box flexDirection="column" borderStyle="round" borderColor={promptColor} paddingX={1} width="100%">
         {lines.map((line, index) => {
           const isFirstLine = index === 0;
           const prompt = isFirstLine ? promptText : '';
           // Fix for multiple consecutive line breaks: use !== '' instead of || to preserve empty lines
           // Empty lines should render as a space to maintain proper height
-          const displayText = line !== '' ? line : (isEmpty && isFirstLine ? placeholder : ' ');
+          const displayText = line !== '' ? line : isEmpty && isFirstLine ? placeholder : ' ';
           const textColor = isEmpty && isFirstLine ? 'gray' : 'white';
           const isCursorLine = index === cursorLine;
 
@@ -1635,7 +1655,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
                     // Adjust cursor position for empty lines: if original line is empty but displayText is ' '
                     // we need to ensure cursor position maps correctly
-                    const adjustedCursorPos = line === '' && displayText === ' ' && cursorPosInLine === 0 ? 0 : cursorPosInLine;
+                    const adjustedCursorPos =
+                      line === '' && displayText === ' ' && cursorPosInLine === 0 ? 0 : cursorPosInLine;
 
                     // Check if cursor is in this segment
                     if (adjustedCursorPos >= segmentStart && adjustedCursorPos < segmentEnd) {
@@ -1646,13 +1667,21 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
                       return (
                         <React.Fragment key={segIdx}>
-                          <Text wrap="wrap" color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
+                          <Text
+                            wrap="wrap"
+                            color={segmentColor}
+                            dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
+                          >
                             {before}
                           </Text>
                           <Text wrap="wrap" color={UI_COLORS.TEXT_CONTRAST} backgroundColor={UI_COLORS.PRIMARY}>
                             {at}
                           </Text>
-                          <Text wrap="wrap" color={segmentColor} dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}>
+                          <Text
+                            wrap="wrap"
+                            color={segmentColor}
+                            dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
+                          >
                             {after}
                           </Text>
                         </React.Fragment>
@@ -1686,11 +1715,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       {/* Completion dropdown */}
       {showCompletions && (
-        <CompletionDropdown
-          completions={completions}
-          selectedIndex={completionIndex}
-          visible={showCompletions}
-        />
+        <CompletionDropdown completions={completions} selectedIndex={completionIndex} visible={showCompletions} />
       )}
     </Box>
   );

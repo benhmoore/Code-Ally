@@ -40,6 +40,8 @@ export interface PermissionPromptProps {
   selectedIndex: number;
   /** Whether the prompt is visible */
   visible?: boolean;
+  /** Whether auto-allow mode is enabled */
+  autoAllowMode?: boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
   request,
   selectedIndex,
   visible = true,
+  autoAllowMode,
 }) => {
   if (!visible) {
     return null;
@@ -78,9 +81,20 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
 
       {/* Header */}
       <Box marginY={1}>
-        <Text color={color} bold>Permission required for </Text>
-        <Text bold color={UI_COLORS.TEXT_DEFAULT}>{toolName}</Text>
+        <Text color={color} bold>
+          Permission required for{' '}
+        </Text>
+        <Text bold color={UI_COLORS.TEXT_DEFAULT}>
+          {toolName}
+        </Text>
       </Box>
+
+      {/* Auto-allow indicator (when enabled) */}
+      {autoAllowMode && (
+        <Box marginBottom={1}>
+          <Text dimColor>Auto-allow mode: ON (non-destructive commands will auto-approve - toggle with Shift+Tab)</Text>
+        </Box>
+      )}
 
       {/* Options */}
       {options.map((option, idx) => {
@@ -88,15 +102,13 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
 
         return (
           <Box key={idx}>
-            <SelectionIndicator isSelected={isSelected}>
-              {option}
-            </SelectionIndicator>
+            <SelectionIndicator isSelected={isSelected}>{option}</SelectionIndicator>
           </Box>
         );
       })}
 
       {/* Footer */}
-      <KeyboardHintFooter action="confirm" cancelText="deny" />
+      <KeyboardHintFooter action="confirm" cancelText="deny" autoAllowMode={autoAllowMode} />
     </Box>
   );
 };

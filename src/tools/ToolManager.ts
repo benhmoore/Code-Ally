@@ -384,6 +384,70 @@ export class ToolManager {
    * @param currentAgentName - Current agent name for tool-agent binding validation
    * @returns Tool result
    */
+  /**
+   * Validate tool arguments and state before permission request
+   *
+   * Called by ToolOrchestrator BEFORE requesting permission for tools that require confirmation.
+   * This allows failing fast on invalid states without prompting the user.
+   *
+   * @param toolName - Name of the tool to validate
+   * @param args - Tool arguments
+   * @param currentAgentName - Current agent name for visibility checks
+   * @returns ToolResult with success=false if validation fails, or null if validation passes
+   */
+  async validateBeforePermission(
+    toolName: string,
+    args: Record<string, any>,
+    currentAgentName?: string
+  ): Promise<ToolResult | null> {
+    const tool = this.tools.get(toolName);
+    if (!tool) {
+      return {
+        success: false,
+        error: `Unknown tool: ${toolName}`,
+        error_type: 'validation_error',
+        suggestion: `Available tools: ${Array.from(this.tools.keys()).join(', ')}`,
+      };
+    }
+
+    // Check visible_to constraint
+    if (tool.visibleTo && tool.visibleTo.length > 0) {
+      if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
+        return {
+          success: false,
+          error: `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
+          error_type: 'agent_mismatch',
+        };
+      }
+    }
+
+    // Check for duplicate calls
+    const duplicateCheck = this.duplicateDetector.check(toolName, args);
+    if (duplicateCheck.shouldBlock) {
+      return {
+        success: false,
+        error: duplicateCheck.message!,
+        error_type: 'validation_error',
+        suggestion: 'Avoid calling the same tool with identical arguments multiple times',
+      };
+    }
+
+    // Validate arguments
+    const functionDef = this.generateFunctionDefinition(tool);
+    const validation = this.validator.validateArguments(tool, functionDef, args);
+    if (!validation.valid) {
+      return {
+        success: false,
+        error: validation.error!,
+        error_type: validation.error_type,
+        suggestion: validation.suggestion,
+      };
+    }
+
+    // Call tool-specific pre-permission validation
+    return await tool.validateBeforePermission(args);
+  }
+
   async executeTool(
     toolName: string,
     args: Record<string, any>,

@@ -32,6 +32,78 @@ export class LineEditTool extends BaseTool {
   }
 
   /**
+   * Validate before permission request
+   * Checks if target lines have been read
+   */
+  async validateBeforePermission(args: any): Promise<ToolResult | null> {
+    const filePath = args.file_path as string;
+    const operation = args.operation as LineOperation;
+    const lineNumber = args.line_number as number;
+    const numLines = args.num_lines as number;
+
+    const absolutePath = resolvePath(filePath);
+    const registry = ServiceRegistry.getInstance();
+    const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+
+    if (!readStateManager) {
+      return null; // No read state manager, skip validation
+    }
+
+    try {
+      const fileContent = await fs.readFile(absolutePath, 'utf-8');
+      const totalLines = fileContent.split('\n').length;
+
+      // Special case: inserting into an empty file
+      if (operation === 'insert' && fileContent.length === 0 && lineNumber === 1) {
+        return null; // Skip validation for empty file insert
+      }
+
+      // Determine which lines need validation
+      let validationStartLine: number;
+      let validationEndLine: number;
+
+      switch (operation) {
+        case 'insert':
+          validationStartLine = Math.max(1, lineNumber - 1);
+          validationEndLine = Math.min(totalLines, lineNumber);
+          break;
+        case 'delete':
+          validationStartLine = lineNumber;
+          validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
+          break;
+        case 'replace':
+          validationStartLine = lineNumber;
+          validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
+          break;
+        default:
+          return null;
+      }
+
+      const validation = readStateManager.validateLinesRead(
+        absolutePath,
+        validationStartLine,
+        validationEndLine
+      );
+
+      if (!validation.success) {
+        const rangeDesc = validationStartLine === validationEndLine
+          ? `line ${validationStartLine}`
+          : `lines ${validationStartLine}-${validationEndLine}`;
+
+        return this.formatErrorResponse(
+          `Lines not read: Cannot ${operation} ${rangeDesc} without reading first. Use the Read tool: read(file_paths=["${filePath}"])`,
+          'validation_error'
+        );
+      }
+
+      return null; // Validation passed
+    } catch (error) {
+      // File doesn't exist or can't be read - let executeImpl handle this
+      return null;
+    }
+  }
+
+  /**
    * Provide custom function definition
    */
   getFunctionDefinition(): FunctionDefinition {

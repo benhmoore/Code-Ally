@@ -212,6 +212,21 @@ export abstract class BaseTool {
   }
 
   /**
+   * Optional validation before permission request
+   *
+   * Called BEFORE permission is requested for tools that require confirmation.
+   * This allows tools to fail fast on invalid states (e.g., stale content, no changes)
+   * without prompting the user for permission first.
+   *
+   * @param _args - Tool-specific parameters
+   * @returns ToolResult with success=false if validation fails, or null if validation passes
+   */
+  async validateBeforePermission(_args: any): Promise<ToolResult | null> {
+    // Default: no pre-permission validation
+    return null;
+  }
+
+  /**
    * Abstract implementation method - subclasses must implement this
    * @param args - Tool-specific parameters
    * @param toolCallId - Tool call ID (optional)

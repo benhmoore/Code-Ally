@@ -156,6 +156,10 @@ export interface ModalState {
   setPermissionRequest: (request?: PermissionRequestWithId) => void;
   setPermissionSelectedIndex: (index: number) => void;
 
+  // Auto-allow mode
+  autoAllowMode: boolean;
+  setAutoAllowMode: (enabled: boolean) => void;
+
   // Model selector
   modelSelectRequest?: ModelSelectRequest;
   modelSelectedIndex: number;
@@ -260,6 +264,9 @@ export const useModalState = (): ModalState => {
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequestWithId | undefined>(undefined);
   const [permissionSelectedIndex, setPermissionSelectedIndex] = useState(0);
 
+  // Auto-allow mode
+  const [autoAllowMode, setAutoAllowMode] = useState(false);
+
   // Model selector
   const [modelSelectRequest, setModelSelectRequest] = useState<ModelSelectRequest | undefined>(undefined);
   const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
@@ -319,6 +326,10 @@ export const useModalState = (): ModalState => {
     permissionSelectedIndex,
     setPermissionRequest,
     setPermissionSelectedIndex,
+
+    // Auto-allow mode
+    autoAllowMode,
+    setAutoAllowMode,
 
     // Model selector
     modelSelectRequest,

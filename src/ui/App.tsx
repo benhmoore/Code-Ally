@@ -48,7 +48,6 @@ import { useContentWidth } from './hooks/useContentWidth.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
 
-
 /**
  * Props for the App component
  */
@@ -88,16 +87,44 @@ export interface AppProps {
  * It subscribes to activity events and updates the app state accordingly.
  * Memoized to prevent unnecessary re-renders when children update.
  */
-const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null; showSetupWizard?: boolean; showModelSelector?: boolean; availableModels?: any[]; activePluginCount?: number; totalPluginCount?: number }> = ({ agent, resumeSession, showSetupWizard, showModelSelector, availableModels, activePluginCount, totalPluginCount }) => {
+const AppContentComponent: React.FC<{
+  agent: Agent;
+  resumeSession?: string | 'interactive' | null;
+  showSetupWizard?: boolean;
+  showModelSelector?: boolean;
+  availableModels?: any[];
+  activePluginCount?: number;
+  totalPluginCount?: number;
+}> = ({
+  agent,
+  resumeSession,
+  showSetupWizard,
+  showModelSelector,
+  availableModels,
+  activePluginCount,
+  totalPluginCount,
+}) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
 
   // Initialize services (command history, completion provider, command handler)
-  const { commandHistory, completionProvider, commandHandler, shouldShowSetupWizard } =
-    useServiceInitialization(agent, actions, showSetupWizard);
+  const { commandHistory, completionProvider, commandHandler, shouldShowSetupWizard } = useServiceInitialization(
+    agent,
+    actions,
+    showSetupWizard
+  );
 
   // Manage all modal and selector state
   const modal = useModalState();
+
+  // Connect auto-allow mode to TrustManager after initialization
+  useEffect(() => {
+    const registry = ServiceRegistry.getInstance();
+    const trustManager = registry.get<any>('trust_manager');
+    if (trustManager && trustManager.setAutoAllowModeGetter) {
+      trustManager.setAutoAllowModeGetter(() => modal.autoAllowMode);
+    }
+  }, [modal.autoAllowMode]);
 
   // Handle session resumption on mount
   const { sessionLoaded } = useSessionResume(
@@ -109,22 +136,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
   );
 
   // Subscribe to all activity events
-  const { isCancelling } = useActivitySubscriptions(
-    state,
-    actions,
-    modal,
-    agent,
-    activityStream
-  );
+  const { isCancelling } = useActivitySubscriptions(state, actions, modal, agent, activityStream);
 
   // Get input handler functions
-  const { handleInput, handleInterjection } = useInputHandlers(
-    agent,
-    commandHandler,
-    activityStream,
-    state,
-    actions
-  );
+  const { handleInput, handleInterjection } = useInputHandlers(agent, commandHandler, activityStream, state, actions);
 
   // Show setup wizard if needed
   useEffect(() => {
@@ -418,7 +433,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         <Box marginTop={1}>
           <AgentWizardView
             initialDescription={modal.agentWizardData.initialDescription}
-            onComplete={(agentData) => {
+            onComplete={agentData => {
               if (activityStream) {
                 activityStream.emit({
                   id: `agent_wizard_complete_${Date.now()}`,
@@ -452,7 +467,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             version={modal.pluginConfigRequest.version}
             tools={modal.pluginConfigRequest.tools}
             agents={modal.pluginConfigRequest.agents}
-            onComplete={async (config) => {
+            onComplete={async config => {
               // Capture the request early to avoid null safety issues
               const request = modal.pluginConfigRequest;
               if (!request) return;
@@ -516,10 +531,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                 if (pluginLoader && toolManager) {
                   try {
                     // Reload plugin to get the tools
-                    const newTools = await pluginLoader.reloadPlugin(
-                      request.pluginName,
-                      request.pluginPath
-                    );
+                    const newTools = await pluginLoader.reloadPlugin(request.pluginName, request.pluginPath);
 
                     // Register the new tools
                     toolManager.registerTools(newTools);
@@ -536,10 +548,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                         logger.info(`[App] Started background process for '${request.pluginName}'`);
                       } catch (bgError) {
                         // Log error but don't fail the config save - plugin is still usable
-                        logger.error(
-                          `[App] Failed to start background process for '${request.pluginName}':`,
-                          bgError
-                        );
+                        logger.error(`[App] Failed to start background process for '${request.pluginName}':`, bgError);
                         logger.warn(
                           `[App] Plugin '${request.pluginName}' configured but background process failed to start. Some features may not work until the daemon is started.`
                         );
@@ -626,7 +635,15 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modal.sessionSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+          />
 
           <SessionSelector
             sessions={modal.sessionSelectRequest.sessions}
@@ -642,7 +659,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               commandHistory={commandHistory || undefined}
               completionProvider={completionProvider || undefined}
               sessionSelectRequest={modal.sessionSelectRequest}
-              onSessionNavigate={(newIndex) => {
+              onSessionNavigate={newIndex => {
                 if (modal.sessionSelectRequest) {
                   modal.setSessionSelectRequest({ ...modal.sessionSelectRequest, selectedIndex: newIndex });
                 }
@@ -660,7 +677,15 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modal.librarySelectRequest ? (
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+          />
 
           <PromptLibrarySelector
             prompts={modal.librarySelectRequest.prompts}
@@ -676,7 +701,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               commandHistory={commandHistory || undefined}
               completionProvider={completionProvider || undefined}
               librarySelectRequest={modal.librarySelectRequest}
-              onLibraryNavigate={(newIndex) => {
+              onLibraryNavigate={newIndex => {
                 if (modal.librarySelectRequest) {
                   modal.setLibrarySelectRequest({ ...modal.librarySelectRequest, selectedIndex: newIndex });
                 }
@@ -694,7 +719,15 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modal.messageSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+          />
 
           <MessageSelector
             messages={modal.messageSelectRequest.messages}
@@ -710,7 +743,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               commandHistory={commandHistory || undefined}
               completionProvider={completionProvider || undefined}
               messageSelectRequest={modal.messageSelectRequest}
-              onMessageNavigate={(newIndex) => {
+              onMessageNavigate={newIndex => {
                 if (modal.messageSelectRequest) {
                   modal.setMessageSelectRequest({ ...modal.messageSelectRequest, selectedIndex: newIndex });
                 }
@@ -728,7 +761,15 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modal.promptAddRequest ? (
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+          />
 
           <PromptAddWizard
             title={modal.promptAddRequest.title}
@@ -740,7 +781,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                 modal.setPromptAddRequest({ ...modal.promptAddRequest, [field]: value });
               }
             }}
-            onFieldFocus={(field) => {
+            onFieldFocus={field => {
               if (modal.promptAddRequest) {
                 modal.setPromptAddRequest({ ...modal.promptAddRequest, focusedField: field });
               }
@@ -788,7 +829,15 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
       modal.modelSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+          />
 
           <ModelSelector
             models={modal.modelSelectRequest.models}
@@ -821,13 +870,21 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Rewind Options Selector (shown after selecting message in rewind) */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+          />
 
           <RewindOptionsSelector
             targetMessage={modal.rewindOptionsRequest.targetMessage}
             fileChanges={modal.rewindOptionsRequest.fileChanges}
             visible={true}
-            onConfirm={(choice) => {
+            onConfirm={choice => {
               // Handle cancel choice
               if (choice === 'cancel') {
                 // Go back to rewind selector
@@ -868,7 +925,14 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
           return (
             <Box marginTop={1} flexDirection="column">
               {/* Status Indicator - always visible to show todos */}
-              <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+              <StatusIndicator
+                isProcessing={state.isThinking}
+                isCompacting={state.isCompacting}
+                recentMessages={state.messages.slice(-3)}
+                sessionLoaded={sessionLoaded}
+                isResuming={!!resumeSession}
+                activeToolCalls={state.activeToolCalls}
+              />
 
               <RewindSelector
                 messages={userMessages}
@@ -885,12 +949,12 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
                   commandHistory={commandHistory || undefined}
                   completionProvider={completionProvider || undefined}
                   rewindRequest={modal.rewindRequest}
-                  onRewindNavigate={(newIndex) => {
+                  onRewindNavigate={newIndex => {
                     if (modal.rewindRequest) {
                       modal.setRewindRequest({ ...modal.rewindRequest, selectedIndex: newIndex });
                     }
                   }}
-                  onRewindEnter={(selectedIndex) => {
+                  onRewindEnter={selectedIndex => {
                     // Show options selector when Enter is pressed
                     const userMessages = state.messages.filter(m => m.role === 'user');
                     const targetMessage = userMessages[selectedIndex];
@@ -939,12 +1003,17 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Undo File List (two-stage flow - stage 1) */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
-
-          <UndoFileList
-            request={modal.undoFileListRequest}
-            visible={true}
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
           />
+
+          <UndoFileList request={modal.undoFileListRequest} visible={true} />
           {/* Hidden InputPrompt for keyboard handling only */}
           <Box height={0} overflow="hidden">
             <InputPrompt
@@ -954,7 +1023,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               commandHistory={commandHistory || undefined}
               completionProvider={completionProvider || undefined}
               undoFileListRequest={modal.undoFileListRequest}
-              onUndoFileListNavigate={(newIndex) => {
+              onUndoFileListNavigate={newIndex => {
                 if (modal.undoFileListRequest) {
                   modal.setUndoFileListRequest({ ...modal.undoFileListRequest, selectedIndex: newIndex });
                 }
@@ -972,7 +1041,15 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Library Clear Confirmation */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+          />
 
           <LibraryClearConfirmation
             promptCount={modal.libraryClearConfirmRequest.promptCount}
@@ -988,7 +1065,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               commandHistory={commandHistory || undefined}
               completionProvider={completionProvider || undefined}
               libraryClearConfirmRequest={modal.libraryClearConfirmRequest}
-              onLibraryClearConfirmNavigate={(newIndex) => {
+              onLibraryClearConfirmNavigate={newIndex => {
                 modal.setLibraryClearConfirmRequest({
                   ...modal.libraryClearConfirmRequest!,
                   selectedIndex: newIndex,
@@ -1007,13 +1084,17 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
-
-          <UndoPrompt
-            request={modal.undoRequest}
-            selectedIndex={modal.undoSelectedIndex}
-            visible={true}
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
           />
+
+          <UndoPrompt request={modal.undoRequest} selectedIndex={modal.undoSelectedIndex} visible={true} />
           {/* Hidden InputPrompt for keyboard handling only */}
           <Box height={0} overflow="hidden">
             <InputPrompt
@@ -1038,12 +1119,21 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+          />
 
           <PermissionPrompt
             request={modal.permissionRequest}
             selectedIndex={modal.permissionSelectedIndex}
             visible={true}
+            autoAllowMode={modal.autoAllowMode}
           />
           {/* Hidden InputPrompt for keyboard handling only */}
           <Box height={0} overflow="hidden">
@@ -1056,6 +1146,7 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               permissionRequest={modal.permissionRequest}
               permissionSelectedIndex={modal.permissionSelectedIndex}
               onPermissionNavigate={modal.setPermissionSelectedIndex}
+              onAutoAllowToggle={() => modal.setAutoAllowMode(!modal.autoAllowMode)}
               activityStream={activityStream}
               agent={agent}
               prefillText={modal.inputPrefillText}
@@ -1069,7 +1160,15 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         /* Input Group - Status Indicator + Input Prompt */
         <Box marginTop={1} flexDirection="column">
           {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} activeToolCalls={state.activeToolCalls} />
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+          />
 
           {/* Input Prompt */}
           <InputPrompt
@@ -1098,7 +1197,10 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             <Text dimColor>
               <Text color="yellow">DEBUG MODE</Text>
               <Text> · Session: {debugStats.sessionId}</Text>
-              <Text> · Memory: {debugStats.heapMB} MB heap / {debugStats.rssMB} MB RSS</Text>
+              <Text>
+                {' '}
+                · Memory: {debugStats.heapMB} MB heap / {debugStats.rssMB} MB RSS
+              </Text>
             </Text>
             {/* Debug Mode: Line 2 - Tokens, Todos, Model, Exit */}
             {modal.isWaitingForExitConfirmation ? (
@@ -1107,16 +1209,37 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
               </Text>
             ) : (
               <Text dimColor>
-                <Text>Tokens: {debugStats.tokensUsed.toLocaleString()}/{debugStats.tokensTotal.toLocaleString()} ({state.contextUsage}%)</Text>
+                <Text>
+                  Tokens: {debugStats.tokensUsed.toLocaleString()}/{debugStats.tokensTotal.toLocaleString()} (
+                  {state.contextUsage}%)
+                </Text>
                 {debugStats.todoTotal > 0 && (
-                  <Text> · Todos: {debugStats.todoPending} pending, {debugStats.todoCompleted} done, {debugStats.todoTotal} total</Text>
+                  <Text>
+                    {' '}
+                    · Todos: {debugStats.todoPending} pending, {debugStats.todoCompleted} done, {debugStats.todoTotal}{' '}
+                    total
+                  </Text>
                 )}
                 <Text> · {state.config.model || 'none'}</Text>
-                {currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>}
+                {currentFocus && (
+                  <Text>
+                    {' '}
+                    · Focus: <Text color="magenta">{currentFocus}</Text>
+                  </Text>
+                )}
                 {(() => {
                   const activeProfile = getActiveProfile();
-                  return activeProfile !== 'default' && <Text> · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)</Text>;
+                  return (
+                    activeProfile !== 'default' && (
+                      <Text>
+                        {' '}
+                        · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)
+                      </Text>
+                    )
+                  );
                 })()}
+                <Text> · Auto-allow: </Text>
+                {modal.autoAllowMode ? <Text color={UI_COLORS.PRIMARY}>ON</Text> : <Text>OFF</Text>}
               </Text>
             )}
           </Box>
@@ -1128,14 +1251,24 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
         ) : (
           /* Normal Mode: Single line */
           <Text dimColor>
-            {state.config.model || 'none'}{currentFocus && <Text> · Focus: <Text color="magenta">{currentFocus}</Text></Text>}
+            {state.config.model || 'none'}
+            {currentFocus && (
+              <Text>
+                {' '}
+                · Focus: <Text color="magenta">{currentFocus}</Text>
+              </Text>
+            )}
             {state.contextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
               <>
                 {' · '}
                 {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
-                  <Text color="red">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact</Text>
+                  <Text color="red">
+                    {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact
+                  </Text>
                 ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
-                  <Text color="yellow">{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - consider /compact</Text>
+                  <Text color="yellow">
+                    {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - consider /compact
+                  </Text>
                 ) : (
                   <Text>{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left</Text>
                 )}
@@ -1143,8 +1276,17 @@ const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'in
             )}
             {(() => {
               const activeProfile = getActiveProfile();
-              return activeProfile !== 'default' && <Text> · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)</Text>;
+              return (
+                activeProfile !== 'default' && (
+                  <Text>
+                    {' '}
+                    · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)
+                  </Text>
+                )
+              );
             })()}
+            <Text> · Auto-allow: </Text>
+            {modal.autoAllowMode ? <Text color={UI_COLORS.PRIMARY}>ON</Text> : <Text>OFF</Text>}
           </Text>
         )}
       </Box>
@@ -1179,14 +1321,32 @@ const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
  * const { unmount } = render(<App config={config} />);
  * ```
  */
-export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession, showSetupWizard, showModelSelector, availableModels, activePluginCount, totalPluginCount }) => {
+export const App: React.FC<AppProps> = ({
+  config,
+  activityStream,
+  agent,
+  resumeSession,
+  showSetupWizard,
+  showModelSelector,
+  availableModels,
+  activePluginCount,
+  totalPluginCount,
+}) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
   return (
     <ActivityProvider activityStream={streamRef.current}>
       <AppProvider initialConfig={config}>
-        <AppContent agent={agent} resumeSession={resumeSession} showSetupWizard={showSetupWizard} showModelSelector={showModelSelector} availableModels={availableModels} activePluginCount={activePluginCount} totalPluginCount={totalPluginCount} />
+        <AppContent
+          agent={agent}
+          resumeSession={resumeSession}
+          showSetupWizard={showSetupWizard}
+          showModelSelector={showModelSelector}
+          availableModels={availableModels}
+          activePluginCount={activePluginCount}
+          totalPluginCount={totalPluginCount}
+        />
       </AppProvider>
     </ActivityProvider>
   );
@@ -1235,10 +1395,7 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
 /**
  * Inner component that accepts initial messages
  */
-const AppContentWithMessages: React.FC<{ agent: Agent; initialMessages: Message[] }> = ({
-  agent,
-  initialMessages,
-}) => {
+const AppContentWithMessages: React.FC<{ agent: Agent; initialMessages: Message[] }> = ({ agent, initialMessages }) => {
   const { actions } = useAppContext();
   const hasLoadedRef = useRef(false);
 

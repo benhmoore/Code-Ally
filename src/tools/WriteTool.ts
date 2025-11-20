@@ -26,6 +26,29 @@ export class WriteTool extends BaseTool {
   }
 
   /**
+   * Validate before permission request
+   * Checks if file already exists (write tool only creates new files)
+   */
+  async validateBeforePermission(args: any): Promise<ToolResult | null> {
+    const filePath = args.file_path as string;
+    const absolutePath = resolvePath(filePath);
+
+    try {
+      // Check if file exists
+      await fs.access(absolutePath);
+      // File exists - fail without requesting permission
+      return this.formatErrorResponse(
+        `File already exists: ${absolutePath}`,
+        'file_error',
+        'Use edit or line-edit to modify existing files. The write tool only creates new files.'
+      );
+    } catch {
+      // File doesn't exist - validation passed
+      return null;
+    }
+  }
+
+  /**
    * Provide custom function definition
    */
   getFunctionDefinition(): FunctionDefinition {

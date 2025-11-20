@@ -658,12 +658,45 @@ export class ToolOrchestrator {
       error_type: 'system_error',
     };
     let permissionDenied = false; // Track if permission was denied to skip TOOL_CALL_END
+    let validationFailed = false; // Track if validation failed (already emitted TOOL_CALL_END)
 
     try {
       // Preview changes (e.g., diffs) BEFORE permission check
       // Tool call now exists in state, so diff can attach to it
       if (tool) {
         await tool.previewChanges(args, id);
+      }
+
+      // Validate before requesting permission (fail fast on invalid states)
+      if (tool && tool.requiresConfirmation) {
+        const validationResult = await this.toolManager.validateBeforePermission(
+          toolName,
+          args,
+          this.agent.getAgentName()
+        );
+        if (validationResult) {
+          // Validation failed - emit END event and return error without requesting permission
+          // Match the same event structure as normal execution for UI consistency
+          validationFailed = true; // Mark so finally block doesn't emit duplicate event
+          this.emitEvent({
+            id,
+            type: ActivityEventType.TOOL_CALL_END,
+            timestamp: Date.now(),
+            parentId: effectiveParentId,
+            data: {
+              toolName,
+              result: validationResult,
+              success: false,
+              error: validationResult.error,
+              visibleInChat: true, // Always show validation errors
+              isTransparent: tool?.isTransparentWrapper || false,
+              collapsed: false,
+              shouldCollapse,
+              hideOutput,
+            },
+          });
+          return validationResult;
+        }
       }
 
       // Check permissions if PermissionManager is available
@@ -803,9 +836,10 @@ export class ToolOrchestrator {
       }
     } finally {
       // Skip TOOL_CALL_END when permission is denied since agent is being fully interrupted
+      // Skip TOOL_CALL_END when validation failed since we already emitted it
       // Don't return here - let the exception propagate!
-      if (!permissionDenied) {
-        // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START (except permission denial)
+      if (!permissionDenied && !validationFailed) {
+        // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START (except permission denial or validation failure)
         // Show silent tools in chat if they error (for debugging)
         const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
 

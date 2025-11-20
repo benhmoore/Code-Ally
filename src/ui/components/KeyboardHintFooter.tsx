@@ -24,6 +24,8 @@ export interface KeyboardHintFooterProps {
   action: string;
   /** Cancel action text (default: "cancel") */
   cancelText?: string;
+  /** Whether auto-allow mode is enabled (for permission prompts) */
+  autoAllowMode?: boolean;
 }
 
 /**
@@ -35,12 +37,17 @@ export interface KeyboardHintFooterProps {
 const KeyboardHintFooterComponent: React.FC<KeyboardHintFooterProps> = ({
   action,
   cancelText = 'cancel',
+  autoAllowMode,
 }) => {
   return (
     <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
       <Text dimColor>
         {UI_SYMBOLS.NAVIGATION.ARROW_UP}
-        {UI_SYMBOLS.NAVIGATION.ARROW_DOWN} navigate  {UI_SYMBOLS.SEPARATOR.BULLET}  Enter {action}  {UI_SYMBOLS.SEPARATOR.BULLET}  Esc/Ctrl+C {cancelText}
+        {UI_SYMBOLS.NAVIGATION.ARROW_DOWN} navigate {UI_SYMBOLS.SEPARATOR.BULLET} Enter {action}{' '}
+        {UI_SYMBOLS.SEPARATOR.BULLET} Esc/Ctrl+C {cancelText}
+        {autoAllowMode !== undefined
+          ? `  ${UI_SYMBOLS.SEPARATOR.BULLET}  Shift+Tab auto-allow [${autoAllowMode ? 'ON' : 'OFF'}]`
+          : ''}
       </Text>
     </Box>
   );

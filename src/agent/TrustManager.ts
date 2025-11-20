@@ -50,10 +50,7 @@ export enum SensitivityTier {
 /**
  * Permission path type (for context-specific trust)
  */
-export type CommandPath =
-  | string
-  | { command?: string; path?: string; outside_cwd?: boolean }
-  | null;
+export type CommandPath = string | { command?: string; path?: string; outside_cwd?: boolean } | null;
 
 /**
  * User permission choice
@@ -98,18 +95,28 @@ export class TrustManager {
   private activityStream?: ActivityStream;
 
   /**
+   * Auto-allow mode getter function
+   * When enabled, automatically approves non-EXTREMELY_SENSITIVE commands
+   */
+  private autoAllowModeGetter?: () => boolean;
+
+  /**
    * Pending permission requests waiting for response
    */
-  private pendingPermissions: Map<string, {
-    resolve: (choice: PermissionChoice) => void;
-    reject: (error: Error) => void;
-  }> = new Map();
+  private pendingPermissions: Map<
+    string,
+    {
+      resolve: (choice: PermissionChoice) => void;
+      reject: (error: Error) => void;
+    }
+  > = new Map();
 
-  constructor(autoConfirm: boolean = false, activityStream?: ActivityStream) {
+  constructor(autoConfirm: boolean = false, activityStream?: ActivityStream, autoAllowModeGetter?: () => boolean) {
     this.autoConfirm = autoConfirm;
     this.trustedTools = new Map();
     this.preApprovedOperations = new Set();
     this.activityStream = activityStream;
+    this.autoAllowModeGetter = autoAllowModeGetter;
 
     // Listen for permission responses if ActivityStream is provided
     if (this.activityStream) {
@@ -127,11 +134,7 @@ export class TrustManager {
    * @param path - Context-specific path/command
    * @returns True if permission granted, throws PermissionDeniedError if denied
    */
-  async checkPermission(
-    toolName: string,
-    args: any,
-    path?: CommandPath
-  ): Promise<boolean> {
+  async checkPermission(toolName: string, args: any, path?: CommandPath): Promise<boolean> {
     // Auto-confirm mode bypasses all permission checks
     if (this.autoConfirm) {
       return true;
@@ -154,11 +157,7 @@ export class TrustManager {
    * @param path - Context-specific path/command
    * @returns True if allowed, throws PermissionDeniedError if denied
    */
-  async promptForPermission(
-    toolName: string,
-    args: any,
-    path?: CommandPath
-  ): Promise<boolean> {
+  async promptForPermission(toolName: string, args: any, path?: CommandPath): Promise<boolean> {
     // Require ActivityStream for permission prompts
     if (!this.activityStream) {
       throw new Error('ActivityStream is required for permission prompts');
@@ -167,15 +166,19 @@ export class TrustManager {
     // Detect command sensitivity tier
     const tier = this.getCommandSensitivity(toolName, path);
 
+    // Auto-allow mode: automatically approve non-EXTREMELY_SENSITIVE commands
+    // Security constraint: EXTREMELY_SENSITIVE commands ALWAYS require explicit user approval
+    if (this.autoAllowModeGetter?.() && tier !== SensitivityTier.EXTREMELY_SENSITIVE) {
+      logger.debug(`[TrustManager] Auto-allowing ${toolName} (auto-allow mode enabled)`);
+      this.trustTool(toolName, TrustScope.GLOBAL);
+      return true;
+    }
+
     // Determine available options based on sensitivity
     const options =
       tier === SensitivityTier.EXTREMELY_SENSITIVE
         ? [PermissionChoice.ALLOW, PermissionChoice.DENY]
-        : [
-            PermissionChoice.ALLOW,
-            PermissionChoice.DENY,
-            PermissionChoice.ALWAYS_ALLOW,
-          ];
+        : [PermissionChoice.ALLOW, PermissionChoice.DENY, PermissionChoice.ALWAYS_ALLOW];
 
     // Get user choice with event-based UI
     const choice = await this.showPermissionMenu(toolName, args, path, options);
@@ -193,14 +196,10 @@ export class TrustManager {
         return true;
 
       case PermissionChoice.DENY:
-        throw new PermissionDeniedError(
-          PERMISSION_MESSAGES.toolSpecificDenial(toolName)
-        );
+        throw new PermissionDeniedError(PERMISSION_MESSAGES.toolSpecificDenial(toolName));
 
       default:
-        throw new PermissionDeniedError(
-          `Unknown permission choice: ${choice}`
-        );
+        throw new PermissionDeniedError(`Unknown permission choice: ${choice}`);
     }
   }
 
@@ -212,9 +211,7 @@ export class TrustManager {
    * @param toolCalls - Array of tool call objects with {function: {name, arguments}}
    * @returns True if permission granted, false if denied
    */
-  async promptForBatchOperations(
-    toolCalls: Array<{ function: { name: string; arguments: any } }>
-  ): Promise<boolean> {
+  async promptForBatchOperations(toolCalls: Array<{ function: { name: string; arguments: any } }>): Promise<boolean> {
     // Auto-confirm mode bypasses all checks
     if (this.autoConfirm) {
       // Pre-approve all operations
@@ -225,7 +222,7 @@ export class TrustManager {
     }
 
     // Check if any command is extremely sensitive
-    const hasExtremelySensitive = toolCalls.some((call) => {
+    const hasExtremelySensitive = toolCalls.some(call => {
       const tier = this.getCommandSensitivity(call.function.name, null);
       return tier === SensitivityTier.EXTREMELY_SENSITIVE;
     });
@@ -233,11 +230,7 @@ export class TrustManager {
     // Show appropriate menu based on sensitivity
     const options = hasExtremelySensitive
       ? [PermissionChoice.ALLOW, PermissionChoice.DENY]
-      : [
-          PermissionChoice.ALLOW,
-          PermissionChoice.DENY,
-          PermissionChoice.ALWAYS_ALLOW,
-        ];
+      : [PermissionChoice.ALLOW, PermissionChoice.DENY, PermissionChoice.ALWAYS_ALLOW];
 
     // Pass batch operation context to permission menu
     const choice = await this.showPermissionMenu(
@@ -360,6 +353,16 @@ export class TrustManager {
   }
 
   /**
+   * Set the auto-allow mode getter function
+   * This should be called after UI initialization to connect the UI state
+   *
+   * @param getter - Function that returns the current auto-allow mode state
+   */
+  setAutoAllowModeGetter(getter: () => boolean): void {
+    this.autoAllowModeGetter = getter;
+  }
+
+  /**
    * Check if a bash command is sensitive and requires confirmation
    *
    * @param command - The bash command to check
@@ -377,10 +380,7 @@ export class TrustManager {
    * @param path - Context-specific path/command
    * @returns Sensitivity tier
    */
-  getCommandSensitivity(
-    toolName: string,
-    path?: CommandPath
-  ): SensitivityTier {
+  getCommandSensitivity(toolName: string, path?: CommandPath): SensitivityTier {
     // Bash tool uses command content analysis
     if (toolName === 'bash' && path && typeof path === 'object') {
       const command = path.command;

@@ -29,6 +29,49 @@ export class EditTool extends BaseTool {
   }
 
   /**
+   * Validate before permission request
+   * Checks for stale content (file not read) and no-op edits (same strings)
+   */
+  async validateBeforePermission(args: any): Promise<ToolResult | null> {
+    const filePath = args.file_path as string;
+    const oldString = args.old_string as string;
+    const newString = args.new_string as string;
+
+    // Check for no-op edit
+    if (oldString === newString) {
+      return this.formatErrorResponse(
+        'old_string and new_string cannot be the same',
+        'validation_error'
+      );
+    }
+
+    // Check if file has been read (stale content check)
+    const absolutePath = resolvePath(filePath);
+    const registry = ServiceRegistry.getInstance();
+    const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+
+    if (readStateManager) {
+      try {
+        const content = await fs.readFile(absolutePath, 'utf-8');
+        const totalLines = content.split('\n').length;
+        const validation = readStateManager.validateLinesRead(absolutePath, 1, totalLines);
+
+        if (!validation.success) {
+          return this.formatErrorResponse(
+            `Lines not read: EditTool requires reading the entire file before editing. Use the Read tool first: read(file_paths=["${filePath}"])`,
+            'validation_error'
+          );
+        }
+      } catch (error) {
+        // File doesn't exist or can't be read - let executeImpl handle this
+        return null;
+      }
+    }
+
+    return null; // Validation passed
+  }
+
+  /**
    * Provide custom function definition
    */
   getFunctionDefinition(): FunctionDefinition {
