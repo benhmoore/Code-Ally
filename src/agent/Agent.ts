@@ -1283,7 +1283,7 @@ export class Agent {
         }
 
         // Regular cancel - mark as interrupted for next request
-        console.log(`[DEBUG-INTERRUPT] ${this.instanceId} Returning USER_FACING_INTERRUPTION (regular cancel after timeout, no canContinueAfterTimeout)`);
+        logger.debug('[AGENT]', this.instanceId, 'Returning USER_FACING_INTERRUPTION (regular cancel after timeout)');
         this.interruptionManager.markRequestAsInterrupted();
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
@@ -1327,7 +1327,7 @@ export class Agent {
         return await this.processLLMResponse(continuationResponse);
       } else {
         // Regular cancel - mark as interrupted for next request
-        console.log(`[DEBUG-INTERRUPT] ${this.instanceId} Returning USER_FACING_INTERRUPTION (interrupted after ResponseProcessor, no canContinueAfterInterjection)`);
+        logger.debug('[AGENT]', this.instanceId, 'Returning USER_FACING_INTERRUPTION (interrupted after ResponseProcessor)');
         this.interruptionManager.markRequestAsInterrupted();
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }

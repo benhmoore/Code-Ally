@@ -16,6 +16,7 @@ import { SessionManager } from './SessionManager.js';
 import { Message, IService } from '../types/index.js';
 import { logger } from './Logger.js';
 import { setTerminalTitle } from '../utils/terminal.js';
+import { POLLING_INTERVALS } from '../config/constants.js';
 
 /**
  * IdleTaskCoordinator manages priority-based execution of background tasks
@@ -24,6 +25,8 @@ export class IdleTaskCoordinator implements IService {
   private lastUserMessageTimestamp: number = 0;
   private lastTitleGenerationTimestamp: number = 0;
   private isOllamaActive: boolean = false;
+  private lastModelResponseTimestamp: number = 0;
+  private retryTimeoutId: NodeJS.Timeout | null = null;
 
   constructor(
     private sessionTitleGenerator: SessionTitleGenerator | null,
@@ -38,6 +41,12 @@ export class IdleTaskCoordinator implements IService {
 
   async cleanup(): Promise<void> {
     logger.debug('[IDLE_COORD] IdleTaskCoordinator cleanup');
+
+    // Clear any pending retry timeout
+    if (this.retryTimeoutId) {
+      clearTimeout(this.retryTimeoutId);
+      this.retryTimeoutId = null;
+    }
   }
 
   /**
@@ -48,6 +57,19 @@ export class IdleTaskCoordinator implements IService {
   setOllamaActive(active: boolean): void {
     logger.debug(`[IDLE_COORD] Ollama active status changed: ${active}`);
     this.isOllamaActive = active;
+
+    // Record timestamp when model finishes responding
+    if (!active) {
+      this.lastModelResponseTimestamp = Date.now();
+      logger.debug(`[IDLE_COORD] Model response completed at: ${this.lastModelResponseTimestamp}`);
+    }
+
+    // If model becomes active, clear any pending retry
+    if (active && this.retryTimeoutId) {
+      logger.debug('[IDLE_COORD] Model became active, cancelling pending retry');
+      clearTimeout(this.retryTimeoutId);
+      this.retryTimeoutId = null;
+    }
   }
 
   /**
@@ -101,6 +123,31 @@ export class IdleTaskCoordinator implements IService {
     // Return immediately if Ollama is active
     if (this.isOllamaActive) {
       logger.debug('[IDLE_COORD] Skipping idle tasks - Ollama is active');
+      return;
+    }
+
+    // Check cooldown period after model response
+    const now = Date.now();
+    const timeSinceResponse = now - this.lastModelResponseTimestamp;
+    if (timeSinceResponse < POLLING_INTERVALS.IDLE_TASK_COOLDOWN) {
+      const timeLeft = POLLING_INTERVALS.IDLE_TASK_COOLDOWN - timeSinceResponse;
+      const timeLeftSeconds = Math.round(timeLeft / 1000);
+      logger.debug(`[IDLE_COORD] Cooldown active (${timeLeftSeconds}s remaining), scheduling retry`);
+
+      // Clear any existing retry timeout
+      if (this.retryTimeoutId) {
+        clearTimeout(this.retryTimeoutId);
+      }
+
+      // Schedule retry after cooldown period expires
+      this.retryTimeoutId = setTimeout(() => {
+        logger.debug('[IDLE_COORD] Cooldown expired, retrying idle tasks');
+        this.retryTimeoutId = null;
+        this.checkAndRunIdleTasks(messages, context).catch((error: Error) => {
+          logger.debug('[IDLE_COORD] Error during retry:', error);
+        });
+      }, timeLeft);
+
       return;
     }
 
@@ -364,6 +411,13 @@ export class IdleTaskCoordinator implements IService {
    */
   cancel(): void {
     logger.debug('[IDLE_COORD] Cancelling all idle tasks');
+
+    // Clear any pending retry timeout
+    if (this.retryTimeoutId) {
+      logger.debug('[IDLE_COORD] Clearing pending retry timeout');
+      clearTimeout(this.retryTimeoutId);
+      this.retryTimeoutId = null;
+    }
 
     if (this.sessionTitleGenerator && this.sessionTitleGenerator.isActive) {
       this.sessionTitleGenerator.cancel();

@@ -521,11 +521,8 @@ export class OllamaClient extends ModelClient {
               // First chunk without thinking after having thinking = thinking block complete
               thinkingComplete = true;
 
-              // DEBUG: Log complete thinking
-              console.log(`[THINKING-COMPLETE] Full thinking (${aggregatedThinking.length} chars):`);
-              console.log(`[THINKING-COMPLETE] ========== START ==========`);
-              console.log(aggregatedThinking);
-              console.log(`[THINKING-COMPLETE] ========== END ==========`);
+              // Log complete thinking for debugging
+              logger.debug('[THINKING-COMPLETE]', `(${aggregatedThinking.length} chars)\n${aggregatedThinking}`);
 
               // Only emit if thinking display is not suppressed
               if (this.activityStream && aggregatedThinking && !suppressThinking) {
@@ -633,11 +630,8 @@ export class OllamaClient extends ModelClient {
     if (message.thinking) {
       response.thinking = message.thinking;
 
-      // DEBUG: Log thinking for non-streaming responses
-      console.log(`[THINKING-COMPLETE-NONSTREAM] Full thinking (${message.thinking.length} chars):`);
-      console.log(`[THINKING-COMPLETE-NONSTREAM] ========== START ==========`);
-      console.log(message.thinking);
-      console.log(`[THINKING-COMPLETE-NONSTREAM] ========== END ==========`);
+      // Log thinking for non-streaming responses
+      logger.debug('[THINKING-COMPLETE-NONSTREAM]', `(${message.thinking.length} chars)\n${message.thinking}`);
 
       // Emit THOUGHT_COMPLETE event for non-streaming responses
       // Only emit if thinking display is not suppressed

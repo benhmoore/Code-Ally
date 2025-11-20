@@ -97,6 +97,9 @@ export const POLLING_INTERVALS = {
   /** Idle message minimum interval (32 seconds) */
   IDLE_MESSAGE_MIN: 32000,
 
+  /** Cooldown after model response before idle tasks can run (10 seconds) */
+  IDLE_TASK_COOLDOWN: 10000,
+
   /** Agent activity watchdog check interval (10 seconds) */
   AGENT_WATCHDOG: 10000,
 } as const;

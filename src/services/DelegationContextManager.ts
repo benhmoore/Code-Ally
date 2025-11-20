@@ -315,7 +315,7 @@ export class DelegationContextManager {
     // Check if nested manager has any active delegations
     // IMPORTANT: Access contexts directly to avoid infinite recursion
     // DO NOT call nestedManager.getActiveDelegation() - it would recurse back here!
-    const nestedContexts = Array.from((nestedManager as any).contexts?.values() || []).filter(
+    const nestedContexts = (Array.from((nestedManager as any).contexts?.values() || []) as DelegationContext[]).filter(
       (ctx: DelegationContext) => ctx.state === 'executing'
     );
 
