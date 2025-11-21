@@ -259,6 +259,25 @@ export const useActivitySubscriptions = (
     }
   });
 
+  // Assistant message complete (text blocks ready to display)
+  useActivityEvent(ActivityEventType.ASSISTANT_MESSAGE_COMPLETE, (event) => {
+    const content = event.data?.content || '';
+
+    // Clear streaming content since it's now finalized as a message
+    streamingContentRef.current = '';
+    actions.setStreamingContent(undefined);
+
+    if (content && !event.parentId) {
+      // Root agent message - add to message history for chronological display
+      // Subagent messages are not added here as they're handled via tool output
+      actions.addMessage({
+        role: 'assistant',
+        content: content,
+        timestamp: event.timestamp || Date.now(),
+      });
+    }
+  });
+
   // Thinking start (track start time for duration calculation)
   useActivityEvent(ActivityEventType.THOUGHT_CHUNK, (event) => {
     // Track start time when we see the "Thinking..." indicator

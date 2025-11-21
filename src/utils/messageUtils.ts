@@ -147,6 +147,20 @@ export function createActivityTimeoutContinuationReminder(): Message {
   );
 }
 
+/**
+ * Create a system reminder for thinking loop detection
+ *
+ * @param reason The detected loop pattern (e.g., "Reconstruction cycle detected (3x)")
+ * @returns System reminder message
+ */
+export function createThinkingLoopContinuationReminder(reason: string): Message {
+  const config = SYSTEM_REMINDERS.INTERRUPTIONS.THINKING_LOOP;
+  return createSystemReminder(
+    resolveReminderText(config, reason),
+    config.persist
+  );
+}
+
 // ===========================================
 // PROGRESS REMINDERS
 // ===========================================

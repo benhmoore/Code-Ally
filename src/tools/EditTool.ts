@@ -45,7 +45,7 @@ export class EditTool extends BaseTool {
       );
     }
 
-    // Check if file has been read (stale content check)
+    // Check if the lines being edited have been read (stale content check)
     const absolutePath = resolvePath(filePath);
     const registry = ServiceRegistry.getInstance();
     const readStateManager = registry.get<ReadStateManager>('read_state_manager');
@@ -53,14 +53,21 @@ export class EditTool extends BaseTool {
     if (readStateManager) {
       try {
         const content = await fs.readFile(absolutePath, 'utf-8');
-        const totalLines = content.split('\n').length;
-        const validation = readStateManager.validateLinesRead(absolutePath, 1, totalLines);
+        const linesToEdit = this.findLinesToEdit(content, oldString);
 
-        if (!validation.success) {
-          return this.formatErrorResponse(
-            `Lines not read: EditTool requires reading the entire file before editing. Use the Read tool first: read(file_paths=["${filePath}"])`,
-            'validation_error'
+        if (linesToEdit) {
+          const validation = readStateManager.validateLinesRead(
+            absolutePath,
+            linesToEdit.start,
+            linesToEdit.end
           );
+
+          if (!validation.success) {
+            return this.formatErrorResponse(
+              `Lines not read: EditTool requires reading the lines being edited before editing. Use the Read tool first: read(file_paths=["${filePath}"], offset=${linesToEdit.start - 1}, limit=${linesToEdit.end - linesToEdit.start + 1})`,
+              'validation_error'
+            );
+          }
         }
       } catch (error) {
         // File doesn't exist or can't be read - let executeImpl handle this
@@ -219,18 +226,25 @@ export class EditTool extends BaseTool {
       // Read file content
       const content = await fs.readFile(absolutePath, 'utf-8');
 
-      // EditTool requires reading the entire file for safe string-based operations
+      // EditTool requires reading the lines being edited for safe string-based operations
       const readStateManager = registry.get<ReadStateManager>('read_state_manager');
 
       if (readStateManager) {
-        const totalLines = content.split('\n').length;
-        const validation = readStateManager.validateLinesRead(absolutePath, 1, totalLines);
+        const linesToEdit = this.findLinesToEdit(content, oldString);
 
-        if (!validation.success) {
-          return this.formatErrorResponse(
-            `Lines not read: EditTool requires reading the entire file before editing. Use the Read tool first: read(file_paths=["${filePath}"])`,
-            'validation_error'
+        if (linesToEdit) {
+          const validation = readStateManager.validateLinesRead(
+            absolutePath,
+            linesToEdit.start,
+            linesToEdit.end
           );
+
+          if (!validation.success) {
+            return this.formatErrorResponse(
+              `Lines not read: EditTool requires reading the lines being edited before editing. Use the Read tool first: read(file_paths=["${filePath}"], offset=${linesToEdit.start - 1}, limit=${linesToEdit.end - linesToEdit.start + 1})`,
+              'validation_error'
+            );
+          }
         }
       }
 
@@ -408,6 +422,31 @@ export class EditTool extends BaseTool {
     }
 
     return matches;
+  }
+
+  /**
+   * Find the line range containing the old_string to be edited
+   * Returns null if old_string is not found
+   */
+  private findLinesToEdit(
+    content: string,
+    oldString: string
+  ): { start: number; end: number } | null {
+    // Find the first occurrence of old_string
+    const index = content.indexOf(oldString);
+    if (index === -1) {
+      return null; // String not found
+    }
+
+    // Convert character index to line numbers
+    const beforeMatch = content.substring(0, index);
+    const startLine = beforeMatch.split('\n').length; // 1-indexed
+
+    // Count newlines in the old_string to find end line
+    const newlinesInMatch = (oldString.match(/\n/g) || []).length;
+    const endLine = startLine + newlinesInMatch;
+
+    return { start: startLine, end: endLine };
   }
 
   /**

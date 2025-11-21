@@ -35,6 +35,7 @@ import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
 import { SessionPersistence } from './SessionPersistence.js';
 import { AgentCompactor } from './AgentCompactor.js';
 import { ContextCoordinator } from './ContextCoordinator.js';
+import { ThinkingLoopDetector, type ThinkingLoopInfo } from './ThinkingLoopDetector.js';
 import { Message, ActivityEventType, Config, ToolCall } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
@@ -48,6 +49,7 @@ import {
   createExploratoryGentleWarning,
   createExploratorySternWarning,
   createActivityTimeoutContinuationReminder,
+  createThinkingLoopContinuationReminder,
 } from '../utils/messageUtils.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 
@@ -154,6 +156,9 @@ export class Agent {
 
   // Activity monitoring - detects agents stuck generating tokens without tool calls
   private activityMonitor: ActivityMonitor;
+
+  // Thinking loop detection - detects repetitive patterns in extended thinking
+  private thinkingLoopDetector: ThinkingLoopDetector;
 
   // Required tool calls tracking - delegated to RequiredToolTracker
   private requiredToolTracker: RequiredToolTracker;
@@ -329,6 +334,12 @@ export class Agent {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Activity monitor enabled:', activityTimeoutMs, 'ms');
     }
 
+    // Create thinking loop detector
+    this.thinkingLoopDetector = new ThinkingLoopDetector({
+      onLoopDetected: (info) => this.handleThinkingLoop(info),
+      instanceId: this.instanceId,
+    });
+
     // Create agent's own TokenManager for isolated context tracking
     this.tokenManager = new TokenManager(config.config.context_size);
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'TokenManager created with context size:', config.config.context_size);
@@ -363,6 +374,24 @@ export class Agent {
       config,
       this.toolResultManager,
       permissionManager
+    );
+
+    // Subscribe to thinking chunk events for loop detection
+    this.activityStream.subscribe(
+      ActivityEventType.THOUGHT_CHUNK,
+      (event) => {
+        if (event.data?.chunk && typeof event.data.chunk === 'string') {
+          this.thinkingLoopDetector.addChunk(event.data.chunk);
+        }
+      }
+    );
+
+    // Subscribe to thinking complete events to stop loop detection
+    this.activityStream.subscribe(
+      ActivityEventType.THOUGHT_COMPLETE,
+      () => {
+        this.thinkingLoopDetector.stop();
+      }
     );
 
     // Setup focus if focusDirectory is provided
@@ -586,6 +615,36 @@ export class Agent {
   }
 
   /**
+   * Handle thinking loop detection
+   *
+   * Called when ThinkingLoopDetector identifies repetitive thinking patterns.
+   * Sets interruption context and cancels the LLM request mid-stream.
+   */
+  private handleThinkingLoop(info: ThinkingLoopInfo): void {
+    // Safety check: prevent double interruption
+    if (this.interruptionManager.isInterrupted()) {
+      logger.debug('[THINKING_LOOP]', this.instanceId, 'Already interrupted, skipping loop handler');
+      return;
+    }
+
+    logger.warn(
+      '[THINKING_LOOP]',
+      this.instanceId,
+      `Detected: ${info.reason}`
+    );
+
+    // Set interruption context
+    this.interruptionManager.setInterruptionContext({
+      reason: `Thinking loop: ${info.reason}`,
+      isTimeout: false,
+      canContinueAfterTimeout: true, // Enable continuation with warning
+    });
+
+    // Interrupt current request (cancels LLM streaming)
+    this.interrupt();
+  }
+
+  /**
    * Send a user message and get a response
    *
    * Main entry point for conversation turns. Handles:
@@ -624,6 +683,9 @@ export class Agent {
 
     // Clear tool call cycle history on new user input
     this.cycleDetector.clearHistory();
+
+    // Reset thinking loop detector on new user input
+    this.thinkingLoopDetector.reset();
 
     // Reset timeout continuation counter on new user input
     this.timeoutContinuationAttempts = 0;
@@ -1262,9 +1324,12 @@ export class Agent {
             await this.checkAutoCompaction();
           }
 
-          // PERSIST: false - Ephemeral: One-time prompt to continue after timeout
-          // Cleaned up after turn since timeout context not needed after continuation
-          const continuationPrompt = createActivityTimeoutContinuationReminder();
+          // PERSIST: false - Ephemeral: One-time prompt to continue after interruption
+          // Distinguish between thinking loop and activity timeout
+          const isThinkingLoop = context.reason?.includes('Thinking loop');
+          const continuationPrompt = isThinkingLoop
+            ? createThinkingLoopContinuationReminder(context.reason || '')
+            : createActivityTimeoutContinuationReminder();
           this.conversationManager.addMessage(continuationPrompt);
 
           // Reset interruption state and retry

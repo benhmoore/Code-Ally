@@ -123,6 +123,15 @@ export const SYSTEM_REMINDERS = {
       text: 'You exceeded the activity timeout without making tool calls. Please continue your work and make progress by calling tools or providing a response.',
       persist: false,
     },
+
+    /** Thinking loop detected - break circular reasoning pattern */
+    // PERSIST: false - Ephemeral: One-time signal to break circular reasoning
+    // Cleaned up after turn since agent should take concrete action immediately
+    THINKING_LOOP: {
+      text: (reason: string) =>
+        `${reason}. You appear to be stuck in circular reasoning. Break out of this pattern and take a concrete action instead of continuing to reconsider the same points.`,
+      persist: false,
+    },
   },
 
   // ===========================================

@@ -809,6 +809,35 @@ export const AGENT_POOL = {
 } as const;
 
 // ===========================================
+// THINKING LOOP DETECTION
+// ===========================================
+
+/**
+ * Configuration for ThinkingLoopDetector to identify repetitive thinking patterns
+ *
+ * Detects when models get stuck in loops:
+ * - Reconstruction cycles: Repeatedly reconsidering/rethinking decisions
+ * - Repetitive questions: Asking the same question multiple times
+ * - Repetitive actions: Stating the same action multiple times
+ */
+export const THINKING_LOOP_DETECTOR = {
+  /** Wait 20 seconds before monitoring begins (allow initial exploration) */
+  WARMUP_PERIOD_MS: 20000,
+
+  /** Check every 5 seconds during thinking for loop patterns */
+  CHECK_INTERVAL_MS: 5000,
+
+  /** Phrase must appear 2+ times to be considered a reconstruction cycle */
+  RECONSTRUCTION_THRESHOLD: 2,
+
+  /** Question/action must appear 3+ times to be considered repetitive */
+  REPETITION_THRESHOLD: 3,
+
+  /** Word overlap threshold (0.7 = 70%) for considering patterns similar */
+  SIMILARITY_THRESHOLD: 0.7,
+} as const;
+
+// ===========================================
 // UI DISPLAY
 // ===========================================
 

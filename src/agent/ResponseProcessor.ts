@@ -410,6 +410,21 @@ export class ResponseProcessor {
     };
     this.conversationManager.addMessage(assistantMessage);
 
+    // Emit event if there's text content to display in the UI
+    // This allows the UI to interleave text blocks with tool calls chronologically
+    if (assistantMessage.content && assistantMessage.content.trim()) {
+      this.emitEvent({
+        id: context.generateId(),
+        type: ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
+        timestamp: assistantMessage.timestamp,
+        parentId: context.parentCallId,
+        data: {
+          message: assistantMessage,
+          content: assistantMessage.content,
+        },
+      });
+    }
+
     // Auto-save after assistant message with tool calls
     context.autoSaveSession();
 
@@ -720,6 +735,20 @@ export class ResponseProcessor {
       };
       this.conversationManager.addMessage(assistantMessage);
 
+      // Emit message complete event for UI to display text content
+      if (assistantMessage.content && assistantMessage.content.trim()) {
+        this.emitEvent({
+          id: context.generateId(),
+          type: ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
+          timestamp: assistantMessage.timestamp,
+          parentId: context.parentCallId,
+          data: {
+            message: assistantMessage,
+            content: assistantMessage.content,
+          },
+        });
+      }
+
       // Clean up ephemeral messages BEFORE auto-save
       context.cleanupEphemeralMessages();
 
@@ -747,6 +776,21 @@ export class ResponseProcessor {
       timestamp: Date.now(),
     };
     this.conversationManager.addMessage(assistantMessage);
+
+    // Emit message complete event for UI to display text content
+    // This allows the UI to interleave text blocks with tool calls chronologically
+    if (assistantMessage.content && assistantMessage.content.trim()) {
+      this.emitEvent({
+        id: context.generateId(),
+        type: ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
+        timestamp: assistantMessage.timestamp,
+        parentId: context.parentCallId,
+        data: {
+          message: assistantMessage,
+          content: assistantMessage.content,
+        },
+      });
+    }
 
     // Clean up ephemeral messages BEFORE auto-save
     // This ensures ephemeral content doesn't persist in session files

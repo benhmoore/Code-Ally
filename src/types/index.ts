@@ -127,6 +127,7 @@ export enum ActivityEventType {
   THOUGHT_CHUNK = 'thought_chunk',
   THOUGHT_COMPLETE = 'thought_complete',
   ASSISTANT_CHUNK = 'assistant_chunk',
+  ASSISTANT_MESSAGE_COMPLETE = 'assistant_message_complete',
   SYSTEM_PROMPT_DISPLAY = 'system_prompt_display',
   AGENT_START = 'agent_start',
   AGENT_END = 'agent_end',
