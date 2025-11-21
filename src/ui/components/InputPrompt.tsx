@@ -4,13 +4,16 @@
  * Features:
  * - Command history (up/down arrows)
  * - Tab completion
- * - Advanced editing shortcuts
- * - Multiline support
+ * - Advanced editing shortcuts (delegated to TextInput)
+ * - Multiline support (delegated to TextInput)
  * - Context-aware completions
+ * - Mention highlighting
+ * - Modal integrations
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text, useInput, useApp } from 'ink';
+import { Box, useInput, useApp } from 'ink';
+import { TextInput } from './TextInput.js';
 import { CommandHistory } from '@services/CommandHistory.js';
 import { CompletionProvider, Completion } from '@services/CompletionProvider.js';
 import { CompletionDropdown } from './CompletionDropdown.js';
@@ -280,44 +283,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   }, [buffer, cursorPosition]);
 
   /**
-   * Calculate cursor line and position within that line
-   */
-  const getCursorLineInfo = (
-    text: string,
-    cursorPos: number
-  ): { line: number; posInLine: number; charsBeforeLine: number } => {
-    // Clamp cursor position to valid range
-    const clampedPos = Math.max(0, Math.min(cursorPos, text.length));
-    const lines = text.split('\n');
-    let charCount = 0;
-
-    for (let i = 0; i < lines.length; i++) {
-      const lineLength = (lines[i] || '').length;
-      // Check if cursor is on this line (including end of line position)
-      if (charCount + lineLength >= clampedPos) {
-        return {
-          line: i,
-          posInLine: Math.min(clampedPos - charCount, lineLength),
-          charsBeforeLine: charCount,
-        };
-      }
-      charCount += lineLength + 1; // +1 for newline
-    }
-
-    // Cursor is beyond buffer (shouldn't happen, but handle defensively)
-    // Place it at end of last line
-    const lastLineIndex = Math.max(0, lines.length - 1);
-    const lastLineLength = (lines[lastLineIndex] || '').length;
-    const charsBeforeLastLine = Math.max(0, text.length - lastLineLength);
-
-    return {
-      line: lastLineIndex,
-      posInLine: lastLineLength,
-      charsBeforeLine: charsBeforeLastLine,
-    };
-  };
-
-  /**
    * Apply selected completion
    */
   const applyCompletion = () => {
@@ -426,6 +391,40 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   };
 
   /**
+   * Helper to calculate cursor line info (reused from TextInput logic)
+   */
+  const getCursorLineInfo = (
+    text: string,
+    cursor: number
+  ): { line: number; posInLine: number; charsBeforeLine: number } => {
+    const clampedCursor = Math.max(0, Math.min(cursor, text.length));
+    const lines = text.split('\n');
+    let charCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const lineLength = (lines[i] || '').length;
+      if (charCount + lineLength >= clampedCursor) {
+        return {
+          line: i,
+          posInLine: Math.min(clampedCursor - charCount, lineLength),
+          charsBeforeLine: charCount,
+        };
+      }
+      charCount += lineLength + 1;
+    }
+
+    const lastLineIndex = Math.max(0, lines.length - 1);
+    const lastLineLength = (lines[lastLineIndex] || '').length;
+    const charsBeforeLastLine = Math.max(0, text.length - lastLineLength);
+
+    return {
+      line: lastLineIndex,
+      posInLine: lastLineLength,
+      charsBeforeLine: charsBeforeLastLine,
+    };
+  };
+
+  /**
    * Submit input
    */
   const handleSubmit = async () => {
@@ -456,83 +455,74 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     setMentionedFiles([]);
   };
 
+  // Track whether TextInput is active (inactive when modals are open)
+  const textInputActive =
+    isActive &&
+    !permissionRequest &&
+    !modelSelectRequest &&
+    !sessionSelectRequest &&
+    !librarySelectRequest &&
+    !messageSelectRequest &&
+    !rewindRequest &&
+    !undoRequest &&
+    !undoFileListRequest &&
+    !libraryClearConfirmRequest &&
+    !configViewerOpen;
+
   /**
-   * Delete word backward (Ctrl+W)
+   * Handle value changes from TextInput
    */
-  const deleteWordBackward = () => {
-    if (cursorPosition === 0) return;
-
-    // Find start of word
-    let pos = cursorPosition - 1;
-
-    // Skip whitespace
-    while (pos > 0) {
-      const char = buffer[pos];
-      if (!char || !/\s/.test(char)) break;
-      pos--;
+  const handleValueChange = (newValue: string) => {
+    // Clear prompt prefill highlight if user modifies buffer
+    if (promptPrefilled) {
+      onPromptPrefilledClear?.();
     }
-
-    // Delete word
-    while (pos > 0) {
-      const char = buffer[pos];
-      if (!char || /\s/.test(char)) break;
-      pos--;
-    }
-
-    if (pos > 0) pos++; // Don't delete the space before word
-
-    const before = buffer.slice(0, pos);
-    const after = buffer.slice(cursorPosition);
-    setBuffer(before + after);
-    setCursorPosition(pos);
+    setBuffer(newValue);
+    setHistoryIndex(-1); // Reset history when editing
   };
 
   /**
-   * Move cursor by word
+   * Handle cursor changes from TextInput
    */
-  const moveCursorWordLeft = () => {
-    let pos = cursorPosition - 1;
-
-    // Skip whitespace
-    while (pos > 0) {
-      const char = buffer[pos];
-      if (!char || !/\s/.test(char)) break;
-      pos--;
-    }
-
-    // Move to start of word
-    while (pos > 0) {
-      const char = buffer[pos];
-      if (!char || /\s/.test(char)) break;
-      pos--;
-    }
-
-    if (pos > 0) pos++; // Position at start of word
-
-    setCursorPosition(Math.max(0, pos));
+  const handleCursorChange = (newPosition: number) => {
+    setCursorPosition(newPosition);
   };
 
-  const moveCursorWordRight = () => {
-    let pos = cursorPosition;
+  /**
+   * Handle submit from TextInput
+   */
+  const handleTextInputSubmit = (value: string) => {
+    const message = value.trim();
+    if (!message) return;
 
-    // Skip current word
-    while (pos < buffer.length) {
-      const char = buffer[pos];
-      if (!char || /\s/.test(char)) break;
-      pos++;
+    // Slash commands always execute immediately, even during agent processing
+    if (message.startsWith('/')) {
+      handleSubmit();
+      return;
     }
 
-    // Skip whitespace
-    while (pos < buffer.length) {
-      const char = buffer[pos];
-      if (!char || !/\s/.test(char)) break;
-      pos++;
+    // Check if agent is processing - if so, this is an interjection
+    if (agent && agent.isProcessing()) {
+      // This is an interjection mid-response
+      if (onInterjection) {
+        onInterjection(message);
+        // Clear buffer after interjection
+        setBuffer('');
+        setCursorPosition(0);
+        setHistoryIndex(-1);
+        setHistoryBuffer('');
+        setShowCompletions(false);
+        setCompletions([]);
+        setMentionedFiles([]);
+      }
+    } else {
+      // Normal submission
+      handleSubmit();
     }
-
-    setCursorPosition(pos);
   };
 
-  // Handle keyboard input
+  // Handle keyboard input for special features (history, completion, modals, etc.)
+  // TextInput handles basic editing, we only intercept for our special features
   useInput(
     (input, key) => {
       if (!isActive) return;
@@ -1185,47 +1175,37 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // ===== History Navigation / Line Navigation =====
-      if (key.upArrow && !showCompletions) {
-        // For multiline: move between lines, only navigate history from first line
-        const lines = buffer.split('\n');
-        const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
-
-        if (cursorInfo.line > 0) {
-          // Move to previous line at same column position or end of line
-          const prevLineStart = cursorInfo.charsBeforeLine - (lines[cursorInfo.line - 1] || '').length - 1;
-          const prevLineLength = (lines[cursorInfo.line - 1] || '').length;
-          const newPos = prevLineStart + Math.min(cursorInfo.posInLine, prevLineLength);
-          setCursorPosition(newPos);
-        } else if (cursorPosition === 0) {
-          // At start of first line - navigate history
-          navigateHistoryPrevious();
-        } else {
-          // On first line but not at start - move to start
-          setCursorPosition(0);
-        }
+      // ===== History Navigation (override TextInput's arrow keys at boundaries) =====
+      // Only intercept when NOT showing completions and at text boundaries
+      if (key.upArrow && !showCompletions && !textInputActive) {
+        // TextInput is inactive (modal open) - let modal handle it
         return;
       }
 
-      if (key.downArrow && !showCompletions) {
-        // For multiline: move between lines, only navigate history from last line
-        const lines = buffer.split('\n');
+      if (key.upArrow && !showCompletions && textInputActive) {
+        // Check if we're at the start of the first line - then navigate history
         const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
-
-        if (cursorInfo.line < lines.length - 1) {
-          // Move to next line at same column position or end of line
-          const nextLineStart = cursorInfo.charsBeforeLine + (lines[cursorInfo.line] || '').length + 1;
-          const nextLineLength = (lines[cursorInfo.line + 1] || '').length;
-          const newPos = nextLineStart + Math.min(cursorInfo.posInLine, nextLineLength);
-          setCursorPosition(newPos);
-        } else if (cursorPosition === buffer.length) {
-          // At end of last line - navigate history
-          navigateHistoryNext();
-        } else {
-          // On last line but not at end - move to end
-          setCursorPosition(buffer.length);
+        if (cursorInfo.line === 0 && cursorPosition === 0) {
+          navigateHistoryPrevious();
+          return;
         }
+        // Otherwise let TextInput handle it (multiline navigation)
+      }
+
+      if (key.downArrow && !showCompletions && !textInputActive) {
+        // TextInput is inactive (modal open) - let modal handle it
         return;
+      }
+
+      if (key.downArrow && !showCompletions && textInputActive) {
+        // Check if we're at the end of the last line - then navigate history
+        const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
+        const lines = buffer.split('\n');
+        if (cursorInfo.line === lines.length - 1 && cursorPosition === buffer.length) {
+          navigateHistoryNext();
+          return;
+        }
+        // Otherwise let TextInput handle it (multiline navigation)
       }
 
       // ===== Completion Navigation =====
@@ -1331,88 +1311,24 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // ===== Submit =====
-      if (key.return) {
-        if (key.ctrl) {
-          // Ctrl+Enter - Insert newline
-          // Clear prompt prefill highlight if user modifies buffer
-          if (promptPrefilled) {
-            onPromptPrefilledClear?.();
-          }
-          const currentBuffer = bufferRef.current;
-          const currentCursor = cursorPositionRef.current;
-          const before = currentBuffer.slice(0, currentCursor);
-          const after = currentBuffer.slice(currentCursor);
-          setBuffer(before + '\n' + after);
-          setCursorPosition(currentCursor + 1);
-        } else {
-          const message = buffer.trim();
-          if (!message) return;
-
-          // Slash commands always execute immediately, even during agent processing
-          if (message.startsWith('/')) {
-            handleSubmit();
-            return;
-          }
-
-          // Check if agent is processing - if so, this is an interjection
-          if (agent && agent.isProcessing()) {
-            // This is an interjection mid-response
-            if (onInterjection) {
-              onInterjection(message);
-              // Clear buffer after interjection
-              setBuffer('');
-              setCursorPosition(0);
-              setHistoryIndex(-1);
-              setHistoryBuffer('');
-              setShowCompletions(false);
-              setCompletions([]);
-              setMentionedFiles([]);
-            }
-          } else {
-            // Normal submission
-            handleSubmit();
-          }
-        }
-        return;
-      }
-
-      // ===== Clear Buffer / Quit (Ctrl+C) =====
-      // Priority order: clear buffer -> exit confirmation -> quit
-      // Use ref to avoid stale closure issues
-      if (key.ctrl && input === 'c') {
+      // ===== Exit Confirmation (Ctrl+C on empty buffer) =====
+      // Note: TextInput handles buffer clearing when buffer has content
+      // We only need to handle exit confirmation when buffer is empty
+      if (key.ctrl && input === 'c' && textInputActive) {
         const currentBuffer = bufferRef.current;
         const hasContent = currentBuffer.trim().length > 0;
 
-        // Priority 1: Clear buffer if it has content
-        if (hasContent) {
-          // Clear prompt prefill highlight if user modifies buffer
-          if (promptPrefilled) {
-            onPromptPrefilledClear?.();
-          }
-          setBuffer('');
-          setCursorPosition(0);
-          setHistoryIndex(-1);
-          setShowCompletions(false);
-          // Also clear exit confirmation if active
-          if (isWaitingForExitConfirmation) {
-            setIsWaitingForExitConfirmation(false);
-            if (exitConfirmationTimerRef.current) {
-              clearTimeout(exitConfirmationTimerRef.current);
-              exitConfirmationTimerRef.current = null;
-            }
-          }
-          return;
-        }
+        // If buffer has content, TextInput will handle clearing it
+        if (hasContent) return;
 
-        // Priority 2: Buffer is empty - check if waiting for confirmation
+        // Buffer is empty - handle exit confirmation
         if (isWaitingForExitConfirmation) {
           // Second Ctrl+C within 1 second - quit
           exit();
           return;
         }
 
-        // Priority 3: First Ctrl+C on empty buffer - start confirmation timer
+        // First Ctrl+C on empty buffer - start confirmation timer
         setIsWaitingForExitConfirmation(true);
 
         // Clear any existing timer
@@ -1428,343 +1344,51 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
         return;
       }
-
-      // ===== Move to Start (Ctrl+A) =====
-      if (key.ctrl && input === 'a') {
-        setCursorPosition(0);
-        return;
-      }
-
-      // ===== Move to End (Ctrl+E) =====
-      if (key.ctrl && input === 'e') {
-        setCursorPosition(buffer.length);
-        return;
-      }
-
-      // ===== Kill Line (Ctrl+K) =====
-      if (key.ctrl && input === 'k') {
-        // Clear prompt prefill highlight if user modifies buffer
-        if (promptPrefilled) {
-          onPromptPrefilledClear?.();
-        }
-        const before = buffer.slice(0, cursorPosition);
-        setBuffer(before);
-        return;
-      }
-
-      // ===== Delete to Start (Ctrl+U) =====
-      if (key.ctrl && input === 'u') {
-        // Clear prompt prefill highlight if user modifies buffer
-        if (promptPrefilled) {
-          onPromptPrefilledClear?.();
-        }
-        const after = buffer.slice(cursorPosition);
-        setBuffer(after);
-        setCursorPosition(0);
-        return;
-      }
-
-      // ===== Delete Word Backward (Ctrl+W) =====
-      // Note: Also available via Alt+Backspace or Ctrl+Backspace
-      if (key.ctrl && input === 'w') {
-        // Clear prompt prefill highlight if user modifies buffer
-        if (promptPrefilled) {
-          onPromptPrefilledClear?.();
-        }
-        deleteWordBackward();
-        return;
-      }
-
-      // ===== Word Movement (Alt+Left/Right and Ctrl+Left/Right) =====
-      // Note: Ink has issues with Option/Alt keys on macOS - use Ctrl as fallback
-      if ((key.meta || key.ctrl) && key.leftArrow) {
-        moveCursorWordLeft();
-        return;
-      }
-
-      if ((key.meta || key.ctrl) && key.rightArrow) {
-        moveCursorWordRight();
-        return;
-      }
-
-      // ===== Delete Word Backward (Ctrl+Backspace OR Alt+Backspace) =====
-      // Note: Alt+Backspace sends ESC+DEL (\x1b\x7f) which Ink parses as key.meta=true, key.delete=true
-      if ((key.ctrl || key.meta) && (key.backspace || key.delete)) {
-        // Clear prompt prefill highlight if user modifies buffer
-        if (promptPrefilled) {
-          onPromptPrefilledClear?.();
-        }
-        deleteWordBackward();
-        return;
-      }
-
-      // ===== Backspace =====
-      if (key.backspace || key.delete) {
-        // Clear prompt prefill highlight if user modifies buffer
-        if (promptPrefilled) {
-          onPromptPrefilledClear?.();
-        }
-
-        // Regular backspace - delete single character
-        const currentCursor = cursorPositionRef.current;
-        if (currentCursor > 0) {
-          const currentBuffer = bufferRef.current;
-          const before = currentBuffer.slice(0, currentCursor - 1);
-          const after = currentBuffer.slice(currentCursor);
-          setBuffer(before + after);
-          setCursorPosition(currentCursor - 1);
-          setHistoryIndex(-1); // Reset history when editing
-        }
-        return;
-      }
-
-      // ===== Left Arrow =====
-      if (key.leftArrow) {
-        setCursorPosition(Math.max(0, cursorPosition - 1));
-        return;
-      }
-
-      // ===== Right Arrow =====
-      if (key.rightArrow) {
-        setCursorPosition(Math.min(buffer.length, cursorPosition + 1));
-        return;
-      }
-
-      // ===== Regular Character Input =====
-      if (input && !key.ctrl && !key.meta) {
-        // Clear prompt prefill highlight if user modifies buffer
-        if (promptPrefilled) {
-          onPromptPrefilledClear?.();
-        }
-
-        // Use refs to avoid stale closure issues with rapid paste events
-        const currentBuffer = bufferRef.current;
-        const currentCursor = cursorPositionRef.current;
-
-        // Normalize line endings - convert \r\n and \r to \n
-        const normalizedInput = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-        const before = currentBuffer.slice(0, currentCursor);
-        const after = currentBuffer.slice(currentCursor);
-        const newBuffer = before + normalizedInput + after;
-        const newCursor = currentCursor + normalizedInput.length;
-
-        setBuffer(newBuffer);
-        setCursorPosition(newCursor);
-        setHistoryIndex(-1); // Reset history when typing
-      }
     },
     { isActive }
   );
-
-  // Split buffer into lines for multiline display
-  const lines = buffer.split('\n');
-  const isEmpty = buffer.trim().length === 0;
-
-  // Calculate which line the cursor is on and position within that line
-  const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
-  const cursorLine = cursorInfo.line;
-  const cursorPosInLine = cursorInfo.posInLine;
 
   // Determine prompt style based on first character
   const isCommandMode = buffer.startsWith('/');
   const isBashMode = buffer.startsWith('!');
 
   let promptText = '> ';
-  let promptColor: string = UI_COLORS.TEXT_DIM;
+  let borderColor: string = UI_COLORS.TEXT_DIM;
 
   if (isCommandMode) {
     promptText = 'Command > ';
-    promptColor = UI_COLORS.TEXT_DIM;
+    borderColor = UI_COLORS.TEXT_DIM;
   } else if (isBashMode) {
     promptText = 'Bash > ';
-    promptColor = UI_COLORS.TEXT_DIM;
+    borderColor = UI_COLORS.TEXT_DIM;
   }
 
   // Override border color when auto-allow mode is active (danger color)
   if (autoAllowMode) {
-    promptColor = UI_COLORS.ERROR;
+    borderColor = UI_COLORS.ERROR;
   }
 
   // Override border color when prompt is prefilled from library (primary color)
   if (promptPrefilled && !autoAllowMode) {
-    promptColor = UI_COLORS.PRIMARY;
+    borderColor = UI_COLORS.PRIMARY;
   }
-
-  /**
-   * Parse text and identify mentioned file paths and plugins for highlighting
-   * Returns array of segments with styling information
-   */
-  const parseTextWithMentions = (text: string): Array<{ text: string; highlightType: 'none' | 'file' | 'plugin' }> => {
-    if ((mentionedFiles.length === 0 && mentionedPlugins.length === 0) || !text) {
-      return [{ text, highlightType: 'none' }];
-    }
-
-    const segments: Array<{ text: string; highlightType: 'none' | 'file' | 'plugin' }> = [];
-    let remaining = text;
-    let searchIndex = 0;
-
-    while (remaining.length > 0) {
-      // Find the earliest mention (file or plugin) in the remaining text
-      let earliestIndex = -1;
-      let earliestMention = '';
-      let earliestType: 'file' | 'plugin' = 'file';
-
-      // Check files
-      for (const filePath of mentionedFiles) {
-        const index = remaining.indexOf(filePath, searchIndex - (text.length - remaining.length));
-        if (index !== -1 && (earliestIndex === -1 || index < earliestIndex)) {
-          earliestIndex = index;
-          earliestMention = filePath;
-          earliestType = 'file';
-        }
-      }
-
-      // Check plugins
-      for (const pluginName of mentionedPlugins) {
-        const index = remaining.indexOf(pluginName, searchIndex - (text.length - remaining.length));
-        if (index !== -1 && (earliestIndex === -1 || index < earliestIndex)) {
-          earliestIndex = index;
-          earliestMention = pluginName;
-          earliestType = 'plugin';
-        }
-      }
-
-      if (earliestIndex === -1) {
-        // No more mentions found
-        segments.push({ text: remaining, highlightType: 'none' });
-        break;
-      }
-
-      // Add text before mention
-      if (earliestIndex > 0) {
-        segments.push({ text: remaining.slice(0, earliestIndex), highlightType: 'none' });
-      }
-
-      // Add the mention
-      segments.push({ text: earliestMention, highlightType: earliestType });
-
-      // Continue with text after mention
-      remaining = remaining.slice(earliestIndex + earliestMention.length);
-      searchIndex = 0;
-    }
-
-    return segments.length > 0 ? segments : [{ text, highlightType: 'none' }];
-  };
 
   return (
     <Box flexDirection="column" width="100%">
-      {/* Input area */}
-      <Box flexDirection="column" borderStyle="round" borderColor={promptColor} paddingX={1} width="100%">
-        {lines.map((line, index) => {
-          const isFirstLine = index === 0;
-          const prompt = isFirstLine ? promptText : '';
-          // Fix for multiple consecutive line breaks: use !== '' instead of || to preserve empty lines
-          // Empty lines should render as a space to maintain proper height
-          const displayText = line !== '' ? line : isEmpty && isFirstLine ? placeholder : ' ';
-          const textColor = isEmpty && isFirstLine ? 'gray' : 'white';
-          const isCursorLine = index === cursorLine;
-
-          // Parse line into segments with mentions
-          const segments = parseTextWithMentions(displayText);
-
-          // Get color for segment based on highlight type
-          const getSegmentColor = (highlightType: 'none' | 'file' | 'plugin'): string => {
-            if (highlightType === 'file') return UI_COLORS.PRIMARY;
-            if (highlightType === 'plugin') return UI_COLORS.PRIMARY;
-            return textColor;
-          };
-
-          return (
-            <Box key={`line-${index}`}>
-              <Text wrap="wrap" color={promptColor} bold={isCommandMode || isBashMode}>
-                {prompt}
-              </Text>
-
-              {/* Non-cursor line or inactive - simple rendering */}
-              {(!isCursorLine || !isActive) && (
-                <>
-                  {segments.map((segment, segIdx) => (
-                    <Text
-                      wrap="wrap"
-                      key={segIdx}
-                      color={getSegmentColor(segment.highlightType)}
-                      dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
-                    >
-                      {segment.text}
-                    </Text>
-                  ))}
-                </>
-              )}
-
-              {/* Cursor line with active input - handle cursor within segments */}
-              {isCursorLine && isActive && (
-                <>
-                  {segments.map((segment, segIdx) => {
-                    // Calculate character range for this segment
-                    const segmentStart = segments.slice(0, segIdx).reduce((sum, s) => sum + s.text.length, 0);
-                    const segmentEnd = segmentStart + segment.text.length;
-                    const segmentColor = getSegmentColor(segment.highlightType);
-
-                    // Adjust cursor position for empty lines: if original line is empty but displayText is ' '
-                    // we need to ensure cursor position maps correctly
-                    const adjustedCursorPos =
-                      line === '' && displayText === ' ' && cursorPosInLine === 0 ? 0 : cursorPosInLine;
-
-                    // Check if cursor is in this segment
-                    if (adjustedCursorPos >= segmentStart && adjustedCursorPos < segmentEnd) {
-                      const localCursorPos = adjustedCursorPos - segmentStart;
-                      const before = segment.text.slice(0, localCursorPos);
-                      const at = segment.text[localCursorPos] || ' ';
-                      const after = segment.text.slice(localCursorPos + 1);
-
-                      return (
-                        <React.Fragment key={segIdx}>
-                          <Text
-                            wrap="wrap"
-                            color={segmentColor}
-                            dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
-                          >
-                            {before}
-                          </Text>
-                          <Text wrap="wrap" color={UI_COLORS.TEXT_CONTRAST} backgroundColor={UI_COLORS.PRIMARY}>
-                            {at}
-                          </Text>
-                          <Text
-                            wrap="wrap"
-                            color={segmentColor}
-                            dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
-                          >
-                            {after}
-                          </Text>
-                        </React.Fragment>
-                      );
-                    }
-
-                    // Cursor not in this segment
-                    return (
-                      <Text
-                        wrap="wrap"
-                        key={segIdx}
-                        color={segmentColor}
-                        dimColor={isEmpty && isFirstLine && segment.highlightType === 'none'}
-                      >
-                        {segment.text}
-                      </Text>
-                    );
-                  })}
-                  {/* Handle cursor at end of line - only show if cursor is beyond all displayed segments */}
-                  {cursorPosInLine >= displayText.length && (
-                    <Text wrap="wrap" color={UI_COLORS.TEXT_CONTRAST} backgroundColor={UI_COLORS.PRIMARY}>
-                      {' '}
-                    </Text>
-                  )}
-                </>
-              )}
-            </Box>
-          );
-        })}
-      </Box>
+      {/* Use TextInput for base text editing functionality */}
+      <TextInput
+        value={buffer}
+        onValueChange={handleValueChange}
+        cursorPosition={cursorPosition}
+        onCursorChange={handleCursorChange}
+        onSubmit={handleTextInputSubmit}
+        isActive={textInputActive}
+        multiline={true}
+        placeholder={placeholder}
+        bordered={true}
+        borderColor={borderColor}
+        promptText={promptText}
+      />
 
       {/* Completion dropdown */}
       {showCompletions && (

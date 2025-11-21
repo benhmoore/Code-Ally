@@ -14,6 +14,7 @@ import { PLUGIN_UI } from '@plugins/constants.js';
 import { ModalContainer } from './ModalContainer.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
 
 interface PluginConfigViewProps {
@@ -51,9 +52,11 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
   const [fieldNames, setFieldNames] = useState<string[]>([]);
   const [currentFieldIndex, setCurrentFieldIndex] = useState(0);
   const [configValues, setConfigValues] = useState<Record<string, any>>({});
-  const [currentInput, setCurrentInput] = useState('');
+  const [currentInputBuffer, setCurrentInputBuffer] = useState('');
+  const [currentInputCursor, setCurrentInputCursor] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [selectedChoiceIndex, setSelectedChoiceIndex] = useState(0);
+  const [booleanChoiceIndex, setBooleanChoiceIndex] = useState(1); // 0 = Yes/true, 1 = No/false
   const [confirmSelectedIndex, setConfirmSelectedIndex] = useState(0); // 0 = Save, 1 = Cancel
 
   // Initialize field names and config values
@@ -86,15 +89,22 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
       const firstField = fields[0]!;
       const firstProp = configSchema.schema.properties[firstField] as ConfigProperty;
       if (firstProp.type === 'boolean') {
-        setCurrentInput('');
+        setCurrentInputBuffer('');
+        setCurrentInputCursor(0);
+        // Set boolean choice based on current value or default to No (false)
+        const currentValue = initialValues[firstField] ?? firstProp.default ?? false;
+        setBooleanChoiceIndex(currentValue ? 0 : 1);
       } else if (firstProp.type === 'choice') {
-        setCurrentInput('');
+        setCurrentInputBuffer('');
+        setCurrentInputCursor(0);
         // Set selected choice index based on current value or default
         const currentValue = initialValues[firstField] ?? firstProp.default;
         const choiceIndex = firstProp.choices?.findIndex(c => c.value === currentValue) ?? 0;
         setSelectedChoiceIndex(choiceIndex >= 0 ? choiceIndex : 0);
       } else {
-        setCurrentInput(String(initialValues[firstField] ?? ''));
+        const initialValue = String(initialValues[firstField] ?? '');
+        setCurrentInputBuffer(initialValue);
+        setCurrentInputCursor(initialValue.length);
       }
     }
   }, [configSchema, existingConfig]);
@@ -119,11 +129,14 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
       }
     } else if (step === ConfigStep.FIELD_INPUT && currentProperty) {
       if (currentProperty.type === 'boolean') {
-        // Boolean field - Y/N input
-        if (PLUGIN_UI.BOOLEAN_YES.includes(input as any)) {
-          handleFieldSubmit(true);
-        } else if (PLUGIN_UI.BOOLEAN_NO.includes(input as any)) {
-          handleFieldSubmit(false);
+        // Boolean field - arrow key navigation
+        if (key.upArrow) {
+          setBooleanChoiceIndex(prev => (prev > 0 ? prev - 1 : 1));
+        } else if (key.downArrow) {
+          setBooleanChoiceIndex(prev => (prev < 1 ? prev + 1 : 0));
+        } else if (key.return) {
+          // 0 = Yes/true, 1 = No/false
+          handleFieldSubmit(booleanChoiceIndex === 0);
         }
       } else if (currentProperty.type === 'choice') {
         // Choice field - arrow keys and Enter
@@ -141,27 +154,8 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
             handleFieldSubmit(choice.value);
           }
         }
-      } else {
-        // Text/Number/Secret field - text input
-        if (key.return) {
-          if (currentProperty.type === 'number') {
-            const numValue = parseFloat(currentInput);
-            if (isNaN(numValue) && currentInput.trim() !== '') {
-              setError('Please enter a valid number');
-              return;
-            }
-            handleFieldSubmit(currentInput.trim() === '' ? undefined : numValue);
-          } else {
-            handleFieldSubmit(currentInput);
-          }
-        } else if (key.backspace || key.delete) {
-          setCurrentInput((prev) => prev.slice(0, -1));
-          setError(null);
-        } else if (input && !key.ctrl && !key.meta) {
-          setCurrentInput((prev) => prev + input);
-          setError(null);
-        }
       }
+      // Text/Number/Secret fields are now handled by TextInput component
     } else if (step === ConfigStep.CONFIRM) {
       // Up arrow - navigate to previous option
       if (key.upArrow) {
@@ -181,6 +175,24 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
       }
     }
   });
+
+  const handleTextFieldSubmit = (value: string) => {
+    if (!currentField || !currentProperty) return;
+
+    let processedValue: any = value;
+
+    // Process based on type
+    if (currentProperty.type === 'number') {
+      const numValue = parseFloat(value);
+      if (isNaN(numValue) && value.trim() !== '') {
+        setError('Please enter a valid number');
+        return;
+      }
+      processedValue = value.trim() === '' ? undefined : numValue;
+    }
+
+    handleFieldSubmit(processedValue);
+  };
 
   const handleFieldSubmit = (value: any) => {
     if (!currentField || !currentProperty) return;
@@ -211,15 +223,22 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
       const nextProp = configSchema.schema.properties[nextField] as ConfigProperty;
 
       if (nextProp.type === 'boolean') {
-        setCurrentInput('');
+        setCurrentInputBuffer('');
+        setCurrentInputCursor(0);
+        // Set boolean choice based on current value or default to No (false)
+        const currentValue = newValues[nextField] ?? nextProp.default ?? false;
+        setBooleanChoiceIndex(currentValue ? 0 : 1);
       } else if (nextProp.type === 'choice') {
-        setCurrentInput('');
+        setCurrentInputBuffer('');
+        setCurrentInputCursor(0);
         // Set selected choice index based on current value or default
         const currentValue = newValues[nextField] ?? nextProp.default;
         const choiceIndex = nextProp.choices?.findIndex(c => c.value === currentValue) ?? 0;
         setSelectedChoiceIndex(choiceIndex >= 0 ? choiceIndex : 0);
       } else {
-        setCurrentInput(String(newValues[nextField] ?? ''));
+        const nextValue = String(newValues[nextField] ?? '');
+        setCurrentInputBuffer(nextValue);
+        setCurrentInputCursor(nextValue.length);
       }
     } else {
       setStep(ConfigStep.CONFIRM);
@@ -334,7 +353,6 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
 
     const progress = `${currentFieldIndex + 1}/${fieldNames.length}`;
     const isSecret = currentProperty.secret === true;
-    const displayValue = isSecret ? '*'.repeat(currentInput.length) : currentInput;
 
     return (
       <>
@@ -363,10 +381,13 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
         )}
 
         {currentProperty.type === 'boolean' ? (
-          <Box marginBottom={1}>
-            <Text>
-              Press <Text color={UI_COLORS.PRIMARY}>Y</Text> for Yes or <Text color={UI_COLORS.PRIMARY}>N</Text> for No
-            </Text>
+          <Box marginBottom={1} flexDirection="column">
+            <SelectionIndicator isSelected={booleanChoiceIndex === 0}>
+              Yes
+            </SelectionIndicator>
+            <SelectionIndicator isSelected={booleanChoiceIndex === 1}>
+              No
+            </SelectionIndicator>
           </Box>
         ) : currentProperty.type === 'choice' ? (
           <>
@@ -387,8 +408,25 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
           <>
             <Box marginBottom={1}>
               <Text color={UI_COLORS.PRIMARY}>{currentField}: </Text>
-              <Text>{displayValue}</Text>
-              <Text color={UI_COLORS.PRIMARY}>█</Text>
+              <TextInput
+                value={isSecret ? '*'.repeat(currentInputBuffer.length) : currentInputBuffer}
+                onValueChange={(newValue) => {
+                  // For secret fields, track actual value separately
+                  if (isSecret) {
+                    // Simple secret handling - just track length
+                    setCurrentInputBuffer(newValue);
+                  } else {
+                    setCurrentInputBuffer(newValue);
+                  }
+                }}
+                cursorPosition={currentInputCursor}
+                onCursorChange={setCurrentInputCursor}
+                onSubmit={handleTextFieldSubmit}
+                onEscape={onCancel}
+                isActive={true}
+                multiline={false}
+                placeholder={currentProperty.default !== undefined ? String(currentProperty.default) : ''}
+              />
             </Box>
             <Box marginBottom={1}>
               <Text dimColor>
@@ -401,9 +439,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
 
         <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
           <Text dimColor>
-            {currentProperty.type === 'boolean'
-              ? 'Press Y or N to continue'
-              : currentProperty.type === 'choice'
+            {currentProperty.type === 'boolean' || currentProperty.type === 'choice'
               ? 'Use ↑↓ arrow keys to navigate, Enter to select, ESC to cancel'
               : 'Press Enter to continue, ESC to cancel'}
           </Text>

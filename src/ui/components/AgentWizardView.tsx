@@ -14,6 +14,7 @@ import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { AgentGenerationService } from '@services/AgentGenerationService.js';
 import { ModalContainer } from './ModalContainer.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
 
 enum ConfigStep {
@@ -48,7 +49,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
   onCancel,
 }) => {
   const [step, setStep] = useState<ConfigStep>(ConfigStep.DESCRIPTION);
-  const [currentInput, setCurrentInput] = useState(initialDescription || '');
   const [error, setError] = useState<string | null>(null);
 
   // Track whether user is in navigation mode (vs typing mode)
@@ -56,6 +56,16 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
   // Navigation index: 0=Continue, 1=Back
   const [actionIndex, setActionIndex] = useState(0); // Default to Continue
   const [confirmIndex, setConfirmIndex] = useState(0); // 0=Create, 1=Back
+
+  // Text input buffers and cursors for each field
+  const [descriptionBuffer, setDescriptionBuffer] = useState(initialDescription || '');
+  const [descriptionCursor, setDescriptionCursor] = useState((initialDescription || '').length);
+  const [promptBuffer, setPromptBuffer] = useState('');
+  const [promptCursor, setPromptCursor] = useState(0);
+  const [descRefinementBuffer, setDescRefinementBuffer] = useState('');
+  const [descRefinementCursor, setDescRefinementCursor] = useState(0);
+  const [nameBuffer, setNameBuffer] = useState('');
+  const [nameCursor, setNameCursor] = useState(0);
 
   // Agent configuration values (populated from LLM generation, then customizable)
   const [customName, setCustomName] = useState('');
@@ -75,9 +85,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
   const [modelIndex, setModelIndex] = useState(0);
   const [_modelSupportsTools, setModelSupportsTools] = useState(true);
   const [modelChoiceIndex, setModelChoiceIndex] = useState(0); // 0=Yes, 1=No, 2=Back
-
-  // Scroll offset for viewing long prompts
-  const [promptScrollOffset, setPromptScrollOffset] = useState(0);
 
   // Get the previous step for backward navigation
   const getPreviousStep = (currentStep: ConfigStep): ConfigStep | null => {
@@ -123,7 +130,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
     setError(null);
 
     if (step === ConfigStep.DESCRIPTION) {
-      if (!currentInput.trim()) {
+      if (!descriptionBuffer.trim()) {
         setError('Description cannot be empty');
         return;
       }
@@ -131,23 +138,25 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
       setActionIndex(0);
       generateAgentConfig();
     } else if (step === ConfigStep.CUSTOMIZE_PROMPT) {
-      setCustomPromptLines(currentInput.split('\n'));
-      setCurrentInput(customDescription);
+      setCustomPromptLines(promptBuffer.split('\n'));
+      setDescRefinementBuffer(customDescription);
+      setDescRefinementCursor(customDescription.length);
       setInNavigationMode(false);
       setActionIndex(0);
       setStep(ConfigStep.CUSTOMIZE_DESCRIPTION);
     } else if (step === ConfigStep.CUSTOMIZE_DESCRIPTION) {
-      if (!currentInput.trim()) {
+      if (!descRefinementBuffer.trim()) {
         setError('Description cannot be empty');
         return;
       }
-      setCustomDescription(currentInput.trim());
-      setCurrentInput(customName);
+      setCustomDescription(descRefinementBuffer.trim());
+      setNameBuffer(customName);
+      setNameCursor(customName.length);
       setInNavigationMode(false);
       setActionIndex(0);
       setStep(ConfigStep.CUSTOMIZE_NAME);
     } else if (step === ConfigStep.CUSTOMIZE_NAME) {
-      const name = currentInput.trim();
+      const name = nameBuffer.trim();
       if (!name) {
         setError('Agent name is required');
         return;
@@ -172,23 +181,24 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
     setInNavigationMode(false);
     setActionIndex(0);
 
-    // Restore appropriate input state for the previous step
+    // Restore appropriate buffer state for the previous step
     switch (prevStep) {
       case ConfigStep.DESCRIPTION:
-        setCurrentInput(currentInput); // Keep current description
+        // Keep current description buffer
         break;
       case ConfigStep.CUSTOMIZE_PROMPT:
-        setCurrentInput(customPromptLines.join('\n'));
-        setPromptScrollOffset(0);
+        setPromptBuffer(customPromptLines.join('\n'));
+        setPromptCursor(customPromptLines.join('\n').length);
         break;
       case ConfigStep.CUSTOMIZE_DESCRIPTION:
-        setCurrentInput(customDescription);
+        setDescRefinementBuffer(customDescription);
+        setDescRefinementCursor(customDescription.length);
         break;
       case ConfigStep.CUSTOMIZE_NAME:
-        setCurrentInput(customName);
+        setNameBuffer(customName);
+        setNameCursor(customName.length);
         break;
       default:
-        setCurrentInput('');
         break;
     }
 
@@ -298,14 +308,14 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         throw new Error('Agent generation service not available');
       }
 
-      const result = await agentGenerationService.generateAgent(currentInput);
+      const result = await agentGenerationService.generateAgent(descriptionBuffer);
 
       // Initialize values with generated values (user can customize them next)
       setCustomName(result.name);
       setCustomDescription(result.description);
       setCustomPromptLines(result.systemPrompt.split('\n'));
-      setCurrentInput(result.systemPrompt);
-      setPromptScrollOffset(0); // Reset scroll to top
+      setPromptBuffer(result.systemPrompt);
+      setPromptCursor(result.systemPrompt.length);
 
       // Move to customization
       setStep(ConfigStep.CUSTOMIZE_PROMPT);
@@ -365,68 +375,28 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
     }
 
     if (step === ConfigStep.DESCRIPTION && !inNavigationMode) {
-      if (key.return && key.shift) {
-        // Shift+Enter adds a newline
-        setCurrentInput((prev) => prev + '\n');
-        setError(null);
-      } else if (key.return || key.downArrow) {
+      if (key.return || key.downArrow) {
         // Enter or Down arrow switches to navigation mode
         setInNavigationMode(true);
         setActionIndex(0); // Default to Continue
-      } else if (key.backspace || key.delete) {
-        setCurrentInput((prev) => prev.slice(0, -1));
-        setError(null);
-      } else if (input && !key.ctrl && !key.meta) {
-        setCurrentInput((prev) => prev + input);
-        setError(null);
       }
     } else if (step === ConfigStep.CUSTOMIZE_PROMPT && !inNavigationMode) {
-      if (key.upArrow) {
-        // Scroll up
-        setPromptScrollOffset((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        // Scroll down
-        const lines = currentInput.split('\n');
-        const maxOffset = Math.max(0, lines.length - 10); // Show 10 lines at a time
-        setPromptScrollOffset((prev) => Math.min(maxOffset, prev + 1));
-      } else if (key.return && key.shift) {
-        // Shift+Enter adds a newline
-        setCurrentInput((prev) => prev + '\n');
-        setError(null);
-      } else if (key.return || key.tab) {
+      if (key.return || key.tab) {
         // Enter or Tab switches to navigation mode
         setInNavigationMode(true);
         setActionIndex(0);
-      } else if (key.backspace || key.delete) {
-        setCurrentInput((prev) => prev.slice(0, -1));
-        setError(null);
-      } else if (input && !key.ctrl && !key.meta) {
-        setCurrentInput((prev) => prev + input);
-        setError(null);
       }
     } else if (step === ConfigStep.CUSTOMIZE_DESCRIPTION && !inNavigationMode) {
       if (key.return || key.downArrow) {
         // Enter or Down arrow switches to navigation mode
         setInNavigationMode(true);
         setActionIndex(0);
-      } else if (key.backspace || key.delete) {
-        setCurrentInput((prev) => prev.slice(0, -1));
-        setError(null);
-      } else if (input && !key.ctrl && !key.meta) {
-        setCurrentInput((prev) => prev + input);
-        setError(null);
       }
     } else if (step === ConfigStep.CUSTOMIZE_NAME && !inNavigationMode) {
       if (key.return || key.downArrow) {
         // Enter or Down arrow switches to navigation mode
         setInNavigationMode(true);
         setActionIndex(0);
-      } else if (key.backspace || key.delete) {
-        setCurrentInput((prev) => prev.slice(0, -1));
-        setError(null);
-      } else if (input && !key.ctrl && !key.meta) {
-        setCurrentInput((prev) => prev + input);
-        setError(null);
       }
     } else if (step === ConfigStep.MODEL_CHOICE) {
       if (key.upArrow) {
@@ -559,34 +529,20 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         {step === ConfigStep.DESCRIPTION && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
-              <Text dimColor>Detailed Description ({currentInput.length} chars):</Text>
+              <Text dimColor>Detailed Description ({descriptionBuffer.length} chars):</Text>
             </Box>
-            <Box marginBottom={1} marginLeft={1} flexDirection="column">
-              {currentInput.length === 0 && !inNavigationMode ? (
-                <Box>
-                  <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-                  <Text color="gray">█</Text>
-                </Box>
-              ) : inNavigationMode ? (
-                // Show read-only preview when in navigation mode
-                currentInput.split('\n').slice(-5).map((line, i) => (
-                  <Box key={i}>
-                    <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-                    <Text>{line}</Text>
-                  </Box>
-                ))
-              ) : (
-                // Show editable text with cursor
-                currentInput.split('\n').slice(-5).map((line, i) => (
-                  <Box key={i}>
-                    <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-                    <Text>{line}</Text>
-                    {i === currentInput.split('\n').slice(-5).length - 1 && (
-                      <Text color="gray">█</Text>
-                    )}
-                  </Box>
-                ))
-              )}
+            <Box marginBottom={1}>
+              <TextInput
+                value={descriptionBuffer}
+                onValueChange={setDescriptionBuffer}
+                cursorPosition={descriptionCursor}
+                onCursorChange={setDescriptionCursor}
+                onSubmit={handleContinue}
+                onEscape={onCancel}
+                isActive={!inNavigationMode}
+                multiline={true}
+                placeholder="Describe your agent in detail..."
+              />
             </Box>
 
             {/* Always show navigation options */}
@@ -641,39 +597,20 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         {step === ConfigStep.CUSTOMIZE_PROMPT && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
-              <Text dimColor>Customize System Prompt ({currentInput.length} chars):</Text>
+              <Text dimColor>Customize System Prompt ({promptBuffer.length} chars):</Text>
             </Box>
-            <Box marginBottom={1} marginLeft={1} flexDirection="column">
-              {(() => {
-                const lines = currentInput.split('\n');
-                const visibleLines = 10;
-                const hasMoreAbove = promptScrollOffset > 0;
-                const hasMoreBelow = promptScrollOffset + visibleLines < lines.length;
-                const visibleSlice = lines.slice(promptScrollOffset, promptScrollOffset + visibleLines);
-
-                return (
-                  <>
-                    {hasMoreAbove && (
-                      <Text dimColor>↑ {promptScrollOffset} more line{promptScrollOffset === 1 ? '' : 's'} above</Text>
-                    )}
-                    {visibleSlice.map((line, i) => (
-                      <Box key={i}>
-                        <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-                        <Text>{line}</Text>
-                      </Box>
-                    ))}
-                    {!inNavigationMode && (
-                      <Box>
-                        <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-                        <Text color="gray">█</Text>
-                      </Box>
-                    )}
-                    {hasMoreBelow && (
-                      <Text dimColor>↓ {lines.length - promptScrollOffset - visibleLines} more line{lines.length - promptScrollOffset - visibleLines === 1 ? '' : 's'} below</Text>
-                    )}
-                  </>
-                );
-              })()}
+            <Box marginBottom={1}>
+              <TextInput
+                value={promptBuffer}
+                onValueChange={setPromptBuffer}
+                cursorPosition={promptCursor}
+                onCursorChange={setPromptCursor}
+                onSubmit={handleContinue}
+                onEscape={onCancel}
+                isActive={!inNavigationMode}
+                multiline={true}
+                placeholder="System prompt..."
+              />
             </Box>
 
             {/* Always show navigation options */}
@@ -713,11 +650,22 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
         {step === ConfigStep.CUSTOMIZE_DESCRIPTION && (
           <Box flexDirection="column">
-            <Text>
-              <Text dimColor>Customize Description: </Text>
-              <Text>{currentInput}</Text>
-              {!inNavigationMode && <Text color="gray">█</Text>}
-            </Text>
+            <Box marginBottom={1}>
+              <Text dimColor>Customize Description:</Text>
+            </Box>
+            <Box marginBottom={1}>
+              <TextInput
+                value={descRefinementBuffer}
+                onValueChange={setDescRefinementBuffer}
+                cursorPosition={descRefinementCursor}
+                onCursorChange={setDescRefinementCursor}
+                onSubmit={handleContinue}
+                onEscape={onCancel}
+                isActive={!inNavigationMode}
+                multiline={false}
+                placeholder="Brief description shown in listings"
+              />
+            </Box>
 
             {/* Always show navigation options */}
             <Box marginTop={1} flexDirection="column">
@@ -756,11 +704,22 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
         {step === ConfigStep.CUSTOMIZE_NAME && (
           <Box flexDirection="column">
-            <Text>
-              <Text dimColor>Customize Name: </Text>
-              <Text>{currentInput}</Text>
-              {!inNavigationMode && <Text color="gray">█</Text>}
-            </Text>
+            <Box marginBottom={1}>
+              <Text dimColor>Customize Name:</Text>
+            </Box>
+            <Box marginBottom={1}>
+              <TextInput
+                value={nameBuffer}
+                onValueChange={setNameBuffer}
+                cursorPosition={nameCursor}
+                onCursorChange={setNameCursor}
+                onSubmit={handleContinue}
+                onEscape={onCancel}
+                isActive={!inNavigationMode}
+                multiline={false}
+                placeholder="agent-name"
+              />
+            </Box>
 
             {/* Always show navigation options */}
             <Box marginTop={1} flexDirection="column">

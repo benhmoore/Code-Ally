@@ -17,6 +17,8 @@ import * as path from 'path';
 import { UI_COLORS } from '../constants/colors.js';
 import { ModalContainer } from './ModalContainer.js';
 import { ChickAnimation } from './ChickAnimation.js';
+import { SelectionIndicator } from './SelectionIndicator.js';
+import { TextInput } from './TextInput.js';
 
 enum WizardStep {
   WELCOME,
@@ -39,117 +41,114 @@ interface ProjectWizardViewProps {
 
 export const ProjectWizardView: React.FC<ProjectWizardViewProps> = ({ onComplete, onSkip }) => {
   const [step, setStep] = useState<WizardStep>(WizardStep.WELCOME);
+  const [welcomeChoiceIndex, setWelcomeChoiceIndex] = useState(0); // 0 = Continue, 1 = Skip
   const [projectName, setProjectName] = useState(path.basename(process.cwd()));
-  const [projectNameInput, setProjectNameInput] = useState(path.basename(process.cwd()));
+  const [projectNameBuffer, setProjectNameBuffer] = useState(path.basename(process.cwd()));
+  const [projectNameCursor, setProjectNameCursor] = useState(path.basename(process.cwd()).length);
   const [description, setDescription] = useState('');
-  const [descriptionInput, setDescriptionInput] = useState('');
+  const [descriptionBuffer, setDescriptionBuffer] = useState('');
+  const [descriptionCursor, setDescriptionCursor] = useState(0);
   const [language, setLanguage] = useState('TypeScript');
-  const [languageInput, setLanguageInput] = useState('TypeScript');
+  const [languageBuffer, setLanguageBuffer] = useState('TypeScript');
+  const [languageCursor, setLanguageCursor] = useState('TypeScript'.length);
   const [setupCommands, setSetupCommands] = useState<string[]>([]);
-  const [setupCommandInput, setSetupCommandInput] = useState('');
+  const [setupCommandBuffer, setSetupCommandBuffer] = useState('');
+  const [setupCommandCursor, setSetupCommandCursor] = useState(0);
   const [buildCommands, setBuildCommands] = useState<string[]>([]);
-  const [buildCommandInput, setBuildCommandInput] = useState('');
+  const [buildCommandBuffer, setBuildCommandBuffer] = useState('');
+  const [buildCommandCursor, setBuildCommandCursor] = useState(0);
   const [testCommands, setTestCommands] = useState<string[]>([]);
-  const [testCommandInput, setTestCommandInput] = useState('');
+  const [testCommandBuffer, setTestCommandBuffer] = useState('');
+  const [testCommandCursor, setTestCommandCursor] = useState(0);
   const [formatter, setFormatter] = useState('');
-  const [formatterInput, setFormatterInput] = useState('');
+  const [formatterBuffer, setFormatterBuffer] = useState('');
+  const [formatterCursor, setFormatterCursor] = useState(0);
   const [linter, setLinter] = useState('');
-  const [linterInput, setLinterInput] = useState('');
+  const [linterBuffer, setLinterBuffer] = useState('');
+  const [linterCursor, setLinterCursor] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  // Handle keyboard input
+  // Submit handlers for each step
+  const handleProjectNameSubmit = (value: string) => {
+    setProjectName(value);
+    setStep(WizardStep.DESCRIPTION);
+  };
+
+  const handleDescriptionSubmit = (value: string) => {
+    setDescription(value);
+    setStep(WizardStep.LANGUAGE);
+  };
+
+  const handleLanguageSubmit = (value: string) => {
+    setLanguage(value);
+    setStep(WizardStep.SETUP_COMMANDS);
+  };
+
+  const handleSetupCommandSubmit = (value: string) => {
+    if (value.trim()) {
+      setSetupCommands([...setupCommands, value.trim()]);
+      setSetupCommandBuffer('');
+      setSetupCommandCursor(0);
+    } else {
+      setStep(WizardStep.BUILD_COMMANDS);
+    }
+  };
+
+  const handleBuildCommandSubmit = (value: string) => {
+    if (value.trim()) {
+      setBuildCommands([...buildCommands, value.trim()]);
+      setBuildCommandBuffer('');
+      setBuildCommandCursor(0);
+    } else {
+      setStep(WizardStep.TEST_COMMANDS);
+    }
+  };
+
+  const handleTestCommandSubmit = (value: string) => {
+    if (value.trim()) {
+      setTestCommands([...testCommands, value.trim()]);
+      setTestCommandBuffer('');
+      setTestCommandCursor(0);
+    } else {
+      setStep(WizardStep.FORMATTER);
+    }
+  };
+
+  const handleFormatterSubmit = (value: string) => {
+    setFormatter(value);
+    setStep(WizardStep.LINTER);
+  };
+
+  const handleLinterSubmit = (value: string) => {
+    setLinter(value);
+    generateAllyFile();
+  };
+
+  // Handle keyboard input for non-text-input steps
   useInput((input, key) => {
+    // ESC or Ctrl+C - exit
+    if (key.escape || (key.ctrl && input === 'c')) {
+      if (onSkip) {
+        onSkip();
+      }
+      return;
+    }
+
     if (step === WizardStep.WELCOME) {
-      if (key.return) {
-        setStep(WizardStep.PROJECT_NAME);
-      } else if (input === 's' || input === 'S') {
-        if (onSkip) {
-          onSkip();
-        }
-      }
-    } else if (step === WizardStep.PROJECT_NAME) {
-      if (key.return) {
-        setProjectName(projectNameInput);
-        setStep(WizardStep.DESCRIPTION);
-      } else if (key.backspace || key.delete) {
-        setProjectNameInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setProjectNameInput((prev) => prev + input);
-      }
-    } else if (step === WizardStep.DESCRIPTION) {
-      if (key.return) {
-        setDescription(descriptionInput);
-        setStep(WizardStep.LANGUAGE);
-      } else if (key.backspace || key.delete) {
-        setDescriptionInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setDescriptionInput((prev) => prev + input);
-      }
-    } else if (step === WizardStep.LANGUAGE) {
-      if (key.return) {
-        setLanguage(languageInput);
-        setStep(WizardStep.SETUP_COMMANDS);
-      } else if (key.backspace || key.delete) {
-        setLanguageInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setLanguageInput((prev) => prev + input);
-      }
-    } else if (step === WizardStep.SETUP_COMMANDS) {
-      if (key.return) {
-        if (setupCommandInput.trim()) {
-          setSetupCommands([...setupCommands, setupCommandInput.trim()]);
-          setSetupCommandInput('');
+      if (key.upArrow) {
+        setWelcomeChoiceIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setWelcomeChoiceIndex((prev) => Math.min(1, prev + 1));
+      } else if (key.return) {
+        if (welcomeChoiceIndex === 0) {
+          // Continue
+          setStep(WizardStep.PROJECT_NAME);
         } else {
-          setStep(WizardStep.BUILD_COMMANDS);
+          // Skip
+          if (onSkip) {
+            onSkip();
+          }
         }
-      } else if (key.backspace || key.delete) {
-        setSetupCommandInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setSetupCommandInput((prev) => prev + input);
-      }
-    } else if (step === WizardStep.BUILD_COMMANDS) {
-      if (key.return) {
-        if (buildCommandInput.trim()) {
-          setBuildCommands([...buildCommands, buildCommandInput.trim()]);
-          setBuildCommandInput('');
-        } else {
-          setStep(WizardStep.TEST_COMMANDS);
-        }
-      } else if (key.backspace || key.delete) {
-        setBuildCommandInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setBuildCommandInput((prev) => prev + input);
-      }
-    } else if (step === WizardStep.TEST_COMMANDS) {
-      if (key.return) {
-        if (testCommandInput.trim()) {
-          setTestCommands([...testCommands, testCommandInput.trim()]);
-          setTestCommandInput('');
-        } else {
-          setStep(WizardStep.FORMATTER);
-        }
-      } else if (key.backspace || key.delete) {
-        setTestCommandInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setTestCommandInput((prev) => prev + input);
-      }
-    } else if (step === WizardStep.FORMATTER) {
-      if (key.return) {
-        setFormatter(formatterInput);
-        setStep(WizardStep.LINTER);
-      } else if (key.backspace || key.delete) {
-        setFormatterInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setFormatterInput((prev) => prev + input);
-      }
-    } else if (step === WizardStep.LINTER) {
-      if (key.return) {
-        setLinter(linterInput);
-        generateAllyFile();
-      } else if (key.backspace || key.delete) {
-        setLinterInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setLinterInput((prev) => prev + input);
       }
     } else if (step === WizardStep.COMPLETED) {
       if (key.return) {
@@ -260,10 +259,16 @@ This file provides project-specific guidance to Code Ally when working with this
           </Box>
 
           {/* Footer separator */}
-          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-            <Text>
-              Press <Text color={UI_COLORS.PRIMARY}>Enter</Text> to continue or <Text color={UI_COLORS.PRIMARY}>S</Text> to skip
-            </Text>
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1} flexDirection="column" gap={1}>
+            <Text dimColor>Select an option:</Text>
+            <Box marginLeft={2} flexDirection="column">
+              <SelectionIndicator isSelected={welcomeChoiceIndex === 0}>
+                Continue
+              </SelectionIndicator>
+              <SelectionIndicator isSelected={welcomeChoiceIndex === 1}>
+                Skip
+              </SelectionIndicator>
+            </Box>
           </Box>
         </>
       )}
@@ -285,8 +290,17 @@ This file provides project-specific guidance to Code Ally when working with this
           </Box>
           <Box marginBottom={1}>
             <Text color={UI_COLORS.PRIMARY}>Project Name: </Text>
-            <Text>{projectNameInput}</Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+            <TextInput
+              value={projectNameBuffer}
+              onValueChange={setProjectNameBuffer}
+              cursorPosition={projectNameCursor}
+              onCursorChange={setProjectNameCursor}
+              onSubmit={handleProjectNameSubmit}
+              onEscape={onSkip}
+              isActive={true}
+              multiline={false}
+              placeholder="my-project"
+            />
           </Box>
           <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to continue</Text>
@@ -311,8 +325,17 @@ This file provides project-specific guidance to Code Ally when working with this
           </Box>
           <Box marginBottom={1}>
             <Text color={UI_COLORS.PRIMARY}>Description: </Text>
-            <Text>{descriptionInput}</Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+            <TextInput
+              value={descriptionBuffer}
+              onValueChange={setDescriptionBuffer}
+              cursorPosition={descriptionCursor}
+              onCursorChange={setDescriptionCursor}
+              onSubmit={handleDescriptionSubmit}
+              onEscape={onSkip}
+              isActive={true}
+              multiline={false}
+              placeholder="A brief description"
+            />
           </Box>
           <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to continue</Text>
@@ -337,8 +360,17 @@ This file provides project-specific guidance to Code Ally when working with this
           </Box>
           <Box marginBottom={1}>
             <Text color={UI_COLORS.PRIMARY}>Language: </Text>
-            <Text>{languageInput}</Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+            <TextInput
+              value={languageBuffer}
+              onValueChange={setLanguageBuffer}
+              cursorPosition={languageCursor}
+              onCursorChange={setLanguageCursor}
+              onSubmit={handleLanguageSubmit}
+              onEscape={onSkip}
+              isActive={true}
+              multiline={false}
+              placeholder="TypeScript"
+            />
           </Box>
           <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to continue</Text>
@@ -373,8 +405,17 @@ This file provides project-specific guidance to Code Ally when working with this
           )}
           <Box marginBottom={1}>
             <Text color={UI_COLORS.PRIMARY}>Command: </Text>
-            <Text>{setupCommandInput}</Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+            <TextInput
+              value={setupCommandBuffer}
+              onValueChange={setSetupCommandBuffer}
+              cursorPosition={setupCommandCursor}
+              onCursorChange={setSetupCommandCursor}
+              onSubmit={handleSetupCommandSubmit}
+              onEscape={onSkip}
+              isActive={true}
+              multiline={false}
+              placeholder="npm install"
+            />
           </Box>
           <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to add command, or Enter on empty line to continue</Text>
@@ -409,8 +450,17 @@ This file provides project-specific guidance to Code Ally when working with this
           )}
           <Box marginBottom={1}>
             <Text color={UI_COLORS.PRIMARY}>Command: </Text>
-            <Text>{buildCommandInput}</Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+            <TextInput
+              value={buildCommandBuffer}
+              onValueChange={setBuildCommandBuffer}
+              cursorPosition={buildCommandCursor}
+              onCursorChange={setBuildCommandCursor}
+              onSubmit={handleBuildCommandSubmit}
+              onEscape={onSkip}
+              isActive={true}
+              multiline={false}
+              placeholder="npm run build"
+            />
           </Box>
           <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to add command, or Enter on empty line to continue</Text>
@@ -445,8 +495,17 @@ This file provides project-specific guidance to Code Ally when working with this
           )}
           <Box marginBottom={1}>
             <Text color={UI_COLORS.PRIMARY}>Command: </Text>
-            <Text>{testCommandInput}</Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+            <TextInput
+              value={testCommandBuffer}
+              onValueChange={setTestCommandBuffer}
+              cursorPosition={testCommandCursor}
+              onCursorChange={setTestCommandCursor}
+              onSubmit={handleTestCommandSubmit}
+              onEscape={onSkip}
+              isActive={true}
+              multiline={false}
+              placeholder="npm test"
+            />
           </Box>
           <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to add command, or Enter on empty line to continue</Text>
@@ -471,8 +530,17 @@ This file provides project-specific guidance to Code Ally when working with this
           </Box>
           <Box marginBottom={1}>
             <Text color={UI_COLORS.PRIMARY}>Formatter: </Text>
-            <Text>{formatterInput}</Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+            <TextInput
+              value={formatterBuffer}
+              onValueChange={setFormatterBuffer}
+              cursorPosition={formatterCursor}
+              onCursorChange={setFormatterCursor}
+              onSubmit={handleFormatterSubmit}
+              onEscape={onSkip}
+              isActive={true}
+              multiline={false}
+              placeholder="prettier"
+            />
           </Box>
           <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to continue</Text>
@@ -497,8 +565,17 @@ This file provides project-specific guidance to Code Ally when working with this
           </Box>
           <Box marginBottom={1}>
             <Text color={UI_COLORS.PRIMARY}>Linter: </Text>
-            <Text>{linterInput}</Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+            <TextInput
+              value={linterBuffer}
+              onValueChange={setLinterBuffer}
+              cursorPosition={linterCursor}
+              onCursorChange={setLinterCursor}
+              onSubmit={handleLinterSubmit}
+              onEscape={onSkip}
+              isActive={true}
+              multiline={false}
+              placeholder="eslint"
+            />
           </Box>
           <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to generate ALLY.md</Text>

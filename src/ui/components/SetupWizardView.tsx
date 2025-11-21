@@ -22,6 +22,7 @@ import { ProgressIndicator } from './ProgressIndicator.js';
 import { testModelToolCalling } from '@llm/ModelValidation.js';
 import { ModalContainer } from './ModalContainer.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
 
 enum SetupStep {
@@ -50,8 +51,10 @@ interface SetupWizardViewProps {
 
 export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, onSkip }) => {
   const [step, setStep] = useState<SetupStep>(SetupStep.WELCOME);
+  const [welcomeChoiceIndex, setWelcomeChoiceIndex] = useState(0); // 0 = Continue, 1 = Skip
   const [endpoint, setEndpoint] = useState('http://localhost:11434');
-  const [endpointInput, setEndpointInput] = useState('http://localhost:11434');
+  const [endpointBuffer, setEndpointBuffer] = useState('http://localhost:11434');
+  const [endpointCursor, setEndpointCursor] = useState('http://localhost:11434'.length);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [customizeAgentModels, setCustomizeAgentModels] = useState(false);
@@ -60,7 +63,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const [selectedPlanModelIndex, setSelectedPlanModelIndex] = useState(0);
   const [selectedContextSizeIndex, setSelectedContextSizeIndex] = useState(1); // Default to 32K
   const [temperature, setTemperature] = useState('0.3');
-  const [temperatureInput, setTemperatureInput] = useState('0.3');
+  const [temperatureBuffer, setTemperatureBuffer] = useState('0.3');
+  const [temperatureCursor, setTemperatureCursor] = useState('0.3'.length);
   const [autoConfirm, setAutoConfirm] = useState(false);
   const [selectedAutoConfirmChoiceIndex, setSelectedAutoConfirmChoiceIndex] = useState(1); // Default to "No"
   const [isLaptop, setIsLaptop] = useState(false);
@@ -98,28 +102,20 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
 
     if (step === SetupStep.WELCOME) {
-      if (key.return) {
-        setStep(SetupStep.ENDPOINT);
-      } else if (input === 's' || input === 'S') {
-        if (onSkip) {
-          onSkip();
+      if (key.upArrow) {
+        setWelcomeChoiceIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setWelcomeChoiceIndex((prev) => Math.min(1, prev + 1));
+      } else if (key.return) {
+        if (welcomeChoiceIndex === 0) {
+          // Continue
+          setStep(SetupStep.ENDPOINT);
+        } else {
+          // Skip
+          if (onSkip) {
+            onSkip();
+          }
         }
-      }
-    } else if (step === SetupStep.ENDPOINT) {
-      if (key.return) {
-        handleEndpointSubmit();
-      } else if (key.backspace || key.delete) {
-        setEndpointInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setEndpointInput((prev) => prev + input);
-      }
-    } else if (step === SetupStep.TEMPERATURE) {
-      if (key.return) {
-        handleTemperatureSubmit();
-      } else if (key.backspace || key.delete) {
-        setTemperatureInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setTemperatureInput((prev) => prev + input);
       }
     } else if (step === SetupStep.MODEL) {
       if (key.upArrow) {
@@ -351,18 +347,18 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
   };
 
-  const handleEndpointSubmit = () => {
-    if (!endpointInput.trim()) {
+  const handleEndpointSubmit = (value: string) => {
+    if (!value.trim()) {
       setError('Endpoint cannot be empty');
       return;
     }
-    setEndpoint(endpointInput);
+    setEndpoint(value);
     setError(null);
     setStep(SetupStep.VALIDATING_ENDPOINT);
   };
 
-  const handleTemperatureSubmit = () => {
-    const temp = parseFloat(temperatureInput);
+  const handleTemperatureSubmit = (value: string) => {
+    const temp = parseFloat(value);
     if (isNaN(temp)) {
       setError('Temperature must be a number');
       return;
@@ -371,7 +367,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       setError('Temperature must be between 0.0 and 2.0');
       return;
     }
-    setTemperature(temperatureInput);
+    setTemperature(value);
     setError(null);
     setStep(SetupStep.AUTO_CONFIRM);
   };
@@ -465,10 +461,16 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text dimColor>• Temperature</Text>
               <Text dimColor>• Auto-confirm preference</Text>
             </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text>
-                Press <Text color={UI_COLORS.PRIMARY}>Enter</Text> to continue or <Text color={UI_COLORS.PRIMARY}>S</Text> to skip
-              </Text>
+            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1} flexDirection="column" gap={1}>
+              <Text dimColor>Select an option:</Text>
+              <Box marginLeft={2} flexDirection="column">
+                <SelectionIndicator isSelected={welcomeChoiceIndex === 0}>
+                  Continue
+                </SelectionIndicator>
+                <SelectionIndicator isSelected={welcomeChoiceIndex === 1}>
+                  Skip
+                </SelectionIndicator>
+              </Box>
             </Box>
           </>
         )}
@@ -496,8 +498,17 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             )}
             <Box marginBottom={1}>
               <Text color={UI_COLORS.PRIMARY}>Endpoint: </Text>
-              <Text>{endpointInput}</Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+              <TextInput
+                value={endpointBuffer}
+                onValueChange={setEndpointBuffer}
+                cursorPosition={endpointCursor}
+                onCursorChange={setEndpointCursor}
+                onSubmit={handleEndpointSubmit}
+                onEscape={() => process.exit(0)}
+                isActive={true}
+                multiline={false}
+                placeholder="http://localhost:11434"
+              />
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
               <Text dimColor>Press Enter to validate connection</Text>
@@ -780,8 +791,17 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             )}
             <Box marginBottom={1}>
               <Text color={UI_COLORS.PRIMARY}>Temperature: </Text>
-              <Text>{temperatureInput}</Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+              <TextInput
+                value={temperatureBuffer}
+                onValueChange={setTemperatureBuffer}
+                cursorPosition={temperatureCursor}
+                onCursorChange={setTemperatureCursor}
+                onSubmit={handleTemperatureSubmit}
+                onEscape={() => process.exit(0)}
+                isActive={true}
+                multiline={false}
+                placeholder="0.3"
+              />
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
               <Text dimColor>Enter a value between 0.0 and 2.0, then press Enter</Text>

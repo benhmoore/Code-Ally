@@ -7,10 +7,11 @@
  * - Tags: Comma-separated tags (optional)
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { ModalContainer } from './ModalContainer.js';
 import { ChickAnimation } from './ChickAnimation.js';
+import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
 
 interface PromptAddWizardProps {
@@ -38,6 +39,18 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
   const isEditMode = React.useMemo(() => {
     return title.trim().length > 0 && content.trim().length > 0;
   }, []); // Only check on mount
+
+  // Cursor positions for each field
+  const [titleCursor, setTitleCursor] = useState(title.length);
+  const [contentCursor, setContentCursor] = useState(content.length);
+  const [tagsCursor, setTagsCursor] = useState(tags.length);
+
+  // Submit handler for TextInput
+  const handleSubmit = () => {
+    if (focusedField !== 'content') {
+      onSubmit();
+    }
+  };
 
   useInput((input, key) => {
     // Cancel on Escape or Ctrl+C
@@ -75,19 +88,6 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
       }
       return;
     }
-
-    // Handle text input
-    if (key.backspace || key.delete) {
-      // Delete character
-      const currentValue = focusedField === 'title' ? title : focusedField === 'content' ? content : tags;
-      const newValue = currentValue.slice(0, -1);
-      onFieldChange(focusedField, newValue);
-    } else if (!key.ctrl && !key.meta && input) {
-      // Add character
-      const currentValue = focusedField === 'title' ? title : focusedField === 'content' ? content : tags;
-      const newValue = currentValue + input;
-      onFieldChange(focusedField, newValue);
-    }
   });
 
   const renderField = (
@@ -98,8 +98,8 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
     isMultiline: boolean = false
   ) => {
     const isFocused = focusedField === fieldName;
-    const displayValue = value || placeholder;
-    const showPlaceholder = !value;
+    const cursor = fieldName === 'title' ? titleCursor : fieldName === 'content' ? contentCursor : tagsCursor;
+    const setCursor = fieldName === 'title' ? setTitleCursor : fieldName === 'content' ? setContentCursor : setTagsCursor;
 
     return (
       <Box flexDirection="column" marginBottom={1}>
@@ -109,35 +109,19 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
         </Text>
 
         {/* Field input */}
-        {isMultiline && value ? (
-          // Multi-line content display (show last 3 lines)
-          <Box flexDirection="column" marginLeft={2}>
-            {value.split('\n').slice(-3).map((line, i, arr) => (
-              <Box key={i}>
-                <Text color={isFocused ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DIM}>
-                  {line}
-                  {isFocused && i === arr.length - 1 && (
-                    <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
-                  )}
-                </Text>
-              </Box>
-            ))}
-          </Box>
-        ) : (
-          // Single-line display
-          <Box marginLeft={2}>
-            {isFocused ? (
-              <Text color={UI_COLORS.PRIMARY}>
-                {value || ' '}
-                <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
-              </Text>
-            ) : (
-              <Text color={showPlaceholder ? UI_COLORS.TEXT_DIM : UI_COLORS.TEXT_DEFAULT}>
-                {displayValue}
-              </Text>
-            )}
-          </Box>
-        )}
+        <Box marginLeft={2}>
+          <TextInput
+            value={value}
+            onValueChange={(newValue) => onFieldChange(fieldName, newValue)}
+            cursorPosition={cursor}
+            onCursorChange={setCursor}
+            onSubmit={handleSubmit}
+            onEscape={onCancel}
+            isActive={isFocused}
+            multiline={isMultiline}
+            placeholder={placeholder}
+          />
+        </Box>
       </Box>
     );
   };
