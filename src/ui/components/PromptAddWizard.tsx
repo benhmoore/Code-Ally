@@ -10,6 +10,7 @@
 import React from 'react';
 import { Box, Text, useInput } from 'ink';
 import { ModalContainer } from './ModalContainer.js';
+import { ChickAnimation } from './ChickAnimation.js';
 import { UI_COLORS } from '../constants/colors.js';
 
 interface PromptAddWizardProps {
@@ -33,6 +34,11 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
   onSubmit,
   onCancel,
 }) => {
+  // Detect edit mode by checking if initial values are provided
+  const isEditMode = React.useMemo(() => {
+    return title.trim().length > 0 && content.trim().length > 0;
+  }, []); // Only check on mount
+
   useInput((input, key) => {
     // Cancel on Escape or Ctrl+C
     if (key.escape || (key.ctrl && input === 'c')) {
@@ -88,24 +94,50 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
     label: string,
     value: string,
     fieldName: 'title' | 'content' | 'tags',
-    placeholder: string
+    placeholder: string,
+    isMultiline: boolean = false
   ) => {
     const isFocused = focusedField === fieldName;
-    const displayValue = value || (isFocused ? '' : placeholder);
-    const color = isFocused ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DIM;
+    const displayValue = value || placeholder;
+    const showPlaceholder = !value;
 
     return (
       <Box flexDirection="column" marginBottom={1}>
-        <Text bold color={isFocused ? UI_COLORS.PRIMARY : undefined}>
+        {/* Field label */}
+        <Text bold color={isFocused ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DEFAULT}>
           {label}:
         </Text>
-        <Box>
-          <Text color={color}>
-            {isFocused && '> '}
-            {displayValue}
-            {isFocused && '_'}
-          </Text>
-        </Box>
+
+        {/* Field input */}
+        {isMultiline && value ? (
+          // Multi-line content display (show last 3 lines)
+          <Box flexDirection="column" marginLeft={2}>
+            {value.split('\n').slice(-3).map((line, i, arr) => (
+              <Box key={i}>
+                <Text color={isFocused ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DIM}>
+                  {line}
+                  {isFocused && i === arr.length - 1 && (
+                    <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+                  )}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          // Single-line display
+          <Box marginLeft={2}>
+            {isFocused ? (
+              <Text color={UI_COLORS.PRIMARY}>
+                {value || ' '}
+                <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+              </Text>
+            ) : (
+              <Text color={showPlaceholder ? UI_COLORS.TEXT_DIM : UI_COLORS.TEXT_DEFAULT}>
+                {displayValue}
+              </Text>
+            )}
+          </Box>
+        )}
       </Box>
     );
   };
@@ -116,27 +148,35 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
   return (
     <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
       <Box flexDirection="column">
-        {/* Title */}
-        <Box marginBottom={1}>
+        {/* Header with ChickAnimation */}
+        <Box marginBottom={1} flexDirection="row" gap={1}>
+          <Text bold>
+            <ChickAnimation />
+          </Text>
           <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-            Add Prompt
+            {isEditMode ? 'Edit Prompt' : 'Add Prompt'}
+          </Text>
+        </Box>
+
+        {/* Description */}
+        <Box marginBottom={1}>
+          <Text>
+            {isEditMode ? 'Update your saved prompt details' : 'Create a new prompt for your library'}
           </Text>
         </Box>
 
         {/* Form fields */}
         <Box flexDirection="column">
-          {renderField('Title', title, 'title', 'Enter a brief title')}
-          {renderField('Content', content, 'content', 'Enter the prompt content')}
-          {renderField('Tags', tags, 'tags', 'Optional: comma-separated tags')}
+          {renderField('Title', title, 'title', 'Enter a brief title', false)}
+          {renderField('Content', content, 'content', 'Enter the prompt content', true)}
+          {renderField('Tags', tags, 'tags', 'Optional: comma-separated tags', false)}
         </Box>
 
-        {/* Footer/instructions */}
-        <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>Tab/↑↓: Navigate fields</Text>
+        {/* Footer separator and instructions */}
+        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
           <Text dimColor>
-            Enter: Save prompt{!isValid && ' (title and content required)'}
+            Tab/↑↓: Navigate • Enter: Save{!isValid && ' (title and content required)'} • Esc: Cancel
           </Text>
-          <Text dimColor>Esc: Cancel</Text>
         </Box>
       </Box>
     </ModalContainer>

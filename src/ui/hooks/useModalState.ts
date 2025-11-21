@@ -200,6 +200,10 @@ export interface ModalState {
   inputPrefillText?: string;
   setInputPrefillText: (text?: string) => void;
 
+  // Prompt prefill tracking (from library)
+  promptPrefilled: boolean;
+  setPromptPrefilled: (prefilled: boolean) => void;
+
   // Undo prompt
   undoRequest?: UndoRequest;
   undoSelectedIndex: number;
@@ -291,6 +295,7 @@ export const useModalState = (): ModalState => {
   const [rewindRequest, setRewindRequest] = useState<RewindRequest | undefined>(undefined);
   const [rewindOptionsRequest, setRewindOptionsRequest] = useState<RewindOptionsRequest | undefined>(undefined);
   const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
+  const [promptPrefilled, setPromptPrefilled] = useState(false);
 
   // Undo prompt
   const [undoRequest, setUndoRequest] = useState<UndoRequest | undefined>(undefined);
@@ -370,6 +375,8 @@ export const useModalState = (): ModalState => {
     // Input prefill
     inputPrefillText,
     setInputPrefillText,
+    promptPrefilled,
+    setPromptPrefilled,
 
     // Undo prompt
     undoRequest,

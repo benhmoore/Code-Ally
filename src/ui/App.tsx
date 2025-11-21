@@ -1184,6 +1184,8 @@ const AppContentComponent: React.FC<{
             agent={agent}
             prefillText={modal.inputPrefillText}
             onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
+            promptPrefilled={modal.promptPrefilled}
+            onPromptPrefilledClear={() => modal.setPromptPrefilled(false)}
             onExitConfirmationChange={modal.setIsWaitingForExitConfirmation}
             bufferValue={modal.inputBuffer}
             onBufferChange={modal.setInputBuffer}

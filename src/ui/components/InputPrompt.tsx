@@ -111,6 +111,10 @@ interface InputPromptProps {
   onBufferChange?: (value: string) => void;
   /** Whether auto-allow mode is enabled (changes border color to danger) */
   autoAllowMode?: boolean;
+  /** Whether the input was prefilled from prompt library (changes border color to primary) */
+  promptPrefilled?: boolean;
+  /** Callback when prompt prefill state should be cleared (user modified buffer) */
+  onPromptPrefilledClear?: () => void;
 }
 
 /**
@@ -155,6 +159,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   bufferValue,
   onBufferChange,
   autoAllowMode = false,
+  promptPrefilled = false,
+  onPromptPrefilledClear,
 }) => {
   const { exit } = useApp();
   const [buffer, setBuffer] = useState(bufferValue || '');
@@ -317,6 +323,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const applyCompletion = () => {
     if (!showCompletions || completions.length === 0 || !completions[completionIndex]) {
       return;
+    }
+
+    // Clear prompt prefill highlight if user modifies buffer
+    if (promptPrefilled) {
+      onPromptPrefilledClear?.();
     }
 
     const completion = completions[completionIndex];
@@ -1324,6 +1335,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       if (key.return) {
         if (key.ctrl) {
           // Ctrl+Enter - Insert newline
+          // Clear prompt prefill highlight if user modifies buffer
+          if (promptPrefilled) {
+            onPromptPrefilledClear?.();
+          }
           const currentBuffer = bufferRef.current;
           const currentCursor = cursorPositionRef.current;
           const before = currentBuffer.slice(0, currentCursor);
@@ -1371,6 +1386,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
         // Priority 1: Clear buffer if it has content
         if (hasContent) {
+          // Clear prompt prefill highlight if user modifies buffer
+          if (promptPrefilled) {
+            onPromptPrefilledClear?.();
+          }
           setBuffer('');
           setCursorPosition(0);
           setHistoryIndex(-1);
@@ -1424,6 +1443,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       // ===== Kill Line (Ctrl+K) =====
       if (key.ctrl && input === 'k') {
+        // Clear prompt prefill highlight if user modifies buffer
+        if (promptPrefilled) {
+          onPromptPrefilledClear?.();
+        }
         const before = buffer.slice(0, cursorPosition);
         setBuffer(before);
         return;
@@ -1431,6 +1454,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       // ===== Delete to Start (Ctrl+U) =====
       if (key.ctrl && input === 'u') {
+        // Clear prompt prefill highlight if user modifies buffer
+        if (promptPrefilled) {
+          onPromptPrefilledClear?.();
+        }
         const after = buffer.slice(cursorPosition);
         setBuffer(after);
         setCursorPosition(0);
@@ -1440,6 +1467,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       // ===== Delete Word Backward (Ctrl+W) =====
       // Note: Also available via Alt+Backspace or Ctrl+Backspace
       if (key.ctrl && input === 'w') {
+        // Clear prompt prefill highlight if user modifies buffer
+        if (promptPrefilled) {
+          onPromptPrefilledClear?.();
+        }
         deleteWordBackward();
         return;
       }
@@ -1459,12 +1490,21 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       // ===== Delete Word Backward (Ctrl+Backspace OR Alt+Backspace) =====
       // Note: Alt+Backspace sends ESC+DEL (\x1b\x7f) which Ink parses as key.meta=true, key.delete=true
       if ((key.ctrl || key.meta) && (key.backspace || key.delete)) {
+        // Clear prompt prefill highlight if user modifies buffer
+        if (promptPrefilled) {
+          onPromptPrefilledClear?.();
+        }
         deleteWordBackward();
         return;
       }
 
       // ===== Backspace =====
       if (key.backspace || key.delete) {
+        // Clear prompt prefill highlight if user modifies buffer
+        if (promptPrefilled) {
+          onPromptPrefilledClear?.();
+        }
+
         // Regular backspace - delete single character
         const currentCursor = cursorPositionRef.current;
         if (currentCursor > 0) {
@@ -1492,6 +1532,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       // ===== Regular Character Input =====
       if (input && !key.ctrl && !key.meta) {
+        // Clear prompt prefill highlight if user modifies buffer
+        if (promptPrefilled) {
+          onPromptPrefilledClear?.();
+        }
+
         // Use refs to avoid stale closure issues with rapid paste events
         const currentBuffer = bufferRef.current;
         const currentCursor = cursorPositionRef.current;
@@ -1539,6 +1584,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   // Override border color when auto-allow mode is active (danger color)
   if (autoAllowMode) {
     promptColor = UI_COLORS.ERROR;
+  }
+
+  // Override border color when prompt is prefilled from library (primary color)
+  if (promptPrefilled && !autoAllowMode) {
+    promptColor = UI_COLORS.PRIMARY;
   }
 
   /**

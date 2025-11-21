@@ -1036,20 +1036,16 @@ export const useActivitySubscriptions = (
         const prompt = await promptLibraryManager.getPrompt(promptId);
 
         if (prompt) {
-          // Insert prompt content as a user message
+          // Insert prompt content into input field and mark as prefilled
           modal.setInputPrefillText(prompt.content);
+          modal.setPromptPrefilled(true);
         } else {
-          actions.addMessage({
-            role: 'assistant',
-            content: `Error: Prompt '${promptId}' not found`,
-          });
+          // Log error but don't add to chat
+          logger.error(`Prompt '${promptId}' not found`);
         }
       } catch (error) {
+        // Log error but don't add to chat
         logger.error('Failed to load prompt:', error);
-        actions.addMessage({
-          role: 'assistant',
-          content: `Error loading prompt: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        });
       }
     }
   });
