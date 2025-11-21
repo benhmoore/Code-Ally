@@ -753,14 +753,7 @@ export class ToolOrchestrator {
         logger.debug('[TOOL_ORCHESTRATOR]', 'Tool', toolName, 'completed - activity timer reset');
       }
 
-      // Record successful tool call for in-progress todo tracking (main agent only)
-      if (result.success && !this.config.isSpecializedAgent && !(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(toolName)) {
-        const registry = ServiceRegistry.getInstance();
-        const todoManager = registry.get<TodoManager>('todo_manager');
-        if (todoManager) {
-          todoManager.recordToolCall(toolName, args);
-        }
-      }
+      // Tool call recording removed in simplified todo system
 
       // Emit output chunks if result has content
       if (result.success && (result as any).content) {
@@ -1109,32 +1102,8 @@ export class ToolOrchestrator {
         return null;
       }
 
-      // Build tool call summary
-      let toolCallSummary = '';
-      const toolCalls = inProgressTodo.toolCalls || [];
-      if (toolCalls.length > 0) {
-        toolCallSummary = ` You've made ${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''} for this task:`;
-
-        // Group tool calls by tool name and show brief summary
-        const callsByTool = new Map<string, string[]>();
-        toolCalls.forEach((call: any) => {
-          if (!callsByTool.has(call.toolName)) {
-            callsByTool.set(call.toolName, []);
-          }
-          if (call.args) {
-            callsByTool.get(call.toolName)!.push(call.args);
-          }
-        });
-
-        // Format as brief list
-        for (const [toolName, argsList] of callsByTool) {
-          const uniqueArgs = [...new Set(argsList)]; // Deduplicate
-          const argStr = uniqueArgs.slice(0, BUFFER_SIZES.TOP_ITEMS_PREVIEW).join(', ') + (uniqueArgs.length > BUFFER_SIZES.TOP_ITEMS_PREVIEW ? '...' : '');
-          toolCallSummary += `\n- ${toolName}(${argStr})`;
-        }
-      }
-
-      return createFocusReminder(inProgressTodo.task, toolCallSummary);
+      // Tool call summary removed in simplified todo system
+      return createFocusReminder(inProgressTodo.task, '');
     } catch (error) {
       logger.warn('[TOOL_ORCHESTRATOR] Failed to generate focus reminder:', formatError(error));
       return null;

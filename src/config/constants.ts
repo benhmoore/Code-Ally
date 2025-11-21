@@ -348,6 +348,9 @@ export const BUFFER_SIZES = {
   /** Top items preview size (3 items) */
   TOP_ITEMS_PREVIEW: 3,
 
+  /** Default number of debug history items to show (5 items) */
+  DEBUG_HISTORY_DEFAULT: 5,
+
   /** Maximum completion results (20 items) */
   MAX_COMPLETION_RESULTS: 20,
 

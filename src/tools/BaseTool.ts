@@ -44,7 +44,7 @@ export abstract class BaseTool {
   /**
    * Whether this tool should appear in the conversation UI
    * Set to false for tools that should be hidden from chat
-   * (e.g., batch, todo-add, todo-update)
+   * (e.g., batch, todo)
    */
   readonly visibleInChat: boolean = true;
 

@@ -258,14 +258,15 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
       if (activityStream && todoManager) {
         // Update todos immediately when TODO_UPDATE event fires
-        const handleTodoUpdate = () => {
+        const handleTodoUpdate = async () => {
           try {
             const todos = todoManager.getTodos();
             setAllTodos([...todos].reverse());
 
             // Update current task if in progress
             const inProgress = todoManager.getInProgressTodo();
-            const newTask = inProgress?.activeForm || null;
+            const { getActiveForm } = await import('../../services/TodoManager.js');
+            const newTask = inProgress ? getActiveForm(inProgress.task) : null;
 
             // Reset timer when task changes (only when processing)
             if (isProcessing && newTask && previousTaskRef.current !== newTask) {
@@ -337,14 +338,15 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   // Update task status and elapsed time every second (polling fallback)
   useEffect(() => {
     // Function to update todo status
-    const updateTodos = () => {
+    const updateTodos = async () => {
       try {
         const registry = ServiceRegistry.getInstance();
         const todoManager = registry.get<TodoManager>('todo_manager');
 
         if (todoManager) {
           const inProgress = todoManager.getInProgressTodo();
-          const newTask = inProgress?.activeForm || null;
+          const { getActiveForm } = await import('../../services/TodoManager.js');
+          const newTask = inProgress ? getActiveForm(inProgress.task) : null;
 
           // Reset timer when task changes (only when processing)
           if (isProcessing && newTask && previousTaskRef.current !== newTask) {
@@ -479,17 +481,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
                     <Text> </Text>
                     <Text color={UI_COLORS.PRIMARY}>{todo.task}</Text>
                   </>
-                ) : todo.status === 'proposed' ? (
-                  <>
-                    <Text>   </Text>
-                    <Text color={UI_COLORS.TEXT_DIM} dimColor>
-                      {getCheckbox(todo.status)}
-                    </Text>
-                    <Text> </Text>
-                    <Text color={UI_COLORS.TEXT_DIM} dimColor>
-                      {todo.task}
-                    </Text>
-                  </>
                 ) : (
                   <>
                     <Text>   </Text>
@@ -504,45 +495,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
                 )}
               </Box>
 
-              {/* Subtasks with indentation */}
-              {todo.subtasks && todo.subtasks.length > 0 && (
-                <Box flexDirection="column" marginLeft={6}>
-                  {todo.subtasks.map((subtask, subIndex) => (
-                    <Box key={subIndex}>
-                      {subtask.status === 'in_progress' ? (
-                        <>
-                          <Text color={UI_COLORS.PRIMARY}>↳ → </Text>
-                          <Text color={UI_COLORS.PRIMARY}>{getCheckbox(subtask.status)}</Text>
-                          <Text> </Text>
-                          <Text color={UI_COLORS.PRIMARY}>{subtask.task}</Text>
-                        </>
-                      ) : subtask.status === 'proposed' ? (
-                        <>
-                          <Text color={UI_COLORS.TEXT_DIM} dimColor>↳   </Text>
-                          <Text color={UI_COLORS.TEXT_DIM} dimColor>
-                            {getCheckbox(subtask.status)}
-                          </Text>
-                          <Text> </Text>
-                          <Text color={UI_COLORS.TEXT_DIM} dimColor>
-                            {subtask.task}
-                          </Text>
-                        </>
-                      ) : (
-                        <>
-                          <Text color={subtask.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT} dimColor={subtask.status === 'completed'}>↳   </Text>
-                          <Text color={subtask.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT}>
-                            {getCheckbox(subtask.status)}
-                          </Text>
-                          <Text> </Text>
-                          <Text color={subtask.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT} dimColor={subtask.status === 'completed'}>
-                            {subtask.task}
-                          </Text>
-                        </>
-                      )}
-                    </Box>
-                  ))}
-                </Box>
-              )}
+              {/* Subtasks removed in simplified todo system */}
             </Box>
           ))}
         </Box>

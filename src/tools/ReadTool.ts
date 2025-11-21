@@ -17,7 +17,6 @@ import { isBinaryContent } from '../utils/fileUtils.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { TOKEN_MANAGEMENT, CONTEXT_SIZES, FORMATTING } from '../config/constants.js';
-import { DEFAULT_CONFIG } from '../config/defaults.js';
 import * as fs from 'fs/promises';
 
 export class ReadTool extends BaseTool {
@@ -58,13 +57,17 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
    * Capped by both configured limit and context size
    */
   private getMaxTokens(): number {
-    const configuredMax = this.config?.read_max_tokens ?? DEFAULT_CONFIG.read_max_tokens;
-    const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
+    // Get context size from TokenManager (authoritative source) or fall back to config
+    const registry = ServiceRegistry.getInstance();
+    const tokenManager = registry.get<any>('token_manager');
+    const contextSize = tokenManager
+      ? tokenManager.getContextSize()
+      : (this.config?.context_size ?? CONTEXT_SIZES.SMALL);
 
     // Cap at 20% of context size to leave room for conversation
     const contextBasedMax = Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT);
 
-    return Math.min(configuredMax, contextBasedMax);
+    return contextBasedMax;
   }
 
   /**
@@ -72,7 +75,13 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
    * Allows up to 90% of context size for temporary large file reads
    */
   private getEphemeralMaxTokens(): number {
-    const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
+    // Get context size from TokenManager (authoritative source) or fall back to config
+    const registry = ServiceRegistry.getInstance();
+    const tokenManager = registry.get<any>('token_manager');
+    const contextSize = tokenManager
+      ? tokenManager.getContextSize()
+      : (this.config?.context_size ?? CONTEXT_SIZES.SMALL);
+
     return Math.floor(contextSize * TOKEN_MANAGEMENT.EPHEMERAL_READ_MAX_PERCENT);
   }
 
@@ -81,7 +90,13 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
    * Uses full context size since user is explicitly requesting the file
    */
   private getUserInitiatedMaxTokens(): number {
-    const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
+    // Get context size from TokenManager (authoritative source) or fall back to config
+    const registry = ServiceRegistry.getInstance();
+    const tokenManager = registry.get<any>('token_manager');
+    const contextSize = tokenManager
+      ? tokenManager.getContextSize()
+      : (this.config?.context_size ?? CONTEXT_SIZES.SMALL);
+
     // Use 95% of context to leave room for user's message and response
     return Math.floor(contextSize * TOKEN_MANAGEMENT.USER_INITIATED_READ_MAX_PERCENT);
   }
@@ -91,7 +106,13 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
    * Middle ground between user (95%) and agent (20%) initiated reads
    */
   private getContextFileMaxTokens(): number {
-    const contextSize = this.config?.context_size ?? CONTEXT_SIZES.SMALL;
+    // Get context size from TokenManager (authoritative source) or fall back to config
+    const registry = ServiceRegistry.getInstance();
+    const tokenManager = registry.get<any>('token_manager');
+    const contextSize = tokenManager
+      ? tokenManager.getContextSize()
+      : (this.config?.context_size ?? CONTEXT_SIZES.SMALL);
+
     // Use 40% of context for context files
     return Math.floor(contextSize * TOKEN_MANAGEMENT.CONTEXT_FILE_READ_MAX_PERCENT);
   }

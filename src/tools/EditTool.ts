@@ -64,7 +64,7 @@ export class EditTool extends BaseTool {
 
           if (!validation.success) {
             return this.formatErrorResponse(
-              `Lines not read: EditTool requires reading the lines being edited before editing. Use the Read tool first: read(file_paths=["${filePath}"], offset=${linesToEdit.start - 1}, limit=${linesToEdit.end - linesToEdit.start + 1})`,
+              `Lines not read: EditTool requires reading the lines being edited before editing. Use read(file_paths=["${filePath}"], offset=${linesToEdit.start}, limit=${linesToEdit.end - linesToEdit.start + 1})`,
               'validation_error'
             );
           }
@@ -241,7 +241,7 @@ export class EditTool extends BaseTool {
 
           if (!validation.success) {
             return this.formatErrorResponse(
-              `Lines not read: EditTool requires reading the lines being edited before editing. Use the Read tool first: read(file_paths=["${filePath}"], offset=${linesToEdit.start - 1}, limit=${linesToEdit.end - linesToEdit.start + 1})`,
+              `Lines not read: EditTool requires reading the lines being edited before editing. Use read(file_paths=["${filePath}"], offset=${linesToEdit.start}, limit=${linesToEdit.end - linesToEdit.start + 1})`,
               'validation_error'
             );
           }

@@ -27,8 +27,8 @@ import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder, createPlanAcceptedReminder } from '../utils/messageUtils.js';
 
-// Planning tools: read-only tools + explore for nested research + todo-add for proposals
-const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-add'];
+// Planning tools: read-only tools + explore for nested research + todo for task creation
+const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo'];
 
 // Base prompt for planning (without thoroughness-specific guidelines)
 const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistant. You excel at researching codebases to create detailed, actionable implementation plans grounded in existing patterns and architecture.
@@ -49,7 +49,7 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 - Use Read to study specific files and understand implementation details in depth
 - Use Explore to delegate complex multi-file pattern analysis and architectural investigations
 - Use Batch to execute multiple searches in parallel for efficiency
-- Use TodoAdd to create proposed implementation tasks with dependencies and subtasks
+- Use TodoAdd to create implementation tasks in logical order
 - Adapt your research depth based on the thoroughness level specified
 
 ## Planning Process
@@ -59,7 +59,7 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 3. **Research Patterns** - Find similar implementations (or note if starting from scratch)
 4. **Analyze Architecture** - Identify conventions, patterns, file organization, and code style
 5. **Create Detailed Plan** - Produce actionable steps with specific file references
-6. **Propose Todo List** - Create structured tasks with dependencies and subtasks
+6. **Create Todo List** - Break down plan into ordered tasks
 
 ## Required Output Format
 
@@ -88,13 +88,12 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 - \`/absolute/path/to/file.ts\` - [what changes]
 - \`/absolute/path/to/new.ts\` - [new file, purpose]
 
-#### Proposed Todos
-After providing the plan above, call todo-add() with proposed todos (status="proposed"):
-- Each todo: content (imperative like "Set up project"), status="proposed", activeForm (continuous like "Setting up project")
-- **Use dependencies** when tasks must complete in order (specify array of todo IDs that must finish first)
-- **Use subtasks** for hierarchical breakdown (nested array, max depth 1) when a task has clear sub-steps
-- Order logically with dependencies enforcing critical sequences
-- Make actionable and represent meaningful milestones
+#### Task Breakdown
+After providing the plan above, call todo() to create implementation tasks:
+- Each todo needs: content (imperative like "Set up project"), status (pending or in_progress), activeForm (present continuous like "Setting up project")
+- Create tasks in logical order - first task will be in_progress, rest pending
+- Make each task actionable and represent meaningful milestones
+- Tasks should follow the implementation sequence outlined in your plan
 
 ## Core Objective
 
@@ -102,7 +101,7 @@ Create comprehensive, actionable implementation plans that enable confident deve
 
 ## Important Constraints
 
-- You have READ-ONLY access plus todo-add - you cannot modify code files
+- You have READ-ONLY access plus todo - you cannot modify code files
 - All file paths in your response MUST be absolute, NOT relative
 - **For existing codebases**: Ground recommendations in actual patterns found via exploration
 - **For new projects**: Ground recommendations in modern best practices for the language/framework
@@ -110,7 +109,7 @@ Create comprehensive, actionable implementation plans that enable confident deve
 - Provide specific file references with line numbers when applicable
 - Include code examples from codebase when relevant (or from best practices if starting fresh)
 - Use explore() for complex multi-file pattern analysis (skip if empty project)
-- **MUST call todo-add() before completing** - planning without todos is incomplete
+- **MUST call todo() before completing** - planning without todos is incomplete
 - Avoid using emojis for clear communication`;
 
 const PLANNING_CLOSING = `
@@ -120,7 +119,9 @@ const PLANNING_CLOSING = `
 - **Existing project, new feature**: Research similar features and follow existing patterns
 - **Existing project, novel feature**: Blend existing patterns with new best practices
 
-Create plans that are complete but not over-engineered, focusing on artful implementation.`;
+Create plans that are complete but not over-engineered, focusing on artful implementation.
+
+Remember: You MUST call todo() before completing to create implementation tasks.`;
 
 // System prompt optimized for implementation planning
 const PLANNING_SYSTEM_PROMPT = PLANNING_BASE_PROMPT + `
@@ -147,9 +148,8 @@ export class PlanTool extends BaseTool implements InjectableTool {
 
   readonly usageGuidance = `**When to use plan:**
 Implementation/refactoring with multiple steps (>3 steps), needs structured approach.
-Creates proposed todos with dependencies and subtasks for systematic execution.
+Creates ordered task list for systematic execution.
 CRITICAL: Agent CANNOT see current conversation - include ALL context in requirements (goals, constraints, files involved).
-Use deny-proposal if plan doesn't align with user intent.
 Skip for: Quick fixes, continuing existing plans, simple changes.`;
 
   private activeDelegations: Map<string, any> = new Map();
@@ -365,7 +365,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         parentCallId: callId,
         parentAgent: parentAgent, // Direct reference to parent agent
         _poolKey: `plan-${callId}`, // Unique key per invocation
-        requiredToolCalls: ['todo-add'], // Planning agent MUST call todo-add before exiting
+        requiredToolCalls: ['todo'], // Planning agent MUST call todo before exiting
         maxDuration,
         thoroughness: thoroughness, // Store for dynamic regeneration
         agentType: 'plan',
@@ -640,54 +640,16 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
   }
 
   /**
-   * Auto-accept proposed todos by converting them from proposed → pending/in_progress
-   * First todo becomes in_progress if no existing in_progress todo exists
+   * Auto-accept proposed todos (no-op in simplified system)
+   *
+   * NOTE: This method is a no-op since the "proposed" status was removed.
+   * Planning agents now create todos directly as pending/in_progress via the unified todo tool.
+   * Keeping this method as an explicit no-op for clarity and to avoid breaking call sites.
    */
-  private async autoAcceptProposedTodos(registry: ServiceRegistry): Promise<void> {
-    try {
-      // Get TodoManager to retrieve proposed todos
-      const todoManager = registry.get<TodoManager>('todo_manager');
-      if (!todoManager) {
-        logger.debug('[PLAN_TOOL] TodoManager not found in registry, skipping auto-accept');
-        return;
-      }
-
-      // Get all todos and filter for proposed ones
-      const allTodos = todoManager.getTodos();
-      const proposedTodos = allTodos.filter(todo => todo.status === 'proposed');
-      const existingTodos = allTodos.filter(todo => todo.status !== 'proposed');
-
-      // If no proposed todos, nothing to do
-      if (proposedTodos.length === 0) {
-        logger.debug('[PLAN_TOOL] No proposed todos found, skipping auto-accept');
-        return;
-      }
-
-      // Check if there's already an in_progress todo (to avoid violating "at most ONE in_progress" rule)
-      const hasExistingInProgress = existingTodos.some(todo => todo.status === 'in_progress');
-
-      // Convert proposed todos to pending/in_progress
-      // First todo becomes in_progress ONLY if no existing in_progress todo exists
-      const activatedTodos = proposedTodos.map((todo, index) => {
-        const newStatus = index === 0 && !hasExistingInProgress ? 'in_progress' : 'pending';
-        return {
-          ...todo,
-          status: newStatus as 'in_progress' | 'pending',
-        };
-      });
-
-      // Combine existing todos with newly activated todos
-      const newTodoList = [...existingTodos, ...activatedTodos];
-
-      // Update TodoManager with new todo list
-      todoManager.setTodos(newTodoList);
-
-      logger.debug('[PLAN_TOOL] Auto-accepted', proposedTodos.length, 'proposed todos. New total:', newTodoList.length);
-      logger.debug('[PLAN_TOOL] First 3 activated todos:', activatedTodos.slice(0, 3).map(t => ({ task: t.task, status: t.status })));
-    } catch (error) {
-      logger.debug('[PLAN_TOOL] Error auto-accepting proposed todos:', error);
-      // Don't throw - this is non-critical, plan can still succeed
-    }
+  private async autoAcceptProposedTodos(_registry: ServiceRegistry): Promise<void> {
+    // No-op: "proposed" status removed in simplified todo system
+    // Planning agents create todos directly as pending/in_progress
+    logger.debug('[PLAN_TOOL] autoAcceptProposedTodos is a no-op in simplified todo system');
   }
 
   /**

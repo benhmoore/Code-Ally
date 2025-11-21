@@ -19,12 +19,7 @@ export { LineEditTool } from './LineEditTool.js';
 // Advanced tools
 export { AgentTool } from './AgentTool.js';
 export { BatchTool } from './BatchTool.js';
-export { TodoAddTool } from './TodoAddTool.js';
-export { TodoRemoveTool } from './TodoRemoveTool.js';
-export { TodoUpdateTool } from './TodoUpdateTool.js';
-export { TodoClearTool } from './TodoClearTool.js';
-export { TodoListTool } from './TodoListTool.js';
-export { DenyProposalTool } from './DenyProposalTool.js';
+export { TodoTool } from './TodoTool.js';
 export { AgentAskTool } from './AgentAskTool.js';
 export { ExploreTool } from './ExploreTool.js';
 export { PlanTool } from './PlanTool.js';

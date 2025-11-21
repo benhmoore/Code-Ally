@@ -12,6 +12,7 @@ import type { ToolCallHistory } from '@services/ToolCallHistory.js';
 import type { ToolCallState } from '@shared/index.js';
 import { logger } from '@services/Logger.js';
 import { LogLevel } from '@services/Logger.js';
+import { BUFFER_SIZES } from '@config/constants.js';
 
 export class DebugCommand extends Command {
   readonly name = '/debug';
@@ -32,9 +33,10 @@ export class DebugCommand extends Command {
       return {
         handled: true,
         response: `Debug Commands:
-  /debug enable    - Enable debug-level logging
-  /debug disable   - Disable debug-level logging
-  /debug calls [n] - Show last N tool calls (default: 5)
+  /debug enable     - Enable debug-level logging
+  /debug disable    - Disable debug-level logging
+  /debug calls [n]  - Show last N tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
+  /debug errors [n] - Show last N failed tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
 `,
       };
     }
@@ -65,9 +67,19 @@ export class DebugCommand extends Command {
           parts.length > 1 ? parts[1] : undefined
         );
 
+      case 'errors':
+        const errorToolCallHistory = serviceRegistry.getToolCallHistory();
+        if (!errorToolCallHistory) {
+          return this.createError('Tool call history not available');
+        }
+        return this.handleDebugErrors(
+          errorToolCallHistory,
+          parts.length > 1 ? parts[1] : undefined
+        );
+
       default:
         return this.createError(
-          `Unknown debug subcommand: ${subcommand}. Available: enable, disable, calls`
+          `Unknown debug subcommand: ${subcommand}. Available: enable, disable, calls, errors`
         );
     }
   }
@@ -101,8 +113,8 @@ export class DebugCommand extends Command {
     toolCallHistory: ToolCallHistory,
     countStr: string | undefined
   ): Promise<CommandResult> {
-    // Default to 5 if not specified
-    let count = 5;
+    // Use configured default if not specified
+    let count: number = BUFFER_SIZES.DEBUG_HISTORY_DEFAULT;
 
     if (countStr) {
       const parsed = parseInt(countStr, 10);
@@ -153,6 +165,71 @@ export class DebugCommand extends Command {
   }
 
   /**
+   * Show the last N failed tool calls (errors only)
+   */
+  private async handleDebugErrors(
+    toolCallHistory: ToolCallHistory,
+    countStr: string | undefined
+  ): Promise<CommandResult> {
+    // Use configured default if not specified
+    let count: number = BUFFER_SIZES.DEBUG_HISTORY_DEFAULT;
+
+    if (countStr) {
+      const parsed = parseInt(countStr, 10);
+
+      if (isNaN(parsed) || parsed < 1) {
+        return this.createError('Invalid count. Must be a positive number.');
+      }
+
+      count = parsed;
+    }
+
+    // Get all calls and filter to errors only
+    const allCalls = toolCallHistory.getAll();
+    const errorCalls = allCalls.filter(call => call.status === 'error');
+    const totalErrorCount = errorCalls.length;
+
+    // Handle no errors
+    if (totalErrorCount === 0) {
+      return {
+        handled: true,
+        response: 'No failed tool calls in history.',
+      };
+    }
+
+    // Get the last N error calls
+    const calls = errorCalls.slice(-count);
+    const actualCount = calls.length;
+
+    // Build output
+    let output = `Failed Tool Calls (Last ${actualCount} error${actualCount !== 1 ? 's' : ''}`;
+    if (totalErrorCount > actualCount) {
+      output += ` of ${totalErrorCount} total`;
+    }
+    output += ')\n';
+    output += '━'.repeat(60) + '\n';
+
+    // Format each call (in reverse order - most recent first)
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const call = calls[i];
+      if (!call) continue; // Safety check
+      const callNumber = calls.length - i;
+
+      output += this.formatToolCall(call, callNumber);
+
+      // Add separator between calls (but not after last one)
+      if (i > 0) {
+        output += '━'.repeat(60) + '\n';
+      }
+    }
+
+    return {
+      handled: true,
+      response: output,
+    };
+  }
+
+  /**
    * Format a single tool call for display
    */
   private formatToolCall(call: ToolCallState, callNumber: number): string {
@@ -180,24 +257,28 @@ export class DebugCommand extends Command {
     const formattedParams = this.formatJSON(call.arguments);
     output += formattedParams + '\n\n';
 
-    // Output (if available)
+    // Error message (if error status) - show first for visibility
+    if (call.error) {
+      output += 'Error';
+      if (call.error_type) {
+        output += ` (${call.error_type})`;
+      }
+      output += ':\n';
+      output += call.error + '\n\n';
+    }
+
+    // Output (show for both success and error - useful for debugging failed tools)
     if (call.output) {
-      const truncated = this.truncateString(call.output, 500);
+      const truncated = this.truncateString(call.output, 1000);
       const charCount = call.output.length;
 
-      if (charCount > 500) {
-        output += `Output: (${charCount} chars, showing first 500)\n`;
+      if (charCount > 1000) {
+        output += `Output: (${charCount} chars, showing first 1000)\n`;
       } else {
         output += 'Output:\n';
       }
 
       output += truncated + '\n\n';
-    }
-
-    // Error message (if error status)
-    if (call.error) {
-      output += 'Error:\n';
-      output += call.error + '\n\n';
     }
 
     return output;

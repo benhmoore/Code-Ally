@@ -11,7 +11,6 @@ import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { TodoManager, TodoItem } from '@services/TodoManager.js';
 import { POLLING_INTERVALS, BUFFER_SIZES } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
-import { UI_SYMBOLS } from '@config/uiSymbols.js';
 
 /**
  * TodoDisplay Component
@@ -59,17 +58,8 @@ export const TodoDisplay: React.FC = () => {
   const getTodoDisplayText = (todo: TodoItem | undefined): string => {
     if (!todo) return '';
 
-    let text = todo.task;
-
-    // If todo has subtasks, find the active one
-    if (todo.subtasks && todo.subtasks.length > 0) {
-      const activeSubtask = todo.subtasks.find(st => st.status === 'in_progress');
-      if (activeSubtask) {
-        text += ` ${UI_SYMBOLS.NAVIGATION.CHEVRON_RIGHT} ${activeSubtask.task}`;
-      }
-    }
-
-    return text;
+    // Subtasks removed in simplified todo system
+    return todo.task;
   };
 
   // Take only the first N incomplete todos

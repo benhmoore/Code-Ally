@@ -127,6 +127,10 @@ def safe_evaluate(expression):
         ZeroDivisionError: If division by zero is attempted
         SyntaxError: If the expression has syntax errors
     """
+    # Pre-process: Replace ^ with ** for exponentiation
+    # (^ is bitwise XOR in Python, but commonly used for exponents in math notation)
+    expression = expression.replace('^', '**')
+
     # Parse the expression into an AST
     try:
         tree = ast.parse(expression, mode='eval')

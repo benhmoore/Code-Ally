@@ -260,7 +260,7 @@ Continuing to use read/grep/glob/ls/tree is inefficient and wastes your limited 
       text: (todoTask: string, toolCallSummary: string) =>
         `Stay focused. You're working on: ${todoTask}.${toolCallSummary}
 
-Stay on task. Use todo-update to mark todos as complete when finished.`,
+Stay on task. Use todo to update status and mark todos as complete when finished.`,
       persist: false,
     },
   },
@@ -344,7 +344,7 @@ Stay on task. Use todo-update to mark todos as complete when finished.`,
     // PERSIST: false - Ephemeral: One-time notification about plan activation
     // Cleaned up after turn since agent should acknowledge and move on
     PLAN_ACCEPTED: {
-      text: "The plan has been automatically accepted and todos activated. If this plan doesn't align with user intent, use deny-proposal to reject it and explain why.",
+      text: "The plan has been automatically accepted and todos activated.",
       persist: false,
     },
 
@@ -366,7 +366,7 @@ Stay on task. Use todo-update to mark todos as complete when finished.`,
     // PERSIST: false - Ephemeral: Dynamic todo state suggestion
     // Cleaned up after turn since todo list regenerated each message
     EMPTY_LIST: {
-      text: 'Todo list empty. For multi-step tasks, use todo-add to track progress.',
+      text: 'Todo list empty. For multi-step tasks, use todo to track progress.',
       persist: false,
     },
 

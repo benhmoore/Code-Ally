@@ -139,14 +139,46 @@ export class ConfigManager implements IService {
       }
 
       // If unknown keys were found, clean the profile config file
+      // IMPORTANT: We need to preserve the loaded profileConfig values when cleaning,
+      // not re-save based on this._config comparison to defaults
       if (unknownKeys.length > 0) {
-        await this.saveConfig();
+        await this.saveProfileConfig(profileConfig);
         logger.info(`\nProfile config cleanup: Removed unknown keys: ${unknownKeys.join(', ')}\n`);
       }
     } catch (error) {
       logger.error('[CONFIG] Error in loadConfig:', error);
       // Return defaults on error
       this._config = { ...DEFAULT_CONFIG };
+    }
+  }
+
+  /**
+   * Save a specific profile config object directly to disk
+   *
+   * This is used when cleaning unknown keys during loadConfig to preserve
+   * the exact values that were loaded, without re-comparing to defaults.
+   *
+   * @param profileConfig The profile config object to save
+   */
+  private async saveProfileConfig(profileConfig: Partial<Config>): Promise<void> {
+    try {
+      const profileConfigPath = this._configPath;
+
+      // Ensure profile config directory exists
+      const profileConfigDir = dirname(profileConfigPath);
+      await fs.mkdir(profileConfigDir, { recursive: true });
+
+      // Save the profile config as-is (already filtered to valid keys only)
+      await fs.writeFile(
+        profileConfigPath,
+        JSON.stringify(profileConfig, null, 2),
+        'utf-8'
+      );
+
+      logger.debug('[CONFIG] Saved profile config (cleanup)');
+    } catch (error) {
+      logger.error('[CONFIG] Error saving profile config:', error);
+      throw error;
     }
   }
 

@@ -508,12 +508,15 @@ export const useInputHandlers = (
         const isError = response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
                        response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
 
-        // Add assistant response
-        actions.addMessage({
-          role: 'assistant',
-          content: response,
-          metadata: isError ? { isError: true } : undefined,
-        });
+        // Add assistant response for error messages only
+        // Normal responses are added via ASSISTANT_MESSAGE_COMPLETE event for proper interleaving
+        if (isError) {
+          actions.addMessage({
+            role: 'assistant',
+            content: response,
+            metadata: { isError: true },
+          });
+        }
 
         // Update TokenManager and context usage
         const registry = ServiceRegistry.getInstance();

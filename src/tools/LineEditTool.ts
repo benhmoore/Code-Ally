@@ -39,7 +39,9 @@ export class LineEditTool extends BaseTool {
     const filePath = args.file_path as string;
     const operation = args.operation as LineOperation;
     const lineNumber = args.line_number as number;
-    const numLines = args.num_lines as number;
+    // Convert to number, default to 1 if undefined/null/NaN
+    const numLinesRaw = Number(args.num_lines);
+    const numLines = args.num_lines === undefined || args.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
 
     const absolutePath = resolvePath(filePath);
     const registry = ServiceRegistry.getInstance();
@@ -91,7 +93,7 @@ export class LineEditTool extends BaseTool {
           : `lines ${validationStartLine}-${validationEndLine}`;
 
         return this.formatErrorResponse(
-          `Lines not read: Cannot ${operation} ${rangeDesc} without reading first. Use the Read tool: read(file_paths=["${filePath}"])`,
+          `Lines not read: Cannot ${operation} ${rangeDesc} without reading first. Use read(file_paths=["${filePath}"], offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1})`,
           'validation_error'
         );
       }
@@ -154,7 +156,9 @@ export class LineEditTool extends BaseTool {
     const operation = args.operation as LineOperation;
     const lineNumber = args.line_number as number;
     const content = (args.content as string) ?? '';
-    const numLines = (args.num_lines as number) ?? 1;
+    // Convert to number, default to 1 if undefined/null/NaN
+    const numLinesRaw = Number(args.num_lines);
+    const numLines = args.num_lines === undefined || args.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
 
     if (!filePath || !operation || !lineNumber) {
       return; // Skip preview if invalid args
@@ -220,7 +224,9 @@ export class LineEditTool extends BaseTool {
     const operation = args.operation as LineOperation;
     const lineNumber = args.line_number as number;
     const content = (args.content as string) ?? '';
-    const numLines = (args.num_lines as number) ?? 1;
+    // Convert to number, default to 1 if undefined/null/NaN, but preserve explicit 0 for validation
+    const numLinesRaw = Number(args.num_lines);
+    const numLines = args.num_lines === undefined || args.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
     const showUpdatedContext = args.show_updated_context === true; // Default is false
 
     // Validate file_path
@@ -382,10 +388,10 @@ export class LineEditTool extends BaseTool {
 Use one of these approaches:
   • Re-read the file: read(file_paths=["${filePath}"])
   • Use show_updated_context=true in your edits to see changes immediately
-  • Read specific lines: read(file_path="${filePath}", offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1})`;
+  • Read specific lines: read(file_paths=["${filePath}"], offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1})`;
             } else {
               // File has never been read
-              guidanceMessage = `Use read(file_path="${filePath}", offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1}) to read ${rangeDesc} first.`;
+              guidanceMessage = `Use read(file_paths=["${filePath}"], offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1}) to read ${rangeDesc} first.`;
             }
 
             return this.formatErrorResponse(

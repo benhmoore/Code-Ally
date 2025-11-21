@@ -373,9 +373,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
   const toolCallCount = toolCall.totalChildCount || 0;
 
-  // Trim all leading/trailing whitespace from output and error for clean display
+  // Trim all leading/trailing whitespace from output for clean display
   const trimmedOutput = toolCall.output?.trim();
-  const trimmedError = toolCall.error?.trim();
 
   return (
     <Box flexDirection="column">
@@ -472,21 +471,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Error output as threaded child - ALWAYS show errors even when collapsed or hideOutput is true */}
-      {trimmedError && (
-        <Box flexDirection="column">
-          <Box>
-            <Text>{indent}    </Text>
-            <Text color={UI_COLORS.ERROR}>→ </Text>
-            <Text color={UI_COLORS.ERROR}>Error</Text>
-          </Box>
-          <Box paddingLeft={indent.length + 8}>
-            <Text color={UI_COLORS.ERROR}>
-              {trimmedError}
-            </Text>
-          </Box>
-        </Box>
-      )}
+      {/* Error output - Hidden from main UI, available via /debug calls [n] command */}
+      {/* Errors are relegated to the debug interface to clean up user experience */}
 
       {/* Output as threaded child (hidden if collapsed, has agent ancestor, or own hideOutput, unless show_full_tool_output is enabled) */}
       {!toolCall.collapsed && !hasAgentAncestor && (!toolCall.hideOutput || config?.show_full_tool_output) && trimmedOutput && !toolCall.error && (

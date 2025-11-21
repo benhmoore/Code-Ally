@@ -906,12 +906,7 @@ async function main() {
     const { AgentAskTool } = await import('./tools/AgentAskTool.js');
     const { BatchTool } = await import('./tools/BatchTool.js');
     const { CleanupCallTool } = await import('./tools/CleanupCallTool.js');
-    const { TodoAddTool } = await import('./tools/TodoAddTool.js');
-    const { TodoRemoveTool } = await import('./tools/TodoRemoveTool.js');
-    const { TodoUpdateTool } = await import('./tools/TodoUpdateTool.js');
-    const { TodoClearTool } = await import('./tools/TodoClearTool.js');
-    const { TodoListTool } = await import('./tools/TodoListTool.js');
-    const { DenyProposalTool } = await import('./tools/DenyProposalTool.js');
+    const { TodoTool } = await import('./tools/TodoTool.js');
     const { SessionsTool } = await import('./tools/SessionsTool.js');
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
@@ -933,12 +928,7 @@ async function main() {
       new AgentAskTool(activityStream),
       new BatchTool(activityStream),
       new CleanupCallTool(activityStream),
-      new TodoAddTool(activityStream),
-      new TodoRemoveTool(activityStream),
-      new TodoUpdateTool(activityStream),
-      new TodoClearTool(activityStream),
-      new TodoListTool(activityStream),
-      new DenyProposalTool(activityStream), // Always available
+      new TodoTool(activityStream), // Unified todo management
       new SessionsTool(activityStream),
       new LintTool(activityStream),
       new FormatTool(activityStream),

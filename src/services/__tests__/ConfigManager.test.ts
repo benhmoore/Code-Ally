@@ -313,4 +313,66 @@ describe('ConfigManager', () => {
       await expect(configManager.cleanup()).resolves.toBeUndefined();
     });
   });
+
+  describe('unknown keys cleanup', () => {
+    it('should preserve user settings when cleaning unknown keys', async () => {
+      // Simulate an old config file with user customizations + an unknown key
+      const oldConfig = {
+        model: 'custom-model',
+        temperature: 0.7,
+        auto_confirm: true,
+        old_removed_field: 'should-be-removed', // Unknown key
+      };
+
+      await fs.writeFile(configPath, JSON.stringify(oldConfig, null, 2));
+
+      // Load config (this should trigger cleanup)
+      configManager = new ConfigManager(configPath);
+      await configManager.initialize();
+
+      // Verify user settings are preserved in memory
+      expect(configManager.getValue('model')).toBe('custom-model');
+      expect(configManager.getValue('temperature')).toBe(0.7);
+      expect(configManager.getValue('auto_confirm')).toBe(true);
+
+      // Verify cleaned config was written to disk
+      const savedContent = await fs.readFile(configPath, 'utf-8');
+      const savedConfig = JSON.parse(savedContent);
+
+      // User settings should be preserved
+      expect(savedConfig.model).toBe('custom-model');
+      expect(savedConfig.temperature).toBe(0.7);
+      expect(savedConfig.auto_confirm).toBe(true);
+
+      // Unknown key should be removed
+      expect(savedConfig.old_removed_field).toBeUndefined();
+    });
+
+    it('should not reset config when defaults change', async () => {
+      // Simulate user config that happens to match current defaults
+      const userConfig = {
+        model: DEFAULT_CONFIG.model,
+        temperature: 0.9, // Different from default
+        unknown_key: 'value',
+      };
+
+      await fs.writeFile(configPath, JSON.stringify(userConfig, null, 2));
+
+      configManager = new ConfigManager(configPath);
+      await configManager.initialize();
+
+      // Verify temperature setting is preserved even though model matches default
+      expect(configManager.getValue('temperature')).toBe(0.9);
+
+      // Verify config on disk
+      const savedContent = await fs.readFile(configPath, 'utf-8');
+      const savedConfig = JSON.parse(savedContent);
+
+      // Temperature should be preserved (different from default)
+      expect(savedConfig.temperature).toBe(0.9);
+
+      // Model might or might not be saved (it matches default, so it's optional)
+      // The key point is that temperature wasn't lost
+    });
+  });
 });

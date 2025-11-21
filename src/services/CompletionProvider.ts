@@ -120,6 +120,7 @@ const DEBUG_SUBCOMMANDS = [
   { name: 'enable', description: 'Enable debug-level logging' },
   { name: 'disable', description: 'Disable debug-level logging' },
   { name: 'calls', description: 'Show recent tool call history' },
+  { name: 'errors', description: 'Show recent failed tool calls' },
 ];
 
 /**

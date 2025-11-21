@@ -80,6 +80,7 @@ export interface FunctionDefinition {
 export interface ParameterSchema {
   type: 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object';
   description?: string;
+  enum?: string[] | number[];
   items?: ParameterSchema;
   properties?: Record<string, ParameterSchema>;
   required?: string[];
@@ -344,17 +345,7 @@ export interface Session {
   todos?: Array<{
     id: string;
     task: string;
-    status: 'proposed' | 'pending' | 'in_progress' | 'completed';
-    activeForm: string;
-    created_at: string;
-    dependencies?: string[];
-    subtasks?: Array<{
-      id: string;
-      task: string;
-      status: 'proposed' | 'pending' | 'in_progress' | 'completed';
-      activeForm: string;
-      created_at: string;
-    }>;
+    status: 'pending' | 'in_progress' | 'completed';
   }>;
   idle_messages?: string[]; // Queue of generated idle messages
   project_context?: {
