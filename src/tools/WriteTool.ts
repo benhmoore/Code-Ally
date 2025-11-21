@@ -20,6 +20,7 @@ export class WriteTool extends BaseTool {
   readonly name = 'write';
   readonly description = 'Create a new file with the specified content. FAILS if file already exists. Use edit or line-edit to modify existing files.';
   readonly requiresConfirmation = true; // Destructive operation
+  readonly hideOutput = true; // Hide output from result preview
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -220,35 +221,19 @@ export class WriteTool extends BaseTool {
 
   /**
    * Format subtext for display in UI
-   * Shows: [description] (filename.txt) or just (filename) if no description
+   * Shows only the description (filepath is shown in diff preview)
    */
   formatSubtext(args: Record<string, any>): string | null {
-    const filePath = args.file_path as string;
     const description = args.description as string;
-
-    if (!filePath) {
-      return null;
-    }
-
-    // Extract filename (basename only)
-    const parts = filePath.split('/');
-    const filename = parts[parts.length - 1] || filePath;
-    const filenameStr = `(${filename})`;
-
-    // If description exists, show it first
-    if (description) {
-      return `${description} ${filenameStr}`;
-    }
-
-    return filenameStr;
+    return description || null;
   }
 
   /**
    * Get parameters shown in subtext
-   * WriteTool shows both 'file_path' and 'description' in subtext
+   * WriteTool shows only 'description' in subtext (filepath shown in diff)
    */
   getSubtextParameters(): string[] {
-    return ['file_path', 'description'];
+    return ['description'];
   }
 
   /**

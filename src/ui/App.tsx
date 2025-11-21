@@ -1178,6 +1178,8 @@ const AppContentComponent: React.FC<{
             commandHistory={commandHistory || undefined}
             completionProvider={completionProvider || undefined}
             configViewerOpen={modal.configViewerOpen}
+            onAutoAllowToggle={() => modal.setAutoAllowMode(!modal.autoAllowMode)}
+            autoAllowMode={modal.autoAllowMode}
             activityStream={activityStream}
             agent={agent}
             prefillText={modal.inputPrefillText}
@@ -1208,39 +1210,44 @@ const AppContentComponent: React.FC<{
                 <Text color={UI_COLORS.PRIMARY}>Ctrl+C again to exit</Text>
               </Text>
             ) : (
-              <Text dimColor>
-                <Text>
-                  Tokens: {debugStats.tokensUsed.toLocaleString()}/{debugStats.tokensTotal.toLocaleString()} (
-                  {state.contextUsage}%)
+              <>
+                <Text dimColor>
+                  <Text>
+                    Tokens: {debugStats.tokensUsed.toLocaleString()}/{debugStats.tokensTotal.toLocaleString()} (
+                    {state.contextUsage}%)
+                  </Text>
+                  {debugStats.todoTotal > 0 && (
+                    <Text>
+                      {' '}
+                      · Todos: {debugStats.todoPending} pending, {debugStats.todoCompleted} done, {debugStats.todoTotal}{' '}
+                      total
+                    </Text>
+                  )}
+                  <Text> · {state.config.model || 'none'}</Text>
+                  {currentFocus && (
+                    <Text>
+                      {' '}
+                      · Focus: <Text color="magenta">{currentFocus}</Text>
+                    </Text>
+                  )}
+                  {(() => {
+                    const activeProfile = getActiveProfile();
+                    return (
+                      activeProfile !== 'default' && (
+                        <Text>
+                          {' '}
+                          · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)
+                        </Text>
+                      )
+                    );
+                  })()}
                 </Text>
-                {debugStats.todoTotal > 0 && (
-                  <Text>
-                    {' '}
-                    · Todos: {debugStats.todoPending} pending, {debugStats.todoCompleted} done, {debugStats.todoTotal}{' '}
-                    total
-                  </Text>
+                {modal.autoAllowMode ? (
+                  <Text color={UI_COLORS.ERROR}> · Auto-allow enabled (Shift+Tab to disable)</Text>
+                ) : (
+                  <Text dimColor> · Shift+Tab to auto-allow tools</Text>
                 )}
-                <Text> · {state.config.model || 'none'}</Text>
-                {currentFocus && (
-                  <Text>
-                    {' '}
-                    · Focus: <Text color="magenta">{currentFocus}</Text>
-                  </Text>
-                )}
-                {(() => {
-                  const activeProfile = getActiveProfile();
-                  return (
-                    activeProfile !== 'default' && (
-                      <Text>
-                        {' '}
-                        · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)
-                      </Text>
-                    )
-                  );
-                })()}
-                <Text> · Auto-allow: </Text>
-                {modal.autoAllowMode ? <Text color={UI_COLORS.PRIMARY}>ON</Text> : <Text>OFF</Text>}
-              </Text>
+              </>
             )}
           </Box>
         ) : modal.isWaitingForExitConfirmation ? (
@@ -1250,44 +1257,49 @@ const AppContentComponent: React.FC<{
           </Text>
         ) : (
           /* Normal Mode: Single line */
-          <Text dimColor>
-            {state.config.model || 'none'}
-            {currentFocus && (
-              <Text>
-                {' '}
-                · Focus: <Text color="magenta">{currentFocus}</Text>
-              </Text>
+          <>
+            <Text dimColor>
+              {state.config.model || 'none'}
+              {currentFocus && (
+                <Text>
+                  {' '}
+                  · Focus: <Text color="magenta">{currentFocus}</Text>
+                </Text>
+              )}
+              {state.contextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
+                <>
+                  {' · '}
+                  {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
+                    <Text color="red">
+                      {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact
+                    </Text>
+                  ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
+                    <Text color="yellow">
+                      {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - consider /compact
+                    </Text>
+                  ) : (
+                    <Text>{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left</Text>
+                  )}
+                </>
+              )}
+              {(() => {
+                const activeProfile = getActiveProfile();
+                return (
+                  activeProfile !== 'default' && (
+                    <Text>
+                      {' '}
+                      · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)
+                    </Text>
+                  )
+                );
+              })()}
+            </Text>
+            {modal.autoAllowMode ? (
+              <Text color={UI_COLORS.ERROR}> · Auto-allow enabled (Shift+Tab to disable)</Text>
+            ) : (
+              <Text dimColor> · Shift+Tab to auto-allow tools</Text>
             )}
-            {state.contextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
-              <>
-                {' · '}
-                {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
-                  <Text color="red">
-                    {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact
-                  </Text>
-                ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
-                  <Text color="yellow">
-                    {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - consider /compact
-                  </Text>
-                ) : (
-                  <Text>{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left</Text>
-                )}
-              </>
-            )}
-            {(() => {
-              const activeProfile = getActiveProfile();
-              return (
-                activeProfile !== 'default' && (
-                  <Text>
-                    {' '}
-                    · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)
-                  </Text>
-                )
-              );
-            })()}
-            <Text> · Auto-allow: </Text>
-            {modal.autoAllowMode ? <Text color={UI_COLORS.PRIMARY}>ON</Text> : <Text>OFF</Text>}
-          </Text>
+          </>
         )}
       </Box>
     </Box>

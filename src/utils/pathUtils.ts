@@ -42,3 +42,24 @@ export function resolvePath(pathStr: string, basePath?: string): string {
 export function resolvePaths(paths: string[], basePath?: string): string[] {
   return paths.map(p => resolvePath(p, basePath));
 }
+
+/**
+ * Convert an absolute path to a relative path for display purposes
+ *
+ * If the path is outside the current working directory, returns the absolute path.
+ * Otherwise, returns a path relative to cwd.
+ *
+ * @param absolutePath - The absolute path to convert
+ * @returns Relative path for display, or absolute path if outside cwd
+ */
+export function getDisplayPath(absolutePath: string): string {
+  const cwd = process.cwd();
+  const relativePath = path.relative(cwd, absolutePath);
+
+  // If the relative path goes up (..), it's outside cwd - show absolute
+  if (relativePath.startsWith('..')) {
+    return absolutePath;
+  }
+
+  return relativePath;
+}

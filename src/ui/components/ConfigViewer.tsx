@@ -47,6 +47,7 @@ export const ConfigViewer: React.FC<ConfigViewerProps> = ({
     const categoryDefs = {
       'LLM Model Settings': ['model', 'service_model', 'explore_model', 'plan_model', 'endpoint', 'context_size', 'temperature', 'max_tokens', 'reasoning_effort'],
       'Execution Settings': ['bash_timeout', 'auto_confirm', 'parallel_tools'],
+      'File System Settings': ['temp_directory'],
       'UI Preferences': ['theme', 'compact_threshold', 'show_context_in_prompt', 'show_thinking_in_chat', 'show_system_prompt_in_chat', 'show_full_tool_output', 'show_tool_parameters_in_chat', 'enable_idle_messages', 'enable_session_title_generation'],
       'Diff Display': ['diff_display_enabled', 'diff_display_max_file_size', 'diff_display_context_lines', 'diff_display_theme', 'diff_display_color_removed', 'diff_display_color_added', 'diff_display_color_modified'],
       'Tool Result Truncation': ['tool_result_max_context_percent', 'tool_result_min_tokens'],

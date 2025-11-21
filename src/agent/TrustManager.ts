@@ -168,9 +168,9 @@ export class TrustManager {
 
     // Auto-allow mode: automatically approve non-EXTREMELY_SENSITIVE commands
     // Security constraint: EXTREMELY_SENSITIVE commands ALWAYS require explicit user approval
+    // Note: Auto-allow is ephemeral - it bypasses prompts but doesn't create permanent trust
     if (this.autoAllowModeGetter?.() && tier !== SensitivityTier.EXTREMELY_SENSITIVE) {
-      logger.debug(`[TrustManager] Auto-allowing ${toolName} (auto-allow mode enabled)`);
-      this.trustTool(toolName, TrustScope.GLOBAL);
+      logger.debug(`[TrustManager] Auto-allowing ${toolName} (auto-allow mode enabled, ephemeral approval)`);
       return true;
     }
 

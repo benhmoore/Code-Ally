@@ -844,8 +844,8 @@ export const THOROUGHNESS_MAX_TOKENS = {
  * Used when user denies permission for operations requiring confirmation
  */
 export const PERMISSION_MESSAGES = {
-  /** Generic permission denial message for tool results */
-  GENERIC_DENIAL: 'Permission denied by user',
+  /** Generic permission denial message for tool results - shown to the model */
+  GENERIC_DENIAL: 'The user denied permission for this operation. Ask the user what to do instead.',
 
   /** User-facing permission denial message shown in chat */
   USER_FACING_DENIAL: 'Permission denied. Tell Ally what to do instead.',
@@ -853,8 +853,8 @@ export const PERMISSION_MESSAGES = {
   /** User-facing interruption message shown in chat */
   USER_FACING_INTERRUPTION: 'Interrupted. Tell Ally what to do instead.',
 
-  /** Generate tool-specific denial message */
-  toolSpecificDenial: (toolName: string) => `Permission denied for ${toolName} by user`,
+  /** Generate tool-specific denial message - shown to the model */
+  toolSpecificDenial: (toolName: string) => `The user denied permission for ${toolName}. Ask the user what to do instead.`,
 } as const;
 
 /**

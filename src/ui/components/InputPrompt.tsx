@@ -109,6 +109,8 @@ interface InputPromptProps {
   bufferValue?: string;
   /** Callback when buffer changes */
   onBufferChange?: (value: string) => void;
+  /** Whether auto-allow mode is enabled (changes border color to danger) */
+  autoAllowMode?: boolean;
 }
 
 /**
@@ -152,6 +154,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onExitConfirmationChange,
   bufferValue,
   onBufferChange,
+  autoAllowMode = false,
 }) => {
   const { exit } = useApp();
   const [buffer, setBuffer] = useState(bufferValue || '');
@@ -1108,11 +1111,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       // ===== Permission Prompt Navigation =====
       if (permissionRequest && onPermissionNavigate && activityStream) {
-        console.log('[InputPrompt] Permission mode - key pressed:', {
-          input,
-          keys: Object.keys(key).filter(k => key[k as keyof typeof key]),
-          tab: key.tab,
-        });
         const optionsCount = permissionRequest.options.length;
 
         // Up arrow - navigate to previous option
@@ -1528,7 +1526,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const isBashMode = buffer.startsWith('!');
 
   let promptText = '> ';
-  let promptColor = UI_COLORS.TEXT_DIM;
+  let promptColor: string = UI_COLORS.TEXT_DIM;
 
   if (isCommandMode) {
     promptText = 'Command > ';
@@ -1536,6 +1534,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   } else if (isBashMode) {
     promptText = 'Bash > ';
     promptColor = UI_COLORS.TEXT_DIM;
+  }
+
+  // Override border color when auto-allow mode is active (danger color)
+  if (autoAllowMode) {
+    promptColor = UI_COLORS.ERROR;
   }
 
   /**

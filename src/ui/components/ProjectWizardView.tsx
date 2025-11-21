@@ -15,6 +15,8 @@ import { Box, Text, useInput } from 'ink';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { UI_COLORS } from '../constants/colors.js';
+import { ModalContainer } from './ModalContainer.js';
+import { ChickAnimation } from './ChickAnimation.js';
 
 enum WizardStep {
   WELCOME,
@@ -220,198 +222,383 @@ This file provides project-specific guidance to Code Ally when working with this
   };
 
   return (
-    <Box flexDirection="column" padding={1} width="100%">
+    <Box flexDirection="column" paddingX={2} paddingY={1} width="100%">
+      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
+        <Box minHeight={20} width="100%" flexDirection="column">
       {step === WizardStep.WELCOME && (
-        <Box flexDirection="column" width="100%">
-          <Box borderStyle="double" borderColor={UI_COLORS.TEXT_DIM} padding={1} marginBottom={1} width="100%">
-            <Text bold color={UI_COLORS.TEXT_DEFAULT}>
-              Welcome to Project Configuration!
+        <>
+          {/* Header with ChickAnimation */}
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Project Configuration
             </Text>
           </Box>
-          <Text>
-            This wizard will help you create an ALLY.md file for your project.
-          </Text>
-          <Text dimColor>
-            This file provides context to Code Ally about your project's structure,
-          </Text>
-          <Text dimColor>
-            development practices, and specific requirements.
-          </Text>
-          <Box marginTop={1}>
+
+          {/* Main description */}
+          <Box marginBottom={1}>
             <Text>
-              Press <Text color={UI_COLORS.PRIMARY} bold>Enter</Text> to continue or <Text color={UI_COLORS.PRIMARY} bold>S</Text> to skip
+              Quick setup wizard to create an ALLY.md configuration file for your project.
             </Text>
           </Box>
-        </Box>
+
+          {/* Feature list header */}
+          <Box marginBottom={1}>
+            <Text dimColor>
+              You'll configure:
+            </Text>
+          </Box>
+
+          {/* Feature list */}
+          <Box paddingLeft={2} marginBottom={1} flexDirection="column">
+            <Text dimColor>• Project name and description</Text>
+            <Text dimColor>• Primary programming language</Text>
+            <Text dimColor>• Setup, build, and test commands</Text>
+            <Text dimColor>• Code formatter and linter</Text>
+          </Box>
+
+          {/* Footer separator */}
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+            <Text>
+              Press <Text color={UI_COLORS.PRIMARY}>Enter</Text> to continue or <Text color={UI_COLORS.PRIMARY}>S</Text> to skip
+            </Text>
+          </Box>
+        </>
       )}
 
       {step === WizardStep.PROJECT_NAME && (
-        <Box flexDirection="column">
-          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Project Name:</Text>
-          <Box marginTop={1}>
-            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-            <Text>{projectNameInput}</Text>
-            <Text color="gray">█</Text>
+        <>
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Step 1: Project Name
+            </Text>
           </Box>
-          <Box marginTop={1}>
+          <Box marginBottom={1}>
+            <Text>
+              Enter a name for your project
+            </Text>
+          </Box>
+          <Box marginBottom={1}>
+            <Text color={UI_COLORS.PRIMARY}>Project Name: </Text>
+            <Text>{projectNameInput}</Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+          </Box>
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to continue</Text>
           </Box>
-        </Box>
+        </>
       )}
 
       {step === WizardStep.DESCRIPTION && (
-        <Box flexDirection="column">
-          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Brief project description (optional):</Text>
-          <Box marginTop={1}>
-            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-            <Text>{descriptionInput}</Text>
-            <Text color="gray">█</Text>
+        <>
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Step 2: Description
+            </Text>
           </Box>
-          <Box marginTop={1}>
+          <Box marginBottom={1}>
+            <Text>
+              Enter a brief project description (optional)
+            </Text>
+          </Box>
+          <Box marginBottom={1}>
+            <Text color={UI_COLORS.PRIMARY}>Description: </Text>
+            <Text>{descriptionInput}</Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+          </Box>
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to continue</Text>
           </Box>
-        </Box>
+        </>
       )}
 
       {step === WizardStep.LANGUAGE && (
-        <Box flexDirection="column">
-          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Primary programming language:</Text>
-          <Box marginTop={1}>
-            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-            <Text>{languageInput}</Text>
-            <Text color="gray">█</Text>
+        <>
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Step 3: Primary Language
+            </Text>
           </Box>
-          <Box marginTop={1}>
+          <Box marginBottom={1}>
+            <Text>
+              Enter the primary programming language used in this project
+            </Text>
+          </Box>
+          <Box marginBottom={1}>
+            <Text color={UI_COLORS.PRIMARY}>Language: </Text>
+            <Text>{languageInput}</Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+          </Box>
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to continue</Text>
           </Box>
-        </Box>
+        </>
       )}
 
       {step === WizardStep.SETUP_COMMANDS && (
-        <Box flexDirection="column">
-          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Setup commands (e.g., npm install):</Text>
-          {setupCommands.map((cmd, i) => (
-            <Box key={i} marginLeft={2}>
-              <Text color={UI_COLORS.PRIMARY}>✓ </Text>
-              <Text>{cmd}</Text>
-            </Box>
-          ))}
-          <Box marginTop={1}>
-            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-            <Text>{setupCommandInput}</Text>
-            <Text color="gray">█</Text>
+        <>
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Step 4: Environment Setup
+            </Text>
           </Box>
-          <Box marginTop={1}>
+          <Box marginBottom={1}>
+            <Text>
+              Add commands to set up the development environment (e.g., npm install, pip install -r requirements.txt)
+            </Text>
+          </Box>
+          {setupCommands.length > 0 && (
+            <Box flexDirection="column" marginBottom={1}>
+              {setupCommands.map((cmd, i) => (
+                <Box key={i}>
+                  <Text color={UI_COLORS.PRIMARY}>✓ </Text>
+                  <Text>{cmd}</Text>
+                </Box>
+              ))}
+            </Box>
+          )}
+          <Box marginBottom={1}>
+            <Text color={UI_COLORS.PRIMARY}>Command: </Text>
+            <Text>{setupCommandInput}</Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+          </Box>
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to add command, or Enter on empty line to continue</Text>
           </Box>
-        </Box>
+        </>
       )}
 
       {step === WizardStep.BUILD_COMMANDS && (
-        <Box flexDirection="column">
-          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Build commands (e.g., npm run build):</Text>
-          {buildCommands.map((cmd, i) => (
-            <Box key={i} marginLeft={2}>
-              <Text color={UI_COLORS.PRIMARY}>✓ </Text>
-              <Text>{cmd}</Text>
-            </Box>
-          ))}
-          <Box marginTop={1}>
-            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-            <Text>{buildCommandInput}</Text>
-            <Text color="gray">█</Text>
+        <>
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Step 5: Build Commands
+            </Text>
           </Box>
-          <Box marginTop={1}>
+          <Box marginBottom={1}>
+            <Text>
+              Add commands to build the project (e.g., npm run build, make)
+            </Text>
+          </Box>
+          {buildCommands.length > 0 && (
+            <Box flexDirection="column" marginBottom={1}>
+              {buildCommands.map((cmd, i) => (
+                <Box key={i}>
+                  <Text color={UI_COLORS.PRIMARY}>✓ </Text>
+                  <Text>{cmd}</Text>
+                </Box>
+              ))}
+            </Box>
+          )}
+          <Box marginBottom={1}>
+            <Text color={UI_COLORS.PRIMARY}>Command: </Text>
+            <Text>{buildCommandInput}</Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+          </Box>
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to add command, or Enter on empty line to continue</Text>
           </Box>
-        </Box>
+        </>
       )}
 
       {step === WizardStep.TEST_COMMANDS && (
-        <Box flexDirection="column">
-          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Test commands (e.g., npm test):</Text>
-          {testCommands.map((cmd, i) => (
-            <Box key={i} marginLeft={2}>
-              <Text color={UI_COLORS.PRIMARY}>✓ </Text>
-              <Text>{cmd}</Text>
-            </Box>
-          ))}
-          <Box marginTop={1}>
-            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-            <Text>{testCommandInput}</Text>
-            <Text color="gray">█</Text>
+        <>
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Step 6: Test Commands
+            </Text>
           </Box>
-          <Box marginTop={1}>
+          <Box marginBottom={1}>
+            <Text>
+              Add commands to run tests (e.g., npm test, pytest)
+            </Text>
+          </Box>
+          {testCommands.length > 0 && (
+            <Box flexDirection="column" marginBottom={1}>
+              {testCommands.map((cmd, i) => (
+                <Box key={i}>
+                  <Text color={UI_COLORS.PRIMARY}>✓ </Text>
+                  <Text>{cmd}</Text>
+                </Box>
+              ))}
+            </Box>
+          )}
+          <Box marginBottom={1}>
+            <Text color={UI_COLORS.PRIMARY}>Command: </Text>
+            <Text>{testCommandInput}</Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+          </Box>
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to add command, or Enter on empty line to continue</Text>
           </Box>
-        </Box>
+        </>
       )}
 
       {step === WizardStep.FORMATTER && (
-        <Box flexDirection="column">
-          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Code formatter (e.g., prettier, black):</Text>
-          <Box marginTop={1}>
-            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-            <Text>{formatterInput}</Text>
-            <Text color="gray">█</Text>
+        <>
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Step 7: Code Formatter
+            </Text>
           </Box>
-          <Box marginTop={1}>
+          <Box marginBottom={1}>
+            <Text>
+              Enter the code formatter used in this project (e.g., prettier, black)
+            </Text>
+          </Box>
+          <Box marginBottom={1}>
+            <Text color={UI_COLORS.PRIMARY}>Formatter: </Text>
+            <Text>{formatterInput}</Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+          </Box>
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to continue</Text>
           </Box>
-        </Box>
+        </>
       )}
 
       {step === WizardStep.LINTER && (
-        <Box flexDirection="column">
-          <Text bold color={UI_COLORS.TEXT_DEFAULT}>Linter (e.g., eslint, ruff):</Text>
-          <Box marginTop={1}>
-            <Text color={UI_COLORS.PRIMARY}>&gt; </Text>
-            <Text>{linterInput}</Text>
-            <Text color="gray">█</Text>
+        <>
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Step 8: Linter
+            </Text>
           </Box>
-          <Box marginTop={1}>
+          <Box marginBottom={1}>
+            <Text>
+              Enter the linter used in this project (e.g., eslint, ruff)
+            </Text>
+          </Box>
+          <Box marginBottom={1}>
+            <Text color={UI_COLORS.PRIMARY}>Linter: </Text>
+            <Text>{linterInput}</Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT}>█</Text>
+          </Box>
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>Press Enter to generate ALLY.md</Text>
           </Box>
-        </Box>
+        </>
       )}
 
       {step === WizardStep.GENERATING && (
-        <Box flexDirection="column">
-          <Text color={UI_COLORS.PRIMARY}>⏳ Generating ALLY.md...</Text>
-        </Box>
+        <>
+          {/* Header with ChickAnimation */}
+          <Box marginBottom={1} flexDirection="row" gap={1}>
+            <Text bold>
+              <ChickAnimation />
+            </Text>
+            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+              Generating ALLY.md...
+            </Text>
+          </Box>
+
+          {/* Status message */}
+          <Box marginBottom={1}>
+            <Text>
+              Creating your project configuration file
+            </Text>
+          </Box>
+        </>
       )}
 
       {step === WizardStep.COMPLETED && (
-        <Box flexDirection="column">
+        <>
           {error ? (
             <>
-              <Text color={UI_COLORS.ERROR} bold>✗ Error creating ALLY.md</Text>
-              <Text color={UI_COLORS.ERROR}>{error}</Text>
+              {/* Error State */}
+              <Box marginBottom={1} flexDirection="row" gap={1}>
+                <Text bold>
+                  <ChickAnimation />
+                </Text>
+                <Text color={UI_COLORS.ERROR} bold>
+                  Error Creating ALLY.md
+                </Text>
+              </Box>
+              <Box marginBottom={1}>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
+              </Box>
             </>
           ) : (
             <>
-              <Box borderStyle="double" borderColor={UI_COLORS.PRIMARY} padding={1} marginBottom={1}>
-                <Text bold color={UI_COLORS.PRIMARY}>
-                  ✓ Project Configuration Complete!
+              {/* Success State - Header */}
+              <Box marginBottom={1} flexDirection="row" gap={1}>
+                <Text bold>
+                  <ChickAnimation />
+                </Text>
+                <Text color={UI_COLORS.PRIMARY} bold>
+                  Project Configuration Complete
                 </Text>
               </Box>
-              <Text>Generated ALLY.md in: <Text color={UI_COLORS.TEXT_DEFAULT}>{process.cwd()}/ALLY.md</Text></Text>
-              <Box marginTop={1}>
-                <Text>Code Ally will now use this configuration when working in this project.</Text>
+
+              {/* Success message */}
+              <Box marginBottom={1}>
+                <Text>
+                  Generated ALLY.md successfully.
+                </Text>
               </Box>
-              <Box marginTop={1}>
-                <Text>You can:</Text>
-                <Text>  • Edit ALLY.md manually to add more details</Text>
-                <Text>  • Regenerate it anytime with <Text color={UI_COLORS.TEXT_DEFAULT}>/project init</Text></Text>
-                <Text>  • View it with <Text color={UI_COLORS.TEXT_DEFAULT}>/project view</Text></Text>
+
+              {/* Configuration details */}
+              <Box marginBottom={1} flexDirection="column">
+                <Text dimColor>File location: {process.cwd()}/ALLY.md</Text>
+                <Text dimColor>• Project: {projectName}</Text>
+                <Text dimColor>• Language: {language}</Text>
+                {setupCommands.length > 0 && (
+                  <Text dimColor>• Setup commands: {setupCommands.length}</Text>
+                )}
+                {buildCommands.length > 0 && (
+                  <Text dimColor>• Build commands: {buildCommands.length}</Text>
+                )}
+                {testCommands.length > 0 && (
+                  <Text dimColor>• Test commands: {testCommands.length}</Text>
+                )}
+              </Box>
+
+              {/* Next steps */}
+              <Box marginBottom={1} flexDirection="column">
+                <Text dimColor>You can:</Text>
+                <Text dimColor>  • Edit ALLY.md manually for more details</Text>
+                <Text dimColor>  • Regenerate with /project init</Text>
+                <Text dimColor>  • View with /project view</Text>
               </Box>
             </>
           )}
-          <Box marginTop={1}>
-            <Text>Press <Text color={UI_COLORS.PRIMARY} bold>Enter</Text> to continue</Text>
+
+          {/* Footer separator */}
+          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+            <Text>
+              Press <Text color={UI_COLORS.PRIMARY}>Enter</Text> to continue
+            </Text>
           </Box>
-        </Box>
+        </>
       )}
+        </Box>
+      </ModalContainer>
     </Box>
   );
 };

@@ -10,6 +10,7 @@ import { Box, Text } from 'ink';
 import { createTwoFilesPatch } from 'diff';
 import { FORMATTING } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { getDisplayPath } from '@utils/pathUtils.js';
 
 export interface DiffLine {
   type: 'add' | 'remove' | 'context' | 'header';
@@ -64,8 +65,17 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
   if (deletions > 0) parts.push(`${deletions} deletion${deletions !== 1 ? 's' : ''}`);
   const summary = parts.length > 0 ? parts.join(', ') : 'no changes';
 
+  // Convert to display-friendly path (relative to cwd when possible)
+  const displayPath = getDisplayPath(filePath);
+
   return (
     <Box flexDirection="column">
+      {/* File path header */}
+      <Box>
+        <Text>{displayPath}</Text>
+      </Box>
+
+      {/* Changes summary */}
       <Box>
         <Text dimColor>
           Changes ({summary}):
