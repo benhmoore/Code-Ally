@@ -194,6 +194,7 @@ export class SetupWizard {
       { value: CONTEXT_SIZES.MEDIUM, label: '32K (32,768 tokens) [Recommended]' },
       { value: CONTEXT_SIZES.LARGE, label: '64K (65,536 tokens)' },
       { value: CONTEXT_SIZES.XLARGE, label: '128K (131,072 tokens)' },
+      { value: CONTEXT_SIZES.XXLARGE, label: '256K (262,144 tokens)' },
     ];
   }
 }

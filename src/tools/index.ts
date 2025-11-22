@@ -8,6 +8,8 @@ export { BaseTool } from './BaseTool.js';
 export { ToolManager } from './ToolManager.js';
 export { ToolValidator, ValidationResult } from './ToolValidator.js';
 export { BashTool } from './BashTool.js';
+export { BashOutputTool } from './BashOutputTool.js';
+export { KillShellTool } from './KillShellTool.js';
 export { ReadTool } from './ReadTool.js';
 export { GrepTool } from './GrepTool.js';
 export { GlobTool } from './GlobTool.js';

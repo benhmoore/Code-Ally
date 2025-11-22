@@ -23,6 +23,7 @@ import { DirectoryTraversalError, isPermissionDeniedError } from '../security/Pa
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
+import { BashProcessManager } from '../services/BashProcessManager.js';
 import { formatError, createStructuredError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
 import { BUFFER_SIZES, ID_GENERATION, SYSTEM_REMINDER } from '../config/constants.js';
@@ -860,6 +861,25 @@ export class ToolOrchestrator {
       // Skip TOOL_CALL_END when validation failed since we already emitted it
       // Don't return here - let the exception propagate!
       if (!permissionDenied && !validationFailed) {
+        // Inject background bash process reminders into every tool result
+        // This ensures the agent is always aware of running background processes
+        const registry = ServiceRegistry.getInstance();
+        const processManager = registry.get<BashProcessManager>('bash_process_manager');
+        if (processManager) {
+          const statusReminders = processManager.getStatusReminders();
+          if (statusReminders.length > 0) {
+            const reminderText = statusReminders.join('\n');
+            // Append to existing system_reminder if present, otherwise create new one
+            if (result.system_reminder) {
+              result.system_reminder += '\n\n' + reminderText;
+            } else {
+              result.system_reminder = reminderText;
+            }
+            // Reminders are ephemeral by default (cleaned up after each turn)
+            result.system_reminder_persist = false;
+          }
+        }
+
         // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START (except permission denial or validation failure)
         // Show silent tools in chat if they error (for debugging)
         const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);

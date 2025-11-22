@@ -180,6 +180,7 @@ export enum ActivityEventType {
   CONTEXT_USAGE_UPDATE = 'context_usage_update',
   COMPACTION_START = 'compaction_start',
   COMPACTION_COMPLETE = 'compaction_complete',
+  BACKGROUND_PROCESS_EXIT = 'background_process_exit',
   PLUGIN_CONFIG_REQUEST = 'plugin_config_request',
   PLUGIN_CONFIG_COMPLETE = 'plugin_config_complete',
   PLUGIN_CONFIG_CANCEL = 'plugin_config_cancel',

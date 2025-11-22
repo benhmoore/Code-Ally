@@ -35,12 +35,21 @@ import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
 import { SessionPersistence } from './SessionPersistence.js';
 import { AgentCompactor } from './AgentCompactor.js';
 import { ContextCoordinator } from './ContextCoordinator.js';
-import { ThinkingLoopDetector, type ThinkingLoopInfo } from './ThinkingLoopDetector.js';
+import { StreamLoopDetector } from './StreamLoopDetector.js';
+import { LoopInfo } from './types/loopDetection.js';
+import {
+  ReconstructionCyclePattern,
+  RepeatedQuestionPattern,
+  RepeatedActionPattern,
+  CharacterRepetitionPattern,
+  PhraseRepetitionPattern,
+  SentenceRepetitionPattern,
+} from './patterns/loopPatterns.js';
 import { Message, ActivityEventType, Config, ToolCall } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { POLLING_INTERVALS, TEXT_LIMITS, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE, TOKEN_MANAGEMENT } from '../config/constants.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE, TOKEN_MANAGEMENT, THINKING_LOOP_DETECTOR, RESPONSE_LOOP_DETECTOR } from '../config/constants.js';
 import {
   createInterruptionReminder,
   createEmptyTodoReminder,
@@ -189,7 +198,10 @@ export class Agent {
   private activityMonitor: ActivityMonitor;
 
   // Thinking loop detection - detects repetitive patterns in extended thinking
-  private thinkingLoopDetector: ThinkingLoopDetector;
+  private thinkingLoopDetector: StreamLoopDetector;
+
+  // Response loop detection - detects repetitive patterns in assistant responses
+  private responseLoopDetector: StreamLoopDetector;
 
   // Required tool calls tracking - delegated to RequiredToolTracker
   private requiredToolTracker: RequiredToolTracker;
@@ -366,10 +378,32 @@ export class Agent {
     }
 
     // Create thinking loop detector
-    this.thinkingLoopDetector = new ThinkingLoopDetector({
-      onLoopDetected: (info) => this.handleThinkingLoop(info),
+    this.thinkingLoopDetector = new StreamLoopDetector({
+      eventType: ActivityEventType.THOUGHT_CHUNK,
+      patterns: [
+        new ReconstructionCyclePattern(),
+        new RepeatedQuestionPattern(),
+        new RepeatedActionPattern(),
+      ],
+      warmupPeriodMs: THINKING_LOOP_DETECTOR.WARMUP_PERIOD_MS,
+      checkIntervalMs: THINKING_LOOP_DETECTOR.CHECK_INTERVAL_MS,
       instanceId: this.instanceId,
-    });
+      onLoopDetected: (info) => this.handleThinkingLoop(info),
+    }, this.activityStream);
+
+    // Create response loop detector
+    this.responseLoopDetector = new StreamLoopDetector({
+      eventType: ActivityEventType.ASSISTANT_CHUNK,
+      patterns: [
+        new CharacterRepetitionPattern(),
+        new PhraseRepetitionPattern(),
+        new SentenceRepetitionPattern(),
+      ],
+      warmupPeriodMs: RESPONSE_LOOP_DETECTOR.WARMUP_PERIOD_MS,
+      checkIntervalMs: RESPONSE_LOOP_DETECTOR.CHECK_INTERVAL_MS,
+      instanceId: this.instanceId,
+      onLoopDetected: (info) => this.handleResponseLoop(info),
+    }, this.activityStream);
 
     // Create agent's own TokenManager for isolated context tracking
     this.tokenManager = new TokenManager(config.config.context_size);
@@ -407,23 +441,6 @@ export class Agent {
       permissionManager
     );
 
-    // Subscribe to thinking chunk events for loop detection
-    this.activityStream.subscribe(
-      ActivityEventType.THOUGHT_CHUNK,
-      (event) => {
-        if (event.data?.chunk && typeof event.data.chunk === 'string') {
-          this.thinkingLoopDetector.addChunk(event.data.chunk);
-        }
-      }
-    );
-
-    // Subscribe to thinking complete events to stop loop detection
-    this.activityStream.subscribe(
-      ActivityEventType.THOUGHT_COMPLETE,
-      () => {
-        this.thinkingLoopDetector.stop();
-      }
-    );
 
     // Setup focus if focusDirectory is provided
     if (config.focusDirectory) {
@@ -649,17 +666,17 @@ export class Agent {
   /**
    * Handle thinking loop detection
    *
-   * Called when ThinkingLoopDetector identifies repetitive thinking patterns.
+   * Called when StreamLoopDetector identifies repetitive thinking patterns.
    * Sets interruption context and cancels the LLM request mid-stream.
    */
-  private handleThinkingLoop(info: ThinkingLoopInfo): void {
+  private handleThinkingLoop(info: LoopInfo): void {
     // Safety check: prevent double interruption
     if (this.interruptionManager.isInterrupted()) {
       logger.debug('[THINKING_LOOP]', this.instanceId, 'Already interrupted, skipping loop handler');
       return;
     }
 
-    logger.warn(
+    logger.debug(
       '[THINKING_LOOP]',
       this.instanceId,
       `Detected: ${info.reason}`
@@ -668,6 +685,36 @@ export class Agent {
     // Set interruption context
     this.interruptionManager.setInterruptionContext({
       reason: `Thinking loop: ${info.reason}`,
+      isTimeout: false,
+      canContinueAfterTimeout: true, // Enable continuation with warning
+    });
+
+    // Interrupt current request (cancels LLM streaming)
+    this.interrupt();
+  }
+
+  /**
+   * Handle response loop detection
+   *
+   * Called when StreamLoopDetector identifies repetitive response patterns.
+   * Sets interruption context and cancels the LLM request mid-stream.
+   */
+  private handleResponseLoop(info: LoopInfo): void {
+    // Safety check: prevent double interruption
+    if (this.interruptionManager.isInterrupted()) {
+      logger.debug('[RESPONSE_LOOP]', this.instanceId, 'Already interrupted, skipping loop handler');
+      return;
+    }
+
+    logger.debug(
+      '[RESPONSE_LOOP]',
+      this.instanceId,
+      `Detected: ${info.reason}`
+    );
+
+    // Set interruption context
+    this.interruptionManager.setInterruptionContext({
+      reason: `Response loop: ${info.reason}`,
       isTimeout: false,
       canContinueAfterTimeout: true, // Enable continuation with warning
     });
@@ -728,6 +775,9 @@ export class Agent {
 
     // Reset thinking loop detector on new user input
     this.thinkingLoopDetector.reset();
+
+    // Reset response loop detector on new user input
+    this.responseLoopDetector.reset();
 
     // Reset timeout continuation counter on new user input
     this.timeoutContinuationAttempts = 0;
@@ -1040,6 +1090,10 @@ export class Agent {
     this.interruptionManager.cleanup();
     this.stopActivityMonitoring();
 
+    // Stop both loop detectors
+    this.thinkingLoopDetector.stop();
+    this.responseLoopDetector.stop();
+
     // Ensure Ollama active flag is reset
     const registry = ServiceRegistry.getInstance();
     const coordinator = registry.get('idle_task_coordinator');
@@ -1338,6 +1392,10 @@ export class Agent {
         // Reset flags
         this.interruptionManager.reset();
 
+        // Reset loop detectors for fresh monitoring after interjection
+        this.thinkingLoopDetector.reset();
+        this.responseLoopDetector.reset();
+
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection, continuing...');
         const continuationResponse = await this.getLLMResponse(executionContext);
@@ -1396,6 +1454,10 @@ export class Agent {
           // Restart activity monitoring
           this.startActivityMonitoring();
 
+          // Reset loop detectors for fresh monitoring on retry
+          this.thinkingLoopDetector.reset();
+          this.responseLoopDetector.reset();
+
           // Get new response from LLM
           logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId, 'Requesting continuation after timeout...');
           const continuationResponse = await this.getLLMResponse(executionContext);
@@ -1440,6 +1502,10 @@ export class Agent {
 
         // Reset flags
         this.interruptionManager.reset();
+
+        // Reset loop detectors for fresh monitoring after interjection
+        this.thinkingLoopDetector.reset();
+        this.responseLoopDetector.reset();
 
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection after ResponseProcessor, continuing...');

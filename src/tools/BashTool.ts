@@ -11,6 +11,8 @@ import { spawn, ChildProcess } from 'child_process';
 import { TIMEOUT_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { formatError } from '../utils/errorUtils.js';
 import { logger } from '../services/Logger.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { BashProcessManager, CircularBuffer } from '../services/BashProcessManager.js';
 
 export class BashTool extends BaseTool {
   readonly name = 'bash';
@@ -43,7 +45,7 @@ export class BashTool extends BaseTool {
             },
             timeout: {
               type: 'integer',
-              description: `Timeout in seconds (default: 60, max: 1200)`,
+              description: `Timeout in seconds (default: 60, max: 1200, use -1 for no timeout)`,
             },
             output_mode: {
               type: 'string',
@@ -52,6 +54,10 @@ export class BashTool extends BaseTool {
             working_dir: {
               type: 'string',
               description: 'Working directory for command execution (default: current directory)',
+            },
+            run_in_background: {
+              type: 'boolean',
+              description: 'Run command in background (returns shell_id for monitoring with bash-output). Use this for long-running servers (npm run dev, python -m http.server, etc), watchers, or any process that runs indefinitely. The timeout parameter is ignored for background processes.',
             },
           },
           required: ['command'],
@@ -66,7 +72,8 @@ export class BashTool extends BaseTool {
 
     // Extract and validate parameters
     const command = args.command as string;
-    const timeout = this.validateTimeout(args.timeout);
+    const runInBackground = args.run_in_background === true;
+    const timeout = runInBackground ? Infinity : this.validateTimeout(args.timeout);
     const outputMode = (args.output_mode as string) || 'full';
     const workingDir = (args.working_dir as string) || process.cwd();
 
@@ -97,15 +104,20 @@ export class BashTool extends BaseTool {
       );
     }
 
-    // Execute command
-    try {
-      const result = await this.executeCommand(command, workingDir, timeout, outputMode, this.currentAbortSignal);
-      return result;
-    } catch (error) {
-      return this.formatErrorResponse(
-        formatError(error),
-        'system_error'
-      );
+    // Branch on execution mode
+    if (runInBackground) {
+      return this.spawnBackground(command, workingDir);
+    } else {
+      // Existing foreground execution
+      try {
+        const result = await this.executeCommand(command, workingDir, timeout, outputMode, this.currentAbortSignal);
+        return result;
+      } catch (error) {
+        return this.formatErrorResponse(
+          formatError(error),
+          'system_error'
+        );
+      }
     }
   }
 
@@ -117,6 +129,11 @@ export class BashTool extends BaseTool {
       // Use config bash_timeout (in seconds), convert to milliseconds
       const configTimeoutSec = this.config?.bash_timeout ?? 60;
       return configTimeoutSec * 1000;
+    }
+
+    // Handle -1 for no timeout (infinite)
+    if (timeout === -1) {
+      return Infinity;
     }
 
     const timeoutMs = Number(timeout) * 1000;
@@ -149,6 +166,270 @@ export class BashTool extends BaseTool {
     }
 
     return { valid: true };
+  }
+
+  /**
+   * Spawn a background process and return immediately with shell_id
+   *
+   * Creates a detached process that runs independently, with output buffered
+   * in a CircularBuffer for later retrieval via bash-output tool.
+   *
+   * @param command - Shell command to execute in background
+   * @param workingDir - Working directory for command execution
+   * @returns ToolResult with shell_id, pid, message, and command
+   */
+  private async spawnBackground(command: string, workingDir: string): Promise<ToolResult> {
+    // Get process manager from registry
+    const registry = ServiceRegistry.getInstance();
+    const processManager = registry.get<BashProcessManager>('bash_process_manager');
+
+    if (!processManager) {
+      return this.formatErrorResponse(
+        'BashProcessManager not available',
+        'system_error',
+        'Background execution requires BashProcessManager to be registered'
+      );
+    }
+
+    // Generate unique shell ID
+    const shellId = `shell-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+    // Create circular buffer for output
+    const outputBuffer = new CircularBuffer(10000); // 10k lines max
+
+    // Spawn detached process
+    const child: ChildProcess = spawn(command, {
+      cwd: workingDir,
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32', // Create process group on Unix
+    });
+
+    if (!child.pid) {
+      return this.formatErrorResponse(
+        'Failed to spawn background process',
+        'system_error',
+        'Process did not receive a PID'
+      );
+    }
+
+    // Helper to kill process group (reused from foreground execution)
+    const killProcessGroup = (signal: NodeJS.Signals) => {
+      if (!child.pid) return;
+
+      try {
+        if (process.platform !== 'win32' && child.pid) {
+          // On Unix, kill the entire process group (negative PID)
+          process.kill(-child.pid, signal);
+        } else {
+          // On Windows, just kill the process
+          child.kill(signal);
+        }
+      } catch (error) {
+        logger.debug('[BashTool] Error killing background process:', error);
+      }
+    };
+
+    // Pipe stdout to circular buffer
+    if (child.stdout) {
+      child.stdout.on('data', (data: Buffer) => {
+        outputBuffer.append(data.toString());
+      });
+    }
+
+    // Pipe stderr to circular buffer
+    if (child.stderr) {
+      child.stderr.on('data', (data: Buffer) => {
+        outputBuffer.append(data.toString());
+      });
+    }
+
+    // Register process with manager
+    const processInfo = {
+      id: shellId,
+      pid: child.pid,
+      command,
+      process: child,
+      outputBuffer,
+      startTime: Date.now(),
+      exitCode: null,
+      exitTime: null,
+    };
+
+    try {
+      processManager.addProcess(processInfo);
+    } catch (error) {
+      // Failed to add (probably hit limit) - kill the process
+      killProcessGroup('SIGTERM');
+      return this.formatErrorResponse(
+        formatError(error),
+        'system_error'
+      );
+    }
+
+    // Track when process exits
+    child.on('exit', (code: number | null) => {
+      const info = processManager.getProcess(shellId);
+      if (info) {
+        info.exitCode = code;
+        info.exitTime = Date.now();
+
+        // Emit event so UI can update
+        this.activityStream.emit({
+          id: `bg-exit-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          type: 'background_process_exit' as any, // Cast needed until types are rebuilt
+          timestamp: Date.now(),
+          data: {
+            shellId,
+            exitCode: code,
+            command,
+          },
+        });
+      }
+    });
+
+    // Return immediately with shell_id and pid
+    return this.formatSuccessResponse({
+      shell_id: shellId,
+      pid: child.pid,
+      message: `Background shell started: ${shellId}`,
+      command,
+    });
+  }
+
+  /**
+   * Transition a running foreground process to background
+   *
+   * Called when a foreground command exceeds its timeout. Instead of killing
+   * the process, we preserve it by registering with BashProcessManager and
+   * continuing to capture output in a CircularBuffer.
+   *
+   * @param child - Running ChildProcess to transition
+   * @param command - Original command string
+   * @param existingStdout - Output already captured before transition
+   * @param existingStderr - Error output already captured before transition
+   * @param timeout - Original timeout value (for message)
+   * @returns ToolResult with shell_id and transition message
+   */
+  private transitionToBackground(
+    child: ChildProcess,
+    command: string,
+    existingStdout: string,
+    existingStderr: string,
+    timeout: number
+  ): ToolResult {
+    // Get process manager from registry
+    const registry = ServiceRegistry.getInstance();
+    const processManager = registry.get<BashProcessManager>('bash_process_manager');
+
+    if (!processManager) {
+      logger.warn('[BashTool] Cannot transition to background - BashProcessManager not available');
+      // Fall back to returning timeout error (process will be killed by caller)
+      return this.formatErrorResponse(
+        `Command timed out after ${timeout / 1000} seconds`,
+        'timeout_error',
+        'BashProcessManager not available for background transition'
+      );
+    }
+
+    // Check if process already exited
+    if (child.exitCode !== null) {
+      logger.debug('[BashTool] Process already exited, cannot transition to background');
+      // Return the output we have
+      const output = existingStdout + existingStderr;
+      return this.formatSuccessResponse({
+        output: output || '(no output)',
+        exit_code: child.exitCode,
+        message: 'Process completed during timeout handling',
+      });
+    }
+
+    // Generate unique shell ID
+    const shellId = `shell-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+    // Create circular buffer and transfer existing output
+    const outputBuffer = new CircularBuffer(10000);
+    if (existingStdout) {
+      outputBuffer.append(existingStdout);
+    }
+    if (existingStderr) {
+      outputBuffer.append(existingStderr);
+    }
+
+    // Continue capturing future output
+    // Note: We don't remove existing listeners - they'll naturally stop when process exits
+    // We add new listeners that write to the buffer
+    if (child.stdout) {
+      child.stdout.on('data', (data: Buffer) => {
+        outputBuffer.append(data.toString());
+      });
+    }
+    if (child.stderr) {
+      child.stderr.on('data', (data: Buffer) => {
+        outputBuffer.append(data.toString());
+      });
+    }
+
+    // Register process with manager
+    const processInfo = {
+      id: shellId,
+      pid: child.pid!,
+      command,
+      process: child,
+      outputBuffer,
+      startTime: Date.now(),
+      exitCode: null,
+      exitTime: null,
+    };
+
+    try {
+      processManager.addProcess(processInfo);
+    } catch (error) {
+      // Failed to add (probably hit limit) - return timeout error
+      logger.warn('[BashTool] Failed to transition to background:', formatError(error));
+      return this.formatErrorResponse(
+        `Command timed out after ${timeout / 1000} seconds`,
+        'timeout_error',
+        formatError(error)
+      );
+    }
+
+    // Track when process exits
+    child.on('exit', (code: number | null) => {
+      const info = processManager.getProcess(shellId);
+      if (info) {
+        info.exitCode = code;
+        info.exitTime = Date.now();
+
+        // Emit event so UI can update
+        this.activityStream.emit({
+          id: `bg-exit-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          type: 'background_process_exit' as any, // Cast needed until types are rebuilt
+          timestamp: Date.now(),
+          data: {
+            shellId,
+            exitCode: code,
+            command,
+          },
+        });
+      }
+    });
+
+    const timeoutSecs = timeout / 1000;
+    const outputPreview = (existingStdout + existingStderr).trim().split('\n').slice(-5).join('\n');
+
+    // Return success with transition info
+    return this.formatSuccessResponse({
+      shell_id: shellId,
+      pid: child.pid,
+      command,
+      transitioned: true,
+      reason: 'timeout',
+      timeout_seconds: timeoutSecs,
+      message: `Command exceeded ${timeoutSecs}s timeout and was moved to background. Process continues running as ${shellId}.`,
+      output_preview: outputPreview || '(no output yet)',
+      instructions: `Use bash-output(shell_id="${shellId}") to monitor output, or /task list to see all background processes.`,
+    });
   }
 
   /**
@@ -185,7 +466,6 @@ export class BashTool extends BaseTool {
     let stdout = '';
     let stderr = '';
     let returnCode: number | null = null;
-    let timedOut = false;
     let lastOutputTime = Date.now();
     let idleKilled = false;
 
@@ -265,15 +545,19 @@ export class BashTool extends BaseTool {
         }
       }
 
-      // Set up timeout
+      // Set up timeout - transition to background instead of killing
       const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        killProcessGroup('SIGTERM');
-        setTimeout(() => {
-          if (child.exitCode === null) {
-            killProcessGroup('SIGKILL');
-          }
-        }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+        // Transition to background instead of killing
+        const transitionResult = this.transitionToBackground(child, command, stdout, stderr, timeout);
+
+        // Clean up listeners and intervals
+        clearInterval(idleCheckInterval);
+        if (abortSignal) {
+          abortSignal.removeEventListener('abort', abortHandler);
+        }
+
+        // Resolve immediately with transition result
+        resolve(transitionResult);
       }, timeout);
 
       // Idle detection: kill process if no output for configured idle timeout
@@ -355,18 +639,8 @@ export class BashTool extends BaseTool {
           return;
         }
 
-        // Check if command timed out
-        if (timedOut) {
-          const timeoutSecs = timeout / 1000;
-          resolve(
-            this.formatErrorResponse(
-              `Command timed out after ${timeoutSecs} seconds`,
-              'timeout_error',
-              'Try increasing the timeout parameter'
-            )
-          );
-          return;
-        }
+        // Note: Timeout handling removed - timeouts now trigger immediate transition to background
+        // See timeout handler above which resolves the promise with transitionToBackground() result
 
         // Non-zero exit code = failure (except for special cases)
         if (returnCode !== 0 && returnCode !== null) {
@@ -417,29 +691,16 @@ export class BashTool extends BaseTool {
 
   /**
    * Format subtext for display in UI
-   * Shows: [command_snippet] - [timeout] - [description]
+   * Shows: [command_snippet] - [timeout/background] - [description]
    */
   formatSubtext(args: Record<string, any>): string | null {
     const command = args.command as string;
     const description = args.description as string;
     const timeoutParam = args.timeout;
+    const runInBackground = args.run_in_background === true;
 
     if (!command) {
       return null;
-    }
-
-    // Calculate timeout (same logic as validateTimeout)
-    let timeoutSeconds: number;
-    if (timeoutParam === undefined || timeoutParam === null) {
-      timeoutSeconds = this.config?.bash_timeout ?? 60;
-    } else {
-      const timeoutNum = Number(timeoutParam);
-      if (isNaN(timeoutNum) || timeoutNum <= 0) {
-        timeoutSeconds = this.config?.bash_timeout ?? 60;
-      } else {
-        // Cap at max timeout (convert from ms to seconds)
-        timeoutSeconds = Math.min(timeoutNum, TIMEOUT_LIMITS.MAX / 1000);
-      }
     }
 
     // Show first 40 chars of command, truncate with ... if longer
@@ -448,8 +709,30 @@ export class BashTool extends BaseTool {
       commandSnippet = commandSnippet.substring(0, 40) + '...';
     }
 
-    // Format timeout display
-    const timeoutDisplay = `${timeoutSeconds}s`;
+    // Background mode ignores timeout
+    if (runInBackground) {
+      const mode = 'background';
+      return description ? `${commandSnippet} - ${mode} - ${description}` : `${commandSnippet} - ${mode}`;
+    }
+
+    // Calculate timeout (same logic as validateTimeout)
+    let timeoutDisplay: string;
+    if (timeoutParam === -1) {
+      timeoutDisplay = '∞'; // Infinite timeout
+    } else if (timeoutParam === undefined || timeoutParam === null) {
+      const timeoutSeconds = this.config?.bash_timeout ?? 60;
+      timeoutDisplay = `${timeoutSeconds}s`;
+    } else {
+      const timeoutNum = Number(timeoutParam);
+      if (isNaN(timeoutNum) || timeoutNum <= 0) {
+        const timeoutSeconds = this.config?.bash_timeout ?? 60;
+        timeoutDisplay = `${timeoutSeconds}s`;
+      } else {
+        // Cap at max timeout (convert from ms to seconds)
+        const timeoutSeconds = Math.min(timeoutNum, TIMEOUT_LIMITS.MAX / 1000);
+        timeoutDisplay = `${timeoutSeconds}s`;
+      }
+    }
 
     // Build subtext: command - timeout [- description]
     if (description) {
@@ -461,10 +744,10 @@ export class BashTool extends BaseTool {
 
   /**
    * Get parameters shown in subtext
-   * BashTool shows 'command', 'timeout', and 'description' in subtext
+   * BashTool shows 'command', 'timeout', 'run_in_background', and 'description' in subtext
    */
   getSubtextParameters(): string[] {
-    return ['command', 'timeout', 'description'];
+    return ['command', 'timeout', 'run_in_background', 'description'];
   }
 
   /**

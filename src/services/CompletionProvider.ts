@@ -69,6 +69,7 @@ const SLASH_COMMANDS = [
   { name: '/project', description: 'Manage project configuration' },
   { name: '/plugin', description: 'Manage plugins' },
   { name: '/prompt', description: 'Manage saved prompts' },
+  { name: '/task', description: 'Manage background processes' },
   { name: '/todo', description: 'Manage todo list' },
   { name: '/exit', description: 'Exit the application' },
 ];
@@ -132,6 +133,15 @@ const TODO_SUBCOMMANDS = [
   { name: 'done', description: 'Complete a todo (alias)' },
   { name: 'clear', description: 'Clear completed todos' },
   { name: 'clear-all', description: 'Clear all todos' },
+];
+
+/**
+ * Task subcommands
+ */
+const TASK_SUBCOMMANDS = [
+  { name: 'list', description: 'List running background processes' },
+  { name: 'ls', description: 'List processes (alias)' },
+  { name: 'kill', description: 'Kill a background process' },
 ];
 
 /**
@@ -339,6 +349,22 @@ export class CompletionProvider {
         }));
     }
 
+    // Complete subcommands for /task (user typed "/task ")
+    if (command === '/task' && wordCount === 2) {
+      const prefix = subcommand || '';
+      return TASK_SUBCOMMANDS.filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
+    }
+
+    // Complete shell IDs for /task kill (user typed "/task kill ")
+    if (command === '/task' && subcommand === 'kill' && wordCount === 3) {
+      return await this.getRunningProcessCompletions(context.currentWord);
+    }
+
     // Complete subcommands for /config (user typed "/config ")
     if (command === '/config' && wordCount === 2) {
       const configSubcommands = [
@@ -499,6 +525,63 @@ export class CompletionProvider {
         description: 'Specialized agent',
         type: 'option' as const,
       }));
+  }
+
+  /**
+   * Get running process completions for /task kill command
+   */
+  private async getRunningProcessCompletions(prefix: string): Promise<Completion[]> {
+    try {
+      const { ServiceRegistry } = await import('./ServiceRegistry.js');
+      const registry = ServiceRegistry.getInstance();
+      const processManager = registry.get('bash_process_manager');
+
+      if (!processManager || typeof (processManager as any).listProcesses !== 'function') {
+        return [];
+      }
+
+      const allProcesses = (processManager as any).listProcesses();
+      const runningProcesses = allProcesses.filter((p: any) => p.exitCode === null);
+
+      if (runningProcesses.length === 0) {
+        return [];
+      }
+
+      // Filter by prefix (allow matching full ID or short ID)
+      const matches = runningProcesses.filter((proc: any) => {
+        const shortId = proc.id.startsWith('shell-')
+          ? proc.id.substring(6, 14) // First 8 digits after "shell-"
+          : proc.id;
+        return proc.id.includes(prefix) || shortId.includes(prefix);
+      });
+
+      const now = Date.now();
+
+      // Map to completions with helpful descriptions
+      return matches.map((proc: any) => {
+        const { formatDuration } = require('../ui/utils/timeUtils.js');
+        const elapsed = formatDuration(now - proc.startTime);
+        const shortId = proc.id.startsWith('shell-')
+          ? proc.id.substring(6, 14)
+          : proc.id;
+
+        // Truncate command if too long
+        const maxCommandLength = 40;
+        const displayCommand = proc.command.length > maxCommandLength
+          ? proc.command.substring(0, maxCommandLength) + '...'
+          : proc.command;
+
+        return {
+          value: shortId,
+          description: `${displayCommand} (${elapsed})`,
+          type: 'option' as const,
+          insertText: proc.id, // Insert full ID
+        };
+      });
+    } catch (error) {
+      logger.debug(`Unable to get running process completions: ${formatError(error)}`);
+      return [];
+    }
   }
 
   /**
@@ -700,7 +783,7 @@ export class CompletionProvider {
           if (key === 'temperature') {
             suggestions.push(0.0, 0.3, 0.5, 0.7, 1.0);
           } else if (key === 'context_size') {
-            suggestions.push(8192, 16384, 32768, 65536, 131072);
+            suggestions.push(8192, 16384, 32768, 65536, 131072, 262144);
           } else if (key === 'max_tokens') {
             suggestions.push(2000, 4000, 7000, 10000, 16000);
           } else if (key === 'compact_threshold') {

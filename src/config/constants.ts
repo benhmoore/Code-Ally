@@ -620,6 +620,9 @@ export const CONTEXT_SIZES = {
 
   /** Extra large context window (128K tokens) */
   XLARGE: 131072,
+
+  /** Double extra large context window (256K tokens) */
+  XXLARGE: 262144,
 } as const;
 
 /**
@@ -630,6 +633,7 @@ export const VALID_CONTEXT_SIZES = [
   CONTEXT_SIZES.MEDIUM,
   CONTEXT_SIZES.LARGE,
   CONTEXT_SIZES.XLARGE,
+  CONTEXT_SIZES.XXLARGE,
 ] as const;
 
 // ===========================================
@@ -872,6 +876,34 @@ export const THINKING_LOOP_DETECTOR = {
 
   /** Question/action must appear 3+ times to be considered repetitive */
   REPETITION_THRESHOLD: 3,
+
+  /** Word overlap threshold (0.7 = 70%) for considering patterns similar */
+  SIMILARITY_THRESHOLD: 0.7,
+} as const;
+
+/**
+ * Configuration for ResponseLoopDetector to identify repetitive patterns in model responses
+ *
+ * Detects when models get stuck generating repetitive content:
+ * - Character repetition: Same characters repeating (e.g., "2.2.2.2...")
+ * - Phrase repetition: Same phrases appearing multiple times
+ * - Sentence repetition: Same sentences appearing multiple times
+ */
+export const RESPONSE_LOOP_DETECTOR = {
+  /** Wait 2 seconds before monitoring begins (glitches happen fast, need early detection) */
+  WARMUP_PERIOD_MS: 2000,
+
+  /** Check every 3 seconds during response generation */
+  CHECK_INTERVAL_MS: 3000,
+
+  /** Character/token must repeat 30+ times to be considered a glitch */
+  CHAR_REPETITION_THRESHOLD: 30,
+
+  /** Phrase must appear 3+ times to be considered repetitive */
+  PHRASE_REPETITION_THRESHOLD: 3,
+
+  /** Sentence must appear 3+ times to be considered repetitive */
+  SENTENCE_REPETITION_THRESHOLD: 3,
 
   /** Word overlap threshold (0.7 = 70%) for considering patterns similar */
   SIMILARITY_THRESHOLD: 0.7,

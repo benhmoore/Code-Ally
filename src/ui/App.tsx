@@ -45,6 +45,7 @@ import { useSessionResume } from './hooks/useSessionResume.js';
 import { useInputHandlers } from './hooks/useInputHandlers.js';
 import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
 import { useContentWidth } from './hooks/useContentWidth.js';
+import { useBackgroundProcesses } from './hooks/useBackgroundProcesses.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
 
@@ -116,6 +117,9 @@ const AppContentComponent: React.FC<{
 
   // Manage all modal and selector state
   const modal = useModalState();
+
+  // Track background processes for status line
+  const backgroundProcessCount = useBackgroundProcesses();
 
   // Connect auto-allow mode to TrustManager after initialization
   useEffect(() => {
@@ -1243,6 +1247,12 @@ const AppContentComponent: React.FC<{
                       )
                     );
                   })()}
+                  {backgroundProcessCount > 0 && (
+                    <Text>
+                      {' '}
+                      · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running task{backgroundProcessCount === 1 ? '' : 's'}</Text> (/task list)
+                    </Text>
+                  )}
                 </Text>
                 {modal.autoAllowMode ? (
                   <Text color={UI_COLORS.ERROR}> · Auto-allow enabled (Shift+Tab to disable)</Text>
@@ -1295,6 +1305,12 @@ const AppContentComponent: React.FC<{
                   )
                 );
               })()}
+              {backgroundProcessCount > 0 && (
+                <Text>
+                  {' '}
+                  · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running task{backgroundProcessCount === 1 ? '' : 's'}</Text> (/task list)
+                </Text>
+              )}
             </Text>
             {modal.autoAllowMode ? (
               <Text color={UI_COLORS.ERROR}> · Auto-allow enabled (Shift+Tab to disable)</Text>

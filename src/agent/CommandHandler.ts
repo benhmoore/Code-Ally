@@ -34,6 +34,7 @@ import { PluginCommand } from './commands/PluginCommand.js';
 import { ResumeCommand } from './commands/ResumeCommand.js';
 import { PromptCommand } from './commands/PromptCommand.js';
 import { ProfileCommand } from './commands/ProfileCommand.js';
+import { TaskCommand } from './commands/TaskCommand.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -66,6 +67,7 @@ export class CommandHandler {
     this.registerCommand(new ProjectCommand());
     this.registerCommand(new PromptCommand());
     this.registerCommand(new ResumeCommand());
+    this.registerCommand(new TaskCommand());
     this.registerCommand(new TodoCommand());
     this.registerCommand(new UndoCommand());
   }
@@ -226,6 +228,10 @@ Todo Commands:
   /todo complete <index>   - Complete a todo by index
   /todo clear              - Clear completed todos
   /todo clear-all          - Clear all todos
+
+Task Commands:
+  /task list               - List running background processes
+  /task kill <shell_id>    - Kill a background process by ID
 
 Plugin Commands:
   /plugin config <name>    - Configure a plugin

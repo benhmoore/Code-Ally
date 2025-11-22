@@ -77,6 +77,12 @@ async function cleanExit(code: number = 0): Promise<void> {
   const ServiceRegistry = (await import('./services/ServiceRegistry.js')).ServiceRegistry;
   const registry = ServiceRegistry.getInstance();
   try {
+    // Shutdown background bash processes if manager exists
+    const bashProcessManager = registry.get<any>('bash_process_manager');
+    if (bashProcessManager && typeof bashProcessManager.shutdown === 'function') {
+      await bashProcessManager.shutdown();
+    }
+
     await registry.shutdown();
   } catch (error) {
     // Ignore errors during shutdown - already exiting
@@ -892,6 +898,11 @@ async function main() {
     await idleTaskCoordinator.initialize();
     registry.registerInstance('idle_task_coordinator', idleTaskCoordinator);
 
+    // Create bash process manager for background shell execution
+    const { BashProcessManager } = await import('./services/BashProcessManager.js');
+    const bashProcessManager = new BashProcessManager(10); // Max 10 background processes
+    registry.registerInstance('bash_process_manager', bashProcessManager);
+
     // Create project context detector
     const { ProjectContextDetector } = await import('./services/ProjectContextDetector.js');
     const projectContextDetector = new ProjectContextDetector(process.cwd());
@@ -900,6 +911,8 @@ async function main() {
 
     // Import and create tools
     const { BashTool } = await import('./tools/BashTool.js');
+    const { BashOutputTool } = await import('./tools/BashOutputTool.js');
+    const { KillShellTool } = await import('./tools/KillShellTool.js');
     const { ReadTool } = await import('./tools/ReadTool.js');
     const { WriteTool } = await import('./tools/WriteTool.js');
     const { WriteTempTool } = await import('./tools/WriteTempTool.js');
@@ -922,6 +935,8 @@ async function main() {
 
     const tools = [
       new BashTool(activityStream, config),
+      new BashOutputTool(activityStream),
+      new KillShellTool(activityStream),
       new ReadTool(activityStream, config),
       new WriteTool(activityStream),
       new WriteTempTool(activityStream), // Internal tool for explore agents
@@ -968,6 +983,10 @@ async function main() {
     const shutdownHandler = async (signal: string) => {
       logger.info(`[CLI] Received ${signal}, shutting down...`);
       try {
+        // Shutdown background bash processes first (before registry shutdown)
+        await bashProcessManager.shutdown();
+        logger.debug('[CLI] Background bash processes terminated');
+
         // Flush pending session saves before exit
         await registry.shutdown();
         logger.debug('[CLI] Registry shutdown complete');

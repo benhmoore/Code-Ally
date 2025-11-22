@@ -25,6 +25,7 @@ export { PatchValidator } from './PatchValidator.js';
 export { PatchFileManager } from './PatchFileManager.js';
 export { PatchIndexManager } from './PatchIndexManager.js';
 export { PatchCleanupManager } from './PatchCleanupManager.js';
+export { BashProcessManager, CircularBuffer } from './BashProcessManager.js';
 
 // Re-export types
 export type { CommandHistoryEntry, CommandHistoryOptions } from './CommandHistory.js';
@@ -33,6 +34,7 @@ export type { FuzzyMatchResult, FuzzyMatchOptions, MatchType } from './FuzzyFile
 export type { PatchManagerConfig, PatchMetadata, UndoResult, UndoPreview, UndoFileEntry } from './PatchManager.js';
 export type { DiffStats } from '../utils/diffUtils.js';
 export type { PatchIndex } from './PatchValidator.js';
+export type { ProcessInfo } from './BashProcessManager.js';
 
 // UI Polish services
 export { SyntaxHighlighter } from './SyntaxHighlighter.js';
