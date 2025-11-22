@@ -452,7 +452,12 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
       try {
         // Execute exploration
         logger.debug('[EXPLORE_TOOL] Sending task to exploration agent...');
-        const response = await explorationAgent.sendMessage(`Execute this exploration task: ${taskPrompt}`);
+        // Pass fresh execution context to prevent stale state in pooled agents
+        const response = await explorationAgent.sendMessage(`Execute this exploration task: ${taskPrompt}`, {
+          parentCallId: callId,
+          maxDuration,
+          thoroughness,
+        });
         logger.debug('[EXPLORE_TOOL] Exploration agent response received, length:', response?.length || 0);
 
         let finalResponse: string;

@@ -72,6 +72,15 @@ export const RETRY_CONFIG = {
 
   /** Maximum LLM request timeout (milliseconds) */
   MAX_LLM_TIMEOUT: 600000, // 10 minutes
+
+  /** Maximum total time for a single LLM request with all retries (30 minutes) */
+  MAX_TOTAL_REQUEST_TIME: 30 * 60 * 1000,
+
+  /** Circuit breaker threshold - number of consecutive failures before opening */
+  CIRCUIT_BREAKER_THRESHOLD: 10,
+
+  /** Circuit breaker cooldown period in milliseconds (1 minute) */
+  CIRCUIT_BREAKER_COOLDOWN: 1 * 60 * 1000,
 } as const;
 
 // ===========================================
@@ -411,6 +420,34 @@ export const BUFFER_SIZES = {
 
   /** Patch number padding width (3 digits for up to 999 patches) */
   PATCH_NUMBER_PADDING: 3,
+} as const;
+
+// ===========================================
+// IMAGE PROCESSING
+// ===========================================
+
+/**
+ * Image optimization and processing parameters
+ * Used for resizing and compressing images before encoding to base64
+ */
+export const IMAGE_PROCESSING = {
+  /** Maximum dimension (width or height) for image resize in pixels */
+  MAX_DIMENSION: 2000,
+
+  /** Target file size after compression in kilobytes */
+  TARGET_SIZE_KB: 80,
+
+  /** Target file size in bytes (derived from TARGET_SIZE_KB) */
+  TARGET_SIZE_BYTES: 80 * 1024,
+
+  /** Starting JPEG/WebP quality level (0-100) */
+  QUALITY_START: 80,
+
+  /** Minimum JPEG/WebP quality level (0-100) */
+  QUALITY_MIN: 40,
+
+  /** Quality reduction step size */
+  QUALITY_STEP: 10,
 } as const;
 
 // ===========================================
@@ -768,8 +805,8 @@ export const AGENT_CONFIG = {
   /** Minimum number of searches required before checking hit rate */
   MIN_SEARCHES_FOR_HIT_RATE: 5,
 
-  /** Maximum agent nesting depth (0=root Ally, 1-3=delegated agents) */
-  MAX_AGENT_DEPTH: 3,
+  /** Maximum agent nesting depth (0=root Ally, 1-5=delegated agents) */
+  MAX_AGENT_DEPTH: 5,
 
   /**
    * Maximum cycle depth for same-type agents (how many times same agent can appear in call chain)
@@ -781,12 +818,12 @@ export const AGENT_CONFIG = {
    * Maximum recursion depth for delegation context search (prevents stack overflow)
    *
    * IMPORTANT: Should be MAX_AGENT_DEPTH + 1 to allow searching entire delegation tree.
-   * - MAX_AGENT_DEPTH=3 allows: Ally(0) → A1(1) → A2(2) → A3(3) = 4 levels
-   * - MAX_DELEGATION_RECURSION_DEPTH=4 allows searching all 4 levels
+   * - MAX_AGENT_DEPTH=5 allows: Ally(0) → A1(1) → A2(2) → A3(3) → A4(4) → A5(5) = 6 levels
+   * - MAX_DELEGATION_RECURSION_DEPTH=6 allows searching all 6 levels
    *
    * If you change MAX_AGENT_DEPTH, update this value accordingly.
    */
-  MAX_DELEGATION_RECURSION_DEPTH: 4,
+  MAX_DELEGATION_RECURSION_DEPTH: 6,
 
   /** Maximum concurrent delegations per manager (prevents resource exhaustion) */
   MAX_CONCURRENT_DELEGATIONS: 20,

@@ -302,7 +302,14 @@ export class SessionsTool extends BaseTool {
       try {
         // Execute session analysis
         logger.debug('[SESSIONS_TOOL] Sending task to analysis agent...');
-        const response = await analysisAgent.sendMessage(`Execute this session analysis task: ${task}`);
+        // Pass fresh execution context to prevent stale state in pooled agents
+        const maxDuration = getThoroughnessDuration('quick');
+        const thoroughness = 'quick';
+        const response = await analysisAgent.sendMessage(`Execute this session analysis task: ${task}`, {
+          parentCallId: callId,
+          maxDuration,
+          thoroughness,
+        });
         logger.debug('[SESSIONS_TOOL] Analysis agent response received, length:', response?.length || 0);
 
         let finalResponse: string;

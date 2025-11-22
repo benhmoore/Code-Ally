@@ -734,7 +734,12 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       try {
         // Execute the task
         logger.debug('[AGENT_TOOL] Sending message to sub-agent...');
-        const response = await subAgent.sendMessage(`Execute this task: ${taskPrompt}`);
+        // Pass fresh execution context to prevent stale state in pooled agents
+        const response = await subAgent.sendMessage(`Execute this task: ${taskPrompt}`, {
+          parentCallId: callId,
+          maxDuration,
+          thoroughness,
+        });
         logger.debug('[AGENT_TOOL] Sub-agent response received, length:', response?.length || 0);
 
       let finalResponse: string;
@@ -749,8 +754,14 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           // Last resort: try to get a summary by asking explicitly
           logger.debug('[AGENT_TOOL] Attempting to request explicit summary from sub-agent');
           try {
+            // Pass fresh execution context to prevent stale state in pooled agents
             const explicitSummary = await subAgent.sendMessage(
-              'Please provide a concise summary of what you accomplished, found, or determined while working on this task.'
+              'Please provide a concise summary of what you accomplished, found, or determined while working on this task.',
+              {
+                parentCallId: callId,
+                maxDuration,
+                thoroughness,
+              }
             );
             if (explicitSummary && explicitSummary.trim().length > 0) {
               finalResponse = explicitSummary;

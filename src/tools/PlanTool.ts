@@ -433,7 +433,12 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
       try {
         // Execute planning
         logger.debug('[PLAN_TOOL] Sending task to planning agent...');
-        const response = await planningAgent.sendMessage(`Create an implementation plan for: ${requirements}`);
+        // Pass fresh execution context to prevent stale state in pooled agents
+        const response = await planningAgent.sendMessage(`Create an implementation plan for: ${requirements}`, {
+          parentCallId: callId,
+          maxDuration,
+          thoroughness,
+        });
         logger.debug('[PLAN_TOOL] Planning agent response received, length:', response?.length || 0);
 
         let finalResponse: string;

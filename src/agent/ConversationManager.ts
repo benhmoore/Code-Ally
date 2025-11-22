@@ -112,11 +112,26 @@ export class ConversationManager {
   }
 
   /**
-   * Get the current conversation history
+   * Get the current conversation history (readonly reference)
    *
-   * @returns Copy of message array (to prevent external mutation)
+   * Returns a readonly reference to the message array for efficient read access.
+   * For mutation scenarios, use getMessagesCopy() instead.
+   *
+   * @returns Readonly reference to message array
    */
-  getMessages(): Message[] {
+  getMessages(): readonly Message[] {
+    return this.messages;
+  }
+
+  /**
+   * Get a copy of the conversation history for mutation
+   *
+   * Use this when you need to modify the returned array.
+   * Most callers should use getMessages() for readonly access.
+   *
+   * @returns Copy of message array
+   */
+  getMessagesCopy(): Message[] {
     return [...this.messages];
   }
 
@@ -170,7 +185,11 @@ export class ConversationManager {
    */
   updateSystemMessage(content: string): void {
     if (this.messages[0]?.role === 'system') {
-      this.messages[0].content = content;
+      // Create new object to maintain immutability (preserves token cache validity)
+      this.messages[0] = {
+        ...this.messages[0],
+        content
+      };
       logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'System message updated');
     }
   }
@@ -269,8 +288,9 @@ export class ConversationManager {
 
     // Part 2: Strip ephemeral <system-reminder> tags from tool result content
     // These are embedded in tool results (role='tool') and need content modification
-    for (const msg of this.messages) {
-      if (msg.role !== 'tool' || typeof msg.content !== 'string') {
+    for (let i = 0; i < this.messages.length; i++) {
+      const msg = this.messages[i];
+      if (!msg || msg.role !== 'tool' || typeof msg.content !== 'string') {
         continue;
       }
 
@@ -282,12 +302,14 @@ export class ConversationManager {
       // Remove only non-persistent <system-reminder> tags using regex
       // Uses EPHEMERAL_TAG_PATTERN from constants which matches tags without persist="true"
       const originalContent = msg.content;
-      msg.content = msg.content.replace(SYSTEM_REMINDER.EPHEMERAL_TAG_PATTERN, '');
+      const newContent = msg.content.replace(SYSTEM_REMINDER.EPHEMERAL_TAG_PATTERN, '');
 
-      // Count this as a removal if content changed
-      if (msg.content !== originalContent) {
-        // Trim any extra blank lines left after tag removal
-        msg.content = msg.content.replace(/\n{3,}/g, '\n\n').trim();
+      // Create new object if content changed (maintains immutability, preserves token cache validity)
+      if (newContent !== originalContent) {
+        this.messages[i] = {
+          ...msg,
+          content: newContent.replace(/\n{3,}/g, '\n\n').trim()
+        } as Message;
         totalRemoved++;
       }
     }
@@ -598,7 +620,13 @@ export class ConversationManager {
    * @returns Last user message or undefined if none found
    */
   getLastUserMessage(): Message | undefined {
-    return [...this.messages].reverse().find(m => m.role === 'user');
+    // Iterate backwards without copying the array
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      if (this.messages[i]?.role === 'user') {
+        return this.messages[i];
+      }
+    }
+    return undefined;
   }
 
   /**

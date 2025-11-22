@@ -20,6 +20,7 @@ export interface Message {
   thinkingEndTime?: number; // When thinking completed (for duration calculation)
   timestamp?: number; // For chronological ordering with tool calls
   metadata?: MessageMetadata; // Presentation hints and command metadata
+  images?: string[]; // Base64-encoded images (Ollama API format)
 }
 
 /**
@@ -40,9 +41,11 @@ export interface MessageMetadata {
   partial?: boolean;
   /** Whether this is a conversation summary that should be displayed in UI */
   isConversationSummary?: boolean;
-  /** File paths that were mentioned using '@' completion in this message */
+  /** File paths, images, and directories that were mentioned using '@' completion in this message */
   mentions?: {
     files?: string[];
+    images?: string[];
+    directories?: string[];
   };
   /** Tool visibility state for each tool call (keyed by tool call ID) */
   tool_visibility?: Record<string, boolean>;

@@ -42,7 +42,7 @@ export class BashTool extends BaseTool {
             },
             timeout: {
               type: 'integer',
-              description: `Timeout in seconds (default: 30, max: 60)`,
+              description: `Timeout in seconds (default: 60, max: 1200)`,
             },
             output_mode: {
               type: 'string',
@@ -114,14 +114,14 @@ export class BashTool extends BaseTool {
   private validateTimeout(timeout: any): number {
     if (timeout === undefined || timeout === null) {
       // Use config bash_timeout (in seconds), convert to milliseconds
-      const configTimeoutSec = this.config?.bash_timeout ?? 30;
+      const configTimeoutSec = this.config?.bash_timeout ?? 60;
       return configTimeoutSec * 1000;
     }
 
     const timeoutMs = Number(timeout) * 1000;
     if (isNaN(timeoutMs) || timeoutMs <= 0) {
       // Use config bash_timeout (in seconds), convert to milliseconds
-      const configTimeoutSec = this.config?.bash_timeout ?? 30;
+      const configTimeoutSec = this.config?.bash_timeout ?? 60;
       return configTimeoutSec * 1000;
     }
 

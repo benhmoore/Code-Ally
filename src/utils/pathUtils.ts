@@ -5,6 +5,7 @@
 import * as path from 'path';
 import { homedir } from 'os';
 import * as fs from 'fs';
+import { isImageFile } from './imageUtils.js';
 
 /**
  * Resolve a file path to an absolute path
@@ -135,7 +136,7 @@ export function detectFilePaths(input: string): string[] {
     return [];
   }
 
-  // Parse quoted and unquoted tokens
+  // Parse quoted and unquoted tokens (handles quotes and backslash-escaped spaces)
   const tokens: string[] = [];
   let current = '';
   let inQuotes = false;
@@ -143,6 +144,14 @@ export function detectFilePaths(input: string): string[] {
 
   for (let i = 0; i < trimmed.length; i++) {
     const char = trimmed[i];
+    const nextChar = i + 1 < trimmed.length ? trimmed[i + 1] : '';
+
+    // Handle backslash-escaped spaces (shell escaping)
+    if (char === '\\' && nextChar === ' ') {
+      current += ' '; // Add unescaped space
+      i++; // Skip the next character (the space)
+      continue;
+    }
 
     if ((char === '"' || char === "'") && !inQuotes) {
       inQuotes = true;
@@ -186,4 +195,62 @@ export function detectFilePaths(input: string): string[] {
   }
 
   return validPaths;
+}
+
+/**
+ * Classify paths into directories, images, and regular files
+ *
+ * @param paths - Array of paths to classify
+ * @returns Object with separate arrays for directories, images, and files
+ */
+export function classifyPaths(paths: string[]): { directories: string[], images: string[], files: string[] } {
+  const directories: string[] = [];
+  const images: string[] = [];
+  const files: string[] = [];
+
+  for (const pathStr of paths) {
+    try {
+      const resolvedPath = resolvePath(pathStr);
+
+      // Check if path exists
+      if (!fs.existsSync(resolvedPath)) {
+        continue;
+      }
+
+      // Check if it's a directory
+      const stats = fs.statSync(resolvedPath);
+      if (stats.isDirectory()) {
+        directories.push(pathStr);
+      } else if (isImageFile(pathStr)) {
+        images.push(pathStr);
+      } else {
+        files.push(pathStr);
+      }
+    } catch (error) {
+      // Skip paths that can't be accessed
+      continue;
+    }
+  }
+
+  return { directories, images, files };
+}
+
+/**
+ * Detect and classify file paths from a pasted string into directories, images, and regular files
+ *
+ * Takes input that could be:
+ * - A single path
+ * - Multiple space-separated paths
+ * - Paths with spaces (in quotes)
+ *
+ * Returns separate arrays for directories, image files, and regular files.
+ * Only includes paths that exist on the filesystem.
+ * Preserves original path format (relative/absolute as pasted).
+ *
+ * @param input - Input string containing one or more paths
+ * @returns Object with separate arrays for directories, images, and files
+ */
+export function detectFilesAndImages(input: string): { directories: string[], images: string[], files: string[] } {
+  const allPaths = detectFilePaths(input);
+  return classifyPaths(allPaths);
 }

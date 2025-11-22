@@ -70,8 +70,17 @@ function resetTerminalState(): void {
  * Ensures all escape sequences are processed before the application exits.
  * This prevents the terminal from getting stuck waiting for input.
  */
-function cleanExit(code: number = 0): void {
+async function cleanExit(code: number = 0): Promise<void> {
   resetTerminalState();
+
+  // Flush pending session saves if registry exists
+  const ServiceRegistry = (await import('./services/ServiceRegistry.js')).ServiceRegistry;
+  const registry = ServiceRegistry.getInstance();
+  try {
+    await registry.shutdown();
+  } catch (error) {
+    // Ignore errors during shutdown - already exiting
+  }
 
   // Wait for stdout to drain before exiting
   if (process.stdout.write('')) {
@@ -957,12 +966,16 @@ async function main() {
 
     // Add graceful shutdown for background plugins
     const shutdownHandler = async (signal: string) => {
-      logger.info(`[CLI] Received ${signal}, shutting down background plugins...`);
+      logger.info(`[CLI] Received ${signal}, shutting down...`);
       try {
+        // Flush pending session saves before exit
+        await registry.shutdown();
+        logger.debug('[CLI] Registry shutdown complete');
+
         await backgroundProcessManager.stopAllProcesses();
         logger.info('[CLI] Background plugins stopped successfully');
       } catch (error) {
-        logger.error(`[CLI] Error stopping background plugins: ${error instanceof Error ? error.message : String(error)}`);
+        logger.error(`[CLI] Error during shutdown: ${error instanceof Error ? error.message : String(error)}`);
       }
       process.exit(0);
     };
@@ -1166,7 +1179,7 @@ process.on('exit', () => {
 
 process.on('SIGINT', () => {
   if (inkUIStarted) {
-    cleanExit(130); // Standard exit code for SIGINT
+    cleanExit(130).catch(() => process.exit(130)); // Standard exit code for SIGINT
   } else {
     process.exit(130);
   }
@@ -1174,7 +1187,7 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
   if (inkUIStarted) {
-    cleanExit(143); // Standard exit code for SIGTERM
+    cleanExit(143).catch(() => process.exit(143)); // Standard exit code for SIGTERM
   } else {
     process.exit(143);
   }

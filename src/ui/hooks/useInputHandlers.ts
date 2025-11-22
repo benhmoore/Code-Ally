@@ -20,6 +20,8 @@ import { ActivityEventType } from '@shared/index.js';
 import { logger } from '@services/Logger.js';
 import { PERMISSION_MESSAGES } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
+import { fileToBase64, isImageFile } from '@utils/imageUtils.js';
+import { resolvePath } from '@utils/pathUtils.js';
 
 /**
  * Input handler functions
@@ -140,7 +142,7 @@ export const useInputHandlers = (
   /**
    * Handle user input (messages, commands, bash shortcuts)
    */
-  const handleInput = useCallback(async (input: string, mentions?: { files?: string[] }) => {
+  const handleInput = useCallback(async (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
     const trimmed = input.trim();
 
     // Check for bash shortcuts (! prefix)
@@ -292,22 +294,51 @@ export const useInputHandlers = (
 
     // Add user message
     if (trimmed) {
-      // Filter mentions to only include files still present in the input text
-      // This handles cases where user completed a file but then deleted it
-      const filteredMentions = mentions?.files
-        ? { files: mentions.files.filter(filePath => trimmed.includes(filePath)) }
-        : undefined;
+      // Filter mentions to only include files/images/directories still present in the input text
+      // This handles cases where user completed a path but then deleted it
+      const filteredMentions = {
+        ...(mentions?.files && { files: mentions.files.filter(filePath => trimmed.includes(filePath)) }),
+        ...(mentions?.images && { images: mentions.images.filter(imagePath => trimmed.includes(imagePath)) }),
+        ...(mentions?.directories && { directories: mentions.directories.filter(dirPath => trimmed.includes(dirPath)) }),
+      };
+
+      // Process images if present
+      let base64Images: string[] | undefined;
+      if (filteredMentions?.images && filteredMentions.images.length > 0) {
+        try {
+          // Convert all image paths to base64
+          base64Images = await Promise.all(
+            filteredMentions.images.map(async (imagePath) => {
+              const resolvedPath = resolvePath(imagePath);
+              return await fileToBase64(resolvedPath);
+            })
+          );
+        } catch (error) {
+          // If image conversion fails, show error but continue
+          actions.addMessage({
+            role: 'assistant',
+            content: `Error loading image: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          });
+          return;
+        }
+      }
 
       // Add user message to UI (separate from Agent's internal message history)
       // This displays the message to the user immediately
       actions.addMessage({
         role: 'user',
         content: trimmed,
-        metadata: filteredMentions ? { mentions: filteredMentions } : undefined,
+        metadata: filteredMentions && (filteredMentions.files?.length || filteredMentions.images?.length || filteredMentions.directories?.length)
+          ? { mentions: filteredMentions }
+          : undefined,
+        images: base64Images,
       });
 
       // Handle file mentions - execute read tool before sending user message
-      if (filteredMentions?.files && filteredMentions.files.length > 0) {
+      // Filter out image files (they're processed separately above)
+      const readableFiles = filteredMentions?.files?.filter(filePath => !isImageFile(filePath)) || [];
+
+      if (readableFiles.length > 0) {
         // Declare variables outside try block so they're accessible in catch
         let toolCallId: string | undefined;
         let readTool: any | undefined;
@@ -348,7 +379,7 @@ export const useInputHandlers = (
               type: 'function' as const,
               function: {
                 name: 'read',
-                arguments: { file_paths: filteredMentions.files },
+                arguments: { file_paths: readableFiles },
               },
             }],
           };
@@ -363,7 +394,7 @@ export const useInputHandlers = (
             timestamp: Date.now(),
             data: {
               toolName: 'read',
-              arguments: { file_paths: filteredMentions.files },
+              arguments: { file_paths: readableFiles },
               visibleInChat: readTool.visibleInChat ?? true,
               isTransparent: readTool.isTransparentWrapper || false,
             },
@@ -397,7 +428,7 @@ export const useInputHandlers = (
           const result = await toolManager.executeTool(
             'read',
             {
-              file_paths: filteredMentions.files,
+              file_paths: readableFiles,
               description: 'Read mentioned files',
             },
             toolCallId,
@@ -479,6 +510,160 @@ export const useInputHandlers = (
         }
       }
 
+      // Handle directory mentions - execute tree tool before sending user message
+      if (filteredMentions?.directories && filteredMentions.directories.length > 0) {
+        // Declare variables outside try block so they're accessible in catch
+        let toolCallId: string | undefined;
+        let treeTool: any | undefined;
+
+        try {
+          // Get ToolManager from ServiceRegistry
+          const serviceRegistry = ServiceRegistry.getInstance();
+          const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+          if (!toolManager) {
+            actions.addMessage({
+              role: 'assistant',
+              content: 'Error: Tool manager not available',
+            });
+            return;
+          }
+
+          // Get TreeTool
+          treeTool = toolManager.getTool('tree');
+
+          if (!treeTool) {
+            actions.addMessage({
+              role: 'assistant',
+              content: 'Error: Tree tool not available',
+            });
+            return;
+          }
+
+          // Generate unique tool call ID
+          toolCallId = `tree-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+          // Create assistant message that describes the tree execution
+          const assistantMessage = {
+            role: 'assistant' as const,
+            content: '',
+            tool_calls: [{
+              id: toolCallId,
+              type: 'function' as const,
+              function: {
+                name: 'tree',
+                arguments: { paths: filteredMentions.directories },
+              },
+            }],
+          };
+
+          // Add assistant message to Agent's conversation history
+          agent.addMessage(assistantMessage);
+
+          // Emit TOOL_CALL_START event to create UI element
+          activityStream.emit({
+            id: toolCallId,
+            type: ActivityEventType.TOOL_CALL_START,
+            timestamp: Date.now(),
+            data: {
+              toolName: 'tree',
+              arguments: { paths: filteredMentions.directories },
+              visibleInChat: treeTool.visibleInChat ?? true,
+              isTransparent: treeTool.isTransparentWrapper || false,
+            },
+          });
+
+          // Reset tool call activity timer to prevent timeout
+          if (typeof agent.resetToolCallActivity === 'function') {
+            agent.resetToolCallActivity();
+          }
+
+          // Execute tree tool via ToolManager.executeTool() for proper integration
+          const result = await toolManager.executeTool(
+            'tree',
+            {
+              paths: filteredMentions.directories,
+              description: 'Show directory structure',
+            },
+            toolCallId,
+            false, // isRetry
+            agent.getToolAbortSignal?.(),
+            true,  // isUserInitiated (95% limit)
+            false, // isContextFile (not applicable)
+            agent.getAgentName?.() // currentAgentName for tool-agent binding validation
+          );
+
+          // Emit TOOL_CALL_END event to complete the tool call
+          activityStream.emit({
+            id: toolCallId,
+            type: ActivityEventType.TOOL_CALL_END,
+            timestamp: Date.now(),
+            data: {
+              toolName: 'tree',
+              result,
+              success: result.success,
+              error: result.success ? undefined : result.error,
+              visibleInChat: treeTool.visibleInChat ?? true,
+              isTransparent: treeTool.isTransparentWrapper || false,
+              collapsed: treeTool.shouldCollapse || false,
+            },
+          });
+
+          // Format tool result message for Agent
+          const toolResultMessage = {
+            role: 'tool' as const,
+            content: JSON.stringify(result),
+            tool_call_id: toolCallId,
+            name: 'tree',
+          };
+
+          // Add tool result to Agent's conversation history
+          agent.addMessage(toolResultMessage);
+        } catch (error) {
+          // Emit TOOL_CALL_END event with error to prevent stuck UI
+          if (toolCallId) {
+            activityStream.emit({
+              id: toolCallId,
+              type: ActivityEventType.TOOL_CALL_END,
+              timestamp: Date.now(),
+              data: {
+                toolName: 'tree',
+                result: {
+                  success: false,
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                  error_type: 'system_error',
+                },
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                visibleInChat: treeTool?.visibleInChat ?? true,
+                isTransparent: treeTool?.isTransparentWrapper || false,
+                collapsed: treeTool?.shouldCollapse || false,
+              },
+            });
+
+            // Add error tool result to Agent's conversation history
+            const errorToolResultMessage = {
+              role: 'tool' as const,
+              content: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                error_type: 'system_error',
+              }),
+              tool_call_id: toolCallId,
+              name: 'tree',
+            };
+            agent.addMessage(errorToolResultMessage);
+          }
+
+          // Show error to user
+          actions.addMessage({
+            role: 'assistant',
+            content: `Error showing directory structure: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          });
+          return;
+        }
+      }
+
       // Set thinking state
       actions.setIsThinking(true);
 
@@ -502,7 +687,7 @@ export const useInputHandlers = (
 
       // Send to agent for processing
       try {
-        const response = await agent.sendMessage(trimmed);
+        const response = await agent.sendMessage(trimmed, undefined, base64Images);
 
         // Check if response is an error message that should be styled in red
         const isError = response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||

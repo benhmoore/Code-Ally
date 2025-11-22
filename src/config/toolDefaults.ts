@@ -54,8 +54,8 @@ export const TIMEOUT_LIMITS = {
   /** Fallback default timeout if config is not available (5 seconds) - BashTool uses config.bash_timeout as primary default */
   DEFAULT: 5000,
 
-  /** Maximum timeout for bash commands (60 seconds) */
-  MAX: 60000,
+  /** Maximum timeout for bash commands (20 minutes) */
+  MAX: 1200000,
 
   /** Graceful shutdown delay between SIGTERM and SIGKILL (1 second) */
   GRACEFUL_SHUTDOWN_DELAY: 1000,

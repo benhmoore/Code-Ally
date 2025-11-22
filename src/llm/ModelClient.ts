@@ -134,7 +134,7 @@ export abstract class ModelClient {
    * );
    * ```
    */
-  abstract send(messages: Message[], options?: SendOptions): Promise<LLMResponse>;
+  abstract send(messages: readonly Message[], options?: SendOptions): Promise<LLMResponse>;
 
   /**
    * Get the current model name

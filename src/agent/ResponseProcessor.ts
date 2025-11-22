@@ -437,8 +437,7 @@ export class ResponseProcessor {
       logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Specialized agent at', contextUsage + '% context - blocking tool execution to preserve space for summary');
 
       // Remove the assistant message with tool calls we just added
-      this.conversationManager.getMessages().slice(0, -1);
-      this.conversationManager.setMessages(this.conversationManager.getMessages().slice(0, -1));
+      this.conversationManager.setMessages(this.conversationManager.getMessagesCopy().slice(0, -1));
 
       // Add a system reminder instructing the agent to provide final summary
       // PERSIST: true - Persistent, explains why specialized agent stopped (constraint on result)
@@ -625,7 +624,7 @@ export class ResponseProcessor {
         // Remove the warning message from history if it exists
         const warningIndex = this.requiredToolTracker.getWarningMessageIndex();
         if (warningIndex >= 0 && warningIndex < this.conversationManager.getMessageCount()) {
-          const messages = this.conversationManager.getMessages();
+          const messages = this.conversationManager.getMessagesCopy();
           const warningMessage = messages[warningIndex];
           if (warningMessage && warningMessage.role === 'system' && warningMessage.content.includes('must call the following required tool')) {
             logger.debug(`[REQUIRED_TOOLS_DEBUG] Removing satisfied warning from conversation history at index ${warningIndex}`);

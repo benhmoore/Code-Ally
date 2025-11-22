@@ -249,7 +249,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     fetchRecentSessions();
   }, []);
 
-  // Memoize toolCallTree to prevent unnecessary recalculations
+  // Memoize toolCallTree with reference equality check to prevent unnecessary recalculations
   const toolCallTree = React.useMemo(() => buildToolCallTree(activeToolCalls), [activeToolCalls]);
 
   // Separate completed from running tool calls
@@ -263,7 +263,8 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     return { completedToolCalls: completed, runningToolCalls: running };
   }, [toolCallTree]);
 
-  // Build completed timeline (messages + completed tools + compaction notices) - memoized
+  // Build completed timeline (messages + completed tools + compaction notices)
+  // Relies on React's memoization + AppContext ref equality for efficient updates
   const completedTimeline = React.useMemo(() => {
     const timeline: TimelineItem[] = [];
 
@@ -403,7 +404,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     });
 
     return items;
-  }, [completedTimeline, terminalWidth]);
+  }, [completedTimeline, terminalWidth, config]);
 
   // Calculate divider for header
   const headerDivider = createDivider(terminalWidth);

@@ -21,6 +21,7 @@ export class TokenManager {
   private currentTokenCount: number = 0;
   private seenFiles: Map<string, string> = new Map(); // path -> content hash
   private toolResultHashes: Map<string, string> = new Map(); // tool_call_id -> content hash
+  private messageTokenCache: Map<Message, number> = new Map(); // message -> token count
 
   /**
    * Create a new TokenManager
@@ -89,13 +90,23 @@ export class TokenManager {
   /**
    * Estimate total token count for an array of messages
    *
+   * Uses cached token counts for messages that have already been counted.
+   * This provides O(1) performance for repeated counts of the same message array.
+   *
    * @param messages Array of messages
    * @returns Total estimated token count
    */
-  estimateMessagesTokens(messages: Message[]): number {
+  estimateMessagesTokens(messages: readonly Message[]): number {
     let total = 0;
     for (const message of messages) {
-      total += this.estimateMessageTokens(message);
+      // Check cache first
+      let tokens = this.messageTokenCache.get(message);
+      if (tokens === undefined) {
+        // Not cached - calculate and store
+        tokens = this.estimateMessageTokens(message);
+        this.messageTokenCache.set(message, tokens);
+      }
+      total += tokens;
     }
     return total;
   }
@@ -105,7 +116,7 @@ export class TokenManager {
    *
    * @param messages Current message array
    */
-  updateTokenCount(messages: Message[]): void {
+  updateTokenCount(messages: readonly Message[]): void {
     this.currentTokenCount = this.estimateMessagesTokens(messages);
   }
 
@@ -223,6 +234,7 @@ export class TokenManager {
     this.currentTokenCount = 0;
     this.seenFiles.clear();
     this.toolResultHashes.clear();
+    this.messageTokenCache.clear();
   }
 
   /**

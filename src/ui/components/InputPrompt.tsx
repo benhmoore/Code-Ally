@@ -26,10 +26,11 @@ import { PermissionChoice } from '@agent/TrustManager.js';
 import { Agent } from '@agent/Agent.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { classifyPaths } from '@utils/pathUtils.js';
 
 interface InputPromptProps {
   /** Callback when user submits input */
-  onSubmit: (input: string, mentions?: { files?: string[] }) => void;
+  onSubmit: (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => void;
   /** Callback when user interjections (submits mid-response) */
   onInterjection?: (message: string) => void;
   /** Whether input is currently active/enabled */
@@ -169,6 +170,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [buffer, setBuffer] = useState(bufferValue || '');
   const [cursorPosition, setCursorPosition] = useState(0);
   const [mentionedFiles, setMentionedFiles] = useState<string[]>([]);
+  const [mentionedImages, setMentionedImages] = useState<string[]>([]);
+  const [mentionedDirectories, setMentionedDirectories] = useState<string[]>([]);
   const [mentionedPlugins, setMentionedPlugins] = useState<string[]>([]);
 
   // Handle prefill text
@@ -442,8 +445,33 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
     }
 
+    // Extract all @ mentions from buffer (handles both quoted and unquoted paths)
+    const extractedPaths: string[] = [];
+    const atMentionRegex = /@(?:"([^"]+)"|([^\s]+))/g;
+    let match;
+    while ((match = atMentionRegex.exec(trimmed)) !== null) {
+      // match[1] is quoted path, match[2] is unquoted path
+      const path = match[1] || match[2];
+      if (path) {
+        extractedPaths.push(path);
+      }
+    }
+
+    // Classify extracted paths into directories, images, and files
+    const { directories: extractedDirectories, images: extractedImages, files: extractedFiles } = classifyPaths(extractedPaths);
+
+    // Combine tracked mentions with extracted mentions (deduplicate)
+    const allDirectories = [...new Set([...mentionedDirectories, ...extractedDirectories])];
+    const allFiles = [...new Set([...mentionedFiles, ...extractedFiles])];
+    const allImages = [...new Set([...mentionedImages, ...extractedImages])];
+
     // Call callback with mentions if any
-    onSubmit(trimmed, mentionedFiles.length > 0 ? { files: mentionedFiles } : undefined);
+    const mentions = {
+      ...(allDirectories.length > 0 && { directories: allDirectories }),
+      ...(allFiles.length > 0 && { files: allFiles }),
+      ...(allImages.length > 0 && { images: allImages }),
+    };
+    onSubmit(trimmed, Object.keys(mentions).length > 0 ? mentions : undefined);
 
     // Reset state
     setBuffer('');
@@ -453,6 +481,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     setShowCompletions(false);
     setCompletions([]);
     setMentionedFiles([]);
+    setMentionedImages([]);
+    setMentionedDirectories([]);
   };
 
   // Track whether TextInput is active (inactive when modals are open)
@@ -491,11 +521,33 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   /**
    * Handle file paths pasted into TextInput
    */
-  const handlePathsPasted = (paths: string[]) => {
-    // Add paths to mentionedFiles, avoiding duplicates
+  const handleFilesPasted = (files: string[]) => {
+    // Add files to mentionedFiles, avoiding duplicates
     setMentionedFiles(prev => [
       ...prev,
-      ...paths.filter(p => !prev.includes(p))
+      ...files.filter(f => !prev.includes(f))
+    ]);
+  };
+
+  /**
+   * Handle images pasted into TextInput
+   */
+  const handleImagesPasted = (images: string[]) => {
+    // Add images to mentionedImages, avoiding duplicates
+    setMentionedImages(prev => [
+      ...prev,
+      ...images.filter(i => !prev.includes(i))
+    ]);
+  };
+
+  /**
+   * Handle directories pasted into TextInput
+   */
+  const handleDirectoriesPasted = (directories: string[]) => {
+    // Add directories to mentionedDirectories, avoiding duplicates
+    setMentionedDirectories(prev => [
+      ...prev,
+      ...directories.filter(d => !prev.includes(d))
     ]);
   };
 
@@ -525,6 +577,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         setShowCompletions(false);
         setCompletions([]);
         setMentionedFiles([]);
+        setMentionedImages([]);
       }
     } else {
       // Normal submission
@@ -1393,7 +1446,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         cursorPosition={cursorPosition}
         onCursorChange={handleCursorChange}
         onSubmit={handleTextInputSubmit}
-        onPathsPasted={handlePathsPasted}
+        onFilesPasted={handleFilesPasted}
+        onImagesPasted={handleImagesPasted}
+        onDirectoriesPasted={handleDirectoriesPasted}
         isActive={textInputActive}
         multiline={true}
         placeholder={placeholder}

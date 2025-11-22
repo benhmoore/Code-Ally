@@ -16,7 +16,7 @@
 
 import React, { useRef, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { detectFilePaths } from '@utils/pathUtils.js';
+import { detectFilesAndImages } from '@utils/pathUtils.js';
 
 export interface TextInputProps {
   /** Current text value */
@@ -32,7 +32,11 @@ export interface TextInputProps {
   /** Callback when user presses Escape key */
   onEscape?: () => void;
   /** Callback when file paths are pasted */
-  onPathsPasted?: (paths: string[]) => void;
+  onFilesPasted?: (files: string[]) => void;
+  /** Callback when image paths are pasted */
+  onImagesPasted?: (images: string[]) => void;
+  /** Callback when directory paths are pasted */
+  onDirectoriesPasted?: (directories: string[]) => void;
   /** Whether input is currently active/enabled */
   isActive?: boolean;
   /** Enable multiline mode (Ctrl+Enter for newline, Enter submits) */
@@ -57,7 +61,9 @@ export const TextInput: React.FC<TextInputProps> = ({
   onCursorChange,
   onSubmit,
   onEscape,
-  onPathsPasted,
+  onFilesPasted,
+  onImagesPasted,
+  onDirectoriesPasted,
   isActive = true,
   multiline = false,
   placeholder = 'Type here...',
@@ -357,15 +363,28 @@ export const TextInput: React.FC<TextInputProps> = ({
         // Normalize line endings - convert \r\n and \r to \n
         const normalizedInput = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-        // Detect pasted file paths (multi-character input without newlines)
+        // Detect pasted file paths, images, and directories (multi-character input without newlines)
         if (input.length > 1 && !normalizedInput.includes('\n')) {
-          const paths = detectFilePaths(input);
-          if (paths.length > 0) {
-            // Notify parent of detected paths
-            onPathsPasted?.(paths);
+          const { directories, files, images } = detectFilesAndImages(input);
+          const hasDirectories = directories.length > 0;
+          const hasFiles = files.length > 0;
+          const hasImages = images.length > 0;
 
-            // Insert paths with @ prefix
-            const pathsWithPrefix = paths.map(p => `@${p}`).join(' ');
+          if (hasDirectories || hasFiles || hasImages) {
+            // Notify parent of detected paths
+            if (hasDirectories) onDirectoriesPasted?.(directories);
+            if (hasFiles) onFilesPasted?.(files);
+            if (hasImages) onImagesPasted?.(images);
+
+            // Insert all with @ prefix (quote paths with spaces)
+            const allPaths = [...directories, ...files, ...images];
+            const pathsWithPrefix = allPaths.map(p => {
+              // Quote paths that contain spaces
+              if (p.includes(' ')) {
+                return `@"${p}"`;
+              }
+              return `@${p}`;
+            }).join(' ');
             const before = currentValue.slice(0, currentCursor);
             const after = currentValue.slice(currentCursor);
             const newValue = before + pathsWithPrefix + after;

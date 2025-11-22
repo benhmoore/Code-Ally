@@ -77,62 +77,16 @@ export const useActivitySubscriptions = (
   // Track cancellation state for immediate visual feedback
   const [isCancelling, setIsCancelling] = useState(false);
 
-  // Batch tool call updates using setImmediate for better performance
-  // Replaces setTimeout-based throttling (reduces UI overhead by 25-30%)
-  // Uses setImmediate instead of requestAnimationFrame (Node.js environment)
-  const pendingToolUpdates = useRef<Map<string, Partial<ToolCallState>>>(new Map());
-  const immediateIdRef = useRef<NodeJS.Immediate | null>(null);
-  const lastBatchFlushTime = useRef<number>(Date.now());
-
-  // Flush pending tool call updates
-  const flushToolUpdates = useRef(() => {
-    if (pendingToolUpdates.current.size === 0) return;
-
-    pendingToolUpdates.current.forEach((update, id) => {
-      if (update.status === 'executing' && update.startTime) {
-        actions.addToolCall(update as ToolCallState);
-      } else {
-        actions.updateToolCall(id, update);
-      }
-    });
-
-    pendingToolUpdates.current.clear();
-    lastBatchFlushTime.current = Date.now();
-    immediateIdRef.current = null;
-  });
-
-  // Schedule batched update using setImmediate
-  // Batches all updates that occur within the same event loop tick
-  // More efficient than setTimeout as it executes after I/O operations but before timers
-  const scheduleToolUpdate = useRef((id: string, update: Partial<ToolCallState>, immediate: boolean = false) => {
-    if (immediate) {
-      // Immediate updates bypass batching (e.g., tool completion)
+  // Remove setImmediate batching - AppContext already batches with setTimeout(16ms)
+  // Double batching was causing unnecessary delays
+  const scheduleToolUpdate = useRef((id: string, update: Partial<ToolCallState>) => {
+    // All updates go directly to AppContext, which handles batching
+    if (update.status === 'executing' && update.startTime) {
+      actions.addToolCall(update as ToolCallState);
+    } else {
       actions.updateToolCall(id, update);
-      return;
-    }
-
-    // Accumulate update in the pending batch
-    const existing = pendingToolUpdates.current.get(id);
-    pendingToolUpdates.current.set(id, { ...existing, ...update });
-
-    // Schedule flush if not already scheduled
-    if (immediateIdRef.current === null) {
-      immediateIdRef.current = setImmediate(() => {
-        flushToolUpdates.current();
-      });
     }
   });
-
-  // Cleanup setImmediate on unmount
-  useEffect(() => {
-    return () => {
-      if (immediateIdRef.current !== null) {
-        clearImmediate(immediateIdRef.current);
-        // Flush any pending updates before unmount
-        flushToolUpdates.current();
-      }
-    };
-  }, []);
 
   // Tool call start events
   useActivityEvent(ActivityEventType.TOOL_CALL_START, (event) => {
@@ -207,7 +161,7 @@ export const useActivitySubscriptions = (
       updates.collapsed = event.data.collapsed;
     }
 
-    scheduleToolUpdate.current(event.id, updates, true);
+    scheduleToolUpdate.current(event.id, updates);
 
     // Record completed tool call in history
     if (toolCall) {
@@ -236,7 +190,7 @@ export const useActivitySubscriptions = (
 
     scheduleToolUpdate.current(event.id, {
       executionStartTime: event.timestamp,
-    }, true);
+    });
   });
 
   // Tool output chunks
@@ -247,7 +201,7 @@ export const useActivitySubscriptions = (
 
     scheduleToolUpdate.current(event.id, {
       output: event.data?.chunk || '',
-    }, false);
+    });
   });
 
   // Assistant content chunks
@@ -390,7 +344,7 @@ export const useActivitySubscriptions = (
         filePath: event.data?.filePath || '',
         operationType: event.data?.operationType || 'edit',
       },
-    }, false);
+    });
   });
 
   // Error events
@@ -409,7 +363,7 @@ export const useActivitySubscriptions = (
       error: event.data?.error || 'Unknown error',
       endTime: event.timestamp,
       diffPreview: undefined, // Clear diff preview on error (operation didn't complete)
-    }, true);
+    });
   });
 
   // Permission request events

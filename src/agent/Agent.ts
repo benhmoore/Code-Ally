@@ -76,6 +76,22 @@ export interface IParentAgent {
   getAgentDepth?(): number;
 }
 
+/**
+ * Execution context for agent invocations
+ *
+ * Separates per-invocation context from agent identity (AgentConfig).
+ * Passed fresh to each sendMessage() call to prevent stale state in pooled agents.
+ *
+ * @property parentCallId - Parent tool call ID for event nesting (undefined for root agent)
+ * @property maxDuration - Maximum duration in minutes for this invocation
+ * @property thoroughness - Thoroughness level: 'quick' | 'medium' | 'very thorough' | 'uncapped'
+ */
+export interface AgentExecutionContext {
+  parentCallId?: string;
+  maxDuration?: number;
+  thoroughness?: string;
+}
+
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
   isSpecializedAgent?: boolean;
@@ -91,7 +107,12 @@ export interface AgentConfig {
   taskPrompt?: string;
   /** Application configuration */
   config: Config;
-  /** Parent tool call ID (for nested agents) */
+  /**
+   * Parent tool call ID (for nested agents)
+   * @deprecated Use execution context parameter in sendMessage() instead.
+   *             This property is maintained for backward compatibility but will
+   *             be removed in a future version. Pass via AgentExecutionContext.
+   */
   parentCallId?: string;
   /** Parent agent instance (for activity monitor pause/resume) */
   parentAgent?: IParentAgent;
@@ -99,9 +120,19 @@ export interface AgentConfig {
   requiredToolCalls?: string[];
   /** Agent requirements specification (new requirements system) */
   requirements?: import('./RequirementTracker.js').AgentRequirements;
-  /** Maximum duration in minutes the agent should run before wrapping up (optional) */
+  /**
+   * Maximum duration in minutes the agent should run before wrapping up (optional)
+   * @deprecated Use execution context parameter in sendMessage() instead.
+   *             This property is maintained for backward compatibility but will
+   *             be removed in a future version. Pass via AgentExecutionContext.
+   */
   maxDuration?: number;
-  /** Dynamic thoroughness level for agent execution (for regeneration in agent-ask): 'quick', 'medium', 'very thorough', 'uncapped' */
+  /**
+   * Dynamic thoroughness level for agent execution (for regeneration in agent-ask): 'quick', 'medium', 'very thorough', 'uncapped'
+   * @deprecated Use execution context parameter in sendMessage() instead.
+   *             This property is maintained for backward compatibility but will
+   *             be removed in a future version. Pass via AgentExecutionContext.
+   */
   thoroughness?: string;
   /** Internal: Unique key for pool matching (used by AgentTool to distinguish custom agents) */
   _poolKey?: string;
@@ -438,16 +469,6 @@ export class Agent {
     return this.toolOrchestrator;
   }
 
-  /**
-   * Update the parent call ID for this agent
-   * Used by AgentPoolService when reusing agents to ensure correct event parentId
-   *
-   * @param parentCallId - New parent call ID
-   */
-  setParentCallId(parentCallId: string | undefined): void {
-    this.config.parentCallId = parentCallId;
-    logger.debug('[AGENT]', this.instanceId, 'Updated config.parentCallId to:', this.config.parentCallId);
-  }
 
   /**
    * Get the interruption manager (used by ToolOrchestrator for permission denial handling)
@@ -665,9 +686,19 @@ export class Agent {
    * - Returning final response
    *
    * @param message - User's message
+   * @param executionContext - Optional execution context for this invocation
    * @returns Promise resolving to the assistant's final response
    */
-  async sendMessage(message: string): Promise<string> {
+  async sendMessage(
+    message: string,
+    executionContext?: AgentExecutionContext,
+    images?: string[]
+  ): Promise<string> {
+    // Extract execution context (prefer parameter, fallback to config for backward compatibility)
+    const parentCallId = executionContext?.parentCallId ?? this.config.parentCallId;
+    const maxDuration = executionContext?.maxDuration ?? this.config.maxDuration;
+    const thoroughness = executionContext?.thoroughness ?? this.config.thoroughness;
+
     // Runtime assertion: catch depth corruption bugs early
     // This should never happen if AgentTool validates depth correctly,
     // but if it does happen, fail fast with a clear error
@@ -774,6 +805,7 @@ export class Agent {
       role: 'user',
       content: message,
       timestamp: Date.now(),
+      images,
     };
     this.conversationManager.addMessage(userMessage);
 
@@ -850,11 +882,19 @@ export class Agent {
       this.requestInProgress = true;
 
       // Send to LLM and process response
-      const response = await this.getLLMResponse();
+      const response = await this.getLLMResponse({
+        parentCallId,
+        maxDuration,
+        thoroughness,
+      });
 
       // Process response (handles both tool calls and text responses)
       // Note: processLLMResponse handles interruptions internally (both cancel and interjection types)
-      const finalResponse = await this.processLLMResponse(response);
+      const finalResponse = await this.processLLMResponse(response, {
+        parentCallId,
+        maxDuration,
+        thoroughness,
+      });
 
       // Execute any pending cleanups before returning
       // cleanup-call queues removals during turn, we execute them now that turn is complete
@@ -1131,9 +1171,10 @@ export class Agent {
   /**
    * Get response from LLM
    *
+   * @param executionContext - Execution context for this invocation
    * @returns LLM response with potential tool calls
    */
-  private async getLLMResponse(): Promise<LLMResponse> {
+  private async getLLMResponse(executionContext: AgentExecutionContext): Promise<LLMResponse> {
     // Get function definitions from tool manager
     // Exclude restricted tools based on agent type
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
@@ -1167,7 +1208,7 @@ export class Agent {
         this.toolResultManager,
         this.config.config.reasoning_effort,
         this.agentName,
-        this.config.thoroughness,
+        executionContext.thoroughness,
         this.config.agentType
       );
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent prompt regenerated with current context');
@@ -1219,7 +1260,7 @@ export class Agent {
       id: this.generateId(),
       type: ActivityEventType.THOUGHT_CHUNK,
       timestamp: Date.now(),
-      parentId: this.config.parentCallId,
+      parentId: executionContext.parentCallId,
       data: { text: 'Thinking...', thinking: true },
     });
 
@@ -1230,7 +1271,7 @@ export class Agent {
         // Disable streaming for subagents - only main agent should stream responses
         stream: !this.config.isSpecializedAgent && this.config.config.parallel_tools,
         // Pass parentCallId for associating thinking events with tool calls
-        parentId: this.config.parentCallId,
+        parentId: executionContext.parentCallId,
       });
 
       // Remove ephemeral system-reminder messages after receiving response
@@ -1262,10 +1303,15 @@ export class Agent {
    * Process LLM response (handles interruptions and delegates to ResponseProcessor)
    *
    * @param response - LLM response
+   * @param executionContext - Execution context for this invocation
    * @param isRetry - Whether this is a retry after empty response
    * @returns Final text response
    */
-  private async processLLMResponse(response: LLMResponse, isRetry: boolean = false): Promise<string> {
+  private async processLLMResponse(
+    response: LLMResponse,
+    executionContext: AgentExecutionContext,
+    isRetry: boolean = false
+  ): Promise<string> {
     // Check for interruption
     if (this.interruptionManager.isInterrupted() || response.interrupted) {
       // Handle interjection vs cancellation
@@ -1294,7 +1340,7 @@ export class Agent {
 
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection, continuing...');
-        const continuationResponse = await this.getLLMResponse();
+        const continuationResponse = await this.getLLMResponse(executionContext);
 
         // Emit the full response from the continuation if present
         // This ensures the response is visible even for subagents with hideOutput=true
@@ -1306,7 +1352,7 @@ export class Agent {
             id: this.generateId(),
             type: ActivityEventType.INTERJECTION_ACKNOWLEDGMENT,
             timestamp: Date.now(),
-            parentId: this.config.parentCallId, // Set for subagents, undefined for main agent
+            parentId: executionContext.parentCallId, // Use from execution context
             data: {
               acknowledgment: responseContent,
               agentType: this.config.isSpecializedAgent ? 'specialized' : 'main',
@@ -1314,7 +1360,7 @@ export class Agent {
           });
         }
 
-        return await this.processLLMResponse(continuationResponse);
+        return await this.processLLMResponse(continuationResponse, executionContext);
       } else {
         // Check if this is a continuation-eligible timeout
         const context = this.interruptionManager.getInterruptionContext();
@@ -1352,10 +1398,10 @@ export class Agent {
 
           // Get new response from LLM
           logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId, 'Requesting continuation after timeout...');
-          const continuationResponse = await this.getLLMResponse();
+          const continuationResponse = await this.getLLMResponse(executionContext);
 
           // Process continuation
-          return await this.processLLMResponse(continuationResponse);
+          return await this.processLLMResponse(continuationResponse, executionContext);
         }
 
         // Regular cancel - mark as interrupted for next request
@@ -1366,7 +1412,7 @@ export class Agent {
     }
 
     // Delegate to ResponseProcessor for remaining logic
-    const context = this.buildResponseContext();
+    const context = this.buildResponseContext(executionContext);
     const result = await this.responseProcessor.processLLMResponse(response, context, isRetry);
 
     // Stop activity monitoring immediately after getting result
@@ -1397,10 +1443,10 @@ export class Agent {
 
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection after ResponseProcessor, continuing...');
-        const continuationResponse = await this.getLLMResponse();
+        const continuationResponse = await this.getLLMResponse(executionContext);
 
         // Process continuation
-        return await this.processLLMResponse(continuationResponse);
+        return await this.processLLMResponse(continuationResponse, executionContext);
       } else {
         // Regular cancel - mark as interrupted for next request
         logger.debug('[AGENT]', this.instanceId, 'Returning USER_FACING_INTERRUPTION (interrupted after ResponseProcessor)');
@@ -1415,16 +1461,17 @@ export class Agent {
   /**
    * Build response context for ResponseProcessor
    * Contains callbacks and state needed for response processing
+   * @param executionContext - Execution context for this invocation
    */
-  private buildResponseContext(): ResponseContext {
+  private buildResponseContext(executionContext: AgentExecutionContext): ResponseContext {
     return {
       instanceId: this.instanceId,
       isSpecializedAgent: this.config.isSpecializedAgent || false,
-      parentCallId: this.config.parentCallId,
+      parentCallId: executionContext.parentCallId, // Use from execution context, not config
       baseAgentPrompt: this.config.baseAgentPrompt,
       generateId: () => this.generateId(),
       autoSaveSession: () => this.autoSaveSession(),
-      getLLMResponse: () => this.getLLMResponse(),
+      getLLMResponse: () => this.getLLMResponse(executionContext),
       unwrapBatchToolCalls: (toolCalls) => this.unwrapBatchToolCalls(toolCalls),
       executeToolCalls: async (toolCalls, cycles) => {
         // Execute tool calls via orchestrator
@@ -1610,12 +1657,21 @@ export class Agent {
   }
 
   /**
-   * Get the current conversation history
+   * Get the current conversation history (readonly reference)
    *
-   * @returns Array of messages
+   * @returns Readonly reference to message array
    */
-  getMessages(): Message[] {
+  getMessages(): readonly Message[] {
     return this.conversationManager.getMessages();
+  }
+
+  /**
+   * Get a copy of the conversation history for mutation
+   *
+   * @returns Copy of message array
+   */
+  getMessagesCopy(): Message[] {
+    return this.conversationManager.getMessagesCopy();
   }
 
   /**
@@ -1755,7 +1811,7 @@ export class Agent {
    * @returns Compacted message array
    */
   async compactConversation(
-    messages: Message[] = this.conversationManager.getMessages(),
+    messages: readonly Message[] = this.conversationManager.getMessages(),
     options: {
       customInstructions?: string;
       preserveLastUserMessage?: boolean;

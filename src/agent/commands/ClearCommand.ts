@@ -31,7 +31,7 @@ export class ClearCommand extends Command {
     }
 
     // Get system message if it exists
-    const messages = agent.getMessages();
+    const messages = agent.getMessagesCopy();
     const systemMessage = messages.find(m => m.role === 'system');
 
     // Keep only system message

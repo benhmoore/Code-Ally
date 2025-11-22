@@ -242,17 +242,15 @@ export class AgentPoolService implements IService {
           );
         }
 
-        // CRITICAL: Update parentCallId for this invocation
-        // When reusing a pooled agent, we must update its ToolOrchestrator's parentCallId
-        // to match the current delegation context, otherwise nested tool calls will be
-        // parented to stale IDs from previous invocations
-        const toolOrchestrator = reserved.metadata.agent.getToolOrchestrator?.();
-        if (toolOrchestrator && typeof toolOrchestrator.setParentCallId === 'function') {
-          toolOrchestrator.setParentCallId(agentConfig.parentCallId);
-        }
+        // CRITICAL: Execution context is passed fresh to sendMessage()
+        // When reusing pooled agents, we pass execution context (parentCallId, maxDuration,
+        // thoroughness) as parameters to sendMessage() instead of mutating agent state.
+        // This prevents stale state and ensures correct event nesting for each invocation.
+        //
+        // The execution context is extracted from agentConfig and passed to each tool invocation.
 
         logger.debug(
-          `[AGENT_POOL] Reusing agent ${reserved.metadata.agentId} (uses: ${reserved.metadata.useCount}) with parentCallId: ${agentConfig.parentCallId}`
+          `[AGENT_POOL] Reusing agent ${reserved.metadata.agentId} (uses: ${reserved.metadata.useCount})`
         );
 
         return {

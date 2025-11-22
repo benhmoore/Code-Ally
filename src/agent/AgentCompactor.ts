@@ -166,7 +166,7 @@ export class AgentCompactor {
    * @returns Compacted message array
    */
   async compactConversation(
-    messages: Message[],
+    messages: readonly Message[],
     options: CompactionOptions = {}
   ): Promise<Message[]> {
     const {
@@ -187,7 +187,7 @@ export class AgentCompactor {
 
     // If we have fewer than 2 non-system messages to summarize, nothing to compact (Level 2: summarization threshold)
     if (otherMessages.length < BUFFER_SIZES.MIN_MESSAGES_TO_SUMMARIZE) {
-      return messages;
+      return [...messages];
     }
 
     // Find the last user message (the one that triggered compaction or current user request)

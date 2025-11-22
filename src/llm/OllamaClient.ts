@@ -28,7 +28,7 @@ import { API_TIMEOUTS, TIME_UNITS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CON
  */
 interface OllamaPayload {
   model: string;
-  messages: Message[];
+  messages: readonly Message[];
   stream: boolean;
   options: {
     temperature: number;
@@ -66,9 +66,6 @@ export class OllamaClient extends ModelClient {
 
   private circuitBreakerFailures: number = 0;
   private circuitBreakerOpenUntil: number = 0;
-
-  private readonly CIRCUIT_BREAKER_THRESHOLD = 10;
-  private readonly CIRCUIT_BREAKER_COOLDOWN = 5 * 60 * 1000;
 
   /**
    * Initialize the Ollama client
@@ -179,7 +176,7 @@ export class OllamaClient extends ModelClient {
    * @param options - Send options
    * @returns Promise resolving to the LLM's response
    */
-  async send(messages: Message[], options: SendOptions = {}): Promise<LLMResponse> {
+  async send(messages: readonly Message[], options: SendOptions = {}): Promise<LLMResponse> {
     const { functions, stream = false, maxRetries: _maxRetries = 3, temperature, parentId, suppressThinking = false } = options;
 
     // Generate unique request ID for this request
@@ -194,7 +191,6 @@ export class OllamaClient extends ModelClient {
       // Infinite retry loop with capped exponential backoff
       let attempt = 0;
       const startTime = Date.now();
-      const MAX_TOTAL_TIME = 30 * 60 * 1000;
 
       while (true) {
         // Check circuit breaker
@@ -204,7 +200,7 @@ export class OllamaClient extends ModelClient {
         }
 
         // Check total time budget
-        if (Date.now() - startTime > MAX_TOTAL_TIME) {
+        if (Date.now() - startTime > RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME) {
           logger.error('[OLLAMA_CLIENT] Maximum retry time exceeded (30 minutes)');
           return this.handleRequestError(new Error('Request timeout after 30 minutes'));
         }
@@ -327,7 +323,7 @@ export class OllamaClient extends ModelClient {
    * Prepare the Ollama API payload
    */
   private preparePayload(
-    messages: Message[],
+    messages: readonly Message[],
     functions?: FunctionDefinition[],
     stream: boolean = false,
     temperature?: number
@@ -776,10 +772,10 @@ export class OllamaClient extends ModelClient {
    */
   private incrementCircuitBreakerFailure(): Error | null {
     this.circuitBreakerFailures++;
-    if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
-      this.circuitBreakerOpenUntil = Date.now() + this.CIRCUIT_BREAKER_COOLDOWN;
+    if (this.circuitBreakerFailures >= RETRY_CONFIG.CIRCUIT_BREAKER_THRESHOLD) {
+      this.circuitBreakerOpenUntil = Date.now() + RETRY_CONFIG.CIRCUIT_BREAKER_COOLDOWN;
       logger.warn(
-        `[OLLAMA_CLIENT] Circuit breaker opened after ${this.CIRCUIT_BREAKER_THRESHOLD} consecutive failures`
+        `[OLLAMA_CLIENT] Circuit breaker opened after ${RETRY_CONFIG.CIRCUIT_BREAKER_THRESHOLD} consecutive failures`
       );
       return new Error('Too many consecutive failures');
     }

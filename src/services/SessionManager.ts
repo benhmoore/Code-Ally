@@ -40,6 +40,13 @@ export class SessionManager implements IService {
   // This creates a serial queue without explicit locks or busy-wait loops
   private writeQueue: Map<string, Promise<void>> = new Map();
 
+  // Debouncing for auto-save - reduces I/O by batching rapid saves
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private debouncedSession: Session | null = null;
+  private debouncedSessionName: string | null = null;
+  private readonly DEBOUNCE_DELAY_MS = 2000; // 2 seconds
+  private isShuttingDown: boolean = false;
+
   constructor(config: SessionManagerConfig = {}) {
     // Sessions are stored in .ally-sessions/ within the current working directory
     this.sessionsDir = join(process.cwd(), '.ally-sessions');
@@ -161,7 +168,11 @@ export class SessionManager implements IService {
    * Cleanup resources
    */
   async cleanup(): Promise<void> {
-    // Reserved for future cleanup tasks
+    // Prevent new auto-saves during shutdown
+    this.isShuttingDown = true;
+
+    // Flush any pending debounced save before cleanup
+    await this.flushDebouncedSave();
   }
 
   /**
@@ -349,7 +360,7 @@ export class SessionManager implements IService {
    * @param messages - Messages to save
    * @returns True if saved successfully
    */
-  async saveSession(sessionName: string, messages: Message[]): Promise<boolean> {
+  async saveSession(sessionName: string, messages: readonly Message[]): Promise<boolean> {
     try {
       // Load existing session or create new one
       let session = await this.loadSession(sessionName);
@@ -367,8 +378,8 @@ export class SessionManager implements IService {
         };
       }
 
-      // Update session
-      session.messages = messages;
+      // Update session (copy messages to ensure mutability)
+      session.messages = [...messages];
       session.updated_at = new Date().toISOString();
 
       await this.saveSessionData(sessionName, session);
@@ -681,6 +692,10 @@ export class SessionManager implements IService {
       };
       session.updated_at = new Date().toISOString();
 
+      // Clear debounce cache since we're writing directly
+      this.debouncedSession = null;
+      this.debouncedSessionName = null;
+
       await this.saveSessionData(sessionName, session);
       return true;
     } catch (error) {
@@ -710,6 +725,10 @@ export class SessionManager implements IService {
       // Apply updates to session
       Object.assign(session, updates);
       session.updated_at = new Date().toISOString();
+
+      // Clear debounce cache since we're writing directly
+      this.debouncedSession = null;
+      this.debouncedSessionName = null;
 
       await this.saveSessionData(sessionName, session);
       return true;
@@ -798,6 +817,10 @@ export class SessionManager implements IService {
       session.todos = todos;
       session.updated_at = new Date().toISOString();
 
+      // Clear debounce cache since we're writing directly
+      this.debouncedSession = null;
+      this.debouncedSessionName = null;
+
       await this.saveSessionData(name, session);
       return true;
     } catch (error) {
@@ -807,22 +830,59 @@ export class SessionManager implements IService {
   }
 
   /**
+   * Flush any pending debounced save immediately
+   * Used on cleanup to ensure no data loss
+   */
+  private async flushDebouncedSave(): Promise<void> {
+    // Cancel pending timer
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+
+    // Save if we have pending data
+    if (this.debouncedSession && this.debouncedSessionName) {
+      logger.debug('[SESSION] Flushing pending debounced save');
+      await this.saveSessionData(this.debouncedSessionName, this.debouncedSession);
+      this.debouncedSession = null;
+      this.debouncedSessionName = null;
+    }
+  }
+
+  /**
+   * Force immediate save of current session, bypassing debounce
+   * Use for critical operations that require guaranteed persistence
+   *
+   * @returns True if saved successfully
+   */
+  async forceSave(): Promise<boolean> {
+    await this.flushDebouncedSave();
+    return true;
+  }
+
+  /**
    * Auto-save current session (messages and todos)
+   *
+   * Now debounced to reduce I/O - batches rapid saves with 2-second delay.
+   * Saves are cached in memory and written after debounce window.
+   * On cleanup/shutdown, pending saves are flushed immediately.
    *
    * @param messages - Current conversation messages
    * @param todos - Current todos
    * @param idleMessages - Idle message queue
    * @param projectContext - Project context
-   * @returns True if saved successfully
+   * @returns True if save was queued/completed successfully
    */
   async autoSave(
-    messages: Message[],
+    messages: readonly Message[],
     todos?: TodoItem[],
     idleMessages?: string[],
     projectContext?: Session['project_context']
   ): Promise<boolean> {
     const name = this.currentSession;
-    if (!name) return false;
+    if (!name || this.isShuttingDown) {
+      return false;
+    }
 
     // Filter out system messages to avoid duplication on resume
     const filteredMessages = messages.filter(msg => msg.role !== 'system');
@@ -832,7 +892,11 @@ export class SessionManager implements IService {
     }
 
     try {
-      let session = await this.loadSession(name);
+      // Use cached session if available to avoid redundant read
+      // Otherwise load from disk (first save in debounce window)
+      let session = this.debouncedSession && this.debouncedSessionName === name
+        ? this.debouncedSession
+        : await this.loadSession(name);
 
       if (!session) {
         session = {
@@ -866,11 +930,41 @@ export class SessionManager implements IService {
       }
       session.updated_at = new Date().toISOString();
 
-      await this.saveSessionData(name, session);
+      // Cache session in memory for debounced save
+      this.debouncedSession = session;
+      this.debouncedSessionName = name;
 
+      // Cancel existing timer
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
+      }
+
+      // Set new debounce timer
+      this.debounceTimer = setTimeout(async () => {
+        this.debounceTimer = null;
+
+        // Save the cached session
+        const sessionToSave = this.debouncedSession;
+        const sessionName = this.debouncedSessionName;
+
+        // Clear cache
+        this.debouncedSession = null;
+        this.debouncedSessionName = null;
+
+        if (sessionToSave && sessionName) {
+          try {
+            await this.saveSessionData(sessionName, sessionToSave);
+            logger.debug('[SESSION] Debounced save completed');
+          } catch (error) {
+            logger.error(`[SESSION] Failed to save debounced session ${sessionName}:`, error);
+          }
+        }
+      }, this.DEBOUNCE_DELAY_MS);
+
+      logger.debug('[SESSION] Auto-save debounced (will save in 2s)');
       return true;
     } catch (error) {
-      logger.error(`Failed to auto-save session ${name}:`, error);
+      logger.error(`Failed to prepare auto-save for session ${name}:`, error);
       return false;
     }
   }
