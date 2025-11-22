@@ -506,6 +506,38 @@ export class PluginLoader {
   }
 
   /**
+   * Create a structured plugin error
+   *
+   * @param message - Human-readable error message
+   * @param operation - Operation that failed
+   * @param pluginPath - Path to the plugin (optional)
+   * @returns Error result with structured details
+   */
+  private createPluginError(
+    message: string,
+    operation: string,
+    pluginPath?: string
+  ): {
+    success: boolean;
+    error: string;
+    error_details: {
+      message: string;
+      operation: string;
+      pluginPath?: string;
+    };
+  } {
+    return {
+      success: false,
+      error: message,
+      error_details: {
+        message,
+        operation,
+        pluginPath,
+      },
+    };
+  }
+
+  /**
    * Install a plugin from a local filesystem path
    *
    * Validates the plugin manifest, copies it to the plugins directory,
@@ -525,16 +557,21 @@ export class PluginLoader {
     agents?: any[];
     error?: string;
     hadExistingConfig?: boolean;
+    error_details?: {
+      message: string;
+      operation: string;
+      pluginPath?: string;
+    };
   }> {
     try {
       // Validate source path exists
       try {
         const stat = await fs.stat(sourcePath);
         if (!stat.isDirectory()) {
-          return { success: false, error: 'Source path is not a directory' };
+          return this.createPluginError('Source path is not a directory', 'installFromPath', sourcePath);
         }
       } catch {
-        return { success: false, error: 'Source path does not exist' };
+        return this.createPluginError('Source path does not exist', 'installFromPath', sourcePath);
       }
 
       // Read and validate manifest
@@ -545,29 +582,30 @@ export class PluginLoader {
         const manifestContent = await fs.readFile(manifestPath, 'utf-8');
         manifest = JSON.parse(manifestContent);
       } catch (error) {
-        return {
-          success: false,
-          error: `Invalid or missing ${PLUGIN_FILES.MANIFEST}: ${
+        return this.createPluginError(
+          `Invalid or missing ${PLUGIN_FILES.MANIFEST}: ${
             error instanceof Error ? error.message : String(error)
           }`,
-        };
+          'installFromPath',
+          sourcePath
+        );
       }
 
       // Validate required manifest fields
       if (!manifest.name) {
-        return { success: false, error: 'Plugin manifest missing required field: name' };
+        return this.createPluginError('Plugin manifest missing required field: name', 'installFromPath', sourcePath);
       }
 
       // Validate plugin name format
       if (manifest.name.startsWith('+') || manifest.name.startsWith('-')) {
-        return { success: false, error: `Invalid plugin name '${manifest.name}': plugin names cannot start with '+' or '-'` };
+        return this.createPluginError(`Invalid plugin name '${manifest.name}': plugin names cannot start with '+' or '-'`, 'installFromPath', sourcePath);
       }
       if (!/^[a-z0-9_-]+$/.test(manifest.name)) {
-        return { success: false, error: `Invalid plugin name '${manifest.name}': must contain only lowercase letters, numbers, underscores, and hyphens` };
+        return this.createPluginError(`Invalid plugin name '${manifest.name}': must contain only lowercase letters, numbers, underscores, and hyphens`, 'installFromPath', sourcePath);
       }
 
       if (!manifest.tools || manifest.tools.length === 0) {
-        return { success: false, error: 'Plugin manifest missing or empty tools array' };
+        return this.createPluginError('Plugin manifest missing or empty tools array', 'installFromPath', sourcePath);
       }
 
       // Check if plugin already exists - if so, preserve config before removing
@@ -659,10 +697,11 @@ export class PluginLoader {
         }
 
         // Not a config issue - actual failure
-        return {
-          success: false,
-          error: 'Plugin installed but failed to load tools. Check logs for details.',
-        };
+        return this.createPluginError(
+          'Plugin installed but failed to load tools. Check logs for details.',
+          'installFromPath',
+          targetPath
+        );
       }
 
       const toolsCount = tools.length;
@@ -681,10 +720,11 @@ export class PluginLoader {
         hadExistingConfig,
       };
     } catch (error) {
-      return {
-        success: false,
-        error: `Failed to install plugin: ${error instanceof Error ? error.message : String(error)}`,
-      };
+      return this.createPluginError(
+        `Failed to install plugin: ${error instanceof Error ? error.message : String(error)}`,
+        'installFromPath',
+        sourcePath
+      );
     }
   }
 
@@ -703,6 +743,11 @@ export class PluginLoader {
   ): Promise<{
     success: boolean;
     error?: string;
+    error_details?: {
+      message: string;
+      operation: string;
+      pluginPath?: string;
+    };
   }> {
     try {
       const pluginPath = join(pluginsDir, pluginName);
@@ -711,10 +756,11 @@ export class PluginLoader {
       try {
         await fs.access(pluginPath);
       } catch {
-        return {
-          success: false,
-          error: `Plugin '${pluginName}' not found`,
-        };
+        return this.createPluginError(
+          `Plugin '${pluginName}' not found`,
+          'uninstall',
+          pluginPath
+        );
       }
 
       // Remove plugin directory
@@ -728,10 +774,11 @@ export class PluginLoader {
 
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: `Failed to uninstall plugin: ${error instanceof Error ? error.message : String(error)}`,
-      };
+      return this.createPluginError(
+        `Failed to uninstall plugin: ${error instanceof Error ? error.message : String(error)}`,
+        'uninstall',
+        join(pluginsDir, pluginName)
+      );
     }
   }
 

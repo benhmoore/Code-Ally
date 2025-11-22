@@ -59,6 +59,10 @@ export interface UndoResult {
   success: boolean;
   reverted_files: string[];
   failed_operations: string[];
+  error_details?: {
+    message: string;
+    operation: string;
+  };
 }
 
 /**
@@ -147,6 +151,43 @@ export class PatchManager implements IService {
    */
   static readonly lifecycle = ServiceLifecycle.SINGLETON;
 
+  // ========== Error Helpers ==========
+
+  /**
+   * Create a structured UndoResult error
+   */
+  private createUndoError(
+    message: string,
+    operation: string,
+    failed_operations: string[] = []
+  ): UndoResult {
+    return {
+      success: false,
+      reverted_files: [],
+      failed_operations,
+      error_details: {
+        message,
+        operation,
+      },
+    };
+  }
+
+  /**
+   * Create a structured error for simple operations
+   */
+  private createPatchError(
+    message: string,
+    operation: string
+  ): { success: boolean; message: string; error_details?: { message: string; operation: string; } } {
+    return {
+      success: false,
+      message,
+      error_details: {
+        message,
+        operation,
+      },
+    };
+  }
 
   // ========== Capture Operations ==========
 
@@ -243,19 +284,19 @@ export class PatchManager implements IService {
    */
   async undoOperations(count: number = 1): Promise<UndoResult> {
     if (this.indexManager.getPatchCount() === 0) {
-      return {
-        success: false,
-        reverted_files: [],
-        failed_operations: ['No operations to undo'],
-      };
+      return this.createUndoError(
+        'No operations to undo',
+        'undoOperations',
+        ['No operations to undo']
+      );
     }
 
     if (count <= 0) {
-      return {
-        success: false,
-        reverted_files: [],
-        failed_operations: ['Invalid undo count'],
-      };
+      return this.createUndoError(
+        'Invalid undo count',
+        'undoOperations',
+        ['Invalid undo count']
+      );
     }
 
     const patchesToUndo = this.indexManager.getLastPatches(count);
@@ -306,11 +347,11 @@ export class PatchManager implements IService {
     // Validate result structure before returning
     if (!this.validator.validateUndoResult(result)) {
       logger.error('Generated invalid UndoResult structure');
-      return {
-        success: false,
-        reverted_files: [],
-        failed_operations: ['Internal error: invalid result structure'],
-      };
+      return this.createUndoError(
+        'Internal error: invalid result structure',
+        'undoOperations',
+        ['Internal error: invalid result structure']
+      );
     }
 
     return result;
@@ -497,11 +538,11 @@ export class PatchManager implements IService {
   async undoOperationsSinceTimestamp(timestamp: number): Promise<UndoResult> {
     // Validate timestamp parameter
     if (typeof timestamp !== 'number' || isNaN(timestamp) || timestamp < 0) {
-      return {
-        success: false,
-        reverted_files: [],
-        failed_operations: ['Invalid timestamp: must be a non-negative number'],
-      };
+      return this.createUndoError(
+        'Invalid timestamp: must be a non-negative number',
+        'undoOperationsSinceTimestamp',
+        ['Invalid timestamp: must be a non-negative number']
+      );
     }
 
     try {
@@ -509,11 +550,11 @@ export class PatchManager implements IService {
       const patchesToUndo = await this.getPatchesSinceTimestamp(timestamp);
 
       if (patchesToUndo.length === 0) {
-        return {
-          success: false,
-          reverted_files: [],
-          failed_operations: ['No operations found since the specified timestamp'],
-        };
+        return this.createUndoError(
+          'No operations found since the specified timestamp',
+          'undoOperationsSinceTimestamp',
+          ['No operations found since the specified timestamp']
+        );
       }
 
       logger.info(`Undoing ${patchesToUndo.length} operations since timestamp ${timestamp}`);
@@ -562,21 +603,21 @@ export class PatchManager implements IService {
       // Validate result structure before returning
       if (!this.validator.validateUndoResult(result)) {
         logger.error('Generated invalid UndoResult structure');
-        return {
-          success: false,
-          reverted_files: [],
-          failed_operations: ['Internal error: invalid result structure'],
-        };
+        return this.createUndoError(
+          'Internal error: invalid result structure',
+          'undoOperationsSinceTimestamp',
+          ['Internal error: invalid result structure']
+        );
       }
 
       return result;
     } catch (error) {
       logger.error('Failed to undo operations since timestamp:', error);
-      return {
-        success: false,
-        reverted_files: [],
-        failed_operations: [`Error: ${error instanceof Error ? error.message : 'Unknown error'}`],
-      };
+      return this.createUndoError(
+        `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'undoOperationsSinceTimestamp',
+        [`Error: ${error instanceof Error ? error.message : 'Unknown error'}`]
+      );
     }
   }
 
@@ -691,7 +732,7 @@ export class PatchManager implements IService {
    *
    * @returns Result with success status and message
    */
-  async clearPatchHistory(): Promise<{ success: boolean; message: string }> {
+  async clearPatchHistory(): Promise<{ success: boolean; message: string; error_details?: { message: string; operation: string; } }> {
     try {
       const removedCount = await this.cleanupManager.cleanupAll();
 
@@ -701,10 +742,10 @@ export class PatchManager implements IService {
       };
     } catch (error) {
       logger.error('Failed to clear patch history:', error);
-      return {
-        success: false,
-        message: `Failed to clear patch history: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      };
+      return this.createPatchError(
+        `Failed to clear patch history: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'clearPatchHistory'
+      );
     }
   }
 
@@ -793,11 +834,11 @@ export class PatchManager implements IService {
     const patchEntry = this.indexManager.getPatch(patchNumber);
 
     if (!patchEntry) {
-      return {
-        success: false,
-        reverted_files: [],
-        failed_operations: [`Patch ${patchNumber} not found`],
-      };
+      return this.createUndoError(
+        `Patch ${patchNumber} not found`,
+        'undoSinglePatch',
+        [`Patch ${patchNumber} not found`]
+      );
     }
 
     try {
@@ -819,31 +860,31 @@ export class PatchManager implements IService {
 
         if (!this.validator.validateUndoResult(result)) {
           logger.error('Generated invalid UndoResult structure');
-          return {
-            success: false,
-            reverted_files: [],
-            failed_operations: ['Internal error: invalid result structure'],
-          };
+          return this.createUndoError(
+            'Internal error: invalid result structure',
+            'undoSinglePatch',
+            ['Internal error: invalid result structure']
+          );
         }
 
         return result;
       } else {
-        return {
-          success: false,
-          reverted_files: [],
-          failed_operations: [`Failed to revert ${patchEntry.file_path}`],
-        };
+        return this.createUndoError(
+          `Failed to revert ${patchEntry.file_path}`,
+          'undoSinglePatch',
+          [`Failed to revert ${patchEntry.file_path}`]
+        );
       }
     } catch (error) {
       const msg = `Error reverting patch ${patchNumber}: ${
         error instanceof Error ? error.message : 'Unknown error'
       }`;
       logger.error(msg, error);
-      return {
-        success: false,
-        reverted_files: [],
-        failed_operations: [msg],
-      };
+      return this.createUndoError(
+        msg,
+        'undoSinglePatch',
+        [msg]
+      );
     }
   }
 

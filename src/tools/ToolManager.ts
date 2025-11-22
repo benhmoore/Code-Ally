@@ -9,7 +9,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolValidator } from './ToolValidator.js';
 import { FunctionDefinition, ToolResult } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { formatError } from '../utils/errorUtils.js';
+import { formatError, createStructuredError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { logger } from '../services/Logger.js';
@@ -402,46 +402,58 @@ export class ToolManager {
   ): Promise<ToolResult | null> {
     const tool = this.tools.get(toolName);
     if (!tool) {
-      return {
-        success: false,
-        error: `Unknown tool: ${toolName}`,
-        error_type: 'validation_error',
-        suggestion: `Available tools: ${Array.from(this.tools.keys()).join(', ')}`,
-      };
+      const result = createStructuredError(
+        `Unknown tool: ${toolName}`,
+        'validation_error',
+        toolName,
+        { requested_tool: toolName, available_tools: Array.from(this.tools.keys()) }
+      );
+      result.suggestion = `Available tools: ${Array.from(this.tools.keys()).join(', ')}`;
+      return result;
     }
 
     // Check visible_to constraint
     if (tool.visibleTo && tool.visibleTo.length > 0) {
       if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
-        return {
-          success: false,
-          error: `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
-          error_type: 'agent_mismatch',
-        };
+        return createStructuredError(
+          `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
+          'agent_mismatch',
+          toolName,
+          {
+            visible_to: tool.visibleTo,
+            current_agent: currentAgentName || 'unknown'
+          }
+        );
       }
     }
 
     // Check for duplicate calls
     const duplicateCheck = this.duplicateDetector.check(toolName, args);
     if (duplicateCheck.shouldBlock) {
-      return {
-        success: false,
-        error: duplicateCheck.message!,
-        error_type: 'validation_error',
-        suggestion: 'Avoid calling the same tool with identical arguments multiple times',
-      };
+      const result = createStructuredError(
+        duplicateCheck.message || 'Duplicate tool call detected',
+        'validation_error',
+        toolName,
+        { args }
+      );
+      result.suggestion = 'Avoid calling the same tool with identical arguments multiple times';
+      return result;
     }
 
     // Validate arguments
     const functionDef = this.generateFunctionDefinition(tool);
     const validation = this.validator.validateArguments(tool, functionDef, args);
     if (!validation.valid) {
-      return {
-        success: false,
-        error: validation.error!,
-        error_type: validation.error_type,
-        suggestion: validation.suggestion,
-      };
+      const result = createStructuredError(
+        validation.error || 'Validation failed',
+        validation.error_type || 'validation_error',
+        toolName,
+        { args, validation_errors: validation.error }
+      );
+      if (validation.suggestion) {
+        result.suggestion = validation.suggestion;
+      }
+      return result;
     }
 
     // Call tool-specific pre-permission validation
@@ -460,44 +472,56 @@ export class ToolManager {
   ): Promise<ToolResult> {
     const tool = this.tools.get(toolName);
     if (!tool) {
-      return {
-        success: false,
-        error: `Unknown tool: ${toolName}`,
-        error_type: 'validation_error',
-        suggestion: `Available tools: ${Array.from(this.tools.keys()).join(', ')}`,
-      };
+      const result = createStructuredError(
+        `Unknown tool: ${toolName}`,
+        'validation_error',
+        toolName,
+        { requested_tool: toolName, available_tools: Array.from(this.tools.keys()) }
+      );
+      result.suggestion = `Available tools: ${Array.from(this.tools.keys()).join(', ')}`;
+      return result;
     }
 
     // Check visible_to constraint (if specified and non-empty)
     if (tool.visibleTo && tool.visibleTo.length > 0) {
       if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
-        return {
-          success: false,
-          error: `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
-          error_type: 'agent_mismatch',
-        };
+        return createStructuredError(
+          `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
+          'agent_mismatch',
+          toolName,
+          {
+            visible_to: tool.visibleTo,
+            current_agent: currentAgentName || 'unknown'
+          }
+        );
       }
     }
 
     const duplicateCheck = this.duplicateDetector.check(toolName, args);
     if (duplicateCheck.shouldBlock) {
-      return {
-        success: false,
-        error: duplicateCheck.message!,
-        error_type: 'validation_error',
-        suggestion: 'Avoid calling the same tool with identical arguments multiple times',
-      };
+      const result = createStructuredError(
+        duplicateCheck.message || 'Duplicate tool call detected',
+        'validation_error',
+        toolName,
+        { args }
+      );
+      result.suggestion = 'Avoid calling the same tool with identical arguments multiple times';
+      return result;
     }
 
     const functionDef = this.generateFunctionDefinition(tool);
     const validation = this.validator.validateArguments(tool, functionDef, args);
     if (!validation.valid) {
-      return {
-        success: false,
-        error: validation.error!,
-        error_type: validation.error_type,
-        suggestion: validation.suggestion,
-      };
+      const result = createStructuredError(
+        validation.error || 'Validation failed',
+        validation.error_type || 'validation_error',
+        toolName,
+        { args, validation_errors: validation.error }
+      );
+      if (validation.suggestion) {
+        result.suggestion = validation.suggestion;
+      }
+      return result;
     }
 
     try {
@@ -517,11 +541,12 @@ export class ToolManager {
       if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('interrupted'))) {
         throw error;
       }
-      return {
-        success: false,
-        error: formatError(error),
-        error_type: 'system_error',
-      };
+      return createStructuredError(
+        formatError(error),
+        'system_error',
+        toolName,
+        { args, error_message: formatError(error) }
+      );
     }
   }
 

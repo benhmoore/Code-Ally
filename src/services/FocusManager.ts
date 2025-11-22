@@ -14,6 +14,30 @@ import { formatError } from '../utils/errorUtils.js';
 export interface FocusResult {
   success: boolean;
   message: string;
+  error_details?: {
+    message: string;
+    operation: string;
+    path?: string;
+  };
+}
+
+/**
+ * Helper function to create structured error results
+ */
+function createFocusError(
+  message: string,
+  operation: string,
+  path?: string
+): FocusResult {
+  return {
+    success: false,
+    message,
+    error_details: {
+      message,
+      operation,
+      path,
+    },
+  };
 }
 
 export class FocusManager {
@@ -43,10 +67,11 @@ export class FocusManager {
       } else {
         // Reject absolute paths
         if (isAbsolute(relativePath)) {
-          return {
-            success: false,
-            message: 'Focus path must be relative to current working directory',
-          };
+          return createFocusError(
+            'Focus path must be relative to current working directory',
+            'setFocus',
+            relativePath
+          );
         }
 
         focusPath = resolve(currentWd, relativePath);
@@ -59,26 +84,29 @@ export class FocusManager {
       try {
         await access(focusPath, constants.R_OK);
       } catch {
-        return {
-          success: false,
-          message: `Focus directory is not accessible: ${relativePath}`,
-        };
+        return createFocusError(
+          `Focus directory is not accessible: ${relativePath}`,
+          'setFocus',
+          relativePath
+        );
       }
 
       const stats = await stat(focusPath);
       if (!stats.isDirectory()) {
-        return {
-          success: false,
-          message: `Focus path is not a directory: ${relativePath}`,
-        };
+        return createFocusError(
+          `Focus path is not a directory: ${relativePath}`,
+          'setFocus',
+          relativePath
+        );
       }
 
       // Ensure focus is within current working directory
       if (!focusPath.startsWith(currentWd)) {
-        return {
-          success: false,
-          message: `Focus directory must be within current working directory: ${relativePath}`,
-        };
+        return createFocusError(
+          `Focus directory must be within current working directory: ${relativePath}`,
+          'setFocus',
+          relativePath
+        );
       }
 
       this.focusDirectory = focusPath;
@@ -89,10 +117,10 @@ export class FocusManager {
         message: `Focus set to: ${relativeDisplay || '.'}`,
       };
     } catch (error) {
-      return {
-        success: false,
-        message: `Error setting focus: ${formatError(error)}`,
-      };
+      return createFocusError(
+        `Error setting focus: ${formatError(error)}`,
+        'setFocus'
+      );
     }
   }
 
@@ -215,7 +243,7 @@ export class FocusManager {
     }
 
     if (!filePath) {
-      return { success: false, message: 'Path cannot be empty' };
+      return createFocusError('Path cannot be empty', 'validatePathInFocus');
     }
 
     try {
@@ -225,10 +253,11 @@ export class FocusManager {
       // Check if path is in excluded files list
       if (this.excludedFiles.has(normalizedPath)) {
         const relativePath = relative(this.initialWorkingDirectory, normalizedPath);
-        return {
-          success: false,
-          message: `Access denied: path '${relativePath}' is excluded from access`,
-        };
+        return createFocusError(
+          `Access denied: path '${relativePath}' is excluded from access`,
+          'validatePathInFocus',
+          relativePath
+        );
       }
 
       // If focus is set, check focus constraints
@@ -242,19 +271,20 @@ export class FocusManager {
         if (!isWithinFocus) {
           const focusDisplay = this.getFocusDisplay();
           const relativePath = relative(this.initialWorkingDirectory, normalizedPath);
-          return {
-            success: false,
-            message: `Access denied: path '${relativePath}' is outside focused directory '${focusDisplay}'`,
-          };
+          return createFocusError(
+            `Access denied: path '${relativePath}' is outside focused directory '${focusDisplay}'`,
+            'validatePathInFocus',
+            relativePath
+          );
         }
       }
 
       return { success: true, message: '' };
     } catch (error) {
-      return {
-        success: false,
-        message: `Error validating focus constraint: ${formatError(error)}`,
-      };
+      return createFocusError(
+        `Error validating focus constraint: ${formatError(error)}`,
+        'validatePathInFocus'
+      );
     }
   }
 

@@ -111,6 +111,15 @@ export interface ToolResult {
   success: boolean;
   error: string;
   error_type?: ErrorType;
+
+  /** Structured error details for clean error message extraction */
+  error_details?: {
+    message: string;                    // Raw error message without tool call formatting
+    tool_name: string;                  // Tool name
+    parameters?: Record<string, any>;   // Parameters that were passed
+    suggestion?: string;                // Error suggestion
+  };
+
   suggestion?: string;
   system_reminder?: string;
   system_reminder_persist?: boolean;
@@ -217,6 +226,7 @@ export interface ToolCallState {
   output?: string;
   error?: string;
   error_type?: ErrorType; // Type of error for filtering display
+  result?: ToolResult; // Full tool result for structured error access
   startTime: number;
   executionStartTime?: number; // When actual execution starts (after permission granted)
   endTime?: number;

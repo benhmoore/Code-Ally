@@ -398,11 +398,13 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         const taskAgentData = await agentManager.loadAgent('task', currentAgentName);
 
         if (!taskAgentData) {
-          return {
-            success: false,
-            error: `Agent '${agentType}' not found and fallback to 'task' agent also failed`,
-            agent_used: agentType,
-          };
+          const result = this.formatErrorResponse(
+            `Agent '${agentType}' not found and fallback to 'task' agent also failed`,
+            'system_error',
+            undefined,
+            { agent_used: agentType }
+          );
+          return result;
         }
 
         // Use task agent but preserve requested agent type name (creating an alias)
@@ -417,12 +419,13 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
 
         if (currentAgentData && currentAgentData.can_delegate_to_agents === false) {
           logger.debug('[AGENT_TOOL] Agent', currentAgentName, 'cannot delegate to sub-agents (can_delegate_to_agents: false)');
-          return {
-            success: false,
-            error: `Agent '${currentAgentName}' cannot delegate to sub-agents (can_delegate_to_agents: false)`,
-            error_type: 'permission_denied',
-            agent_used: agentType,
-          };
+          const result = this.formatErrorResponse(
+            `Agent '${currentAgentName}' cannot delegate to sub-agents (can_delegate_to_agents: false)`,
+            'permission_denied',
+            undefined,
+            { agent_used: agentType }
+          );
+          return result;
         }
       }
 
@@ -470,11 +473,13 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
 
       return response;
     } catch (error) {
-      return {
-        success: false,
-        error: `Error executing agent task: ${formatError(error)}`,
-        agent_used: agentType,
-      };
+      const result = this.formatErrorResponse(
+        `Error executing agent task: ${formatError(error)}`,
+        'system_error',
+        undefined,
+        { agent_used: agentType }
+      );
+      return result;
     }
   }
 

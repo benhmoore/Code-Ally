@@ -57,8 +57,8 @@ export const TIMEOUT_LIMITS = {
   /** Maximum timeout for bash commands (20 minutes) */
   MAX: 1200000,
 
-  /** Graceful shutdown delay between SIGTERM and SIGKILL (1 second) */
-  GRACEFUL_SHUTDOWN_DELAY: 1000,
+  /** Graceful shutdown delay between SIGTERM and SIGKILL (500ms) */
+  GRACEFUL_SHUTDOWN_DELAY: 500,
 
   /** Idle timeout for detecting interactive commands waiting for input (10 seconds) */
   IDLE_DETECTION_TIMEOUT: 10000,

@@ -471,9 +471,6 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Error output - Hidden from main UI, available via /debug calls [n] command */}
-      {/* Errors are relegated to the debug interface to clean up user experience */}
-
       {/* Output as threaded child (hidden if collapsed, has agent ancestor, or own hideOutput, unless show_full_tool_output is enabled) */}
       {!toolCall.collapsed && !hasAgentAncestor && (!toolCall.hideOutput || config?.show_full_tool_output) && trimmedOutput && !toolCall.error && (
         <Box flexDirection="column">
@@ -491,6 +488,33 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           </Box>
         </Box>
       )}
+
+      {/* Error output - Show clean error message from error_details */}
+      {!toolCall.collapsed && !hasAgentAncestor && toolCall.error && toolCall.result?.error_details && (() => {
+        // Use structured error_details.message (clean error without tool call formatting)
+        const errorMessage = toolCall.result.error_details.message;
+        const firstLine = errorMessage.split('\n')[0] || 'Unknown error';
+        const truncated = firstLine.slice(0, TEXT_LIMITS.ERROR_DISPLAY_MAX);
+        const needsTruncation = errorMessage.length > TEXT_LIMITS.ERROR_DISPLAY_MAX;
+
+        return (
+          <Box flexDirection="column">
+            <Box paddingLeft={indent.length + 4}>
+              <Text color="red" dimColor>
+                {truncated}
+                {needsTruncation && '...'}
+              </Text>
+            </Box>
+            {needsTruncation && (
+              <Box paddingLeft={indent.length + 4}>
+                <Text color="gray" dimColor>
+                  Full error: /debug errors
+                </Text>
+              </Box>
+            )}
+          </Box>
+        );
+      })()}
 
       {/* Nested content: interleaved tool calls and interjections sorted by timestamp */}
       {/* Render if: has interjections, not collapsed, or show_full_tool_output enabled */}

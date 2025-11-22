@@ -264,7 +264,10 @@ export class DebugCommand extends Command {
         output += ` (${call.error_type})`;
       }
       output += ':\n';
-      output += call.error + '\n\n';
+
+      // Use structured error message if available, otherwise fall back to formatted error
+      const errorMessage = call.result?.error_details?.message || call.error;
+      output += errorMessage + '\n\n';
     }
 
     // Output (show for both success and error - useful for debugging failed tools)

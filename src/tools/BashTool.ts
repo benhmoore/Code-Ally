@@ -10,6 +10,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn, ChildProcess } from 'child_process';
 import { TIMEOUT_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { formatError } from '../utils/errorUtils.js';
+import { logger } from '../services/Logger.js';
 
 export class BashTool extends BaseTool {
   readonly name = 'bash';
@@ -201,20 +202,57 @@ export class BashTool extends BaseTool {
     return new Promise((resolve) => {
       // Spawn process
       // Use 'ignore' for stdin to prevent hanging on interactive prompts
+      // Use detached: true on Unix to create a new process group for proper cleanup
       const child: ChildProcess = spawn(command, {
         cwd: workingDir,
         shell: true,
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32', // Create process group on Unix
       });
 
+      // Helper to kill process group (important for shell: true)
+      const killProcessGroup = (signal: NodeJS.Signals) => {
+        if (!child.pid) return;
+
+        try {
+          if (process.platform !== 'win32' && child.pid) {
+            // On Unix, kill the entire process group (negative PID)
+            // This ensures child processes like 'npm run dev' are also killed
+            process.kill(-child.pid, signal);
+          } else {
+            // On Windows, just kill the process
+            child.kill(signal);
+          }
+        } catch (error) {
+          // Process might have already exited
+          logger.debug('[BashTool] Error killing process:', error);
+        }
+      };
+
       // Set up abort handler
+      let abortTimeoutHandle: NodeJS.Timeout | null = null;
       const abortHandler = () => {
-        child.kill('SIGTERM');
+        killProcessGroup('SIGTERM');
         setTimeout(() => {
           if (child.exitCode === null) {
-            child.kill('SIGKILL');
+            killProcessGroup('SIGKILL');
           }
         }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+
+        // Hard timeout: force resolve after 2 seconds if process still hasn't closed
+        // This prevents limbo state where tool call disappears but never completes
+        abortTimeoutHandle = setTimeout(() => {
+          if (child.exitCode === null) {
+            logger.warn('[BashTool] Process did not respond to SIGKILL after abort, forcing completion');
+            // Force resolve the promise even if process hasn't closed
+            resolve(
+              this.formatErrorResponse(
+                'Command interrupted by user (forced completion)',
+                'interrupted'
+              )
+            );
+          }
+        }, 2000); // 2 seconds: 500ms grace + 1500ms for SIGKILL to take effect
       };
 
       if (abortSignal) {
@@ -230,10 +268,10 @@ export class BashTool extends BaseTool {
       // Set up timeout
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGTERM');
+        killProcessGroup('SIGTERM');
         setTimeout(() => {
           if (child.exitCode === null) {
-            child.kill('SIGKILL');
+            killProcessGroup('SIGKILL');
           }
         }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
       }, timeout);
@@ -247,10 +285,10 @@ export class BashTool extends BaseTool {
         if (child.exitCode === null && idleTime > TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT) {
           idleKilled = true;
           clearInterval(idleCheckInterval);
-          child.kill('SIGTERM');
+          killProcessGroup('SIGTERM');
           setTimeout(() => {
             if (child.exitCode === null) {
-              child.kill('SIGKILL');
+              killProcessGroup('SIGKILL');
             }
           }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
         }
@@ -280,6 +318,9 @@ export class BashTool extends BaseTool {
       child.on('close', (code: number | null) => {
         clearTimeout(timeoutHandle);
         clearInterval(idleCheckInterval);
+        if (abortTimeoutHandle) {
+          clearTimeout(abortTimeoutHandle);
+        }
 
         // Clean up abort listener
         if (abortSignal) {
@@ -376,14 +417,29 @@ export class BashTool extends BaseTool {
 
   /**
    * Format subtext for display in UI
-   * Shows: [command_snippet] - [description]
+   * Shows: [command_snippet] - [timeout] - [description]
    */
   formatSubtext(args: Record<string, any>): string | null {
     const command = args.command as string;
     const description = args.description as string;
+    const timeoutParam = args.timeout;
 
     if (!command) {
       return null;
+    }
+
+    // Calculate timeout (same logic as validateTimeout)
+    let timeoutSeconds: number;
+    if (timeoutParam === undefined || timeoutParam === null) {
+      timeoutSeconds = this.config?.bash_timeout ?? 60;
+    } else {
+      const timeoutNum = Number(timeoutParam);
+      if (isNaN(timeoutNum) || timeoutNum <= 0) {
+        timeoutSeconds = this.config?.bash_timeout ?? 60;
+      } else {
+        // Cap at max timeout (convert from ms to seconds)
+        timeoutSeconds = Math.min(timeoutNum, TIMEOUT_LIMITS.MAX / 1000);
+      }
     }
 
     // Show first 40 chars of command, truncate with ... if longer
@@ -392,20 +448,23 @@ export class BashTool extends BaseTool {
       commandSnippet = commandSnippet.substring(0, 40) + '...';
     }
 
-    // Add description if provided
+    // Format timeout display
+    const timeoutDisplay = `${timeoutSeconds}s`;
+
+    // Build subtext: command - timeout [- description]
     if (description) {
-      return `${commandSnippet} - ${description}`;
+      return `${commandSnippet} - ${timeoutDisplay} - ${description}`;
     }
 
-    return commandSnippet;
+    return `${commandSnippet} - ${timeoutDisplay}`;
   }
 
   /**
    * Get parameters shown in subtext
-   * BashTool shows both 'command' and 'description' in subtext
+   * BashTool shows 'command', 'timeout', and 'description' in subtext
    */
   getSubtextParameters(): string[] {
-    return ['command', 'description'];
+    return ['command', 'timeout', 'description'];
   }
 
   /**

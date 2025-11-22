@@ -22,6 +22,7 @@ import { PERMISSION_MESSAGES } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
 import { fileToBase64, isImageFile } from '@utils/imageUtils.js';
 import { resolvePath } from '@utils/pathUtils.js';
+import { createStructuredError } from '@utils/errorUtils.js';
 
 /**
  * Input handler functions
@@ -215,10 +216,11 @@ export const useInputHandlers = (
           });
 
           // Execute bash command with ID for streaming output
+          // Pass abort signal so ESC can cancel the command
           const result = await bashTool.execute({
             command: bashCommand,
             description: 'Execute user command',
-          }, toolCallId);
+          }, toolCallId, agent.getToolAbortSignal?.());
 
           // Emit TOOL_CALL_END event to complete the tool call
           activityStream.emit({
@@ -474,11 +476,12 @@ export const useInputHandlers = (
               timestamp: Date.now(),
               data: {
                 toolName: 'read',
-                result: {
-                  success: false,
-                  error: error instanceof Error ? error.message : 'Unknown error',
-                  error_type: 'system_error',
-                },
+                result: createStructuredError(
+                  error instanceof Error ? error.message : 'Unknown error',
+                  'system_error',
+                  'read',
+                  { file_paths: readableFiles }
+                ),
                 success: false,
                 error: error instanceof Error ? error.message : 'Unknown error',
                 visibleInChat: readTool?.visibleInChat ?? true,
@@ -490,11 +493,14 @@ export const useInputHandlers = (
             // Add error tool result to Agent's conversation history
             const errorToolResultMessage = {
               role: 'tool' as const,
-              content: JSON.stringify({
-                success: false,
-                error: error instanceof Error ? error.message : 'Unknown error',
-                error_type: 'system_error',
-              }),
+              content: JSON.stringify(
+                createStructuredError(
+                  error instanceof Error ? error.message : 'Unknown error',
+                  'system_error',
+                  'read',
+                  { file_paths: readableFiles }
+                )
+              ),
               tool_call_id: toolCallId,
               name: 'read',
             };
@@ -628,11 +634,12 @@ export const useInputHandlers = (
               timestamp: Date.now(),
               data: {
                 toolName: 'tree',
-                result: {
-                  success: false,
-                  error: error instanceof Error ? error.message : 'Unknown error',
-                  error_type: 'system_error',
-                },
+                result: createStructuredError(
+                  error instanceof Error ? error.message : 'Unknown error',
+                  'system_error',
+                  'tree',
+                  { paths: filteredMentions.directories }
+                ),
                 success: false,
                 error: error instanceof Error ? error.message : 'Unknown error',
                 visibleInChat: treeTool?.visibleInChat ?? true,
@@ -644,11 +651,14 @@ export const useInputHandlers = (
             // Add error tool result to Agent's conversation history
             const errorToolResultMessage = {
               role: 'tool' as const,
-              content: JSON.stringify({
-                success: false,
-                error: error instanceof Error ? error.message : 'Unknown error',
-                error_type: 'system_error',
-              }),
+              content: JSON.stringify(
+                createStructuredError(
+                  error instanceof Error ? error.message : 'Unknown error',
+                  'system_error',
+                  'tree',
+                  { paths: filteredMentions.directories }
+                )
+              ),
               tool_call_id: toolCallId,
               name: 'tree',
             };

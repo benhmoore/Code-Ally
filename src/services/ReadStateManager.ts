@@ -27,6 +27,12 @@ export interface ValidationResult {
   message: string;
   /** Formatted string of missing ranges (if validation failed) */
   missingRanges?: string;
+  /** Structured error details (if validation failed) */
+  error_details?: {
+    message: string;
+    operation: string;
+    missingRanges?: string;
+  };
 }
 
 export class ReadStateManager {
@@ -34,6 +40,31 @@ export class ReadStateManager {
 
   constructor() {
     this.fileStates = new Map();
+  }
+
+  /**
+   * Create a structured validation error
+   *
+   * @param message - Human-readable error message
+   * @param operation - Operation that failed
+   * @param missingRanges - Formatted string of missing ranges (optional)
+   * @returns ValidationResult with error details
+   */
+  private createValidationError(
+    message: string,
+    operation: string,
+    missingRanges?: string
+  ): ValidationResult {
+    return {
+      success: false,
+      message,
+      missingRanges,
+      error_details: {
+        message,
+        operation,
+        missingRanges,
+      },
+    };
   }
 
   /**
@@ -84,11 +115,11 @@ export class ReadStateManager {
 
     // If file has no read state, validation fails
     if (!fileState || fileState.readRanges.length === 0) {
-      return {
-        success: false,
-        message: `File has not been read: ${filePath}`,
-        missingRanges: `${startLine}-${endLine}`,
-      };
+      return this.createValidationError(
+        `File has not been read: ${filePath}`,
+        'validateLinesRead',
+        `${startLine}-${endLine}`
+      );
     }
 
     // Check if requested range is fully covered by read ranges
@@ -130,11 +161,11 @@ export class ReadStateManager {
         .map(r => (r.start === r.end ? `${r.start}` : `${r.start}-${r.end}`))
         .join(', ');
 
-      return {
-        success: false,
-        message: `Lines not read in ${filePath}: ${missingRangesStr}`,
-        missingRanges: missingRangesStr,
-      };
+      return this.createValidationError(
+        `Lines not read in ${filePath}: ${missingRangesStr}`,
+        'validateLinesRead',
+        missingRangesStr
+      );
     }
 
     return {

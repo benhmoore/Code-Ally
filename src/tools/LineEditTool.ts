@@ -1,8 +1,9 @@
 /**
- * LineEditTool - Line-based file editing
+ * LineEditTool - Line-based file editing (Batch-only design)
  *
  * Performs precise line-based operations: insert, delete, replace.
  * Uses 1-indexed line numbers (human-friendly).
+ * All edits are processed as batches for atomicity and consistency.
  */
 
 import { BaseTool } from './BaseTool.js';
@@ -19,11 +20,21 @@ import { ReadStateManager } from '../services/ReadStateManager.js';
 
 type LineOperation = 'insert' | 'delete' | 'replace';
 
+/**
+ * Single edit operation in a batch
+ */
+interface EditOperation {
+  operation: LineOperation;
+  line_number: number;
+  content?: string;      // Required for insert/replace
+  num_lines?: number;    // For delete/replace, default: 1
+}
+
 export class LineEditTool extends BaseTool {
   readonly name = 'line-edit';
   readonly displayName = 'Edit Line';
   readonly description =
-    'Edit files by line number with insert, delete, and replace operations. Line numbers are 1-indexed and will shift after edits that change line count.';
+    'Edit files by line number with insert, delete, and replace operations. Always accepts an array of edits for atomic processing. Line numbers are 1-indexed. Edits are automatically sorted and applied bottom-to-top to prevent line shifting issues.';
   readonly requiresConfirmation = true; // Destructive operation
   readonly hideOutput = true; // Hide output from result preview
 
@@ -33,15 +44,15 @@ export class LineEditTool extends BaseTool {
 
   /**
    * Validate before permission request
-   * Checks if target lines have been read
+   * Checks if target lines have been read for all edits in the batch
    */
   async validateBeforePermission(args: any): Promise<ToolResult | null> {
     const filePath = args.file_path as string;
-    const operation = args.operation as LineOperation;
-    const lineNumber = args.line_number as number;
-    // Convert to number, default to 1 if undefined/null/NaN
-    const numLinesRaw = Number(args.num_lines);
-    const numLines = args.num_lines === undefined || args.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
+    const edits = args.edits as EditOperation[] | undefined;
+
+    if (!edits || !Array.isArray(edits) || edits.length === 0) {
+      return null; // Skip validation if no edits provided (will be caught in executeImpl)
+    }
 
     const absolutePath = resolvePath(filePath);
     const registry = ServiceRegistry.getInstance();
@@ -55,50 +66,43 @@ export class LineEditTool extends BaseTool {
       const fileContent = await fs.readFile(absolutePath, 'utf-8');
       const totalLines = fileContent.split('\n').length;
 
-      // Special case: inserting into an empty file
-      if (operation === 'insert' && fileContent.length === 0 && lineNumber === 1) {
-        return null; // Skip validation for empty file insert
-      }
+      // Validate read state for each edit
+      for (let i = 0; i < edits.length; i++) {
+        const edit = edits[i];
+        const editNum = i + 1;
 
-      // Determine which lines need validation
-      let validationStartLine: number;
-      let validationEndLine: number;
+        if (!edit || !edit.operation || !edit.line_number) {
+          continue; // Skip invalid edits (will be caught in executeImpl)
+        }
 
-      switch (operation) {
-        case 'insert':
-          validationStartLine = Math.max(1, lineNumber - 1);
-          validationEndLine = Math.min(totalLines, lineNumber);
-          break;
-        case 'delete':
-          validationStartLine = lineNumber;
-          validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
-          break;
-        case 'replace':
-          validationStartLine = lineNumber;
-          validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
-          break;
-        default:
-          return null;
-      }
+        // Special case: inserting into an empty file
+        if (edit.operation === 'insert' && fileContent.length === 0 && edit.line_number === 1) {
+          continue; // Skip validation for empty file insert at line 1
+        }
 
-      const validation = readStateManager.validateLinesRead(
-        absolutePath,
-        validationStartLine,
-        validationEndLine
-      );
+        const numLinesRaw = Number(edit.num_lines);
+        const numLines = edit.num_lines === undefined || edit.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
 
-      if (!validation.success) {
-        const rangeDesc = validationStartLine === validationEndLine
-          ? `line ${validationStartLine}`
-          : `lines ${validationStartLine}-${validationEndLine}`;
-
-        return this.formatErrorResponse(
-          `Lines not read: Cannot ${operation} ${rangeDesc} without reading first. Use read(file_paths=["${filePath}"], offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1})`,
-          'validation_error'
+        const validationRange = this.getValidationRange(edit.operation, edit.line_number, numLines, totalLines);
+        const validation = readStateManager.validateLinesRead(
+          absolutePath,
+          validationRange.start,
+          validationRange.end
         );
+
+        if (!validation.success) {
+          const rangeDesc = validationRange.start === validationRange.end
+            ? `line ${validationRange.start}`
+            : `lines ${validationRange.start}-${validationRange.end}`;
+
+          return this.formatErrorResponse(
+            `Edit ${editNum}: Lines not read. Cannot ${edit.operation} ${rangeDesc} without reading first. Use read(file_paths=["${filePath}"], offset=${validationRange.start}, limit=${validationRange.end - validationRange.start + 1})`,
+            'validation_error'
+          );
+        }
       }
 
-      return null; // Validation passed
+      return null; // All validations passed
     } catch (error) {
       // File doesn't exist or can't be read - let executeImpl handle this
       return null;
@@ -106,7 +110,7 @@ export class LineEditTool extends BaseTool {
   }
 
   /**
-   * Provide custom function definition
+   * Provide custom function definition (Batch-only design)
    */
   getFunctionDefinition(): FunctionDefinition {
     return {
@@ -121,46 +125,53 @@ export class LineEditTool extends BaseTool {
               type: 'string',
               description: 'Absolute or relative path to the file to edit',
             },
-            operation: {
-              type: 'string',
-              description: 'Operation to perform: insert, delete, or replace',
-            },
-            line_number: {
-              type: 'integer',
-              description: 'Line number to operate on (1-indexed). Line numbers shift when edits change line count.',
-            },
-            content: {
-              type: 'string',
-              description:
-                'Content for insert/replace operations. Can contain \\n for multiple lines.',
-            },
-            num_lines: {
-              type: 'integer',
-              description: 'Number of existing lines to remove starting at line_number (default: 1). For replace, new content can be any number of lines.',
+            edits: {
+              type: 'array',
+              description: 'Array of edit operations to apply atomically. Edits are sorted and applied bottom-to-top automatically to prevent line shifting issues. Each edit requires: operation (insert/delete/replace), line_number (1-indexed), content (for insert/replace), num_lines (for delete/replace, default 1).',
+              items: {
+                type: 'object',
+                properties: {
+                  operation: {
+                    type: 'string',
+                    description: 'Operation: insert, delete, or replace',
+                  },
+                  line_number: {
+                    type: 'integer',
+                    description: 'Line number (1-indexed)',
+                  },
+                  content: {
+                    type: 'string',
+                    description: 'Content for insert/replace operations',
+                  },
+                  num_lines: {
+                    type: 'integer',
+                    description: 'Number of lines to delete/replace (default: 1)',
+                  },
+                },
+                required: ['operation', 'line_number'],
+              },
             },
             show_updated_context: {
               type: 'boolean',
-              description: 'Include the updated file content in the response (default: false). Recommended when making multiple edits to avoid using stale line numbers.',
+              description: 'Include the updated file content in the response (default: false). Useful to see results immediately without re-reading the file.',
             },
           },
-          required: ['file_path', 'operation', 'line_number'],
+          required: ['file_path', 'edits'],
         },
       },
     };
   }
 
+  /**
+   * Preview batch edits by applying them in memory and showing the diff
+   */
   async previewChanges(args: any, callId?: string): Promise<void> {
     await super.previewChanges(args, callId);
 
     const filePath = args.file_path as string;
-    const operation = args.operation as LineOperation;
-    const lineNumber = args.line_number as number;
-    const content = (args.content as string) ?? '';
-    // Convert to number, default to 1 if undefined/null/NaN
-    const numLinesRaw = Number(args.num_lines);
-    const numLines = args.num_lines === undefined || args.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
+    const edits = args.edits as EditOperation[] | undefined;
 
-    if (!filePath || !operation || !lineNumber) {
+    if (!filePath || !edits || !Array.isArray(edits) || edits.length === 0) {
       return; // Skip preview if invalid args
     }
 
@@ -184,28 +195,38 @@ export class LineEditTool extends BaseTool {
           return line.replace(/\r$/, '');
         });
 
-        // Perform operation for preview
-        let modifiedLines: string[];
-        switch (operation) {
-          case 'insert':
-            modifiedLines = this.performInsert(lines, lineNumber, content);
-            break;
-          case 'delete':
-            const deleteResult = this.performDelete(lines, lineNumber, numLines, lines.length);
-            if (deleteResult.error) {
-              throw new Error('Delete operation would fail'); // Skip preview
-            }
-            modifiedLines = deleteResult.lines!;
-            break;
-          case 'replace':
-            const replacePreviewResult = this.performReplace(lines, lineNumber, content, numLines, lines.length);
-            if (replacePreviewResult.error) {
-              throw new Error('Replace operation would fail'); // Skip preview
-            }
-            modifiedLines = replacePreviewResult.lines!;
-            break;
-          default:
-            throw new Error('Invalid operation');
+        // Sort edits descending by line number
+        const sortedEdits = [...edits].sort((a, b) => b.line_number - a.line_number);
+
+        // Apply all edits in memory for preview
+        let modifiedLines = [...lines];
+
+        for (const edit of sortedEdits) {
+          const content = (edit.content as string) ?? '';
+          const numLinesRaw = Number(edit.num_lines);
+          const numLines = edit.num_lines === undefined || edit.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
+
+          switch (edit.operation) {
+            case 'insert':
+              modifiedLines = this.performInsert(modifiedLines, edit.line_number, content);
+              break;
+            case 'delete':
+              const deleteResult = this.performDelete(modifiedLines, edit.line_number, numLines, modifiedLines.length);
+              if (deleteResult.error) {
+                throw new Error('Delete operation would fail');
+              }
+              modifiedLines = deleteResult.lines!;
+              break;
+            case 'replace':
+              const replaceResult = this.performReplace(modifiedLines, edit.line_number, content, numLines, modifiedLines.length);
+              if (replaceResult.error) {
+                throw new Error('Replace operation would fail');
+              }
+              modifiedLines = replaceResult.lines!;
+              break;
+            default:
+              throw new Error('Invalid operation');
+          }
         }
 
         const modifiedContent = modifiedLines.join(lineEnding);
@@ -215,76 +236,51 @@ export class LineEditTool extends BaseTool {
     );
   }
 
+  /**
+   * Execute batch edits - single code path for all edits
+   */
   protected async executeImpl(args: any): Promise<ToolResult> {
-    // Capture parameters
     this.captureParams(args);
 
-    // Extract and validate parameters
     const filePath = args.file_path as string;
-    const operation = args.operation as LineOperation;
-    const lineNumber = args.line_number as number;
-    const content = (args.content as string) ?? '';
-    // Convert to number, default to 1 if undefined/null/NaN, but preserve explicit 0 for validation
-    const numLinesRaw = Number(args.num_lines);
-    const numLines = args.num_lines === undefined || args.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
-    const showUpdatedContext = args.show_updated_context === true; // Default is false
+    const edits = args.edits as EditOperation[] | undefined;
+    const showUpdatedContext = args.show_updated_context === true;
 
-    // Validate file_path
+    // Validate required parameters
     if (!filePath) {
       return this.formatErrorResponse(
         'file_path parameter is required',
         'validation_error',
-        'Example: line-edit(file_path="src/main.ts", operation="replace", line_number=10, content="new line")'
+        'Example: line_edit(file_path="foo.ts", edits=[{operation:"replace", line_number:10, content:"new"}])'
       );
     }
 
-    // Validate operation
-    if (!operation) {
+    if (!edits || !Array.isArray(edits) || edits.length === 0) {
       return this.formatErrorResponse(
-        'operation parameter is required',
+        'edits array required with at least one operation',
         'validation_error',
-        'Must be one of: insert, delete, replace'
+        'Example: line_edit(file_path="foo.ts", edits=[{operation:"replace", line_number:10, content:"new"}])'
       );
     }
 
-    if (!['insert', 'delete', 'replace'].includes(operation)) {
-      return this.formatErrorResponse(
-        `Invalid operation: ${operation}`,
-        'validation_error',
-        'Must be one of: insert, delete, replace'
-      );
-    }
+    // Execute batch edits (everything goes through this)
+    return this.executeBatchEdits(filePath, edits, showUpdatedContext);
+  }
 
-    // Validate line_number
-    if (!lineNumber || lineNumber < 1) {
-      return this.formatErrorResponse(
-        'line_number must be >= 1',
-        'validation_error',
-        'Line numbers are 1-indexed'
-      );
-    }
-
-    // Validate content for insert/replace operations
-    if ((operation === 'insert' || operation === 'replace') && !content) {
-      return this.formatErrorResponse(
-        `content parameter is required for ${operation} operation`,
-        'validation_error'
-      );
-    }
-
-    // Validate num_lines for delete operation
-    if (operation === 'delete' && numLines < 1) {
-      return this.formatErrorResponse(
-        'num_lines must be >= 1 for delete operation',
-        'validation_error'
-      );
-    }
-
-    // Resolve absolute path
+  /**
+   * Execute batch edits atomically
+   * All edits are validated upfront, sorted by line number descending, then applied
+   */
+  private async executeBatchEdits(
+    filePath: string,
+    edits: EditOperation[],
+    showUpdatedContext: boolean
+  ): Promise<ToolResult> {
+    // Step 1: Resolve absolute path
     const absolutePath = resolvePath(filePath);
 
     try {
-      // Check if file exists
+      // Step 2: Validate file exists and is a file
       try {
         await fs.access(absolutePath);
       } catch {
@@ -295,7 +291,6 @@ export class LineEditTool extends BaseTool {
         );
       }
 
-      // Check if it's a file (not a directory)
       const stats = await fs.stat(absolutePath);
       if (!stats.isFile()) {
         return this.formatErrorResponse(
@@ -304,203 +299,180 @@ export class LineEditTool extends BaseTool {
         );
       }
 
-      // Read file content preserving line endings
+      // Step 3: Read original file content and detect line endings
       const fileContent = await fs.readFile(absolutePath, 'utf-8');
 
-      // Detect line ending style BEFORE splitting
+      // Detect line ending style (CRLF vs LF)
       const hasWindowsLineEndings = fileContent.includes('\r\n');
       const lineEnding = hasWindowsLineEndings ? '\r\n' : '\n';
 
-      // Split lines preserving the original line ending in each line
-      // For Windows files, each line will end with \r (since we split on \n)
+      // Split into lines, removing any \r from line endings
       const lines = fileContent.split('\n').map((line, index, arr) => {
-        // Last line doesn't need ending preserved if file doesn't end with newline
         if (index === arr.length - 1 && !fileContent.endsWith('\n')) {
           return line;
         }
-        // Remove \r if present (will be added back later)
         return line.replace(/\r$/, '');
       });
       const totalLines = lines.length;
 
-      // Validate line number exists (for insert, allow totalLines+1 to append)
-      const maxLineNumber = operation === 'insert' ? totalLines + 1 : totalLines;
-      if (lineNumber > maxLineNumber) {
-        const context = this.getLineContext(lines, totalLines, Math.max(1, totalLines - TEXT_LIMITS.LINE_EDIT_CONTEXT_LINES));
-        return this.formatErrorResponse(
-          `line_number ${lineNumber} does not exist (file has ${totalLines} line${totalLines !== 1 ? 's' : ''})`,
-          'validation_error',
-          `Last lines of file:\n${context}\n\nUse the Read tool to see the actual file content.`
-        );
-      }
-
-      // Validate that target lines have been read
+      // Step 4: Validate ALL edits atomically
+      const validationErrors: string[] = [];
       const registry = ServiceRegistry.getInstance();
       const readStateManager = registry.get<ReadStateManager>('read_state_manager');
 
-      if (readStateManager) {
-        // Special case: inserting into an empty file
-        if (operation === 'insert' && fileContent.length === 0 && lineNumber === 1) {
-          // Skip validation for empty file insert at line 1
-        } else {
-          // Determine which lines need validation
-          let validationStartLine: number;
-          let validationEndLine: number;
+      // Loop through all edits and collect ALL validation errors
+      for (let i = 0; i < edits.length; i++) {
+        const edit = edits[i];
+        const editNum = i + 1; // Use 1-based numbering for user-facing errors
 
-          switch (operation) {
-            case 'insert':
-              // For insert, validate we've read the context around insertion point
-              validationStartLine = Math.max(1, lineNumber - 1);
-              validationEndLine = Math.min(totalLines, lineNumber);
-              break;
+        // Validate edit object exists
+        if (!edit) {
+          validationErrors.push(`Edit ${editNum}: undefined edit object`);
+          continue;
+        }
 
-            case 'delete':
-              validationStartLine = lineNumber;
-              validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
-              break;
+        // Validate operation is valid
+        if (!edit.operation || !['insert', 'delete', 'replace'].includes(edit.operation)) {
+          validationErrors.push(`Edit ${editNum}: Invalid operation '${edit.operation}' (must be insert, delete, or replace)`);
+          continue;
+        }
 
-            case 'replace':
-              validationStartLine = lineNumber;
-              validationEndLine = Math.min(totalLines, lineNumber + numLines - 1);
-              break;
+        // Validate line_number exists and is valid
+        if (!edit.line_number || edit.line_number < 1) {
+          validationErrors.push(`Edit ${editNum}: line_number must be >= 1`);
+          continue;
+        }
+
+        // Validate line_number is within file bounds (for insert, allow totalLines+1 to append)
+        const maxLineNumber = edit.operation === 'insert' ? totalLines + 1 : totalLines;
+        if (edit.line_number > maxLineNumber) {
+          validationErrors.push(`Edit ${editNum}: line_number ${edit.line_number} does not exist (file has ${totalLines} line${totalLines !== 1 ? 's' : ''})`);
+          continue;
+        }
+
+        // Validate content exists for insert/replace
+        const content = (edit.content as string) ?? '';
+        if ((edit.operation === 'insert' || edit.operation === 'replace') && !content) {
+          validationErrors.push(`Edit ${editNum}: content parameter is required for ${edit.operation} operation`);
+          continue;
+        }
+
+        // Validate num_lines for delete/replace
+        const numLinesRaw = Number(edit.num_lines);
+        const numLines = edit.num_lines === undefined || edit.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
+
+        if ((edit.operation === 'delete' || edit.operation === 'replace') && numLines < 1) {
+          validationErrors.push(`Edit ${editNum}: num_lines must be >= 1 for ${edit.operation} operation`);
+          continue;
+        }
+
+        // Validate that delete/replace operations don't exceed file bounds
+        if (edit.operation === 'delete' || edit.operation === 'replace') {
+          const endLine = edit.line_number + numLines - 1;
+          if (endLine > totalLines) {
+            validationErrors.push(`Edit ${editNum}: Cannot ${edit.operation} ${numLines} line(s) starting at line ${edit.line_number} (file has ${totalLines} line${totalLines !== 1 ? 's' : ''})`);
+            continue;
           }
+        }
 
-          const validation = readStateManager.validateLinesRead(
-            absolutePath,
-            validationStartLine,
-            validationEndLine
-          );
-
-          if (!validation.success) {
-            const rangeDesc = validationStartLine === validationEndLine
-              ? `line ${validationStartLine}`
-              : `lines ${validationStartLine}-${validationEndLine}`;
-
-            // Check if this is likely due to previous edit invalidation
-            const readState = readStateManager.getReadState(absolutePath);
-            const hasPartialReadState = readState && readState.length > 0;
-
-            let guidanceMessage: string;
-            if (hasPartialReadState) {
-              // File has been read before - likely invalidated by previous edit
-              guidanceMessage = `Lines ${validationStartLine}-${validationEndLine} were invalidated by a previous edit.
-
-Use one of these approaches:
-  • Re-read the file: read(file_paths=["${filePath}"])
-  • Use show_updated_context=true in your edits to see changes immediately
-  • Read specific lines: read(file_paths=["${filePath}"], offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1})`;
-            } else {
-              // File has never been read
-              guidanceMessage = `Use read(file_paths=["${filePath}"], offset=${validationStartLine}, limit=${validationEndLine - validationStartLine + 1}) to read ${rangeDesc} first.`;
-            }
-
-            return this.formatErrorResponse(
-              `Cannot ${operation} at line ${lineNumber}: File has not been read`,
-              'validation_error',
-              guidanceMessage
+        // Validate read state using ReadStateManager
+        if (readStateManager) {
+          // Special case: inserting into an empty file at line 1
+          if (edit.operation === 'insert' && fileContent.length === 0 && edit.line_number === 1) {
+            // Skip read state validation for empty file insert
+          } else {
+            const validationRange = this.getValidationRange(edit.operation, edit.line_number, numLines, totalLines);
+            const validation = readStateManager.validateLinesRead(
+              absolutePath,
+              validationRange.start,
+              validationRange.end
             );
+
+            if (!validation.success) {
+              const rangeDesc = validationRange.start === validationRange.end
+                ? `line ${validationRange.start}`
+                : `lines ${validationRange.start}-${validationRange.end}`;
+              validationErrors.push(`Edit ${editNum}: Cannot ${edit.operation} at line ${edit.line_number}: ${rangeDesc} not read`);
+            }
           }
         }
       }
 
-      // Perform the operation
-      let modifiedLines: string[];
-      let operationDescription: string;
-      let detailedDescription: string;
-
-      switch (operation) {
-        case 'insert':
-          const insertedLineCount = content.split('\n').length;
-          modifiedLines = this.performInsert(lines, lineNumber, content);
-          operationDescription = `Inserted ${insertedLineCount} line(s) at line ${lineNumber}`;
-          detailedDescription = this.buildDetailedDescription(
-            operation,
-            lineNumber,
-            0, // INSERT removes 0 lines
-            insertedLineCount,
-            totalLines
-          );
-          break;
-
-        case 'delete':
-          const deleteResult = this.performDelete(lines, lineNumber, numLines, totalLines);
-          if (deleteResult.error) {
-            return this.formatErrorResponse(deleteResult.error, 'validation_error');
-          }
-          modifiedLines = deleteResult.lines!;
-          operationDescription = `Deleted ${numLines} line(s) starting at line ${lineNumber}`;
-          detailedDescription = this.buildDetailedDescription(
-            operation,
-            lineNumber,
-            numLines,
-            0,
-            totalLines
-          );
-          break;
-
-        case 'replace':
-          const replaceResult = this.performReplace(lines, lineNumber, content, numLines, totalLines);
-          if (replaceResult.error) {
-            return this.formatErrorResponse(replaceResult.error, 'validation_error');
-          }
-          modifiedLines = replaceResult.lines!;
-          const newLineCount = content.split('\n').length;
-          operationDescription = numLines === 1
-            ? `Replaced line ${lineNumber}`
-            : `Replaced ${numLines} line(s) starting at line ${lineNumber}`;
-          detailedDescription = this.buildDetailedDescription(
-            operation,
-            lineNumber,
-            numLines,
-            newLineCount,
-            totalLines
-          );
-          break;
-
-        default:
-          return this.formatErrorResponse(
-            `Unknown operation: ${operation}`,
-            'validation_error'
-          );
+      // Step 5: Check for duplicate line numbers across all edits
+      const lineNumbers = edits.map(e => e.line_number);
+      const duplicates = lineNumbers.filter((line, index) => lineNumbers.indexOf(line) !== index);
+      if (duplicates.length > 0) {
+        const uniqueDuplicates = [...new Set(duplicates)].sort((a, b) => a - b);
+        validationErrors.push(
+          `Duplicate line numbers detected: ${uniqueDuplicates.join(', ')}. Each line can only be edited once per batch.`
+        );
       }
 
-      // Join lines back with original line ending style
-      const modifiedContent = modifiedLines.join(lineEnding);
+      // If ANY validation failed, return error without applying ANY edits (atomic validation)
+      if (validationErrors.length > 0) {
+        return this.formatErrorResponse(
+          `Batch edit validation failed with ${validationErrors.length} error(s):\n${validationErrors.map(e => `  • ${e}`).join('\n')}`,
+          'validation_error',
+          'All edits must pass validation before any are applied. Fix the errors and try again.'
+        );
+      }
 
-      // Write the modified content
-      await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
+      // Step 6: Sort edits descending by line number (prevents line shifting issues)
+      const sortedEdits = [...edits].sort((a, b) => b.line_number - a.line_number);
 
-      // Invalidate affected line numbers after edit
-      if (readStateManager) {
-        // Calculate line delta based on operation
-        let lineDelta: number;
+      // Step 7: Apply edits sequentially (bottom-to-top)
+      let modifiedLines = [...lines];
+      const appliedEdits: string[] = [];
 
-        switch (operation) {
+      for (const edit of sortedEdits) {
+        const content = (edit.content as string) ?? '';
+        const numLinesRaw = Number(edit.num_lines);
+        const numLines = edit.num_lines === undefined || edit.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
+
+        switch (edit.operation) {
           case 'insert':
+            modifiedLines = this.performInsert(modifiedLines, edit.line_number, content);
             const insertedLineCount = content.split('\n').length;
-            lineDelta = insertedLineCount;
+            appliedEdits.push(`Inserted ${insertedLineCount} line(s) at line ${edit.line_number}`);
             break;
 
           case 'delete':
-            lineDelta = -numLines;
+            const deleteResult = this.performDelete(modifiedLines, edit.line_number, numLines, modifiedLines.length);
+            if (deleteResult.error) {
+              // This shouldn't happen since we validated upfront, but handle gracefully
+              return this.formatErrorResponse(deleteResult.error, 'validation_error');
+            }
+            modifiedLines = deleteResult.lines!;
+            appliedEdits.push(`Deleted ${numLines} line(s) starting at line ${edit.line_number}`);
             break;
 
           case 'replace':
+            const replaceResult = this.performReplace(modifiedLines, edit.line_number, content, numLines, modifiedLines.length);
+            if (replaceResult.error) {
+              // This shouldn't happen since we validated upfront, but handle gracefully
+              return this.formatErrorResponse(replaceResult.error, 'validation_error');
+            }
+            modifiedLines = replaceResult.lines!;
             const newLineCount = content.split('\n').length;
-            lineDelta = newLineCount - numLines;
+            appliedEdits.push(
+              numLines === 1
+                ? `Replaced line ${edit.line_number} with ${newLineCount} line(s)`
+                : `Replaced ${numLines} line(s) starting at line ${edit.line_number} with ${newLineCount} line(s)`
+            );
             break;
-
-          default:
-            lineDelta = 0;
-        }
-
-        // Invalidate if line count changed
-        if (lineDelta !== 0) {
-          readStateManager.invalidateAfterEdit(absolutePath, lineNumber, lineDelta);
         }
       }
 
-      // Capture the operation as a patch for undo functionality
+      // Step 8: Write modified content to file
+      const modifiedContent = modifiedLines.join(lineEnding);
+      await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
+
+      // Step 9: Update read state - clear entire file (simpler than calculating exact ranges)
+      if (readStateManager) {
+        readStateManager.clearFile(absolutePath);
+      }
+
+      // Step 10: Capture patch for undo functionality
       const patchNumber = await this.captureOperationPatch(
         'line-edit',
         absolutePath,
@@ -508,17 +480,26 @@ Use one of these approaches:
         modifiedContent
       );
 
-      // Generate unified diff to show what changed
+      // Step 11: Generate unified diff
       const diff = createUnifiedDiff(fileContent, modifiedContent, absolutePath);
 
+      // Step 12: Build success response
+      const successMessage =
+        `Batch edit completed: ${edits.length} operation(s) applied\n\n` +
+        appliedEdits.reverse().join('\n'); // Reverse to show in original order (top-to-bottom)
+
       const response = this.formatSuccessResponse({
-        content: detailedDescription, // Human-readable output for LLM
+        content: successMessage,
         file_path: absolutePath,
-        operation: operationDescription,
+        edits_applied: edits.length,
         lines_before: totalLines,
         lines_after: modifiedLines.length,
-        diff, // Include diff so model can see what changed
+        diff,
       });
+
+      // Add system reminder about invalidated lines
+      response.system_reminder =
+        'All line numbers have been invalidated due to edits. To edit again, either re-read the file or use show_updated_context=true';
 
       // Add patch information to result if patch was captured
       if (patchNumber !== null) {
@@ -530,8 +511,7 @@ Use one of these approaches:
         response.updated_content = modifiedContent;
       }
 
-      // Check file for syntax/parse errors after modification
-      // Matches Python CodeAlly pattern exactly
+      // Step 13: Check file for syntax/parse errors after modification
       const checkResult = await checkFileAfterModification(absolutePath);
       if (checkResult) {
         response.file_check = checkResult;
@@ -540,64 +520,45 @@ Use one of these approaches:
       return response;
     } catch (error) {
       return this.formatErrorResponse(
-        `Failed to edit file: ${formatError(error)}`,
+        `Failed to perform batch edit: ${formatError(error)}`,
         'system_error'
       );
     }
   }
 
   /**
-   * Build detailed description of operation including line shift information
+   * Get validation range for read-state checking
+   * Returns the lines that need to have been read for each operation type
    */
-  private buildDetailedDescription(
+  private getValidationRange(
     operation: LineOperation,
     lineNumber: number,
-    numLinesRemoved: number,
-    numLinesAdded: number,
+    numLines: number,
     totalLines: number
-  ): string {
-    const parts: string[] = [];
-
-    // Main operation description
+  ): { start: number; end: number } {
     switch (operation) {
       case 'insert':
-        parts.push(`Inserted ${numLinesAdded} line(s) at line ${lineNumber}`);
-        break;
+        // For insert, validate we've read the context around insertion point
+        return {
+          start: Math.max(1, lineNumber - 1),
+          end: Math.min(totalLines, lineNumber)
+        };
+
       case 'delete':
-        parts.push(`Deleted ${numLinesRemoved} line(s) starting at line ${lineNumber}`);
-        break;
+        return {
+          start: lineNumber,
+          end: Math.min(totalLines, lineNumber + numLines - 1)
+        };
+
       case 'replace':
-        parts.push(
-          numLinesRemoved === 1
-            ? `Replaced line ${lineNumber} with ${numLinesAdded} line(s)`
-            : `Replaced ${numLinesRemoved} line(s) starting at line ${lineNumber} with ${numLinesAdded} line(s)`
-        );
-        break;
+        return {
+          start: lineNumber,
+          end: Math.min(totalLines, lineNumber + numLines - 1)
+        };
+
+      default:
+        return { start: lineNumber, end: lineNumber };
     }
-
-    // Calculate line shift and add warnings
-    const netChange = numLinesAdded - numLinesRemoved;
-
-    if (netChange !== 0) {
-      // For INSERT: lines after the insertion point are affected
-      // For DELETE/REPLACE: lines after the modified range are affected
-      const firstAffectedLine = operation === 'insert'
-        ? lineNumber + numLinesAdded
-        : lineNumber + numLinesRemoved;
-
-      // Only show warning if there are lines that got shifted
-      if (firstAffectedLine <= totalLines) {
-        const direction = netChange > 0 ? 'down' : 'up';
-        const absChange = Math.abs(netChange);
-        parts.push(`Lines ${firstAffectedLine}+ shifted ${direction} by ${absChange} lines`);
-
-        // Proactive warning about invalidation
-        parts.push(`\n\n⚠️  Lines ${firstAffectedLine}+ were invalidated due to line shift. To edit these lines again, either re-read the file or use show_updated_context=true`);
-      }
-      // If appending to end, no warning needed (no lines to shift)
-    }
-
-    return parts.join('. ');
   }
 
   /**
@@ -690,12 +651,12 @@ Use one of these approaches:
     }
 
     const lines: string[] = [];
-    const operation = result.operation ?? 'unknown operation';
+    const editsApplied = result.edits_applied ?? 0;
     const linesBefore = result.lines_before ?? 0;
     const linesAfter = result.lines_after ?? 0;
     const lineDiff = linesAfter - linesBefore;
 
-    lines.push(operation);
+    lines.push(`Batch edit: ${editsApplied} operation(s) applied`);
 
     if (lineDiff !== 0) {
       const sign = lineDiff > 0 ? '+' : '';

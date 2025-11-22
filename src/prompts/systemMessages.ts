@@ -77,7 +77,7 @@ Agents: Auto-persist. Reusable via agent-ask.`;
 
 // Additional guidelines that apply to all agents
 const GENERAL_GUIDELINES = `Code: Check existing patterns before creating new code.
-Files: Read before editing. Use incremental edits (edit, line-edit). Ephemeral reads only for large files.
+Files: Read before editing. Use batch edits (edits array) for edit and line-edit tools - provide all edits in a single array, edits are applied atomically and prevent line shifting issues. Ephemeral reads only for large files.
 Prohibited: No commits without request. No unsolicited explanations.`;
 
 // Complete directives for main Ally assistant

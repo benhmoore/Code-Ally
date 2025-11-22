@@ -16,6 +16,29 @@ export interface PatchResult {
   success: boolean;
   content?: string;
   error?: string;
+  /** Structured error details (if patch failed) */
+  error_details?: {
+    message: string;
+    operation: string;
+  };
+}
+
+/**
+ * Create a structured patch error
+ *
+ * @param message - Human-readable error message
+ * @param operation - Operation that failed
+ * @returns PatchResult with error details
+ */
+function createPatchError(message: string, operation: string): PatchResult {
+  return {
+    success: false,
+    error: message,
+    error_details: {
+      message,
+      operation,
+    },
+  };
 }
 
 /**
@@ -33,13 +56,13 @@ export function applyUnifiedDiff(
 ): PatchResult {
   try {
     if (!diffContent || !diffContent.trim()) {
-      return { success: false, error: 'Empty diff content' };
+      return createPatchError('Empty diff content', 'applyUnifiedDiff');
     }
 
     // Parse the diff
     const parsed = parseUnifiedDiff(diffContent);
     if (!parsed) {
-      return { success: false, error: 'Failed to parse diff content' };
+      return createPatchError('Failed to parse diff content', 'applyUnifiedDiff');
     }
 
     // If reverse, swap the hunks' operations
@@ -52,7 +75,7 @@ export function applyUnifiedDiff(
     let result = applyPatch(currentContent, patchToApply);
 
     if (result === false || result === undefined) {
-      return { success: false, error: 'Failed to apply patch - content mismatch or invalid patch' };
+      return createPatchError('Failed to apply patch - content mismatch or invalid patch', 'applyUnifiedDiff');
     }
 
     // Fix a bug in the diff library where applying patches to empty strings adds a leading newline
@@ -64,10 +87,10 @@ export function applyUnifiedDiff(
     return { success: true, content: result };
   } catch (error) {
     logger.error('Failed to apply patch:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
+    return createPatchError(
+      error instanceof Error ? error.message : 'Unknown error',
+      'applyUnifiedDiff'
+    );
   }
 }
 

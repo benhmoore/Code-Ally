@@ -23,7 +23,7 @@ import { DirectoryTraversalError, isPermissionDeniedError } from '../security/Pa
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
-import { formatError } from '../utils/errorUtils.js';
+import { formatError, createStructuredError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
 import { BUFFER_SIZES, ID_GENERATION, SYSTEM_REMINDER } from '../config/constants.js';
 import {
@@ -320,11 +320,15 @@ export class ToolOrchestrator {
         // TypeScript check - Promise.allSettled should always return results
         if (!settledResult) {
           // Push placeholder to maintain alignment with toolCalls array
-          successfulResults.push({
-            success: false,
-            error: 'Unexpected empty result from Promise.allSettled',
-            error_type: 'system_error',
-          });
+          const toolCall = toolCalls[i];
+          successfulResults.push(
+            createStructuredError(
+              'Unexpected empty result from Promise.allSettled',
+              'system_error',
+              toolCall?.function?.name || 'concurrent_batch',
+              toolCall?.function?.arguments
+            )
+          );
           continue;
         }
 
@@ -348,28 +352,31 @@ export class ToolOrchestrator {
               let resultData: ToolResult;
               if (j === i) {
                 // This is the tool that was denied
-                resultData = {
-                  success: false,
-                  error: deniedError.message || 'Permission denied',
-                  error_type: 'permission_denied',
-                };
+                resultData = createStructuredError(
+                  deniedError.message || 'Permission denied',
+                  'permission_denied',
+                  toolCall.function.name,
+                  toolCall.function.arguments
+                );
               } else if (toolResult && toolResult.status === 'rejected') {
                 // Other error
-                resultData = {
-                  success: false,
-                  error: formatError(toolResult.reason),
-                  error_type: 'system_error',
-                };
+                resultData = createStructuredError(
+                  formatError(toolResult.reason),
+                  'system_error',
+                  toolCall.function.name,
+                  toolCall.function.arguments
+                );
               } else if (toolResult && toolResult.status === 'fulfilled') {
                 // Successful result
                 resultData = toolResult.value;
               } else {
                 // Fallback for missing result
-                resultData = {
-                  success: false,
-                  error: 'Unknown error',
-                  error_type: 'system_error',
-                };
+                resultData = createStructuredError(
+                  'Unknown error',
+                  'system_error',
+                  toolCall.function.name,
+                  toolCall.function.arguments
+                );
               }
 
               this.emitEvent({
@@ -392,6 +399,16 @@ export class ToolOrchestrator {
             }
 
             // Emit group end event
+            const groupError = createStructuredError(
+              'Permission denied',
+              'permission_denied',
+              'concurrent_batch',
+              {
+                groupExecution: true,
+                toolCount: toolCalls.length,
+                tools: toolCalls.map(tc => tc.function.name),
+              }
+            );
             this.emitEvent({
               id: groupId,
               type: ActivityEventType.TOOL_CALL_END,
@@ -400,8 +417,9 @@ export class ToolOrchestrator {
               data: {
                 groupExecution: true,
                 toolCount: toolCalls.length,
+                result: groupError,
                 success: false,
-                error: 'Permission denied',
+                error: groupError.error,
               },
             });
 
@@ -409,11 +427,15 @@ export class ToolOrchestrator {
             throw deniedError;
           }
           // Other errors: create error result
-          successfulResults.push({
-            success: false,
-            error: formatError(settledResult.reason),
-            error_type: 'system_error',
-          });
+          const toolCall = toolCalls[i];
+          successfulResults.push(
+            createStructuredError(
+              formatError(settledResult.reason),
+              'system_error',
+              toolCall?.function?.name || 'concurrent_batch',
+              toolCall?.function?.arguments
+            )
+          );
         } else {
           successfulResults.push(settledResult.value);
         }
@@ -652,11 +674,12 @@ export class ToolOrchestrator {
 
     // CRITICAL: After TOOL_CALL_START, we MUST emit TOOL_CALL_END
     // Use try-finally to guarantee this happens
-    let result: ToolResult = {
-      success: false,
-      error: 'Tool execution failed unexpectedly',
-      error_type: 'system_error',
-    };
+    let result: ToolResult = createStructuredError(
+      'Tool execution failed unexpectedly',
+      'system_error',
+      toolName,
+      args
+    );
     let permissionDenied = false; // Track if permission was denied to skip TOOL_CALL_END
     let validationFailed = false; // Track if validation failed (already emitted TOOL_CALL_END)
 
@@ -775,6 +798,12 @@ export class ToolOrchestrator {
         permissionDenied = true;
 
         // Emit TOOL_CALL_END event for this failed tool call
+        const permissionError = createStructuredError(
+          error.message || 'Permission denied',
+          'permission_denied',
+          toolName,
+          args
+        );
         this.emitEvent({
           id,
           type: ActivityEventType.TOOL_CALL_END,
@@ -782,13 +811,9 @@ export class ToolOrchestrator {
           parentId: effectiveParentId,
           data: {
             toolName,
-            result: {
-              success: false,
-              error: error.message || 'Permission denied',
-              error_type: 'permission_denied' as const,
-            },
+            result: permissionError,
             success: false,
-            error: error.message || 'Permission denied',
+            error: permissionError.error,
             visibleInChat: true, // Always show permission denials
             isTransparent: tool?.isTransparentWrapper || false,
             collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
@@ -802,23 +827,26 @@ export class ToolOrchestrator {
 
       // Handle abort/interrupt errors specially
       if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('interrupted'))) {
-        result = {
-          success: false,
-          error: 'Tool execution interrupted by user',
-          error_type: 'interrupted',
-        };
+        result = createStructuredError(
+          'Tool execution interrupted by user',
+          'interrupted',
+          toolName,
+          args
+        );
       } else if (error instanceof DirectoryTraversalError) {
-        result = {
-          success: false,
-          error: error.message,
-          error_type: 'permission_denied',
-        };
+        result = createStructuredError(
+          error.message,
+          'permission_denied',
+          toolName,
+          args
+        );
       } else {
-        result = {
-          success: false,
-          error: formatError(error),
-          error_type: 'system_error',
-        };
+        result = createStructuredError(
+          formatError(error),
+          'system_error',
+          toolName,
+          args
+        );
       }
 
       // For specialized agents: report elapsed turn duration in minutes (error case)

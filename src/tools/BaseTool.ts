@@ -383,6 +383,17 @@ export abstract class BaseTool {
       success: false,
       error: `${paramContext}${errorMessage}`,
       error_type: errorType,
+
+      // Structured error details for clean error extraction
+      error_details: {
+        message: errorMessage,
+        tool_name: this.name,
+        parameters: Object.keys(this.currentParams).length > 0
+          ? { ...this.currentParams }
+          : undefined,
+        suggestion: suggestion,
+      },
+
       ...additionalFields,
     };
 

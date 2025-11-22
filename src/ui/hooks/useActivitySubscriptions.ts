@@ -138,6 +138,7 @@ export const useActivitySubscriptions = (
       endTime: event.timestamp,
       error: event.data.error,
       error_type: event.data.result?.error_type,
+      result: event.data.result,
     };
 
     // Extract agent_id from result for agent delegations
