@@ -439,6 +439,17 @@ export class Agent {
   }
 
   /**
+   * Update the parent call ID for this agent
+   * Used by AgentPoolService when reusing agents to ensure correct event parentId
+   *
+   * @param parentCallId - New parent call ID
+   */
+  setParentCallId(parentCallId: string | undefined): void {
+    this.config.parentCallId = parentCallId;
+    logger.debug('[AGENT]', this.instanceId, 'Updated config.parentCallId to:', this.config.parentCallId);
+  }
+
+  /**
    * Get the interruption manager (used by ToolOrchestrator for permission denial handling)
    */
   getInterruptionManager(): InterruptionManager {

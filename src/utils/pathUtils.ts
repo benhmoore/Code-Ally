@@ -4,6 +4,7 @@
 
 import * as path from 'path';
 import { homedir } from 'os';
+import * as fs from 'fs';
 
 /**
  * Resolve a file path to an absolute path
@@ -62,4 +63,127 @@ export function getDisplayPath(absolutePath: string): string {
   }
 
   return relativePath;
+}
+
+/**
+ * Check if a string looks like a file path
+ *
+ * Simple pattern matching to detect path-like strings:
+ * - Starts with /, ~/, ./, ../
+ * - Contains / or \ (Unix or Windows path separators)
+ * - Starts with drive letter (Windows: C:, D:, etc.)
+ * - Has a file extension
+ *
+ * @param str - String to check
+ * @returns true if the string resembles a file path
+ */
+export function looksLikePath(str: string): boolean {
+  if (!str || typeof str !== 'string') {
+    return false;
+  }
+
+  const trimmed = str.trim();
+
+  // Check for common path prefixes
+  if (trimmed.startsWith('/') ||
+      trimmed.startsWith('~/') ||
+      trimmed.startsWith('./') ||
+      trimmed.startsWith('../')) {
+    return true;
+  }
+
+  // Check for Windows drive letter (C:, D:, etc.)
+  if (/^[a-zA-Z]:/.test(trimmed)) {
+    return true;
+  }
+
+  // Check if it contains path separators (/ or \)
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    return true;
+  }
+
+  // Check for file extension pattern (e.g., file.txt, script.js)
+  const extensionPattern = /\.\w+$/;
+  if (extensionPattern.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Detect and validate file paths from a pasted string
+ *
+ * Takes input that could be:
+ * - A single path
+ * - Multiple space-separated paths
+ * - Paths with spaces (in quotes)
+ *
+ * Returns only paths that exist on the filesystem.
+ * Preserves original path format (relative/absolute as pasted).
+ *
+ * @param input - Input string containing one or more paths
+ * @returns Array of valid file paths that exist on filesystem
+ */
+export function detectFilePaths(input: string): string[] {
+  if (!input || typeof input !== 'string') {
+    return [];
+  }
+
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  // Parse quoted and unquoted tokens
+  const tokens: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let quoteChar = '';
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const char = trimmed[i];
+
+    if ((char === '"' || char === "'") && !inQuotes) {
+      inQuotes = true;
+      quoteChar = char;
+    } else if (char === quoteChar && inQuotes) {
+      inQuotes = false;
+      quoteChar = '';
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+    } else if (char === ' ' && !inQuotes) {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  // Add final token
+  if (current) {
+    tokens.push(current);
+  }
+
+  // Filter to path-like tokens and validate they exist
+  const validPaths: string[] = [];
+
+  for (const token of tokens) {
+    if (looksLikePath(token)) {
+      // Resolve to absolute path for existence check
+      const absolutePath = resolvePath(token);
+
+      // Check if file exists
+      if (fs.existsSync(absolutePath)) {
+        // Return original format (as pasted)
+        validPaths.push(token);
+      }
+    }
+  }
+
+  return validPaths;
 }

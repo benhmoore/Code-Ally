@@ -489,6 +489,17 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   };
 
   /**
+   * Handle file paths pasted into TextInput
+   */
+  const handlePathsPasted = (paths: string[]) => {
+    // Add paths to mentionedFiles, avoiding duplicates
+    setMentionedFiles(prev => [
+      ...prev,
+      ...paths.filter(p => !prev.includes(p))
+    ]);
+  };
+
+  /**
    * Handle submit from TextInput
    */
   const handleTextInputSubmit = (value: string) => {
@@ -1382,6 +1393,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         cursorPosition={cursorPosition}
         onCursorChange={handleCursorChange}
         onSubmit={handleTextInputSubmit}
+        onPathsPasted={handlePathsPasted}
         isActive={textInputActive}
         multiline={true}
         placeholder={placeholder}

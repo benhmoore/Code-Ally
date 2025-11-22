@@ -16,6 +16,7 @@
 
 import React, { useRef, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { detectFilePaths } from '@utils/pathUtils.js';
 
 export interface TextInputProps {
   /** Current text value */
@@ -30,6 +31,8 @@ export interface TextInputProps {
   onSubmit: (value: string) => void;
   /** Callback when user presses Escape key */
   onEscape?: () => void;
+  /** Callback when file paths are pasted */
+  onPathsPasted?: (paths: string[]) => void;
   /** Whether input is currently active/enabled */
   isActive?: boolean;
   /** Enable multiline mode (Ctrl+Enter for newline, Enter submits) */
@@ -54,6 +57,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   onCursorChange,
   onSubmit,
   onEscape,
+  onPathsPasted,
   isActive = true,
   multiline = false,
   placeholder = 'Type here...',
@@ -353,6 +357,27 @@ export const TextInput: React.FC<TextInputProps> = ({
         // Normalize line endings - convert \r\n and \r to \n
         const normalizedInput = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
+        // Detect pasted file paths (multi-character input without newlines)
+        if (input.length > 1 && !normalizedInput.includes('\n')) {
+          const paths = detectFilePaths(input);
+          if (paths.length > 0) {
+            // Notify parent of detected paths
+            onPathsPasted?.(paths);
+
+            // Insert paths with @ prefix
+            const pathsWithPrefix = paths.map(p => `@${p}`).join(' ');
+            const before = currentValue.slice(0, currentCursor);
+            const after = currentValue.slice(currentCursor);
+            const newValue = before + pathsWithPrefix + after;
+            const newCursor = currentCursor + pathsWithPrefix.length;
+
+            onValueChange(newValue);
+            onCursorChange(newCursor);
+            return;
+          }
+        }
+
+        // Regular insertion (no paths detected or single character)
         const before = currentValue.slice(0, currentCursor);
         const after = currentValue.slice(currentCursor);
         const newValue = before + normalizedInput + after;
