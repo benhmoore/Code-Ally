@@ -237,12 +237,14 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
     const results: string[] = [];
     const errors: string[] = [];
     let filesRead = 0;
+    let totalLines = 0;
 
     for (const filePath of filePaths) {
       try {
-        const content = await this.readFile(filePath, limit, offset);
+        const { content, lineCount } = await this.readFile(filePath, limit, offset);
         results.push(content);
         filesRead++;
+        totalLines += lineCount;
       } catch (error) {
         const errorMsg = formatError(error);
         errors.push(`${filePath}: ${errorMsg}`);
@@ -268,6 +270,7 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
       files_read: filesRead,
       files_failed: errors.length,
       partial_failure: errors.length > 0,
+      total_lines: totalLines,
     });
 
     // Mark result as non-truncatable - read results must never be truncated
@@ -297,7 +300,7 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
     for (const filePath of filePaths) {
       try {
         if (limit > 0) {
-          const content = await this.readFile(filePath, limit, offset);
+          const { content } = await this.readFile(filePath, limit, offset);
           totalEstimate += tokenCounter.count(content);
         } else {
           const stats = await fs.stat(filePath);
@@ -319,7 +322,7 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
     filePath: string,
     limit: number,
     offset: number
-  ): Promise<string> {
+  ): Promise<{ content: string; lineCount: number }> {
     // Resolve absolute path
     const absolutePath = resolvePath(filePath);
 
@@ -345,7 +348,10 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
 
     // Check for binary content
     if (isBinaryContent(content)) {
-      return `=== ${absolutePath} ===\n[Binary file - content not displayed]`;
+      return {
+        content: `=== ${absolutePath} ===\n[Binary file - content not displayed]`,
+        lineCount: 0,
+      };
     }
 
     // Split into lines
@@ -368,11 +374,14 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
       // Validate positive offset isn't beyond file
       if (startLine >= totalLines) {
         const lastPageStart = Math.max(1, totalLines - (limit || 50));
-        return `=== ${absolutePath} ===\n` +
-          `[Cannot read from offset ${offset}: file only has ${totalLines} line${totalLines !== 1 ? 's' : ''}. ` +
-          `Try reading from the beginning (offset=1)` +
-          (limit ? `, or offset=${lastPageStart} to read the last ${Math.min(limit, totalLines)} lines.` : '.') +
-          `]`;
+        return {
+          content: `=== ${absolutePath} ===\n` +
+            `[Cannot read from offset ${offset}: file only has ${totalLines} line${totalLines !== 1 ? 's' : ''}. ` +
+            `Try reading from the beginning (offset=1)` +
+            (limit ? `, or offset=${lastPageStart} to read the last ${Math.min(limit, totalLines)} lines.` : '.') +
+            `]`,
+          lineCount: totalLines,
+        };
       }
     } else {
       // Zero offset: start from beginning
@@ -383,10 +392,14 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
     const endLine = limit > 0 ? startLine + limit : lines.length;
     const selectedLines = lines.slice(startLine, endLine);
 
-    // Add informational header if only showing a slice
+    // Add informational header with line count
     let header = `=== ${absolutePath} ===`;
     if (offset !== 0 || (limit > 0 && endLine < totalLines)) {
+      // Showing a slice of the file
       header += `\n[Showing lines ${startLine + 1}-${Math.min(endLine, totalLines)} of ${totalLines} total lines]`;
+    } else {
+      // Showing the full file
+      header += `\n[${totalLines} line${totalLines !== 1 ? 's' : ''}]`;
     }
 
     // Format with line numbers
@@ -404,20 +417,21 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
       readStateManager.trackRead(absolutePath, startLineNumber, endLineNumber);
     }
 
-    return `${header}\n${formattedLines.join('\n')}`;
+    return {
+      content: `${header}\n${formattedLines.join('\n')}`,
+      lineCount: selectedLines.length,
+    };
   }
 
 
   /**
    * Format subtext for display in UI
-   * Shows: [description] (file1.txt, file2.txt) or just (filenames) if no description
-   * Includes line range information when limit/offset are used
+   * Shows: [description] (file1.txt - N lines) or (file1.txt, file2.txt - N lines)
+   * Uses actual line count from result when available
    */
-  formatSubtext(args: Record<string, any>): string | null {
+  formatSubtext(args: Record<string, any>, result?: any): string | null {
     const filePaths = args.file_paths;
     const description = args.description as string;
-    const limit = args.limit !== undefined ? Number(args.limit) : 0;
-    const offset = args.offset !== undefined ? Number(args.offset) : 0;
 
     if (!filePaths) {
       return null;
@@ -430,34 +444,17 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
       return parts[parts.length - 1] || p;
     });
 
-    // Build line range info if applicable
-    let rangeInfo = '';
-    if (limit > 0 || offset !== 0) {
-      if (offset < 0) {
-        // Negative offset: reading from end
-        if (limit > 0) {
-          rangeInfo = ` - last ${limit} lines`;
-        } else {
-          rangeInfo = ` - last ${Math.abs(offset)} lines`;
-        }
-      } else if (offset > 0) {
-        // Positive offset: reading from specific line
-        const startLine = offset;
-        if (limit > 0) {
-          const endLine = startLine + limit - 1;
-          rangeInfo = ` - lines ${startLine}-${endLine}`;
-        } else {
-          rangeInfo = ` - from line ${startLine}`;
-        }
-      } else {
-        // offset = 0: reading from beginning
-        if (limit > 0) {
-          rangeInfo = ` - first ${limit} lines`;
-        }
-      }
+    // Build line count info
+    let lineCountInfo = '';
+    if (result?.total_lines !== undefined) {
+      // Use actual line count from result
+      const count = result.total_lines;
+      lineCountInfo = ` - ${count} line${count !== 1 ? 's' : ''}`;
     }
 
-    const filenamesStr = `(${filenames.join(', ')}${rangeInfo})`;
+    const filenamesStr = filenames.length === 1
+      ? `(${filenames[0]}${lineCountInfo})`
+      : `(${filenames.join(', ')}${lineCountInfo})`;
 
     // If description exists, show it first
     if (description) {

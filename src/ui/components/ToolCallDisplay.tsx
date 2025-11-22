@@ -147,7 +147,8 @@ function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: 
     if (toolManager) {
       const tool = toolManager.getTool(toolName);
       if (tool && typeof tool.formatSubtext === 'function') {
-        const formatted = tool.formatSubtext(args);
+        // Pass result to formatSubtext if available (for tools that need post-execution data)
+        const formatted = tool.formatSubtext(args, toolCall.result);
         if (formatted) {
           subtext = formatted;
         }

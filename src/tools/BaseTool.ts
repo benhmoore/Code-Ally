@@ -473,9 +473,10 @@ export abstract class BaseTool {
    * Default implementation: returns the description parameter if present.
    *
    * @param args - Tool arguments passed to execute()
+   * @param _result - Optional tool result for post-execution data (e.g., actual line counts)
    * @returns Formatted subtext string or null if no subtext should be shown
    */
-  formatSubtext(args: Record<string, any>): string | null {
+  formatSubtext(args: Record<string, any>, _result?: any): string | null {
     return args.description || null;
   }
 
