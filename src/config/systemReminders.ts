@@ -260,7 +260,7 @@ Continuing to use read/grep/glob/ls/tree is inefficient and wastes your limited 
       text: (todoTask: string, toolCallSummary: string) =>
         `Stay focused. You're working on: ${todoTask}.${toolCallSummary}
 
-Stay on task. Use todo to update status and mark todos as complete when finished.`,
+Stay on task. Use todo-write to update status and mark todos as complete when finished.`,
       persist: false,
     },
   },
@@ -366,7 +366,7 @@ Stay on task. Use todo to update status and mark todos as complete when finished
     // PERSIST: false - Ephemeral: Dynamic todo state suggestion
     // Cleaned up after turn since todo list regenerated each message
     EMPTY_LIST: {
-      text: 'Todo list empty. For multi-step tasks, use todo to track progress.',
+      text: 'Todo list empty. For multi-step tasks, use todo-write to track progress.',
       persist: false,
     },
 

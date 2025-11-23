@@ -232,7 +232,8 @@ export class LineEditTool extends BaseTool {
         const modifiedContent = modifiedLines.join(lineEnding);
         return { oldContent: fileContent, newContent: modifiedContent };
       },
-      'line-edit'
+      'line-edit',
+      edits.length
     );
   }
 

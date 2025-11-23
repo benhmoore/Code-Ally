@@ -1,5 +1,5 @@
 /**
- * TodoTool - Unified stateless todo management
+ * TodoWriteTool - Unified stateless todo management
  *
  * Provides a clean, stateless interface for managing todos where the agent
  * provides the complete desired todo list state in each call. This replaces
@@ -19,22 +19,18 @@ import { formatError } from '../utils/errorUtils.js';
 import { autoSaveTodos } from '../utils/todoUtils.js';
 
 /**
- * Actions supported by the todo tool
- */
-type TodoAction = 'set' | 'clear' | 'list';
-
-/**
  * Todo item as provided by the agent (without ID)
  */
 interface TodoInput {
   content: string;
   status: TodoStatus;
+  activeForm: string;
 }
 
-export class TodoTool extends BaseTool {
-  readonly name = 'todo';
+export class TodoWriteTool extends BaseTool {
+  readonly name = 'todo-write';
   readonly description =
-    'Manage todo list. Use action=set to replace entire list, clear to remove all, list to show current todos.';
+    'Manage todo list. Each todo must have: content (imperative task), status (pending/in_progress/completed), activeForm (present continuous). Example: [{content: "Fix bug", status: "pending", activeForm: "Fixing bug"}]. Empty array clears list.';
   readonly requiresConfirmation = false;
   readonly visibleInChat = true;
   readonly hideOutput = true; // Todo updates shown in status bar, not chat
@@ -47,10 +43,9 @@ export class TodoTool extends BaseTool {
   /**
    * Get the function definition for LLM
    *
-   * Defines a clean schema where:
-   * - action='set' replaces the entire todo list with new state
-   * - action='clear' removes all todos
-   * - action='list' shows current todos
+   * Defines a clean schema where the todos array represents the complete desired state.
+   * - Empty array [] clears all todos
+   * - Non-empty array replaces entire todo list with provided todos
    */
   getFunctionDefinition(): FunctionDefinition {
     return {
@@ -61,33 +56,31 @@ export class TodoTool extends BaseTool {
         parameters: {
           type: 'object',
           properties: {
-            action: {
-              type: 'string',
-              enum: ['set', 'clear', 'list'],
-              description:
-                'Operation: set (replace todos), clear (remove all), list (show current)',
-            },
             todos: {
               type: 'array',
-              description: 'Complete list of todos (for action=set only)',
+              description: 'Array of todo items representing complete desired state. Pass empty array [] to clear all todos. Each item must include all three fields: content, status, and activeForm.',
               items: {
                 type: 'object',
                 properties: {
                   content: {
                     type: 'string',
-                    description: 'Task description',
+                    description: 'Task description in imperative form. Examples: "Fix authentication bug", "Write unit tests", "Deploy to staging". This is what appears in the todo list.',
                   },
                   status: {
                     type: 'string',
                     enum: ['pending', 'in_progress', 'completed'],
-                    description: 'Status: pending|in_progress|completed',
+                    description: 'Current status of the task. Use "pending" for upcoming tasks, "in_progress" for active work (only ONE task should be in_progress at a time), "completed" for finished tasks.',
+                  },
+                  activeForm: {
+                    type: 'string',
+                    description: 'Present continuous form for progress display. Convert imperative to -ing form: "Fix bug" → "Fixing bug", "Write tests" → "Writing tests", "Deploy" → "Deploying". Shown in status bar during execution.',
                   },
                 },
-                required: ['content', 'status'],
+                required: ['content', 'status', 'activeForm'],
               },
             },
           },
-          required: ['action'],
+          required: ['todos'],
         },
       },
     };
@@ -96,33 +89,32 @@ export class TodoTool extends BaseTool {
   /**
    * Execute the todo tool
    *
-   * Handles three actions:
-   * - set: Replace entire todo list
-   * - clear: Remove all todos
-   * - list: Show current todos
+   * Replaces the entire todo list with the provided todos.
+   * - Empty array [] clears all todos
+   * - Non-empty array replaces entire todo list
    *
-   * @param args - Tool arguments
+   * @param args - Tool arguments containing todos array
    * @returns Tool result
    */
   protected async executeImpl(args: any): Promise<ToolResult> {
     this.captureParams(args);
 
-    const action = args.action as TodoAction;
+    const todos = args.todos;
 
-    // Validate action
-    if (!action) {
+    // Validate todos parameter
+    if (!todos) {
       return this.formatErrorResponse(
-        'action is required',
+        'todos parameter is required',
         'validation_error',
-        'Specify action as "set", "clear", or "list"'
+        'Provide a todos array with the complete desired list (or empty array to clear)'
       );
     }
 
-    if (!['set', 'clear', 'list'].includes(action)) {
+    if (!Array.isArray(todos)) {
       return this.formatErrorResponse(
-        `Invalid action: ${action}`,
+        'todos must be an array',
         'validation_error',
-        'Action must be "set", "clear", or "list"'
+        'Provide todos as an array of {content, status, activeForm} objects'
       );
     }
 
@@ -135,73 +127,55 @@ export class TodoTool extends BaseTool {
         return this.formatErrorResponse('TodoManager not available', 'system_error');
       }
 
-      // Dispatch to action handler
-      switch (action) {
-        case 'set':
-          return await this.handleSet(args, todoManager);
-        case 'clear':
-          return await this.handleClear(todoManager);
-        case 'list':
-          return this.handleList(todoManager);
-        default:
-          return this.formatErrorResponse(
-            `Unknown action: ${action}`,
-            'validation_error'
-          );
+      // Handle empty array (clear all todos)
+      if (todos.length === 0) {
+        return await this.handleClear(todoManager);
       }
+
+      // Handle non-empty array (set todos)
+      return await this.handleSet(todos, todoManager);
     } catch (error) {
       return this.formatErrorResponse(
-        `Error executing todo action: ${formatError(error)}`,
+        `Error executing TodoWrite: ${formatError(error)}`,
         'system_error'
       );
     }
   }
 
   /**
-   * Handle action='set' - Replace entire todo list
+   * Handle todo list replacement
    *
    * Validates the input todos, generates IDs, validates business rules,
    * then replaces the entire todo list with the new state.
    *
-   * @param args - Tool arguments
+   * @param todos - Array of todo items
    * @param todoManager - TodoManager instance
    * @returns Tool result
    */
-  private async handleSet(args: any, todoManager: TodoManager): Promise<ToolResult> {
-    const todos = args.todos;
-
-    // Validate todos parameter
-    if (!todos) {
-      return this.formatErrorResponse(
-        'todos is required for action=set',
-        'validation_error',
-        'Provide a todos array with the complete desired list'
-      );
-    }
-
-    if (!Array.isArray(todos)) {
-      return this.formatErrorResponse(
-        'todos must be an array',
-        'validation_error',
-        'Provide todos as an array of {content, status} objects'
-      );
-    }
-
+  private async handleSet(todos: TodoInput[], todoManager: TodoManager): Promise<ToolResult> {
     // Validate each todo
     for (let i = 0; i < todos.length; i++) {
       const todo = todos[i];
 
+      // Null check for TypeScript
+      if (!todo) {
+        return this.formatErrorResponse(
+          `Task at index ${i} is null or undefined`,
+          'validation_error'
+        );
+      }
+
       // Validate content
       if (!todo.content || typeof todo.content !== 'string') {
         return this.formatErrorResponse(
-          `Todo ${i}: content is required and must be a string`,
+          `Task "${todo.content || '(empty)'}": content is required and must be a string`,
           'validation_error'
         );
       }
 
       if (todo.content.trim().length === 0) {
         return this.formatErrorResponse(
-          `Todo ${i}: content cannot be empty`,
+          `Task at index ${i}: content cannot be empty`,
           'validation_error'
         );
       }
@@ -209,14 +183,29 @@ export class TodoTool extends BaseTool {
       // Validate status
       if (!todo.status || typeof todo.status !== 'string') {
         return this.formatErrorResponse(
-          `Todo ${i}: status is required and must be a string`,
+          `Task "${todo.content}": status is required and must be a string`,
           'validation_error'
         );
       }
 
       if (!['pending', 'in_progress', 'completed'].includes(todo.status)) {
         return this.formatErrorResponse(
-          `Todo ${i}: status must be pending, in_progress, or completed (got: ${todo.status})`,
+          `Task "${todo.content}": status must be pending, in_progress, or completed (got: ${todo.status})`,
+          'validation_error'
+        );
+      }
+
+      // Validate activeForm
+      if (!todo.activeForm || typeof todo.activeForm !== 'string') {
+        return this.formatErrorResponse(
+          `Task "${todo.content}": activeForm is required and must be a string`,
+          'validation_error'
+        );
+      }
+
+      if (todo.activeForm.trim().length === 0) {
+        return this.formatErrorResponse(
+          `Task "${todo.content}": activeForm cannot be empty`,
           'validation_error'
         );
       }
@@ -280,7 +269,7 @@ export class TodoTool extends BaseTool {
   }
 
   /**
-   * Handle action='clear' - Remove all todos
+   * Handle clearing all todos
    *
    * Clears the entire todo list and saves the empty state.
    *
@@ -301,51 +290,6 @@ export class TodoTool extends BaseTool {
     return this.formatSuccessResponse({
       content: message,
       cleared_count: clearedCount,
-    });
-  }
-
-  /**
-   * Handle action='list' - Show current todos
-   *
-   * Retrieves and formats the current todo list for display.
-   *
-   * @param todoManager - TodoManager instance
-   * @returns Tool result
-   */
-  private handleList(todoManager: TodoManager): ToolResult {
-    const todos = todoManager.getTodos();
-
-    if (todos.length === 0) {
-      return this.formatSuccessResponse({
-        content: 'No todos in the list.',
-        total_count: 0,
-        todos: [],
-      });
-    }
-
-    // Get formatted context
-    const todoSummary = todoManager.generateActiveContext();
-    const pendingCount = todos.filter(t => t.status === 'pending').length;
-    const inProgressCount = todos.filter(t => t.status === 'in_progress').length;
-    const completedCount = todos.filter(t => t.status === 'completed').length;
-    const incompleteCount = pendingCount + inProgressCount;
-
-    let message = `Current todos (${todos.length} total):\n\n`;
-    message += todoSummary || '(empty)';
-    message += `\n\nSummary: ${pendingCount} pending, ${inProgressCount} in progress, ${completedCount} completed.`;
-
-    return this.formatSuccessResponse({
-      content: message,
-      total_count: todos.length,
-      pending_count: pendingCount,
-      in_progress_count: inProgressCount,
-      completed_count: completedCount,
-      incomplete_count: incompleteCount,
-      todos: todos.map(t => ({
-        id: t.id,
-        content: t.task,
-        status: t.status,
-      })),
     });
   }
 }

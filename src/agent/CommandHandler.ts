@@ -183,7 +183,7 @@ Core Commands:
   /config set <key>=<val>  - Set a configuration value
   /config reset            - Reset all settings to defaults
   /model [ally|service] [name] - Switch model or show current model
-  /debug [calls] [n]       - Show tool call history
+  /debug                   - Debug commands (enable/disable/calls/errors/dump)
   /context                 - Show context usage (token count)
   /clear                   - Clear conversation history
   /compact                 - Compact conversation history
@@ -251,7 +251,7 @@ Profile Commands:
   private async handleContext(_messages: Message[]): Promise<CommandResult> {
     return {
       handled: true,
-      response: 'Use /debug calls [n] to view recent tool call history.',
+      response: 'Use /debug to view debug commands. Try /debug calls, /debug errors, or /debug dump.',
     };
   }
 

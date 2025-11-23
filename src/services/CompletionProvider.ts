@@ -122,6 +122,7 @@ const DEBUG_SUBCOMMANDS = [
   { name: 'disable', description: 'Disable debug-level logging' },
   { name: 'calls', description: 'Show recent tool call history' },
   { name: 'errors', description: 'Show recent failed tool calls' },
+  { name: 'dump', description: 'Generate debug dump file with logs and messages' },
 ];
 
 /**

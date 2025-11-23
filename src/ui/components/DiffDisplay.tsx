@@ -26,8 +26,15 @@ export interface DiffDisplayProps {
   newContent: string;
   /** File path for display */
   filePath?: string;
-  /** Maximum lines to display (0 = no limit) */
-  maxLines?: number;
+  /** Maximum lines to display per hunk/edit (0 = no limit) */
+  maxLinesPerHunk?: number;
+  /** Number of edits being applied */
+  editsCount?: number;
+}
+
+interface DiffHunk {
+  header?: DiffLine;
+  lines: DiffLine[];
 }
 
 /**
@@ -44,23 +51,23 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
   oldContent,
   newContent,
   filePath = 'file',
-  maxLines = 0,
+  maxLinesPerHunk = 10,
+  editsCount,
 }) => {
   const diffLines = generateDiffLines(oldContent, newContent, filePath);
 
-  // Filter out header lines (@@) for display
-  const contentLines = diffLines.filter(line => line.type !== 'header');
+  // Group lines into hunks
+  const hunks = groupIntoHunks(diffLines);
 
-  // Count additions and deletions
-  const additions = contentLines.filter(l => l.type === 'add').length;
-  const deletions = contentLines.filter(l => l.type === 'remove').length;
-
-  // Limit display if maxLines is set
-  const displayLines = maxLines > 0 ? contentLines.slice(0, maxLines) : contentLines;
-  const hasMore = maxLines > 0 && contentLines.length > maxLines;
+  // Count total additions and deletions across all hunks
+  const additions = diffLines.filter(l => l.type === 'add').length;
+  const deletions = diffLines.filter(l => l.type === 'remove').length;
 
   // Build summary text
   const parts: string[] = [];
+  if (editsCount && editsCount > 1) {
+    parts.push(`${editsCount} edits`);
+  }
   if (additions > 0) parts.push(`${additions} addition${additions !== 1 ? 's' : ''}`);
   if (deletions > 0) parts.push(`${deletions} deletion${deletions !== 1 ? 's' : ''}`);
   const summary = parts.length > 0 ? parts.join(', ') : 'no changes';
@@ -82,16 +89,50 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
         </Text>
       </Box>
 
+      {/* Render each hunk separately */}
       <Box flexDirection="column">
-        {displayLines.map((line, idx) => (
-          <DiffLine key={idx} line={line} />
+        {hunks.map((hunk, hunkIdx) => (
+          <DiffHunkDisplay
+            key={hunkIdx}
+            hunk={hunk}
+            maxLines={maxLinesPerHunk}
+            isLast={hunkIdx === hunks.length - 1}
+          />
         ))}
-        {hasMore && (
-          <Text dimColor>
-            ... {contentLines.length - maxLines} more lines
-          </Text>
-        )}
       </Box>
+    </Box>
+  );
+};
+
+/**
+ * Display a single hunk with optional truncation
+ */
+const DiffHunkDisplay: React.FC<{ hunk: DiffHunk; maxLines: number; isLast: boolean }> = ({
+  hunk,
+  maxLines,
+  isLast,
+}) => {
+  const displayLines = maxLines > 0 ? hunk.lines.slice(0, maxLines) : hunk.lines;
+  const truncated = maxLines > 0 && hunk.lines.length > maxLines;
+  const hiddenCount = truncated ? hunk.lines.length - maxLines : 0;
+
+  return (
+    <Box flexDirection="column">
+      {displayLines.map((line, idx) => (
+        <DiffLine key={idx} line={line} />
+      ))}
+      {truncated && (
+        <Box>
+          <Text dimColor>
+            {' '.repeat(FORMATTING.LINE_NUMBER_WIDTH)} │   ... {hiddenCount} more line{hiddenCount !== 1 ? 's' : ''} in this region
+          </Text>
+        </Box>
+      )}
+      {!isLast && hunk.lines.length > 0 && (
+        <Box>
+          <Text dimColor> </Text>
+        </Box>
+      )}
     </Box>
   );
 };
@@ -227,6 +268,34 @@ function generateDiffLines(oldContent: string, newContent: string, filePath: str
   }
 
   return diffLines;
+}
+
+/**
+ * Group diff lines into hunks (separated by header lines)
+ */
+function groupIntoHunks(diffLines: DiffLine[]): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  let currentHunk: DiffHunk = { lines: [] };
+
+  for (const line of diffLines) {
+    if (line.type === 'header') {
+      // Start a new hunk when we hit a header
+      if (currentHunk.lines.length > 0) {
+        hunks.push(currentHunk);
+      }
+      currentHunk = { header: line, lines: [] };
+    } else {
+      // Add non-header lines to current hunk
+      currentHunk.lines.push(line);
+    }
+  }
+
+  // Add final hunk if it has content
+  if (currentHunk.lines.length > 0) {
+    hunks.push(currentHunk);
+  }
+
+  return hunks;
 }
 
 /**

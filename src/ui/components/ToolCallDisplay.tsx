@@ -467,7 +467,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
             oldContent={toolCall.diffPreview.oldContent}
             newContent={toolCall.diffPreview.newContent}
             filePath={toolCall.diffPreview.filePath}
-            maxLines={20}
+            maxLinesPerHunk={10}
+            editsCount={toolCall.diffPreview.editsCount}
           />
         </Box>
       )}

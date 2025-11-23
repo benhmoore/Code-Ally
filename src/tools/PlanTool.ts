@@ -27,8 +27,8 @@ import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder, createPlanAcceptedReminder } from '../utils/messageUtils.js';
 
-// Planning tools: read-only tools + explore for nested research + todo for task creation
-const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo'];
+// Planning tools: read-only tools + explore for nested research + TodoWrite for task creation
+const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-write'];
 
 // Base prompt for planning (without thoroughness-specific guidelines)
 const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistant. You excel at researching codebases to create detailed, actionable implementation plans grounded in existing patterns and architecture.
@@ -49,7 +49,7 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 - Use Read to study specific files and understand implementation details in depth
 - Use Explore to delegate complex multi-file pattern analysis and architectural investigations
 - Use Batch to execute multiple searches in parallel for efficiency
-- Use TodoAdd to create implementation tasks in logical order
+- Use todo-write to create implementation tasks in logical order
 - Adapt your research depth based on the thoroughness level specified
 
 ## Planning Process
@@ -89,7 +89,7 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 - \`/absolute/path/to/new.ts\` - [new file, purpose]
 
 #### Task Breakdown
-After providing the plan above, call todo() to create implementation tasks:
+After providing the plan above, call todo-write() to create implementation tasks:
 - Each todo needs: content (imperative like "Set up project"), status (pending or in_progress), activeForm (present continuous like "Setting up project")
 - Create tasks in logical order - first task will be in_progress, rest pending
 - Make each task actionable and represent meaningful milestones
@@ -109,7 +109,7 @@ Create comprehensive, actionable implementation plans that enable confident deve
 - Provide specific file references with line numbers when applicable
 - Include code examples from codebase when relevant (or from best practices if starting fresh)
 - Use explore() for complex multi-file pattern analysis (skip if empty project)
-- **MUST call todo() before completing** - planning without todos is incomplete
+- **MUST call todo-write() before completing** - planning without todos is incomplete
 - Avoid using emojis for clear communication`;
 
 const PLANNING_CLOSING = `
@@ -121,7 +121,7 @@ const PLANNING_CLOSING = `
 
 Create plans that are complete but not over-engineered, focusing on artful implementation.
 
-Remember: You MUST call todo() before completing to create implementation tasks.`;
+Remember: You MUST call todo-write() before completing to create implementation tasks.`;
 
 // System prompt optimized for implementation planning
 const PLANNING_SYSTEM_PROMPT = PLANNING_BASE_PROMPT + `
@@ -365,7 +365,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         parentCallId: callId,
         parentAgent: parentAgent, // Direct reference to parent agent
         _poolKey: `plan-${callId}`, // Unique key per invocation
-        requiredToolCalls: ['todo'], // Planning agent MUST call todo before exiting
+        requiredToolCalls: ['todo-write'], // Planning agent MUST call todo-write before exiting
         maxDuration,
         thoroughness: thoroughness, // Store for dynamic regeneration
         agentType: 'plan',

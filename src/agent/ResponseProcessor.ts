@@ -266,7 +266,32 @@ export class ResponseProcessor {
 
     // Check for error (non-partial, non-validation errors)
     if (response.error && !response.partial && !response.tool_call_validation_failed) {
-      return response.content || 'An error occurred';
+      let errorContent = response.content || 'An error occurred';
+      logger.debug('[RESPONSE_PROCESSOR]', context.instanceId, 'Returning error response. Content length:', errorContent.length);
+      logger.debug('[RESPONSE_PROCESSOR]', context.instanceId, 'Error content preview:', errorContent.substring(0, 200));
+
+      // If this is an image-related error, strip images from conversation history
+      // to prevent future requests from failing with the same error
+      if ((response as any).shouldStripImages) {
+        logger.debug('[RESPONSE_PROCESSOR]', context.instanceId, 'Stripping images from conversation history due to image error');
+        const messages = this.conversationManager.getMessages();
+        let strippedCount = 0;
+
+        messages.forEach((msg, idx) => {
+          if (msg.images && msg.images.length > 0) {
+            logger.debug('[RESPONSE_PROCESSOR]', context.instanceId, `Removing ${msg.images.length} image(s) from message ${idx} (role: ${msg.role})`);
+            delete msg.images;
+            strippedCount++;
+          }
+        });
+
+        if (strippedCount > 0) {
+          logger.debug('[RESPONSE_PROCESSOR]', context.instanceId, `Stripped images from ${strippedCount} message(s)`);
+          errorContent += `\n\nNote: Removed images from conversation history to prevent this error from recurring.`;
+        }
+      }
+
+      return errorContent;
     }
 
     // Extract tool calls

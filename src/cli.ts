@@ -455,6 +455,14 @@ async function handleOnceMode(
   // Send the message (don't echo it - user already typed it)
   try {
     const response = await agent.sendMessage(message);
+
+    // DEBUG: Log response details to diagnose blank response issue
+    console.log('DEBUG: Response type:', typeof response);
+    console.log('DEBUG: Response length:', response?.length);
+    console.log('DEBUG: Response value:', JSON.stringify(response));
+    console.log('DEBUG: First 100 chars:', response?.substring(0, 100));
+    console.log('---');
+
     console.log(response);
 
     // Save session only if explicitly requested
@@ -928,7 +936,7 @@ async function main() {
     const { AgentAskTool } = await import('./tools/AgentAskTool.js');
     const { BatchTool } = await import('./tools/BatchTool.js');
     const { CleanupCallTool } = await import('./tools/CleanupCallTool.js');
-    const { TodoTool } = await import('./tools/TodoTool.js');
+    const { TodoWriteTool } = await import('./tools/TodoWriteTool.js');
     const { SessionsTool } = await import('./tools/SessionsTool.js');
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
@@ -952,7 +960,7 @@ async function main() {
       new AgentAskTool(activityStream),
       new BatchTool(activityStream),
       new CleanupCallTool(activityStream),
-      new TodoTool(activityStream), // Unified todo management
+      new TodoWriteTool(activityStream), // Unified todo management
       new SessionsTool(activityStream),
       new LintTool(activityStream),
       new FormatTool(activityStream),

@@ -701,7 +701,8 @@ export const useInputHandlers = (
 
         // Check if response is an error message that should be styled in red
         const isError = response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
-                       response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
+                       response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION ||
+                       response.includes('Error communicating with Ollama');
 
         // Add assistant response for error messages only
         // Normal responses are added via ASSISTANT_MESSAGE_COMPLETE event for proper interleaving
@@ -735,6 +736,9 @@ export const useInputHandlers = (
             content: messageContent,
             metadata: { isError: true },
           });
+        } else if (response && response.trim().length > 0) {
+          // Response exists but was filtered - log for debugging
+          logger.debug('[UI_INPUT_HANDLER] Response filtered (not displayed in UI). Length:', response.length, 'Preview:', response.substring(0, 100));
         }
 
         // Update TokenManager and context usage

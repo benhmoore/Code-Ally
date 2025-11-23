@@ -309,7 +309,21 @@ export class OllamaClient extends ModelClient {
 
           // Non-retryable error - return error response
           logger.debug(`[OLLAMA_CLIENT] Non-retryable error on request ${requestId}`);
-          return this.handleRequestError(error);
+
+          // Check if this is an image-related error
+          const errorMsg = error.message || String(error);
+          const isImageError = errorMsg.includes('Cannot decode or download image') ||
+                               errorMsg.includes('image') && (error.httpStatus === 400 || error.httpStatus === 415);
+
+          const errorResponse = this.handleRequestError(error);
+
+          // If image error, mark response to trigger image stripping from history
+          if (isImageError) {
+            logger.debug('[OLLAMA_CLIENT] Image-related error detected - marking for image removal from history');
+            (errorResponse as any).shouldStripImages = true;
+          }
+
+          return errorResponse;
         }
       }
     } finally {
@@ -787,6 +801,10 @@ export class OllamaClient extends ModelClient {
    */
   private handleRequestError(error: any): LLMResponse {
     const errorMsg = error.message || String(error);
+    logger.debug('[OLLAMA_CLIENT] handleRequestError called');
+    logger.debug('[OLLAMA_CLIENT] Error message:', errorMsg);
+    logger.debug('[OLLAMA_CLIENT] Error type:', error.constructor.name);
+    logger.debug('[OLLAMA_CLIENT] HTTP status:', error.httpStatus);
 
     let suggestions: string[] = [];
 
@@ -820,9 +838,13 @@ export class OllamaClient extends ModelClient {
       ];
     }
 
+    const errorContent = `Error communicating with Ollama: ${errorMsg}\n\nSuggested fixes:\n${suggestions.map(s => `- ${s}`).join('\n')}`;
+    logger.debug('[OLLAMA_CLIENT] Error response content length:', errorContent.length);
+    logger.debug('[OLLAMA_CLIENT] Error response preview:', errorContent.substring(0, 150));
+
     return {
       role: 'assistant',
-      content: `Error communicating with Ollama: ${errorMsg}\n\nSuggested fixes:\n${suggestions.map(s => `- ${s}`).join('\n')}`,
+      content: errorContent,
       error: true,
       suggestions,
     };

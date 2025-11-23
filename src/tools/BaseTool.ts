@@ -267,7 +267,7 @@ export abstract class BaseTool {
    * Emit a diff preview for file changes
    * Shows user what will change before applying modifications
    */
-  protected emitDiffPreview(oldContent: string, newContent: string, filePath: string, operationType: 'edit' | 'write' | 'line-edit' = 'edit'): void {
+  protected emitDiffPreview(oldContent: string, newContent: string, filePath: string, operationType: 'edit' | 'write' | 'line-edit' = 'edit', editsCount?: number): void {
     if (!this.currentCallId) {
       logger.warn(`[${this.name}] Cannot emit diff preview: no currentCallId set`);
       return;
@@ -283,6 +283,7 @@ export abstract class BaseTool {
         newContent,
         filePath,
         operationType,
+        editsCount,
       },
     });
   }
@@ -294,15 +295,17 @@ export abstract class BaseTool {
    * @param filePath - Path to the file being modified
    * @param generatePreview - Async function that reads file and generates preview content
    * @param operationType - Type of operation being performed
+   * @param editsCount - Optional number of edits being applied
    */
   protected async safelyEmitDiffPreview(
     filePath: string,
     generatePreview: () => Promise<{ oldContent: string; newContent: string }>,
-    operationType: 'edit' | 'write' | 'line-edit' = 'edit'
+    operationType: 'edit' | 'write' | 'line-edit' = 'edit',
+    editsCount?: number
   ): Promise<void> {
     try {
       const { oldContent, newContent } = await generatePreview();
-      this.emitDiffPreview(oldContent, newContent, filePath, operationType);
+      this.emitDiffPreview(oldContent, newContent, filePath, operationType, editsCount);
     } catch {
       // Silently fail preview - let actual execute handle errors
     }

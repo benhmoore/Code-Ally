@@ -12,9 +12,18 @@ import type { ToolCallHistory } from '@services/ToolCallHistory.js';
 import type { ToolCallState } from '@shared/index.js';
 import { logger, LogLevel, type LogEntry } from '@services/Logger.js';
 import { BUFFER_SIZES } from '@config/constants.js';
+import type { Agent } from '../Agent.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
+/**
+ * Timeline entry types for unified chronological display
+ */
+type TimelineEntry =
+  | { type: 'log'; timestamp: number; data: LogEntry }
+  | { type: 'message'; timestamp: number; data: Message }
+  | { type: 'tool_call'; timestamp: number; data: ToolCallState };
 
 export class DebugCommand extends Command {
   readonly name = '/debug';
@@ -35,11 +44,11 @@ export class DebugCommand extends Command {
       return {
         handled: true,
         response: `Debug Commands:
-  /debug enable     - Enable debug-level logging
-  /debug disable    - Disable debug-level logging
-  /debug calls [n]  - Show last N tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
-  /debug errors [n] - Show last N failed tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
-  /debug dump       - Dump all debug information to a timestamped file in home directory
+  /debug enable        - Enable debug-level logging
+  /debug disable       - Disable debug-level logging
+  /debug calls [n]     - Show last N tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
+  /debug errors [n]    - Show last N failed tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
+  /debug dump [n]      - Dump debug info to file (last N entries, default: ${BUFFER_SIZES.MAX_LOG_BUFFER_SIZE})
 `,
       };
     }
@@ -81,7 +90,10 @@ export class DebugCommand extends Command {
         );
 
       case 'dump':
-        return this.handleDebugDump(serviceRegistry);
+        return this.handleDebugDump(
+          serviceRegistry,
+          parts.length > 1 ? parts[1] : undefined
+        );
 
       default:
         return this.createError(
@@ -238,14 +250,39 @@ export class DebugCommand extends Command {
   /**
    * Dump all debug information to a file
    */
-  private async handleDebugDump(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
+  private async handleDebugDump(
+    serviceRegistry: ServiceRegistry,
+    countStr: string | undefined
+  ): Promise<CommandResult> {
     try {
+      // Parse entry count (default to max buffer size)
+      let maxEntries: number = BUFFER_SIZES.MAX_LOG_BUFFER_SIZE;
+
+      if (countStr) {
+        const parsed = parseInt(countStr, 10);
+
+        if (isNaN(parsed) || parsed < 1) {
+          return this.createError('Invalid count. Must be a positive number.');
+        }
+
+        maxEntries = parsed;
+      }
+
       // Generate timestamp for filename
       const now = new Date();
       const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5); // Remove milliseconds
       const filename = `codeally-debug-${timestamp}.txt`;
       const homeDir = os.homedir();
       const filepath = path.join(homeDir, filename);
+
+      // Collect all data sources
+      const logs = logger.getAllLogs();
+      const toolCallHistory = serviceRegistry.getToolCallHistory();
+      const allToolCalls = toolCallHistory?.getAll() || [];
+
+      // Get conversation messages from agent
+      const agent = serviceRegistry.get<Agent>('agent');
+      const messages = agent?.getConversationManager().getMessages() || [];
 
       // Build debug dump content
       let content = '';
@@ -268,120 +305,292 @@ export class DebugCommand extends Command {
       content += `Current Log Level: ${LogLevel[logger.getLevel()]}\n`;
       content += '\n';
 
-      // Log Buffer
+      // Summary Statistics
       content += '━'.repeat(80) + '\n';
-      content += 'LOG BUFFER\n';
+      content += 'SUMMARY\n';
       content += '━'.repeat(80) + '\n';
-      const logs = logger.getAllLogs();
-      content += `Total log entries: ${logs.length}\n\n`;
+      content += `Total Entries: ${logs.length + messages.length + allToolCalls.length}\n`;
+      content += `  Log Entries: ${logs.length}\n`;
+      content += `  Messages: ${messages.length}\n`;
+      content += `  Tool Calls: ${allToolCalls.length}\n\n`;
 
-      if (logs.length > 0) {
-        // Group logs by level
-        const logsByLevel: { [key: string]: LogEntry[] } = {};
-        for (const log of logs) {
-          const levelName = LogLevel[log.level];
-          if (!logsByLevel[levelName]) {
-            logsByLevel[levelName] = [];
-          }
-          logsByLevel[levelName].push(log);
+      // Message breakdown by role
+      if (messages.length > 0) {
+        const messagesByRole: { [key: string]: number } = {};
+        for (const msg of messages) {
+          messagesByRole[msg.role] = (messagesByRole[msg.role] || 0) + 1;
         }
-
-        // Display summary
-        content += 'Log Summary by Level:\n';
-        for (const levelName of Object.keys(logsByLevel).sort()) {
-          const levelLogs = logsByLevel[levelName];
-          if (levelLogs) {
-            content += `  ${levelName}: ${levelLogs.length} entries\n`;
-          }
+        content += 'Messages by Role:\n';
+        for (const role of Object.keys(messagesByRole).sort()) {
+          content += `  ${role}: ${messagesByRole[role]}\n`;
         }
         content += '\n';
+      }
 
-        // Display all logs chronologically
-        content += 'All Log Entries (chronological):\n';
-        content += '-'.repeat(80) + '\n';
+      // Log breakdown by level
+      if (logs.length > 0) {
+        const logsByLevel: { [key: string]: number } = {};
         for (const log of logs) {
-          const date = new Date(log.timestamp);
-          const levelName = LogLevel[log.level].padEnd(7);
-          content += `[${date.toISOString()}] [${levelName}] ${log.message}\n`;
+          const levelName = LogLevel[log.level];
+          logsByLevel[levelName] = (logsByLevel[levelName] || 0) + 1;
         }
+        content += 'Logs by Level:\n';
+        for (const levelName of Object.keys(logsByLevel).sort()) {
+          content += `  ${levelName}: ${logsByLevel[levelName]}\n`;
+        }
+        content += '\n';
+      }
+
+      // Tool call breakdown
+      if (allToolCalls.length > 0) {
+        const callsByTool: { [key: string]: number } = {};
+        const errorsByTool: { [key: string]: number } = {};
+        for (const call of allToolCalls) {
+          callsByTool[call.toolName] = (callsByTool[call.toolName] || 0) + 1;
+          if (call.status === 'error') {
+            errorsByTool[call.toolName] = (errorsByTool[call.toolName] || 0) + 1;
+          }
+        }
+        content += 'Tool Calls by Name:\n';
+        for (const toolName of Object.keys(callsByTool).sort()) {
+          const errorCount = errorsByTool[toolName] || 0;
+          const errorInfo = errorCount > 0 ? ` (${errorCount} errors)` : '';
+          content += `  ${toolName}: ${callsByTool[toolName]}${errorInfo}\n`;
+        }
+        content += '\n';
+      }
+
+      // Build unified chronological timeline
+      content += '━'.repeat(80) + '\n';
+      content += 'CHRONOLOGICAL TIMELINE (Logs + Messages + Tool Calls)\n';
+      content += '━'.repeat(80) + '\n';
+
+      const timeline = this.buildTimeline(logs, messages, allToolCalls, maxEntries);
+      const totalEntries = logs.length + messages.length + allToolCalls.length;
+
+      if (timeline.length < totalEntries) {
+        content += `Showing last ${timeline.length} of ${totalEntries} total entries\n`;
       } else {
-        content += 'No log entries found.\n';
+        content += `Showing all ${timeline.length} entries\n`;
       }
       content += '\n';
 
-      // Tool Call History
-      content += '━'.repeat(80) + '\n';
-      content += 'TOOL CALL HISTORY\n';
-      content += '━'.repeat(80) + '\n';
-
-      const toolCallHistory = serviceRegistry.getToolCallHistory();
-      if (toolCallHistory) {
-        const allCalls = toolCallHistory.getAll();
-        content += `Total tool calls: ${allCalls.length}\n\n`;
-
-        if (allCalls.length > 0) {
-          // Summary by tool name
-          const callsByTool: { [key: string]: number } = {};
-          const errorsByTool: { [key: string]: number } = {};
-          for (const call of allCalls) {
-            callsByTool[call.toolName] = (callsByTool[call.toolName] || 0) + 1;
-            if (call.status === 'error') {
-              errorsByTool[call.toolName] = (errorsByTool[call.toolName] || 0) + 1;
-            }
-          }
-
-          content += 'Tool Call Summary:\n';
-          for (const toolName of Object.keys(callsByTool).sort()) {
-            const errorCount = errorsByTool[toolName] || 0;
-            const errorInfo = errorCount > 0 ? ` (${errorCount} errors)` : '';
-            content += `  ${toolName}: ${callsByTool[toolName]} calls${errorInfo}\n`;
-          }
-          content += '\n';
-
-          // Detailed call history
-          content += 'Detailed Call History:\n';
-          content += '-'.repeat(80) + '\n';
-          for (let i = 0; i < allCalls.length; i++) {
-            const call = allCalls[i];
-            if (!call) continue;
-
-            content += `#${i + 1} - ${call.toolName}\n`;
-            content += `  Status: ${call.status}\n`;
-            content += `  Started: ${new Date(call.startTime).toISOString()}\n`;
-            if (call.endTime) {
-              const duration = call.endTime - call.startTime;
-              content += `  Duration: ${duration}ms\n`;
-            }
-            if (call.error) {
-              content += `  Error: ${call.error}\n`;
-            }
-            content += `  Arguments: ${JSON.stringify(call.arguments, null, 2)}\n`;
-            if (call.output && call.output.length > 500) {
-              content += `  Output: ${call.output.substring(0, 500)}... (truncated, ${call.output.length} chars total)\n`;
-            } else if (call.output) {
-              content += `  Output: ${call.output}\n`;
-            }
-            content += '\n';
-          }
-        } else {
-          content += 'No tool calls recorded.\n\n';
-        }
+      if (timeline.length === 0) {
+        content += 'No timeline entries found.\n\n';
       } else {
-        content += 'Tool call history not available.\n\n';
+        for (const entry of timeline) {
+          content += this.formatTimelineEntry(entry);
+        }
       }
 
       // Write to file
       fs.writeFileSync(filepath, content, 'utf-8');
 
+      const limitInfo = timeline.length < totalEntries
+        ? ` (last ${timeline.length} of ${totalEntries} total entries)`
+        : '';
+
       return {
         handled: true,
-        response: `Debug dump written to: ${filepath}\n\nContains:\n  - ${logs.length} log entries\n  - ${toolCallHistory?.getCount() || 0} tool calls\n  - System information`,
+        response: `Debug dump written to: ${filepath}${limitInfo}\n\nContains:\n  - ${logs.length} log entries\n  - ${messages.length} conversation messages\n  - ${allToolCalls.length} tool calls\n  - System information`,
       };
     } catch (error) {
       return this.createError(
         `Failed to write debug dump: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+  }
+
+  /**
+   * Build a unified chronological timeline from logs, messages, and tool calls
+   */
+  private buildTimeline(
+    logs: LogEntry[],
+    messages: readonly Message[],
+    toolCalls: ToolCallState[],
+    maxEntries: number
+  ): TimelineEntry[] {
+    const timeline: TimelineEntry[] = [];
+
+    // Add logs
+    for (const log of logs) {
+      timeline.push({ type: 'log', timestamp: log.timestamp, data: log });
+    }
+
+    // Add messages
+    for (const msg of messages) {
+      if (msg.timestamp) {
+        timeline.push({ type: 'message', timestamp: msg.timestamp, data: msg });
+      }
+    }
+
+    // Add tool calls
+    for (const call of toolCalls) {
+      timeline.push({ type: 'tool_call', timestamp: call.startTime, data: call });
+    }
+
+    // Sort chronologically
+    timeline.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Return last N entries if limit specified
+    if (maxEntries > 0 && timeline.length > maxEntries) {
+      return timeline.slice(-maxEntries);
+    }
+
+    return timeline;
+  }
+
+  /**
+   * Format a timeline entry based on its type
+   */
+  private formatTimelineEntry(entry: TimelineEntry): string {
+    const date = new Date(entry.timestamp);
+    const isoTime = date.toISOString();
+
+    switch (entry.type) {
+      case 'log':
+        return this.formatLogEntry(isoTime, entry.data);
+      case 'message':
+        return this.formatMessageEntry(isoTime, entry.data);
+      case 'tool_call':
+        return this.formatToolCallEntry(isoTime, entry.data);
+    }
+  }
+
+  /**
+   * Format a log entry
+   */
+  private formatLogEntry(isoTime: string, log: LogEntry): string {
+    const levelName = LogLevel[log.level].padEnd(7);
+    return `[${isoTime}] [${levelName}] ${log.message}\n`;
+  }
+
+  /**
+   * Format a conversation message entry
+   */
+  private formatMessageEntry(isoTime: string, msg: Message): string {
+    let output = '';
+    const roleUpper = msg.role.toUpperCase().padEnd(9);
+
+    // Calculate indentation based on timestamp format: "[YYYY-MM-DDTHH:MM:SS.sssZ] "
+    // ISO timestamp is always 24 chars, plus "[" and "] " = 27 chars total
+    const indent = ' '.repeat(27);
+
+    output += `[${isoTime}] ┌─ ${roleUpper}`;
+
+    // Add message ID if present
+    if (msg.id) {
+      output += ` (${msg.id.substring(0, 8)})`;
+    }
+    output += '\n';
+
+    // Show tool calls if present
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      output += `${indent}│ Tool Calls: ${msg.tool_calls.length}\n`;
+      for (const toolCall of msg.tool_calls) {
+        const argsStr = this.formatJSON(toolCall.function.arguments);
+        const truncatedArgs = this.truncateString(argsStr, 100);
+        output += `${indent}│   - ${toolCall.function.name}(${truncatedArgs})\n`;
+      }
+    }
+
+    // Show tool_call_id if present (for tool result messages)
+    if (msg.tool_call_id) {
+      output += `${indent}│ Tool Call ID: ${msg.tool_call_id}\n`;
+    }
+
+    // Show name if present (for tool messages)
+    if (msg.name) {
+      output += `${indent}│ Tool: ${msg.name}\n`;
+    }
+
+    // Show thinking if present
+    if (msg.thinking) {
+      const thinkingPreview = this.truncateString(msg.thinking, 100);
+      output += `${indent}│ Thinking: ${thinkingPreview}\n`;
+    }
+
+    // Show content
+    const contentPreview = this.truncateString(msg.content, 500);
+    const lines = contentPreview.split('\n');
+
+    if (lines.length === 1 && lines[0] && lines[0].length < 80) {
+      // Short single-line content
+      output += `${indent}│ ${lines[0]}\n`;
+    } else {
+      // Multi-line or long content
+      output += `${indent}│ Content:\n`;
+      for (const line of lines) {
+        if (line) {
+          output += `${indent}│   ${line}\n`;
+        }
+      }
+    }
+
+    // Show truncation indicator
+    if (msg.content.length > 500) {
+      output += `${indent}│   ... (${msg.content.length} chars total)\n`;
+    }
+
+    // Show metadata if present
+    if (msg.metadata?.ephemeral) {
+      output += `${indent}│ [Ephemeral]\n`;
+    }
+    if (msg.metadata?.isCommandResponse) {
+      output += `${indent}│ [Command Response]\n`;
+    }
+
+    output += `${indent}└─\n`;
+
+    return output;
+  }
+
+  /**
+   * Format a tool call entry
+   */
+  private formatToolCallEntry(isoTime: string, call: ToolCallState): string {
+    let output = '';
+
+    // Calculate indentation based on timestamp format: "[YYYY-MM-DDTHH:MM:SS.sssZ] "
+    // ISO timestamp is always 24 chars, plus "[" and "] " = 27 chars total
+    const indent = ' '.repeat(27);
+
+    const statusIcon = call.status === 'success' ? '✓' : call.status === 'error' ? '✗' : '○';
+    const duration = call.endTime ? `${call.endTime - call.startTime}ms` : 'running';
+
+    output += `[${isoTime}] ┌─ TOOL CALL: ${call.toolName} ${statusIcon} (${duration})\n`;
+
+    // Show arguments
+    const argsStr = this.formatJSON(call.arguments);
+    const argLines = argsStr.split('\n');
+    output += `${indent}│ Arguments:\n`;
+    for (const line of argLines.slice(0, 5)) {
+      if (line) {
+        output += `${indent}│   ${line}\n`;
+      }
+    }
+    if (argLines.length > 5) {
+      output += `${indent}│   ... (${argLines.length - 5} more lines)\n`;
+    }
+
+    // Show error if present
+    if (call.error) {
+      const errorPreview = this.truncateString(call.error, 200);
+      output += `${indent}│ Error: ${errorPreview}\n`;
+    }
+
+    // Show output preview
+    if (call.output) {
+      const outputPreview = this.truncateString(call.output, 200);
+      output += `${indent}│ Output: ${outputPreview}\n`;
+      if (call.output.length > 200) {
+        output += `${indent}│   ... (${call.output.length} chars total)\n`;
+      }
+    }
+
+    output += `${indent}└─\n`;
+
+    return output;
   }
 
   /**

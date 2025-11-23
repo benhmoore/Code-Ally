@@ -134,8 +134,11 @@ export class ToolValidator {
    * Validate BashTool arguments
    */
   private static validateBashArgs(args: Record<string, any>): ValidationResult {
-    // Validate timeout parameter
-    if (args.timeout !== undefined && args.timeout !== null) {
+    // Skip timeout validation for background processes (timeout is ignored)
+    const runInBackground = args.run_in_background === true;
+
+    // Validate timeout parameter (only for foreground processes)
+    if (!runInBackground && args.timeout !== undefined && args.timeout !== null) {
       const timeout = Number(args.timeout);
       if (isNaN(timeout) || timeout <= 0) {
         return {

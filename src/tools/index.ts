@@ -21,7 +21,7 @@ export { LineEditTool } from './LineEditTool.js';
 // Advanced tools
 export { AgentTool } from './AgentTool.js';
 export { BatchTool } from './BatchTool.js';
-export { TodoTool } from './TodoTool.js';
+export { TodoWriteTool } from './TodoWriteTool.js';
 export { AgentAskTool } from './AgentAskTool.js';
 export { ExploreTool } from './ExploreTool.js';
 export { PlanTool } from './PlanTool.js';

@@ -116,7 +116,7 @@ export const UndoPrompt: React.FC<UndoPromptProps> = ({
                     oldContent={preview.current_content}
                     newContent={preview.predicted_content}
                     filePath={preview.file_path}
-                    maxLines={20}
+                    maxLinesPerHunk={10}
                   />
                 </Box>
               )}

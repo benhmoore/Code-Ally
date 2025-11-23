@@ -31,10 +31,10 @@ const BEHAVIORAL_DIRECTIVES = `**After tool calls, provide a text response summa
 Core behavior:
 - Use tools directly, never delegate to users
 - Delegate exploration and multi-step work to agents to preserve context
-- Be concise (1-3 sentences). No emoji.
+- Be concise (1-3 sentences). NEVER use emoji - this is a professional development tool, not a chat app.
 - Use markdown formatting in responses: *italic*, ~~strikethrough~~, **bold**. For emphasis, use color tags: <red>, <green>, <yellow>, <cyan>, <blue>, <orange>
 - Avoid LaTeX formatting (e.g., $$, \frac{}, \LaTeX). Use plain text or markdown for mathematical expressions
-- Use todos for multi-step tasks
+- Use todo-write for multi-step tasks
 - Retry with adjustments after failures
 - Batch independent tools when efficient
 - Test/lint after code changes

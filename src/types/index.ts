@@ -246,6 +246,7 @@ export interface ToolCallState {
     newContent: string;
     filePath: string;
     operationType: string;
+    editsCount?: number;
   };
 }
 

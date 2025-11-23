@@ -193,7 +193,8 @@ export class EditTool extends BaseTool {
 
         return { oldContent: content, newContent: modifiedContent };
       },
-      'edit'
+      'edit',
+      edits.length
     );
   }
 

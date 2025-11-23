@@ -1007,8 +1007,11 @@ export class Agent {
         }
       }
 
+      logger.debug('[AGENT]', this.instanceId, 'sendMessage returning finalResponse. Type:', typeof finalResponse, 'Length:', finalResponse?.length);
+      logger.debug('[AGENT]', this.instanceId, 'finalResponse preview:', finalResponse?.substring(0, 100));
       return finalResponse;
     } catch (error) {
+      logger.debug('[AGENT]', this.instanceId, 'sendMessage caught exception:', error instanceof Error ? error.message : String(error));
       // Mark delegation as failed for parent activity monitoring
       delegationSucceeded = false;
 

@@ -344,6 +344,7 @@ export const useActivitySubscriptions = (
         newContent: event.data?.newContent || '',
         filePath: event.data?.filePath || '',
         operationType: event.data?.operationType || 'edit',
+        editsCount: event.data?.editsCount,
       },
     });
   });
