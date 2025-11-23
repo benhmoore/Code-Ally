@@ -423,6 +423,13 @@ export class EditTool extends BaseTool {
       // Include updated file content if requested
       if (showUpdatedContext) {
         response.updated_content = modifiedContent;
+
+        // Track updated content as read (like WriteTool does)
+        // This allows immediate follow-up edits without requiring a separate Read
+        if (readStateManager) {
+          const lines = modifiedContent.split('\n');
+          readStateManager.trackRead(absolutePath, 1, lines.length);
+        }
       }
 
       // Step 11: Check file for syntax/parse errors after modification
