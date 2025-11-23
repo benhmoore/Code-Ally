@@ -150,6 +150,7 @@ export class PlanTool extends BaseTool implements InjectableTool {
 Implementation/refactoring with multiple steps (>3 steps), needs structured approach.
 Creates ordered task list for systematic execution.
 CRITICAL: Agent CANNOT see current conversation - include ALL context in requirements (goals, constraints, files involved).
+Agent has NO internet access - only local codebase research.
 Skip for: Quick fixes, continuing existing plans, simple changes.`;
 
   private activeDelegations: Map<string, any> = new Map();

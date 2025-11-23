@@ -60,8 +60,8 @@ export const TIMEOUT_LIMITS = {
   /** Graceful shutdown delay between SIGTERM and SIGKILL (500ms) */
   GRACEFUL_SHUTDOWN_DELAY: 500,
 
-  /** Idle timeout for detecting interactive commands waiting for input (10 seconds) */
-  IDLE_DETECTION_TIMEOUT: 10000,
+  /** Idle timeout for detecting interactive commands waiting for input (25 seconds) */
+  IDLE_DETECTION_TIMEOUT: 25000,
 
   /** Interval for checking idle status (1 second) */
   IDLE_CHECK_INTERVAL: 1000,

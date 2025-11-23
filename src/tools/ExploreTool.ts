@@ -165,6 +165,7 @@ Unknown scope/location: Don't know where to start or how much code is involved.
 Multi-file synthesis: Understanding patterns, relationships, or architecture across codebase.
 Preserves your context - investigation happens in separate agent context.
 CRITICAL: Agent CANNOT see current conversation - include ALL context in task_prompt (what to find, where to look, why).
+Agent has NO internet access - only local codebase exploration.
 NOT for: Known file paths, single-file questions, simple lookups.
 
 **Output format:**
