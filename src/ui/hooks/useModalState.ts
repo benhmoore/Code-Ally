@@ -20,6 +20,7 @@ import { ModelOption } from '../components/ModelSelector.js';
 import { PermissionRequest } from '../components/PermissionPrompt.js';
 import type { SessionInfo, Message, PromptInfo } from '@shared/index.js';
 import type { FileChangeStats } from '../components/RewindOptionsSelector.js';
+import type { UndoPreview } from '@services/PatchManager.js';
 
 /**
  * Permission request with ID
@@ -77,6 +78,7 @@ export interface RewindOptionsRequest {
   selectedIndex: number;
   targetMessage: Message;
   fileChanges: FileChangeStats;
+  previewData?: UndoPreview[];
 }
 
 /**

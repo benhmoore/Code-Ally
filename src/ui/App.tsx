@@ -887,6 +887,7 @@ const AppContentComponent: React.FC<{
           <RewindOptionsSelector
             targetMessage={modal.rewindOptionsRequest.targetMessage}
             fileChanges={modal.rewindOptionsRequest.fileChanges}
+            previewData={modal.rewindOptionsRequest.previewData}
             visible={true}
             onConfirm={choice => {
               // Handle cancel choice
@@ -970,24 +971,29 @@ const AppContentComponent: React.FC<{
 
                       const calculateFileChanges = async () => {
                         if (!patchManager || !targetMessage.timestamp) {
-                          return { fileCount: 0, files: [] };
+                          return { fileCount: 0, files: [], previewData: undefined };
                         }
 
                         const patchesSince = await patchManager.getPatchesSinceTimestamp(targetMessage.timestamp);
                         const uniqueFiles = new Set<string>();
                         patchesSince.forEach(p => uniqueFiles.add(p.file_path));
 
+                        // Fetch preview data for diff stats
+                        const previewData = await patchManager.previewUndoSinceTimestamp(targetMessage.timestamp);
+
                         return {
                           fileCount: uniqueFiles.size,
                           files: Array.from(uniqueFiles).map(path => ({ path })),
+                          previewData: previewData || undefined,
                         };
                       };
 
-                      calculateFileChanges().then(fileChanges => {
+                      calculateFileChanges().then(result => {
                         modal.setRewindOptionsRequest({
                           selectedIndex,
                           targetMessage,
-                          fileChanges,
+                          fileChanges: { fileCount: result.fileCount, files: result.files },
+                          previewData: result.previewData,
                         });
                       });
                     }

@@ -706,9 +706,33 @@ export const useInputHandlers = (
         // Add assistant response for error messages only
         // Normal responses are added via ASSISTANT_MESSAGE_COMPLETE event for proper interleaving
         if (isError) {
+          let messageContent: string = response;
+
+          // For interruptions, check if there are file changes and provide helpful guidance
+          if (response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION) {
+            const registry = ServiceRegistry.getInstance();
+            const patchManager = registry.get('patch_manager');
+
+            if (patchManager) {
+              // Get the last user message timestamp
+              const messages = agent.getMessages();
+              const userMessages = messages.filter(m => m.role === 'user');
+              const lastUserMessage = userMessages[userMessages.length - 1];
+
+              if (lastUserMessage?.timestamp) {
+                // Check if there are any patches since the last user message
+                const patches = await (patchManager as any).getPatchesSinceTimestamp(lastUserMessage.timestamp);
+
+                if (patches && patches.length > 0) {
+                  messageContent = 'Interrupted. Tell Ally what to do instead. Use /undo to revert a change or press escape twice to rewind the conversation.';
+                }
+              }
+            }
+          }
+
           actions.addMessage({
             role: 'assistant',
-            content: response,
+            content: messageContent,
             metadata: { isError: true },
           });
         }

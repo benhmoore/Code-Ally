@@ -360,6 +360,12 @@ export const BUFFER_SIZES = {
   /** Default number of debug history items to show (5 items) */
   DEBUG_HISTORY_DEFAULT: 5,
 
+  /** Maximum number of log entries to store in memory (2500 entries) */
+  MAX_LOG_BUFFER_SIZE: 2500,
+
+  /** Maximum length for a single log message (10KB) */
+  MAX_LOG_MESSAGE_LENGTH: 10 * 1024,
+
   /** Maximum completion results (20 items) */
   MAX_COMPLETION_RESULTS: 20,
 

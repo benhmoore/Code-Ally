@@ -16,6 +16,8 @@ import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { createDivider } from '../utils/uiHelpers.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { formatDiffStats, truncatePath } from '../utils/formatters.js';
+import { formatRelativeTime } from '../utils/timeUtils.js';
 
 export interface UndoFileListRequest {
   /** Request ID for tracking */
@@ -32,76 +34,6 @@ export interface UndoFileListProps {
   /** Whether the prompt is visible */
   visible?: boolean;
 }
-
-/**
- * Format diff stats for display
- */
-const formatDiffStats = (stats: { additions: number; deletions: number }): string => {
-  const parts: string[] = [];
-  if (stats.additions > 0) {
-    parts.push(`+${stats.additions}`);
-  }
-  if (stats.deletions > 0) {
-    parts.push(`-${stats.deletions}`);
-  }
-  return parts.length > 0 ? `(${parts.join(', ')})` : '(no changes)';
-};
-
-/**
- * Format timestamp for display
- */
-const formatTimestamp = (timestamp: string): string => {
-  try {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-
-    return date.toLocaleDateString();
-  } catch {
-    return timestamp;
-  }
-};
-
-/**
- * Truncate file path to fit display width
- */
-const truncatePath = (path: string, maxLength: number = 60): string => {
-  if (path.length <= maxLength) return path;
-
-  const parts = path.split('/');
-  if (parts.length <= 2) return path;
-
-  // Keep first and last parts, truncate middle
-  const first = parts[0] || '';
-  const last = parts[parts.length - 1] || '';
-  const available = maxLength - first.length - last.length - 6; // 6 for "/...//"
-
-  if (available <= 0) {
-    return `${first}/.../${last}`;
-  }
-
-  // Try to fit some middle parts
-  let middle = '';
-  for (let i = 1; i < parts.length - 1; i++) {
-    const part = parts[i] || '';
-    if (middle.length + part.length + 1 <= available) {
-      middle += `/${part}`;
-    } else {
-      middle = '/...';
-      break;
-    }
-  }
-
-  return `${first}${middle}/${last}`;
-};
 
 /**
  * UndoFileList Component
@@ -144,7 +76,7 @@ export const UndoFileList: React.FC<UndoFileListProps> = ({
           {fileList.map((fileEntry, index) => {
             const isSelected = index === selectedIndex;
             const diffStats = formatDiffStats(fileEntry.stats);
-            const timestamp = formatTimestamp(fileEntry.timestamp);
+            const timestamp = formatRelativeTime(fileEntry.timestamp);
             const filePath = truncatePath(fileEntry.file_path);
 
             return (

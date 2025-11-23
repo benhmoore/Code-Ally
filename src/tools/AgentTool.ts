@@ -84,7 +84,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
             },
             agent_type: {
               type: 'string',
-              description: "Agent type to use (e.g., 'plan', 'explore', 'refactor-expert'). Defaults to 'task'.",
+              description: "Agent type to use (e.g., 'task'). Defaults to 'task'.",
             },
             thoroughness: {
               type: 'string',

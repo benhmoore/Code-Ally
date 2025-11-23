@@ -21,6 +21,11 @@ import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { createDivider } from '../utils/uiHelpers.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
 import { UI_COLORS } from '../constants/colors.js';
+import type { UndoPreview } from '@services/PatchManager.js';
+import { calculateDiffStats } from '@utils/diffUtils.js';
+import { createTwoFilesPatch } from 'diff';
+import { formatDiffStats, truncatePath } from '../utils/formatters.js';
+import { formatRelativeTime } from '../utils/timeUtils.js';
 
 /**
  * File change statistics
@@ -40,6 +45,8 @@ export interface RewindOptionsSelectorProps {
   targetMessage: Message;
   /** File changes that will be restored */
   fileChanges: FileChangeStats;
+  /** Preview data with diffs (optional) */
+  previewData?: UndoPreview[];
   /** Callback when user confirms selection */
   onConfirm: (choice: RewindChoice) => void;
   /** Whether the prompt is visible */
@@ -61,6 +68,7 @@ function truncateContent(content: string, maxLength: number = 60): string {
 export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
   targetMessage,
   fileChanges,
+  previewData,
   onConfirm,
   visible = true,
 }) => {
@@ -133,11 +141,33 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
   const divider = createDivider(terminalWidth);
 
   const messagePreview = truncateContent(targetMessage.content);
-  const fileList = fileChanges.files.slice(0, 3).map(f => {
-    const filename = f.path.split('/').pop() || f.path;
-    return filename;
-  });
-  const hasMoreFiles = fileChanges.fileCount > 3;
+
+  // Prepare file display data from preview data if available
+  const fileDisplays = React.useMemo(() => {
+    if (previewData && previewData.length > 0) {
+      return previewData.map(preview => {
+        const diff = createTwoFilesPatch(
+          preview.file_path,
+          preview.file_path,
+          preview.current_content,
+          preview.predicted_content,
+          '',
+          ''
+        );
+        const stats = calculateDiffStats(diff);
+        return {
+          path: preview.file_path,
+          operation_type: preview.operation_type,
+          stats,
+          timestamp: preview.timestamp,
+        };
+      });
+    }
+    return null;
+  }, [previewData]);
+
+  const displayLimit = 5;
+  const hasMoreFiles = fileChanges.fileCount > displayLimit;
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -161,18 +191,53 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
         </Box>
       </Box>
 
-      {/* File changes preview */}
+      {/* File changes preview with diff stats */}
       {fileChanges.fileCount > 0 && (
         <Box marginBottom={1} flexDirection="column">
-          {fileList.map((filename, index) => (
-            <Box key={index} marginLeft={2}>
-              <Text dimColor>• {filename}</Text>
-            </Box>
-          ))}
-          {hasMoreFiles && (
-            <Box marginLeft={2}>
-              <Text dimColor>• ... and {fileChanges.fileCount - 3} more</Text>
-            </Box>
+          <Text dimColor>Files to restore ({fileChanges.fileCount}):</Text>
+          {fileDisplays ? (
+            <>
+              {fileDisplays.slice(0, displayLimit).map((file, index) => {
+                const filePath = truncatePath(file.path, 50);
+                const diffStats = formatDiffStats(file.stats);
+                const timestamp = formatRelativeTime(file.timestamp);
+
+                return (
+                  <Box key={index} flexDirection="column" marginLeft={2} marginBottom={index < Math.min(displayLimit, fileDisplays.length) - 1 ? 0 : 0}>
+                    <Box>
+                      <Text>▸ {filePath}</Text>
+                    </Box>
+                    <Box marginLeft={2}>
+                      <Text dimColor>{file.operation_type}</Text>
+                      <Text dimColor> </Text>
+                      <Text color={file.stats.changes > 0 ? 'cyan' : 'gray'}>
+                        {diffStats}
+                      </Text>
+                      <Text dimColor> • </Text>
+                      <Text dimColor>{timestamp}</Text>
+                    </Box>
+                  </Box>
+                );
+              })}
+              {hasMoreFiles && (
+                <Box marginLeft={2}>
+                  <Text dimColor>▸ ... and {fileChanges.fileCount - displayLimit} more</Text>
+                </Box>
+              )}
+            </>
+          ) : (
+            <>
+              {fileChanges.files.slice(0, displayLimit).map((file, index) => (
+                <Box key={index} marginLeft={2}>
+                  <Text dimColor>▸ {file.path.split('/').pop() || file.path}</Text>
+                </Box>
+              ))}
+              {hasMoreFiles && (
+                <Box marginLeft={2}>
+                  <Text dimColor>▸ ... and {fileChanges.fileCount - displayLimit} more</Text>
+                </Box>
+              )}
+            </>
           )}
         </Box>
       )}
