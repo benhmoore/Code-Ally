@@ -35,6 +35,12 @@ export class ActivityStream {
    * - Centralized error handling
    */
   emit(event: ActivityEvent): void {
+    // Debug logging for ASSISTANT_MESSAGE_COMPLETE events
+    if (event.type === ActivityEventType.ASSISTANT_MESSAGE_COMPLETE) {
+      logger.debug('[ACTIVITY_STREAM]', 'emit() called for', event.type);
+      logger.debug('[ACTIVITY_STREAM]', 'Parent ID:', this.parentId || 'none');
+    }
+
     // Capture references to avoid race conditions
     const manager = this.eventSubscriptionManager;
     const parent = this.parentId;
@@ -48,6 +54,12 @@ export class ActivityStream {
     // This reduces iteration overhead and Map lookups from 2 to 1
     const typeListeners = this.listeners.get(event.type);
     const wildcardListeners = this.listeners.get('*');
+
+    // Debug logging for ASSISTANT_MESSAGE_COMPLETE events
+    if (event.type === ActivityEventType.ASSISTANT_MESSAGE_COMPLETE) {
+      logger.debug('[ACTIVITY_STREAM]', 'Type listeners:', typeListeners?.size || 0);
+      logger.debug('[ACTIVITY_STREAM]', 'Wildcard listeners:', wildcardListeners?.size || 0);
+    }
 
     // Call type-specific listeners first to maintain semantic order
     if (typeListeners) {

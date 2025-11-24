@@ -1087,6 +1087,7 @@ async function main() {
       activityStream,
       {
         config,
+        agentType: 'ally', // Main Ally agent
       },
       configManager, // For configurable token limits
       permissionManager

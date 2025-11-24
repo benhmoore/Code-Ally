@@ -51,6 +51,8 @@ export interface ResponseContext {
   parentCallId?: string;
   /** Base agent prompt (for determining agent type in events) */
   baseAgentPrompt?: string;
+  /** Agent name identifier (e.g., 'ally', 'explore', 'task', 'talk-back-agent') - from agent definition name field */
+  agentName?: string;
   /** Function to generate unique IDs */
   generateId: () => string;
   /** Callback to save session after state changes */
@@ -182,6 +184,9 @@ export class ResponseProcessor {
           })),
           thinking: response.thinking,
           timestamp: Date.now(),
+          metadata: {
+            agentName: context.agentName,
+          },
         };
         this.conversationManager.addMessage(assistantMessage);
 
@@ -234,6 +239,9 @@ export class ResponseProcessor {
         })),
         thinking: response.thinking,
         timestamp: Date.now(),
+        metadata: {
+          agentName: context.agentName,
+        },
       };
       this.conversationManager.addMessage(assistantMessage);
 
@@ -322,6 +330,9 @@ export class ResponseProcessor {
         // No tool_calls since toolCalls.length === 0
         thinking: response.thinking,
         timestamp: Date.now(),
+        metadata: {
+          agentName: context.agentName,
+        },
       };
       this.conversationManager.addMessage(assistantMessage);
 
@@ -431,13 +442,17 @@ export class ResponseProcessor {
       tool_calls: toolCallsForMessage,
       thinking: response.thinking,
       timestamp: Date.now(),
-      metadata: Object.keys(tool_visibility).length > 0 ? { tool_visibility } : undefined,
+      metadata: {
+        ...(Object.keys(tool_visibility).length > 0 ? { tool_visibility } : {}),
+        agentName: context.agentName,
+      },
     };
     this.conversationManager.addMessage(assistantMessage);
 
     // Emit event if there's text content to display in the UI
     // This allows the UI to interleave text blocks with tool calls chronologically
     if (assistantMessage.content && assistantMessage.content.trim()) {
+      logger.debug('[RESPONSE_PROCESSOR]', 'Emitting ASSISTANT_MESSAGE_COMPLETE', assistantMessage.content.length, 'chars, parentId:', context.parentCallId || 'none');
       this.emitEvent({
         id: context.generateId(),
         type: ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
@@ -448,6 +463,8 @@ export class ResponseProcessor {
           content: assistantMessage.content,
         },
       });
+    } else {
+      logger.debug('[RESPONSE_PROCESSOR]', 'Skipping ASSISTANT_MESSAGE_COMPLETE emit - content:', !!assistantMessage.content, 'trimmed:', !!assistantMessage.content?.trim());
     }
 
     // Auto-save after assistant message with tool calls
@@ -756,11 +773,15 @@ export class ResponseProcessor {
         role: 'assistant',
         content: fallbackContent,
         timestamp: Date.now(),
+        metadata: {
+          agentName: context.agentName,
+        },
       };
       this.conversationManager.addMessage(assistantMessage);
 
       // Emit message complete event for UI to display text content
       if (assistantMessage.content && assistantMessage.content.trim()) {
+        logger.debug('[RESPONSE_PROCESSOR]', 'Emitting ASSISTANT_MESSAGE_COMPLETE [text-only]', assistantMessage.content.length, 'chars, parentId:', context.parentCallId || 'none');
         this.emitEvent({
           id: context.generateId(),
           type: ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
@@ -771,6 +792,8 @@ export class ResponseProcessor {
             content: assistantMessage.content,
           },
         });
+      } else {
+        logger.debug('[RESPONSE_PROCESSOR]', 'Skipping ASSISTANT_MESSAGE_COMPLETE emit [text-only] - content:', !!assistantMessage.content, 'trimmed:', !!assistantMessage.content?.trim());
       }
 
       // Clean up ephemeral messages BEFORE auto-save
@@ -798,12 +821,16 @@ export class ResponseProcessor {
       role: 'assistant',
       content: content,
       timestamp: Date.now(),
+      metadata: {
+        agentName: context.agentName,
+      },
     };
     this.conversationManager.addMessage(assistantMessage);
 
     // Emit message complete event for UI to display text content
     // This allows the UI to interleave text blocks with tool calls chronologically
     if (assistantMessage.content && assistantMessage.content.trim()) {
+      logger.debug('[RESPONSE_PROCESSOR]', 'Emitting ASSISTANT_MESSAGE_COMPLETE [normal]', assistantMessage.content.length, 'chars, parentId:', context.parentCallId || 'none');
       this.emitEvent({
         id: context.generateId(),
         type: ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
@@ -814,6 +841,8 @@ export class ResponseProcessor {
           content: assistantMessage.content,
         },
       });
+    } else {
+      logger.debug('[RESPONSE_PROCESSOR]', 'Skipping ASSISTANT_MESSAGE_COMPLETE emit [normal] - content:', !!assistantMessage.content, 'trimmed:', !!assistantMessage.content?.trim());
     }
 
     // Clean up ephemeral messages BEFORE auto-save
@@ -843,6 +872,10 @@ export class ResponseProcessor {
    * Emit an activity event
    */
   private emitEvent(event: any): void {
+    if (event.type === 'assistant_message_complete') {
+      logger.debug('[RESPONSE_PROCESSOR]', 'Calling activityStream.emit for', event.type);
+      logger.debug('[RESPONSE_PROCESSOR]', 'ActivityStream instance:', this.activityStream?.constructor?.name || 'unknown');
+    }
     this.activityStream.emit(event);
   }
 

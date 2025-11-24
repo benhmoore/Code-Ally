@@ -35,6 +35,7 @@ import { ResumeCommand } from './commands/ResumeCommand.js';
 import { PromptCommand } from './commands/PromptCommand.js';
 import { ProfileCommand } from './commands/ProfileCommand.js';
 import { TaskCommand } from './commands/TaskCommand.js';
+import { SwitchCommand } from './commands/SwitchCommand.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -67,6 +68,7 @@ export class CommandHandler {
     this.registerCommand(new ProjectCommand());
     this.registerCommand(new PromptCommand());
     this.registerCommand(new ResumeCommand());
+    this.registerCommand(new SwitchCommand());
     this.registerCommand(new TaskCommand());
     this.registerCommand(new TodoCommand());
     this.registerCommand(new UndoCommand());
@@ -210,6 +212,7 @@ Agent Commands:
   /agent active            - Show active pooled agents
   /agent stats             - Show pool statistics
   /agent clear [id]        - Clear specific agent or all from pool
+  /switch <agent>          - Switch to a different agent
 
 Focus Commands:
   /focus <path>            - Set directory focus

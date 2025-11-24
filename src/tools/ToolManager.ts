@@ -177,9 +177,10 @@ export class ToolManager {
    *
    * @param excludeTools - Optional list of tool names to exclude
    * @param currentAgentName - Optional current agent name for visible_to filtering
+   * @param allowedTools - Optional list of tool names to ALLOW (if specified, ONLY these tools are included)
    * @returns List of function definitions for LLM function calling
    */
-  getFunctionDefinitions(excludeTools?: string[], currentAgentName?: string): FunctionDefinition[] {
+  getFunctionDefinitions(excludeTools?: string[], currentAgentName?: string, allowedTools?: string[]): FunctionDefinition[] {
     // Get active plugins from PluginActivationManager
     let activePlugins: Set<string> | null = null;
     try {
@@ -192,9 +193,9 @@ export class ToolManager {
       activePlugins = null;
     }
 
-    // Generate cache key based on plugin activation state and agent name
+    // Generate cache key based on plugin activation state, agent name, and allowed tools
     // This ensures cached results match the current activation state and agent context
-    const cacheKey = this.generateCacheKey(activePlugins, excludeTools, currentAgentName);
+    const cacheKey = this.generateCacheKey(activePlugins, excludeTools, currentAgentName, allowedTools);
 
     // Check cache with activation-aware key
     if (this.functionDefinitionsCache.has(cacheKey)) {
@@ -203,12 +204,18 @@ export class ToolManager {
 
     const functionDefs: FunctionDefinition[] = [];
     const excludeSet = new Set(excludeTools || []);
+    const allowedSet = allowedTools ? new Set(allowedTools) : null;
     const visibleTools: string[] = [];
     const filteredByAgent: string[] = [];
 
     for (const tool of this.tools.values()) {
       // Skip excluded tools
       if (excludeSet.has(tool.name)) {
+        continue;
+      }
+
+      // If allowedTools is specified, ONLY include tools in that list
+      if (allowedSet && !allowedSet.has(tool.name)) {
         continue;
       }
 
@@ -262,7 +269,7 @@ export class ToolManager {
    * @param currentAgentName - Optional current agent name for visible_to filtering
    * @returns Cache key string
    */
-  private generateCacheKey(activePlugins: Set<string> | null, excludeTools?: string[], currentAgentName?: string): string {
+  private generateCacheKey(activePlugins: Set<string> | null, excludeTools?: string[], currentAgentName?: string, allowedTools?: string[]): string {
     const parts: string[] = [];
 
     // Include active plugins in key (sorted for consistency)
@@ -277,6 +284,11 @@ export class ToolManager {
     // Include exclusions in key if present
     if (excludeTools && excludeTools.length > 0) {
       parts.push(`exclude:${excludeTools.sort().join(',')}`);
+    }
+
+    // Include allowed tools in key if present
+    if (allowedTools && allowedTools.length > 0) {
+      parts.push(`allowed:${allowedTools.sort().join(',')}`);
     }
 
     // Include agent name in key if present

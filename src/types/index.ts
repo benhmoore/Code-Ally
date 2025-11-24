@@ -51,6 +51,8 @@ export interface MessageMetadata {
   tool_visibility?: Record<string, boolean>;
   /** Tool status for each tool call (keyed by tool call ID) */
   tool_status?: Record<string, 'success' | 'error'>;
+  /** Agent that generated this message (for displaying agent name prefix) */
+  agentName?: string;
   // Future: Add more presentation hints as needed
 }
 
@@ -177,6 +179,7 @@ export enum ActivityEventType {
   AGENT_SELECT_RESPONSE = 'agent_select_response',
   AGENT_USE_REQUEST = 'agent_use_request',
   AGENT_USE_COMPLETE = 'agent_use_complete',
+  AGENT_SWITCHED = 'agent_switched',
   CONTEXT_USAGE_UPDATE = 'context_usage_update',
   COMPACTION_START = 'compaction_start',
   COMPACTION_COMPLETE = 'compaction_complete',

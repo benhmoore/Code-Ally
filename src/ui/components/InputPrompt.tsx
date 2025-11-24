@@ -49,6 +49,10 @@ interface InputPromptProps {
   onPermissionNavigate?: (newIndex: number) => void;
   /** Callback to toggle auto-allow mode during permission prompts */
   onAutoAllowToggle?: () => void;
+  /** Callback to switch back to ally agent (Esc shortcut) */
+  onSwitchToAlly?: () => void;
+  /** Current active agent name (for Esc behavior) */
+  currentAgent?: string;
   /** Model selector data (if active) */
   modelSelectRequest?: {
     requestId: string;
@@ -135,6 +139,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   permissionSelectedIndex = 0,
   onPermissionNavigate,
   onAutoAllowToggle,
+  onSwitchToAlly,
+  currentAgent,
   modelSelectRequest,
   modelSelectedIndex = 0,
   onModelNavigate,
@@ -1301,7 +1307,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // ===== Escape - Dismiss Completions, Interrupt Agent, or Double-Escape for Rewind =====
+      // ===== Escape - Dismiss Completions, Interrupt Agent, Return to Ally, or Double-Escape for Rewind =====
       if (key.escape) {
         // Prevent infinite loop from re-entry during state updates
         if (processingEscapeRef.current) return;
@@ -1347,7 +1353,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Third priority: Double-escape to open rewind (only when no modal active)
+        // Third priority: Return to ally if on a different agent
+        if (currentAgent && currentAgent !== 'ally' && onSwitchToAlly) {
+          logger.debug('[INPUT] Escape - returning to ally agent');
+          onSwitchToAlly();
+          return;
+        }
+
+        // Fourth priority: Double-escape to open rewind (only when no modal active)
         if (!modelSelectRequest && !sessionSelectRequest && !rewindRequest && !permissionRequest && activityStream) {
           const newCount = escCount + 1;
           setEscCount(newCount);

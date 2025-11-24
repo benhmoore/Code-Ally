@@ -11,6 +11,8 @@ interface MessageDisplayProps {
   message: Message;
   /** Configuration (for show_thinking_in_chat) */
   config?: any;
+  /** Current agent name (to prefix non-ally responses) */
+  currentAgent?: string;
 }
 
 /**
@@ -28,7 +30,18 @@ interface MessageDisplayProps {
  * - Memoized to prevent re-renders (messages never change)
  * - Critical for smooth performance with long conversations
  */
-const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, config }) => {
+/**
+ * Format agent name for display
+ * e.g., "talk-back-agent" -> "Talk Back Agent"
+ */
+const formatAgentName = (agentName: string): string => {
+  return agentName
+    .split('-')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
+
+const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, config, currentAgent }) => {
   const { role, content, name } = message;
   const showThinking = config?.show_thinking_in_chat ?? false;
 
@@ -58,6 +71,13 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
     // Check if this is an error message that should be styled in red
     const isError = message.metadata?.isError === true;
 
+    // Get agent name from metadata (persisted) or fallback to current agent prop (live)
+    const messageAgentName = message.metadata?.agentName || currentAgent;
+
+    // Show agent name prefix for non-ally agents
+    const showAgentPrefix = messageAgentName && messageAgentName !== 'ally';
+    const agentPrefix = showAgentPrefix ? `${formatAgentName(messageAgentName)} > ` : '';
+
     return (
       <Box flexDirection="column">
         {thinking && (
@@ -76,11 +96,20 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
         )}
         {safeContent && (
           isError ? (
-            <Text color={UI_COLORS.ERROR}>{safeContent}</Text>
+            <Text color={UI_COLORS.ERROR}>
+              {agentPrefix}{safeContent}
+            </Text>
           ) : isCommandResponse ? (
-            <Text color={UI_COLORS.PRIMARY}>{safeContent}</Text>
+            <Text color={UI_COLORS.PRIMARY}>
+              {agentPrefix}{safeContent}
+            </Text>
           ) : (
-            <MarkdownText content={safeContent} />
+            <>
+              {showAgentPrefix && (
+                <Text dimColor italic>{agentPrefix}</Text>
+              )}
+              <MarkdownText content={safeContent} />
+            </>
           )
         )}
         {/* Note: Tool calls are now displayed via ToolCallDisplay in ConversationView */}
@@ -139,7 +168,10 @@ export const MessageDisplay = React.memo(
   MessageDisplayComponent,
   (prevProps, nextProps) => {
     // Messages are immutable - if the reference is the same, content is identical
-    // This allows React to skip re-rendering entirely
-    return prevProps.message === nextProps.message;
+    // Also check if currentAgent changed (affects prefix display)
+    return (
+      prevProps.message === nextProps.message &&
+      prevProps.currentAgent === nextProps.currentAgent
+    );
   }
 );

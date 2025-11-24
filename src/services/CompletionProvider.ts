@@ -63,6 +63,7 @@ const SLASH_COMMANDS = [
   { name: '/resume', description: 'Resume a previous session' },
   { name: '/undo', description: 'Undo file operations' },
   { name: '/agent', description: 'Manage specialized agents' },
+  { name: '/switch', description: 'Switch to a different agent' },
   { name: '/focus', description: 'Set focus to a specific path' },
   { name: '/defocus', description: 'Clear current focus' },
   { name: '/focus-show', description: 'Show current focus' },
@@ -470,6 +471,11 @@ export class CompletionProvider {
       return await this.getPromptLibraryCompletions(context.currentWord);
     }
 
+    // Complete agent names for /switch (user typed "/switch ")
+    if (command === '/switch' && wordCount === 2) {
+      return await this.getSwitchAgentCompletions(context.currentWord);
+    }
+
     // Complete subcommands for /plugin (user typed "/plugin ")
     if (command === '/plugin' && wordCount === 2) {
       const prefix = subcommand || '';
@@ -526,6 +532,44 @@ export class CompletionProvider {
         description: 'Specialized agent',
         type: 'option' as const,
       }));
+  }
+
+  /**
+   * Get agent name completions for /switch command
+   * Includes special alias "ally" (main agent) plus all available agents
+   */
+  private async getSwitchAgentCompletions(prefix: string): Promise<Completion[]> {
+    const completions: Completion[] = [];
+
+    // Add special alias for main agent
+    if ('ally'.startsWith(prefix)) {
+      completions.push({
+        value: 'ally',
+        description: 'Main Ally agent',
+        type: 'option' as const,
+      });
+    }
+
+    // Add all available agents
+    if (this.agentManager) {
+      try {
+        const agents = await this.agentManager.listAgents();
+
+        for (const agent of agents) {
+          if (agent.name.startsWith(prefix)) {
+            completions.push({
+              value: agent.name,
+              description: agent.description || 'Specialized agent',
+              type: 'option' as const,
+            });
+          }
+        }
+      } catch (error) {
+        logger.debug(`Unable to get agent list for /switch completion: ${formatError(error)}`);
+      }
+    }
+
+    return completions;
   }
 
   /**

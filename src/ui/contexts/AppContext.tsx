@@ -68,6 +68,9 @@ export interface AppState {
 
   /** Counter to force Static component remount (for rewind/compaction) */
   staticRemountKey: number;
+
+  /** Current active agent type (e.g., 'ally', 'task', 'explore', 'plan', custom agent name) */
+  currentAgent: string;
 }
 
 /**
@@ -121,6 +124,9 @@ export interface AppActions {
 
   /** Atomically reset conversation view with new messages (for resume/compact/rewind) */
   resetConversationView: (messages: Message[]) => void;
+
+  /** Set the current active agent */
+  setCurrentAgent: (agent: string) => void;
 }
 
 /**
@@ -171,6 +177,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [compactionNotices, setCompactionNotices] = useState<CompactionNotice[]>([]);
   const [rewindNotices, setRewindNotices] = useState<RewindNotice[]>([]);
   const [staticRemountKey, setStaticRemountKey] = useState<number>(0);
+  const [currentAgent, setCurrentAgent] = useState<string>('ally');
 
   // Batching mechanism for tool call updates
   const pendingUpdatesRef = useRef<Map<string, Partial<ToolCallState>>>(new Map());
@@ -361,7 +368,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     compactionNotices,
     rewindNotices,
     staticRemountKey,
-  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, staticRemountKey]);
+    currentAgent,
+  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, staticRemountKey, currentAgent]);
 
   // Memoize actions object to prevent unnecessary context updates
   const actions = React.useMemo(() => ({
@@ -381,7 +389,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     clearRewindNotices,
     forceStaticRemount,
     resetConversationView,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView]);
+    setCurrentAgent,
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView, setCurrentAgent]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

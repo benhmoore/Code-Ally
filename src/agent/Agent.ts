@@ -108,6 +108,8 @@ export interface AgentConfig {
   allowTodoManagement?: boolean;
   /** Whether this agent can access exploration-only tools (default: true for specialized agents only) */
   allowExplorationTools?: boolean;
+  /** Explicit list of allowed tools for this agent (if specified, ONLY these tools are available) */
+  allowedTools?: string[];
   /** Enable verbose logging */
   verbose?: boolean;
   /** Base agent prompt for specialized agents (dynamic regeneration in sendMessage) */
@@ -466,6 +468,13 @@ export class Agent {
   }
 
   /**
+   * Get the unique instance identifier for this agent
+   */
+  public getInstanceId(): string {
+    return this.instanceId;
+  }
+
+  /**
    * Get the model client (used by CommandHandler for /compact)
    */
   getModelClient(): ModelClient {
@@ -527,6 +536,27 @@ export class Agent {
    */
   getConversationManager(): ConversationManager {
     return this.conversationManager;
+  }
+
+  /**
+   * Get the conversation history (used by AgentSwitcher for history transfer)
+   */
+  public getConversationHistory(): Message[] {
+    return this.conversationManager.getMessagesCopy();
+  }
+
+  /**
+   * Load messages into the conversation (used by AgentSwitcher for history transfer)
+   * Clears existing messages first, then loads the provided messages
+   */
+  public async loadMessages(messages: Message[]): Promise<void> {
+    // Clear existing messages
+    this.conversationManager.clearMessages();
+
+    // Load provided messages
+    this.conversationManager.addMessages(messages);
+
+    logger.debug('[AGENT]', this.instanceId, 'Loaded', messages.length, 'messages');
   }
 
 
@@ -1247,7 +1277,8 @@ export class Agent {
 
     const functions = this.toolManager.getFunctionDefinitions(
       excludeTools.length > 0 ? excludeTools : undefined,
-      this.agentName  // Pass agent name for visible_to filtering
+      this.agentName,  // Pass agent name for visible_to filtering
+      this.config.allowedTools  // Pass allowed tools list for restriction
     );
 
     // Generate or regenerate system prompt with current context (todos, etc.) before each LLM call
@@ -1255,12 +1286,13 @@ export class Agent {
     // This ensures resumed sessions and new sessions both have proper system prompts
     let updatedSystemPrompt: string;
 
-    if (this.config.isSpecializedAgent && this.config.baseAgentPrompt && this.config.taskPrompt) {
-      // Generate/regenerate specialized agent prompt with current context
+    if (this.config.baseAgentPrompt) {
+      // Generate/regenerate custom agent prompt with current context
+      // This works for both specialized agents (sub-agents) and root-level custom agents
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
       updatedSystemPrompt = await getAgentSystemPrompt(
         this.config.baseAgentPrompt,
-        this.config.taskPrompt,
+        this.config.taskPrompt || '', // Use empty string if no task prompt (for root-level custom agents)
         this.tokenManager,
         this.toolResultManager,
         this.config.config.reasoning_effort,
@@ -1268,7 +1300,7 @@ export class Agent {
         executionContext.thoroughness,
         this.config.agentType
       );
-      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Specialized agent prompt regenerated with current context');
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Custom agent prompt regenerated with current context');
     } else {
       // Generate/regenerate main agent prompt with current context
       const { getMainSystemPrompt } = await import('../prompts/systemMessages.js');
@@ -1388,7 +1420,10 @@ export class Agent {
             })),
             thinking: response.thinking,
             timestamp: Date.now(),
-            metadata: { partial: true },
+            metadata: {
+              partial: true,
+              agentName: this.agentName,
+            },
           });
         }
 
@@ -1538,6 +1573,7 @@ export class Agent {
       isSpecializedAgent: this.config.isSpecializedAgent || false,
       parentCallId: executionContext.parentCallId, // Use from execution context, not config
       baseAgentPrompt: this.config.baseAgentPrompt,
+      agentName: this.agentName, // Agent name identifier from config.agentType
       generateId: () => this.generateId(),
       autoSaveSession: () => this.autoSaveSession(),
       getLLMResponse: () => this.getLLMResponse(executionContext),

@@ -387,9 +387,11 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       const agentManager = this.getAgentManager();
 
       // Load agent data (from built-in or user directory)
-      // Pass current agent name for visibility filtering
-      logger.debug('[AGENT_TOOL] Loading agent:', agentType, 'caller:', currentAgentName || 'main');
-      let agentData = await agentManager.loadAgent(agentType, currentAgentName);
+      // Pass current agent name for visibility filtering, but treat 'ally' as undefined (main assistant)
+      // This ensures agents with visible_from_agents: [] can be accessed from main ally
+      const callerForVisibility = currentAgentName === 'ally' ? undefined : currentAgentName;
+      logger.debug('[AGENT_TOOL] Loading agent:', agentType, 'caller:', currentAgentName || 'main', '(visibility caller:', callerForVisibility || 'main', ')');
+      let agentData = await agentManager.loadAgent(agentType, callerForVisibility);
       logger.debug('[AGENT_TOOL] Agent data loaded:', agentData ? 'success' : 'null');
 
       if (!agentData) {
@@ -582,11 +584,13 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
 
     // Filter tools based on agent configuration and plugin context
     let filteredToolManager = toolManager;
+    let allowedTools: string[] | undefined = undefined;
     const allTools = toolManager.getAllTools();
 
-    if (agentData.tools !== undefined && agentData.tools.length > 0) {
-      // Agent explicitly specifies allowed tools
+    if (agentData.tools !== undefined) {
+      // Agent explicitly specifies allowed tools (including empty array = no tools)
       logger.debug('[AGENT_TOOL] Agent specifies allowed tools:', agentData.tools);
+      allowedTools = agentData.tools; // Store for config
       const allowedToolNames = new Set(agentData.tools);
       const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
       filteredToolManager = new ToolManager(filteredTools, this.activityStream);
@@ -597,12 +601,14 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       const coreTools = allTools.filter(tool => !tool.pluginName);
       const pluginTools = allTools.filter(tool => tool.pluginName === agentData._pluginName);
       const filteredTools = [...coreTools, ...pluginTools];
+      allowedTools = filteredTools.map(t => t.name); // Store for config
       filteredToolManager = new ToolManager(filteredTools, this.activityStream);
       logger.debug('[AGENT_TOOL] Plugin agent has access to', filteredTools.length, 'tools:',
         filteredTools.map(t => t.name).join(', '));
     } else {
       // User agent with no explicit tool list: provide all tools
       logger.debug('[AGENT_TOOL] User agent has access to all tools (unrestricted)');
+      allowedTools = undefined; // Explicitly undefined = all tools
     }
 
     // Filter out agent delegation tools if agent has can_see_agents: false
@@ -611,6 +617,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       const agentToolNames = new Set(['agent', 'explore', 'plan', 'agent-ask']);
       const toolsToUse = filteredToolManager.getAllTools();
       const toolsWithoutAgents = toolsToUse.filter(tool => !agentToolNames.has(tool.name));
+      allowedTools = toolsWithoutAgents.map(t => t.name); // Update allowed tools list
       filteredToolManager = new ToolManager(toolsWithoutAgents, this.activityStream);
       logger.debug('[AGENT_TOOL] Filtered to', toolsWithoutAgents.length, 'tools (removed agent delegation tools)');
     }
@@ -654,6 +661,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         requirements: agentData.requirements,
         agentDepth: newDepth,
         agentCallStack: newCallStack,
+        allowedTools: allowedTools, // Restrict tools based on agent definition
       };
 
       subAgent = new Agent(
@@ -694,6 +702,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         requirements: agentData.requirements,
         agentDepth: newDepth,
         agentCallStack: newCallStack,
+        allowedTools: allowedTools, // Restrict tools based on agent definition
       };
 
       // Acquire agent from pool

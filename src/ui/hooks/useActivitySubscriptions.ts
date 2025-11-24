@@ -280,6 +280,7 @@ export const useActivitySubscriptions = (
   // Assistant message complete (text blocks ready to display)
   useActivityEvent(ActivityEventType.ASSISTANT_MESSAGE_COMPLETE, (event) => {
     const content = event.data?.content || '';
+    console.log(`📬 [ACTIVITY_SUB] Received ASSISTANT_MESSAGE_COMPLETE event (length: ${content.length}, parentId: ${event.parentId || 'none'})`);
 
     // Clear streaming content since it's now finalized as a message
     streamingContentRef.current = '';
@@ -288,11 +289,16 @@ export const useActivitySubscriptions = (
     if (content && !event.parentId) {
       // Root agent message - add to message history for chronological display
       // Subagent messages are not added here as they're handled via tool output
+      console.log(`✉️  [ACTIVITY_SUB] Adding assistant message to UI (${content.length} chars)\n`);
       actions.addMessage({
         role: 'assistant',
         content: content,
         timestamp: event.timestamp || Date.now(),
       });
+    } else if (event.parentId) {
+      console.log(`⏭️  [ACTIVITY_SUB] Skipping subagent message (has parentId)\n`);
+    } else {
+      console.log(`⏭️  [ACTIVITY_SUB] Skipping empty message\n`);
     }
   });
 
@@ -1239,6 +1245,14 @@ export const useActivitySubscriptions = (
           content: `Error saving prompt: ${error instanceof Error ? error.message : 'Unknown error'}`,
         });
       }
+    }
+  });
+
+  // Agent switched event
+  useActivityEvent(ActivityEventType.AGENT_SWITCHED, (event) => {
+    const { agentName } = event.data || {};
+    if (agentName) {
+      actions.setCurrentAgent(agentName);
     }
   });
 

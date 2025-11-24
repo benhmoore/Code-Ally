@@ -59,6 +59,8 @@ interface ConversationViewProps {
   activePluginCount?: number;
   /** Total number of loaded plugins */
   totalPluginCount?: number;
+  /** Current agent name (to prefix non-ally responses) */
+  currentAgent?: string;
 }
 
 /**
@@ -216,6 +218,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   config,
   activePluginCount,
   totalPluginCount,
+  currentAgent,
 }) => {
   const terminalWidth = useContentWidth();
 
@@ -344,7 +347,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       if (item.type === 'message') {
         items.push(
           <Box key={`msg-${item.message.id || item.index}`} {...spacing}>
-            <MessageDisplay message={item.message} config={config} />
+            <MessageDisplay message={item.message} config={config} currentAgent={currentAgent} />
           </Box>
         );
       } else if (item.type === 'toolCall') {

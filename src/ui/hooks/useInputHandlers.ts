@@ -37,7 +37,6 @@ export interface InputHandlers {
 /**
  * Create input handler functions
  *
- * @param agent - The agent instance
  * @param commandHandler - The command handler instance
  * @param activityStream - ActivityStream to emit events
  * @param state - App context state
@@ -47,7 +46,6 @@ export interface InputHandlers {
  * @example
  * ```tsx
  * const { handleInput, handleInterjection } = useInputHandlers(
- *   agent,
  *   commandHandler,
  *   activityStream,
  *   state,
@@ -61,7 +59,6 @@ export interface InputHandlers {
  * ```
  */
 export const useInputHandlers = (
-  agent: Agent,
   commandHandler: CommandHandler | null,
   activityStream: ActivityStream,
   state: AppState,
@@ -71,12 +68,23 @@ export const useInputHandlers = (
    * Handle user interjection (submitting message mid-response)
    */
   const handleInterjection = useCallback(async (message: string) => {
-    if (!agent) return;
+    // Get current agent from ServiceRegistry (supports agent switching)
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const agent = serviceRegistry.get<Agent>('agent');
+
+    if (!agent) {
+      logger.error('[INTERJECTION] No agent available to handle interjection');
+      actions.addMessage({
+        role: 'assistant',
+        content: 'Error: Agent not available. Please try again or restart the application.',
+        metadata: { isError: true },
+      });
+      return;
+    }
 
     logger.debug('[APP] Handling interjection:', message);
 
-    // Get ServiceRegistry to access tools
-    const serviceRegistry = ServiceRegistry.getInstance();
+    // Get ToolManager from ServiceRegistry
     const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
 
     // Find currently active injectable tool (explore, plan, agent)
@@ -138,12 +146,28 @@ export const useInputHandlers = (
         targetAgent: targetToolName,
       },
     });
-  }, [agent, activityStream, actions]);
+  }, [activityStream, actions]);
 
   /**
    * Handle user input (messages, commands, bash shortcuts)
    */
   const handleInput = useCallback(async (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
+    // Get current agent from ServiceRegistry (supports agent switching)
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const agent = serviceRegistry.get<Agent>('agent');
+
+    if (!agent) {
+      logger.error('[INPUT_HANDLER] No agent available to handle input');
+      actions.addMessage({
+        role: 'assistant',
+        content: 'Error: Agent not available. Please try again or restart the application.',
+        metadata: { isError: true },
+      });
+      return;
+    }
+
+    logger.debug('[INPUT_HANDLER]', 'Handling input with agent:', agent.getInstanceId());
+
     const trimmed = input.trim();
 
     // Check for bash shortcuts (! prefix)
@@ -153,7 +177,6 @@ export const useInputHandlers = (
       if (bashCommand) {
         try {
           // Get ToolManager from ServiceRegistry
-          const serviceRegistry = ServiceRegistry.getInstance();
           const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
 
           if (!toolManager) {
@@ -347,7 +370,6 @@ export const useInputHandlers = (
 
         try {
           // Get ToolManager from ServiceRegistry
-          const serviceRegistry = ServiceRegistry.getInstance();
           const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
 
           if (!toolManager) {
@@ -524,7 +546,6 @@ export const useInputHandlers = (
 
         try {
           // Get ToolManager from ServiceRegistry
-          const serviceRegistry = ServiceRegistry.getInstance();
           const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
 
           if (!toolManager) {
@@ -683,7 +704,6 @@ export const useInputHandlers = (
       // Retry behavior:
       // - IdleMessageGenerator: Will naturally retry every 60s when idle (StatusIndicator)
       // - SessionTitleGenerator: Will retry when next new session is created (low priority)
-      const serviceRegistry = ServiceRegistry.getInstance();
       const services = [
         serviceRegistry.get('idle_message_generator'),
         (serviceRegistry.get('session_manager') as any)?.titleGenerator,
@@ -697,7 +717,9 @@ export const useInputHandlers = (
 
       // Send to agent for processing
       try {
+        logger.debug('[INPUT_HANDLER]', 'Sending message to agent:', agent.getInstanceId());
         const response = await agent.sendMessage(trimmed, undefined, base64Images);
+        logger.debug('[INPUT_HANDLER]', 'Received response (length:', response?.length || 0, ')');
 
         // Check if response is an error message that should be styled in red
         const isError = response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
@@ -711,8 +733,7 @@ export const useInputHandlers = (
 
           // For interruptions, check if there are file changes and provide helpful guidance
           if (response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION) {
-            const registry = ServiceRegistry.getInstance();
-            const patchManager = registry.get('patch_manager');
+            const patchManager = serviceRegistry.get('patch_manager');
 
             if (patchManager) {
               // Get the last user message timestamp
@@ -742,8 +763,7 @@ export const useInputHandlers = (
         }
 
         // Update TokenManager and context usage
-        const registry = ServiceRegistry.getInstance();
-        const tokenManager = registry.get('token_manager');
+        const tokenManager = serviceRegistry.get('token_manager');
         if (tokenManager) {
           // Recalculate tokens from agent's messages
           const agentMessages = agent.getMessages();
@@ -774,7 +794,7 @@ export const useInputHandlers = (
         actions.setIsThinking(false);
       }
     }
-  }, [agent, commandHandler, activityStream, state.messages, actions]);
+  }, [commandHandler, activityStream, state.messages, actions]);
 
   return {
     handleInput,

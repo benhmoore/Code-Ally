@@ -47,6 +47,8 @@ import { useInputHandlers } from './hooks/useInputHandlers.js';
 import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
 import { useContentWidth } from './hooks/useContentWidth.js';
 import { useBackgroundProcesses } from './hooks/useBackgroundProcesses.js';
+import { useAgentSwitch } from './hooks/useAgentSwitch.js';
+import { switchAgent } from '../services/AgentSwitcher.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
 
@@ -144,7 +146,35 @@ const AppContentComponent: React.FC<{
   const { isCancelling } = useActivitySubscriptions(state, actions, modal, agent, activityStream);
 
   // Get input handler functions
-  const { handleInput, handleInterjection } = useInputHandlers(agent, commandHandler, activityStream, state, actions);
+  const { handleInput, handleInterjection } = useInputHandlers(commandHandler, activityStream, state, actions);
+
+  // Handler for Esc shortcut to quickly return to ally
+  const handleSwitchToAlly = async () => {
+    // Only switch if not already on ally
+    if (state.currentAgent === 'ally') {
+      return;
+    }
+
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const newAgent = await switchAgent('ally', registry);
+
+      // Emit AGENT_SWITCHED event
+      activityStream.emit({
+        id: `agent_switch_${Date.now()}`,
+        type: ActivityEventType.AGENT_SWITCHED,
+        timestamp: Date.now(),
+        data: {
+          agentName: 'ally',
+          agentId: newAgent.getInstanceId(),
+        },
+      });
+
+      logger.debug('[APP]', 'Switched to ally via Esc shortcut');
+    } catch (error) {
+      logger.error('[APP]', 'Failed to switch to ally:', error);
+    }
+  };
 
   // Show setup wizard if needed
   useEffect(() => {
@@ -372,6 +402,7 @@ const AppContentComponent: React.FC<{
         config={effectiveConfig}
         activePluginCount={activePluginCount}
         totalPluginCount={totalPluginCount}
+        currentAgent={state.currentAgent}
       />
 
       {/* Config Viewer (non-modal - shown above input) */}
@@ -1158,6 +1189,8 @@ const AppContentComponent: React.FC<{
               permissionSelectedIndex={modal.permissionSelectedIndex}
               onPermissionNavigate={modal.setPermissionSelectedIndex}
               onAutoAllowToggle={() => modal.setAutoAllowMode(!modal.autoAllowMode)}
+              onSwitchToAlly={handleSwitchToAlly}
+              currentAgent={state.currentAgent}
               activityStream={activityStream}
               agent={agent}
               prefillText={modal.inputPrefillText}
@@ -1190,6 +1223,8 @@ const AppContentComponent: React.FC<{
             completionProvider={completionProvider || undefined}
             configViewerOpen={modal.configViewerOpen}
             onAutoAllowToggle={() => modal.setAutoAllowMode(!modal.autoAllowMode)}
+            onSwitchToAlly={handleSwitchToAlly}
+            currentAgent={state.currentAgent}
             autoAllowMode={modal.autoAllowMode}
             activityStream={activityStream}
             agent={agent}
@@ -1266,6 +1301,9 @@ const AppContentComponent: React.FC<{
                 ) : (
                   <Text dimColor> · Shift+Tab to auto-allow tools</Text>
                 )}
+                {state.currentAgent !== 'ally' && (
+                  <Text color={UI_COLORS.PRIMARY}> · Talking to {state.currentAgent} (esc to switch back)</Text>
+                )}
               </>
             )}
           </Box>
@@ -1324,6 +1362,9 @@ const AppContentComponent: React.FC<{
             ) : (
               <Text dimColor> · Shift+Tab to auto-allow tools</Text>
             )}
+            {state.currentAgent !== 'ally' && (
+              <Text color={UI_COLORS.PRIMARY}> · Talking to {state.currentAgent} (esc to switch back)</Text>
+            )}
           </>
         )}
       </Box>
@@ -1372,12 +1413,15 @@ export const App: React.FC<AppProps> = ({
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
+  // Track current agent (updates when agent is switched via useAgentSwitch hook)
+  const currentAgent = useAgentSwitch(agent, streamRef.current);
+
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
         <AppProvider initialConfig={config}>
           <AppContent
-            agent={agent}
+            agent={currentAgent}
             resumeSession={resumeSession}
             showSetupWizard={showSetupWizard}
             showModelSelector={showModelSelector}
@@ -1422,11 +1466,14 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
 }) => {
   const streamRef = useRef(activityStream || new ActivityStream());
 
+  // Track current agent (updates when agent is switched via useAgentSwitch hook)
+  const currentAgent = useAgentSwitch(agent, streamRef.current);
+
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
         <AppProvider initialConfig={config}>
-          <AppContentWithMessages agent={agent} initialMessages={initialMessages} />
+          <AppContentWithMessages agent={currentAgent} initialMessages={initialMessages} />
         </AppProvider>
       </ActivityProvider>
     </TerminalProvider>
