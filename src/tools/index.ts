@@ -15,11 +15,13 @@ export { GrepTool } from './GrepTool.js';
 export { GlobTool } from './GlobTool.js';
 export { LsTool } from './LsTool.js';
 export { WriteTool } from './WriteTool.js';
+export { WriteAgentTool } from './WriteAgentTool.js';
 export { EditTool } from './EditTool.js';
 export { LineEditTool } from './LineEditTool.js';
 
 // Advanced tools
 export { AgentTool } from './AgentTool.js';
+export { CreateAgentTool } from './CreateAgentTool.js';
 export { BatchTool } from './BatchTool.js';
 export { TodoWriteTool } from './TodoWriteTool.js';
 export { AgentAskTool } from './AgentAskTool.js';

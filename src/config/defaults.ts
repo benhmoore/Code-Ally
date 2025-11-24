@@ -23,6 +23,7 @@ export const DEFAULT_CONFIG: Config = {
   service_model: null, // Model for background services (defaults to main model)
   explore_model: null, // Model for Explore agent (defaults to global model)
   plan_model: null, // Model for Plan agent (defaults to global model)
+  agent_creation_model: null, // Model for CreateAgent agent (defaults to global model)
   endpoint: 'http://localhost:11434', // Ollama API endpoint
   context_size: 16384, // Context window size in tokens
   temperature: 0.3, // Generation temperature (0.0-1.0)
@@ -110,6 +111,7 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   service_model: 'string',
   explore_model: 'string',
   plan_model: 'string',
+  agent_creation_model: 'string',
   endpoint: 'string',
   context_size: 'number',
   temperature: 'number',

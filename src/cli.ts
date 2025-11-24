@@ -923,6 +923,7 @@ async function main() {
     const { KillShellTool } = await import('./tools/KillShellTool.js');
     const { ReadTool } = await import('./tools/ReadTool.js');
     const { WriteTool } = await import('./tools/WriteTool.js');
+    const { WriteAgentTool } = await import('./tools/WriteAgentTool.js');
     const { WriteTempTool } = await import('./tools/WriteTempTool.js');
     const { EditTool } = await import('./tools/EditTool.js');
     const { LineEditTool } = await import('./tools/LineEditTool.js');
@@ -931,6 +932,7 @@ async function main() {
     const { LsTool } = await import('./tools/LsTool.js');
     const { TreeTool } = await import('./tools/TreeTool.js');
     const { AgentTool } = await import('./tools/AgentTool.js');
+    const { CreateAgentTool } = await import('./tools/CreateAgentTool.js');
     const { ExploreTool } = await import('./tools/ExploreTool.js');
     const { PlanTool } = await import('./tools/PlanTool.js');
     const { AgentAskTool } = await import('./tools/AgentAskTool.js');
@@ -947,6 +949,7 @@ async function main() {
       new KillShellTool(activityStream),
       new ReadTool(activityStream, config),
       new WriteTool(activityStream),
+      new WriteAgentTool(activityStream), // Agent-specific write tool (only visible to create-agent)
       new WriteTempTool(activityStream), // Internal tool for explore agents
       new EditTool(activityStream),
       new LineEditTool(activityStream),
@@ -955,6 +958,7 @@ async function main() {
       new LsTool(activityStream),
       new TreeTool(activityStream),
       new AgentTool(activityStream),
+      new CreateAgentTool(activityStream),
       new ExploreTool(activityStream),
       new PlanTool(activityStream),
       new AgentAskTool(activityStream),
