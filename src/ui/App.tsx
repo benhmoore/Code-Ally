@@ -11,6 +11,7 @@ import { Box, Text } from 'ink';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityProvider, useActivityStreamContext } from './contexts/ActivityContext.js';
 import { AppProvider, useAppContext } from './contexts/AppContext.js';
+import { TerminalProvider } from './contexts/TerminalContext.js';
 import { ActivityEventType, Config, Message } from '../types/index.js';
 import { InputPrompt } from './components/InputPrompt.js';
 import { ConversationView } from './components/ConversationView.js';
@@ -1372,19 +1373,21 @@ export const App: React.FC<AppProps> = ({
   const streamRef = useRef(activityStream || new ActivityStream());
 
   return (
-    <ActivityProvider activityStream={streamRef.current}>
-      <AppProvider initialConfig={config}>
-        <AppContent
-          agent={agent}
-          resumeSession={resumeSession}
-          showSetupWizard={showSetupWizard}
-          showModelSelector={showModelSelector}
-          availableModels={availableModels}
-          activePluginCount={activePluginCount}
-          totalPluginCount={totalPluginCount}
-        />
-      </AppProvider>
-    </ActivityProvider>
+    <TerminalProvider>
+      <ActivityProvider activityStream={streamRef.current}>
+        <AppProvider initialConfig={config}>
+          <AppContent
+            agent={agent}
+            resumeSession={resumeSession}
+            showSetupWizard={showSetupWizard}
+            showModelSelector={showModelSelector}
+            availableModels={availableModels}
+            activePluginCount={activePluginCount}
+            totalPluginCount={totalPluginCount}
+          />
+        </AppProvider>
+      </ActivityProvider>
+    </TerminalProvider>
   );
 };
 
@@ -1420,11 +1423,13 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
   const streamRef = useRef(activityStream || new ActivityStream());
 
   return (
-    <ActivityProvider activityStream={streamRef.current}>
-      <AppProvider initialConfig={config}>
-        <AppContentWithMessages agent={agent} initialMessages={initialMessages} />
-      </AppProvider>
-    </ActivityProvider>
+    <TerminalProvider>
+      <ActivityProvider activityStream={streamRef.current}>
+        <AppProvider initialConfig={config}>
+          <AppContentWithMessages agent={agent} initialMessages={initialMessages} />
+        </AppProvider>
+      </ActivityProvider>
+    </TerminalProvider>
   );
 };
 

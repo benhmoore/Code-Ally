@@ -77,6 +77,13 @@ export const useActivitySubscriptions = (
   // Track cancellation state for immediate visual feedback
   const [isCancelling, setIsCancelling] = useState(false);
 
+  // Chunk batching: Accumulate tool output chunks to reduce render frequency
+  // Maps tool call ID -> array of pending chunks
+  const pendingChunks = useRef<Map<string, string[]>>(new Map());
+
+  // Timer reference for debounced flush
+  const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   // Remove setImmediate batching - AppContext already batches with setTimeout(16ms)
   // Double batching was causing unnecessary delays
   const scheduleToolUpdate = useRef((id: string, update: Partial<ToolCallState>) => {
@@ -86,6 +93,44 @@ export const useActivitySubscriptions = (
     } else {
       actions.updateToolCall(id, update);
     }
+  });
+
+  // Flush accumulated chunks for a specific tool (or all tools if no ID provided)
+  const flushChunks = useRef((toolId?: string) => {
+    if (toolId) {
+      // Flush specific tool
+      const chunks = pendingChunks.current.get(toolId);
+      if (chunks && chunks.length > 0) {
+        // Combine all chunks into single output update
+        const combinedOutput = chunks.join('');
+        scheduleToolUpdate.current(toolId, { output: combinedOutput });
+        // Clear this tool's chunks
+        pendingChunks.current.delete(toolId);
+      }
+    } else {
+      // Flush all tools
+      pendingChunks.current.forEach((chunks, id) => {
+        if (chunks.length > 0) {
+          const combinedOutput = chunks.join('');
+          scheduleToolUpdate.current(id, { output: combinedOutput });
+        }
+      });
+      pendingChunks.current.clear();
+    }
+  });
+
+  // Debounced flush - batches chunks over 100ms window
+  const scheduleDebouncedFlush = useRef(() => {
+    // Cancel existing timer
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+    }
+
+    // Schedule new flush after 100ms
+    flushTimerRef.current = setTimeout(() => {
+      flushChunks.current(); // Flush all pending chunks
+      flushTimerRef.current = null;
+    }, 100);
   });
 
   // Tool call start events
@@ -132,6 +177,10 @@ export const useActivitySubscriptions = (
     if (event.data?.success === undefined) {
       throw new Error(`TOOL_CALL_END event missing required 'success' field. ID: ${event.id}`);
     }
+
+    // Flush any pending chunks for this tool immediately when it ends
+    // This ensures no chunks are lost and final output is complete
+    flushChunks.current(event.id);
 
     const updates: Partial<ToolCallState> = {
       status: event.data.success ? 'success' : 'error',
@@ -194,15 +243,29 @@ export const useActivitySubscriptions = (
     });
   });
 
-  // Tool output chunks
+  // Tool output chunks - accumulate and batch for performance
   useActivityEvent(ActivityEventType.TOOL_OUTPUT_CHUNK, (event) => {
     if (!event.id) {
       throw new Error(`TOOL_OUTPUT_CHUNK event missing required 'id' field`);
     }
 
-    scheduleToolUpdate.current(event.id, {
-      output: event.data?.chunk || '',
-    });
+    const chunk = event.data?.chunk || '';
+
+    // Skip empty chunks
+    if (!chunk) return;
+
+    // Get or create chunk array for this tool
+    let chunks = pendingChunks.current.get(event.id);
+    if (!chunks) {
+      chunks = [];
+      pendingChunks.current.set(event.id, chunks);
+    }
+
+    // Accumulate chunk
+    chunks.push(chunk);
+
+    // Schedule debounced flush (batches chunks over 100ms window)
+    scheduleDebouncedFlush.current();
   });
 
   // Assistant content chunks
@@ -790,6 +853,20 @@ export const useActivitySubscriptions = (
       });
     }
   }, [modal.rewindRequest, state.messages, actions]);
+
+  // Cleanup on unmount: flush pending chunks and cancel timers
+  useEffect(() => {
+    return () => {
+      // Flush any remaining chunks
+      flushChunks.current();
+
+      // Cancel pending flush timer
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Undo file list request
   useActivityEvent(ActivityEventType.UNDO_FILE_LIST_REQUEST, (event) => {
