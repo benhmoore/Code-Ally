@@ -115,7 +115,7 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
                 nestedObj[nestedKey] = true;
               } else if (nestedValue === 'false') {
                 nestedObj[nestedKey] = false;
-              } else if (!isNaN(Number(nestedValue))) {
+              } else if (nestedValue.trim() !== '' && !isNaN(Number(nestedValue))) {
                 nestedObj[nestedKey] = Number(nestedValue);
               } else {
                 nestedObj[nestedKey] = nestedValue.replace(/^["']|["']$/g, '');
@@ -127,7 +127,13 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
           continue;
         } else {
           // Remove quotes from simple values
-          metadata[key] = value.replace(/^["']|["']$/g, '');
+          const stripped = value.replace(/^["']|["']$/g, '');
+          // Try to parse as number if it looks numeric (check for non-empty FIRST)
+          if (stripped.trim() !== '' && !isNaN(Number(stripped))) {
+            metadata[key] = Number(stripped);
+          } else {
+            metadata[key] = stripped;
+          }
         }
       }
     }

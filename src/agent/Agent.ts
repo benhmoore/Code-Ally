@@ -106,8 +106,6 @@ export interface AgentConfig {
   isSpecializedAgent?: boolean;
   /** Whether this agent can manage the global todo list (default: false for specialized agents) */
   allowTodoManagement?: boolean;
-  /** Whether this agent can access exploration-only tools (default: true for specialized agents only) */
-  allowExplorationTools?: boolean;
   /** Explicit list of allowed tools for this agent (if specified, ONLY these tools are available) */
   allowedTools?: string[];
   /** Enable verbose logging */
@@ -1265,14 +1263,10 @@ export class Agent {
     // Get function definitions from tool manager
     // Exclude restricted tools based on agent type
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-    const allowExplorationTools = this.config.allowExplorationTools ?? this.config.isSpecializedAgent ?? false;
 
     const excludeTools: string[] = [];
     if (!allowTodoManagement) {
       excludeTools.push(...TOOL_NAMES.TODO_MANAGEMENT_TOOLS);
-    }
-    if (!allowExplorationTools) {
-      excludeTools.push(...TOOL_NAMES.EXPLORATION_ONLY_TOOLS);
     }
 
     const functions = this.toolManager.getFunctionDefinitions(

@@ -219,14 +219,6 @@ export class SessionsTool extends BaseTool {
         throw new Error('ConfigManager.getConfig() returned null/undefined');
       }
 
-      // Filter to read-only tools
-      logger.debug('[SESSIONS_TOOL] Filtering to read-only tools:', SESSION_ANALYSIS_TOOLS);
-      const allowedToolNames = new Set(SESSION_ANALYSIS_TOOLS);
-      const allTools = toolManager.getAllTools();
-      const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
-      const filteredToolManager = new ToolManager(filteredTools, this.activityStream);
-      logger.debug('[SESSIONS_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
-
       // System prompt will be generated dynamically in sendMessage()
 
       // Emit session analysis start event
@@ -261,6 +253,7 @@ export class SessionsTool extends BaseTool {
         maxDuration: getThoroughnessDuration('quick'), // 1 minute limit for session analysis
         focusDirectory: '.ally-sessions', // Restrict agent to sessions directory
         excludeFiles: excludeFiles, // Exclude current session
+        allowedTools: SESSION_ANALYSIS_TOOLS, // Restrict to read-only tools
       };
 
       // Always use pooled agent for persistence
@@ -276,16 +269,16 @@ export class SessionsTool extends BaseTool {
         logger.warn('[SESSIONS_TOOL] AgentPoolService not available, falling back to ephemeral agent');
         analysisAgent = new Agent(
           mainModelClient,
-          filteredToolManager,
+          toolManager,
           this.activityStream,
           agentConfig,
           configManager,
           permissionManager
         );
       } else {
-        // Acquire agent from pool with filtered ToolManager
-        logger.debug('[SESSIONS_TOOL] Acquiring agent from pool with filtered ToolManager');
-        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager);
+        // Acquire agent from pool
+        logger.debug('[SESSIONS_TOOL] Acquiring agent from pool for session analysis');
+        pooledAgent = await agentPoolService.acquire(agentConfig, toolManager);
         analysisAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
         this.currentPooledAgent = pooledAgent; // Track for interjection routing

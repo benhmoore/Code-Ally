@@ -582,44 +582,19 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     // System prompt will be generated dynamically in sendMessage() using baseAgentPrompt and taskPrompt
     // This ensures current context (todos, token usage) is always included
 
-    // Filter tools based on agent configuration and plugin context
-    let filteredToolManager = toolManager;
-    let allowedTools: string[] | undefined = undefined;
-    const allTools = toolManager.getAllTools();
-
-    if (agentData.tools !== undefined) {
-      // Agent explicitly specifies allowed tools (including empty array = no tools)
-      logger.debug('[AGENT_TOOL] Agent specifies allowed tools:', agentData.tools);
-      allowedTools = agentData.tools; // Store for config
-      const allowedToolNames = new Set(agentData.tools);
-      const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
-      filteredToolManager = new ToolManager(filteredTools, this.activityStream);
-      logger.debug('[AGENT_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
-    } else if (agentData._pluginName) {
-      // Plugin agent with no explicit tool list: provide core tools + plugin's own tools
-      logger.debug('[AGENT_TOOL] Plugin agent - filtering to core tools + plugin tools');
-      const coreTools = allTools.filter(tool => !tool.pluginName);
-      const pluginTools = allTools.filter(tool => tool.pluginName === agentData._pluginName);
-      const filteredTools = [...coreTools, ...pluginTools];
-      allowedTools = filteredTools.map(t => t.name); // Store for config
-      filteredToolManager = new ToolManager(filteredTools, this.activityStream);
-      logger.debug('[AGENT_TOOL] Plugin agent has access to', filteredTools.length, 'tools:',
-        filteredTools.map(t => t.name).join(', '));
-    } else {
-      // User agent with no explicit tool list: provide all tools
-      logger.debug('[AGENT_TOOL] User agent has access to all tools (unrestricted)');
-      allowedTools = undefined; // Explicitly undefined = all tools
+    // Compute allowed tools using centralized helper from AgentManager
+    const agentManager = registry.get<AgentManager>('agent_manager');
+    if (!agentManager) {
+      throw new Error('AgentManager not found in registry');
     }
 
-    // Filter out agent delegation tools if agent has can_see_agents: false
-    if (agentData.can_see_agents === false) {
-      logger.debug('[AGENT_TOOL] Agent cannot see other agents - filtering out agent/explore/plan/agent-ask tools');
-      const agentToolNames = new Set(['agent', 'explore', 'plan', 'agent-ask']);
-      const toolsToUse = filteredToolManager.getAllTools();
-      const toolsWithoutAgents = toolsToUse.filter(tool => !agentToolNames.has(tool.name));
-      allowedTools = toolsWithoutAgents.map(t => t.name); // Update allowed tools list
-      filteredToolManager = new ToolManager(toolsWithoutAgents, this.activityStream);
-      logger.debug('[AGENT_TOOL] Filtered to', toolsWithoutAgents.length, 'tools (removed agent delegation tools)');
+    const allToolNames = toolManager.getAllTools().map(t => t.name);
+    const allowedTools = agentManager.computeAllowedTools(agentData, allToolNames);
+
+    if (allowedTools !== undefined) {
+      logger.debug('[AGENT_TOOL] Agent has access to', allowedTools.length, 'tools:', allowedTools.join(', '));
+    } else {
+      logger.debug('[AGENT_TOOL] Agent has access to all tools (unrestricted)');
     }
 
     // Create scoped registry for sub-agent (currently unused - for future extension)
@@ -666,7 +641,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
 
       subAgent = new Agent(
         modelClient,
-        filteredToolManager,
+        toolManager,
         this.activityStream,
         agentConfig,
         configManager,
@@ -709,7 +684,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       logger.debug('[AGENT_TOOL] Acquiring agent from pool with poolKey:', poolKey);
       // Pass custom modelClient only if agent uses a different model than global
       const customModelClient = targetModel !== config.model ? modelClient : undefined;
-      pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager, customModelClient);
+      pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
       subAgent = pooledAgent.agent;
       agentId = pooledAgent.agentId;
       this._currentPooledAgent = pooledAgent; // Track for interjection routing

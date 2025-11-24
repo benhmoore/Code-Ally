@@ -578,6 +578,19 @@ export class ToolOrchestrator {
     // Get the tool to check properties
     const tool = this.toolManager.getTool(toolName);
 
+    // Validate tool is allowed for this agent (prevents execution if restricted)
+    const allowedTools = this.config.allowedTools;
+    if (allowedTools !== undefined && !allowedTools.includes(toolName)) {
+      logger.warn(`[TOOL_ORCHESTRATOR] Agent '${this.agent.getAgentName()}' attempted unauthorized tool: ${toolName}`);
+      const allowedList = allowedTools.length > 0 ? allowedTools.join(', ') : 'no tools';
+      return createStructuredError(
+        `Tool '${toolName}' is not available to this agent. Available tools: ${allowedList}`,
+        'permission_error',
+        toolName,
+        args
+      );
+    }
+
     // If we have a parent context from a nested agent, use it; otherwise use the group parentId
     const effectiveParentId = this.parentCallId || parentId;
     logger.debug('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId, 'emitStartEvent:', emitStartEvent);

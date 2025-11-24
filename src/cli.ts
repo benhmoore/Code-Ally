@@ -924,6 +924,9 @@ async function main() {
     const { ReadTool } = await import('./tools/ReadTool.js');
     const { WriteTool } = await import('./tools/WriteTool.js');
     const { WriteAgentTool } = await import('./tools/WriteAgentTool.js');
+    const { EditAgentTool } = await import('./tools/EditAgentTool.js');
+    const { DeleteAgentTool } = await import('./tools/DeleteAgentTool.js');
+    const { ListAgentsTool } = await import('./tools/ListAgentsTool.js');
     const { WriteTempTool } = await import('./tools/WriteTempTool.js');
     const { EditTool } = await import('./tools/EditTool.js');
     const { LineEditTool } = await import('./tools/LineEditTool.js');
@@ -950,6 +953,9 @@ async function main() {
       new ReadTool(activityStream, config),
       new WriteTool(activityStream),
       new WriteAgentTool(activityStream), // Agent-specific write tool (only visible to create-agent)
+      new EditAgentTool(activityStream), // Agent-specific edit tool (only visible to create-agent)
+      new DeleteAgentTool(activityStream), // Agent-specific delete tool (only visible to create-agent)
+      new ListAgentsTool(activityStream), // Agent listing tool (only visible to create-agent)
       new WriteTempTool(activityStream), // Internal tool for explore agents
       new EditTool(activityStream),
       new LineEditTool(activityStream),

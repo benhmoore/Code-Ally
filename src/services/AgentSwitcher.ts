@@ -61,7 +61,6 @@ export async function switchAgent(
       config: configManager.getConfig(),
       isSpecializedAgent: false,
       allowTodoManagement: true,
-      allowExplorationTools: false,
       agentType: 'ally',
     };
   } else {
@@ -84,13 +83,22 @@ export async function switchAgent(
       throw new Error('ConfigManager not found in registry');
     }
 
+    // Get tool manager for computing allowed tools
+    const toolManager = registry.get<ToolManager>('tool_manager');
+    if (!toolManager) {
+      throw new Error('ToolManager not found in registry');
+    }
+
+    // Compute allowed tools using centralized helper
+    const allToolNames = toolManager.getAllTools().map(t => t.name);
+    const allowedTools = agentManager.computeAllowedTools(agentData, allToolNames);
+
     // Create agent config with target agent's settings
     agentConfig = {
       config: configManager.getConfig(),
       isSpecializedAgent: false, // Top-level agent, not a sub-agent
       allowTodoManagement: true, // Root privilege
-      allowExplorationTools: agentData.tools?.includes('explore') ?? false,
-      allowedTools: agentData.tools, // Restrict to specific tools if defined
+      allowedTools: allowedTools, // Restrict to specific tools if defined
       baseAgentPrompt: agentData.system_prompt,
       taskPrompt: agentData.description,
       agentType: targetAgentType,

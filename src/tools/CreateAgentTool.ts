@@ -21,22 +21,34 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
+import { TEXT_LIMITS, FORMATTING, API_TIMEOUTS } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getAgentsDir, getActiveProfile } from '../config/paths.js';
 
-// Tools available for agent creation (read-only + explore for research + write-agent for creating agent file)
-const AGENT_CREATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'explore', 'write-agent'];
+// Tools available for agent creation (read-only + explore for research + agent management tools)
+const AGENT_CREATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'explore', 'write-agent', 'list-agents', 'edit-agent', 'delete-agent'];
 
 /**
  * Generate agent creation system prompt
  *
  * @param agentsDir - Absolute path to the agents directory for this profile
  * @param profileName - Name of the active profile (used for context in instructions)
+ * @param availableModels - List of available Ollama models
+ * @param currentModel - Currently selected model
  */
-function getAgentCreationSystemPrompt(agentsDir: string, profileName: string): string {
+function getAgentCreationSystemPrompt(
+  agentsDir: string,
+  profileName: string,
+  availableModels: string[],
+  currentModel: string
+): string {
+  // Format model list with current model highlighted
+  const modelList = availableModels.length > 0
+    ? availableModels.map(m => m === currentModel ? `- **${m}** (current)` : `- ${m}`).join('\n')
+    : '(No models available)';
+
   // profileName is used in the template string for context - referenced but not stored
   return `You are an expert agent designer for Ally (profile: ${profileName}). You create specialized agents by researching existing patterns and designing comprehensive agent configurations.
 
@@ -64,7 +76,9 @@ Create a custom specialized agent based on the user's requirements by:
    - **description**: One-line summary of agent's purpose
    - **system_prompt**: Detailed instructions defining agent behavior and expertise
    - **tools** (optional): Array of tool names (e.g., ["read", "write", "bash"]). Omit for all tools.
-   - **model** (optional): Specific model to use (haiku/sonnet/opus)
+   - **model** (optional): Specific model to use. Available models:
+${modelList}
+     **Important**: Always use the default model (current) unless the user specifically requests another from this list.
    - **temperature** (optional): Temperature 0-1 for response variability
    - **reasoning_effort** (optional): "low", "medium", "high", or "inherit"
    - **usage_guidelines** (optional): When to use this agent (markdown format)
@@ -79,10 +93,10 @@ Create a custom specialized agent based on the user's requirements by:
    - visible_from_agents references valid agent names (if specified)
 
 4. **Create Agent File**:
-   - Use write-agent tool with filename only (e.g., "agent-name.md")
+   - Use write-agent tool with structured parameters (name, description, system_prompt, and optional config)
    - The tool automatically saves to: ${agentsDir}/{agent-name}.md
-   - Format as markdown with YAML frontmatter (see format below)
-   - Include comprehensive system prompt in body
+   - Required: name (kebab-case), description, system_prompt
+   - Optional: model, temperature, reasoning_effort, tools, usage_guidelines, visibility settings
 
 5. **Confirm Creation**:
    - Report agent name, description, and file path
@@ -123,7 +137,10 @@ You have access to:
 - **grep**: Search for specific patterns in agents
 - **ls/tree**: Explore directory structure
 - **explore**: Delegate research to exploration agent
-- **write-agent**: Create the agent file with filename only (e.g., "my-agent.md"). Path is automatic.
+- **list-agents**: List all agents in the current profile. Returns agent names, descriptions, tools, and visibility settings. Use this to check for name conflicts and understand existing agent patterns.
+- **write-agent**: Create the agent file with structured parameters. Required: name, description, system_prompt. Optional: model, temperature, reasoning_effort, tools, usage_guidelines, visibility settings.
+- **edit-agent**: Modify existing agent configuration. Supports partial updates - only provided fields are updated. Required: name. Optional: description, system_prompt, model, temperature, reasoning_effort, tools, usage_guidelines, visibility settings.
+- **delete-agent**: Permanently delete an agent by name. Required: name (kebab-case, no .md extension).
 
 ## Validation Rules
 
@@ -145,15 +162,17 @@ You have access to:
    - Common agents: explore, plan, agent
 
 4. **File Creation**:
-   - Use write-agent tool with JUST the filename (e.g., "my-agent.md")
+   - Use write-agent tool with structured parameters (NOT the write tool)
    - The tool automatically saves to the correct profile directory: ${agentsDir}
-   - DO NOT use write tool - use write-agent instead
-   - Example: write-agent(filename="code-reviewer.md", content="...")
+   - Required parameters: name (kebab-case, no .md extension), description, system_prompt
+   - Optional parameters: model, temperature, reasoning_effort, tools, usage_guidelines, visible_from_agents, can_delegate_to_agents, can_see_agents
+   - Example: write-agent(name="code-reviewer", description="Expert code review specialist", system_prompt="You are an expert...", tools=["read", "grep"])
 
 ## Execution Guidelines
 
 1. **Research First** (unless empty profile):
-   - Check ${agentsDir} for existing agents
+   - Use list-agents to see all existing agents and their configurations
+   - Read specific agent files to understand patterns and style
    - If directory is empty or doesn't exist, use best practices for design
 
 2. **Design Thoughtfully**:
@@ -169,10 +188,10 @@ You have access to:
    - Validate agent references
 
 4. **Create File**:
-   - Format with proper YAML frontmatter
-   - Include comprehensive system prompt
-   - Add timestamps (created_at, updated_at)
-   - Use write-agent tool with filename only
+   - Use write-agent tool with all required parameters (name, description, system_prompt)
+   - Add optional parameters as needed (model, temperature, tools, etc.)
+   - The tool automatically formats YAML frontmatter and timestamps
+   - Provide a comprehensive system prompt that defines the agent's behavior
 
 5. **Report Results**:
    - Confirm agent creation with details
@@ -181,9 +200,11 @@ You have access to:
 
 ## Important Constraints
 
-- Use write-agent tool (NOT write) with filename only - path is automatic
-- Agent name MUST be kebab-case (e.g., "code-reviewer.md")
+- Use write-agent tool (NOT write) with structured parameters - path is automatic
+- Agent name MUST be kebab-case (e.g., "code-reviewer") - do NOT include .md extension
+- Provide name without extension; the tool adds .md automatically
 - System prompt should be clear, comprehensive, and focused
+- All required parameters must be provided: name, description, system_prompt
 - Avoid using emojis for clear communication
 
 Create the agent following these guidelines and confirm when complete.`;
@@ -193,7 +214,7 @@ export class CreateAgentTool extends BaseTool implements InjectableTool {
   readonly name = 'create-agent';
   readonly description =
     'Create custom specialized agent for current profile. Delegates to agent creation specialist with research + write access. Returns agent details and usage instructions.';
-  readonly requiresConfirmation = true; // Requires confirmation to create agent file
+  readonly requiresConfirmation = false; // No permission needed (write-agent handles validation)
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output
@@ -376,14 +397,6 @@ Skip for: One-time tasks, existing agents sufficient, simple tool calls.`;
         });
       }
 
-      // Filter to agent creation tools (read-only + explore + write)
-      logger.debug('[CREATE_AGENT_TOOL] Filtering to agent creation tools:', AGENT_CREATION_TOOLS);
-      const allowedToolNames = new Set(AGENT_CREATION_TOOLS);
-      const allTools = toolManager.getAllTools();
-      const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
-      const filteredToolManager = new ToolManager(filteredTools, this.activityStream);
-      logger.debug('[CREATE_AGENT_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
-
       // Emit agent creation start event
       this.emitEvent({
         id: callId,
@@ -409,12 +422,16 @@ Skip for: One-time tasks, existing agents sufficient, simple tool calls.`;
       const agentsDir = getAgentsDir();
       const profileName = getActiveProfile();
 
+      // Fetch available models from Ollama
+      const availableModels = await this.fetchAvailableModels(config.endpoint);
+      const currentModel = config.model;
+
       // Create agent configuration with unique pool key per invocation
       // This ensures each create-agent() call gets its own persistent agent
       const agentConfig: AgentConfig = {
         isSpecializedAgent: true,
         verbose: false,
-        baseAgentPrompt: getAgentCreationSystemPrompt(agentsDir, profileName),
+        baseAgentPrompt: getAgentCreationSystemPrompt(agentsDir, profileName, availableModels, currentModel),
         taskPrompt: request,
         config: config,
         parentCallId: callId,
@@ -424,6 +441,7 @@ Skip for: One-time tasks, existing agents sufficient, simple tool calls.`;
         thoroughness: thoroughness, // Store for dynamic regeneration
         agentType: 'create-agent',
         agentDepth: newDepth,
+        allowedTools: AGENT_CREATION_TOOLS, // Restrict to agent creation tools
       };
 
       // Always use pooled agent for persistence
@@ -439,18 +457,18 @@ Skip for: One-time tasks, existing agents sufficient, simple tool calls.`;
         logger.warn('[CREATE_AGENT_TOOL] AgentPoolService not available, falling back to ephemeral agent');
         creationAgent = new Agent(
           modelClient,
-          filteredToolManager,
+          toolManager,
           this.activityStream,
           agentConfig,
           configManager,
           permissionManager
         );
       } else {
-        // Acquire agent from pool with filtered ToolManager
-        logger.debug('[CREATE_AGENT_TOOL] Acquiring agent from pool with filtered ToolManager');
+        // Acquire agent from pool
+        logger.debug('[CREATE_AGENT_TOOL] Acquiring agent from pool for agent creation');
         // Pass custom modelClient only if agent creation uses a different model than global
         const customModelClient = targetModel !== config.model ? modelClient : undefined;
-        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager, customModelClient);
+        pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
         creationAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
         this._currentPooledAgent = pooledAgent; // Track for interjection routing
@@ -603,6 +621,43 @@ Skip for: One-time tasks, existing agents sufficient, simple tool calls.`;
         undefined,
         { agent_used: 'create-agent' }
       );
+    }
+  }
+
+  /**
+   * Fetch available models from Ollama
+   *
+   * @param endpoint - Ollama endpoint URL
+   * @returns Array of available model names
+   */
+  private async fetchAvailableModels(endpoint: string): Promise<string[]> {
+    try {
+      const url = `${endpoint}/api/tags`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_MODEL_LIST_TIMEOUT);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        logger.warn('[CREATE_AGENT_TOOL] Failed to fetch models from Ollama:', response.status);
+        return [];
+      }
+
+      interface OllamaListResponse {
+        models: Array<{ name: string }>;
+      }
+
+      const data = await response.json() as OllamaListResponse;
+      return data.models.map(m => m.name);
+    } catch (error) {
+      logger.warn('[CREATE_AGENT_TOOL] Error fetching models:', formatError(error));
+      return [];
     }
   }
 

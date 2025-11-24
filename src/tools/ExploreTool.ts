@@ -344,14 +344,6 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
         });
       }
 
-      // Filter to exploration tools (read-only + write-temp)
-      logger.debug('[EXPLORE_TOOL] Filtering to exploration tools:', EXPLORATION_TOOLS);
-      const allowedToolNames = new Set(EXPLORATION_TOOLS);
-      const allTools = toolManager.getAllTools();
-      const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
-      const filteredToolManager = new ToolManager(filteredTools, this.activityStream);
-      logger.debug('[EXPLORE_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
-
       // System prompt will be generated dynamically in sendMessage()
 
       // Emit exploration start event
@@ -390,6 +382,7 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
         thoroughness: thoroughness, // Store for dynamic regeneration
         agentType: 'explore',
         agentDepth: newDepth,
+        allowedTools: EXPLORATION_TOOLS, // Restrict to exploration tools
       };
 
       // Always use pooled agent for persistence
@@ -405,18 +398,18 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
         logger.warn('[EXPLORE_TOOL] AgentPoolService not available, falling back to ephemeral agent');
         explorationAgent = new Agent(
           modelClient,
-          filteredToolManager,
+          toolManager,
           this.activityStream,
           agentConfig,
           configManager,
           permissionManager
         );
       } else {
-        // Acquire agent from pool with filtered ToolManager
-        logger.debug('[EXPLORE_TOOL] Acquiring agent from pool with filtered ToolManager');
+        // Acquire agent from pool
+        logger.debug('[EXPLORE_TOOL] Acquiring agent from pool for exploration');
         // Pass custom modelClient only if explore uses a different model than global
         const customModelClient = targetModel !== config.model ? modelClient : undefined;
-        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager, customModelClient);
+        pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
         explorationAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
         this._currentPooledAgent = pooledAgent; // Track for interjection routing

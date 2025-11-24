@@ -323,14 +323,6 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         });
       }
 
-      // Filter to planning tools (read-only + explore)
-      logger.debug('[PLAN_TOOL] Filtering to planning tools:', PLANNING_TOOLS);
-      const allowedToolNames = new Set(PLANNING_TOOLS);
-      const allTools = toolManager.getAllTools();
-      const filteredTools = allTools.filter(tool => allowedToolNames.has(tool.name));
-      const filteredToolManager = new ToolManager(filteredTools, this.activityStream);
-      logger.debug('[PLAN_TOOL] Filtered to', filteredTools.length, 'tools:', filteredTools.map(t => t.name).join(', '));
-
       // System prompt will be generated dynamically in sendMessage()
 
       // Map thoroughness to max duration
@@ -371,6 +363,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         thoroughness: thoroughness, // Store for dynamic regeneration
         agentType: 'plan',
         agentDepth: newDepth,
+        allowedTools: PLANNING_TOOLS, // Restrict to planning tools
       };
 
       // Always use pooled agent for persistence
@@ -386,18 +379,18 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
         logger.warn('[PLAN_TOOL] AgentPoolService not available, falling back to ephemeral agent');
         planningAgent = new Agent(
           modelClient,
-          filteredToolManager,
+          toolManager,
           this.activityStream,
           agentConfig,
           configManager,
           permissionManager
         );
       } else {
-        // Acquire agent from pool with filtered ToolManager
-        logger.debug('[PLAN_TOOL] Acquiring agent from pool with filtered ToolManager');
+        // Acquire agent from pool
+        logger.debug('[PLAN_TOOL] Acquiring agent from pool');
         // Pass custom modelClient only if plan uses a different model than global
         const customModelClient = targetModel !== config.model ? modelClient : undefined;
-        pooledAgent = await agentPoolService.acquire(agentConfig, filteredToolManager, customModelClient);
+        pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
         planningAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
         this._currentPooledAgent = pooledAgent; // Track for interjection routing

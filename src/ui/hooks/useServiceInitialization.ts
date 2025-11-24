@@ -113,8 +113,7 @@ export const useServiceInitialization = (
           actions.setContextUsage(initialContextUsage);
         }
       } catch (error) {
-        console.error('Failed to initialize input services:', error);
-        // Continue without services
+        // Continue without services - initialization is optional
       }
     };
 

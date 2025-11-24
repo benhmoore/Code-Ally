@@ -83,7 +83,6 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
    */
   cancel(): void {
     if (this.isAnalyzing) {
-      console.log('[AUTO_CLEANUP] 🛑 Cancelling ongoing analysis (user interaction started)');
 
       // Cancel all active requests on the model client
       if (typeof this.modelClient.cancel === 'function') {
@@ -162,7 +161,6 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
 
       // Check if response was interrupted or had an error - don't process it
       if (response.interrupted || response.error) {
-        console.log('[AUTO_CLEANUP] ⚠️  Response was interrupted/error, skipping analysis');
         throw new Error('Analysis interrupted or failed');
       }
 
@@ -171,7 +169,6 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
 
       return analysis;
     } catch (error) {
-      console.log('[AUTO_CLEANUP] ❌ Failed to analyze tool calls:', error);
       return { irrelevantToolCallIds: [] };
     }
   }
@@ -185,11 +182,9 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
   cleanupBackground(sessionName: string, messages: Message[]): void {
     // Prevent duplicate analyses
     if (this.pendingAnalyses.has(sessionName)) {
-      console.log(`[AUTO_CLEANUP] ⏭️  Skipping - already analyzing ${sessionName}`);
       return;
     }
 
-    console.log(`[AUTO_CLEANUP] 🚀 Starting background cleanup analysis for session ${sessionName}`);
     this.pendingAnalyses.add(sessionName);
     this.isAnalyzing = true;
 
@@ -198,15 +193,12 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
       .catch(error => {
         // Ignore abort/interrupt errors (expected when cancelled)
         if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
-          console.log(`[AUTO_CLEANUP] ⚠️  Analysis cancelled for ${sessionName}`);
         } else {
-          console.log(`[AUTO_CLEANUP] ❌ Analysis failed for ${sessionName}:`, error);
         }
       })
       .finally(() => {
         this.pendingAnalyses.delete(sessionName);
         this.isAnalyzing = false;
-        console.log(`[AUTO_CLEANUP] ✅ Analysis completed for ${sessionName}`);
       });
   }
 
@@ -221,17 +213,14 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
     const analysis = await this.analyzeToolCalls(messages);
 
     if (analysis.irrelevantToolCallIds.length === 0) {
-      console.log('[AUTO_CLEANUP] 📝 No irrelevant tool calls identified');
       return;
     }
 
-    console.log(`[AUTO_CLEANUP] 📝 Identified ${analysis.irrelevantToolCallIds.length} irrelevant tool calls: ${analysis.irrelevantToolCallIds.join(', ')}`);
 
     // Store pending cleanups in session metadata
     try {
       const session = await this.sessionManager.loadSession(sessionName);
       if (!session) {
-        console.log(`[AUTO_CLEANUP] ❌ Session ${sessionName} not found`);
         return;
       }
 
@@ -246,12 +235,9 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
       });
 
       if (success) {
-        console.log(`[AUTO_CLEANUP] 💾 Stored ${allCleanups.length} pending cleanups to session ${sessionName}`);
       } else {
-        console.log(`[AUTO_CLEANUP] ❌ Failed to store cleanups for ${sessionName}: updateMetadata returned false`);
       }
     } catch (error) {
-      console.log(`[AUTO_CLEANUP] ❌ Failed to store cleanups for ${sessionName}:`, error);
       throw error;
     }
   }
@@ -384,7 +370,6 @@ If no tool calls are irrelevant, reply with:
       // Try to extract JSON from the response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        console.log('[AUTO_CLEANUP] ⚠️  No JSON found in response');
         return { irrelevantToolCallIds: [] };
       }
 
@@ -393,13 +378,11 @@ If no tool calls are irrelevant, reply with:
 
       // Validate that all IDs are strings
       if (!Array.isArray(irrelevantIds) || !irrelevantIds.every(id => typeof id === 'string')) {
-        console.log('[AUTO_CLEANUP] ⚠️  Invalid irrelevant_ids format');
         return { irrelevantToolCallIds: [] };
       }
 
       return { irrelevantToolCallIds: irrelevantIds };
     } catch (error) {
-      console.log('[AUTO_CLEANUP] ⚠️  Failed to parse analysis response:', error);
       return { irrelevantToolCallIds: [] };
     }
   }
