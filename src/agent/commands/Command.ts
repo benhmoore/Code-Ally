@@ -68,6 +68,17 @@ export abstract class Command {
   }
 
   /**
+   * Helper to create a silent response (no message displayed)
+   *
+   * @returns CommandResult with no response content
+   */
+  protected createSilentResponse(): CommandResult {
+    return {
+      handled: true,
+    };
+  }
+
+  /**
    * Helper to emit an activity stream event
    *
    * @param serviceRegistry - Service registry

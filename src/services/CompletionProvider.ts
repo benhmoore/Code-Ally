@@ -72,6 +72,7 @@ const SLASH_COMMANDS = [
   { name: '/prompt', description: 'Manage saved prompts' },
   { name: '/task', description: 'Manage background processes' },
   { name: '/todo', description: 'Manage todo list' },
+  { name: '/profile', description: 'Manage profiles' },
   { name: '/exit', description: 'Exit the application' },
 ];
 
@@ -132,9 +133,8 @@ const DEBUG_SUBCOMMANDS = [
 const TODO_SUBCOMMANDS = [
   { name: 'add', description: 'Add a new todo' },
   { name: 'complete', description: 'Complete a todo by index' },
-  { name: 'done', description: 'Complete a todo (alias)' },
   { name: 'clear', description: 'Clear completed todos' },
-  { name: 'clear-all', description: 'Clear all todos' },
+  { name: 'clear all', description: 'Clear all todos' },
 ];
 
 /**
@@ -144,6 +144,14 @@ const TASK_SUBCOMMANDS = [
   { name: 'list', description: 'List running background processes' },
   { name: 'ls', description: 'List processes (alias)' },
   { name: 'kill', description: 'Kill a background process' },
+];
+
+/**
+ * Profile subcommands
+ */
+const PROFILE_SUBCOMMANDS = [
+  { name: 'list', description: 'List all profiles' },
+  { name: 'info', description: 'Show profile information' },
 ];
 
 /**
@@ -396,24 +404,6 @@ export class CompletionProvider {
       }
     }
 
-    // Complete subcommands for /memory (user typed "/memory ")
-    if (command === '/memory' && wordCount === 2) {
-      const memorySubcommands = [
-        { name: 'add', description: 'Add a memory fact' },
-        { name: 'ls', description: 'List all memories' },
-        { name: 'rm', description: 'Remove a memory' },
-        { name: 'clear', description: 'Clear all memories' },
-        { name: 'show', description: 'Show memory details' },
-      ];
-      const prefix = subcommand || '';
-      return memorySubcommands.filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
-    }
-
     // Complete subcommands for /project (user typed "/project ")
     if (command === '/project' && wordCount === 2) {
       const projectSubcommands = [
@@ -515,6 +505,17 @@ export class CompletionProvider {
     // Complete plugin names for /plugin deactivate (user typed "/plugin deactivate ")
     if (command === '/plugin' && subcommand === 'deactivate' && wordCount === 3) {
       return await this.getPluginNameCompletions(context.currentWord);
+    }
+
+    // Complete subcommands for /profile (user typed "/profile ")
+    if (command === '/profile' && wordCount === 2) {
+      const prefix = subcommand || '';
+      return PROFILE_SUBCOMMANDS.filter(sub => sub.name.startsWith(prefix))
+        .map(sub => ({
+          value: sub.name,
+          description: sub.description,
+          type: 'command' as const,
+        }));
     }
 
     return [];

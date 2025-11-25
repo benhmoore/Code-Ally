@@ -696,6 +696,7 @@ export class ToolOrchestrator {
     );
     let permissionDenied = false; // Track if permission was denied to skip TOOL_CALL_END
     let validationFailed = false; // Track if validation failed (already emitted TOOL_CALL_END)
+    let executionStartTime: number | undefined; // Track execution start time for session persistence
 
     try {
       // Preview changes (e.g., diffs) BEFORE permission check
@@ -754,10 +755,11 @@ export class ToolOrchestrator {
       }
 
       // Emit execution start event (timer starts NOW, after permission granted or if no permission needed)
+      executionStartTime = Date.now();
       this.emitEvent({
         id,
         type: ActivityEventType.TOOL_EXECUTION_START,
-        timestamp: Date.now(),
+        timestamp: executionStartTime,
         parentId: effectiveParentId,
         data: {
           toolName,
@@ -775,6 +777,9 @@ export class ToolOrchestrator {
         false, // isContextFile
         this.agent.getAgentName() // currentAgentName for tool-agent binding validation
       );
+
+      // Store execution start time for session persistence
+      (result as any)._executionStartTime = executionStartTime;
 
       // For specialized agents: report elapsed turn duration in minutes
       const turnStartTime = this.agent.getTurnStartTime();
@@ -861,6 +866,11 @@ export class ToolOrchestrator {
           toolName,
           args
         );
+      }
+
+      // Store execution start time for session persistence (error case)
+      if (executionStartTime !== undefined) {
+        (result as any)._executionStartTime = executionStartTime;
       }
 
       // For specialized agents: report elapsed turn duration in minutes (error case)
@@ -972,6 +982,23 @@ export class ToolOrchestrator {
     }
     // Store tool status for session persistence
     metadata.tool_status = { [toolCall.id]: result.success ? 'success' : 'error' };
+
+    // Store tool_context data for session persistence (execution timing, agent model, etc.)
+    const executionStartTime = (result as any)._executionStartTime;
+    const agentModel = (result as any)._agentModel;
+
+    if (executionStartTime !== undefined || agentModel !== undefined) {
+      const toolContext: any = {};
+      if (executionStartTime !== undefined) {
+        toolContext.executionStartTime = executionStartTime;
+      }
+      if (agentModel !== undefined) {
+        toolContext.agentModel = agentModel;
+      }
+      metadata.tool_context = {
+        [toolCall.id]: toolContext,
+      };
+    }
 
     this.agent.addMessage({
       ...toolResultMessage,

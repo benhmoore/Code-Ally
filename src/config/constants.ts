@@ -604,7 +604,7 @@ export const COMMAND_TIPS = [
   '`ally --debug` for troubleshooting',
   '`/project init` creates ALLY.md config',
   '`/clear` clears conversation history',
-  '`/focus <file>` to track a file',
+  '`/focus <path>` to set directory focus',
 ] as const;
 
 // ===========================================

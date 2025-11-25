@@ -312,14 +312,27 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
   if (node.type === 'list') {
     return (
       <Box flexDirection="column">
-        {node.children?.map((item, idx) => (
-          <Box key={idx} paddingLeft={2}>
-            <Text>
-              {node.ordered ? `${idx + 1}. ` : '• '}
-              {stripInlineMarkdown(item.content || '')}
-            </Text>
-          </Box>
-        ))}
+        {node.children?.map((item, idx) => {
+          const formatted = formatInlineMarkdown(item.content || '');
+          const bullet = node.ordered ? `${idx + 1}. ` : '• ';
+
+          // Handle styled text segments
+          if (Array.isArray(formatted)) {
+            const styledText = segmentsToAnsiString(formatted);
+            return (
+              <Box key={idx} paddingLeft={2}>
+                <Text>{bullet}{styledText}</Text>
+              </Box>
+            );
+          }
+
+          // Handle plain string
+          return (
+            <Box key={idx} paddingLeft={2}>
+              <Text>{bullet}{formatted}</Text>
+            </Box>
+          );
+        })}
       </Box>
     );
   }

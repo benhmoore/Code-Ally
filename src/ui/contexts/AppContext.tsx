@@ -116,6 +116,9 @@ export interface AppActions {
   /** Add a compaction notice */
   addCompactionNotice: (notice: CompactionNotice) => void;
 
+  /** Clear all compaction notices */
+  clearCompactionNotices: () => void;
+
   /** Add a rewind notice */
   addRewindNotice: (notice: RewindNotice) => void;
 
@@ -312,6 +315,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setCompactionNotices((prev) => [...prev, notice]);
   }, []);
 
+  const clearCompactionNotices = useCallback(() => {
+    setCompactionNotices([]);
+  }, []);
+
   const addRewindNotice = useCallback((notice: RewindNotice) => {
     setRewindNotices((prev) => [...prev, notice]);
   }, []);
@@ -397,12 +404,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setStreamingContent,
     setIsCompacting,
     addCompactionNotice,
+    clearCompactionNotices,
     addRewindNotice,
     clearRewindNotices,
     forceStaticRemount,
     resetConversationView,
     setCurrentAgent,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView, setCurrentAgent]);
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView, setCurrentAgent]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

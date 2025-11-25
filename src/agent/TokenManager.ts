@@ -20,8 +20,8 @@ export class TokenManager {
   private contextSize: number;
   private currentTokenCount: number = 0;
   private seenFiles: Map<string, string> = new Map(); // path -> content hash
-  private toolResultHashes: Map<string, string> = new Map(); // tool_call_id -> content hash
-  private messageTokenCache: Map<Message, number> = new Map(); // message -> token count
+  private toolResultHashes: Map<string, string> = new Map(); // content hash -> tool_call_id (first occurrence)
+  private messageTokenCache: Map<string, number> = new Map(); // message id -> token count
 
   /**
    * Create a new TokenManager
@@ -99,12 +99,14 @@ export class TokenManager {
   estimateMessagesTokens(messages: readonly Message[]): number {
     let total = 0;
     for (const message of messages) {
-      // Check cache first
-      let tokens = this.messageTokenCache.get(message);
+      // Check cache first (skip caching if message has no id)
+      let tokens = message.id ? this.messageTokenCache.get(message.id) : undefined;
       if (tokens === undefined) {
         // Not cached - calculate and store
         tokens = this.estimateMessageTokens(message);
-        this.messageTokenCache.set(message, tokens);
+        if (message.id) {
+          this.messageTokenCache.set(message.id, tokens);
+        }
       }
       total += tokens;
     }
@@ -189,22 +191,24 @@ export class TokenManager {
    *
    * @param toolCallId The tool call ID
    * @param content The tool result content
-   * @returns The hash of previously seen identical content, or null if this is unique
+   * @returns The ID of the first tool call with identical content, or null if this is unique
    */
   trackToolResult(toolCallId: string, content: string): string | null {
     const hash = this.hashContent(content);
 
-    // Check if we've seen this exact content before
-    for (const [existingId, existingHash] of this.toolResultHashes.entries()) {
-      if (existingHash === hash && existingId !== toolCallId) {
-        // Found a duplicate - return the existing ID
-        this.toolResultHashes.set(toolCallId, hash);
-        return existingId;
-      }
+    // O(1) lookup: check if we've seen this exact content before
+    const existingId = this.toolResultHashes.get(hash);
+
+    if (existingId !== undefined && existingId !== toolCallId) {
+      // Found a duplicate - return the existing ID (first occurrence)
+      return existingId;
     }
 
-    // No duplicate found - store this result
-    this.toolResultHashes.set(toolCallId, hash);
+    // No duplicate found - store this as the first occurrence for this hash
+    if (existingId === undefined) {
+      this.toolResultHashes.set(hash, toolCallId);
+    }
+
     return null;
   }
 
@@ -216,14 +220,8 @@ export class TokenManager {
    */
   isToolResultDuplicate(content: string): boolean {
     const hash = this.hashContent(content);
-
-    for (const existingHash of this.toolResultHashes.values()) {
-      if (existingHash === hash) {
-        return true;
-      }
-    }
-
-    return false;
+    // O(1) lookup: check if hash exists in map
+    return this.toolResultHashes.has(hash);
   }
 
   /**

@@ -5,10 +5,13 @@
  * - Regular user messages
  * - Slash commands
  * - Bash shortcuts (! prefix)
+ * - Memory shortcuts (# prefix) - saves to ALLY.md
  * - User interjections (mid-response messages)
  */
 
 import { useCallback } from 'react';
+import fs from 'fs';
+import path from 'path';
 import { Agent } from '@agent/Agent.js';
 import { CommandHandler } from '@agent/CommandHandler.js';
 import { ActivityStream } from '@services/ActivityStream.js';
@@ -278,6 +281,55 @@ export const useInputHandlers = (
           actions.addMessage({
             role: 'assistant',
             content: `Error executing bash command: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          });
+          return;
+        }
+      }
+    }
+
+    // Check for memory shortcuts (# prefix) - saves to ALLY.md
+    if (trimmed.startsWith('#')) {
+      const memoryContent = trimmed.slice(1).trim();
+
+      if (memoryContent) {
+        try {
+          const allyMdPath = path.join(process.cwd(), 'ALLY.md');
+
+          // Read existing content or start fresh
+          let existingContent = '';
+          if (fs.existsSync(allyMdPath)) {
+            existingContent = fs.readFileSync(allyMdPath, 'utf-8');
+          }
+
+          // Append the new memory as a bullet point
+          const newLine = `- ${memoryContent}\n`;
+          const newContent = existingContent
+            ? existingContent.trimEnd() + '\n' + newLine
+            : newLine;
+
+          // Write to ALLY.md
+          fs.writeFileSync(allyMdPath, newContent, 'utf-8');
+
+          logger.debug('[INPUT_HANDLER] Memory saved to ALLY.md:', memoryContent);
+
+          // Add user message showing what was saved
+          actions.addMessage({
+            role: 'user',
+            content: trimmed,
+          });
+
+          // Add confirmation response
+          actions.addMessage({
+            role: 'assistant',
+            content: `Memory saved to ALLY.md`,
+          });
+
+          return;
+        } catch (error) {
+          actions.addMessage({
+            role: 'assistant',
+            content: `Error saving memory: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            metadata: { isError: true },
           });
           return;
         }

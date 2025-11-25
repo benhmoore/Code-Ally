@@ -19,7 +19,7 @@ import { RequiredToolTracker } from './RequiredToolTracker.js';
 import { RequirementValidator } from './RequirementTracker.js';
 import { InterruptionManager } from './InterruptionManager.js';
 import { ConversationManager } from './ConversationManager.js';
-import { Message, ActivityEventType } from '../types/index.js';
+import { Message, ActivityEventType, ToolCallContext } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -424,6 +424,7 @@ export class ResponseProcessor {
 
     // Build tool metadata for session persistence
     const tool_visibility: Record<string, boolean> = {};
+    const tool_context: Record<string, ToolCallContext> = {};
     const serviceRegistry = await import('../services/ServiceRegistry.js').then(m => m.ServiceRegistry.getInstance());
     const toolManager = serviceRegistry.get('tool_manager');
 
@@ -436,6 +437,29 @@ export class ResponseProcessor {
       }
     }
 
+    // Store context data in tool_context for each tool call
+    // This enables reconstructing the tool call hierarchy and state on session resume
+    for (const tc of unwrappedToolCalls) {
+      const context_data: ToolCallContext = {};
+
+      // Store parentId if this is a nested/delegated call
+      if (context.parentCallId) {
+        context_data.parentId = context.parentCallId;
+      }
+
+      // Store thinking content and duration if available from LLM response
+      if (response.thinking) {
+        context_data.thinking = response.thinking;
+        // thinkingDuration would be calculated if timing info is available
+        // For now, we don't have this data in the response object
+      }
+
+      // Only add to tool_context if we have data to store
+      if (Object.keys(context_data).length > 0) {
+        tool_context[tc.id] = context_data;
+      }
+    }
+
     const assistantMessage: Message = {
       role: 'assistant',
       content: response.content || '',
@@ -444,6 +468,7 @@ export class ResponseProcessor {
       timestamp: Date.now(),
       metadata: {
         ...(Object.keys(tool_visibility).length > 0 ? { tool_visibility } : {}),
+        ...(Object.keys(tool_context).length > 0 ? { tool_context } : {}),
         agentName: context.agentName,
       },
     };

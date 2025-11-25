@@ -2,14 +2,16 @@
  * ClearCommand - Clear conversation history
  *
  * Removes all messages from the conversation except the system message,
- * and updates the token manager accordingly.
+ * clears the UI view completely, and updates the token manager accordingly.
  */
 
 import { Command } from './Command.js';
+import { ActivityEventType } from '@shared/index.js';
 import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 import type { Agent } from '../Agent.js';
+import type { ActivityStream } from '@services/ActivityStream.js';
 
 export class ClearCommand extends Command {
   readonly name = '/clear';
@@ -44,6 +46,18 @@ export class ClearCommand extends Command {
       (tokenManager as any).updateTokenCount(clearedMessages);
     }
 
-    return this.createResponse('Conversation history cleared.');
+    // Emit event to reset the UI view completely
+    const activityStream = serviceRegistry.get<ActivityStream>('activity_stream');
+    if (activityStream) {
+      activityStream.emit({
+        id: `clear-${Date.now()}`,
+        type: ActivityEventType.CONVERSATION_CLEAR,
+        timestamp: Date.now(),
+        data: {},
+      });
+    }
+
+    // Return silent success - UI will be completely reset so no message needed
+    return this.createSilentResponse();
   }
 }

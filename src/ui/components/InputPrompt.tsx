@@ -1428,6 +1428,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   // Determine prompt style based on first character
   const isCommandMode = buffer.startsWith('/');
   const isBashMode = buffer.startsWith('!');
+  const isMemoryMode = buffer.startsWith('#');
 
   let promptText = '> ';
   let borderColor: string = UI_COLORS.TEXT_DIM;
@@ -1438,6 +1439,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   } else if (isBashMode) {
     promptText = 'Bash > ';
     borderColor = UI_COLORS.TEXT_DIM;
+  } else if (isMemoryMode) {
+    promptText = 'Memory > ';
+    borderColor = UI_COLORS.MEMORY;
   }
 
   // Override border color when auto-allow mode is active (danger color)

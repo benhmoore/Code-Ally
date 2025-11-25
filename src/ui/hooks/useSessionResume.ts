@@ -51,6 +51,10 @@ export function reconstructInterjectionsFromMessages(messages: Message[], activi
  * but we don't have the ToolCallState objects that are needed for proper UI rendering.
  * This function reconstructs those states from the message history.
  *
+ * Tool context data is stored in two places:
+ * - Assistant messages: parentId, thinking, thinkingDuration (in metadata.tool_context)
+ * - Tool result messages: executionStartTime, agentModel (in metadata.tool_context)
+ *
  * @param messages - Array of messages from the session
  * @param serviceRegistry - Service registry to look up tool definitions
  * @returns Array of reconstructed ToolCallState objects
@@ -117,6 +121,35 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
           status = hasError ? 'error' : 'success';
         }
 
+        // Merge tool_context from both assistant message and tool result message
+        // Assistant message contains: parentId, thinking, thinkingDuration
+        // Tool result message contains: executionStartTime, agentModel
+        const assistantToolContext = msg.metadata?.tool_context?.[tc.id];
+        const resultToolContext = result?.metadata?.tool_context?.[tc.id];
+
+        // Extract context data from both sources
+        const parentId = assistantToolContext?.parentId;
+        const thinking = assistantToolContext?.thinking;
+        const thinkingDuration = assistantToolContext?.thinkingDuration;
+        const executionStartTime = resultToolContext?.executionStartTime;
+        const agentModel = resultToolContext?.agentModel;
+
+        // Calculate thinking timing if we have thinking content
+        let thinkingStartTime: number | undefined;
+        let thinkingEndTime: number | undefined;
+        if (thinking) {
+          // If we have thinking duration, calculate timing based on message timestamp
+          if (thinkingDuration !== undefined) {
+            // Thinking ends when the message is created (baseTimestamp)
+            thinkingEndTime = baseTimestamp + index;
+            thinkingStartTime = thinkingEndTime - thinkingDuration;
+          } else {
+            // Fallback: estimate thinking occurred just before the message
+            thinkingEndTime = baseTimestamp + index;
+            // Without duration, we can't accurately set startTime
+          }
+        }
+
         const toolCallState: ToolCallState = {
           id: tc.id,
           status,
@@ -127,6 +160,13 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
           startTime: baseTimestamp + index, // Slightly offset multiple calls in same message
           endTime: result?.timestamp,
           visibleInChat: visibleInChat,
+          // Add reconstructed tool context fields
+          ...(parentId !== undefined && { parentId }),
+          ...(thinking !== undefined && { thinking }),
+          ...(thinkingStartTime !== undefined && { thinkingStartTime }),
+          ...(thinkingEndTime !== undefined && { thinkingEndTime }),
+          ...(executionStartTime !== undefined && { executionStartTime }),
+          ...(agentModel !== undefined && { agentModel }),
         };
 
         toolCalls.push(toolCallState);
@@ -204,11 +244,18 @@ export async function loadSessionData(
   // This prevents Static component from accumulating renders
   actions.resetConversationView(userMessages);
 
-  // NOTE: Do NOT reconstruct completed tool calls into activeToolCalls
-  // Completed tool calls already exist in the messages (as tool_calls field)
-  // Reconstructing them creates duplication in the timeline rendering
-  // activeToolCalls is ONLY for tracking currently-running tool calls
-  // On resume, all tool calls are completed and in message history
+  // Reconstruct tool calls from message history
+  // This populates activeToolCalls with completed tool calls so they appear in the timeline
+  const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
+  reconstructedToolCalls.forEach(toolCall => {
+    try {
+      actions.addToolCall(toolCall);
+    } catch (error) {
+      // Log but don't fail session resume if a tool call can't be added
+      // This could happen if there are duplicate IDs in the session data
+      console.warn(`Failed to add reconstructed tool call ${toolCall.id}:`, error);
+    }
+  });
 
   // Reconstruct interjection events from message history
   reconstructInterjectionsFromMessages(userMessages, activityStream);

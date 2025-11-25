@@ -11,7 +11,7 @@ import { ActivityEventType, Message, ToolCallState } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
-import { reconstructInterjectionsFromMessages, loadSessionData } from './useSessionResume.js';
+import { reconstructInterjectionsFromMessages, reconstructToolCallsFromMessages, loadSessionData } from './useSessionResume.js';
 import { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -1335,11 +1335,18 @@ export const useActivitySubscriptions = (
         // Reset conversation view (this will clear terminal and set new messages)
         actions.resetConversationView(rewindedMessages);
 
-        // NOTE: Do NOT reconstruct completed tool calls into activeToolCalls
-        // Completed tool calls already exist in the messages (as tool_calls field)
-        // Reconstructing them creates duplication in the timeline rendering
-        // activeToolCalls is ONLY for tracking currently-running tool calls
-        // On rewind, all tool calls are completed and in message history
+        // Reconstruct tool calls from message history
+        // This populates activeToolCalls with completed tool calls so they appear in the timeline
+        const reconstructedToolCalls = reconstructToolCallsFromMessages(rewindedMessages, serviceRegistry);
+        reconstructedToolCalls.forEach(toolCall => {
+          try {
+            actions.addToolCall(toolCall);
+          } catch (error) {
+            // Log but don't fail rewind if a tool call can't be added
+            // This could happen if there are duplicate IDs in the session data
+            console.warn(`Failed to add reconstructed tool call ${toolCall.id}:`, error);
+          }
+        });
 
         reconstructInterjectionsFromMessages(rewindedMessages, activityStream);
 
@@ -1376,6 +1383,28 @@ export const useActivitySubscriptions = (
         });
       }
     }
+  });
+
+  // Conversation clear - reset UI to initial state
+  useActivityEvent(ActivityEventType.CONVERSATION_CLEAR, () => {
+    const serviceRegistry = ServiceRegistry.getInstance();
+
+    // Clear all UI state
+    actions.clearToolCalls();
+    actions.clearCompactionNotices();
+    actions.clearRewindNotices();
+
+    // Clear todos
+    const todoManager = serviceRegistry.get('todo_manager');
+    if (todoManager && typeof (todoManager as any).setTodos === 'function') {
+      (todoManager as any).setTodos([]);
+    }
+
+    // Reset conversation view to empty (like initial app load)
+    actions.resetConversationView([]);
+
+    // Reset context usage
+    actions.setContextUsage(0);
   });
 
   return {

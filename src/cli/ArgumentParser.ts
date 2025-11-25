@@ -80,13 +80,12 @@ export class ArgumentParser {
         `
 Interactive Commands (available once running):
   /help              - Show interactive command help
-  /project init      - Create ALLY.md configuration for project
-  /project show      - View ALLY.md configuration contents
-  /project edit      - Edit ALLY.md with default editor
+  /project init      - Create ALLY.md configuration
+  /project view      - View ALLY.md contents
   /clear             - Clear conversation history
   /compact           - Compact conversation to reduce context
-  /model ls          - List available models
-  /debug system      - Show system prompt and tools
+  /model             - Change AI model (interactive selector)
+  /debug             - Debug commands (enable/disable/calls/errors/dump)
 
 Use '/help' for complete interactive command reference.
         `

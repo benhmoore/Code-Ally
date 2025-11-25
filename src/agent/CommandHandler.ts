@@ -109,7 +109,7 @@ export class CommandHandler {
     switch (command) {
       // Core commands
       case 'help':
-        return await this.handleHelp();
+        return await this.handleHelp(args);
       case 'context':
         return await this.handleContext(messages);
       case 'compact':
@@ -174,78 +174,124 @@ export class CommandHandler {
   // Core Commands
   // ===========================
 
-  private async handleHelp(): Promise<CommandResult> {
-    const helpText = `
-Available Commands:
+  private async handleHelp(args: string[]): Promise<CommandResult> {
+    const helpSections = [
+      {
+        name: 'Input Modes',
+        content: `\`!\`  Run bash command
+\`#\`  Save memory to ALLY.md
+\`@\`  Mention file or directory
+\`+\`  Enable plugin for session
+\`-\`  Disable plugin for session`,
+      },
+      {
+        name: 'Core',
+        content: `\`/help\`  Show this help
+\`/init\`  Run setup wizard
+\`/exit\`  Quit application
+\`/config\`  View/edit settings
+\`/model\`  Change AI model
+\`/clear\`  Clear history
+\`/compact\`  Compact history
+\`/rewind\`  Rewind conversation
+\`/resume\`  Resume session
+\`/undo\`  Undo file changes
+\`/debug\`  Debug tools
+\`/context\`  Show token usage`,
+      },
+      {
+        name: 'Prompts',
+        content: `\`/prompt\`  Browse saved prompts
+\`/prompt add\`  Create new prompt
+\`/prompt edit <id>\`  Edit prompt
+\`/prompt delete <id>\`  Delete prompt
+\`/prompt list\`  List all prompts
+\`/prompt clear\`  Clear all prompts`,
+      },
+      {
+        name: 'Agents',
+        content: `\`/agent list\`  List agents
+\`/agent show <name>\`  Show agent details
+\`/agent create\`  Create new agent
+\`/agent delete <name>\`  Delete agent
+\`/agent use <name> <task>\`  Run task with agent
+\`/agent active\`  Show pooled agents
+\`/agent stats\`  Pool statistics
+\`/agent clear\`  Clear agent pool
+\`/switch <agent>\`  Switch active agent`,
+      },
+      {
+        name: 'Project',
+        content: `\`/project init\`  Initialize ALLY.md
+\`/project edit\`  Edit ALLY.md
+\`/project view\`  View ALLY.md
+\`/project clear\`  Clear project context
+\`/focus <path>\`  Set directory focus
+\`/defocus\`  Clear focus
+\`/focus-show\`  Show current focus`,
+      },
+      {
+        name: 'Todos',
+        content: `\`/todo\`  Show todos
+\`/todo add <task>\`  Add todo
+\`/todo complete <n>\`  Complete todo
+\`/todo clear\`  Clear completed
+\`/todo clear all\`  Clear all`,
+      },
+      {
+        name: 'Tasks',
+        content: `\`/task list\`  List background tasks
+\`/task kill <id>\`  Kill task`,
+      },
+      {
+        name: 'Plugins',
+        content: `\`/plugin list\`  List plugins
+\`/plugin show <name>\`  Plugin details
+\`/plugin config <name>\`  Configure plugin
+\`/plugin active\`  Active plugins
+\`/plugin activate <name>\`  Activate plugin
+\`/plugin deactivate <name>\`  Deactivate plugin
+\`/plugin install <path>\`  Install plugin
+\`/plugin uninstall <name>\`  Uninstall plugin`,
+      },
+      {
+        name: 'Profiles',
+        content: `\`/profile\`  Current profile
+\`/profile list\`  List profiles
+\`/profile info <name>\`  Profile details`,
+      },
+    ];
 
-Core Commands:
-  /help                    - Show this help message
-  /init                    - Run setup wizard
-  /config                  - Toggle configuration viewer
-  /config set <key>=<val>  - Set a configuration value
-  /config reset            - Reset all settings to defaults
-  /model [ally|service] [name] - Switch model or show current model
-  /debug                   - Debug commands (enable/disable/calls/errors/dump)
-  /context                 - Show context usage (token count)
-  /clear                   - Clear conversation history
-  /compact                 - Compact conversation history
-  /rewind                  - Rewind conversation to a previous message
-  /resume                  - Resume a previous session
-  /undo [count]            - Undo last N file operations (default: 1)
+    const formatSection = (section: { name: string; content: string }) =>
+      `**${section.name}**\n${section.content}`;
 
-Saved Prompts:
-  /prompt                  - Browse and insert saved prompts
-  /prompt <id>             - Insert specific prompt by ID
-  /prompt add              - Create a new prompt (select from messages or new)
-  /prompt edit <id>        - Edit an existing prompt
-  /prompt delete <id>      - Delete a prompt by ID
-  /prompt list             - List all saved prompts
-  /prompt clear            - Clear all saved prompts
-  /exit, /quit             - Exit the application
+    // No filter - return all sections
+    const filter = args.join(' ').toLowerCase().trim();
+    if (!filter) {
+      return {
+        handled: true,
+        response: helpSections.map(formatSection).join('\n\n'),
+      };
+    }
 
-Agent Commands:
-  /agent create <desc>     - Create a new specialized agent
-  /agent list              - List available agents
-  /agent show <name>       - Show agent details
-  /agent use <name> <task> - Use specific agent for a task
-  /agent delete <name>     - Delete an agent
-  /agent active            - Show active pooled agents
-  /agent stats             - Show pool statistics
-  /agent clear [id]        - Clear specific agent or all from pool
-  /switch <agent>          - Switch to a different agent
+    // Filter sections by name or content match
+    const matching = helpSections.filter(
+      (section) =>
+        section.name.toLowerCase().includes(filter) ||
+        section.content.toLowerCase().includes(filter)
+    );
 
-Focus Commands:
-  /focus <path>            - Set directory focus
-  /defocus                 - Clear focus
-  /focus-show              - Show current focus
+    if (matching.length === 0) {
+      return {
+        handled: true,
+        response: `No help found for "${filter}". Type \`/help\` to see all commands.`,
+      };
+    }
 
-Project Commands:
-  /project init            - Initialize project context
-  /project edit            - Edit project file
-  /project view            - View project file
-  /project clear           - Clear project context
-
-Todo Commands:
-  /todo                    - Show current todo list
-  /todo add <task>         - Add a new todo
-  /todo complete <index>   - Complete a todo by index
-  /todo clear              - Clear completed todos
-  /todo clear-all          - Clear all todos
-
-Task Commands:
-  /task list               - List running background processes
-  /task kill <shell_id>    - Kill a background process by ID
-
-Plugin Commands:
-  /plugin config <name>    - Configure a plugin
-
-Profile Commands:
-  /profile                 - Show current profile
-  /profile list            - List all profiles
-  /profile info [name]     - Show profile information
-`;
-
-    return { handled: true, response: helpText };
+    return {
+      handled: true,
+      response: matching.map(formatSection).join('\n\n'),
+    };
   }
 
   /**

@@ -501,6 +501,8 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         result: taskResult.result,
         agent_used: agentType,
         duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
+        // Store agent model for session persistence (enables model tracking on resume)
+        _agentModel: agentModel,
       };
 
       // Include agent_id if available

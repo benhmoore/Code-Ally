@@ -99,6 +99,15 @@ export const UI_COLORS = {
    */
   SUCCESS: '#50fa7b' as const,
 
+  /**
+   * Cyan - Memory and note-taking mode
+   *
+   * Usage:
+   * - Memory input mode border (# prefix)
+   * - ALLY.md memory storage indicator
+   */
+  MEMORY: 'cyan' as const,
+
   // ============================================================================
   // SECONDARY COLORS
   // ============================================================================

@@ -241,6 +241,9 @@ export class SessionsTool extends BaseTool {
         logger.debug('[SESSIONS_TOOL] Excluding current session from analysis:', currentSessionPath);
       }
 
+      // Get parent agent for activity monitoring coordination
+      const parentAgent = registry.get<any>('agent');
+
       // Create agent configuration with focusDirectory set to sessions dir
       // System prompt will be generated dynamically in sendMessage()
       const agentConfig: AgentConfig = {
@@ -250,6 +253,7 @@ export class SessionsTool extends BaseTool {
         taskPrompt: task,
         config: config,
         parentCallId: callId,
+        parentAgent: parentAgent, // Enable activity monitoring coordination
         maxDuration: getThoroughnessDuration('quick'), // 1 minute limit for session analysis
         focusDirectory: '.ally-sessions', // Restrict agent to sessions directory
         excludeFiles: excludeFiles, // Exclude current session
