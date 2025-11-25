@@ -79,35 +79,35 @@ export class TodoCommand extends Command {
       // Not using yellow output for this message (it's not a status update)
       return {
         handled: true,
-        response: 'No todos. Use /todo add <task> to add one.',
+        response: 'No todos. Use `/todo add <task>` to add one.',
       };
     }
-
-    let output = 'Todo List:\n\n';
 
     const inProgress = todoManager.getInProgressTodo();
     const pending = todos.filter(t => t.status === 'pending');
     const completed = todoManager.getCompletedTodos();
 
+    let output = '**Todo List**\n\n';
+
     // Show in-progress task (highlighted)
     if (inProgress) {
-      output += `  → IN PROGRESS: ${inProgress.task}\n\n`;
+      output += `**In Progress**\n→ ${inProgress.task}\n\n`;
     }
 
     // Show pending tasks with indices
     if (pending.length > 0) {
-      output += 'Pending:\n';
+      output += '**Pending**\n';
       pending.forEach((todo, index) => {
-        output += `  ${index}. ${todo.task}\n`;
+        output += `\`${index}\`  ${todo.task}\n`;
       });
       output += '\n';
     }
 
     // Show completed tasks
     if (completed.length > 0) {
-      output += 'Completed:\n';
+      output += '**Completed**\n';
       completed.forEach(todo => {
-        output += `  ✓ ${todo.task}\n`;
+        output += `✓ ${todo.task}\n`;
       });
     }
 

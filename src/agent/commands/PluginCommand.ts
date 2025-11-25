@@ -518,12 +518,14 @@ export class PluginCommand extends Command {
         };
       }
 
-      let output = 'Active Plugins:\n\n';
+      let output = '**Active Plugins**\n\n';
+      output += '| Plugin | Mode |\n';
+      output += '|--------|------|\n';
 
       for (const pluginName of activePlugins) {
         const mode = activationManager.getActivationMode(pluginName);
-        const modeBadge = mode === 'always' ? '[always]' : '[tagged]';
-        output += `  ${pluginName} ${modeBadge}\n`;
+        const modeBadge = mode === 'always' ? 'always' : 'tagged';
+        output += `| ${pluginName} | ${modeBadge} |\n`;
       }
 
       return {
@@ -608,18 +610,21 @@ export class PluginCommand extends Command {
   private showHelp(): CommandResult {
     return {
       handled: true,
-      response: `Plugin Management Commands:
+      response: `**Plugin Management**
+\`/plugin list\`  List all installed plugins
+\`/plugin show <name>\`  Show detailed plugin information
+\`/plugin active\`  List active plugins in this session
+\`/plugin config <name>\`  Configure a plugin
 
-  /plugin list                    List all installed plugins
-  /plugin show <name>             Show detailed plugin information
-  /plugin install <path|url>      Install a plugin
-  /plugin uninstall <name>        Uninstall a plugin
-  /plugin config <name>           Configure a plugin
-  /plugin active                  List active plugins in this session
-  /plugin activate <name>         Activate a plugin
-  /plugin deactivate <name>       Deactivate a plugin
+**Installation**
+\`/plugin install <path>\`  Install a plugin
+\`/plugin uninstall <name>\`  Uninstall a plugin
 
-Use +plugin-name to activate or -plugin-name to deactivate`,
+**Activation**
+\`/plugin activate <name>\`  Activate a plugin
+\`/plugin deactivate <name>\`  Deactivate a plugin
+\`+plugin-name\`  Quick activate in message
+\`-plugin-name\`  Quick deactivate in message`,
     };
   }
 }

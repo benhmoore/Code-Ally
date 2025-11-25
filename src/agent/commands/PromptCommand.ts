@@ -251,24 +251,26 @@ export class PromptCommand extends Command {
       if (prompts.length === 0) {
         return {
           handled: true,
-          response: 'No saved prompts. Use /prompt add to create one.',
+          response: 'No saved prompts. Use `/prompt add` to create one.',
         };
       }
 
-      let output = 'Saved Prompts:\n\n';
+      let output = '**Saved Prompts**\n\n';
+      output += '| ID | Title | Tags | Created |\n';
+      output += '|----|-------|------|----------|\n';
 
       prompts.forEach(prompt => {
         const date = new Date(prompt.createdAt).toLocaleDateString();
-        const tags = prompt.tags && prompt.tags.length > 0 ? ` [${prompt.tags.join(', ')}]` : '';
-        const preview = prompt.content.length > 60
-          ? prompt.content.substring(0, 60) + '...'
-          : prompt.content;
+        const tags = prompt.tags && prompt.tags.length > 0 ? prompt.tags.join(', ') : '-';
 
-        output += `  ${prompt.id}\n`;
-        output += `    ${prompt.title}${tags}\n`;
-        output += `    ${preview}\n`;
-        output += `    Created: ${date}\n\n`;
+        output += `| \`${prompt.id}\` | ${prompt.title} | ${tags} | ${date} |\n`;
       });
+
+      output += '\n---\n\n';
+      output += '**Commands**\n';
+      output += '`/prompt <id>`  Insert prompt\n';
+      output += '`/prompt edit <id>`  Edit prompt\n';
+      output += '`/prompt delete <id>`  Delete prompt';
 
       return {
         handled: true,

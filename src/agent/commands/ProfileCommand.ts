@@ -64,19 +64,17 @@ export class ProfileCommand extends Command {
       const profile = await profileManager.loadProfile(activeProfileName);
       const stats = await profileManager.getProfileStats(activeProfileName);
 
-      let output = '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-      output += `  Current Profile: ${profile.name}\n`;
-      output += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+      let output = `**Current Profile: ${profile.name}**\n\n`;
 
       if (profile.description) {
-        output += `  ${profile.description}\n\n`;
+        output += `${profile.description}\n\n`;
       }
 
-      output += `  Active Plugins:  ${stats.plugin_count}\n`;
-      output += `  Custom Agents:   ${stats.agent_count}\n`;
-      output += `  Prompts:         ${stats.prompt_count}\n\n`;
-
-      output += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      output += '| Resource | Count |\n';
+      output += '|----------|-------|\n';
+      output += `| Plugins | ${stats.plugin_count} |\n`;
+      output += `| Agents | ${stats.agent_count} |\n`;
+      output += `| Prompts | ${stats.prompt_count} |\n`;
 
       return this.createResponse(output);
     } catch (error) {
@@ -99,22 +97,19 @@ export class ProfileCommand extends Command {
     try {
       const profiles = await profileManager.listProfiles();
 
-      let output = '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-      output += '  Available Profiles\n';
-      output += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+      let output = '**Available Profiles**\n\n';
+      output += '| Profile | Description | Plugins | Agents |\n';
+      output += '|---------|-------------|---------|--------|\n';
 
       for (const profile of profiles) {
-        const current = profile.name === activeProfileName ? ' (current session)' : '';
-        output += `  ${profile.name}${current}\n`;
-        if (profile.description) {
-          output += `    ${profile.description}\n`;
-        }
-        output += `    ${profile.plugin_count} plugins, ${profile.agent_count} agents\n\n`;
+        const current = profile.name === activeProfileName ? ' ●' : '';
+        const description = profile.description || '-';
+        output += `| ${profile.name}${current} | ${description} | ${profile.plugin_count} | ${profile.agent_count} |\n`;
       }
 
-      output += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-      output += 'To switch profiles, exit and relaunch:\n';
-      output += '  ally --profile <name>\n\n';
+      output += '\n---\n\n';
+      output += '**Switch Profile**\n';
+      output += '`ally --profile <name>`  Launch with different profile';
 
       return this.createResponse(output);
     } catch (error) {
@@ -141,28 +136,27 @@ export class ProfileCommand extends Command {
       const profile = await profileManager.loadProfile(targetProfile);
       const stats = await profileManager.getProfileStats(targetProfile);
 
-      let output = '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-      output += `  Profile: ${profile.name}\n`;
-      output += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+      let output = `**Profile: ${profile.name}**\n\n`;
 
       if (profile.description) {
-        output += `  Description: ${profile.description}\n\n`;
+        output += `${profile.description}\n\n`;
       }
 
-      output += `  Created: ${new Date(profile.created_at).toLocaleString()}\n`;
-      output += `  Updated: ${new Date(profile.updated_at).toLocaleString()}\n\n`;
-
-      output += `  Plugins:  ${stats.plugin_count}\n`;
-      output += `  Agents:   ${stats.agent_count}\n`;
-      output += `  Prompts:  ${stats.prompt_count}\n`;
-      output += `  Config Overrides: ${stats.config_overrides}\n\n`;
+      output += '| Property | Value |\n';
+      output += '|----------|-------|\n';
+      output += `| Created | ${new Date(profile.created_at).toLocaleString()} |\n`;
+      output += `| Updated | ${new Date(profile.updated_at).toLocaleString()} |\n`;
+      output += `| Plugins | ${stats.plugin_count} |\n`;
+      output += `| Agents | ${stats.agent_count} |\n`;
+      output += `| Prompts | ${stats.prompt_count} |\n`;
+      output += `| Config Overrides | ${stats.config_overrides} |\n`;
 
       if (profile.tags && profile.tags.length > 0) {
-        output += `  Tags: ${profile.tags.join(', ')}\n\n`;
+        output += `| Tags | ${profile.tags.join(', ')} |\n`;
       }
 
-      output += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-      output += `Launch with: ally --profile ${profile.name}\n\n`;
+      output += '\n---\n\n';
+      output += `**Launch**\n\`ally --profile ${profile.name}\``;
 
       return this.createResponse(output);
     } catch (error) {
@@ -174,16 +168,14 @@ export class ProfileCommand extends Command {
    * Show help for profile commands
    */
   private showHelp(): CommandResult {
-    const output =
-      '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-      '  Profile Commands\n' +
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-      '  /profile              Show current profile\n' +
-      '  /profile list         List all profiles\n' +
-      '  /profile info [name]  Show profile info\n\n' +
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-      'Profile switching is launch-time only.\n' +
-      'To switch: ally --profile <name>\n\n';
+    const output = `**Profile Commands**
+\`/profile\`  Show current profile
+\`/profile list\`  List all profiles
+\`/profile info [name]\`  Show profile details
+
+**Switch Profile**
+Profile switching is launch-time only.
+\`ally --profile <name>\`  Launch with different profile`;
 
     return this.createResponse(output);
   }

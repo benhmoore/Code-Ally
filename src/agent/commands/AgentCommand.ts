@@ -67,20 +67,17 @@ export class AgentCommand extends Command {
   private showHelp(): CommandResult {
     return {
       handled: true,
-      response: `Agent Commands:
+      response: `**Specialized Agents**
+\`/agent create\`  Create new specialized agent
+\`/agent list\`  List available agents
+\`/agent show <name>\`  Show agent details
+\`/agent use <name> <task>\`  Run task with agent
+\`/agent delete <name>\`  Delete agent
 
-Specialized Agent Management:
-  /agent create <description> - Create new specialized agent
-  /agent list                 - List available agents
-  /agent show <name>          - Show agent details
-  /agent use <name> <task>    - Use specific agent
-  /agent delete <name>        - Delete agent
-
-Agent Pool Management:
-  /agent active               - Show active pooled agents
-  /agent stats                - Show pool statistics
-  /agent clear [agent_id]     - Clear specific agent or all if no ID
-`,
+**Agent Pool**
+\`/agent active\`  Show active pooled agents
+\`/agent stats\`  Show pool statistics
+\`/agent clear [id]\`  Clear specific agent or all`,
     };
   }
 
@@ -105,14 +102,16 @@ Agent Pool Management:
     if (agents.length === 0) {
       return {
         handled: true,
-        response: 'No agents available. Use /agent create to create one.',
+        response: 'No agents available. Use `/agent create` to create one.',
       };
     }
 
-    let output = 'Available Agents:\n\n';
+    let output = '**Available Agents**\n\n';
+    output += '| Name | Description |\n';
+    output += '|------|-------------|\n';
 
     for (const agent of agents) {
-      output += `  - ${agent.name}: ${agent.description}\n`;
+      output += `| ${agent.name} | ${agent.description} |\n`;
     }
 
     // Multi-line output, not yellow
@@ -138,10 +137,12 @@ Agent Pool Management:
       };
     }
 
-    let output = `Agent: ${agent.name}\n\n`;
-    output += `Description: ${agent.description}\n`;
-    output += `Created: ${agent.created_at || 'Unknown'}\n\n`;
-    output += `System Prompt:\n${agent.system_prompt}\n`;
+    let output = `**Agent: ${agent.name}**\n\n`;
+    output += `| Property | Value |\n`;
+    output += `|----------|-------|\n`;
+    output += `| Description | ${agent.description} |\n`;
+    output += `| Created | ${agent.created_at || 'Unknown'} |\n\n`;
+    output += `**System Prompt**\n\`\`\`\n${agent.system_prompt}\n\`\`\``;
 
     // Multi-line output, not yellow
     return { handled: true, response: output };
@@ -226,7 +227,9 @@ Agent Pool Management:
       };
     }
 
-    let output = 'Active Agents:\n\n';
+    let output = '**Active Agents**\n\n';
+    output += '| ID | Status | Type | Age | Last Used | Uses |\n';
+    output += '|----|--------|------|-----|-----------|------|\n';
 
     for (const agentId of agentIds) {
       const metadata = agentPool.getAgentMetadata(agentId);
@@ -237,13 +240,7 @@ Agent Pool Management:
       const age = this.formatDuration(Date.now() - metadata.createdAt);
       const lastUsed = this.formatDuration(Date.now() - metadata.lastAccessedAt);
 
-      output += `  ${agentId}\n`;
-      output += `    Status:      ${status}\n`;
-      output += `    Type:        ${type}\n`;
-      output += `    Age:         ${age}\n`;
-      output += `    Last Used:   ${lastUsed}\n`;
-      output += `    Use Count:   ${metadata.useCount}\n`;
-      output += '\n';
+      output += `| ${agentId} | ${status} | ${type} | ${age} | ${lastUsed} | ${metadata.useCount} |\n`;
     }
 
     // Multi-line output, not yellow
@@ -261,16 +258,18 @@ Agent Pool Management:
 
     const stats = agentPool.getPoolStats();
 
-    let output = 'Agent Pool Statistics:\n\n';
-    output += `  Total Agents:     ${stats.totalAgents}/${stats.maxPoolSize}\n`;
-    output += `  In Use:           ${stats.inUseAgents}\n`;
-    output += `  Available:        ${stats.availableAgents}\n`;
+    let output = '**Agent Pool Statistics**\n\n';
+    output += '| Metric | Value |\n';
+    output += '|--------|-------|\n';
+    output += `| Total Agents | ${stats.totalAgents}/${stats.maxPoolSize} |\n`;
+    output += `| In Use | ${stats.inUseAgents} |\n`;
+    output += `| Available | ${stats.availableAgents} |\n`;
 
     if (stats.oldestAgentAge !== null) {
-      output += `  Oldest Agent:     ${this.formatDuration(stats.oldestAgentAge)}\n`;
+      output += `| Oldest Agent | ${this.formatDuration(stats.oldestAgentAge)} |\n`;
     }
     if (stats.newestAgentAge !== null) {
-      output += `  Newest Agent:     ${this.formatDuration(stats.newestAgentAge)}\n`;
+      output += `| Newest Agent | ${this.formatDuration(stats.newestAgentAge)} |\n`;
     }
 
     // Multi-line output, not yellow

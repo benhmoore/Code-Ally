@@ -63,13 +63,13 @@ export class TaskCommand extends Command {
    * Get usage text
    */
   private getUsageText(): string {
-    return `Usage:
-  /task list, ls          List all running background processes
-  /task kill <shell_id>   Kill a background process by ID
+    return `**Background Tasks**
+\`/task list\`  List running background processes
+\`/task kill <id>\`  Kill a background process
 
-Examples:
-  /task list
-  /task kill shell-1234567890-abc123`;
+**Examples**
+\`/task list\`
+\`/task kill shell-1234567890-abc123\``;
   }
 
   /**
@@ -92,7 +92,9 @@ Examples:
       };
     }
 
-    let output = `Background Processes (${runningProcesses.length} running):\n\n`;
+    let output = `**Background Processes** (${runningProcesses.length} running)\n\n`;
+    output += '| # | ID | Command | PID | Running |\n';
+    output += '|---|-----|---------|-----|----------|\n';
 
     const now = Date.now();
     runningProcesses.forEach((proc, index) => {
@@ -103,12 +105,13 @@ Examples:
         ? proc.id.substring(6, 14) // Show first 8 digits after "shell-"
         : proc.id;
 
-      output += `  ${index + 1}. [${shortId}] ${proc.command}\n`;
-      output += `     PID: ${proc.pid} | Running for: ${elapsed}\n`;
-      output += `     Kill: /task kill ${proc.id}\n\n`;
+      output += `| ${index + 1} | \`${shortId}\` | ${proc.command} | ${proc.pid} | ${elapsed} |\n`;
     });
 
-    output += `Use bash-output(shell_id="<id>") to read process output`;
+    output += '\n---\n\n';
+    output += '**Commands**\n';
+    output += '`/task kill <full-id>`  Kill a process\n';
+    output += '`bash-output(shell_id="<id>")`  Read process output';
 
     return {
       handled: true,
