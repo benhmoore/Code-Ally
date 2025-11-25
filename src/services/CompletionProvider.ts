@@ -155,6 +155,21 @@ const PROFILE_SUBCOMMANDS = [
 ];
 
 /**
+ * Help topics for /help filtering
+ */
+const HELP_TOPICS = [
+  { name: 'input', description: 'Input modes (!, #, @, +, -)' },
+  { name: 'core', description: 'Core commands' },
+  { name: 'prompts', description: 'Prompt library commands' },
+  { name: 'agents', description: 'Agent commands' },
+  { name: 'project', description: 'Project & focus commands' },
+  { name: 'todos', description: 'Todo commands' },
+  { name: 'tasks', description: 'Background task commands' },
+  { name: 'plugins', description: 'Plugin commands' },
+  { name: 'profiles', description: 'Profile commands' },
+];
+
+/**
  * CompletionProvider service
  */
 export class CompletionProvider {
@@ -514,6 +529,17 @@ export class CompletionProvider {
         .map(sub => ({
           value: sub.name,
           description: sub.description,
+          type: 'command' as const,
+        }));
+    }
+
+    // Complete topics for /help (user typed "/help ")
+    if (command === '/help' && wordCount === 2) {
+      const prefix = subcommand || '';
+      return HELP_TOPICS.filter(topic => topic.name.startsWith(prefix))
+        .map(topic => ({
+          value: topic.name,
+          description: topic.description,
           type: 'command' as const,
         }));
     }

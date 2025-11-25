@@ -554,6 +554,9 @@ export class Agent {
     // Load provided messages
     this.conversationManager.addMessages(messages);
 
+    // Recalculate token count after bulk load
+    this.contextCoordinator.updateTokenCount();
+
     logger.debug('[AGENT]', this.instanceId, 'Loaded', messages.length, 'messages');
   }
 
@@ -581,6 +584,12 @@ export class Agent {
     this.pendingCleanupIds = [];
 
     const result = this.conversationManager.removeToolResults(idsToRemove);
+
+    // Recalculate token count after removal
+    if (result.removed_count > 0) {
+      this.contextCoordinator.updateTokenCount();
+    }
+
     logger.debug(
       '[AGENT_CLEANUP]',
       this.instanceId,
@@ -602,6 +611,8 @@ export class Agent {
   clearConversationHistory(): void {
     this.conversationManager.clearMessages();
     this.resetCheckpointTracking();
+    // Reset token count after clearing
+    this.contextCoordinator.updateTokenCount();
     logger.debug(`[AGENT] Cleared conversation history for agent ${this.instanceId}`);
   }
 
@@ -1730,8 +1741,8 @@ export class Agent {
     };
     this.conversationManager.addMessage(messageWithMetadata);
 
-    // Update token count with new message
-    this.contextCoordinator.updateTokenCount();
+    // Update token count incrementally with new message (O(1) instead of O(n))
+    this.contextCoordinator.addMessageTokens(messageWithMetadata);
 
     // Emit context usage update event for real-time UI updates
     // Only emit for main agent, not specialized agents (subagents)
@@ -1825,6 +1836,8 @@ export class Agent {
       ...msg,
       id: msg.id || generateMessageId(),
     })));
+    // Recalculate token count after compaction
+    this.contextCoordinator.updateTokenCount();
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages updated after compaction, count:', this.conversationManager.getMessageCount());
   }
 
@@ -1866,6 +1879,9 @@ export class Agent {
 
     // Update messages to the truncated version
     this.conversationManager.setMessages(systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages);
+
+    // Recalculate token count after rewind
+    this.contextCoordinator.updateTokenCount();
 
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Rewound to message', userMessageIndex, '- Total messages now:', this.conversationManager.getMessageCount());
 

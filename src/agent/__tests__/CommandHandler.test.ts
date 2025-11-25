@@ -52,7 +52,7 @@ describe('CommandHandler', () => {
     it('should parse simple commands', async () => {
       const result = await commandHandler.handleCommand('/help', []);
       expect(result.handled).toBe(true);
-      expect(result.response).toContain('Available Commands');
+      expect(result.response).toContain('/help');
     });
 
     it('should parse commands with arguments', async () => {
@@ -70,8 +70,8 @@ describe('CommandHandler', () => {
     it('should handle /help', async () => {
       const result = await commandHandler.handleCommand('/help', []);
       expect(result.handled).toBe(true);
-      expect(result.response).toContain('Core Commands');
-      expect(result.response).toContain('Agent Commands');
+      expect(result.response).toContain('**Core**');
+      expect(result.response).toContain('/agent');
     });
 
     it('should handle /config-show', async () => {

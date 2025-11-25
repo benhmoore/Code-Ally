@@ -45,6 +45,9 @@ export class ConversationManager {
   /** Conversation message array */
   private messages: Message[] = [];
 
+  /** Index mapping tool_call_id to tool result message for O(1) lookup */
+  private toolResultIndex: Map<string, Message> = new Map();
+
   /** Agent instance ID for logging */
   private readonly instanceId: string;
 
@@ -63,6 +66,8 @@ export class ConversationManager {
         id: msg.id || generateMessageId(),
         timestamp: msg.timestamp || Date.now(),
       }));
+      // Build tool result index from initial messages
+      this.rebuildToolResultIndex();
       logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Initialized with', this.messages.length, 'messages');
     }
   }
@@ -82,6 +87,11 @@ export class ConversationManager {
       timestamp: message.timestamp || Date.now(),
     };
     this.messages.push(messageWithMetadata);
+
+    // Update tool result index if this is a tool result message
+    if (messageWithMetadata.role === 'tool' && messageWithMetadata.tool_call_id) {
+      this.toolResultIndex.set(messageWithMetadata.tool_call_id, messageWithMetadata);
+    }
 
     // Log message addition for context tracking
     const toolInfo = message.tool_calls ? ` toolCalls:${message.tool_calls.length}` : '';
@@ -149,6 +159,8 @@ export class ConversationManager {
       ...msg,
       id: msg.id || generateMessageId(),
     }));
+    // Rebuild tool result index from scratch
+    this.rebuildToolResultIndex();
     logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Messages set, count:', this.messages.length);
   }
 
@@ -166,6 +178,7 @@ export class ConversationManager {
    */
   clearMessages(): void {
     this.messages = [];
+    this.toolResultIndex.clear();
     logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Messages cleared');
   }
 
@@ -212,6 +225,14 @@ export class ConversationManager {
    */
   removeMessages(predicate: (msg: Message) => boolean): number {
     const originalLength = this.messages.length;
+
+    // Remove matching tool results from index before filtering
+    for (const msg of this.messages) {
+      if (predicate(msg) && msg.role === 'tool' && msg.tool_call_id) {
+        this.toolResultIndex.delete(msg.tool_call_id);
+      }
+    }
+
     this.messages = this.messages.filter(msg => !predicate(msg));
     const removedCount = originalLength - this.messages.length;
 
@@ -500,10 +521,8 @@ export class ConversationManager {
           continue;
         }
 
-        // Find the corresponding tool result message
-        const toolResult = this.messages.find(
-          msg => msg.role === 'tool' && msg.tool_call_id === toolCall.id
-        );
+        // Get the corresponding tool result message from index (O(1) lookup)
+        const toolResult = this.toolResultIndex.get(toolCall.id);
 
         if (!toolResult) {
           logger.debug(
@@ -652,5 +671,19 @@ export class ConversationManager {
     otherMessages = otherMessages.filter(msg => !msg.metadata?.ephemeral);
 
     return systemMessage ? [systemMessage, ...otherMessages] : otherMessages;
+  }
+
+  /**
+   * Rebuild the tool result index from current messages
+   *
+   * @private
+   */
+  private rebuildToolResultIndex(): void {
+    this.toolResultIndex.clear();
+    for (const msg of this.messages) {
+      if (msg.role === 'tool' && msg.tool_call_id) {
+        this.toolResultIndex.set(msg.tool_call_id, msg);
+      }
+    }
   }
 }

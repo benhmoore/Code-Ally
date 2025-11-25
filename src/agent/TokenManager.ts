@@ -123,6 +123,20 @@ export class TokenManager {
   }
 
   /**
+   * Add tokens for a single message to the running total (O(1))
+   * Use this when adding messages incrementally instead of full recalculation.
+   * @param message Message to add tokens for
+   */
+  addMessageTokens(message: Message): void {
+    const tokens = this.estimateMessageTokens(message);
+    this.currentTokenCount += tokens;
+    // Cache the result if message has ID
+    if (message.id) {
+      this.messageTokenCache.set(message.id, tokens);
+    }
+  }
+
+  /**
    * Get the current token count
    *
    * @returns Current token count

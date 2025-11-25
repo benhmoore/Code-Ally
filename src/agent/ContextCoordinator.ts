@@ -14,6 +14,7 @@
 import { TokenManager } from './TokenManager.js';
 import { ConversationManager } from './ConversationManager.js';
 import { logger } from '../services/Logger.js';
+import { Message } from '../types/index.js';
 
 /**
  * ContextCoordinator manages context usage tracking and limits
@@ -52,6 +53,14 @@ export class ContextCoordinator {
    */
   updateTokenCount(): void {
     this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
+  }
+
+  /**
+   * Add tokens for a single message incrementally (O(1))
+   * Use this when adding a new message instead of full recalculation.
+   */
+  addMessageTokens(message: Message): void {
+    this.tokenManager.addMessageTokens(message);
   }
 
   /**

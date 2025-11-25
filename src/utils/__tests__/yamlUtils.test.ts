@@ -82,8 +82,8 @@ disabled: false`;
 max_tokens: 1000`;
 
         const result = parseFrontmatterYAML(yaml);
-        expect(result.temperature).toBe('0.7');
-        expect(result.max_tokens).toBe('1000');
+        expect(result.temperature).toBe(0.7);
+        expect(result.max_tokens).toBe(1000);
       });
 
       it('should handle empty values', () => {
@@ -278,7 +278,7 @@ requirements:
         expect(result.name).toBe('Test Agent');
         expect(result.description).toBe('A comprehensive test');
         expect(result.model).toBe('claude-3-5-sonnet-20241022');
-        expect(result.temperature).toBe('0.7');
+        expect(result.temperature).toBe(0.7);
         expect(result.tools).toEqual(['Read', 'Write', 'Edit']);
         expect(result.usage_guidelines).toBe(
           'Use this agent for testing.\nIt handles multiple scenarios.'

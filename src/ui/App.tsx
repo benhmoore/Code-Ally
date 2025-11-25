@@ -145,6 +145,24 @@ const AppContentComponent: React.FC<{
   // Subscribe to all activity events
   const { isCancelling } = useActivitySubscriptions(state, actions, modal, agent, activityStream);
 
+  // Emit AGENT_SWITCHED event on mount to sync footer with actual agent model
+  // This ensures the UI shows the real model being used, not just the configured one
+  // IMPORTANT: This must come AFTER useActivitySubscriptions so the listener is set up first
+  useEffect(() => {
+    const actualModel = agent.getModelClient().modelName;
+    activityStream.emit({
+      id: `agent_init_${Date.now()}`,
+      type: ActivityEventType.AGENT_SWITCHED,
+      timestamp: Date.now(),
+      data: {
+        agentName: 'ally',
+        agentId: agent.getInstanceId(),
+        agentModel: actualModel,
+      },
+    });
+    logger.debug('[APP]', 'Emitted initial AGENT_SWITCHED event with model:', actualModel);
+  }, []); // Run once on mount
+
   // Get input handler functions
   const { handleInput, handleInterjection } = useInputHandlers(commandHandler, activityStream, state, actions);
 
