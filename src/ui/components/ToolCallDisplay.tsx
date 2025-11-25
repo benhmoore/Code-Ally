@@ -391,6 +391,11 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           {displayName}
         </Text>
 
+        {/* Model - show for agent delegations only if different from primary */}
+        {isAgentDelegation && toolCall.agentModel && config?.model && toolCall.agentModel !== config.model && (
+          <Text dimColor> · {toolCall.agentModel}</Text>
+        )}
+
         {/* Thoroughness - show for agent delegations */}
         {thoroughness && (
           <Text dimColor> · {thoroughness}</Text>

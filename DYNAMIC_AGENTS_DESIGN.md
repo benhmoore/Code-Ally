@@ -59,13 +59,13 @@ Can be multiple paragraphs with specific guidance.
 
 ## What's Missing?
 
-### 1. Agent Creation Tool (New)
-**Location**: `src/tools/CreateAgentTool.ts`
+### 1. Agent Management Tool (New)
+**Location**: `src/tools/ManageAgentsTool.ts`
 
 ```typescript
-class CreateAgentTool extends BaseTool {
-  name = 'create-agent';
-  description = 'Create a custom specialized agent for the current profile';
+class ManageAgentsTool extends BaseTool {
+  name = 'manage-agents';
+  description = 'Manage specialized agents for current profile (create, edit, delete, list)';
   requiresConfirmation = true; // Show preview before creating
 
   schema = {
@@ -280,7 +280,7 @@ Provide API specifications before implementation.
 
 ### Phase 1: Core Tool (COMPLETED)
 - [x] AgentManager already exists with all needed methods
-- [x] Create `CreateAgentTool` class - Implemented at `/Users/bhm128/CodeAlly/src/tools/CreateAgentTool.ts`
+- [x] Create `ManageAgentsTool` class - Implemented at `/Users/benmoore/CodeAlly-TS/src/tools/ManageAgentsTool.ts`
 - [x] Add validation (kebab-case, no conflicts) - Validation handled by delegated agent
 - [x] Implement preview functionality - Uses `requiresConfirmation: true` for user approval
 - [x] Add to ToolManager registration - Registered in `/Users/bhm128/CodeAlly/src/cli.ts`

@@ -20,6 +20,7 @@ import { parseFrontmatterYAML, extractFrontmatter } from '../utils/yamlUtils.js'
 import { validateAgentName } from '../utils/namingValidation.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { BaseTool } from '../tools/BaseTool.js';
+import { AGENT_DELEGATION_TOOLS } from '../config/constants.js';
 
 export interface AgentData {
   name: string;
@@ -172,6 +173,7 @@ export class AgentManager {
    * between AgentSwitcher and AgentTool.
    *
    * @param agentData - Agent definition with tools, _pluginName, and can_see_agents fields
+   * @param toolManager - ToolManager instance for accessing available tools
    * @param allToolNames - Complete list of available tool names (used for can_see_agents filtering
    *                       when agent is unrestricted but should not see agent delegation tools)
    * @returns Array of allowed tool names, or undefined for unrestricted access
@@ -183,6 +185,7 @@ export class AgentManager {
    */
   public computeAllowedTools(
     agentData: AgentData,
+    toolManager: ToolManager,
     allToolNames: string[]
   ): string[] | undefined {
     let allowedTools: string[] | undefined;
@@ -193,31 +196,11 @@ export class AgentManager {
       allowedTools = agentData.tools;
     } else if (agentData._pluginName) {
       // Plugin agent with no explicit tool list: compute plugin tools (core tools + plugin's tools)
-      try {
-        const registry = ServiceRegistry.getInstance();
-        const toolManager = registry.get<ToolManager>('tool_manager');
-
-        if (toolManager) {
-          const allTools: BaseTool[] = toolManager.getAllTools();
-          const coreTools = allTools.filter(tool => !tool.pluginName);
-          const pluginTools = allTools.filter(tool => tool.pluginName === agentData._pluginName);
-          const filteredTools = [...coreTools, ...pluginTools];
-          allowedTools = filteredTools.map(t => t.name);
-        } else {
-          // Cannot compute plugin tools without ToolManager - deny all as safe default
-          logger.warn(
-            `[AgentManager] Cannot compute plugin tools for agent '${agentData.name}' ` +
-            `(plugin: ${agentData._pluginName}) - ToolManager not available. Denying all tools.`
-          );
-          allowedTools = [];
-        }
-      } catch (error) {
-        logger.error(
-          `[AgentManager] Error computing plugin tools for agent '${agentData.name}':`,
-          formatError(error)
-        );
-        allowedTools = [];
-      }
+      const allTools: BaseTool[] = toolManager.getAllTools();
+      const coreTools = allTools.filter(tool => !tool.pluginName);
+      const pluginTools = allTools.filter(tool => tool.pluginName === agentData._pluginName);
+      const filteredTools = [...coreTools, ...pluginTools];
+      allowedTools = filteredTools.map(t => t.name);
     } else {
       // User agent with no explicit tool list: unrestricted access
       allowedTools = undefined;
@@ -226,11 +209,11 @@ export class AgentManager {
     // Step 2: Apply can_see_agents filtering
     if (agentData.can_see_agents === false && allowedTools !== undefined) {
       // Remove agent delegation tools from explicit list
-      const agentToolNames = new Set(['agent', 'explore', 'plan', 'agent-ask']);
+      const agentToolNames = new Set<string>(AGENT_DELEGATION_TOOLS);
       allowedTools = allowedTools.filter(toolName => !agentToolNames.has(toolName));
     } else if (agentData.can_see_agents === false && allowedTools === undefined) {
       // Agent is unrestricted but can't see agents - compute all tools except agent tools
-      const agentToolNames = new Set(['agent', 'explore', 'plan', 'agent-ask']);
+      const agentToolNames = new Set<string>(AGENT_DELEGATION_TOOLS);
       allowedTools = allToolNames.filter(toolName => !agentToolNames.has(toolName));
     }
 

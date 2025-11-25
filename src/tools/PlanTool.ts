@@ -11,21 +11,14 @@
  * - Purpose: prescriptive (how to implement) vs descriptive (what exists)
  */
 
-import { BaseTool } from './BaseTool.js';
-import { InjectableTool } from './InjectableTool.js';
-import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/index.js';
+import { BaseDelegationTool, DelegationToolConfig } from './BaseDelegationTool.js';
+import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { Agent, AgentConfig } from '../agent/Agent.js';
-import { ModelClient } from '../llm/ModelClient.js';
-import { logger } from '../services/Logger.js';
-import { ToolManager } from './ToolManager.js';
 import { TodoManager } from '../services/TodoManager.js';
-import { formatError } from '../utils/errorUtils.js';
-import { TEXT_LIMITS, FORMATTING, REASONING_EFFORT } from '../config/constants.js';
-import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
-import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
-import { createAgentPersistenceReminder, createPlanAcceptedReminder } from '../utils/messageUtils.js';
+import { REASONING_EFFORT, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
+import { createPlanAcceptedReminder } from '../utils/messageUtils.js';
+import type { Config } from '../types/index.js';
 
 // Planning tools: read-only tools + explore for nested research + TodoWrite for task creation
 const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-write'];
@@ -110,9 +103,7 @@ Create comprehensive, actionable implementation plans that enable confident deve
 - Include code examples from codebase when relevant (or from best practices if starting fresh)
 - Use explore() for complex multi-file pattern analysis (skip if empty project)
 - **MUST call todo-write() before completing** - planning without todos is incomplete
-- Avoid using emojis for clear communication`;
-
-const PLANNING_CLOSING = `
+- Avoid using emojis for clear communication
 
 **Handling Different Scenarios:**
 - **Empty directory/new project**: Recommend project structure, tech stack, and modern conventions
@@ -121,10 +112,7 @@ const PLANNING_CLOSING = `
 
 Create plans that are complete but not over-engineered, focusing on artful implementation.
 
-Remember: You MUST call todo-write() before completing to create implementation tasks.`;
-
-// System prompt optimized for implementation planning
-const PLANNING_SYSTEM_PROMPT = PLANNING_BASE_PROMPT + `
+Remember: You MUST call todo-write() before completing to create implementation tasks.
 
 **Execution Guidelines:**
 - Be efficient in research (use 5-15 tool calls depending on codebase complexity)
@@ -133,11 +121,9 @@ const PLANNING_SYSTEM_PROMPT = PLANNING_BASE_PROMPT + `
 - For new projects: provide clear rationale for recommended approaches
 - Use explore() for complex pattern analysis across multiple files
 - Ensure plan is complete but not over-engineered
-- Focus on implementation that fits existing architecture (or establishes good architecture)
+- Focus on implementation that fits existing architecture (or establishes good architecture)`;
 
-` + PLANNING_CLOSING;
-
-export class PlanTool extends BaseTool implements InjectableTool {
+export class PlanTool extends BaseDelegationTool {
   readonly name = 'plan';
   readonly description =
     'Create implementation plan by researching codebase patterns. Delegates to planning agent with read-only + explore access. Returns detailed, actionable plan grounded in existing architecture.';
@@ -153,31 +139,85 @@ CRITICAL: Agent CANNOT see current conversation - include ALL context in require
 Agent has NO internet access - only local codebase research.
 Skip for: Quick fixes, continuing existing plans, simple changes.`;
 
-  private activeDelegations: Map<string, any> = new Map();
-  private _currentPooledAgent: PooledAgent | null = null;
-
-  // InjectableTool interface properties
-  get delegationState(): 'executing' | 'completing' | null {
-    // Always null for PlanTool - delegation state is managed by DelegationContextManager
-    return null;
-  }
-
-  get activeCallId(): string | null {
-    // Always null for PlanTool - delegation tracking is done by DelegationContextManager
-    return null;
-  }
-
-  get currentPooledAgent(): PooledAgent | null {
-    return this._currentPooledAgent;
-  }
-
   constructor(activityStream: ActivityStream) {
     super(activityStream);
+  }
 
-    // Listen for global interrupt events
-    this.activityStream.subscribe(ActivityEventType.INTERRUPT_ALL, () => {
-      this.interruptAll();
-    });
+  /**
+   * Get tool configuration
+   */
+  protected getConfig(): DelegationToolConfig {
+    return {
+      agentType: AGENT_TYPES.PLAN,
+      allowedTools: PLANNING_TOOLS,
+      modelConfigKey: 'plan_model',
+      requiredToolCalls: ['todo-write'],
+      reasoningEffort: REASONING_EFFORT.HIGH,
+      allowTodoManagement: true,
+      emptyResponseFallback: 'Planning completed but no plan was provided.',
+      summaryLabel: 'Implementation plan:',
+    };
+  }
+
+  /**
+   * Get system prompt for planning agent
+   */
+  protected getSystemPrompt(_config: Config): string {
+    return PLANNING_BASE_PROMPT;
+  }
+
+  /**
+   * Extract task prompt from arguments
+   */
+  protected getTaskPromptFromArgs(args: any): string {
+    return args.requirements;
+  }
+
+  /**
+   * Format task message for planning
+   */
+  protected formatTaskMessage(taskPrompt: string): string {
+    return `Create an implementation plan for: ${taskPrompt}`;
+  }
+
+  /**
+   * Post-process response to include todo summary
+   */
+  protected async postProcessResponse(
+    response: string,
+    _config: DelegationToolConfig,
+    registry: ServiceRegistry
+  ): Promise<string> {
+    // Get current todo summary to include in result
+    const currentTodoManager = registry.get<TodoManager>('todo_manager');
+    const todoSummary = currentTodoManager?.generateActiveContext();
+
+    if (todoSummary) {
+      return response + `\n\nActivated todos:\n${todoSummary}`;
+    }
+
+    return response;
+  }
+
+  /**
+   * Augment success response with plan accepted reminder
+   */
+  protected augmentSuccessResponse(
+    successResponse: Record<string, any>,
+    _config: DelegationToolConfig,
+    agentId: string | null
+  ): void {
+    // Add plan accepted reminder (ephemeral - cleaned up after turn)
+    const planAcceptedReminder = createPlanAcceptedReminder();
+
+    if (agentId && successResponse.system_reminder) {
+      // Append to existing system_reminder
+      successResponse.system_reminder += '\n\n' + planAcceptedReminder.system_reminder;
+      // Keep system_reminder_persist from agent persistence reminder (already ephemeral)
+    } else {
+      // No agent_id, just add plan accepted reminder
+      Object.assign(successResponse, planAcceptedReminder);
+    }
   }
 
   /**
@@ -211,7 +251,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
     this.captureParams(args);
 
     const requirements = args.requirements;
-    const thoroughness = args.thoroughness ?? 'uncapped';
+    const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
 
     // Validate requirements parameter
     if (!requirements || typeof requirements !== 'string') {
@@ -223,10 +263,9 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
     }
 
     // Validate thoroughness parameter
-    const validThoroughness = ['quick', 'medium', 'very thorough', 'uncapped'];
-    if (!validThoroughness.includes(thoroughness)) {
+    if (!VALID_THOROUGHNESS.includes(thoroughness)) {
       return this.formatErrorResponse(
-        `thoroughness must be one of: ${validThoroughness.join(', ')}`,
+        `thoroughness must be one of: ${VALID_THOROUGHNESS.join(', ')}`,
         'validation_error',
         'Example: plan(requirements="...", thoroughness="uncapped")'
       );
@@ -241,414 +280,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
       );
     }
 
-    return await this.executePlanning(requirements, thoroughness, callId);
-  }
-
-  /**
-   * Execute planning with specialized agent
-   *
-   * Planning agents always persist in the agent pool for reuse.
-   *
-   * @param requirements - The requirements for the implementation plan
-   * @param thoroughness - Planning thoroughness level (quick/medium/very thorough)
-   * @param callId - Unique call identifier for tracking
-   */
-  private async executePlanning(
-    requirements: string,
-    thoroughness: string,
-    callId: string
-  ): Promise<ToolResult> {
-    logger.debug('[PLAN_TOOL] Starting planning, callId:', callId, 'thoroughness:', thoroughness);
-    const startTime = Date.now();
-
-    try {
-      // Get required services
-      const registry = ServiceRegistry.getInstance();
-      const mainModelClient = registry.get<ModelClient>('model_client');
-      const toolManager = registry.get<ToolManager>('tool_manager');
-      const configManager = registry.get<any>('config_manager');
-      const permissionManager = registry.get<any>('permission_manager');
-
-      // Enforce strict service availability
-      if (!mainModelClient) {
-        throw new Error('PlanTool requires model_client to be registered');
-      }
-      if (!toolManager) {
-        throw new Error('PlanTool requires tool_manager to be registered');
-      }
-      if (!configManager) {
-        throw new Error('PlanTool requires config_manager to be registered');
-      }
-      if (!permissionManager) {
-        throw new Error('PlanTool requires permission_manager to be registered');
-      }
-
-      const config = configManager.getConfig();
-      if (!config) {
-        throw new Error('ConfigManager.getConfig() returned null/undefined');
-      }
-
-      // Determine target model
-      const targetModel = config.plan_model || config.model;
-
-      // Plan agent ALWAYS uses HIGH reasoning effort
-      const resolvedReasoningEffort = REASONING_EFFORT.HIGH;
-      logger.debug(`[PLAN_TOOL] Using hardcoded HIGH reasoning_effort: ${resolvedReasoningEffort}`);
-
-      // Calculate max tokens based on thoroughness
-      const maxTokens = getThoroughnessMaxTokens(thoroughness as any, config.max_tokens);
-      logger.debug(`[PLAN_TOOL] Set maxTokens to ${maxTokens} for thoroughness: ${thoroughness}`);
-
-      // Create appropriate model client
-      let modelClient: ModelClient;
-
-      // Use shared client only if model, reasoning_effort, AND max_tokens all match config
-      if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort && maxTokens === config.max_tokens) {
-        // Use shared global client
-        logger.debug(`[PLAN_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort}, maxTokens: ${maxTokens})`);
-        modelClient = mainModelClient;
-      } else{
-        // Plan specifies different model OR different reasoning_effort - create dedicated client
-        logger.debug(`[PLAN_TOOL] Creating dedicated client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
-
-        const { OllamaClient } = await import('../llm/OllamaClient.js');
-        modelClient = new OllamaClient({
-          endpoint: config.endpoint,
-          modelName: targetModel,
-          temperature: config.temperature,
-          contextSize: config.context_size,
-          maxTokens: maxTokens,
-          activityStream: this.activityStream,
-          reasoningEffort: resolvedReasoningEffort,
-        });
-      }
-
-      // System prompt will be generated dynamically in sendMessage()
-
-      // Map thoroughness to max duration
-      const maxDuration = getThoroughnessDuration(thoroughness as any);
-
-      // Emit planning start event
-      this.emitEvent({
-        id: callId,
-        type: ActivityEventType.AGENT_START,
-        timestamp: Date.now(),
-        data: {
-          agentName: 'plan',
-          taskPrompt: requirements,
-        },
-      });
-
-      // Get parent agent - the agent currently executing this tool
-      const parentAgent = registry.get<any>('agent');
-
-      // Calculate agent depth for nesting
-      const currentDepth = parentAgent?.getAgentDepth?.() ?? 0;
-      const newDepth = currentDepth + 1;
-
-      // Create agent configuration with unique pool key per invocation
-      // This ensures each plan() call gets its own persistent agent
-      const agentConfig: AgentConfig = {
-        isSpecializedAgent: true,
-        allowTodoManagement: true, // Planning agent can create proposed todos
-        verbose: false,
-        baseAgentPrompt: PLANNING_SYSTEM_PROMPT,
-        taskPrompt: requirements,
-        config: config,
-        parentCallId: callId,
-        parentAgent: parentAgent, // Direct reference to parent agent
-        _poolKey: `plan-${callId}`, // Unique key per invocation
-        requiredToolCalls: ['todo-write'], // Planning agent MUST call todo-write before exiting
-        maxDuration,
-        thoroughness: thoroughness, // Store for dynamic regeneration
-        agentType: 'plan',
-        agentDepth: newDepth,
-        allowedTools: PLANNING_TOOLS, // Restrict to planning tools
-      };
-
-      // Always use pooled agent for persistence
-      let planningAgent: Agent;
-      let pooledAgent: PooledAgent | null = null;
-      let agentId: string | null = null;
-
-      // Use AgentPoolService for persistent agent
-      const agentPoolService = registry.get<AgentPoolService>('agent_pool');
-
-      if (!agentPoolService) {
-        // Graceful fallback: AgentPoolService not available
-        logger.warn('[PLAN_TOOL] AgentPoolService not available, falling back to ephemeral agent');
-        planningAgent = new Agent(
-          modelClient,
-          toolManager,
-          this.activityStream,
-          agentConfig,
-          configManager,
-          permissionManager
-        );
-      } else {
-        // Acquire agent from pool
-        logger.debug('[PLAN_TOOL] Acquiring agent from pool');
-        // Pass custom modelClient only if plan uses a different model than global
-        const customModelClient = targetModel !== config.model ? modelClient : undefined;
-        pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
-        planningAgent = pooledAgent.agent;
-        agentId = pooledAgent.agentId;
-        this._currentPooledAgent = pooledAgent; // Track for interjection routing
-
-        // Register delegation with DelegationContextManager
-        try {
-          const serviceRegistry = ServiceRegistry.getInstance();
-          const toolManager = serviceRegistry.get<any>('tool_manager');
-          const delegationManager = toolManager?.getDelegationContextManager();
-          if (delegationManager) {
-            delegationManager.register(callId, 'plan', pooledAgent);
-            logger.debug(`[PLAN_TOOL] Registered delegation: callId=${callId}`);
-          }
-        } catch (error) {
-          // ServiceRegistry not available in tests - skip delegation registration
-          logger.debug(`[PLAN_TOOL] Delegation registration skipped: ${error}`);
-        }
-
-        logger.debug('[PLAN_TOOL] Acquired pooled agent:', agentId);
-      }
-
-      // Track active delegation
-      this.activeDelegations.set(callId, {
-        agent: planningAgent,
-        requirements,
-        startTime: Date.now(),
-      });
-
-      // Update registry to point to sub-agent during its execution
-      // This ensures nested tool calls (plan spawning other agents) get correct parent
-      const previousAgent = registry.get<any>('agent');
-      registry.registerInstance('agent', planningAgent);
-
-      try {
-        // Execute planning
-        logger.debug('[PLAN_TOOL] Sending task to planning agent...');
-        // Pass fresh execution context to prevent stale state in pooled agents
-        const response = await planningAgent.sendMessage(`Create an implementation plan for: ${requirements}`, {
-          parentCallId: callId,
-          maxDuration,
-          thoroughness,
-        });
-        logger.debug('[PLAN_TOOL] Planning agent response received, length:', response?.length || 0);
-
-        let finalResponse: string;
-
-        // Ensure we have a substantial response
-        if (!response || response.trim().length === 0) {
-          logger.debug('[PLAN_TOOL] Empty response, extracting from conversation');
-          finalResponse = this.extractSummaryFromConversation(planningAgent) ||
-            'Planning completed but no plan was provided.';
-        } else if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
-          logger.debug('[PLAN_TOOL] Incomplete response, attempting to extract summary');
-          const summary = this.extractSummaryFromConversation(planningAgent);
-          finalResponse = (summary && summary.length > response.length) ? summary : response;
-        } else {
-          finalResponse = response;
-        }
-
-        const duration = (Date.now() - startTime) / 1000;
-
-        // Emit planning end event
-        this.emitEvent({
-          id: callId,
-          type: ActivityEventType.AGENT_END,
-          timestamp: Date.now(),
-          data: {
-            agentName: 'plan',
-            result: finalResponse,
-            duration,
-          },
-        });
-
-        // Auto-accept proposed todos
-        await this.autoAcceptProposedTodos(registry);
-
-        // Get current todo summary to include in result
-        const currentTodoManager = registry.get<TodoManager>('todo_manager');
-        const todoSummary = currentTodoManager?.generateActiveContext();
-        let content = finalResponse + '\n\nIMPORTANT: The user CANNOT see this plan. You must share the plan, summarized or verbatim, with the user in your own response.';
-
-        if (todoSummary) {
-          content += `\n\nActivated todos:\n${todoSummary}`;
-        }
-
-        // Build response with agent_used
-        // PERSIST: false - Ephemeral: One-time notification about plan activation
-        // Cleaned up after turn since agent should acknowledge and move on
-        const planAcceptedReminder = createPlanAcceptedReminder();
-        const successResponse: Record<string, any> = {
-          content,
-          duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
-          agent_used: 'plan',
-        };
-
-        // Add plan accepted reminder (with explicit persistence flags)
-        Object.assign(successResponse, planAcceptedReminder);
-
-        // Always include agent_id when available (with explicit persistence flags)
-        if (agentId) {
-          successResponse.agent_id = agentId;
-          // PERSIST: false - Ephemeral: Coaching about agent-ask for follow-ups
-          // Cleaned up after turn since agent should integrate advice, not need constant reminding
-          const agentReminder = createAgentPersistenceReminder(agentId);
-          // Append agent-ask reminder text to existing system_reminder
-          successResponse.system_reminder += '\n\n' + agentReminder.system_reminder;
-          // Keep system_reminder_persist from plan accepted (ephemeral)
-          // Both reminders are ephemeral, so persistence flag stays false
-        }
-
-        return this.formatSuccessResponse(successResponse);
-      } finally {
-        // Restore previous agent in registry
-        try {
-          registry.registerInstance('agent', previousAgent);
-          logger.debug(`[PLAN_TOOL] Restored registry 'agent': ${(previousAgent as any)?.instanceId || 'null'}`);
-        } catch (registryError) {
-          logger.error(`[PLAN_TOOL] CRITICAL: Failed to restore registry agent:`, registryError);
-          // Don't throw - continue with other cleanup
-        }
-
-        // Clean up delegation tracking
-        logger.debug('[PLAN_TOOL] Cleaning up planning agent...');
-        this.activeDelegations.delete(callId);
-
-        // Release agent back to pool or cleanup ephemeral agent
-        if (pooledAgent) {
-          // Release agent back to pool
-          logger.debug('[PLAN_TOOL] Releasing agent back to pool');
-          pooledAgent.release();
-
-          // Transition delegation to completing state
-          try {
-            const serviceRegistry = ServiceRegistry.getInstance();
-            const toolManager = serviceRegistry.get<any>('tool_manager');
-            const delegationManager = toolManager?.getDelegationContextManager();
-            if (delegationManager) {
-              delegationManager.transitionToCompleting(callId);
-              logger.debug(`[PLAN_TOOL] Transitioned delegation to completing: callId=${callId}`);
-            }
-          } catch (error) {
-            logger.debug(`[PLAN_TOOL] Delegation transition skipped: ${error}`);
-          }
-
-          this._currentPooledAgent = null; // Clear tracked pooled agent
-        } else {
-          // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
-          await planningAgent.cleanup();
-
-          // Transition delegation to completing state
-          try {
-            const serviceRegistry = ServiceRegistry.getInstance();
-            const toolManager = serviceRegistry.get<any>('tool_manager');
-            const delegationManager = toolManager?.getDelegationContextManager();
-            if (delegationManager) {
-              delegationManager.transitionToCompleting(callId);
-              logger.debug(`[PLAN_TOOL] Transitioned delegation to completing: callId=${callId}`);
-            }
-          } catch (error) {
-            logger.debug(`[PLAN_TOOL] Delegation transition skipped: ${error}`);
-          }
-        }
-      }
-    } catch (error) {
-      return this.formatErrorResponse(
-        `Planning failed: ${formatError(error)}`,
-        'execution_error',
-        undefined,
-        { agent_used: 'plan' }
-      );
-    }
-  }
-
-  /**
-   * Extract summary from planning agent's conversation history
-   */
-  private extractSummaryFromConversation(agent: Agent): string | null {
-    try {
-      const messages = agent.getMessages();
-
-      // Find all assistant messages
-      const assistantMessages = messages
-        .filter(msg => msg.role === 'assistant' && msg.content && msg.content.trim().length > 0)
-        .map(msg => msg.content);
-
-      if (assistantMessages.length === 0) {
-        logger.debug('[PLAN_TOOL] No assistant messages found in conversation');
-        return null;
-      }
-
-      // Combine recent messages if multiple exist
-      if (assistantMessages.length > 1) {
-        const recentMessages = assistantMessages.slice(-3);
-        const summary = recentMessages.join('\n\n');
-        logger.debug('[PLAN_TOOL] Extracted summary from', recentMessages.length, 'messages, length:', summary.length);
-        return `Implementation plan:\n\n${summary}`;
-      }
-
-      // Single assistant message
-      const summary = assistantMessages[0];
-      if (summary) {
-        logger.debug('[PLAN_TOOL] Using single assistant message as summary, length:', summary.length);
-        return summary;
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug('[PLAN_TOOL] Error extracting summary:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Interrupt all active planning sessions
-   */
-  interruptAll(): void {
-    logger.debug('[PLAN_TOOL] Interrupting', this.activeDelegations.size, 'active planning sessions');
-    for (const [callId, delegation] of this.activeDelegations.entries()) {
-      const agent = delegation.agent;
-      if (agent && typeof agent.interrupt === 'function') {
-        logger.debug('[PLAN_TOOL] Interrupting planning:', callId);
-        agent.interrupt();
-      }
-    }
-  }
-
-  /**
-   * Inject user message into active pooled agent
-   * Used for routing interjections to subagents
-   */
-  injectUserMessage(message: string): void {
-    if (!this._currentPooledAgent) {
-      logger.warn('[PLAN_TOOL] injectUserMessage called but no active pooled agent');
-      return;
-    }
-
-    const agent = this._currentPooledAgent.agent;
-    if (!agent) {
-      logger.warn('[PLAN_TOOL] injectUserMessage called but pooled agent has no agent instance');
-      return;
-    }
-
-    logger.debug('[PLAN_TOOL] Injecting user message into pooled agent:', this._currentPooledAgent.agentId);
-    agent.addUserInterjection(message);
-    agent.interrupt('interjection');
-  }
-
-  /**
-   * Auto-accept proposed todos (no-op in simplified system)
-   *
-   * NOTE: This method is a no-op since the "proposed" status was removed.
-   * Planning agents now create todos directly as pending/in_progress via the unified todo tool.
-   * Keeping this method as an explicit no-op for clarity and to avoid breaking call sites.
-   */
-  private async autoAcceptProposedTodos(_registry: ServiceRegistry): Promise<void> {
-    // No-op: "proposed" status removed in simplified todo system
-    // Planning agents create todos directly as pending/in_progress
-    logger.debug('[PLAN_TOOL] autoAcceptProposedTodos is a no-op in simplified todo system');
+    return await this.executeDelegation(requirements, thoroughness, callId);
   }
 
   /**
@@ -671,32 +303,5 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
    */
   getSubtextParameters(): string[] {
     return ['requirements', 'description'];
-  }
-
-  /**
-   * Custom result preview
-   */
-  getResultPreview(result: ToolResult, maxLines: number = 3): string[] {
-    if (!result.success) {
-      return super.getResultPreview(result, maxLines);
-    }
-
-    const lines: string[] = [];
-
-    // Show duration if available
-    if (result.duration_seconds !== undefined) {
-      lines.push(`Planned in ${result.duration_seconds}s`);
-    }
-
-    // Show content preview
-    if (result.content) {
-      const contentPreview =
-        result.content.length > TEXT_LIMITS.AGENT_RESULT_PREVIEW_MAX
-          ? result.content.substring(0, TEXT_LIMITS.AGENT_RESULT_PREVIEW_MAX - 3) + '...'
-          : result.content;
-      lines.push(contentPreview);
-    }
-
-    return lines.slice(0, maxLines);
   }
 }

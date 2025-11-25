@@ -1,7 +1,7 @@
 /**
  * EditAgentTool - Specialized tool for editing existing agent definition files
  *
- * This tool is only visible to the 'create-agent' agent and handles
+ * This tool is only visible to the 'manage-agents' agent and handles
  * updating agent files with partial modifications. Only provided fields
  * are updated, preserving all other existing configuration.
  */
@@ -14,7 +14,15 @@ import { ReadStateManager } from '../services/ReadStateManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentsDir } from '../config/paths.js';
 import { parseAgentFile, constructAgentContent, AgentContentParams, validateAgentName } from '../utils/agentContentUtils.js';
-import { WriteAgentTool } from './WriteAgentTool.js';
+import {
+  validateTemperature,
+  validateReasoningEffort,
+  validateTools,
+  validateModel,
+  validateVisibilitySettings,
+  validateModelToolCapability,
+  VisibilitySettings
+} from '../utils/agentValidationUtils.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -23,17 +31,10 @@ export class EditAgentTool extends BaseTool {
   readonly description = 'Modify existing agent configuration. Supports partial updates - only provided fields are updated.';
   readonly requiresConfirmation = false; // Validated before execution
   readonly hideOutput = true; // Hide output from result preview
-  readonly visibleTo = ['create-agent']; // Only visible to create-agent agent
-
-  /**
-   * Reusable WriteAgentTool instance for accessing validators
-   */
-  private writeAgentTool: WriteAgentTool;
+  readonly visibleTo = ['manage-agents']; // Only visible to manage-agents agent
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
-    // Create WriteAgentTool instance to access its validation methods
-    this.writeAgentTool = new WriteAgentTool(activityStream);
   }
 
   /**
@@ -168,30 +169,30 @@ export class EditAgentTool extends BaseTool {
       const can_delegate_to_agents = args.can_delegate_to_agents as boolean | undefined;
       const can_see_agents = args.can_see_agents as boolean | undefined;
 
-      // Validate updated fields using WriteAgentTool validators (non-visibility fields)
+      // Validate updated fields (non-visibility fields)
       if (temperature !== undefined) {
-        const result = this.writeAgentTool.validateTemperature(temperature);
+        const result = validateTemperature(temperature);
         if (!result.valid) {
           return this.formatErrorResponse(result.error!, 'validation_error');
         }
       }
 
       if (reasoning_effort !== undefined) {
-        const result = this.writeAgentTool.validateReasoningEffort(reasoning_effort);
+        const result = validateReasoningEffort(reasoning_effort);
         if (!result.valid) {
           return this.formatErrorResponse(result.error!, 'validation_error');
         }
       }
 
       if (tools !== undefined) {
-        const result = await this.writeAgentTool.validateTools(tools);
+        const result = await validateTools(tools);
         if (!result.valid) {
           return this.formatErrorResponse(result.error!, 'validation_error');
         }
       }
 
       if (model !== undefined) {
-        const result = await this.writeAgentTool.validateModel(model);
+        const result = await validateModel(model);
         if (!result.valid) {
           return this.formatErrorResponse(result.error!, 'validation_error');
         }
@@ -215,13 +216,21 @@ export class EditAgentTool extends BaseTool {
 
       // Validate visibility settings on MERGED values (not just new values)
       // This ensures the final configuration is logically consistent
-      const visResult = await this.writeAgentTool.validateVisibilitySettings(
-        mergedParams.visible_from_agents,
-        mergedParams.can_delegate_to_agents,
-        mergedParams.can_see_agents
-      );
+      const visibilitySettings: VisibilitySettings = {
+        visibleFromAgents: mergedParams.visible_from_agents,
+        canDelegateToAgents: mergedParams.can_delegate_to_agents,
+        canSeeAgents: mergedParams.can_see_agents,
+      };
+      const visResult = await validateVisibilitySettings(visibilitySettings);
       if (!visResult.valid) {
         return this.formatErrorResponse(visResult.error!, 'validation_error');
+      }
+
+      // Validate model supports tools on MERGED values
+      // This catches cases where model is changed to one that doesn't support existing tools
+      const toolCapResult = await validateModelToolCapability(mergedParams.model, mergedParams.tools);
+      if (!toolCapResult.valid) {
+        return this.formatErrorResponse(toolCapResult.error!, 'validation_error');
       }
 
       // Construct updated content with preserved created_at and updated updated_at

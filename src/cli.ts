@@ -935,7 +935,7 @@ async function main() {
     const { LsTool } = await import('./tools/LsTool.js');
     const { TreeTool } = await import('./tools/TreeTool.js');
     const { AgentTool } = await import('./tools/AgentTool.js');
-    const { CreateAgentTool } = await import('./tools/CreateAgentTool.js');
+    const { ManageAgentsTool } = await import('./tools/ManageAgentsTool.js');
     const { ExploreTool } = await import('./tools/ExploreTool.js');
     const { PlanTool } = await import('./tools/PlanTool.js');
     const { AgentAskTool } = await import('./tools/AgentAskTool.js');
@@ -952,10 +952,10 @@ async function main() {
       new KillShellTool(activityStream),
       new ReadTool(activityStream, config),
       new WriteTool(activityStream),
-      new WriteAgentTool(activityStream), // Agent-specific write tool (only visible to create-agent)
-      new EditAgentTool(activityStream), // Agent-specific edit tool (only visible to create-agent)
-      new DeleteAgentTool(activityStream), // Agent-specific delete tool (only visible to create-agent)
-      new ListAgentsTool(activityStream), // Agent listing tool (only visible to create-agent)
+      new WriteAgentTool(activityStream), // Agent-specific write tool (only visible to manage-agents)
+      new EditAgentTool(activityStream), // Agent-specific edit tool (only visible to manage-agents)
+      new DeleteAgentTool(activityStream), // Agent-specific delete tool (only visible to manage-agents)
+      new ListAgentsTool(activityStream), // Agent listing tool (only visible to manage-agents)
       new WriteTempTool(activityStream), // Internal tool for explore agents
       new EditTool(activityStream),
       new LineEditTool(activityStream),
@@ -964,7 +964,7 @@ async function main() {
       new LsTool(activityStream),
       new TreeTool(activityStream),
       new AgentTool(activityStream),
-      new CreateAgentTool(activityStream),
+      new ManageAgentsTool(activityStream),
       new ExploreTool(activityStream),
       new PlanTool(activityStream),
       new AgentAskTool(activityStream),

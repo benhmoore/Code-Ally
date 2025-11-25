@@ -608,6 +608,44 @@ export const COMMAND_TIPS = [
 ] as const;
 
 // ===========================================
+// AGENT TYPES
+// ===========================================
+
+/**
+ * Agent type identifiers
+ */
+export const AGENT_TYPES = {
+  ALLY: 'ally',
+  TASK: 'task',
+  EXPLORE: 'explore',
+  PLAN: 'plan',
+  MANAGE_AGENTS: 'manage-agents',
+} as const;
+
+export type AgentType = typeof AGENT_TYPES[keyof typeof AGENT_TYPES];
+
+// ===========================================
+// THOROUGHNESS LEVELS
+// ===========================================
+
+/**
+ * Thoroughness levels for agent operations
+ */
+export const THOROUGHNESS_LEVELS = {
+  QUICK: 'quick',
+  MEDIUM: 'medium',
+  VERY_THOROUGH: 'very thorough',
+  UNCAPPED: 'uncapped',
+} as const;
+
+export type ThoroughnessLevel = typeof THOROUGHNESS_LEVELS[keyof typeof THOROUGHNESS_LEVELS];
+
+/**
+ * Valid thoroughness values array (for validation)
+ */
+export const VALID_THOROUGHNESS = Object.values(THOROUGHNESS_LEVELS);
+
+// ===========================================
 // CONTEXT & TOKEN SIZES
 // ===========================================
 
@@ -924,7 +962,7 @@ export const RESPONSE_LOOP_DETECTOR = {
  * Used by ToolCallDisplay and ConversationView to identify agent delegations
  * Also used to determine when nested tool outputs should be hidden
  */
-export const AGENT_DELEGATION_TOOLS = ['agent', 'create-agent', 'explore', 'plan', 'sessions', 'agent-ask'] as const;
+export const AGENT_DELEGATION_TOOLS = ['agent', 'manage-agents', 'explore', 'plan', 'sessions', 'agent-ask'] as const;
 
 // ===========================================
 // THOROUGHNESS LEVELS

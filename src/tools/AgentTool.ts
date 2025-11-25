@@ -20,10 +20,32 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, REASONING_EFFORT, ID_GENERATION, AGENT_CONFIG, PERMISSION_MESSAGES } from '../config/constants.js';
+import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, ID_GENERATION, AGENT_CONFIG, PERMISSION_MESSAGES, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
+import { getModelClientForAgent } from '../utils/modelClientUtils.js';
+import { extractSummaryFromConversation } from '../utils/agentUtils.js';
+
+/**
+ * Parameters for agent execution
+ */
+interface AgentExecutionParams {
+  agentType: string;
+  taskPrompt: string;
+  thoroughness: string;
+  callId: string;
+  depth: number;
+  parentAgentName?: string;
+  initialMessages?: Message[];
+}
+
+/**
+ * Parameters for executing an agent task
+ */
+interface AgentTaskExecutionParams extends AgentExecutionParams {
+  agentData: any;
+}
 
 export class AgentTool extends BaseTool implements InjectableTool {
   readonly name = 'agent';
@@ -84,7 +106,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
             },
             agent_type: {
               type: 'string',
-              description: "Agent type to use (e.g., 'task'). Defaults to 'task'.",
+              description: `Agent type to use (e.g., '${AGENT_TYPES.TASK}'). Defaults to '${AGENT_TYPES.TASK}'.`,
             },
             thoroughness: {
               type: 'string',
@@ -107,9 +129,9 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
   protected async executeImpl(args: any): Promise<ToolResult> {
     this.captureParams(args);
 
-    const agentType = (args.agent_type || 'task').trim();
+    const agentType = (args.agent_type || AGENT_TYPES.TASK).trim();
     const taskPrompt = args.task_prompt;
-    const thoroughness = args.thoroughness ?? 'uncapped';
+    const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
     const contextFiles = args.context_files;
 
     // Validate task_prompt parameter
@@ -138,10 +160,9 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     }
 
     // Validate thoroughness parameter
-    const validThoroughness = ['quick', 'medium', 'very thorough', 'uncapped'];
-    if (!validThoroughness.includes(thoroughness)) {
+    if (!VALID_THOROUGHNESS.includes(thoroughness)) {
       return this.formatErrorResponse(
-        `thoroughness must be one of: ${validThoroughness.join(', ')}`,
+        `thoroughness must be one of: ${VALID_THOROUGHNESS.join(', ')}`,
         'validation_error',
         'Example: agent(task_prompt="...", thoroughness="uncapped")'
       );
@@ -304,25 +325,27 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       }
     }
 
-    return await this.executeSingleAgentWrapper(agentType, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
+    return await this.executeSingleAgentWrapper({
+      agentType,
+      taskPrompt,
+      thoroughness,
+      callId,
+      depth: newDepth,
+      parentAgentName: currentAgentName,
+      initialMessages,
+    });
   }
 
   /**
    * Execute a single agent and format the result
    */
-  private async executeSingleAgentWrapper(
-    agentType: string,
-    taskPrompt: string,
-    thoroughness: string,
-    callId: string,
-    newDepth: number,
-    currentAgentName: string | undefined,
-    initialMessages?: Message[]
-  ): Promise<ToolResult> {
+  private async executeSingleAgentWrapper(params: AgentExecutionParams): Promise<ToolResult> {
+    const { agentType, callId, thoroughness } = params;
+
     logger.debug('[AGENT_TOOL] Executing single agent:', agentType, 'callId:', callId, 'thoroughness:', thoroughness);
 
     try {
-      const result = await this.executeSingleAgent(agentType, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
+      const result = await this.executeSingleAgent(params);
 
       if (result.success) {
         // Build response with agent_id (always returned since agents always persist)
@@ -353,9 +376,10 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         );
       }
     } catch (error) {
+      const errorType = (error as any)?.error_type || 'execution_error';
       return this.formatErrorResponse(
         `Agent execution failed: ${formatError(error)}`,
-        'execution_error',
+        errorType,
         undefined,
         {
           agent_used: agentType,
@@ -369,15 +393,9 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
    *
    * Agents always persist in the agent pool for reuse.
    */
-  private async executeSingleAgent(
-    agentType: string,
-    taskPrompt: string,
-    thoroughness: string,
-    callId: string,
-    newDepth: number,
-    currentAgentName: string | undefined,
-    initialMessages?: Message[]
-  ): Promise<any> {
+  private async executeSingleAgent(params: AgentExecutionParams): Promise<any> {
+    const { agentType, taskPrompt, thoroughness, callId, depth, parentAgentName, initialMessages } = params;
+
     logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentType, 'callId:', callId, 'thoroughness:', thoroughness);
     const startTime = Date.now();
 
@@ -389,19 +407,19 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       // Load agent data (from built-in or user directory)
       // Pass current agent name for visibility filtering, but treat 'ally' as undefined (main assistant)
       // This ensures agents with visible_from_agents: [] can be accessed from main ally
-      const callerForVisibility = currentAgentName === 'ally' ? undefined : currentAgentName;
-      logger.debug('[AGENT_TOOL] Loading agent:', agentType, 'caller:', currentAgentName || 'main', '(visibility caller:', callerForVisibility || 'main', ')');
+      const callerForVisibility = parentAgentName === AGENT_TYPES.ALLY ? undefined : parentAgentName;
+      logger.debug('[AGENT_TOOL] Loading agent:', agentType, 'caller:', parentAgentName || 'main', '(visibility caller:', callerForVisibility || 'main', ')');
       let agentData = await agentManager.loadAgent(agentType, callerForVisibility);
       logger.debug('[AGENT_TOOL] Agent data loaded:', agentData ? 'success' : 'null');
 
       if (!agentData) {
         // Fall back to task agent - allowing the model to create named aliases
         logger.debug('[AGENT_TOOL] Agent not found, creating alias for task agent with name:', agentType);
-        const taskAgentData = await agentManager.loadAgent('task', currentAgentName);
+        const taskAgentData = await agentManager.loadAgent(AGENT_TYPES.TASK, parentAgentName);
 
         if (!taskAgentData) {
           const result = this.formatErrorResponse(
-            `Agent '${agentType}' not found and fallback to 'task' agent also failed`,
+            `Agent '${agentType}' not found and fallback to '${AGENT_TYPES.TASK}' agent also failed`,
             'system_error',
             undefined,
             { agent_used: agentType }
@@ -415,14 +433,14 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       }
 
       // Check if current agent has permission to delegate to sub-agents
-      if (currentAgentName) {
+      if (parentAgentName) {
         // Load current agent data to check can_delegate_to_agents permission
-        const currentAgentData = await agentManager.loadAgent(currentAgentName);
+        const currentAgentData = await agentManager.loadAgent(parentAgentName);
 
         if (currentAgentData && currentAgentData.can_delegate_to_agents === false) {
-          logger.debug('[AGENT_TOOL] Agent', currentAgentName, 'cannot delegate to sub-agents (can_delegate_to_agents: false)');
+          logger.debug('[AGENT_TOOL] Agent', parentAgentName, 'cannot delegate to sub-agents (can_delegate_to_agents: false)');
           const result = this.formatErrorResponse(
-            `Agent '${currentAgentName}' cannot delegate to sub-agents (can_delegate_to_agents: false)`,
+            `Agent '${parentAgentName}' cannot delegate to sub-agents (can_delegate_to_agents: false)`,
             'permission_denied',
             undefined,
             { agent_used: agentType }
@@ -430,6 +448,13 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           return result;
         }
       }
+
+      // Determine the model that will be used for this agent
+      // Need to get config to resolve the fallback model
+      const registry = ServiceRegistry.getInstance();
+      const configManager = registry.get<any>('config_manager');
+      const config = configManager?.getConfig();
+      const agentModel = agentData.model || config?.model || 'unknown';
 
       // Emit agent start event
       this.emitEvent({
@@ -439,12 +464,22 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         data: {
           agentName: agentType,
           taskPrompt,
+          model: agentModel,
         },
       });
 
       // Execute the agent task
       logger.debug('[AGENT_TOOL] Executing agent task...');
-      const taskResult = await this.executeAgentTask(agentData, agentType, taskPrompt, thoroughness, callId, newDepth, currentAgentName, initialMessages);
+      const taskResult = await this.executeAgentTask({
+        agentData,
+        agentType,
+        taskPrompt,
+        thoroughness,
+        callId,
+        depth,
+        parentAgentName,
+        initialMessages,
+      });
       logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
 
       const duration = (Date.now() - startTime) / 1000;
@@ -475,9 +510,10 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
 
       return response;
     } catch (error) {
+      const errorType = (error as any)?.error_type || 'system_error';
       const result = this.formatErrorResponse(
         `Error executing agent task: ${formatError(error)}`,
-        'system_error',
+        errorType,
         undefined,
         { agent_used: agentType }
       );
@@ -486,25 +522,18 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
   }
 
   /**
-   * Execute a task using the specified agent
-   *
-   * Agents always persist in the agent pool for reuse.
+   * Validate all required services are available
    */
-  private async executeAgentTask(
-    agentData: any,
-    agentType: string,
-    taskPrompt: string,
-    thoroughness: string,
-    callId: string,
-    newDepth: number,
-    currentAgentName: string | undefined,
-    initialMessages?: Message[]
-  ): Promise<{ result: string; agent_id?: string }> {
-    logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
-    const registry = ServiceRegistry.getInstance();
-
-    // Get required services - STRICT: no fallbacks
+  private validateRequiredServices(): {
+    registry: ServiceRegistry;
+    mainModelClient: ModelClient;
+    toolManager: ToolManager;
+    config: any;
+    configManager: any;
+    permissionManager: any;
+  } {
     logger.debug('[AGENT_TOOL] Getting services from registry...');
+    const registry = ServiceRegistry.getInstance();
     const mainModelClient = registry.get<ModelClient>('model_client');
     const toolManager = registry.get<ToolManager>('tool_manager');
     const configManager = registry.get<any>('config_manager');
@@ -530,66 +559,354 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     }
 
     logger.debug('[AGENT_TOOL] All required services available');
-    logger.debug('[AGENT_TOOL] Agent depth:', newDepth);
+    return { registry, mainModelClient, toolManager, config, configManager, permissionManager };
+  }
 
-    // Determine target model
-    const targetModel = agentData.model || config.model;
+  /**
+   * Build agent configuration for execution
+   */
+  private buildAgentConfig(params: {
+    agentData: any;
+    agentType: string;
+    taskPrompt: string;
+    config: any;
+    callId: string;
+    depth: number;
+    maxDuration: number | undefined;
+    thoroughness: string;
+    allowedTools: string[] | undefined;
+    parentAgentName?: string;
+    initialMessages?: Message[];
+  }): AgentConfig {
+    const {
+      agentData,
+      agentType,
+      taskPrompt,
+      config,
+      callId,
+      depth,
+      maxDuration,
+      thoroughness,
+      allowedTools,
+      parentAgentName,
+      initialMessages,
+    } = params;
 
-    // Resolve reasoning_effort: use agent's value if set and not "inherit", otherwise use config
-    let resolvedReasoningEffort: string | undefined;
-    if (agentData.reasoning_effort && agentData.reasoning_effort !== REASONING_EFFORT.INHERIT) {
-      resolvedReasoningEffort = agentData.reasoning_effort;
-      logger.debug(`[AGENT_TOOL] Using agent reasoning_effort: ${resolvedReasoningEffort}`);
-    } else {
-      resolvedReasoningEffort = config.reasoning_effort;
-      logger.debug(`[AGENT_TOOL] Using config reasoning_effort: ${resolvedReasoningEffort}`);
+    // Build updated agent call stack for circular delegation detection
+    const registry = ServiceRegistry.getInstance();
+    const currentAgent = registry.get<any>('agent');
+    const currentCallStack = currentAgent?.getAgentCallStack?.() ?? [];
+    const newCallStack = parentAgentName ? [...currentCallStack, parentAgentName] : currentCallStack;
+
+    // Get parent agent reference
+    const parentAgent = registry.get<any>('agent');
+
+    // Create unique pool key for this agent config
+    const poolKey = agentData._pluginName
+      ? `plugin-${agentData._pluginName}-${agentType}-${callId}`
+      : `agent-${agentType}-${callId}`;
+
+    return {
+      isSpecializedAgent: true,
+      verbose: false,
+      baseAgentPrompt: agentData.system_prompt,
+      taskPrompt: taskPrompt,
+      config: config,
+      parentCallId: callId,
+      parentAgent: parentAgent,
+      _poolKey: poolKey,
+      maxDuration,
+      thoroughness: thoroughness,
+      initialMessages,
+      agentType: agentType,
+      requirements: agentData.requirements,
+      agentDepth: depth,
+      agentCallStack: newCallStack,
+      allowedTools: allowedTools,
+    };
+  }
+
+  /**
+   * Acquire agent from pool or create ephemeral agent
+   */
+  private async acquireOrCreateAgent(params: {
+    agentConfig: AgentConfig;
+    toolManager: ToolManager;
+    modelClient: ModelClient;
+    targetModel: string;
+    config: any;
+    configManager: any;
+    permissionManager: any;
+    agentType: string;
+  }): Promise<{ agent: Agent; pooledAgent: PooledAgent | null; agentId: string | null }> {
+    const { agentConfig, toolManager, modelClient, targetModel, config, configManager, permissionManager, agentType } =
+      params;
+
+    const registry = ServiceRegistry.getInstance();
+    const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+
+    if (!agentPoolService) {
+      // Graceful fallback: AgentPoolService not available
+      logger.warn('[AGENT_TOOL] AgentPoolService not available, falling back to ephemeral agent');
+      const agent = new Agent(modelClient, toolManager, this.activityStream, agentConfig, configManager, permissionManager);
+      return { agent, pooledAgent: null, agentId: null };
     }
 
-    // Calculate max tokens based on thoroughness
+    // Acquire agent from pool
+    logger.debug('[AGENT_TOOL] Acquiring agent from pool with poolKey:', agentConfig._poolKey);
+    const customModelClient = targetModel !== config.model ? modelClient : undefined;
+    const pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
+    const agentId = pooledAgent.agentId;
+    this._currentPooledAgent = pooledAgent; // Track for interjection routing
+
+    logger.debug(`[AGENT_TOOL] Using pooled agent ${agentId} for ${agentType}`);
+    return { agent: pooledAgent.agent, pooledAgent, agentId };
+  }
+
+  /**
+   * Register delegation with context manager
+   */
+  private registerDelegation(callId: string, pooledAgent: PooledAgent): void {
+    try {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const toolManager = serviceRegistry.get<any>('tool_manager');
+      const delegationManager = toolManager?.getDelegationContextManager();
+      if (delegationManager) {
+        delegationManager.register(callId, 'agent', pooledAgent);
+        logger.debug(`[AGENT_TOOL] Registered delegation: callId=${callId}`);
+      }
+    } catch (error) {
+      // ServiceRegistry not available in tests - skip delegation registration
+      logger.debug(`[AGENT_TOOL] Delegation registration skipped: ${error}`);
+    }
+  }
+
+  /**
+   * Execute agent and capture result
+   */
+  private async executeAgent(params: {
+    agent: Agent;
+    agentType: string;
+    taskPrompt: string;
+    callId: string;
+    maxDuration: number | undefined;
+    thoroughness: string;
+  }): Promise<string> {
+    const { agent, agentType, taskPrompt, callId, maxDuration, thoroughness } = params;
+
+    logger.debug('[AGENT_TOOL] Sending message to sub-agent...');
+    const response = await agent.sendMessage(`Execute this task: ${taskPrompt}`, {
+      parentCallId: callId,
+      maxDuration,
+      thoroughness,
+    });
+    logger.debug('[AGENT_TOOL] Sub-agent response received, length:', response?.length || 0);
+
+    // Ensure we have a substantial response
+    if (!response || response.trim().length === 0) {
+      logger.debug('[AGENT_TOOL] Sub-agent returned empty response, attempting to extract summary from conversation');
+      const summary = extractSummaryFromConversation(
+        agent,
+        '[AGENT_TOOL]',
+        `Agent '${agentType}' work summary:`,
+        BUFFER_SIZES.AGENT_RECENT_MESSAGES
+      );
+      if (summary) {
+        return summary;
+      }
+
+      // Last resort: try to get a summary by asking explicitly
+      logger.debug('[AGENT_TOOL] Attempting to request explicit summary from sub-agent');
+      try {
+        const explicitSummary = await agent.sendMessage(
+          'Please provide a concise summary of what you accomplished, found, or determined while working on this task.',
+          {
+            parentCallId: callId,
+            maxDuration,
+            thoroughness,
+          }
+        );
+        if (explicitSummary && explicitSummary.trim().length > 0) {
+          return explicitSummary;
+        }
+      } catch (summaryError) {
+        logger.debug('[AGENT_TOOL] Failed to get explicit summary:', summaryError);
+      }
+      return `Agent '${agentType}' completed the task but did not provide a summary.`;
+    }
+
+    // Check if response is just an interruption or error message
+    if (
+      response.includes('[Request interrupted') ||
+      response.includes('Interrupted. Tell Ally what to do instead.') ||
+      response.includes('Permission denied. Tell Ally what to do instead.') ||
+      response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION ||
+      response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
+      response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN
+    ) {
+      logger.debug('[AGENT_TOOL] Sub-agent response seems incomplete, attempting to extract summary');
+      const summary = extractSummaryFromConversation(
+        agent,
+        '[AGENT_TOOL]',
+        `Agent '${agentType}' work summary:`,
+        BUFFER_SIZES.AGENT_RECENT_MESSAGES
+      );
+      if (summary && summary.length > response.length) {
+        return summary;
+      }
+    }
+
+    return response;
+  }
+
+  /**
+   * Format execution response with agent metadata
+   */
+  private formatExecutionResponse(params: {
+    finalResponse: string;
+    agentId: string | null;
+  }): { result: string; agent_id?: string } {
+    const { finalResponse, agentId } = params;
+
+    // Append note to all agent responses
+    const result =
+      finalResponse +
+      '\n\nIMPORTANT: The user CANNOT see this summary. You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
+
+    // Return result with agent_id (always returned since agents always persist)
+    const returnValue: { result: string; agent_id?: string } = { result };
+    if (agentId) {
+      returnValue.agent_id = agentId;
+    }
+    return returnValue;
+  }
+
+  /**
+   * Cleanup after agent execution
+   */
+  private cleanupAfterExecution(params: {
+    registry: ServiceRegistry;
+    previousAgent: any;
+    pooledAgent: PooledAgent | null;
+    callId: string;
+    subAgent: Agent;
+  }): void {
+    const { registry, previousAgent } = params;
+
+    // Restore previous agent in registry
+    try {
+      registry.registerInstance('agent', previousAgent);
+
+      // VALIDATION: Ensure registry restoration succeeded
+      const restoredAgent = registry.get<any>('agent');
+      if (restoredAgent !== previousAgent) {
+        // CRITICAL: Registry corruption detected - fail fast
+        const error = new Error(
+          `[AGENT_TOOL] CRITICAL: Registry corruption detected! ` +
+            `Expected agent ${(previousAgent as any)?.instanceId || 'null'} ` +
+            `but registry contains ${(restoredAgent as any)?.instanceId || 'null'}. ` +
+            `This indicates a race condition or double-release bug in agent management.`
+        );
+        logger.error(error.message);
+        throw error;
+      }
+
+      logger.debug(`[AGENT_TOOL] Restored registry 'agent': ${(previousAgent as any)?.instanceId || 'null'}`);
+    } catch (registryError) {
+      logger.error(`[AGENT_TOOL] CRITICAL: Failed to restore registry agent:`, registryError);
+      if (registryError instanceof Error && registryError.message.includes('Registry corruption')) {
+        throw registryError;
+      }
+    }
+  }
+
+  /**
+   * Cleanup and release agent resources
+   */
+  private async releaseAgent(params: {
+    pooledAgent: PooledAgent | null;
+    subAgent: Agent;
+    callId: string;
+  }): Promise<void> {
+    const { pooledAgent, subAgent, callId } = params;
+
+    if (pooledAgent) {
+      logger.debug('[AGENT_TOOL] Releasing agent back to pool');
+      pooledAgent.release();
+
+      // Transition delegation to completing state
+      try {
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const toolManager = serviceRegistry.get<any>('tool_manager');
+        const delegationManager = toolManager?.getDelegationContextManager();
+        if (delegationManager) {
+          delegationManager.transitionToCompleting(callId);
+          logger.debug(`[AGENT_TOOL] Transitioned delegation to completing: callId=${callId}`);
+        }
+      } catch (error) {
+        logger.debug(`[AGENT_TOOL] Delegation transition skipped: ${error}`);
+      }
+    } else {
+      // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
+      await subAgent.cleanup();
+
+      // Transition delegation to completing state
+      try {
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const toolManager = serviceRegistry.get<any>('tool_manager');
+        const delegationManager = toolManager?.getDelegationContextManager();
+        if (delegationManager) {
+          delegationManager.transitionToCompleting(callId);
+          logger.debug(`[AGENT_TOOL] Transitioned delegation to completing: callId=${callId}`);
+        }
+      } catch (error) {
+        logger.debug(`[AGENT_TOOL] Delegation transition skipped: ${error}`);
+      }
+    }
+  }
+
+  /**
+   * Execute a task using the specified agent
+   *
+   * Agents always persist in the agent pool for reuse.
+   */
+  private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string }> {
+    const { agentData, agentType, taskPrompt, thoroughness, callId, depth, initialMessages } = params;
+
+    logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
+
+    // 1. Validate services
+    const services = this.validateRequiredServices();
+    const { registry, mainModelClient, toolManager, config, configManager, permissionManager } = services;
+
+    logger.debug('[AGENT_TOOL] Agent depth:', depth);
+
+    // 2. Determine target model and create model client
+    const targetModel = agentData.model || config.model;
     const maxTokens = getThoroughnessMaxTokens(thoroughness as any, config.max_tokens);
     logger.debug(`[AGENT_TOOL] Set maxTokens to ${maxTokens} for thoroughness: ${thoroughness}`);
 
-    // Create appropriate model client
-    let modelClient: ModelClient;
+    const modelClient = await getModelClientForAgent({
+      agentConfig: agentData,
+      appConfig: config,
+      sharedClient: mainModelClient,
+      activityStream: this.activityStream,
+      maxTokens: maxTokens,
+      context: '[AGENT_TOOL]',
+    });
 
-    // Use shared client only if model, reasoning_effort, AND max_tokens all match config
-    if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort && maxTokens === config.max_tokens) {
-      // Use shared global client
-      logger.debug(`[AGENT_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort}, maxTokens: ${maxTokens})`);
-      modelClient = mainModelClient;
-    } else {
-      // Agent specifies different model OR different reasoning_effort - create dedicated client
-      logger.debug(`[AGENT_TOOL] Creating dedicated client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
-
-      // Create dedicated client for this model
-      // Note: Model tool support was validated during agent creation
-      const { OllamaClient } = await import('../llm/OllamaClient.js');
-      modelClient = new OllamaClient({
-        endpoint: config.endpoint,
-        modelName: targetModel,
-        temperature: agentData.temperature ?? config.temperature,
-        contextSize: config.context_size,
-        maxTokens: maxTokens,
-        activityStream: this.activityStream,
-        reasoningEffort: resolvedReasoningEffort,
-      });
-    }
-
-    // Map thoroughness to max duration
-    const maxDuration = getThoroughnessDuration(thoroughness as any);
+    // 3. Map thoroughness to max duration
+    const maxDuration = getThoroughnessDuration(thoroughness as any) ?? 0;
     logger.debug('[AGENT_TOOL] Set maxDuration to', maxDuration, 'minutes for thoroughness:', thoroughness);
 
-    // System prompt will be generated dynamically in sendMessage() using baseAgentPrompt and taskPrompt
-    // This ensures current context (todos, token usage) is always included
-
-    // Compute allowed tools using centralized helper from AgentManager
+    // 4. Compute allowed tools
     const agentManager = registry.get<AgentManager>('agent_manager');
     if (!agentManager) {
       throw new Error('AgentManager not found in registry');
     }
 
-    const allToolNames = toolManager.getAllTools().map(t => t.name);
-    const allowedTools = agentManager.computeAllowedTools(agentData, allToolNames);
+    const allToolNames = toolManager.getAllTools().map((t) => t.name);
+    const allowedTools = agentManager.computeAllowedTools(agentData, toolManager, allToolNames);
 
     if (allowedTools !== undefined) {
       logger.debug('[AGENT_TOOL] Agent has access to', allowedTools.length, 'tools:', allowedTools.join(', '));
@@ -597,116 +914,40 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       logger.debug('[AGENT_TOOL] Agent has access to all tools (unrestricted)');
     }
 
-    // Create scoped registry for sub-agent (currently unused - for future extension)
-    // const scopedRegistry = new ScopedServiceRegistryProxy(registry);
+    // 5. Build agent config
+    const agentConfig = this.buildAgentConfig({
+      agentData,
+      agentType,
+      taskPrompt,
+      config,
+      callId,
+      depth,
+      maxDuration,
+      thoroughness,
+      allowedTools,
+      parentAgentName: params.parentAgentName,
+      initialMessages,
+    });
 
-    // Build updated agent call stack for circular delegation detection
-    const currentAgent = registry.get<any>('agent');
-    const currentCallStack = currentAgent?.getAgentCallStack?.() ?? [];
-    const newCallStack = currentAgentName
-      ? [...currentCallStack, currentAgentName]
-      : currentCallStack;
-
-    // Create sub-agent with scoped context and parent relationship
-    // IMPORTANT: Use callId parameter, not this.currentCallId (which can be overwritten by concurrent calls)
+    // 6. Acquire/create agent
     logger.debug('[AGENT_TOOL] Creating sub-agent with parentCallId:', callId);
+    const { agent: subAgent, pooledAgent, agentId } = await this.acquireOrCreateAgent({
+      agentConfig,
+      toolManager,
+      modelClient,
+      targetModel,
+      config,
+      configManager,
+      permissionManager,
+      agentType,
+    });
 
-    // Always use pooled agent for persistence
-    let subAgent: Agent;
-    let pooledAgent: PooledAgent | null = null;
-    let agentId: string | null = null;
-
-    // Use AgentPoolService for persistent agent
-    const agentPoolService = registry.get<AgentPoolService>('agent_pool');
-
-    if (!agentPoolService) {
-      // Graceful fallback: AgentPoolService not available
-      logger.warn('[AGENT_TOOL] AgentPoolService not available, falling back to ephemeral agent');
-      const agentConfig: AgentConfig = {
-        isSpecializedAgent: true,
-        verbose: false,
-        baseAgentPrompt: agentData.system_prompt,
-        taskPrompt: taskPrompt,
-        config: config,
-        parentCallId: callId,
-        maxDuration,
-        thoroughness: thoroughness, // Store for dynamic regeneration
-        initialMessages,
-        agentType: agentType,
-        requirements: agentData.requirements,
-        agentDepth: newDepth,
-        agentCallStack: newCallStack,
-        allowedTools: allowedTools, // Restrict tools based on agent definition
-      };
-
-      subAgent = new Agent(
-        modelClient,
-        toolManager,
-        this.activityStream,
-        agentConfig,
-        configManager,
-        permissionManager
-      );
-    } else {
-      // IMPORTANT: Create unique pool key for this agent config
-      // Must include agent type to avoid mixing different custom agents
-      // For plugin agents, include plugin name to avoid conflicts across plugins
-      // Include callId to ensure each invocation gets its own persistent agent
-      const poolKey = agentData._pluginName
-        ? `plugin-${agentData._pluginName}-${agentType}-${callId}`
-        : `agent-${agentType}-${callId}`;
-
-      // Get parent agent - the agent currently executing this tool
-      // At this point, registry.get('agent') IS the parent agent
-      const parentAgent = registry.get<any>('agent');
-
-      // Create config with pool metadata
-      const agentConfig: AgentConfig = {
-        isSpecializedAgent: true,
-        verbose: false,
-        baseAgentPrompt: agentData.system_prompt,
-        taskPrompt: taskPrompt,
-        config: config,
-        parentCallId: callId,
-        parentAgent: parentAgent, // Direct reference to parent agent
-        _poolKey: poolKey, // CRITICAL: Add this for pool matching
-        maxDuration,
-        thoroughness: thoroughness, // Store for dynamic regeneration
-        initialMessages,
-        agentType: agentType,
-        requirements: agentData.requirements,
-        agentDepth: newDepth,
-        agentCallStack: newCallStack,
-        allowedTools: allowedTools, // Restrict tools based on agent definition
-      };
-
-      // Acquire agent from pool
-      logger.debug('[AGENT_TOOL] Acquiring agent from pool with poolKey:', poolKey);
-      // Pass custom modelClient only if agent uses a different model than global
-      const customModelClient = targetModel !== config.model ? modelClient : undefined;
-      pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
-      subAgent = pooledAgent.agent;
-      agentId = pooledAgent.agentId;
-      this._currentPooledAgent = pooledAgent; // Track for interjection routing
-
-      // Register delegation with DelegationContextManager
-      try {
-        const serviceRegistry = ServiceRegistry.getInstance();
-        const toolManager = serviceRegistry.get<any>('tool_manager');
-        const delegationManager = toolManager?.getDelegationContextManager();
-        if (delegationManager) {
-          delegationManager.register(callId, 'agent', pooledAgent);
-          logger.debug(`[AGENT_TOOL] Registered delegation: callId=${callId}`);
-        }
-      } catch (error) {
-        // ServiceRegistry not available in tests - skip delegation registration
-        logger.debug(`[AGENT_TOOL] Delegation registration skipped: ${error}`);
-      }
-
-      logger.debug(`[AGENT_TOOL] Using pooled agent ${agentId} for ${agentType}`);
+    // 7. Register delegation
+    if (pooledAgent) {
+      this.registerDelegation(callId, pooledAgent);
     }
 
-    // Track active delegation
+    // 8. Track active delegation
     this.activeDelegations.set(callId, {
       subAgent,
       agentName: agentType,
@@ -714,198 +955,38 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       startTime: Date.now(),
     });
 
+    // 9. Store previous agent for restoration
+    const previousAgent = registry.get<any>('agent');
+
     try {
-      // Update registry to point to sub-agent during its execution
-      // This ensures nested tool calls (agent spawning agent) get correct parent
-      const previousAgent = registry.get<any>('agent');
+      // 10. Update registry to point to sub-agent during execution
       registry.registerInstance('agent', subAgent);
 
       try {
-        // Execute the task
-        logger.debug('[AGENT_TOOL] Sending message to sub-agent...');
-        // Pass fresh execution context to prevent stale state in pooled agents
-        const response = await subAgent.sendMessage(`Execute this task: ${taskPrompt}`, {
-          parentCallId: callId,
+        // 11. Execute agent
+        const finalResponse = await this.executeAgent({
+          agent: subAgent,
+          agentType,
+          taskPrompt,
+          callId,
           maxDuration,
           thoroughness,
         });
-        logger.debug('[AGENT_TOOL] Sub-agent response received, length:', response?.length || 0);
 
-      let finalResponse: string;
-
-      // Ensure we have a substantial response
-      if (!response || response.trim().length === 0) {
-        logger.debug('[AGENT_TOOL] Sub-agent returned empty response, attempting to extract summary from conversation');
-        const summary = this.extractSummaryFromConversation(subAgent, agentType);
-        if (summary) {
-          finalResponse = summary;
-        } else {
-          // Last resort: try to get a summary by asking explicitly
-          logger.debug('[AGENT_TOOL] Attempting to request explicit summary from sub-agent');
-          try {
-            // Pass fresh execution context to prevent stale state in pooled agents
-            const explicitSummary = await subAgent.sendMessage(
-              'Please provide a concise summary of what you accomplished, found, or determined while working on this task.',
-              {
-                parentCallId: callId,
-                maxDuration,
-                thoroughness,
-              }
-            );
-            if (explicitSummary && explicitSummary.trim().length > 0) {
-              finalResponse = explicitSummary;
-            } else {
-              finalResponse = `Agent '${agentType}' completed the task but did not provide a summary.`;
-            }
-          } catch (summaryError) {
-            logger.debug('[AGENT_TOOL] Failed to get explicit summary:', summaryError);
-            finalResponse = `Agent '${agentType}' completed the task but did not provide a summary.`;
-          }
-        }
-      } else {
-        // Check if response is just an interruption or error message
-        if (
-          response.includes('[Request interrupted') ||
-          response.includes('Interrupted. Tell Ally what to do instead.') ||
-          response.includes('Permission denied. Tell Ally what to do instead.') ||
-          response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION ||
-          response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
-          response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN
-        ) {
-          logger.debug('[AGENT_TOOL] Sub-agent response seems incomplete, attempting to extract summary');
-          const summary = this.extractSummaryFromConversation(subAgent, agentType);
-          if (summary && summary.length > response.length) {
-            finalResponse = summary;
-          } else {
-            finalResponse = response;
-          }
-        } else {
-          finalResponse = response;
-        }
-      }
-
-      // Append note to all agent responses
-      const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this summary. You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
-
-      // Return result with agent_id (always returned since agents always persist)
-      const returnValue: { result: string; agent_id?: string } = { result };
-      if (agentId) {
-        returnValue.agent_id = agentId;
-      }
-      return returnValue;
+        // 12. Format response
+        return this.formatExecutionResponse({ finalResponse, agentId });
       } finally {
-        // Restore previous agent in registry
-        try {
-          registry.registerInstance('agent', previousAgent);
-
-          // VALIDATION: Ensure registry restoration succeeded
-          // This prevents registry corruption where the wrong agent remains active
-          const restoredAgent = registry.get<any>('agent');
-          if (restoredAgent !== previousAgent) {
-            // CRITICAL: Registry corruption detected - fail fast
-            const error = new Error(
-              `[AGENT_TOOL] CRITICAL: Registry corruption detected! ` +
-              `Expected agent ${(previousAgent as any)?.instanceId || 'null'} ` +
-              `but registry contains ${(restoredAgent as any)?.instanceId || 'null'}. ` +
-              `This indicates a race condition or double-release bug in agent management.`
-            );
-            logger.error(error.message);
-            throw error;
-          }
-
-          logger.debug(`[AGENT_TOOL] Restored registry 'agent': ${(previousAgent as any)?.instanceId || 'null'}`);
-        } catch (registryError) {
-          logger.error(`[AGENT_TOOL] CRITICAL: Failed to restore registry agent:`, registryError);
-          // Don't throw on registry errors (let validation errors propagate) - continue with other cleanup
-          if (registryError instanceof Error && registryError.message.includes('Registry corruption')) {
-            throw registryError;
-          }
-        }
+        // 13. Restore registry
+        this.cleanupAfterExecution({ registry, previousAgent, pooledAgent, callId, subAgent });
       }
     } catch (error) {
       logger.debug('[AGENT_TOOL] ERROR during sub-agent execution:', error);
       throw error;
     } finally {
-      // Clean up delegation tracking
+      // 14. Cleanup delegation and release agent
       logger.debug('[AGENT_TOOL] Cleaning up sub-agent...');
       this.activeDelegations.delete(callId);
-
-      // Release agent back to pool or cleanup ephemeral agent
-      if (pooledAgent) {
-        logger.debug('[AGENT_TOOL] Releasing agent back to pool');
-        pooledAgent.release();
-
-        // Transition delegation to completing state
-        try {
-          const serviceRegistry = ServiceRegistry.getInstance();
-          const toolManager = serviceRegistry.get<any>('tool_manager');
-          const delegationManager = toolManager?.getDelegationContextManager();
-          if (delegationManager) {
-            delegationManager.transitionToCompleting(callId);
-            logger.debug(`[AGENT_TOOL] Transitioned delegation to completing: callId=${callId}`);
-          }
-        } catch (error) {
-          logger.debug(`[AGENT_TOOL] Delegation transition skipped: ${error}`);
-        }
-      } else {
-        // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
-        await subAgent.cleanup();
-
-        // Transition delegation to completing state
-        try {
-          const serviceRegistry = ServiceRegistry.getInstance();
-          const toolManager = serviceRegistry.get<any>('tool_manager');
-          const delegationManager = toolManager?.getDelegationContextManager();
-          if (delegationManager) {
-            delegationManager.transitionToCompleting(callId);
-            logger.debug(`[AGENT_TOOL] Transitioned delegation to completing: callId=${callId}`);
-          }
-        } catch (error) {
-          logger.debug(`[AGENT_TOOL] Delegation transition skipped: ${error}`);
-        }
-      }
-    }
-  }
-
-
-  /**
-   * Extract a summary from the subagent's conversation history
-   * Used when the subagent doesn't provide a final response
-   */
-  private extractSummaryFromConversation(subAgent: Agent, agentName: string): string | null {
-    try {
-      const messages = subAgent.getMessages();
-
-      // Find all assistant messages (excluding system/user/tool messages)
-      const assistantMessages = messages
-        .filter(msg => msg.role === 'assistant' && msg.content && msg.content.trim().length > 0)
-        .map(msg => msg.content);
-
-      if (assistantMessages.length === 0) {
-        logger.debug('[AGENT_TOOL] No assistant messages found in conversation');
-        return null;
-      }
-
-      // If we have multiple assistant messages, combine the last few
-      if (assistantMessages.length > 1) {
-        // Take the last 3 assistant messages (or all if less than 3)
-        const recentMessages = assistantMessages.slice(-BUFFER_SIZES.AGENT_RECENT_MESSAGES);
-        const summary = recentMessages.join('\n\n');
-        logger.debug('[AGENT_TOOL] Extracted summary from', recentMessages.length, 'assistant messages, length:', summary.length);
-        return `Agent '${agentName}' work summary:\n\n${summary}`;
-      }
-
-      // Single assistant message
-      const summary = assistantMessages[0];
-      if (summary) {
-        logger.debug('[AGENT_TOOL] Using single assistant message as summary, length:', summary.length);
-        return summary;
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug('[AGENT_TOOL] Error extracting summary from conversation:', error);
-      return null;
+      await this.releaseAgent({ pooledAgent, subAgent, callId });
     }
   }
 

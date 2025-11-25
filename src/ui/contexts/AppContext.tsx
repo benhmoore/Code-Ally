@@ -71,6 +71,9 @@ export interface AppState {
 
   /** Current active agent type (e.g., 'ally', 'task', 'explore', 'plan', custom agent name) */
   currentAgent: string;
+
+  /** Current active agent's model (or config model if ally) */
+  currentAgentModel: string;
 }
 
 /**
@@ -125,8 +128,8 @@ export interface AppActions {
   /** Atomically reset conversation view with new messages (for resume/compact/rewind) */
   resetConversationView: (messages: Message[]) => void;
 
-  /** Set the current active agent */
-  setCurrentAgent: (agent: string) => void;
+  /** Set the current active agent and its model */
+  setCurrentAgent: (agent: string, model?: string) => void;
 }
 
 /**
@@ -177,7 +180,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [compactionNotices, setCompactionNotices] = useState<CompactionNotice[]>([]);
   const [rewindNotices, setRewindNotices] = useState<RewindNotice[]>([]);
   const [staticRemountKey, setStaticRemountKey] = useState<number>(0);
-  const [currentAgent, setCurrentAgent] = useState<string>('ally');
+  const [currentAgent, setCurrentAgentState] = useState<string>('ally');
+  const [currentAgentModel, setCurrentAgentModel] = useState<string>(initialConfig.model || '');
 
   // Batching mechanism for tool call updates
   const pendingUpdatesRef = useRef<Map<string, Partial<ToolCallState>>>(new Map());
@@ -355,6 +359,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     });
   }, []);
 
+  const setCurrentAgent = useCallback((agent: string, model?: string) => {
+    setCurrentAgentState(agent);
+    if (model !== undefined) {
+      setCurrentAgentModel(model);
+    }
+  }, []);
+
   // Memoize state object to prevent unnecessary context updates
   const state = React.useMemo(() => ({
     messages,
@@ -369,7 +380,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     rewindNotices,
     staticRemountKey,
     currentAgent,
-  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, staticRemountKey, currentAgent]);
+    currentAgentModel,
+  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, staticRemountKey, currentAgent, currentAgentModel]);
 
   // Memoize actions object to prevent unnecessary context updates
   const actions = React.useMemo(() => ({

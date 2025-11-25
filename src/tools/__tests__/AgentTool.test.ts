@@ -7,6 +7,7 @@ import { AgentTool } from '@tools/AgentTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { AgentManager } from '@services/AgentManager.js';
+import { AGENT_CONFIG } from '@config/constants.js';
 import { mkdtemp, rm, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir, homedir } from 'os';
@@ -184,9 +185,9 @@ describe('AgentTool', () => {
     });
 
     it('should reject agent delegation beyond maximum depth', async () => {
-      // Mock a parent agent at depth 3 (maximum depth)
+      // Mock a parent agent at maximum depth
       const mockParentAgent = {
-        getAgentDepth: vi.fn().mockReturnValue(3),
+        getAgentDepth: vi.fn().mockReturnValue(AGENT_CONFIG.MAX_AGENT_DEPTH),
       };
 
       registry.registerInstance('agent', mockParentAgent);

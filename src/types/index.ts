@@ -244,6 +244,7 @@ export interface ToolCallState {
   thinkingStartTime?: number; // When thinking started (for duration calculation)
   thinkingEndTime?: number; // When thinking completed (for duration calculation)
   agentId?: string; // Pool agent ID for agent delegations (used to look up agent type)
+  agentModel?: string; // Model used by agent delegation (for display when different from primary)
   diffPreview?: {
     oldContent: string;
     newContent: string;
@@ -263,7 +264,7 @@ export interface Config {
   service_model?: string | null; // Model for background services (titles, idle messages). Defaults to main model.
   explore_model?: string | null; // Model for Explore agent. Defaults to global model.
   plan_model?: string | null; // Model for Plan agent. Defaults to global model.
-  agent_creation_model?: string | null; // Model for CreateAgent agent. Defaults to global model.
+  agent_creation_model?: string | null; // Model for ManageAgents agent. Defaults to global model.
   endpoint: string;
   context_size: number;
   temperature: number;

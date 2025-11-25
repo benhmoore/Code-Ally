@@ -16,12 +16,14 @@ import { ConfigManager } from './ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
 import { Message } from '../types/index.js';
 import { logger } from './Logger.js';
+import { getModelClientForAgent } from '../utils/modelClientUtils.js';
+import { AGENT_TYPES } from '../config/constants.js';
 
 /**
  * Switch the main agent instance to a different agent type
  *
- * @param targetAgentType - Name of the agent to switch to (e.g., 'explore', 'plan', or custom agent)
- *                          Special cases: 'task' or 'ally' returns to default main agent
+ * @param targetAgentType - Name of the agent to switch to (e.g., AGENT_TYPES.EXPLORE, AGENT_TYPES.PLAN, or custom agent)
+ *                          Special cases: AGENT_TYPES.TASK or AGENT_TYPES.ALLY returns to default main agent
  * @param registry - Service registry containing all required services
  * @throws Error if agent cannot be loaded or switching fails
  */
@@ -47,7 +49,7 @@ export async function switchAgent(
   let agentConfig: AgentConfig;
   let isMainAgent = false;
 
-  if (targetAgentType === 'ally') {
+  if (targetAgentType === AGENT_TYPES.ALLY) {
     logger.debug('[AGENT_SWITCHER]', 'Returning to default main agent');
     isMainAgent = true;
 
@@ -61,7 +63,7 @@ export async function switchAgent(
       config: configManager.getConfig(),
       isSpecializedAgent: false,
       allowTodoManagement: true,
-      agentType: 'ally',
+      agentType: AGENT_TYPES.ALLY,
     };
   } else {
     // Load target agent definition from AgentManager
@@ -91,7 +93,7 @@ export async function switchAgent(
 
     // Compute allowed tools using centralized helper
     const allToolNames = toolManager.getAllTools().map(t => t.name);
-    const allowedTools = agentManager.computeAllowedTools(agentData, allToolNames);
+    const allowedTools = agentManager.computeAllowedTools(agentData, toolManager, allToolNames);
 
     // Create agent config with target agent's settings
     agentConfig = {
@@ -113,7 +115,7 @@ export async function switchAgent(
   }
 
   // Get required services with comprehensive null safety
-  const modelClient = registry.get<ModelClient>('model_client');
+  const mainModelClient = registry.get<ModelClient>('model_client');
   const toolManager = registry.get<ToolManager>('tool_manager');
   const activityStream = registry.get<ActivityStream>('activity_stream');
   const configManager = registry.get<ConfigManager>('config_manager');
@@ -121,7 +123,7 @@ export async function switchAgent(
 
   // Validate all required services are available
   const missingServices: string[] = [];
-  if (!modelClient) missingServices.push('model_client');
+  if (!mainModelClient) missingServices.push('model_client');
   if (!toolManager) missingServices.push('tool_manager');
   if (!activityStream) missingServices.push('activity_stream');
   if (!configManager) missingServices.push('config_manager');
@@ -133,8 +135,28 @@ export async function switchAgent(
     );
   }
 
+  // Create appropriate model client for the agent
+  let modelClient: ModelClient = mainModelClient!;
+
+  // If switching to a custom agent (not 'ally'), check for agent-specific model settings
+  if (!isMainAgent && targetAgentType !== AGENT_TYPES.ALLY) {
+    const agentManager = registry.get<AgentManager>('agent_manager');
+    const agentData = agentManager ? await agentManager.loadAgent(targetAgentType) : null;
+    const config = configManager!.getConfig();
+
+    if (agentData && config) {
+      modelClient = await getModelClientForAgent({
+        agentConfig: agentData,
+        appConfig: config,
+        sharedClient: mainModelClient!,
+        activityStream: activityStream!,
+        context: '[AGENT_SWITCHER]'
+      });
+    }
+  }
+
   // Validate ActivityStream is shared (critical assumption for skipping cleanup)
-  const oldAgentStream = (currentAgent as any).activityStream;
+  const oldAgentStream = 'activityStream' in currentAgent ? (currentAgent as any).activityStream : undefined;
   const streamsMatch = oldAgentStream === activityStream;
 
   if (!streamsMatch) {
@@ -155,7 +177,7 @@ export async function switchAgent(
   // Non-null assertions are safe here because we validated services above
   logger.debug('[AGENT_SWITCHER]', 'Creating new agent instance');
   const newAgent = new Agent(
-    modelClient!,
+    modelClient,  // Use the potentially-dedicated model client
     toolManager!,
     activityStream!,
     agentConfig,

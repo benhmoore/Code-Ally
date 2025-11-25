@@ -368,6 +368,13 @@ export const useActivitySubscriptions = (
       streamingContentRef.current = '';
       actions.setStreamingContent(undefined);
     }
+
+    // Capture agent model for the tool call (event.id is the tool call ID)
+    if (event.id && event.data?.model) {
+      scheduleToolUpdate.current(event.id, {
+        agentModel: event.data.model,
+      });
+    }
   });
 
   // Agent end
@@ -1244,9 +1251,9 @@ export const useActivitySubscriptions = (
 
   // Agent switched event
   useActivityEvent(ActivityEventType.AGENT_SWITCHED, (event) => {
-    const { agentName } = event.data || {};
+    const { agentName, agentModel } = event.data || {};
     if (agentName) {
-      actions.setCurrentAgent(agentName);
+      actions.setCurrentAgent(agentName, agentModel);
     }
   });
 

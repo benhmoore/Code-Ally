@@ -47,6 +47,7 @@ export class SwitchCommand extends Command {
           data: {
             agentName, // Use the agent name as typed by user
             agentId: newAgent.getInstanceId(), // Include ID for validation
+            agentModel: newAgent.getModelClient().modelName, // Include model for status display
           },
         });
       }

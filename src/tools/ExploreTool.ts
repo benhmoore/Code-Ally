@@ -12,23 +12,14 @@
  * - Agents always persist in the pool for reuse
  */
 
-import { BaseTool } from './BaseTool.js';
-import { InjectableTool } from './InjectableTool.js';
-import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/index.js';
+import { BaseDelegationTool, DelegationToolConfig } from './BaseDelegationTool.js';
+import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { Agent, AgentConfig } from '../agent/Agent.js';
-import { ModelClient } from '../llm/ModelClient.js';
-import { logger } from '../services/Logger.js';
-import { ToolManager } from './ToolManager.js';
-import { formatError } from '../utils/errorUtils.js';
-import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
-import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
-import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
-import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
+import { AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
+import type { Config } from '../types/index.js';
 
 // Tools available for exploration (read-only + write-temp for note-taking + explore for delegation)
-const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp', 'explore'];
+const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp', AGENT_TYPES.EXPLORE];
 
 /**
  * Generate exploration base prompt with temp directory
@@ -144,14 +135,7 @@ Complete the exploration request efficiently and report your findings clearly wi
 Execute your exploration systematically and provide comprehensive results.`;
 }
 
-/**
- * Generate full exploration system prompt with temp directory
- */
-function getExplorationSystemPrompt(tempDir: string): string {
-  return getExplorationBasePrompt(tempDir);
-}
-
-export class ExploreTool extends BaseTool implements InjectableTool {
+export class ExploreTool extends BaseDelegationTool {
   readonly name = 'explore';
   readonly description =
     'Explore codebase with read-only access. Delegates to specialized exploration agent. Use when you need to understand code structure, find implementations, or analyze architecture. Returns comprehensive findings.';
@@ -174,31 +158,42 @@ If temp file paths are mentioned in the response, you can read those files for a
 
 Note: Explore agents can delegate to other explore agents (max 2 levels deep) for distinct sub-investigations.`;
 
-  private activeDelegations: Map<string, any> = new Map();
-  private _currentPooledAgent: PooledAgent | null = null;
-
-  // InjectableTool interface properties
-  get delegationState(): 'executing' | 'completing' | null {
-    // Always null for ExploreTool - delegation state is managed by DelegationContextManager
-    return null;
-  }
-
-  get activeCallId(): string | null {
-    // Always null for ExploreTool - delegation tracking is done by DelegationContextManager
-    return null;
-  }
-
-  get currentPooledAgent(): PooledAgent | null {
-    return this._currentPooledAgent;
-  }
-
   constructor(activityStream: ActivityStream) {
     super(activityStream);
+  }
 
-    // Listen for global interrupt events
-    this.activityStream.subscribe(ActivityEventType.INTERRUPT_ALL, () => {
-      this.interruptAll();
-    });
+  /**
+   * Get tool configuration
+   */
+  protected getConfig(): DelegationToolConfig {
+    return {
+      agentType: AGENT_TYPES.EXPLORE,
+      allowedTools: EXPLORATION_TOOLS,
+      modelConfigKey: 'explore_model',
+      emptyResponseFallback: 'Exploration completed but no summary was provided.',
+      summaryLabel: 'Exploration findings:',
+    };
+  }
+
+  /**
+   * Get system prompt for exploration agent
+   */
+  protected getSystemPrompt(config: Config): string {
+    return getExplorationBasePrompt(config.temp_directory);
+  }
+
+  /**
+   * Extract task prompt from arguments
+   */
+  protected getTaskPromptFromArgs(args: any): string {
+    return args.task_prompt;
+  }
+
+  /**
+   * Format task message for exploration
+   */
+  protected formatTaskMessage(taskPrompt: string): string {
+    return `Execute this exploration task: ${taskPrompt}`;
   }
 
   /**
@@ -232,7 +227,7 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
     this.captureParams(args);
 
     const taskPrompt = args.task_prompt;
-    const thoroughness = args.thoroughness ?? 'uncapped';
+    const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
 
     // Validate task_prompt parameter
     if (!taskPrompt || typeof taskPrompt !== 'string') {
@@ -244,10 +239,9 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
     }
 
     // Validate thoroughness parameter
-    const validThoroughness = ['quick', 'medium', 'very thorough', 'uncapped'];
-    if (!validThoroughness.includes(thoroughness)) {
+    if (!VALID_THOROUGHNESS.includes(thoroughness)) {
       return this.formatErrorResponse(
-        `thoroughness parameter must be one of: ${validThoroughness.join(', ')}`,
+        `thoroughness parameter must be one of: ${VALID_THOROUGHNESS.join(', ')}`,
         'validation_error',
         'Example: explore(task_prompt="...", thoroughness="uncapped")'
       );
@@ -262,381 +256,7 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
       );
     }
 
-    return await this.executeExploration(taskPrompt, thoroughness, callId);
-  }
-
-  /**
-   * Execute exploration with read-only agent
-   *
-   * All exploration agents are persisted in the agent pool for reuse.
-   *
-   * @param taskPrompt - The exploration task to execute
-   * @param thoroughness - Level of thoroughness: "quick", "medium", or "very thorough"
-   * @param callId - Unique call identifier for tracking
-   */
-  private async executeExploration(
-    taskPrompt: string,
-    thoroughness: string,
-    callId: string
-  ): Promise<ToolResult> {
-    logger.debug('[EXPLORE_TOOL] Starting exploration, callId:', callId);
-    const startTime = Date.now();
-
-    try {
-      // Get required services
-      const registry = ServiceRegistry.getInstance();
-      const mainModelClient = registry.get<ModelClient>('model_client');
-      const toolManager = registry.get<ToolManager>('tool_manager');
-      const configManager = registry.get<any>('config_manager');
-      const permissionManager = registry.get<any>('permission_manager');
-
-      // Enforce strict service availability
-      if (!mainModelClient) {
-        throw new Error('ExploreTool requires model_client to be registered');
-      }
-      if (!toolManager) {
-        throw new Error('ExploreTool requires tool_manager to be registered');
-      }
-      if (!configManager) {
-        throw new Error('ExploreTool requires config_manager to be registered');
-      }
-      if (!permissionManager) {
-        throw new Error('ExploreTool requires permission_manager to be registered');
-      }
-
-      const config = configManager.getConfig();
-      if (!config) {
-        throw new Error('ConfigManager.getConfig() returned null/undefined');
-      }
-
-      // Determine target model
-      const targetModel = config.explore_model || config.model;
-
-      // Explore agent uses INHERIT - get reasoning_effort from config
-      const resolvedReasoningEffort = config.reasoning_effort;
-      logger.debug(`[EXPLORE_TOOL] Using config reasoning_effort: ${resolvedReasoningEffort}`);
-
-      // Calculate max tokens based on thoroughness
-      const maxTokens = getThoroughnessMaxTokens(thoroughness as any, config.max_tokens);
-      logger.debug(`[EXPLORE_TOOL] Set maxTokens to ${maxTokens} for thoroughness: ${thoroughness}`);
-
-      // Create appropriate model client
-      let modelClient: ModelClient;
-
-      // Use shared client only if model, reasoning_effort, AND max_tokens all match config
-      if (targetModel === config.model && resolvedReasoningEffort === config.reasoning_effort && maxTokens === config.max_tokens) {
-        // Use shared global client
-        logger.debug(`[EXPLORE_TOOL] Using shared model client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort}, maxTokens: ${maxTokens})`);
-        modelClient = mainModelClient;
-      } else {
-        // Explore specifies different model OR different reasoning_effort - create dedicated client
-        logger.debug(`[EXPLORE_TOOL] Creating dedicated client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort})`);
-
-        const { OllamaClient } = await import('../llm/OllamaClient.js');
-        modelClient = new OllamaClient({
-          endpoint: config.endpoint,
-          modelName: targetModel,
-          temperature: config.temperature,
-          contextSize: config.context_size,
-          maxTokens: maxTokens,
-          activityStream: this.activityStream,
-          reasoningEffort: resolvedReasoningEffort,
-        });
-      }
-
-      // System prompt will be generated dynamically in sendMessage()
-
-      // Emit exploration start event
-      this.emitEvent({
-        id: callId,
-        type: ActivityEventType.AGENT_START,
-        timestamp: Date.now(),
-        data: {
-          agentName: 'explore',
-          taskPrompt: taskPrompt,
-        },
-      });
-
-      // Map thoroughness to max duration
-      const maxDuration = getThoroughnessDuration(thoroughness as any);
-
-      // Get parent agent - the agent currently executing this tool
-      const parentAgent = registry.get<any>('agent');
-
-      // Calculate agent depth for nesting
-      const currentDepth = parentAgent?.getAgentDepth?.() ?? 0;
-      const newDepth = currentDepth + 1;
-
-      // Create agent configuration with unique pool key per invocation
-      // This ensures each explore() call gets its own persistent agent
-      const agentConfig: AgentConfig = {
-        isSpecializedAgent: true,
-        verbose: false,
-        baseAgentPrompt: getExplorationSystemPrompt(config.temp_directory),
-        taskPrompt: taskPrompt,
-        config: config,
-        parentCallId: callId,
-        parentAgent: parentAgent, // Direct reference to parent agent
-        _poolKey: `explore-${callId}`, // Unique key per invocation
-        maxDuration,
-        thoroughness: thoroughness, // Store for dynamic regeneration
-        agentType: 'explore',
-        agentDepth: newDepth,
-        allowedTools: EXPLORATION_TOOLS, // Restrict to exploration tools
-      };
-
-      // Always use pooled agent for persistence
-      let explorationAgent: Agent;
-      let pooledAgent: PooledAgent | null = null;
-      let agentId: string | null = null;
-
-      // Use AgentPoolService for persistent agent
-      const agentPoolService = registry.get<AgentPoolService>('agent_pool');
-
-      if (!agentPoolService) {
-        // Graceful fallback: AgentPoolService not available
-        logger.warn('[EXPLORE_TOOL] AgentPoolService not available, falling back to ephemeral agent');
-        explorationAgent = new Agent(
-          modelClient,
-          toolManager,
-          this.activityStream,
-          agentConfig,
-          configManager,
-          permissionManager
-        );
-      } else {
-        // Acquire agent from pool
-        logger.debug('[EXPLORE_TOOL] Acquiring agent from pool for exploration');
-        // Pass custom modelClient only if explore uses a different model than global
-        const customModelClient = targetModel !== config.model ? modelClient : undefined;
-        pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
-        explorationAgent = pooledAgent.agent;
-        agentId = pooledAgent.agentId;
-        this._currentPooledAgent = pooledAgent; // Track for interjection routing
-
-        // Register delegation with DelegationContextManager
-        try {
-          const serviceRegistry = ServiceRegistry.getInstance();
-          const toolManager = serviceRegistry.get<any>('tool_manager');
-          const delegationManager = toolManager?.getDelegationContextManager();
-          if (delegationManager) {
-            delegationManager.register(callId, 'explore', pooledAgent);
-            logger.debug(`[EXPLORE_TOOL] Registered delegation: callId=${callId}`);
-          }
-        } catch (error) {
-          // ServiceRegistry not available in tests - skip delegation registration
-          logger.debug(`[EXPLORE_TOOL] Delegation registration skipped: ${error}`);
-        }
-
-        logger.debug('[EXPLORE_TOOL] Acquired pooled agent:', agentId);
-      }
-
-      // Track active delegation
-      this.activeDelegations.set(callId, {
-        agent: explorationAgent,
-        taskPrompt,
-        startTime: Date.now(),
-      });
-
-      // Update registry to point to sub-agent during its execution
-      // This ensures nested tool calls (explore spawning explore) get correct parent
-      const previousAgent = registry.get<any>('agent');
-      registry.registerInstance('agent', explorationAgent);
-
-      try {
-        // Execute exploration
-        logger.debug('[EXPLORE_TOOL] Sending task to exploration agent...');
-        // Pass fresh execution context to prevent stale state in pooled agents
-        const response = await explorationAgent.sendMessage(`Execute this exploration task: ${taskPrompt}`, {
-          parentCallId: callId,
-          maxDuration,
-          thoroughness,
-        });
-        logger.debug('[EXPLORE_TOOL] Exploration agent response received, length:', response?.length || 0);
-
-        let finalResponse: string;
-
-        // Ensure we have a substantial response
-        if (!response || response.trim().length === 0) {
-          logger.debug('[EXPLORE_TOOL] Empty response, extracting from conversation');
-          finalResponse = this.extractSummaryFromConversation(explorationAgent) ||
-            'Exploration completed but no summary was provided.';
-        } else if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
-          logger.debug('[EXPLORE_TOOL] Incomplete response, attempting to extract summary');
-          const summary = this.extractSummaryFromConversation(explorationAgent);
-          finalResponse = (summary && summary.length > response.length) ? summary : response;
-        } else {
-          finalResponse = response;
-        }
-
-        const duration = (Date.now() - startTime) / 1000;
-
-        // Emit exploration end event
-        this.emitEvent({
-          id: callId,
-          type: ActivityEventType.AGENT_END,
-          timestamp: Date.now(),
-          data: {
-            agentName: 'explore',
-            result: finalResponse,
-            duration,
-          },
-        });
-
-        // Append note that user cannot see this
-        const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this output! You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
-
-        // Build response with agent_used
-        const successResponse: Record<string, any> = {
-          content: result,
-          duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
-          agent_used: 'explore',
-        };
-
-        // Always include agent_id when available (with explicit persistence flags)
-        if (agentId) {
-          successResponse.agent_id = agentId;
-          // PERSIST: false - Ephemeral: Coaching about agent-ask for follow-ups
-          // Cleaned up after turn since agent should integrate advice, not need constant reminding
-          const reminder = createAgentPersistenceReminder(agentId);
-          Object.assign(successResponse, reminder);
-        }
-
-        return this.formatSuccessResponse(successResponse);
-      } finally {
-        // Restore previous agent in registry
-        try {
-          registry.registerInstance('agent', previousAgent);
-          logger.debug(`[EXPLORE_TOOL] Restored registry 'agent': ${(previousAgent as any)?.instanceId || 'null'}`);
-        } catch (registryError) {
-          logger.error(`[EXPLORE_TOOL] CRITICAL: Failed to restore registry agent:`, registryError);
-          // Don't throw - continue with other cleanup
-        }
-
-        // Clean up delegation tracking
-        logger.debug('[EXPLORE_TOOL] Cleaning up exploration agent...');
-        this.activeDelegations.delete(callId);
-
-        // Release agent back to pool or cleanup ephemeral agent
-        if (pooledAgent) {
-          // Release agent back to pool
-          logger.debug('[EXPLORE_TOOL] Releasing agent back to pool');
-          pooledAgent.release();
-
-          // Transition delegation to completing state
-          try {
-            const serviceRegistry = ServiceRegistry.getInstance();
-            const toolManager = serviceRegistry.get<any>('tool_manager');
-            const delegationManager = toolManager?.getDelegationContextManager();
-            if (delegationManager) {
-              delegationManager.transitionToCompleting(callId);
-              logger.debug(`[EXPLORE_TOOL] Transitioned delegation to completing: callId=${callId}`);
-            }
-          } catch (error) {
-            logger.debug(`[EXPLORE_TOOL] Delegation transition skipped: ${error}`);
-          }
-
-          this._currentPooledAgent = null; // Clear tracked pooled agent
-        } else {
-          // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
-          await explorationAgent.cleanup();
-
-          // Transition delegation to completing state
-          try {
-            const serviceRegistry = ServiceRegistry.getInstance();
-            const toolManager = serviceRegistry.get<any>('tool_manager');
-            const delegationManager = toolManager?.getDelegationContextManager();
-            if (delegationManager) {
-              delegationManager.transitionToCompleting(callId);
-              logger.debug(`[EXPLORE_TOOL] Transitioned delegation to completing: callId=${callId}`);
-            }
-          } catch (error) {
-            logger.debug(`[EXPLORE_TOOL] Delegation transition skipped: ${error}`);
-          }
-        }
-      }
-    } catch (error) {
-      return this.formatErrorResponse(
-        `Exploration failed: ${formatError(error)}`,
-        'execution_error',
-        undefined,
-        { agent_used: 'explore' }
-      );
-    }
-  }
-
-  /**
-   * Extract summary from exploration agent's conversation history
-   */
-  private extractSummaryFromConversation(agent: Agent): string | null {
-    try {
-      const messages = agent.getMessages();
-
-      // Find all assistant messages
-      const assistantMessages = messages
-        .filter(msg => msg.role === 'assistant' && msg.content && msg.content.trim().length > 0)
-        .map(msg => msg.content);
-
-      if (assistantMessages.length === 0) {
-        logger.debug('[EXPLORE_TOOL] No assistant messages found in conversation');
-        return null;
-      }
-
-      // Combine recent messages if multiple exist
-      if (assistantMessages.length > 1) {
-        const recentMessages = assistantMessages.slice(-3);
-        const summary = recentMessages.join('\n\n');
-        logger.debug('[EXPLORE_TOOL] Extracted summary from', recentMessages.length, 'messages, length:', summary.length);
-        return `Exploration findings:\n\n${summary}`;
-      }
-
-      // Single assistant message
-      const summary = assistantMessages[0];
-      if (summary) {
-        logger.debug('[EXPLORE_TOOL] Using single assistant message as summary, length:', summary.length);
-        return summary;
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug('[EXPLORE_TOOL] Error extracting summary:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Interrupt all active explorations
-   */
-  interruptAll(): void {
-    logger.debug('[EXPLORE_TOOL] Interrupting', this.activeDelegations.size, 'active explorations');
-    for (const [callId, delegation] of this.activeDelegations.entries()) {
-      const agent = delegation.agent;
-      if (agent && typeof agent.interrupt === 'function') {
-        logger.debug('[EXPLORE_TOOL] Interrupting exploration:', callId);
-        agent.interrupt();
-      }
-    }
-  }
-
-  /**
-   * Inject user message into active pooled agent
-   * Used for routing interjections to subagents
-   */
-  injectUserMessage(message: string): void {
-    if (!this._currentPooledAgent) {
-      logger.warn('[EXPLORE_TOOL] injectUserMessage called but no active pooled agent');
-      return;
-    }
-
-    const agent = this._currentPooledAgent.agent;
-    if (!agent) {
-      logger.warn('[EXPLORE_TOOL] injectUserMessage called but pooled agent has no agent instance');
-      return;
-    }
-
-    logger.debug('[EXPLORE_TOOL] Injecting user message into pooled agent:', this._currentPooledAgent.agentId);
-    agent.addUserInterjection(message);
-    agent.interrupt('interjection');
+    return await this.executeDelegation(taskPrompt, thoroughness, callId);
   }
 
   /**
@@ -659,32 +279,5 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
    */
   getSubtextParameters(): string[] {
     return ['task_prompt', 'description'];
-  }
-
-  /**
-   * Custom result preview
-   */
-  getResultPreview(result: ToolResult, maxLines: number = 3): string[] {
-    if (!result.success) {
-      return super.getResultPreview(result, maxLines);
-    }
-
-    const lines: string[] = [];
-
-    // Show duration if available
-    if (result.duration_seconds !== undefined) {
-      lines.push(`Explored in ${result.duration_seconds}s`);
-    }
-
-    // Show content preview
-    if (result.content) {
-      const contentPreview =
-        result.content.length > TEXT_LIMITS.AGENT_RESULT_PREVIEW_MAX
-          ? result.content.substring(0, TEXT_LIMITS.AGENT_RESULT_PREVIEW_MAX - 3) + '...'
-          : result.content;
-      lines.push(contentPreview);
-    }
-
-    return lines.slice(0, maxLines);
   }
 }

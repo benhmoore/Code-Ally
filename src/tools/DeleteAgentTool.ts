@@ -1,8 +1,8 @@
 /**
  * DeleteAgentTool - Specialized tool for deleting agent definition files
  *
- * This tool is only visible to the 'create-agent' agent and handles
- * removing agent files permanently. No confirmation required (agent-alchemist is trusted).
+ * This tool is only visible to the 'manage-agents' agent and handles
+ * removing agent files permanently. No confirmation required (manage-agents is trusted).
  */
 
 import { BaseTool } from './BaseTool.js';
@@ -17,9 +17,9 @@ import * as path from 'path';
 export class DeleteAgentTool extends BaseTool {
   readonly name = 'delete-agent';
   readonly description = 'Delete an agent from the profile. Removes the agent file permanently.';
-  readonly requiresConfirmation = false; // Trust the agent-alchemist
+  readonly requiresConfirmation = false; // Trust the manage-agents agent
   readonly hideOutput = false; // Show deletion confirmation
-  readonly visibleTo = ['create-agent']; // Only visible to create-agent agent
+  readonly visibleTo = ['manage-agents']; // Only visible to manage-agents agent
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

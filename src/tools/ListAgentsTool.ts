@@ -1,7 +1,7 @@
 /**
  * ListAgentsTool - List all agents in the current profile
  *
- * This tool is only visible to the 'create-agent' agent and provides
+ * This tool is only visible to the 'manage-agents' agent and provides
  * a comprehensive list of all available agents with their configurations.
  * It's a read-only operation that helps agents understand what other
  * agents exist and their capabilities.
@@ -35,7 +35,7 @@ export class ListAgentsTool extends BaseTool {
   readonly description = 'List all agents in current profile. Returns agent summaries with name, description, and configuration.';
   readonly requiresConfirmation = false; // Read-only operation
   readonly hideOutput = false; // Show agent list to user
-  readonly visibleTo = ['create-agent']; // Only create-agent agent can use
+  readonly visibleTo = ['manage-agents']; // Only manage-agents agent can use
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

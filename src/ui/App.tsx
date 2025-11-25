@@ -167,6 +167,7 @@ const AppContentComponent: React.FC<{
         data: {
           agentName: 'ally',
           agentId: newAgent.getInstanceId(),
+          agentModel: newAgent.getModelClient().modelName,
         },
       });
 
@@ -1271,7 +1272,7 @@ const AppContentComponent: React.FC<{
                       total
                     </Text>
                   )}
-                  <Text> · {state.config.model || 'none'}</Text>
+                  <Text> · {state.currentAgentModel || state.config.model || 'none'}</Text>
                   {currentFocus && (
                     <Text>
                       {' '}
@@ -1316,7 +1317,7 @@ const AppContentComponent: React.FC<{
           /* Normal Mode: Single line */
           <>
             <Text dimColor>
-              {state.config.model || 'none'}
+              {state.currentAgentModel || state.config.model || 'none'}
               {currentFocus && (
                 <Text>
                   {' '}
