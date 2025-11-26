@@ -8,6 +8,22 @@ Terminal-based AI coding assistant that runs in your CLI. Built with TypeScript,
 
 Code Ally gives you an AI that lives where you work—your terminal. It reads your code, runs your commands, and remembers your conversation across sessions. When the built-in tools aren't enough, write your own in Python or Node.js. When one agent isn't enough, create specialists that delegate to each other.
 
+## Feature Spotlight
+
+- **Todo list** — Ally can keep a todo list as it works to stay on track
+- **Expert delegation** — Agents can delegate to specialized sub-agents
+- **Plugins** — Extend with custom tools and agents in Python or Node.js
+- **Change tracking** — Full undo support for file modifications
+- **Session persistence** — Resume conversations across restarts
+
+## Recommended Models
+
+Tested to work best with these models:
+
+- `gpt-oss:20b` — Balanced performance and speed
+- `gpt-oss:120b` — Best quality for complex tasks
+- `glm-4.6:cloud` — Cloud-hosted option via Ollama
+
 ## Installation
 
 ```bash
@@ -326,14 +342,6 @@ src/
 ```
 
 **Stack:** TypeScript 5.3+, React 18, Ink 4, Vitest, Zod
-
-## Recommended Models
-
-Tested to work best with these models:
-
-- `gpt-oss:20b` — Balanced performance and speed
-- `gpt-oss:120b` — Best quality for complex tasks
-- `glm-4.6:cloud` — Cloud-hosted option via Ollama
 
 ## Requirements
 
