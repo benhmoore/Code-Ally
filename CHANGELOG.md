@@ -1,0 +1,21 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0] - 2025-11-25
+
+### Added
+- Initial release
+- Terminal-based AI coding assistant with Ollama integration
+- Built-in tools: file operations, search, shell commands, planning
+- Plugin system for custom tools and agents in Python or Node.js
+- Agent system with delegation and pooling
+- Session persistence and resume
+- Focus mode for directory restrictions
+- Profile support for isolated environments
+- Interactive setup wizard
