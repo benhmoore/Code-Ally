@@ -1,4 +1,4 @@
-# Code Ally
+# Code Ally <sup style="color: #ffc800;">( ^)></sup>
 
 <p align="center">
   <img src="docs/hero.png" alt="Code Ally terminal interface" width="700">
