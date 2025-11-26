@@ -10,8 +10,8 @@ Code Ally gives you an AI that lives where you work—your terminal. It reads yo
 
 ## Feature Spotlight
 
+- **Expert delegation** — Delegate to specialized agents created by you or Ally
 - **Todo list** — Ally can keep a todo list as it works to stay on track
-- **Expert delegation** — Agents can delegate to specialized sub-agents
 - **Plugins** — Extend with custom tools and agents in Python or Node.js
 - **Change tracking** — Full undo support for file modifications
 - **Session persistence** — Resume conversations across restarts
