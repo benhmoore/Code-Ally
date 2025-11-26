@@ -4,7 +4,7 @@
   <img src="docs/hero.png" alt="Code Ally terminal interface" width="700">
 </p>
 
-Terminal-based AI coding assistant that runs in your CLI. Built with TypeScript, React, and Ink.
+Terminal-based AI coding assistant that runs in your CLI. Built with TypeScript, React, and Ink. Heavily inspired by [Claude Code](https://github.com/anthropics/claude-code).
 
 Code Ally gives you an AI that lives where you work—your terminal. It reads your code, runs your commands, and remembers your conversation across sessions. When the built-in tools aren't enough, write your own in Python or Node.js. When one agent isn't enough, create specialists that delegate to each other.
 
