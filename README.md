@@ -329,6 +329,10 @@ src/
 - Ollama running locally
 - Terminal with Unicode support
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
 ## License
 
-MIT
+[MIT](LICENSE)
