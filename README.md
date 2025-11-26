@@ -327,6 +327,14 @@ src/
 
 **Stack:** TypeScript 5.3+, React 18, Ink 4, Vitest, Zod
 
+## Recommended Models
+
+Tested to work best with these models:
+
+- `gpt-oss:20b` — Balanced performance and speed
+- `gpt-oss:120b` — Best quality for complex tasks
+- `glm-4.6:cloud` — Cloud-hosted option via Ollama
+
 ## Requirements
 
 - Node.js 18+
