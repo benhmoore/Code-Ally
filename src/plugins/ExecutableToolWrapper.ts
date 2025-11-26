@@ -1,0 +1,512 @@
+import { BaseTool } from '../tools/BaseTool.js';
+import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ActivityStream } from '../services/ActivityStream.js';
+import { spawn, ChildProcess } from 'child_process';
+import { TIMEOUT_LIMITS, TOOL_LIMITS } from '../config/toolDefaults.js';
+import type { ToolDefinition, PluginManifest } from './PluginLoader.js';
+import type { PluginEnvironmentManager } from './PluginEnvironmentManager.js';
+import { logger } from '../services/Logger.js';
+
+/**
+ * Wraps external executable plugins (Python scripts, shell scripts, etc.)
+ * and provides a standardized interface for executing them as tools.
+ *
+ * The wrapper handles:
+ * - Process spawning and lifecycle management
+ * - Input/output serialization (JSON)
+ * - Error handling and timeouts
+ * - File path resolution
+ */
+export class ExecutableToolWrapper extends BaseTool {
+	// Abstract properties from BaseTool (must not be readonly)
+	name: string;
+	description: string;
+	requiresConfirmation: boolean;
+	displayName?: string;
+	usageGuidance?: string;
+	pluginName?: string;
+
+	private readonly command: string;
+	private readonly commandArgs: string[];
+	private readonly workingDir: string;
+	private readonly schema: any;
+	private readonly timeout: number;
+	private readonly config?: any;
+	private readonly manifest: PluginManifest;
+	private readonly envManager: PluginEnvironmentManager;
+	private readonly subtextTemplate?: string;
+
+	/**
+	 * Creates a new ExecutableToolWrapper instance.
+	 *
+	 * @param toolDef - Tool definition containing metadata and configuration
+	 * @param manifest - Complete plugin manifest (for runtime info)
+	 * @param pluginPath - Absolute path to the plugin directory
+	 * @param activityStream - Activity stream for logging and user feedback
+	 * @param envManager - Plugin environment manager for venv paths
+	 * @param timeout - Maximum execution time in milliseconds (default: 120000ms / 2 minutes)
+	 * @param config - Optional plugin configuration to be injected as environment variables
+	 */
+	constructor(
+		toolDef: ToolDefinition,
+		manifest: PluginManifest,
+		pluginPath: string,
+		activityStream: ActivityStream,
+		envManager: PluginEnvironmentManager,
+		timeout: number = 120000,
+		config?: any
+	) {
+		// BaseTool constructor only takes activityStream
+		super(activityStream);
+
+		// Set abstract properties
+		this.name = toolDef.name;
+		this.description = toolDef.description || '';
+		this.requiresConfirmation = toolDef.requiresConfirmation ?? false;
+		this.displayName = toolDef.display_name;
+		this.usageGuidance = toolDef.usageGuidance;
+		this.pluginName = manifest.name;
+
+		// Set visibleTo from tool definition (cast to any since it's readonly)
+		if (toolDef.visible_to) {
+			(this as any).visibleTo = toolDef.visible_to;
+		}
+
+		if (!toolDef.command) {
+			throw new Error(`Tool definition for '${toolDef.name}' is missing required 'command' field`);
+		}
+
+		this.command = toolDef.command;
+		this.commandArgs = toolDef.args || [];
+		this.workingDir = pluginPath;
+		this.schema = toolDef.schema || {};
+		this.timeout = timeout;
+		this.config = config;
+		this.manifest = manifest;
+		this.envManager = envManager;
+		this.subtextTemplate = toolDef.subtext;
+	}
+
+	/**
+	 * Returns the function definition for this tool.
+	 * Uses the schema from the plugin manifest to define parameters.
+	 */
+	getFunctionDefinition(): FunctionDefinition {
+		return {
+			type: 'function',
+			function: {
+				name: this.name,
+				description: this.description,
+				parameters: this.schema && Object.keys(this.schema).length > 0
+					? this.schema
+					: {
+						type: 'object',
+						properties: {},
+						required: []
+					}
+			}
+		};
+	}
+
+	/**
+	 * Executes the external plugin with the provided arguments.
+	 *
+	 * @param args - Arguments to pass to the plugin (will be serialized as JSON)
+	 * @returns Promise resolving to the tool execution result
+	 */
+	protected async executeImpl(args: any): Promise<ToolResult> {
+		// Capture parameters for logging
+		this.captureParams(args);
+
+		try {
+			// Execute the plugin and get results
+			// Note: Arguments are passed through unchanged. Plugins execute with
+			// cwd set to their directory, so they can use relative paths naturally.
+			const output = await this.executePlugin(args, this.currentAbortSignal);
+
+			return output;
+		} catch (error) {
+			return this.formatErrorResponse(
+				error instanceof Error ? error.message : String(error),
+				'execution_error'
+			);
+		}
+	}
+
+
+	/**
+	 * Converts plugin configuration to environment variables.
+	 * Each config key is prefixed with PLUGIN_CONFIG_ and converted to uppercase.
+	 *
+	 * @returns Object containing environment variables
+	 */
+	private getConfigEnvVars(): Record<string, string> {
+		const envVars: Record<string, string> = {};
+
+		// Add config vars
+		if (this.config && typeof this.config === 'object') {
+			for (const [key, value] of Object.entries(this.config)) {
+				const envKey = `PLUGIN_CONFIG_${key.toUpperCase()}`;
+				envVars[envKey] = String(value);
+			}
+		}
+
+		// Add NODE_PATH for Node.js plugins
+		if (this.manifest.runtime === 'node') {
+			envVars['NODE_PATH'] = this.envManager.getNodeModulesPath(this.manifest.name);
+		}
+
+		return envVars;
+	}
+
+	/**
+	 * Resolves the actual command to execute, injecting venv Python if needed.
+	 *
+	 * If the plugin specifies runtime='python3' and command='python3',
+	 * automatically uses the venv Python interpreter.
+	 *
+	 * @returns Resolved command path
+	 */
+	private getResolvedCommand(): string {
+		// If plugin uses Python runtime and command is python3, use venv Python
+		logger.debug(`[ExecutableToolWrapper] getResolvedCommand - manifest.runtime: ${this.manifest.runtime}, command: ${this.command}, manifest.name: ${this.manifest.name}`);
+		if (
+			this.manifest.runtime === 'python3' &&
+			(this.command === 'python3' || this.command === 'python')
+		) {
+			const pythonPath = this.envManager.getPythonPath(this.manifest.name);
+			logger.debug(`[ExecutableToolWrapper] Using venv Python: ${pythonPath}`);
+			return pythonPath;
+		}
+
+		// Otherwise use command as-is
+		logger.debug(`[ExecutableToolWrapper] Using command as-is: ${this.command}`);
+		return this.command;
+	}
+
+	/**
+	 * Gracefully terminate a child process with SIGTERM, followed by SIGKILL if needed
+	 *
+	 * @param child - Child process to terminate
+	 */
+	private terminateProcess(child: ChildProcess): void {
+		child.kill('SIGTERM');
+		setTimeout(() => {
+			if (child.exitCode === null) {
+				child.kill('SIGKILL');
+			}
+		}, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+	}
+
+	/**
+	 * Spawns the external process and manages its execution.
+	 *
+	 * @param args - Resolved arguments to pass to the plugin
+	 * @param abortSignal - Optional AbortSignal for interrupting plugin execution
+	 * @returns Promise resolving to the tool result
+	 */
+	private async executePlugin(args: any, abortSignal?: AbortSignal): Promise<ToolResult> {
+		return new Promise((resolve, reject) => {
+			let stdout = '';
+			let stderr = '';
+			let outputTruncated = false;
+			let timedOut = false;
+
+			// Resolve the actual command (with venv injection if needed)
+			const resolvedCommand = this.getResolvedCommand();
+			logger.debug(`[ExecutableToolWrapper] Executing plugin '${this.name}': ${resolvedCommand} ${this.commandArgs.join(' ')}`);
+
+			// Spawn the child process
+			const child = spawn(resolvedCommand, this.commandArgs, {
+				cwd: this.workingDir,
+				env: {
+					...process.env,
+					...this.getConfigEnvVars()
+				},
+				stdio: ['pipe', 'pipe', 'pipe']
+			});
+
+			// Set up abort handler
+			const abortHandler = () => {
+				this.terminateProcess(child);
+			};
+
+			if (abortSignal) {
+				if (abortSignal.aborted) {
+					// Already aborted, kill immediately
+					abortHandler();
+				} else {
+					// Listen for future abort
+					abortSignal.addEventListener('abort', abortHandler);
+				}
+			}
+
+			// Write arguments to stdin as JSON early to avoid double-rejection
+			// This happens before event handlers are set up to catch write errors cleanly
+			try {
+				const input = JSON.stringify(args);
+				child.stdin.write(input);
+				child.stdin.end();
+			} catch (error) {
+				child.kill();
+				reject(new Error(
+					`Failed to serialize arguments to JSON: ${error instanceof Error ? error.message : String(error)}
+Arguments: ${JSON.stringify(args, null, 2)}`
+				));
+				return;
+			}
+
+			// Set up timeout
+			const timeoutId = setTimeout(() => {
+				timedOut = true;
+				this.terminateProcess(child);
+			}, this.timeout);
+
+			// Handle spawn errors
+			child.on('error', (error) => {
+				clearTimeout(timeoutId);
+				reject(new Error(
+					`Failed to spawn process '${resolvedCommand}': ${error.message}
+Working directory: ${this.workingDir}
+Command: ${resolvedCommand} ${this.commandArgs.join(' ')}`
+				));
+			});
+
+			// Collect stdout with size limits and streaming
+			child.stdout.on('data', (data) => {
+				const chunk = data.toString();
+				if (stdout.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
+					stdout += chunk;
+					// Stream output for real-time feedback
+					this.emitOutputChunk(chunk);
+				} else if (!outputTruncated) {
+					outputTruncated = true;
+					const truncationMsg = '\n\n[Output truncated - exceeded 10MB limit]\n';
+					stdout += truncationMsg;
+					this.emitOutputChunk(truncationMsg);
+				}
+			});
+
+			// Collect stderr with size limits
+			child.stderr.on('data', (data) => {
+				const chunk = data.toString();
+				if (stderr.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
+					stderr += chunk;
+					this.emitOutputChunk(chunk);
+				}
+			});
+
+			// Handle process exit
+			child.on('close', (code) => {
+				clearTimeout(timeoutId);
+
+				// Clean up abort listener
+				if (abortSignal) {
+					abortSignal.removeEventListener('abort', abortHandler);
+				}
+
+				// Check if killed due to abort
+				if (abortSignal?.aborted) {
+					reject(new Error('Plugin execution interrupted by user'));
+					return;
+				}
+
+				if (timedOut) {
+					reject(new Error(
+						`Plugin execution timed out after ${this.timeout}ms
+Command: ${resolvedCommand} ${this.commandArgs.join(' ')}
+Stderr: ${stderr || '(none)'}`
+					));
+					return;
+				}
+
+				if (code !== 0) {
+					reject(new Error(
+						`Plugin exited with code ${code}
+Command: ${resolvedCommand} ${this.commandArgs.join(' ')}
+Stdout: ${stdout || '(none)'}
+Stderr: ${stderr || '(none)'}`
+					));
+					return;
+				}
+
+				// Process successful exit
+				try {
+					const result = this.parsePluginOutput(stdout, stderr, outputTruncated);
+					resolve(result);
+				} catch (error) {
+					reject(error);
+				}
+			});
+		});
+	}
+
+	/**
+	 * Parses the plugin's output and converts it to a ToolResult.
+	 * Expects JSON output with optional 'success', 'error', and 'data' fields.
+	 *
+	 * @param stdout - Standard output from the plugin
+	 * @param stderr - Standard error output from the plugin
+	 * @param outputTruncated - Whether output was truncated due to size limits
+	 * @returns Parsed tool result
+	 */
+	private parsePluginOutput(stdout: string, stderr: string, outputTruncated: boolean = false): ToolResult {
+		if (!stdout.trim()) {
+			return this.formatErrorResponse(
+				`Plugin produced no output
+Stderr: ${stderr || '(none)'}`,
+				'plugin_error'
+			);
+		}
+
+		try {
+			const output = JSON.parse(stdout);
+
+			// Check if output explicitly indicates success/failure
+			if ('success' in output) {
+				if (output.success === false) {
+					return this.formatErrorResponse(
+						output.error || output.message || 'Plugin execution failed',
+						'plugin_error',
+						undefined,
+						output.data ? { data: output.data } : undefined
+					);
+				}
+			}
+
+			// Check if output has an error field
+			if (output.error) {
+				return this.formatErrorResponse(
+					output.error,
+					'plugin_error',
+					undefined,
+					output.data ? { data: output.data } : undefined
+				);
+			}
+
+			// Extract result data
+			const resultData = output.data !== undefined ? output.data : output;
+			let message = output.message || 'Plugin executed successfully';
+
+			// Add warning if output was truncated
+			if (outputTruncated) {
+				message += '\n\nWarning: Output exceeded 10MB limit and was truncated';
+			}
+
+			return this.formatSuccessResponse({
+				output: message,
+				data: resultData
+			});
+
+		} catch (error) {
+			// JSON parse failed - return raw output with enhanced error context
+			// Note: We can't access resolvedCommand here, but this.command is sufficient for debugging
+			return this.formatErrorResponse(
+				`Failed to parse plugin output as JSON: ${error instanceof Error ? error.message : String(error)}
+Plugin: ${this.name}
+Command: ${this.command} ${this.commandArgs.join(' ')}
+Raw output:
+${stdout}
+Stderr: ${stderr || '(none)'}`,
+				'plugin_error'
+			);
+		}
+	}
+
+	/**
+	 * Extracts parameter names from a subtext template string.
+	 * Finds all placeholders in the format {paramName} and returns unique parameter names.
+	 *
+	 * @param template - Template string containing {param} placeholders
+	 * @returns Array of unique parameter names found in the template
+	 * @example
+	 * extractTemplateParams("{a} + {b} = {a}") // Returns ["a", "b"]
+	 */
+	private extractTemplateParams(template: string): string[] {
+		const regex = /\{(\w+)\}/g;
+		const params = new Set<string>();
+		let match: RegExpExecArray | null;
+
+		while ((match = regex.exec(template)) !== null) {
+			if (match[1]) {
+				params.add(match[1]);
+			}
+		}
+
+		return Array.from(params);
+	}
+
+	/**
+	 * Format subtext for display in the UI using the plugin's subtext template.
+	 *
+	 * If a subtext template is defined, this method performs parameter substitution
+	 * by replacing {paramName} placeholders with actual argument values.
+	 * Missing parameters are shown as <paramName> for debugging.
+	 *
+	 * If no template is defined, falls back to the default behavior (showing description).
+	 *
+	 * @param args - Tool arguments passed to execute()
+	 * @returns Formatted subtext string or null if template is empty or all parameters are missing
+	 * @example
+	 * // Template: "{file_path} → {destination}"
+	 * // Args: {file_path: "/foo/bar.txt", destination: "/baz/bar.txt"}
+	 * // Result: "/foo/bar.txt → /baz/bar.txt"
+	 */
+	formatSubtext(args: Record<string, any>): string | null {
+		// If no template, use default behavior (returns description)
+		if (!this.subtextTemplate) {
+			return super.formatSubtext(args);
+		}
+
+		// Perform parameter substitution
+		let result = this.subtextTemplate;
+		const params = this.extractTemplateParams(this.subtextTemplate);
+
+		// Track if any parameters were successfully substituted
+		let hasValidSubstitution = false;
+
+		for (const paramName of params) {
+			if (paramName in args && args[paramName] !== undefined && args[paramName] !== null) {
+				// Convert value to string and replace
+				result = result.replace(new RegExp(`\\{${paramName}\\}`, 'g'), String(args[paramName]));
+				hasValidSubstitution = true;
+			} else {
+				// Show missing parameter for debugging
+				result = result.replace(new RegExp(`\\{${paramName}\\}`, 'g'), `<${paramName}>`);
+			}
+		}
+
+		// Return null if template is empty after substitution or no valid parameters found
+		if (!result.trim() || !hasValidSubstitution) {
+			return null;
+		}
+
+		return result;
+	}
+
+	/**
+	 * Get list of parameter names that are shown in subtext.
+	 *
+	 * If a subtext template is defined, extracts parameter names from the template
+	 * and returns them along with 'description' (which is always included to maintain
+	 * compatibility with the default behavior).
+	 *
+	 * These parameters are filtered from the args preview in the UI to avoid
+	 * showing the same information twice.
+	 *
+	 * @returns Array of parameter names that are displayed in subtext
+	 * @example
+	 * // Template: "{file_path} → {destination}"
+	 * // Result: ["description", "file_path", "destination"]
+	 */
+	getSubtextParameters(): string[] {
+		// If no template, use default behavior (returns ['description'])
+		if (!this.subtextTemplate) {
+			return super.getSubtextParameters();
+		}
+
+		// Extract parameters from template and always include 'description'
+		const params = this.extractTemplateParams(this.subtextTemplate);
+		return ['description', ...params];
+	}
+}

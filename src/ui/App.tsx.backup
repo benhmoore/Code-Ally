@@ -1,0 +1,724 @@
+/**
+ * App - Root React component for Code Ally UI
+ *
+ * This is the main entry point for the Ink-based terminal UI. It sets up
+ * the context providers, manages global state, and coordinates the overall
+ * application structure.
+ */
+
+import React, { useEffect, useRef, useMemo } from 'react';
+import { Box, Text } from 'ink';
+import { ActivityStream } from '../services/ActivityStream.js';
+import { ActivityProvider, useActivityStreamContext } from './contexts/ActivityContext.js';
+import { AppProvider, useAppContext } from './contexts/AppContext.js';
+import { ActivityEventType, Config, Message } from '../types/index.js';
+import { InputPrompt } from './components/InputPrompt.js';
+import { ConversationView } from './components/ConversationView.js';
+import { PermissionPrompt } from './components/PermissionPrompt.js';
+import { ModelSelector } from './components/ModelSelector.js';
+import { ConfigViewer } from './components/ConfigViewer.js';
+import { SetupWizardView } from './components/SetupWizardView.js';
+import { ProjectWizardView } from './components/ProjectWizardView.js';
+import { AgentWizardView } from './components/AgentWizardView.js';
+import { PluginConfigView } from './components/PluginConfigView.js';
+import { RewindSelector } from './components/RewindSelector.js';
+import { SessionSelector } from './components/SessionSelector.js';
+import { StatusIndicator } from './components/StatusIndicator.js';
+import { UndoPrompt } from './components/UndoPrompt.js';
+import { UndoFileList } from './components/UndoFileList.js';
+import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
+import { ReasoningStream } from './components/ReasoningStream.js';
+import { Agent } from '../agent/Agent.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { ToolManager } from '../tools/ToolManager.js';
+import { FocusManager } from '../services/FocusManager.js';
+import { PluginConfigManager } from '../plugins/PluginConfigManager.js';
+import { logger } from '../services/Logger.js';
+import { useServiceInitialization } from './hooks/useServiceInitialization.js';
+import { useModalState } from './hooks/useModalState.js';
+import { useSessionResume } from './hooks/useSessionResume.js';
+import { useInputHandlers } from './hooks/useInputHandlers.js';
+import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
+
+
+/**
+ * Props for the App component
+ */
+export interface AppProps {
+  /** Initial configuration */
+  config: Config;
+
+  /** Activity stream instance */
+  activityStream?: ActivityStream;
+
+  /** Agent instance */
+  agent: Agent;
+
+  /** Session to resume (session ID, 'interactive' for selector, or null) */
+  resumeSession?: string | 'interactive' | null;
+
+  /** Force show setup wizard (e.g., from --init flag) */
+  showSetupWizard?: boolean;
+
+  /** Number of loaded plugins */
+  pluginCount?: number;
+}
+
+/**
+ * Inner app component that uses contexts
+ *
+ * This component is wrapped by providers and has access to all context values.
+ * It subscribes to activity events and updates the app state accordingly.
+ * Memoized to prevent unnecessary re-renders when children update.
+ */
+const AppContentComponent: React.FC<{ agent: Agent; resumeSession?: string | 'interactive' | null; showSetupWizard?: boolean; pluginCount?: number }> = ({ agent, resumeSession, showSetupWizard, pluginCount }) => {
+  const { state, actions } = useAppContext();
+  const activityStream = useActivityStreamContext();
+
+  // Initialize services (command history, completion provider, command handler)
+  const { commandHistory, completionProvider, commandHandler, shouldShowSetupWizard } =
+    useServiceInitialization(agent, actions, showSetupWizard);
+
+  // Manage all modal and selector state
+  const modal = useModalState();
+
+  // Handle session resumption on mount
+  const { sessionLoaded } = useSessionResume(
+    resumeSession,
+    agent,
+    actions,
+    activityStream,
+    modal.setSessionSelectRequest
+  );
+
+  // Subscribe to all activity events
+  const { activeAgentsCount, isCancelling } = useActivitySubscriptions(
+    state,
+    actions,
+    modal,
+    agent,
+    activityStream
+  );
+
+  // Get input handler functions
+  const { handleInput, handleInterjection } = useInputHandlers(
+    agent,
+    commandHandler,
+    activityStream,
+    state,
+    actions
+  );
+
+  // Show setup wizard if needed
+  useEffect(() => {
+    if (shouldShowSetupWizard) {
+      modal.setSetupWizardOpen(true);
+    }
+  }, [shouldShowSetupWizard]);
+
+  // Check for pending plugin config requests on mount
+  useEffect(() => {
+    const checkPendingPluginConfig = async () => {
+      // Dynamic import to avoid circular dependencies
+      const { PluginLoader } = await import('../plugins/PluginLoader.js');
+
+      // Check if there's a pending config request
+      const pendingRequest = PluginLoader.getPendingConfigRequest();
+      if (pendingRequest) {
+        logger.debug('[App] Found pending plugin config request on mount:', pendingRequest.pluginName);
+
+        // Load existing config if available
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
+        let existingConfig: any = undefined;
+
+        if (pluginConfigManager) {
+          try {
+            existingConfig = await pluginConfigManager.loadConfig(
+              pendingRequest.pluginName,
+              pendingRequest.pluginPath,
+              pendingRequest.schema
+            );
+            logger.debug(`[App] Loaded existing config for pending request: ${JSON.stringify(existingConfig)}`);
+          } catch (error) {
+            logger.debug(`[App] No existing config found for pending request: ${error}`);
+          }
+        }
+
+        // Set the plugin config request state
+        modal.setPluginConfigRequest({
+          pluginName: pendingRequest.pluginName,
+          pluginPath: pendingRequest.pluginPath,
+          schema: pendingRequest.schema,
+          existingConfig: existingConfig || {},
+        });
+      }
+    };
+
+    checkPendingPluginConfig();
+  }, []);
+
+  // Get current focus display (if any)
+  const currentFocus = useMemo(() => {
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const focusManager = serviceRegistry.get<FocusManager>('focus_manager');
+    return focusManager?.getFocusDisplay() ?? null;
+  }, [state.messages.length]); // Re-compute when messages change (focus commands add messages)
+
+  return (
+    <Box flexDirection="column" padding={1}>
+      {/* Conversation View - contains header + all conversation history */}
+      <ConversationView
+        messages={state.messages}
+        isThinking={state.isThinking}
+        streamingContent={state.streamingContent}
+        activeToolCalls={state.activeToolCalls}
+        contextUsage={state.contextUsage}
+        compactionNotices={state.compactionNotices}
+        rewindNotices={state.rewindNotices}
+        staticRemountKey={state.staticRemountKey}
+        config={state.config}
+        pluginCount={pluginCount}
+      />
+
+      {/* Config Viewer (non-modal - shown above input) */}
+      {modal.configViewerOpen && !modal.setupWizardOpen && (
+        <Box marginTop={1}>
+          <ConfigViewer visible={true} />
+        </Box>
+      )}
+
+      {/* Setup Wizard (modal - replaces input when active) */}
+      {modal.setupWizardOpen ? (
+        <Box marginTop={1}>
+          <SetupWizardView
+            onComplete={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `setup_wizard_complete_${Date.now()}`,
+                  type: ActivityEventType.SETUP_WIZARD_COMPLETE,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+            onSkip={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `setup_wizard_skip_${Date.now()}`,
+                  type: ActivityEventType.SETUP_WIZARD_SKIP,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+          />
+        </Box>
+      ) : /* Project Wizard (modal - replaces input when active) */
+      modal.projectWizardOpen ? (
+        <Box marginTop={1}>
+          <ProjectWizardView
+            onComplete={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `project_wizard_complete_${Date.now()}`,
+                  type: ActivityEventType.PROJECT_WIZARD_COMPLETE,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+            onSkip={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `project_wizard_skip_${Date.now()}`,
+                  type: ActivityEventType.PROJECT_WIZARD_SKIP,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+          />
+        </Box>
+      ) : /* Agent Wizard (modal - replaces input when active) */
+      modal.agentWizardOpen ? (
+        <Box marginTop={1}>
+          <AgentWizardView
+            initialDescription={modal.agentWizardData.initialDescription}
+            onComplete={(agentData) => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `agent_wizard_complete_${Date.now()}`,
+                  type: ActivityEventType.AGENT_WIZARD_COMPLETE,
+                  timestamp: Date.now(),
+                  data: agentData,
+                });
+              }
+            }}
+            onCancel={() => {
+              if (activityStream) {
+                activityStream.emit({
+                  id: `agent_wizard_skip_${Date.now()}`,
+                  type: ActivityEventType.AGENT_WIZARD_SKIP,
+                  timestamp: Date.now(),
+                  data: {},
+                });
+              }
+            }}
+          />
+        </Box>
+      ) : /* Plugin Config View (modal - replaces input when active) */
+      modal.pluginConfigRequest ? (
+        <Box marginTop={1}>
+          <PluginConfigView
+            pluginName={modal.pluginConfigRequest.pluginName}
+            configSchema={modal.pluginConfigRequest.schema}
+            existingConfig={modal.pluginConfigRequest.existingConfig}
+            onComplete={async (config) => {
+              const serviceRegistry = ServiceRegistry.getInstance();
+              const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
+
+              if (!pluginConfigManager) {
+                actions.addMessage({
+                  role: 'assistant',
+                  content: 'Error: Plugin configuration manager not available',
+                });
+                setPluginConfigRequest(undefined);
+                return;
+              }
+
+              try {
+                // Save the configuration
+                await pluginConfigManager.saveConfig(
+                  modal.pluginConfigRequest.pluginName,
+                  modal.pluginConfigRequest.pluginPath,
+                  config,
+                  modal.pluginConfigRequest.schema
+                );
+
+                // Reload the plugin immediately
+                const { PluginLoader } = await import('../plugins/PluginLoader.js');
+                const pluginLoader = serviceRegistry.get<InstanceType<typeof PluginLoader>>('plugin_loader');
+                const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+
+                if (pluginLoader && toolManager) {
+                  try {
+                    // Reload plugin to get the tools
+                    const newTools = await pluginLoader.reloadPlugin(
+                      modal.pluginConfigRequest.pluginName,
+                      modal.pluginConfigRequest.pluginPath
+                    );
+
+                    // Register the new tools
+                    toolManager.registerTools(newTools);
+
+                    logger.info(`Plugin '${modal.pluginConfigRequest.pluginName}' reloaded successfully`);
+                  } catch (reloadError) {
+                    logger.error(`Error reloading plugin '${modal.pluginConfigRequest.pluginName}':`, reloadError);
+                    // Continue - config was saved, just the reload failed
+                  }
+                }
+
+                // Emit completion event
+                if (activityStream) {
+                  activityStream.emit({
+                    id: `plugin_config_complete_${Date.now()}`,
+                    type: ActivityEventType.PLUGIN_CONFIG_COMPLETE,
+                    timestamp: Date.now(),
+                    data: {
+                      pluginName: modal.pluginConfigRequest.pluginName,
+                      pluginPath: modal.pluginConfigRequest.pluginPath,
+                    },
+                  });
+                }
+
+                // Clear request
+                modal.setPluginConfigRequest(undefined);
+
+                // Add success message
+                actions.addMessage({
+                  role: 'assistant',
+                  content: `✓ Plugin '${modal.pluginConfigRequest.pluginName}' configured and activated!`,
+                });
+              } catch (error) {
+                actions.addMessage({
+                  role: 'assistant',
+                  content: `Error saving plugin configuration: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                });
+                modal.setPluginConfigRequest(undefined);
+              }
+            }}
+            onCancel={() => {
+              // Emit cancel event
+              if (activityStream) {
+                activityStream.emit({
+                  id: `plugin_config_cancel_${Date.now()}`,
+                  type: ActivityEventType.PLUGIN_CONFIG_CANCEL,
+                  timestamp: Date.now(),
+                  data: {
+                    pluginName: modal.pluginConfigRequest.pluginName,
+                  },
+                });
+              }
+
+              // Clear request
+              modal.setPluginConfigRequest(undefined);
+
+              actions.addMessage({
+                role: 'assistant',
+                content: `Plugin configuration cancelled. Plugin '${modal.pluginConfigRequest.pluginName}' remains inactive.`,
+              });
+            }}
+          />
+        </Box>
+      ) : /* Session Selector (replaces input when active) */
+      modal.sessionSelectRequest ? (
+        <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream config={state.config} />
+
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+          <SessionSelector
+            sessions={modal.sessionSelectRequest.sessions}
+            selectedIndex={modal.sessionSelectRequest.selectedIndex}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              onInterjection={handleInterjection}
+              isActive={true}
+              commandHistory={commandHistory || undefined}
+              completionProvider={completionProvider || undefined}
+              sessionSelectRequest={modal.sessionSelectRequest}
+              onSessionNavigate={(newIndex) => modal.setSessionSelectRequest(prev => prev ? { ...prev, selectedIndex: newIndex } : undefined)}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={modal.inputPrefillText}
+              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
+              bufferValue={modal.inputBuffer}
+              onBufferChange={modal.setInputBuffer}
+            />
+          </Box>
+        </Box>
+      ) : /* Model Selector (replaces input when active) */
+      modal.modelSelectRequest ? (
+        <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream config={state.config} />
+
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+          <ModelSelector
+            models={modelSelectRequest.models}
+            selectedIndex={modelSelectedIndex}
+            currentModel={modelSelectRequest.currentModel}
+            typeName={modelSelectRequest.typeName}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              onInterjection={handleInterjection}
+              isActive={true}
+              commandHistory={commandHistory.current || undefined}
+              completionProvider={completionProvider || undefined}
+              modelSelectRequest={modelSelectRequest}
+              modelSelectedIndex={modelSelectedIndex}
+              onModelNavigate={setModelSelectedIndex}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
+            />
+          </Box>
+        </Box>
+      ) : rewindRequest ? (
+        /* Rewind Selector (replaces input when active) */
+        (() => {
+          const userMessages = state.messages.filter(m => m.role === 'user');
+          return (
+            <Box marginTop={1} flexDirection="column">
+              {/* Reasoning Stream - shows thinking tokens */}
+              <ReasoningStream config={state.config} />
+
+              {/* Status Indicator - always visible to show todos */}
+              <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+              <RewindSelector
+                messages={userMessages}
+                selectedIndex={rewindRequest.selectedIndex}
+                visible={true}
+              />
+              {/* Hidden InputPrompt for keyboard handling only */}
+              <Box height={0} overflow="hidden">
+                <InputPrompt
+                  onSubmit={handleInput}
+                  onInterjection={handleInterjection}
+                  isActive={true}
+                  commandHistory={commandHistory.current || undefined}
+                  completionProvider={completionProvider || undefined}
+                  rewindRequest={rewindRequest}
+                  onRewindNavigate={(newIndex) => setRewindRequest(prev => prev ? { ...prev, selectedIndex: newIndex } : undefined)}
+                  activityStream={activityStream}
+                  agent={agent}
+                  prefillText={inputPrefillText}
+                  onPrefillConsumed={() => setInputPrefillText(undefined)}
+                  bufferValue={inputBuffer}
+                  onBufferChange={setInputBuffer}
+                />
+              </Box>
+            </Box>
+          );
+        })()
+      ) : undoFileListRequest && !undoRequest ? (
+        /* Undo File List (two-stage flow - stage 1) */
+        <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream config={state.config} />
+
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+          <UndoFileList
+            request={undoFileListRequest}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              onInterjection={handleInterjection}
+              isActive={true}
+              commandHistory={commandHistory.current || undefined}
+              completionProvider={completionProvider || undefined}
+              undoFileListRequest={undoFileListRequest}
+              onUndoFileListNavigate={(newIndex) => setUndoFileListRequest(prev => prev ? { ...prev, selectedIndex: newIndex } : undefined)}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
+            />
+          </Box>
+        </Box>
+      ) : undoRequest ? (
+        /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
+        <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream config={state.config} />
+
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+          <UndoPrompt
+            request={undoRequest}
+            selectedIndex={undoSelectedIndex}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              onInterjection={handleInterjection}
+              isActive={true}
+              commandHistory={commandHistory.current || undefined}
+              completionProvider={completionProvider || undefined}
+              undoRequest={undoRequest}
+              undoSelectedIndex={undoSelectedIndex}
+              onUndoNavigate={setUndoSelectedIndex}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
+            />
+          </Box>
+        </Box>
+      ) : permissionRequest ? (
+        /* Permission Prompt (replaces input when active) */
+        <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream config={state.config} />
+
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+          <PermissionPrompt
+            request={permissionRequest}
+            selectedIndex={permissionSelectedIndex}
+            visible={true}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              onInterjection={handleInterjection}
+              isActive={true}
+              commandHistory={commandHistory.current || undefined}
+              completionProvider={completionProvider || undefined}
+              permissionRequest={permissionRequest}
+              permissionSelectedIndex={permissionSelectedIndex}
+              onPermissionNavigate={setPermissionSelectedIndex}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={inputPrefillText}
+              onPrefillConsumed={() => setInputPrefillText(undefined)}
+              bufferValue={inputBuffer}
+              onBufferChange={setInputBuffer}
+            />
+          </Box>
+        </Box>
+      ) : (
+        /* Input Group - Status Indicator + Input Prompt */
+        <Box marginTop={1} flexDirection="column">
+          {/* Reasoning Stream - shows thinking tokens */}
+          <ReasoningStream config={state.config} />
+
+          {/* Status Indicator - always visible to show todos */}
+          <StatusIndicator isProcessing={state.isThinking} isCompacting={state.isCompacting} isCancelling={isCancelling} recentMessages={state.messages.slice(-3)} sessionLoaded={sessionLoaded} isResuming={!!resumeSession} />
+
+          {/* Input Prompt */}
+          <InputPrompt
+            onSubmit={handleInput}
+            onInterjection={handleInterjection}
+            isActive={true}
+            commandHistory={commandHistory.current || undefined}
+            completionProvider={completionProvider || undefined}
+            configViewerOpen={configViewerOpen}
+            activityStream={activityStream}
+            agent={agent}
+            prefillText={inputPrefillText}
+            onPrefillConsumed={() => setInputPrefillText(undefined)}
+            onExitConfirmationChange={setIsWaitingForExitConfirmation}
+            bufferValue={inputBuffer}
+            onBufferChange={setInputBuffer}
+          />
+        </Box>
+      )}
+
+      {/* Footer / Help */}
+      <Box marginTop={1}>
+        <Text dimColor>
+          <Text color={isWaitingForExitConfirmation ? 'yellow' : undefined}>Ctrl+C to exit</Text>{activeAgentsCount > 0 && <Text> | <Text color="cyan">{activeAgentsCount} active agent{activeAgentsCount === 1 ? '' : 's'}</Text></Text>} | Model: {state.config.model || 'none'}{currentFocus && <Text> | Focus: <Text color="magenta">{currentFocus}</Text></Text>} |{' '}
+          {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
+            <Text color="red">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - use /compact</Text>
+          ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
+            <Text color="yellow">Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining - consider /compact</Text>
+          ) : (
+            <Text>Context: {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% remaining</Text>
+          )}
+        </Text>
+      </Box>
+    </Box>
+  );
+};
+
+/**
+ * Memoized AppContent - prevents re-renders unless props actually change
+ */
+const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
+  const agentSame = prevProps.agent === nextProps.agent;
+  const resumeSame = prevProps.resumeSession === nextProps.resumeSession;
+  const setupSame = prevProps.showSetupWizard === nextProps.showSetupWizard;
+  return agentSame && resumeSame && setupSame;
+});
+
+/**
+ * Root App Component
+ *
+ * Sets up all context providers and renders the main application.
+ * This is the entry point for the Ink application.
+ *
+ * @example
+ * ```tsx
+ * import { render } from 'ink';
+ * import { App } from './ui/App.js';
+ *
+ * const config = await configManager.getConfig();
+ * const { unmount } = render(<App config={config} />);
+ * ```
+ */
+export const App: React.FC<AppProps> = ({ config, activityStream, agent, resumeSession, showSetupWizard, pluginCount }) => {
+  // Create activity stream if not provided
+  const streamRef = useRef(activityStream || new ActivityStream());
+
+  return (
+    <ActivityProvider activityStream={streamRef.current}>
+      <AppProvider initialConfig={config}>
+        <AppContent agent={agent} resumeSession={resumeSession} showSetupWizard={showSetupWizard} pluginCount={pluginCount} />
+      </AppProvider>
+    </ActivityProvider>
+  );
+};
+
+/**
+ * Example usage with message injection for testing
+ */
+export interface AppWithMessagesProps extends AppProps {
+  /** Initial messages to display */
+  initialMessages?: Message[];
+}
+
+/**
+ * App component with initial messages
+ *
+ * Useful for testing and development. Allows pre-populating the conversation.
+ *
+ * @example
+ * ```tsx
+ * const messages: Message[] = [
+ *   { role: 'user', content: 'Hello!' },
+ *   { role: 'assistant', content: 'Hi there!' },
+ * ];
+ *
+ * render(<AppWithMessages config={config} initialMessages={messages} />);
+ * ```
+ */
+export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
+  config,
+  activityStream,
+  agent,
+  initialMessages = [],
+}) => {
+  const streamRef = useRef(activityStream || new ActivityStream());
+
+  return (
+    <ActivityProvider activityStream={streamRef.current}>
+      <AppProvider initialConfig={config}>
+        <AppContentWithMessages agent={agent} initialMessages={initialMessages} />
+      </AppProvider>
+    </ActivityProvider>
+  );
+};
+
+/**
+ * Inner component that accepts initial messages
+ */
+const AppContentWithMessages: React.FC<{ agent: Agent; initialMessages: Message[] }> = ({
+  agent,
+  initialMessages,
+}) => {
+  const { actions } = useAppContext();
+
+  // Load initial messages on mount
+  useEffect(() => {
+    if (initialMessages.length > 0) {
+      actions.setMessages(initialMessages);
+    }
+  }, []); // Only run once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+
+  return <AppContent agent={agent} />;
+};
+
+export default App;

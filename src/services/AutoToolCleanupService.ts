@@ -1,0 +1,401 @@
+/**
+ * AutoToolCleanupService - Auto-identifies and removes irrelevant tool results
+ *
+ * Uses LLM to analyze tool calls in conversations and identify irrelevant ones
+ * that can be safely removed to save context. Operates in background to avoid blocking.
+ */
+
+import { ModelClient } from '../llm/ModelClient.js';
+import { Message, BackgroundTask } from '../types/index.js';
+import { CancellableService } from '../types/CancellableService.js';
+import { POLLING_INTERVALS, API_TIMEOUTS, AUTO_TOOL_CLEANUP } from '../config/constants.js';
+import type { SessionManager } from './SessionManager.js';
+
+/**
+ * Configuration for AutoToolCleanupService
+ */
+export interface AutoToolCleanupConfig {
+  /** Ratio of eligible tool calls to analyze (0.0-1.0) */
+  analysisRatio?: number;
+  /** Max chars of tool result to include in analysis */
+  maxTruncationLength?: number;
+}
+
+/**
+ * Structure for tool call analysis
+ */
+interface ToolCallInfo {
+  /** Tool call ID */
+  id: string;
+  /** Tool name */
+  name: string;
+  /** Tool arguments (truncated for analysis) */
+  args: string;
+  /** Tool result (truncated for analysis) */
+  result: string;
+  /** Message index in conversation */
+  messageIndex: number;
+}
+
+/**
+ * Analysis result from LLM
+ */
+interface CleanupAnalysis {
+  /** Tool call IDs that can be safely removed */
+  irrelevantToolCallIds: string[];
+}
+
+/**
+ * AutoToolCleanupService auto-identifies irrelevant tool results using LLM
+ */
+export class AutoToolCleanupService implements CancellableService, BackgroundTask {
+  private modelClient: ModelClient;
+  private sessionManager: SessionManager;
+  private pendingAnalyses = new Set<string>();
+  private isAnalyzing: boolean = false;
+
+  private enableCleanup: boolean;
+  private analysisRatio: number;
+  private maxTruncationLength: number;
+
+  get isActive(): boolean {
+    return this.isAnalyzing;
+  }
+
+  constructor(
+    modelClient: ModelClient,
+    sessionManager: SessionManager,
+    enableCleanup: boolean = true,
+    config: AutoToolCleanupConfig = {}
+  ) {
+    this.modelClient = modelClient;
+    this.sessionManager = sessionManager;
+    this.enableCleanup = enableCleanup;
+    this.analysisRatio = config.analysisRatio ?? AUTO_TOOL_CLEANUP.ANALYSIS_RATIO;
+    this.maxTruncationLength = config.maxTruncationLength ?? 500;
+  }
+
+  /**
+   * Cancel any ongoing analysis
+   *
+   * Called before main agent starts processing to avoid resource competition.
+   * The service will naturally retry later when conditions allow.
+   */
+  cancel(): void {
+    if (this.isAnalyzing) {
+
+      // Cancel all active requests on the model client
+      if (typeof this.modelClient.cancel === 'function') {
+        this.modelClient.cancel();
+      }
+
+      // Reset flag and clear pending
+      this.isAnalyzing = false;
+      this.pendingAnalyses.clear();
+    }
+  }
+
+  /**
+   * Check if we should analyze this conversation
+   *
+   * @param messages - Conversation messages
+   * @param lastAnalysisAt - Timestamp of last analysis
+   * @returns true if analysis should proceed
+   */
+  shouldAnalyze(messages: Message[], lastAnalysisAt?: number): boolean {
+    // Don't analyze if already analyzing
+    if (this.isAnalyzing) {
+      return false;
+    }
+
+    // Count tool results
+    const toolResultCount = messages.filter(msg =>
+      msg.role === 'tool'
+    ).length;
+
+    // Need enough tool results to justify analysis
+    if (toolResultCount < AUTO_TOOL_CLEANUP.MIN_TOOL_RESULTS) {
+      return false;
+    }
+
+    // Check if enough time has passed since last analysis
+    if (lastAnalysisAt) {
+      const timeSinceLastAnalysis = Date.now() - lastAnalysisAt;
+      if (timeSinceLastAnalysis < AUTO_TOOL_CLEANUP.MIN_INTERVAL) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Analyze tool calls and identify irrelevant ones
+   *
+   * @param messages - Conversation messages
+   * @returns Analysis result with irrelevant tool call IDs
+   */
+  async analyzeToolCalls(messages: Message[]): Promise<CleanupAnalysis> {
+    // If cleanup is disabled, return empty result
+    if (!this.enableCleanup) {
+      return { irrelevantToolCallIds: [] };
+    }
+
+    // Extract tool calls and results
+    const toolCallInfos = this.extractToolCallInfos(messages);
+
+    if (toolCallInfos.length === 0) {
+      return { irrelevantToolCallIds: [] };
+    }
+
+    const analysisPrompt = this.buildAnalysisPrompt(toolCallInfos);
+
+    try {
+      const response = await this.modelClient.send(
+        [{ role: 'user', content: analysisPrompt }],
+        {
+          stream: false,
+          suppressThinking: true, // Don't show thinking for background analysis
+        }
+      );
+
+      // Check if response was interrupted or had an error - don't process it
+      if (response.interrupted || response.error) {
+        throw new Error('Analysis interrupted or failed');
+      }
+
+      // Parse the response to extract tool call IDs
+      const analysis = this.parseAnalysisResponse(response.content);
+
+      return analysis;
+    } catch (error) {
+      return { irrelevantToolCallIds: [] };
+    }
+  }
+
+  /**
+   * Perform cleanup analysis in the background
+   *
+   * @param sessionName - Name of the session
+   * @param messages - Conversation messages
+   */
+  cleanupBackground(sessionName: string, messages: Message[]): void {
+    // Prevent duplicate analyses
+    if (this.pendingAnalyses.has(sessionName)) {
+      return;
+    }
+
+    this.pendingAnalyses.add(sessionName);
+    this.isAnalyzing = true;
+
+    // Run in background
+    this.analyzeAndStoreAsync(sessionName, messages)
+      .catch(error => {
+        // Ignore abort/interrupt errors (expected when cancelled)
+        if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
+        } else {
+        }
+      })
+      .finally(() => {
+        this.pendingAnalyses.delete(sessionName);
+        this.isAnalyzing = false;
+      });
+  }
+
+  /**
+   * Analyze and store cleanup results asynchronously
+   */
+  private async analyzeAndStoreAsync(
+    sessionName: string,
+    messages: Message[]
+  ): Promise<void> {
+    // Perform analysis
+    const analysis = await this.analyzeToolCalls(messages);
+
+    if (analysis.irrelevantToolCallIds.length === 0) {
+      return;
+    }
+
+
+    // Store pending cleanups in session metadata
+    try {
+      const session = await this.sessionManager.loadSession(sessionName);
+      if (!session) {
+        return;
+      }
+
+      // Merge with existing pending cleanups
+      const existingCleanups = session.metadata?.pendingToolCleanups || [];
+      const allCleanups = [...new Set([...existingCleanups, ...analysis.irrelevantToolCallIds])];
+
+      // Use SessionManager's updateMetadata to ensure serialized writes
+      const success = await this.sessionManager.updateMetadata(sessionName, {
+        pendingToolCleanups: allCleanups,
+        lastCleanupAnalysisAt: Date.now(),
+      });
+
+      if (success) {
+      } else {
+      }
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Extract tool call information from messages using turn-based ratio approach
+   *
+   * Algorithm:
+   * 1. Find index of last assistant message in conversation
+   * 2. Build index of tool results for O(1) lookup
+   * 3. Extract all tool calls with their results
+   * 4. Filter out tool calls >= lastAssistantIndex (preserve last turn)
+   * 5. Of remaining tool calls, calculate: eligibleCount = floor(count * ANALYSIS_RATIO)
+   * 6. Take the FIRST eligibleCount tool calls (oldest ones)
+   */
+  private extractToolCallInfos(messages: Message[]): ToolCallInfo[] {
+    // Step 1: Find the start of the last assistant turn (not just last assistant message)
+    // A turn includes all assistant messages and tool results since the last user message
+    let lastAssistantTurnStart = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg?.role === 'user') {
+        lastAssistantTurnStart = i + 1;
+        break;
+      }
+    }
+
+    // If no user message found, preserve entire conversation (all tool calls in current turn)
+    if (lastAssistantTurnStart === -1) {
+      lastAssistantTurnStart = 0;
+    }
+
+    // Step 2: Build index of tool results for O(1) lookup
+    const toolResultMap = new Map<string, Message>();
+    for (const msg of messages) {
+      if (msg.role === 'tool' && msg.tool_call_id) {
+        toolResultMap.set(msg.tool_call_id, msg);
+      }
+    }
+
+    // Step 3: Extract all tool calls with their results
+    const allToolCalls: ToolCallInfo[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (!msg) continue;
+
+      // Look for assistant messages with tool calls
+      if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+        for (const toolCall of msg.tool_calls) {
+          if (!toolCall || !toolCall.id) continue;
+
+          // O(1) lookup instead of O(n) find
+          const toolResultMsg = toolResultMap.get(toolCall.id);
+
+          allToolCalls.push({
+            id: toolCall.id,
+            name: toolCall.function.name,
+            args: this.truncateForAnalysis(JSON.stringify(toolCall.function.arguments)),
+            result: toolResultMsg ? this.truncateForAnalysis(toolResultMsg.content) : '',
+            messageIndex: i,
+          });
+        }
+      }
+    }
+
+    // Step 4: Filter out tool calls from last assistant turn (preserve active turn)
+    const eligibleToolCalls = allToolCalls.filter(tc => tc.messageIndex < lastAssistantTurnStart);
+
+    // Step 5: Calculate how many of the eligible tool calls to analyze (oldest X%)
+    const eligibleCount = Math.floor(eligibleToolCalls.length * this.analysisRatio);
+
+    // Step 6: Take the FIRST eligibleCount tool calls (oldest ones)
+    const toolCallsToAnalyze = eligibleToolCalls.slice(0, eligibleCount);
+
+    return toolCallsToAnalyze;
+  }
+
+  /**
+   * Truncate content for analysis to save tokens
+   */
+  private truncateForAnalysis(content: string): string {
+    if (content.length <= this.maxTruncationLength) {
+      return content;
+    }
+    return content.slice(0, this.maxTruncationLength) + '... [truncated]';
+  }
+
+  /**
+   * Build the prompt for tool call analysis
+   */
+  private buildAnalysisPrompt(toolCallInfos: ToolCallInfo[]): string {
+    const toolCallList = toolCallInfos
+      .map((info, idx) => {
+        return `${idx + 1}. ID: ${info.id}
+   Tool: ${info.name}
+   Args: ${info.args}
+   Result: ${info.result}`;
+      })
+      .join('\n\n');
+
+    return `Analyze the following tool calls from a conversation and identify which ones are IRRELEVANT and can be safely removed.
+
+A tool call is IRRELEVANT if:
+- It was exploratory but didn't contribute to the final solution
+- Its results were not used in subsequent tool calls or responses
+- It was part of a failed attempt that was later corrected
+- It was redundant (duplicate information already available)
+
+IMPORTANT: Only mark tool calls as irrelevant if you are HIGHLY CONFIDENT they can be removed without losing important context.
+
+Tool Calls:
+${toolCallList}
+
+Reply with ONLY a JSON object in this format:
+{
+  "irrelevant_ids": ["id1", "id2", ...]
+}
+
+If no tool calls are irrelevant, reply with:
+{
+  "irrelevant_ids": []
+}`;
+  }
+
+  /**
+   * Parse the analysis response to extract irrelevant tool call IDs
+   */
+  private parseAnalysisResponse(content: string): CleanupAnalysis {
+    try {
+      // Try to extract JSON from the response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return { irrelevantToolCallIds: [] };
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      const irrelevantIds = parsed.irrelevant_ids || [];
+
+      // Validate that all IDs are strings
+      if (!Array.isArray(irrelevantIds) || !irrelevantIds.every(id => typeof id === 'string')) {
+        return { irrelevantToolCallIds: [] };
+      }
+
+      return { irrelevantToolCallIds: irrelevantIds };
+    } catch (error) {
+      return { irrelevantToolCallIds: [] };
+    }
+  }
+
+  /**
+   * Cleanup any pending operations
+   */
+  async cleanup(): Promise<void> {
+    // Wait for pending analyses to complete
+    const startTime = Date.now();
+
+    while (this.pendingAnalyses.size > 0 && Date.now() - startTime < API_TIMEOUTS.CLEANUP_MAX_WAIT) {
+      await new Promise(resolve => setTimeout(resolve, POLLING_INTERVALS.CLEANUP));
+    }
+  }
+}

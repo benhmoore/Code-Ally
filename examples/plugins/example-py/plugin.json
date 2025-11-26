@@ -1,0 +1,52 @@
+{
+  "name": "example-py-plugin",
+  "version": "1.0.0",
+  "description": "Example plugin demonstrating the toolset format with configuration",
+  "author": "Ally Examples",
+  "tools": [
+    {
+      "name": "reverse-string-py",
+      "description": "Reverse a string using Python",
+      "command": "python3",
+      "args": ["reverse.py"],
+      "requiresConfirmation": false,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to reverse"
+          },
+          "preserve_case": {
+            "type": "boolean",
+            "description": "Whether to preserve the case of characters (default: true)"
+          }
+        },
+        "required": ["text"]
+      }
+    }
+  ],
+  "config": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "description": "Prefix to add to reversed strings",
+          "required": false
+        },
+        "suffix": {
+          "type": "string",
+          "description": "Suffix to add to reversed strings",
+          "required": false
+        },
+        "api_key": {
+          "type": "string",
+          "description": "Example API key (demonstrates secret encryption)",
+          "secret": true,
+          "required": false
+        }
+      }
+    }
+  }
+}

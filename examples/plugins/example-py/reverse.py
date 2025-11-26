@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""
+Reverse String Plugin - Example Executable Plugin
+
+This demonstrates how to create an executable plugin in any language.
+The plugin receives JSON via stdin and outputs JSON via stdout.
+Configuration is read from environment variables.
+
+Signal Handling:
+- Handles SIGTERM/SIGINT for graceful shutdown when interrupted
+- More complex plugins should cleanup resources (files, connections, etc.) in the handler
+"""
+
+import json
+import sys
+import os
+import signal
+
+
+def reverse_string(text: str, preserve_case: bool = True) -> dict:
+    """
+    Reverse a string, optionally preserving case.
+    Applies prefix/suffix from configuration if provided.
+
+    Args:
+        text: The string to reverse
+        preserve_case: Whether to preserve character casing
+
+    Returns:
+        Dictionary with success status and result
+    """
+    try:
+        # Read configuration from environment variables
+        prefix = os.getenv('PLUGIN_CONFIG_PREFIX', '')
+        suffix = os.getenv('PLUGIN_CONFIG_SUFFIX', '')
+        api_key = os.getenv('PLUGIN_CONFIG_API_KEY', '')
+
+        if preserve_case:
+            # Simple reversal
+            reversed_text = text[::-1]
+        else:
+            # Reverse and convert to lowercase
+            reversed_text = text[::-1].lower()
+
+        # Apply prefix and suffix from config
+        if prefix:
+            reversed_text = prefix + reversed_text
+        if suffix:
+            reversed_text = reversed_text + suffix
+
+        return {
+            'success': True,
+            'original': text,
+            'reversed': reversed_text,
+            'length': len(text),
+            'preserved_case': preserve_case,
+            'config_applied': {
+                'prefix': prefix if prefix else None,
+                'suffix': suffix if suffix else None,
+                'api_key_present': bool(api_key)
+            }
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'Failed to reverse string: {str(e)}',
+            'error_type': 'processing_error'
+        }
+
+
+def signal_handler(sig, frame):
+    """Handle SIGTERM/SIGINT gracefully."""
+    # For simple plugins like this, we can just exit
+    # More complex plugins would cleanup resources here
+    sys.exit(0)
+
+
+def main():
+    """Main entry point - reads JSON from stdin, outputs JSON to stdout."""
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
+    try:
+        # Read input from stdin
+        input_data = json.loads(sys.stdin.read())
+
+        # Extract parameters
+        text = input_data.get('text', '')
+        preserve_case = input_data.get('preserve_case', True)
+
+        # Validate input
+        if not text:
+            result = {
+                'success': False,
+                'error': 'Missing required parameter: text',
+                'error_type': 'validation_error'
+            }
+        else:
+            # Execute the operation
+            result = reverse_string(text, preserve_case)
+
+        # Output result as JSON
+        print(json.dumps(result))
+
+    except json.JSONDecodeError as e:
+        # Invalid JSON input
+        error_result = {
+            'success': False,
+            'error': f'Invalid JSON input: {str(e)}',
+            'error_type': 'input_error'
+        }
+        print(json.dumps(error_result))
+        sys.exit(1)
+
+    except Exception as e:
+        # Unexpected error
+        error_result = {
+            'success': False,
+            'error': f'Unexpected error: {str(e)}',
+            'error_type': 'system_error'
+        }
+        print(json.dumps(error_result))
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
