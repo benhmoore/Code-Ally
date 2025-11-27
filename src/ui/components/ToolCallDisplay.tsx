@@ -16,7 +16,7 @@ import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { formatDisplayName } from '../utils/uiHelpers.js';
-import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
+import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS, UI_DELAYS } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -412,7 +412,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         )}
 
         {/* Duration - always show for agents, show for others if > 5 seconds */}
-        {(isAgentDelegation || duration > 5000) && (
+        {(isAgentDelegation || duration > UI_DELAYS.TOOL_DURATION_DISPLAY_THRESHOLD) && (
           <Text dimColor> · {durationStr}</Text>
         )}
       </Box>

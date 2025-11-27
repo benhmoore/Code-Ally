@@ -302,6 +302,9 @@ export const UI_DELAYS = {
 
   /** Streaming content batch flush delay (100ms) */
   STREAMING_CONTENT_BATCH_FLUSH: 100,
+
+  /** Tool call duration display threshold - show duration after this time (5 seconds) */
+  TOOL_DURATION_DISPLAY_THRESHOLD: 5000,
 } as const;
 
 // ===========================================

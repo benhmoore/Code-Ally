@@ -71,10 +71,10 @@ function getExploreThoroughnessGuidelines(thoroughness: string): string | null {
 **Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
 - You CAN write temporary notes to /tmp using write-temp to organize findings
-- **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
+- **Time limit: ~3 minutes maximum** - System reminders will notify you of remaining time
 - **Delegation strategy**: Strongly consider delegation for multi-area explorations (protects context)
 - If exploring 2+ distinct areas, prefer parallel explore() calls over sequential direct investigation
-- Be thorough but efficient with tool usage (aim for 5-10 tool calls if not delegating)
+- Be thorough but efficient with tool usage (aim for 3-6 tool calls if not delegating)
 - Consider using write-temp to organize findings by category as you discover them
 - Review your notes before summarizing to ensure comprehensive coverage
 - Always provide clear, structured summaries of findings
@@ -87,11 +87,11 @@ function getExploreThoroughnessGuidelines(thoroughness: string): string | null {
 **Important Guidelines:**
 - You have READ-ONLY access to codebase - you cannot modify project files
 - You CAN write temporary notes to /tmp using write-temp to organize findings
-- **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
+- **Time limit: ~6 minutes maximum** - System reminders will notify you of remaining time
 - **Delegation strategy**: DEFAULT to delegation for complex explorations with multiple components
 - Break down into logical sub-explorations (e.g., architecture overview, then deep dives per component)
 - Use "overview then deep dive" pattern: First map the landscape, then delegate detailed investigations
-- Be comprehensive and meticulous (aim for 10-20 tool calls if not delegating)
+- Be comprehensive and meticulous (aim for 6-12 tool calls if not delegating)
 - Use write-temp extensively to organize findings as you discover them
 - Create separate note files for different aspects (architecture.txt, patterns.txt, dependencies.txt)
 - Check multiple locations and consider various naming conventions
@@ -145,8 +145,8 @@ function getPlanThoroughnessGuidelines(thoroughness: string): string | null {
       return `**Your Current Thoroughness Level: MEDIUM**
 
 **Important Guidelines:**
-- **Time limit: ~5 minutes maximum** - System reminders will notify you of remaining time
-- Be efficient in research (use 10-15 tool calls depending on codebase complexity)
+- **Time limit: ~3 minutes maximum** - System reminders will notify you of remaining time
+- Be efficient in research (use 6-9 tool calls depending on codebase complexity)
 - **For existing codebases**: Ground recommendations in existing patterns, provide file references
 - **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
 - **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly
@@ -160,8 +160,8 @@ function getPlanThoroughnessGuidelines(thoroughness: string): string | null {
       return `**Your Current Thoroughness Level: VERY THOROUGH**
 
 **Important Guidelines:**
-- **Time limit: ~10 minutes maximum** - System reminders will notify you of remaining time
-- Be thorough in research (use 15-20+ tool calls for comprehensive analysis)
+- **Time limit: ~6 minutes maximum** - System reminders will notify you of remaining time
+- Be thorough in research (use 9-12 tool calls for comprehensive analysis)
 - **For existing codebases**: Ground recommendations in existing patterns, provide file references
 - **For empty/new projects**: Ground recommendations in modern best practices for the language/framework
 - **Don't waste time searching for patterns that don't exist** - recognize empty projects quickly

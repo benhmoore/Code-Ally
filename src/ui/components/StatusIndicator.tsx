@@ -19,7 +19,7 @@ import { formatElapsed } from '../utils/timeUtils.js';
 import { logger } from '@services/Logger.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import { setTerminalProgress, clearTerminalProgress } from '@utils/terminal.js';
-import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES } from '@config/constants.js';
+import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES, UI_DELAYS } from '@config/constants.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { MarkdownText } from './MarkdownText.js';
@@ -251,21 +251,38 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   }, [isProcessing]);
 
   // Manage terminal tab progress bar (OSC 9;4)
-  // Shows indeterminate progress while processing, clears when idle
+  // Shows indeterminate progress only during long-running tool calls
   useEffect(() => {
-    if (isProcessing || isCompacting) {
-      // Show indeterminate progress in terminal tab
-      setTerminalProgress(0, 'indeterminate');
-    } else {
-      // Clear progress bar when idle
-      clearTerminalProgress();
-    }
+    // Check if any tool call has been executing beyond the display threshold
+    const checkLongRunningToolCalls = () => {
+      const now = Date.now();
+      const hasLongRunningTool = activeToolCalls.some(tc => {
+        if (tc.status !== 'executing') return false;
+        const startTime = tc.executionStartTime || tc.startTime;
+        return (now - startTime) >= UI_DELAYS.TOOL_DURATION_DISPLAY_THRESHOLD;
+      });
 
-    // Cleanup on unmount
+      if (hasLongRunningTool) {
+        setTerminalProgress(0, 'indeterminate');
+      } else {
+        clearTerminalProgress();
+      }
+    };
+
+    // Initial check
+    checkLongRunningToolCalls();
+
+    // Check every second while processing
+    const interval = (isProcessing || isCompacting)
+      ? setInterval(checkLongRunningToolCalls, 1000)
+      : undefined;
+
+    // Cleanup on unmount or when deps change
     return () => {
+      if (interval) clearInterval(interval);
       clearTerminalProgress();
     };
-  }, [isProcessing, isCompacting]);
+  }, [isProcessing, isCompacting, activeToolCalls]);
 
   // Subscribe to TODO_UPDATE events for immediate todo display updates
   useEffect(() => {

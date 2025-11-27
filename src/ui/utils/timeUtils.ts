@@ -14,8 +14,8 @@ export type ThoroughnessLevel = 'quick' | 'medium' | 'very thorough' | 'uncapped
  */
 export const THOROUGHNESS_DURATIONS = {
   QUICK_MINUTES: 1,
-  MEDIUM_MINUTES: 5,
-  VERY_THOROUGH_MINUTES: 10,
+  MEDIUM_MINUTES: 3,
+  VERY_THOROUGH_MINUTES: 6,
 } as const;
 
 /**
