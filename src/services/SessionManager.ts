@@ -192,6 +192,28 @@ export class SessionManager implements IService {
   }
 
   /**
+   * Filter messages for persistence:
+   * - Remove system messages (regenerated on resume)
+   * - Remove assistant messages with incomplete tool calls (interrupted execution)
+   */
+  private filterMessagesForPersistence(messages: readonly Message[]): Message[] {
+    const completedToolCalls = new Set<string>();
+    for (const msg of messages) {
+      if (msg.role === 'tool' && msg.tool_call_id) {
+        completedToolCalls.add(msg.tool_call_id);
+      }
+    }
+
+    return messages.filter(msg => {
+      if (msg.role === 'system') return false;
+      if (msg.role === 'assistant' && msg.tool_calls?.length) {
+        return msg.tool_calls.every(tc => completedToolCalls.has(tc.id));
+      }
+      return true;
+    });
+  }
+
+  /**
    * Quarantine a corrupted session file instead of deleting it
    */
   private async quarantineSession(sessionName: string, reason: string): Promise<void> {
@@ -378,8 +400,8 @@ export class SessionManager implements IService {
         };
       }
 
-      // Update session (copy messages to ensure mutability)
-      session.messages = [...messages];
+      // Filter and update session messages
+      session.messages = this.filterMessagesForPersistence(messages);
       session.updated_at = new Date().toISOString();
 
       await this.saveSessionData(sessionName, session);
@@ -889,8 +911,7 @@ export class SessionManager implements IService {
       return false;
     }
 
-    // Filter out system messages to avoid duplication on resume
-    const filteredMessages = messages.filter(msg => msg.role !== 'system');
+    const filteredMessages = this.filterMessagesForPersistence(messages);
 
     if (filteredMessages.length === 0 && (!todos || todos.length === 0)) {
       return false; // Nothing to save
