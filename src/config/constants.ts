@@ -825,6 +825,12 @@ export const TOKEN_MANAGEMENT = {
 
   /** Context file read maximum percentage of context (40%) */
   CONTEXT_FILE_READ_MAX_PERCENT: 0.4,
+
+  /** Percentage of remaining context to allocate for dynamic output (90%) */
+  DYNAMIC_OUTPUT_PERCENT: 0.9,
+
+  /** Minimum output tokens to ensure viable responses (256 tokens) */
+  MIN_OUTPUT_TOKENS: 256,
 } as const;
 
 // ===========================================

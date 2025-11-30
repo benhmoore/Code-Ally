@@ -1449,6 +1449,13 @@ export class Agent {
     });
 
     try {
+      // Calculate dynamic max output tokens based on remaining context
+      const remainingTokens = this.tokenManager.getRemainingTokens();
+      const dynamicMaxTokens = Math.max(
+        TOKEN_MANAGEMENT.MIN_OUTPUT_TOKENS,
+        Math.floor(remainingTokens * TOKEN_MANAGEMENT.DYNAMIC_OUTPUT_PERCENT)
+      );
+
       // Send to model (includes system-reminder if present)
       const response = await this.modelClient.send(this.conversationManager.getMessages(), {
         functions,
@@ -1456,6 +1463,8 @@ export class Agent {
         stream: !this.config.isSpecializedAgent && this.config.config.parallel_tools,
         // Pass parentCallId for associating thinking events with tool calls
         parentId: executionContext.parentCallId,
+        // Dynamic output token limit based on remaining context
+        dynamicMaxTokens,
       });
 
       // Remove ephemeral system-reminder messages after receiving response

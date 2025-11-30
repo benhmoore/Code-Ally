@@ -29,6 +29,12 @@ export interface SendOptions {
   parentId?: string;
   /** Suppress thinking display (for background services like title generation) */
   suppressThinking?: boolean;
+  /**
+   * Dynamic max tokens calculated from remaining context.
+   * When provided, overrides the client's static maxTokens for this request.
+   * Calculated as: floor((contextSize - inputTokens) * 0.9)
+   */
+  dynamicMaxTokens?: number;
 }
 
 /**
