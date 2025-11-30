@@ -66,7 +66,7 @@ export class PatchCleanupManager {
     }
 
     await this.indexManager.saveIndex();
-    logger.info(`Cleaned up ${deletedCount} old patches (count limit)`);
+    logger.debug(`Cleaned up ${deletedCount} old patches (count limit)`);
 
     return deletedCount;
   }
@@ -115,7 +115,7 @@ export class PatchCleanupManager {
 
       if (removedCount > 0) {
         await this.indexManager.saveIndex();
-        logger.info(`Cleaned up ${removedCount} old patches (size limit)`);
+        logger.debug(`Cleaned up ${removedCount} old patches (size limit)`);
       }
 
       return removedCount;
@@ -169,7 +169,7 @@ export class PatchCleanupManager {
     if (deletedCount > 0) {
       this.indexManager.removePatches(patchNumbersToRemove);
       await this.indexManager.saveIndex();
-      logger.info(`Cleaned up ${deletedCount} old patches (age limit)`);
+      logger.debug(`Cleaned up ${deletedCount} old patches (age limit)`);
     }
 
     return deletedCount;
@@ -219,7 +219,7 @@ export class PatchCleanupManager {
       totalRemoved += sizeRemoved;
 
       if (totalRemoved > 0) {
-        logger.info(`Automatic cleanup removed ${totalRemoved} patches total`);
+        logger.debug(`Automatic cleanup removed ${totalRemoved} patches total`);
       }
 
       return totalRemoved;
