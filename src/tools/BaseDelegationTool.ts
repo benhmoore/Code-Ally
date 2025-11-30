@@ -19,7 +19,7 @@ import { BaseTool } from './BaseTool.js';
 import { InjectableTool } from './InjectableTool.js';
 import { ToolResult, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { ServiceRegistry, ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
 import { Agent, AgentConfig } from '../agent/Agent.js';
 import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
@@ -139,12 +139,12 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
    *
    * @param response - Agent response
    * @param config - Tool configuration
-   * @param registry - Service registry
+   * @param registry - Service registry (can be scoped or global)
    */
   protected async postProcessResponse(
     response: string,
     _config: DelegationToolConfig,
-    _registry: ServiceRegistry
+    _registry: ServiceRegistry | ScopedServiceRegistryProxy
   ): Promise<string> {
     return response;
   }
@@ -336,10 +336,10 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         startTime: Date.now(),
       });
 
-      // Update registry to point to sub-agent during its execution
-      // This ensures nested tool calls get correct parent
-      const previousAgent = registry.get<any>('agent');
-      registry.registerInstance('agent', delegationAgent);
+      // Create scoped registry for this delegation
+      // This ensures nested tool calls get correct parent without global mutation
+      const scopedRegistry = new ScopedServiceRegistryProxy(registry);
+      scopedRegistry.registerInstance('agent', delegationAgent);
 
       try {
         // Execute delegation
@@ -369,8 +369,8 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
           finalResponse = response;
         }
 
-        // Allow subclass to post-process response
-        finalResponse = await this.postProcessResponse(finalResponse, config, registry);
+        // Allow subclass to post-process response (pass scoped registry)
+        finalResponse = await this.postProcessResponse(finalResponse, config, scopedRegistry);
 
         const duration = (Date.now() - startTime) / 1000;
 
@@ -408,15 +408,6 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
 
         return this.formatSuccessResponse(successResponse);
       } finally {
-        // Restore previous agent in registry
-        try {
-          registry.registerInstance('agent', previousAgent);
-          logger.debug(`[${this.name.toUpperCase()}_TOOL] Restored registry 'agent': ${(previousAgent as any)?.instanceId || 'null'}`);
-        } catch (registryError) {
-          logger.error(`[${this.name.toUpperCase()}_TOOL] CRITICAL: Failed to restore registry agent:`, registryError);
-          // Don't throw - continue with other cleanup
-        }
-
         // Clean up delegation tracking
         logger.debug(`[${this.name.toUpperCase()}_TOOL] Cleaning up agent...`);
         this.activeDelegations.delete(callId);

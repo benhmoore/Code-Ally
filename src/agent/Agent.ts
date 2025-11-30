@@ -157,6 +157,8 @@ export interface AgentConfig {
   agentDepth?: number;
   /** Agent call stack for circular delegation detection (tracks agent names in call chain) */
   agentCallStack?: string[];
+  /** Internal: Scoped registry for this agent (shadows global for 'agent' key to prevent race conditions) */
+  _scopedRegistry?: any; // ScopedServiceRegistryProxy - typed as 'any' to avoid circular dependency
 }
 
 /**
@@ -193,6 +195,9 @@ export class Agent {
 
   // Agent call stack for circular delegation detection
   private readonly agentCallStack: string[];
+
+  // Scoped registry for this agent (prevents race conditions in parallel execution)
+  private readonly scopedRegistry?: any; // ScopedServiceRegistryProxy
 
   // Activity monitoring - detects agents stuck generating tokens without tool calls
   private activityMonitor: ActivityMonitor;
@@ -277,9 +282,12 @@ export class Agent {
     // Store agent call stack from config (default to empty array)
     this.agentCallStack = config.agentCallStack ?? [];
 
+    // Store scoped registry from config (for parallel execution safety)
+    this.scopedRegistry = config._scopedRegistry;
+
     // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none', 'depth:', this.agentDepth);
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none', 'depth:', this.agentDepth, 'scopedRegistry:', this.scopedRegistry ? 'yes' : 'no');
 
     // Initialize parent agent reference from config during construction (eager initialization)
     // This is set directly from the config parameter when the agent is created by AgentTool,
@@ -506,6 +514,13 @@ export class Agent {
    */
   getAgentName(): string | undefined {
     return this.agentName;
+  }
+
+  /**
+   * Get the scoped registry for this agent (used by ToolOrchestrator for tool execution context)
+   */
+  getScopedRegistry(): any | undefined {
+    return this.scopedRegistry;
   }
 
   /**

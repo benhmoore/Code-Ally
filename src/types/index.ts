@@ -420,3 +420,18 @@ export interface SessionInfo {
 // ===========================
 
 export type { PromptInfo } from '../services/PromptLibraryManager.js';
+
+// ===========================
+// Tool Execution Context Types
+// ===========================
+
+/**
+ * Execution context for tool execution
+ * Enables passing scoped resources (like registry proxies) through the execution chain
+ */
+export interface ToolExecutionContext {
+  /** Scoped registry for this execution (shadows global for 'agent' key) */
+  registryScope?: any; // ScopedServiceRegistryProxy - typed as 'any' to avoid circular dependency
+  /** Current agent name for validation */
+  agentName?: string;
+}

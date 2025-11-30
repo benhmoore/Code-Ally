@@ -14,7 +14,7 @@
 import { BaseDelegationTool, DelegationToolConfig } from './BaseDelegationTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { ServiceRegistry, ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { REASONING_EFFORT, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
 import { createPlanAcceptedReminder } from '../utils/messageUtils.js';
@@ -186,7 +186,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
   protected async postProcessResponse(
     response: string,
     _config: DelegationToolConfig,
-    registry: ServiceRegistry
+    registry: ServiceRegistry | ScopedServiceRegistryProxy
   ): Promise<string> {
     // Get current todo summary to include in result
     const currentTodoManager = registry.get<TodoManager>('todo_manager');

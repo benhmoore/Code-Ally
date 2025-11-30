@@ -61,8 +61,10 @@ const SAFE_CONCURRENT_TOOLS = new Set([
   'git_log',
   'git_diff',
   'web_fetch',
-  // NOTE: 'agent' is NOT included - agent delegation tools need sequential execution
-  // to ensure proper START event emission and UI display hierarchy
+  // Agent delegation tools - use scoped registries for isolation
+  'agent',
+  'explore',
+  'plan',
 ]);
 
 /**
@@ -77,6 +79,7 @@ export interface IAgentForOrchestrator {
   getMaxDuration(): number | undefined;
   getAgentName(): string | undefined;
   getAgentDepth(): number;
+  getScopedRegistry?(): any;
   getTokenManager(): {
     getContextUsagePercentage(): number;
     trackToolResult(toolCallId: string, content: string): string | null;
@@ -767,6 +770,10 @@ export class ToolOrchestrator {
       });
 
       // Execute tool via tool manager (pass ID for streaming output and agent name for binding validation)
+      // Pass scoped registry in execution context to prevent race conditions in parallel execution
+      const scopedRegistry = this.agent.getScopedRegistry?.();
+      const executionContext = scopedRegistry ? { registryScope: scopedRegistry } : undefined;
+
       result = await this.toolManager.executeTool(
         toolName,
         args,
@@ -775,7 +782,8 @@ export class ToolOrchestrator {
         this.agent.getToolAbortSignal(),
         false, // isUserInitiated
         false, // isContextFile
-        this.agent.getAgentName() // currentAgentName for tool-agent binding validation
+        this.agent.getAgentName(), // currentAgentName for tool-agent binding validation
+        executionContext
       );
 
       // Store execution start time for session persistence

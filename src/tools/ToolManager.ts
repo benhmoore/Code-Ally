@@ -7,7 +7,7 @@
 
 import { BaseTool } from './BaseTool.js';
 import { ToolValidator } from './ToolValidator.js';
-import { FunctionDefinition, ToolResult } from '../types/index.js';
+import { FunctionDefinition, ToolResult, ToolExecutionContext } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError, createStructuredError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
@@ -394,6 +394,7 @@ export class ToolManager {
    * @param isUserInitiated - Internal flag for user-initiated execution (not visible to model)
    * @param isContextFile - Internal flag for context file read (not visible to model)
    * @param currentAgentName - Current agent name for tool-agent binding validation
+   * @param executionContext - Optional execution context with scoped resources
    * @returns Tool result
    */
   /**
@@ -480,7 +481,8 @@ export class ToolManager {
     abortSignal?: AbortSignal,
     isUserInitiated: boolean = false,
     isContextFile: boolean = false,
-    currentAgentName?: string
+    currentAgentName?: string,
+    executionContext?: ToolExecutionContext
   ): Promise<ToolResult> {
     const tool = this.tools.get(toolName);
     if (!tool) {
@@ -537,7 +539,7 @@ export class ToolManager {
     }
 
     try {
-      const result = await tool.execute(args, callId, abortSignal, isUserInitiated, isContextFile);
+      const result = await tool.execute(args, callId, abortSignal, isUserInitiated, isContextFile, executionContext);
 
       if (result.success) {
         this.duplicateDetector.recordCall(toolName, args);

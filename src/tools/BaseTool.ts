@@ -5,7 +5,7 @@
  * and event emission. All concrete tools must extend this class.
  */
 
-import { ToolResult, ActivityEvent, ActivityEventType, ErrorType } from '../types/index.js';
+import { ToolResult, ActivityEvent, ActivityEventType, ErrorType, ToolExecutionContext } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -148,6 +148,11 @@ export abstract class BaseTool {
   protected currentAbortSignal?: AbortSignal;
 
   /**
+   * Current execution context (set during execute for access in executeImpl)
+   */
+  protected currentExecutionContext?: ToolExecutionContext;
+
+  /**
    * Preview changes before execution (e.g., show diff for file edits)
    *
    * Called by ToolOrchestrator BEFORE permission checks, allowing users
@@ -175,11 +180,20 @@ export abstract class BaseTool {
    * @param abortSignal - Optional AbortSignal for interrupting tool execution
    * @param isUserInitiated - Internal flag indicating user-initiated execution (not visible to model)
    * @param isContextFile - Internal flag indicating context file read (not visible to model)
+   * @param executionContext - Optional execution context with scoped resources
    * @returns Tool result dictionary
    */
-  async execute(args: any, callId?: string, abortSignal?: AbortSignal, isUserInitiated: boolean = false, isContextFile: boolean = false): Promise<ToolResult> {
+  async execute(
+    args: any,
+    callId?: string,
+    abortSignal?: AbortSignal,
+    isUserInitiated: boolean = false,
+    isContextFile: boolean = false,
+    executionContext?: ToolExecutionContext
+  ): Promise<ToolResult> {
     this.currentCallId = callId;
     this.currentAbortSignal = abortSignal;
+    this.currentExecutionContext = executionContext;
 
     try {
       // Check if already aborted before starting
@@ -208,6 +222,7 @@ export abstract class BaseTool {
     } finally {
       this.currentCallId = undefined;
       this.currentAbortSignal = undefined;
+      this.currentExecutionContext = undefined;
     }
   }
 

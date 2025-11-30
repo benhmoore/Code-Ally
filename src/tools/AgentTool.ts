@@ -13,7 +13,7 @@ import { BaseTool } from './BaseTool.js';
 import { InjectableTool } from './InjectableTool.js';
 import { ToolResult, FunctionDefinition, ActivityEventType, Message } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { ServiceRegistry, ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
 import { AgentManager, BaseAgentConfig } from '../services/AgentManager.js';
 import { Agent, AgentConfig } from '../agent/Agent.js';
 import { ModelClient } from '../llm/ModelClient.js';
@@ -50,7 +50,7 @@ interface AgentTaskExecutionParams extends AgentExecutionParams {
 export class AgentTool extends BaseTool implements InjectableTool {
   readonly name = 'agent';
   readonly description =
-    'Delegate task to specialized agent. Each call runs ONE agent sequentially';
+    'Delegate task to specialized agent. Multiple calls can run in parallel';
   readonly requiresConfirmation = false; // Non-destructive: task delegation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
@@ -797,45 +797,6 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
   }
 
   /**
-   * Cleanup after agent execution
-   */
-  private cleanupAfterExecution(params: {
-    registry: ServiceRegistry;
-    previousAgent: any;
-    pooledAgent: PooledAgent | null;
-    callId: string;
-    subAgent: Agent;
-  }): void {
-    const { registry, previousAgent } = params;
-
-    // Restore previous agent in registry
-    try {
-      registry.registerInstance('agent', previousAgent);
-
-      // VALIDATION: Ensure registry restoration succeeded
-      const restoredAgent = registry.get<any>('agent');
-      if (restoredAgent !== previousAgent) {
-        // CRITICAL: Registry corruption detected - fail fast
-        const error = new Error(
-          `[AGENT_TOOL] CRITICAL: Registry corruption detected! ` +
-            `Expected agent ${(previousAgent as any)?.instanceId || 'null'} ` +
-            `but registry contains ${(restoredAgent as any)?.instanceId || 'null'}. ` +
-            `This indicates a race condition or double-release bug in agent management.`
-        );
-        logger.error(error.message);
-        throw error;
-      }
-
-      logger.debug(`[AGENT_TOOL] Restored registry 'agent': ${(previousAgent as any)?.instanceId || 'null'}`);
-    } catch (registryError) {
-      logger.error(`[AGENT_TOOL] CRITICAL: Failed to restore registry agent:`, registryError);
-      if (registryError instanceof Error && registryError.message.includes('Registry corruption')) {
-        throw registryError;
-      }
-    }
-  }
-
-  /**
    * Cleanup and release agent resources
    */
   private async releaseAgent(params: {
@@ -928,7 +889,23 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       logger.debug('[AGENT_TOOL] Agent has access to all tools (unrestricted)');
     }
 
-    // 5. Build full agent config with execution-specific fields
+    // 4b. Create filtered ToolManager if tool restrictions apply
+    // This ensures the agent only sees allowed tools (enforced at both ToolManager and ToolOrchestrator levels)
+    let filteredToolManager: ToolManager | undefined;
+    if (baseConfig.allowedTools !== undefined) {
+      const allTools = toolManager.getAllTools();
+      const allowedToolSet = new Set(baseConfig.allowedTools);
+      const filteredTools = allTools.filter(tool => allowedToolSet.has(tool.name));
+      filteredToolManager = new ToolManager(filteredTools, this.activityStream);
+      logger.debug('[AGENT_TOOL] Created filtered ToolManager with', filteredTools.length, 'tools');
+    }
+
+    // 5. Create scoped registry for this agent (NO global mutation!)
+    // This will be stored in the agent and passed to all child tool executions
+    const scopedRegistry = new ScopedServiceRegistryProxy(registry);
+    logger.debug('[AGENT_TOOL] Created scoped registry for agent:', agentType);
+
+    // 6. Build full agent config with execution-specific fields and scoped registry
     const agentConfig = this.buildAgentConfig({
       baseConfig,
       agentData,
@@ -941,12 +918,14 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       parentAgentName: params.parentAgentName,
       initialMessages,
     });
+    // Add scoped registry to config (will be stored on agent instance)
+    agentConfig._scopedRegistry = scopedRegistry;
 
-    // 6. Acquire/create agent
+    // 7. Acquire/create agent
     logger.debug('[AGENT_TOOL] Creating sub-agent with parentCallId:', callId);
     const { agent: subAgent, pooledAgent, agentId } = await this.acquireOrCreateAgent({
       agentConfig,
-      toolManager,
+      toolManager: filteredToolManager || toolManager, // Use filtered manager if available
       modelClient,
       targetModel,
       config,
@@ -955,12 +934,16 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       agentType,
     });
 
-    // 7. Register delegation
+    // 8. Register sub-agent in scoped registry (now that agent instance exists)
+    scopedRegistry.registerInstance('agent', subAgent);
+    logger.debug('[AGENT_TOOL] Registered sub-agent in scoped registry');
+
+    // 9. Register delegation
     if (pooledAgent) {
       this.registerDelegation(callId, pooledAgent);
     }
 
-    // 8. Track active delegation
+    // 10. Track active delegation
     this.activeDelegations.set(callId, {
       subAgent,
       agentName: agentType,
@@ -968,35 +951,24 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       startTime: Date.now(),
     });
 
-    // 9. Store previous agent for restoration
-    const previousAgent = registry.get<any>('agent');
-
     try {
-      // 10. Update registry to point to sub-agent during execution
-      registry.registerInstance('agent', subAgent);
+      // 11. Execute agent (scoped registry already set in agent config)
+      const finalResponse = await this.executeAgent({
+        agent: subAgent,
+        agentType,
+        taskPrompt,
+        callId,
+        maxDuration,
+        thoroughness,
+      });
 
-      try {
-        // 11. Execute agent
-        const finalResponse = await this.executeAgent({
-          agent: subAgent,
-          agentType,
-          taskPrompt,
-          callId,
-          maxDuration,
-          thoroughness,
-        });
-
-        // 12. Format response
-        return this.formatExecutionResponse({ finalResponse, agentId });
-      } finally {
-        // 13. Restore registry
-        this.cleanupAfterExecution({ registry, previousAgent, pooledAgent, callId, subAgent });
-      }
+      // 12. Format response
+      return this.formatExecutionResponse({ finalResponse, agentId });
     } catch (error) {
       logger.debug('[AGENT_TOOL] ERROR during sub-agent execution:', error);
       throw error;
     } finally {
-      // 14. Cleanup delegation and release agent
+      // 13. Cleanup delegation and release agent
       logger.debug('[AGENT_TOOL] Cleaning up sub-agent...');
       this.activeDelegations.delete(callId);
       await this.releaseAgent({ pooledAgent, subAgent, callId });
