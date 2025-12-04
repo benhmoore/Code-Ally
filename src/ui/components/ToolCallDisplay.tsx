@@ -12,11 +12,12 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { ToolCallState, ActivityEventType } from '@shared/index.js';
+import { CompactionNotice } from '../contexts/AppContext.js';
 import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { formatDisplayName } from '../utils/uiHelpers.js';
-import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS, UI_DELAYS } from '@config/constants.js';
+import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS, UI_DELAYS, BUFFER_SIZES } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -34,6 +35,8 @@ interface ToolCallDisplayProps {
   config?: any;
   /** Whether any ancestor is an agent tool (used to hide non-agent tool outputs) */
   hasAgentAncestor?: boolean;
+  /** Compaction notices to check for nested notices */
+  compactionNotices?: CompactionNotice[];
 }
 
 /**
@@ -214,6 +217,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   level = 0,
   config,
   hasAgentAncestor = false,
+  compactionNotices = [],
 }) => {
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
 
@@ -401,6 +405,11 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           <Text dimColor> · {thoroughness}</Text>
         )}
 
+        {/* Compacting indicator - only show when agent is compacting */}
+        {isAgentDelegation && toolCall.isCompacting && (
+          <Text dimColor> · compacting</Text>
+        )}
+
         {/* Subtext - contextual information (not shown inline for agents) */}
         {subtext && !isAgentDelegation && (
           <Text dimColor> · {subtext}</Text>
@@ -523,13 +532,14 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         );
       })()}
 
-      {/* Nested content: interleaved tool calls and interjections sorted by timestamp */}
-      {/* Render if: has interjections, not collapsed, or show_full_tool_output enabled */}
-      {(interjections.length > 0 || config?.show_full_tool_output || !toolCall.collapsed) && (() => {
-        // Build combined list of children and interjections
+      {/* Nested content: interleaved tool calls, interjections, and compaction notices sorted by timestamp */}
+      {/* Render if: has interjections, has compaction notices, not collapsed, or show_full_tool_output enabled */}
+      {(interjections.length > 0 || compactionNotices.some(n => n.parentId === toolCall.id) || config?.show_full_tool_output || !toolCall.collapsed) && (() => {
+        // Build combined list of children, interjections, and compaction notices
         type NestedItem =
           | { type: 'toolCall'; data: ToolCallState; timestamp: number }
-          | { type: 'interjection'; data: { message: string; timestamp: number }; timestamp: number };
+          | { type: 'interjection'; data: { message: string; timestamp: number }; timestamp: number }
+          | { type: 'compactionNotice'; data: CompactionNotice; timestamp: number };
 
         const items: NestedItem[] = [];
 
@@ -555,8 +565,35 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           });
         });
 
+        // Add compaction notices for this tool call (visibility handled by final truncation)
+        if (!toolCall.collapsed || config?.show_full_tool_output) {
+          compactionNotices
+            .filter(notice => notice.parentId === toolCall.id)
+            .forEach(notice => {
+              items.push({
+                type: 'compactionNotice',
+                data: notice,
+                timestamp: notice.timestamp
+              });
+            });
+        }
+
         // Sort by timestamp
         items.sort((a, b) => a.timestamp - b.timestamp);
+
+        // For agent delegations: limit tool calls + compaction notices to last 3
+        // Interjections are always shown (they don't count toward the limit)
+        if (isAgentDelegation && !config?.show_full_tool_output) {
+          const interjectionItems = items.filter(i => i.type === 'interjection');
+          const otherItems = items.filter(i => i.type !== 'interjection');
+
+          if (otherItems.length > BUFFER_SIZES.TOP_ITEMS_PREVIEW) {
+            const truncated = otherItems.slice(-BUFFER_SIZES.TOP_ITEMS_PREVIEW);
+            items.length = 0;
+            items.push(...truncated, ...interjectionItems);
+            items.sort((a, b) => a.timestamp - b.timestamp);
+          }
+        }
 
         // Render items in order
         return (
@@ -590,6 +627,15 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
                     )}
                   </React.Fragment>
                 );
+              } else if (item.type === 'compactionNotice') {
+                // Compaction notice styled like a completed tool call
+                return (
+                  <Box key={`compaction-${item.data.id}`}>
+                    <Text>{indent}    </Text>
+                    <Text>↻ </Text>
+                    <Text>Compacted</Text>
+                  </Box>
+                );
               } else {
                 // Recursively render nested tool call
                 return (
@@ -599,6 +645,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
                     level={level + 1}
                     config={config}
                     hasAgentAncestor={childrenHaveAgentAncestor}
+                    compactionNotices={compactionNotices}
                   />
                 );
               }

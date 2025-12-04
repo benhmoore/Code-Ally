@@ -684,6 +684,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <SessionSelector
@@ -726,6 +727,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <PromptLibrarySelector
@@ -768,6 +770,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <MessageSelector
@@ -810,6 +813,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <PromptAddWizard
@@ -878,6 +882,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <ModelSelector
@@ -919,6 +924,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <RewindOptionsSelector
@@ -970,10 +976,12 @@ const AppContentComponent: React.FC<{
               <StatusIndicator
                 isProcessing={state.isThinking}
                 isCompacting={state.isCompacting}
+                isCancelling={isCancelling}
                 recentMessages={state.messages.slice(-3)}
                 sessionLoaded={sessionLoaded}
                 isResuming={!!resumeSession}
                 activeToolCalls={state.activeToolCalls}
+                activeSubAgents={state.activeSubAgents}
               />
 
               <RewindSelector
@@ -1058,6 +1066,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <UndoFileList request={modal.undoFileListRequest} visible={true} />
@@ -1096,6 +1105,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <LibraryClearConfirmation
@@ -1139,6 +1149,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <UndoPrompt request={modal.undoRequest} selectedIndex={modal.undoSelectedIndex} visible={true} />
@@ -1174,6 +1185,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           <PermissionPrompt
@@ -1224,6 +1236,7 @@ const AppContentComponent: React.FC<{
             sessionLoaded={sessionLoaded}
             isResuming={!!resumeSession}
             activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
           />
 
           {/* Input Prompt */}

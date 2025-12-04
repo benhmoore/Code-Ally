@@ -161,10 +161,17 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
 function renderToolCallTree(
   toolCall: ToolCallState & { children?: ToolCallState[] },
   level: number = 0,
-  config?: any
+  config?: any,
+  compactionNotices?: CompactionNotice[]
 ): React.ReactNode {
   return (
-    <ToolCallDisplay key={toolCall.id} toolCall={toolCall} level={level} config={config} />
+    <ToolCallDisplay
+      key={toolCall.id}
+      toolCall={toolCall}
+      level={level}
+      config={config}
+      compactionNotices={compactionNotices}
+    />
   );
 }
 
@@ -186,11 +193,12 @@ const ActiveContent = React.memo<{
   streamingContent?: string;
   contextUsage: number;
   config?: any;
-}>(({ runningToolCalls, streamingContent, config }) => (
+  compactionNotices?: CompactionNotice[];
+}>(({ runningToolCalls, streamingContent, config, compactionNotices }) => (
   <>
     {runningToolCalls.map((toolCall) => (
       <Box key={`running-tool-${toolCall.id}`} paddingLeft={2}>
-        {renderToolCallTree(toolCall, 0, config)}
+        {renderToolCallTree(toolCall, 0, config, compactionNotices)}
       </Box>
     ))}
 
@@ -313,8 +321,13 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       });
     });
 
-    // Add compaction notices
+    // Add compaction notices (only top-level ones without parentId)
     compactionNotices.forEach((notice) => {
+      // Skip notices that are nested under a tool call
+      if (notice.parentId) {
+        return;
+      }
+
       timeline.push({
         type: 'compactionNotice',
         notice,
@@ -355,7 +368,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       } else if (item.type === 'toolCall') {
         items.push(
           <Box key={`tool-${item.toolCall.id}`} {...spacing} paddingLeft={2}>
-            {renderToolCallTree(item.toolCall, 0, config)}
+            {renderToolCallTree(item.toolCall, 0, config, compactionNotices)}
           </Box>
         );
       } else if (item.type === 'compactionNotice') {
@@ -409,7 +422,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     });
 
     return items;
-  }, [completedTimeline, terminalWidth, config]);
+  }, [completedTimeline, terminalWidth, config, compactionNotices, currentAgent]);
 
   return (
     <Box flexDirection="column">
@@ -464,6 +477,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         streamingContent={streamingContent}
         contextUsage={contextUsage}
         config={config}
+        compactionNotices={compactionNotices}
       />
     </Box>
   );

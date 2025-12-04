@@ -481,6 +481,14 @@ export class Agent {
   }
 
   /**
+   * Get the current context usage as a percentage (0-100)
+   * Used by delegation tools to report context usage in AGENT_END events.
+   */
+  public getContextUsagePercentage(): number {
+    return this.contextCoordinator.getContextUsagePercentage();
+  }
+
+  /**
    * Get the model client (used by CommandHandler for /compact)
    */
   getModelClient(): ModelClient {
@@ -1844,16 +1852,17 @@ export class Agent {
     this.contextCoordinator.addMessageTokens(messageWithMetadata);
 
     // Emit context usage update event for real-time UI updates
-    // Only emit for main agent, not specialized agents (subagents)
-    if (!this.config.isSpecializedAgent) {
-      const contextUsage = this.contextCoordinator.getContextUsagePercentage();
-      this.emitEvent({
-        id: this.generateId(),
-        type: ActivityEventType.CONTEXT_USAGE_UPDATE,
-        timestamp: Date.now(),
-        data: { contextUsage },
-      });
-    }
+    const contextUsage = this.contextCoordinator.getContextUsagePercentage();
+    this.emitEvent({
+      id: this.generateId(),
+      type: ActivityEventType.CONTEXT_USAGE_UPDATE,
+      timestamp: Date.now(),
+      data: {
+        contextUsage,
+        // Include parentCallId for specialized agents so UI can update the tool call
+        parentCallId: this.config.isSpecializedAgent ? this.config.parentCallId : undefined,
+      },
+    });
 
     // Log message addition for context tracking
     const toolInfo = message.tool_calls ? ` toolCalls:${message.tool_calls.length}` : '';
@@ -2005,6 +2014,7 @@ export class Agent {
       isSpecializedAgent: this.config.isSpecializedAgent || false,
       compactThreshold: this.config.config.compact_threshold,
       generateId: () => this.generateId(),
+      parentCallId: this.config.parentCallId,
     });
   }
 

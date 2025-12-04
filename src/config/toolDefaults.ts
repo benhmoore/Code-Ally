@@ -109,6 +109,8 @@ export const CONTEXT_THRESHOLDS = {
   WARNING: 85,
   STRONG_REMINDER: 90,
   CRITICAL: 95,
+  /** Emergency truncation threshold - skip summarization, just truncate */
+  EMERGENCY: 98,
   MAX_PERCENT: 100,
 
   WARNINGS: {

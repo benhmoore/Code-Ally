@@ -39,6 +39,8 @@ interface StatusIndicatorProps {
   isResuming?: boolean;
   /** Active tool calls for detecting agent discussions */
   activeToolCalls?: ToolCallState[];
+  /** Active sub-agents (specialized agents currently running) */
+  activeSubAgents?: string[];
 }
 
 /**
@@ -106,7 +108,7 @@ const getActiveAgentName = (toolCalls: ToolCallState[]): string | null => {
   return null;
 };
 
-export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting, isCancelling = false, recentMessages = [], sessionLoaded = true, isResuming = false, activeToolCalls = [] }) => {
+export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, isCompacting, isCancelling = false, recentMessages = [], sessionLoaded = true, isResuming = false, activeToolCalls = [], activeSubAgents = [] }) => {
   const [currentTask, setCurrentTask] = useState<string | null>(null);
   const [_startTime, setStartTime] = useState<number>(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -479,12 +481,15 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
               color={UI_COLORS.PRIMARY}
             />
             <Text> </Text>
-            {activeAgentName ? (
+            {activeAgentName || activeSubAgents.length > 0 ? (
               <>
                 <Text>Working with </Text>
                 <Text color={UI_COLORS.PRIMARY} bold>
-                  {activeAgentName}
+                  {activeAgentName || activeSubAgents.join(', ')}
                 </Text>
+                {activeSubAgents.length > 1 && (
+                  <Text dimColor> ({activeSubAgents.length} agents)</Text>
+                )}
                 <Text>...</Text>
               </>
             ) : (

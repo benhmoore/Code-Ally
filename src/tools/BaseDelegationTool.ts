@@ -374,6 +374,9 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
 
         const duration = (Date.now() - startTime) / 1000;
 
+        // Get context usage from delegated agent for UI display
+        const contextUsage = delegationAgent.getContextUsagePercentage();
+
         // Emit agent end event
         this.emitEvent({
           id: callId,
@@ -383,6 +386,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
             agentName: config.agentType,
             result: finalResponse,
             duration,
+            contextUsage,
           },
         });
 

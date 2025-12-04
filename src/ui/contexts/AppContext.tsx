@@ -19,6 +19,7 @@ export interface CompactionNotice {
   timestamp: number;
   oldContextUsage: number;
   threshold: number;
+  parentId?: string;
 }
 
 /**
@@ -74,6 +75,9 @@ export interface AppState {
 
   /** Current active agent's model (or config model if ally) */
   currentAgentModel: string;
+
+  /** Active sub-agents (specialized agents currently running) */
+  activeSubAgents: string[];
 }
 
 /**
@@ -133,6 +137,12 @@ export interface AppActions {
 
   /** Set the current active agent and its model */
   setCurrentAgent: (agent: string, model?: string) => void;
+
+  /** Add an active sub-agent */
+  addSubAgent: (agentName: string) => void;
+
+  /** Remove an active sub-agent */
+  removeSubAgent: (agentName: string) => void;
 }
 
 /**
@@ -185,6 +195,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [staticRemountKey, setStaticRemountKey] = useState<number>(0);
   const [currentAgent, setCurrentAgentState] = useState<string>(initialConfig.default_agent || 'ally');
   const [currentAgentModel, setCurrentAgentModel] = useState<string>(initialConfig.model || '');
+  const [activeSubAgents, setActiveSubAgents] = useState<string[]>([]);
 
   // Batching mechanism for tool call updates
   const pendingUpdatesRef = useRef<Map<string, Partial<ToolCallState>>>(new Map());
@@ -373,6 +384,20 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     }
   }, []);
 
+  const addSubAgent = useCallback((agentName: string) => {
+    setActiveSubAgents((prev) => {
+      // Avoid duplicates
+      if (prev.includes(agentName)) {
+        return prev;
+      }
+      return [...prev, agentName];
+    });
+  }, []);
+
+  const removeSubAgent = useCallback((agentName: string) => {
+    setActiveSubAgents((prev) => prev.filter((name) => name !== agentName));
+  }, []);
+
   // Memoize state object to prevent unnecessary context updates
   const state = React.useMemo(() => ({
     messages,
@@ -388,7 +413,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     staticRemountKey,
     currentAgent,
     currentAgentModel,
-  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, staticRemountKey, currentAgent, currentAgentModel]);
+    activeSubAgents,
+  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents]);
 
   // Memoize actions object to prevent unnecessary context updates
   const actions = React.useMemo(() => ({
@@ -410,7 +436,9 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     forceStaticRemount,
     resetConversationView,
     setCurrentAgent,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView, setCurrentAgent]);
+    addSubAgent,
+    removeSubAgent,
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView, setCurrentAgent, addSubAgent, removeSubAgent]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

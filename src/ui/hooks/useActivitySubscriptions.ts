@@ -399,11 +399,25 @@ export const useActivitySubscriptions = (
   // Agent start
   useActivityEvent(ActivityEventType.AGENT_START, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
+    const agentName = event.data?.agentName;
 
     if (isSpecialized) {
       setActiveAgentsCount((prev) => prev + 1);
+
+      // Track sub-agent name if available
+      if (agentName) {
+        actions.addSubAgent(agentName);
+      }
     } else {
+      // Cancel any pending streaming flush to prevent stale data
+      if (streamingFlushTimerRef.current) {
+        clearTimeout(streamingFlushTimerRef.current);
+        streamingFlushTimerRef.current = null;
+      }
+
+      // Clear both streaming refs atomically to prevent accumulation bugs
       streamingContentRef.current = '';
+      pendingStreamingChunks.current = '';
       actions.setStreamingContent(undefined);
     }
 
@@ -419,17 +433,39 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.AGENT_END, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
     const wasInterrupted = event.data?.interrupted || false;
+    const agentName = event.data?.agentName;
+    const contextUsage = event.data?.contextUsage;
 
     if (isSpecialized) {
       setActiveAgentsCount((prev) => Math.max(0, prev - 1));
+
+      // Remove sub-agent from tracking if available
+      if (agentName) {
+        actions.removeSubAgent(agentName);
+      }
     } else {
+      // Cancel any pending streaming flush to prevent stale data
+      if (streamingFlushTimerRef.current) {
+        clearTimeout(streamingFlushTimerRef.current);
+        streamingFlushTimerRef.current = null;
+      }
+
+      // Clear both streaming refs atomically to prevent accumulation bugs
       streamingContentRef.current = '';
+      pendingStreamingChunks.current = '';
       actions.setStreamingContent(undefined);
 
       // Clear active tool calls when main agent ends (especially if interrupted)
       if (wasInterrupted) {
         actions.clearToolCalls();
       }
+    }
+
+    // Capture context usage for the tool call (event.id is the tool call ID)
+    if (event.id && typeof contextUsage === 'number') {
+      scheduleToolUpdate.current(event.id, {
+        contextUsage,
+      });
     }
 
     setIsCancelling(false);
@@ -757,21 +793,49 @@ export const useActivitySubscriptions = (
 
   // Context usage updates
   useActivityEvent(ActivityEventType.CONTEXT_USAGE_UPDATE, (event) => {
-    const { contextUsage } = event.data;
+    const { contextUsage, parentCallId } = event.data;
     if (typeof contextUsage === 'number') {
-      actions.setContextUsage(contextUsage);
+      if (parentCallId) {
+        // Update tool call context usage for specialized agents
+        scheduleToolUpdate.current(parentCallId, { contextUsage });
+      } else {
+        // Update global context usage for main agent
+        actions.setContextUsage(contextUsage);
+      }
     }
   });
 
   // Compaction start
-  useActivityEvent(ActivityEventType.COMPACTION_START, () => {
-    actions.setIsCompacting(true);
+  useActivityEvent(ActivityEventType.COMPACTION_START, (event) => {
+    const { parentId } = event.data || {};
+    if (parentId) {
+      // Mark the tool call as compacting for delegated agents
+      scheduleToolUpdate.current(parentId, { isCompacting: true });
+    } else {
+      // Show global compacting indicator for main agent
+      actions.setIsCompacting(true);
+    }
   });
 
   // Compaction complete
   useActivityEvent(ActivityEventType.COMPACTION_COMPLETE, (event) => {
-    const { oldContextUsage, newContextUsage, threshold, compactedMessages } = event.data;
+    const { oldContextUsage, newContextUsage, threshold, compactedMessages, parentId } = event.data;
 
+    // For delegated agent compaction, only add the notice and clear compacting state
+    // Don't touch main agent's conversation or tool calls
+    if (parentId) {
+      scheduleToolUpdate.current(parentId, { isCompacting: false });
+      actions.addCompactionNotice({
+        id: event.id,
+        timestamp: event.timestamp,
+        oldContextUsage,
+        threshold,
+        parentId,
+      });
+      return;
+    }
+
+    // Main agent compaction - full reset
     // Clear tool calls first
     actions.clearToolCalls();
 
@@ -791,6 +855,7 @@ export const useActivitySubscriptions = (
       timestamp: event.timestamp,
       oldContextUsage,
       threshold,
+      parentId,
     });
 
     if (typeof newContextUsage === 'number') {

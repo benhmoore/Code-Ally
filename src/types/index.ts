@@ -263,6 +263,8 @@ export interface ToolCallState {
   thinkingEndTime?: number; // When thinking completed (for duration calculation)
   agentId?: string; // Pool agent ID for agent delegations (used to look up agent type)
   agentModel?: string; // Model used by agent delegation (for display when different from primary)
+  contextUsage?: number; // Context usage percentage for agent delegations (0-100)
+  isCompacting?: boolean; // Whether this agent is currently compacting its context
   diffPreview?: {
     oldContent: string;
     newContent: string;
