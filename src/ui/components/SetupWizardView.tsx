@@ -72,14 +72,30 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
   };
 
+  // TextInput is active on ENDPOINT step
+  const isTextInputStep = step === SetupStep.ENDPOINT;
+
+  // Handle exit from TextInput's onCtrlC (empty buffer)
+  const handleCtrlC = () => {
+    process.exit(0);
+  };
+
   // Handle keyboard input for selection screens
   useInput((input, key) => {
-    // ESC or Ctrl+C - exit the application (except during APPLYING, COMPLETED, and validation steps)
-    if ((key.escape || (key.ctrl && input === 'c')) &&
-        step !== SetupStep.APPLYING &&
-        step !== SetupStep.COMPLETED &&
-        step !== SetupStep.VALIDATING_ENDPOINT &&
-        step !== SetupStep.VALIDATING_MODEL) {
+    // Exclude certain steps from keyboard handling
+    const isProtectedStep = step === SetupStep.APPLYING ||
+                            step === SetupStep.COMPLETED ||
+                            step === SetupStep.VALIDATING_ENDPOINT ||
+                            step === SetupStep.VALIDATING_MODEL;
+
+    // ESC - exit (except protected steps)
+    if (key.escape && !isProtectedStep) {
+      process.exit(0);
+      return;
+    }
+
+    // Ctrl+C - only handle for non-TextInput steps (TextInput handles its own)
+    if (key.ctrl && input === 'c' && !isProtectedStep && !isTextInputStep) {
       process.exit(0);
       return;
     }
@@ -331,6 +347,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 onCursorChange={setEndpointCursor}
                 onSubmit={handleEndpointSubmit}
                 onEscape={() => process.exit(0)}
+                onCtrlC={handleCtrlC}
                 isActive={true}
                 multiline={false}
                 placeholder="http://localhost:11434"

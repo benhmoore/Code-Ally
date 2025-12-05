@@ -1084,6 +1084,37 @@ async function main() {
     }
     logger.debug('[CLI] Built-in tool-agents registered');
 
+    // Create agent pool service for managing concurrent agent instances
+    // This must be created before LinkedPluginWatcher to support pool eviction on reload
+    const { AgentPoolService } = await import('./services/AgentPoolService.js');
+    const agentPoolService = new AgentPoolService(
+      modelClient,
+      toolManager,
+      activityStream,
+      configManager,
+      permissionManager,
+      {
+        maxPoolSize: AGENT_CONFIG.AGENT_POOL_SIZE_WITH_NESTING, // Keep up to 15 agents in pool for depth-3 nesting support (auto-evict least recently used when full)
+        verbose: options.debug || false, // Enable verbose logging in debug mode
+      }
+    );
+    await agentPoolService.initialize();
+    registry.registerInstance('agent_pool', agentPoolService);
+
+    // Create LinkedPluginWatcher for auto-reloading linked plugins
+    // This must be done AFTER toolManager, agentManager, and agentPoolService are created
+    const { LinkedPluginWatcher } = await import('./plugins/LinkedPluginWatcher.js');
+    const linkedPluginWatcher = new LinkedPluginWatcher(
+      pluginLoader,
+      pluginActivationManager,
+      toolManager,
+      agentManager,
+      agentPoolService
+    );
+    registry.registerInstance('linked_plugin_watcher', linkedPluginWatcher);
+    await linkedPluginWatcher.initialize();
+    logger.debug('[CLI] LinkedPluginWatcher initialized');
+
     // Create agent generation service for LLM-assisted agent creation
     const { AgentGenerationService } = await import('./services/AgentGenerationService.js');
     const agentGenerationService = new AgentGenerationService(serviceModelClient);
@@ -1178,22 +1209,6 @@ async function main() {
     // Register main agent's TokenManager in ServiceRegistry for global access (UI, etc)
     const tokenManager = agent.getTokenManager();
     registry.registerInstance('token_manager', tokenManager);
-
-    // Create agent pool service for managing concurrent agent instances
-    const { AgentPoolService } = await import('./services/AgentPoolService.js');
-    const agentPoolService = new AgentPoolService(
-      modelClient,
-      toolManager,
-      activityStream,
-      configManager,
-      permissionManager,
-      {
-        maxPoolSize: AGENT_CONFIG.AGENT_POOL_SIZE_WITH_NESTING, // Keep up to 15 agents in pool for depth-3 nesting support (auto-evict least recently used when full)
-        verbose: options.debug || false, // Enable verbose logging in debug mode
-      }
-    );
-    await agentPoolService.initialize();
-    registry.registerInstance('agent_pool', agentPoolService);
 
     // Install signal handlers for graceful background plugin shutdown
     // Override the global handlers with plugin-aware versions

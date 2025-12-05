@@ -182,17 +182,16 @@ export class TrustManager {
       return true;
     }
 
-    // Determine available options based on sensitivity and delegation state
-    // INSTRUCT only shown when there's an active delegation (sub-agent running)
-    // that can receive the instruction. Otherwise, show DENY for simple denial.
+    // Determine available options based on sensitivity
+    // Always show INSTRUCT option - user can press Escape to deny without instruction
     const activeDelegationName = this.getActiveDelegationNameGetter?.();
-    const denyOption = activeDelegationName
+    const instructOption = activeDelegationName
       ? `Tell ${activeDelegationName} what to do instead...`
-      : PermissionChoice.DENY;
+      : 'Tell Ally what to do instead...';
     const options =
       tier === SensitivityTier.EXTREMELY_SENSITIVE
-        ? [PermissionChoice.ALLOW, denyOption]
-        : [PermissionChoice.ALLOW, PermissionChoice.ALWAYS_ALLOW, denyOption];
+        ? [PermissionChoice.ALLOW, instructOption]
+        : [PermissionChoice.ALLOW, PermissionChoice.ALWAYS_ALLOW, instructOption];
 
     // Get user choice with event-based UI
     const choice = await this.showPermissionMenu(toolName, args, path, options);

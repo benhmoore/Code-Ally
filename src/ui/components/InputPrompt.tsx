@@ -596,6 +596,32 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     }
   };
 
+  /**
+   * Handle Ctrl+C on empty buffer from TextInput
+   * First press starts exit confirmation, second press within 1s exits
+   */
+  const handleCtrlC = () => {
+    if (isWaitingForExitConfirmation) {
+      // Second Ctrl+C within 1 second - quit
+      exit();
+      return;
+    }
+
+    // First Ctrl+C on empty buffer - start confirmation timer
+    setIsWaitingForExitConfirmation(true);
+
+    // Clear any existing timer
+    if (exitConfirmationTimerRef.current) {
+      clearTimeout(exitConfirmationTimerRef.current);
+    }
+
+    // Set 1-second timer to reset confirmation
+    exitConfirmationTimerRef.current = setTimeout(() => {
+      setIsWaitingForExitConfirmation(false);
+      exitConfirmationTimerRef.current = null;
+    }, 1000);
+  };
+
   // Handle keyboard input for special features (history, completion, modals, etc.)
   // TextInput handles basic editing, we only intercept for our special features
   useInput(
@@ -1402,39 +1428,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // ===== Exit Confirmation (Ctrl+C on empty buffer) =====
-      // Note: TextInput handles buffer clearing when buffer has content
-      // We only need to handle exit confirmation when buffer is empty
-      if (key.ctrl && input === 'c' && textInputActive) {
-        const currentBuffer = bufferRef.current;
-        const hasContent = currentBuffer.trim().length > 0;
-
-        // If buffer has content, TextInput will handle clearing it
-        if (hasContent) return;
-
-        // Buffer is empty - handle exit confirmation
-        if (isWaitingForExitConfirmation) {
-          // Second Ctrl+C within 1 second - quit
-          exit();
-          return;
-        }
-
-        // First Ctrl+C on empty buffer - start confirmation timer
-        setIsWaitingForExitConfirmation(true);
-
-        // Clear any existing timer
-        if (exitConfirmationTimerRef.current) {
-          clearTimeout(exitConfirmationTimerRef.current);
-        }
-
-        // Set 1-second timer to reset confirmation
-        exitConfirmationTimerRef.current = setTimeout(() => {
-          setIsWaitingForExitConfirmation(false);
-          exitConfirmationTimerRef.current = null;
-        }, 1000);
-
-        return;
-      }
+      // Note: Exit confirmation (Ctrl+C on empty buffer) is now handled
+      // via TextInput's onCtrlC callback -> handleCtrlC
     },
     { isActive }
   );
@@ -1480,6 +1475,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         onFilesPasted={handleFilesPasted}
         onImagesPasted={handleImagesPasted}
         onDirectoriesPasted={handleDirectoriesPasted}
+        onCtrlC={handleCtrlC}
         isActive={textInputActive}
         multiline={true}
         placeholder={placeholder}

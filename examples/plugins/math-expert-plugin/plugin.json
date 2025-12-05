@@ -12,7 +12,9 @@
       "name": "add",
       "description": "Add two numbers together",
       "command": "python3",
-      "args": ["tools/add.py"],
+      "args": [
+        "tools/add.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -25,16 +27,23 @@
             "description": "Second number"
           }
         },
-        "required": ["a", "b"]
+        "required": [
+          "a",
+          "b"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "{a} + {b}"
     },
     {
       "name": "subtract",
       "description": "Subtract one number from another",
       "command": "python3",
-      "args": ["tools/subtract.py"],
+      "args": [
+        "tools/subtract.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -47,16 +56,23 @@
             "description": "Number to subtract"
           }
         },
-        "required": ["a", "b"]
+        "required": [
+          "a",
+          "b"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "{a} - {b}"
     },
     {
       "name": "multiply",
       "description": "Multiply two numbers together",
       "command": "python3",
-      "args": ["tools/multiply.py"],
+      "args": [
+        "tools/multiply.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -69,16 +85,23 @@
             "description": "Second number"
           }
         },
-        "required": ["a", "b"]
+        "required": [
+          "a",
+          "b"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "{a} × {b}"
     },
     {
       "name": "divide",
       "description": "Divide one number by another",
       "command": "python3",
-      "args": ["tools/divide.py"],
+      "args": [
+        "tools/divide.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -91,16 +114,23 @@
             "description": "Divisor (number to divide by)"
           }
         },
-        "required": ["a", "b"]
+        "required": [
+          "a",
+          "b"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "{a} ÷ {b}"
     },
     {
       "name": "calculate",
       "description": "Evaluate a mathematical expression. Supports arithmetic operators (+, -, *, /, **, //, %), mathematical functions (sqrt, sin, cos, tan, log, exp, abs, ceil, floor), and constants (pi, e). Use this for complex expressions that require multiple operations.",
       "command": "python3",
-      "args": ["tools/calculate.py"],
+      "args": [
+        "tools/calculate.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -109,16 +139,22 @@
             "description": "Mathematical expression to evaluate (e.g., '2 * (3 + 4)', 'sqrt(16) + 3', 'sin(pi/2)')"
           }
         },
-        "required": ["expression"]
+        "required": [
+          "expression"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "{expression}"
     },
     {
       "name": "solve-equation",
       "description": "Solve algebraic equations symbolically using SymPy. Supports linear equations (2*x + 3 = 7), quadratic equations (x**2 - 5*x + 6 = 0), rational equations (1/x + 2 = 3), and more. Returns all solutions including complex numbers when applicable.",
       "command": "python3",
-      "args": ["tools/solve-equation.py"],
+      "args": [
+        "tools/solve-equation.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -131,16 +167,22 @@
             "description": "Variable to solve for (default: x)"
           }
         },
-        "required": ["equation"]
+        "required": [
+          "equation"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "{equation}"
     },
     {
       "name": "differentiate",
       "description": "Compute the derivative of a mathematical expression symbolically using SymPy. Supports polynomial, trigonometric, exponential, and logarithmic functions. Can compute higher-order derivatives.",
       "command": "python3",
-      "args": ["tools/differentiate.py"],
+      "args": [
+        "tools/differentiate.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -157,16 +199,22 @@
             "description": "Order of derivative (1 for first derivative, 2 for second, etc. - default: 1)"
           }
         },
-        "required": ["expression"]
+        "required": [
+          "expression"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "d/d{variable} {expression}"
     },
     {
       "name": "integrate",
       "description": "Compute the integral of a mathematical expression symbolically using SymPy. Supports both definite and indefinite integrals. For definite integrals, provide both lower_bound and upper_bound. For indefinite integrals, omit both bounds.",
       "command": "python3",
-      "args": ["tools/integrate.py"],
+      "args": [
+        "tools/integrate.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -187,16 +235,22 @@
             "description": "Upper bound for definite integral (number or expression like '1', '2*pi')"
           }
         },
-        "required": ["expression"]
+        "required": [
+          "expression"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "∫ {expression}"
     },
     {
       "name": "limit",
       "description": "Compute the limit of a mathematical expression as a variable approaches a point using SymPy. Supports limits at finite points, infinity, and one-sided limits.",
       "command": "python3",
-      "args": ["tools/limit.py"],
+      "args": [
+        "tools/limit.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -217,16 +271,22 @@
             "description": "Direction of limit: '+' for right limit, '-' for left limit, omit for two-sided limit"
           }
         },
-        "required": ["expression"]
+        "required": [
+          "expression"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "lim {expression} as {variable}→{point}"
     },
     {
       "name": "matrix-determinant",
       "description": "Compute the determinant of a square matrix using SymPy. Useful for testing matrix invertibility and solving systems of linear equations.",
       "command": "python3",
-      "args": ["tools/matrix-determinant.py"],
+      "args": [
+        "tools/matrix-determinant.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -241,16 +301,22 @@
             }
           }
         },
-        "required": ["matrix"]
+        "required": [
+          "matrix"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "det(matrix)"
     },
     {
       "name": "matrix-inverse",
       "description": "Compute the inverse of a square matrix using SymPy. Returns error if matrix is singular (determinant is zero).",
       "command": "python3",
-      "args": ["tools/matrix-inverse.py"],
+      "args": [
+        "tools/matrix-inverse.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -265,16 +331,22 @@
             }
           }
         },
-        "required": ["matrix"]
+        "required": [
+          "matrix"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "matrix⁻¹"
     },
     {
       "name": "matrix-multiply",
       "description": "Multiply two matrices using SymPy. Matrix dimensions must be compatible: matrix_a columns must equal matrix_b rows.",
       "command": "python3",
-      "args": ["tools/matrix-multiply.py"],
+      "args": [
+        "tools/matrix-multiply.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -299,16 +371,23 @@
             }
           }
         },
-        "required": ["matrix_a", "matrix_b"]
+        "required": [
+          "matrix_a",
+          "matrix_b"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "A × B"
     },
     {
       "name": "matrix-eigenvalues",
       "description": "Compute eigenvalues (and optionally eigenvectors) of a square matrix using SymPy. Essential for understanding linear transformations and matrix diagonalization.",
       "command": "python3",
-      "args": ["tools/matrix-eigenvalues.py"],
+      "args": [
+        "tools/matrix-eigenvalues.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -327,16 +406,22 @@
             "description": "Whether to also compute eigenvectors (default: false)"
           }
         },
-        "required": ["matrix"]
+        "required": [
+          "matrix"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "eigenvalues of matrix"
     },
     {
       "name": "solve-ode",
       "description": "Solve an ordinary differential equation (ODE) symbolically using SymPy. Returns the general solution with arbitrary constants. Supports first-order and higher-order ODEs. Use notation like f'(x) for derivatives or Derivative(f(x), x).",
       "command": "python3",
-      "args": ["tools/solve-ode.py"],
+      "args": [
+        "tools/solve-ode.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -353,16 +438,22 @@
             "description": "Independent variable (default: x)"
           }
         },
-        "required": ["equation"]
+        "required": [
+          "equation"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "{equation}"
     },
     {
       "name": "solve-ode-ivp",
       "description": "Solve an ODE initial value problem symbolically using SymPy. Returns the specific solution satisfying given initial conditions. Useful for finding particular solutions to differential equations.",
       "command": "python3",
-      "args": ["tools/solve-ode-ivp.py"],
+      "args": [
+        "tools/solve-ode-ivp.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -386,16 +477,23 @@
             "description": "Independent variable (default: x)"
           }
         },
-        "required": ["equation", "initial_conditions"]
+        "required": [
+          "equation",
+          "initial_conditions"
+        ]
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "{equation} with IVP"
     },
     {
       "name": "cannot-calculate",
       "description": "Call this when you cannot perform the requested calculation with your available arithmetic tools (add, subtract, multiply, divide)",
       "command": "python3",
-      "args": ["tools/cannot-calculate.py"],
+      "args": [
+        "tools/cannot-calculate.py"
+      ],
       "schema": {
         "type": "object",
         "properties": {
@@ -405,7 +503,9 @@
           }
         }
       },
-      "visible_to": ["math-expert"],
+      "visible_to": [
+        "math-expert"
+      ],
       "subtext": "{reason}"
     }
   ],
@@ -414,7 +514,25 @@
       "name": "math-expert",
       "description": "Expert mathematician specializing in arithmetic, algebra, calculus, linear algebra, and differential equations",
       "system_prompt_file": "agents/math-expert.md",
-      "tools": ["add", "subtract", "multiply", "divide", "calculate", "solve-equation", "differentiate", "integrate", "limit", "matrix-determinant", "matrix-inverse", "matrix-multiply", "matrix-eigenvalues", "solve-ode", "solve-ode-ivp", "cannot-calculate"]
+      "tools": [
+        "add",
+        "subtract",
+        "multiply",
+        "divide",
+        "calculate",
+        "solve-equation",
+        "differentiate",
+        "integrate",
+        "limit",
+        "matrix-determinant",
+        "matrix-inverse",
+        "matrix-multiply",
+        "matrix-eigenvalues",
+        "solve-ode",
+        "solve-ode-ivp",
+        "cannot-calculate"
+      ]
     }
-  ]
+  ],
+  "activationMode": "always"
 }

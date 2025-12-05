@@ -37,6 +37,8 @@ export interface TextInputProps {
   onImagesPasted?: (images: string[]) => void;
   /** Callback when directory paths are pasted */
   onDirectoriesPasted?: (directories: string[]) => void;
+  /** Callback when Ctrl+C is pressed on empty buffer (for parent to handle exit/cancel) */
+  onCtrlC?: () => void;
   /** Whether input is currently active/enabled */
   isActive?: boolean;
   /** Enable multiline mode (Ctrl+Enter for newline, Enter submits) */
@@ -64,6 +66,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   onFilesPasted,
   onImagesPasted,
   onDirectoriesPasted,
+  onCtrlC,
   isActive = true,
   multiline = false,
   placeholder = 'Type here...',
@@ -243,10 +246,13 @@ export const TextInput: React.FC<TextInputProps> = ({
       }
 
       // ===== Clear Buffer (Ctrl+C) =====
+      // Clears buffer if content exists, otherwise notifies parent
       if (key.ctrl && input === 'c') {
         if (currentValue.trim().length > 0) {
           onValueChange('');
           onCursorChange(0);
+        } else {
+          onCtrlC?.();
         }
         return;
       }
@@ -490,7 +496,7 @@ export const TextInput: React.FC<TextInputProps> = ({
           {renderContent()}
         </Box>
       ) : (
-        <Box flexDirection="column" width="100%">
+        <Box flexDirection="column" width="100%" marginLeft={1}>
           {renderContent()}
         </Box>
       )}

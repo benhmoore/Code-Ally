@@ -52,12 +52,19 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
     }
   };
 
-  useInput((input, key) => {
-    // Cancel on Escape or Ctrl+C
-    if (key.escape || (key.ctrl && input === 'c')) {
+  // Handle cancel from TextInput's onCtrlC (empty buffer)
+  const handleCtrlC = () => {
+    onCancel();
+  };
+
+  useInput((_input, key) => {
+    // ESC - always cancel
+    if (key.escape) {
       onCancel();
       return;
     }
+
+    // Note: Ctrl+C is handled by TextInput (always active in this form)
 
     // Submit on Enter (only if not in multiline content field)
     if (key.return && focusedField !== 'content') {
@@ -117,6 +124,7 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
             onCursorChange={setCursor}
             onSubmit={handleSubmit}
             onEscape={onCancel}
+            onCtrlC={handleCtrlC}
             isActive={isFocused}
             multiline={isMultiline}
             placeholder={placeholder}

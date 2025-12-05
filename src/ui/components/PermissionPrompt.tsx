@@ -144,7 +144,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
       })}
 
       {/* Footer */}
-      <KeyboardHintFooter action="confirm" cancelText="deny" autoAllowMode={autoAllowMode} />
+      <KeyboardHintFooter action="confirm" cancelText="deny" />
     </Box>
   );
 };

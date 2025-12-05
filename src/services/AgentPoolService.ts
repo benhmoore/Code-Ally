@@ -596,4 +596,45 @@ export class AgentPoolService implements IService {
     logger.debug(`[AGENT_POOL] Manually removed agent ${agentId}`);
     return true;
   }
+
+  /**
+   * Evict all agents belonging to a specific plugin
+   *
+   * Used when a plugin is reloaded to ensure pooled agents don't use stale
+   * system prompts. Matches agents where _poolKey starts with "plugin-{pluginName}-".
+   * Agents currently in use are NOT evicted to avoid interrupting active operations.
+   *
+   * @param pluginName - Name of the plugin whose agents should be evicted
+   * @returns Number of agents evicted
+   */
+  evictPluginAgents(pluginName: string): number {
+    const prefix = `plugin-${pluginName}-`;
+    const toEvict: string[] = [];
+
+    for (const [agentId, metadata] of this.pool.entries()) {
+      // Check if this agent belongs to the plugin
+      if (metadata.config._poolKey?.startsWith(prefix)) {
+        // Skip agents currently in use
+        if (metadata.inUse) {
+          logger.debug(
+            `[AGENT_POOL] Skipping eviction of in-use agent ${agentId} for plugin '${pluginName}'`
+          );
+          continue;
+        }
+        toEvict.push(agentId);
+      }
+    }
+
+    for (const agentId of toEvict) {
+      this.evictAgent(agentId);
+    }
+
+    if (toEvict.length > 0) {
+      logger.debug(
+        `[AGENT_POOL] Evicted ${toEvict.length} pooled agent(s) for plugin '${pluginName}'`
+      );
+    }
+
+    return toEvict.length;
+  }
 }

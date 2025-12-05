@@ -585,16 +585,24 @@ const AppContentComponent: React.FC<{
                 const { PluginLoader } = await import('../plugins/PluginLoader.js');
                 const pluginLoader = serviceRegistry.get<InstanceType<typeof PluginLoader>>('plugin_loader');
                 const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+                const agentManagerModule = await import('../services/AgentManager.js');
+                const agentManager = serviceRegistry.get<InstanceType<typeof agentManagerModule.AgentManager>>('agent_manager');
 
                 if (pluginLoader && toolManager) {
                   try {
-                    // Reload plugin to get the tools
-                    const newTools = await pluginLoader.reloadPlugin(request.pluginName, request.pluginPath);
+                    // Reload plugin to get tools and agents
+                    const { tools, agents } = await pluginLoader.reloadPlugin(request.pluginName, request.pluginPath);
 
                     // Register the new tools
-                    toolManager.registerTools(newTools);
+                    toolManager.registerTools(tools);
 
-                    logger.debug(`Plugin '${request.pluginName}' reloaded successfully`);
+                    // Register the new agents if any
+                    if (agentManager && agents.length > 0) {
+                      agentManager.registerPluginAgents(agents);
+                      logger.debug(`Plugin '${request.pluginName}' registered ${agents.length} agent(s)`);
+                    }
+
+                    logger.debug(`Plugin '${request.pluginName}' reloaded successfully with ${tools.length} tool(s) and ${agents.length} agent(s)`);
 
                     // Refresh PluginActivationManager after tools are registered to make them available
                     try {

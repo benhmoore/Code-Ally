@@ -130,6 +130,7 @@ export interface PluginInstallResult {
   agents?: any[]; // AgentData[] - imported separately to avoid circular dependency
   error?: string;
   hadExistingConfig?: boolean;
+  isLinked?: boolean;
 }
 
 /**
@@ -173,7 +174,8 @@ export interface PluginLoaderService {
    */
   installFromPath(
     sourcePath: string,
-    pluginsDir: string
+    pluginsDir: string,
+    options?: { link?: boolean }
   ): Promise<PluginInstallResult>;
 
   /**
@@ -187,12 +189,27 @@ export interface PluginLoaderService {
   /**
    * Reload plugin after configuration
    */
-  reloadPlugin(pluginName: string, pluginPath: string): Promise<BaseTool[]>;
+  reloadPlugin(pluginName: string, pluginPath: string): Promise<{
+    tools: BaseTool[];
+    agents: any[]; // AgentData[] - imported separately to avoid circular dependency
+    manifest: PluginManifest;
+  }>;
 
   /**
    * Get all loaded plugins with their manifests
    */
   getLoadedPlugins(): LoadedPluginInfo[];
+
+  /**
+   * Check if a plugin is linked (dev mode install)
+   */
+  isPluginLinked(pluginName: string): Promise<boolean>;
+
+  /**
+   * Get the source path of a linked plugin
+   * @returns Source path if linked, null otherwise
+   */
+  getLinkedPluginSource(pluginName: string): Promise<string | null>;
 }
 
 /**

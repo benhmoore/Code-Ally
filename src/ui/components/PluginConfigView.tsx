@@ -114,10 +114,29 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
     ? (configSchema.schema.properties[currentField] as ConfigProperty)
     : null;
 
+  // TextInput is active for string/number/integer fields in FIELD_INPUT step
+  // (boolean and choice fields use selection UI, not TextInput)
+  const isTextInputActive = step === ConfigStep.FIELD_INPUT &&
+    currentProperty &&
+    (currentProperty.type === 'string' ||
+     currentProperty.type === 'number' ||
+     currentProperty.type === 'integer');
+
+  // Handle cancel from TextInput's onCtrlC (empty buffer)
+  const handleCtrlC = () => {
+    onCancel();
+  };
+
   // Handle keyboard input
   useInput((input, key) => {
-    // ESC or Ctrl+C - cancel
-    if (key.escape || (key.ctrl && input === 'c')) {
+    // ESC - always cancel
+    if (key.escape) {
+      onCancel();
+      return;
+    }
+
+    // Ctrl+C - only handle for non-TextInput contexts
+    if (key.ctrl && input === 'c' && !isTextInputActive) {
       onCancel();
       return;
     }
@@ -423,6 +442,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
                 onCursorChange={setCurrentInputCursor}
                 onSubmit={handleTextFieldSubmit}
                 onEscape={onCancel}
+                onCtrlC={handleCtrlC}
                 isActive={true}
                 multiline={false}
                 placeholder={currentProperty.default !== undefined ? String(currentProperty.default) : ''}

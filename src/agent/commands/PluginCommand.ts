@@ -35,7 +35,7 @@ export class PluginCommand extends Command {
       { name: 'list', description: 'List all installed plugins' },
       { name: 'show', description: 'Show plugin details', args: '<name>' },
       { name: 'config', description: 'Configure a plugin', args: '<name>' },
-      { name: 'install', description: 'Install a plugin', args: '<path>' },
+      { name: 'install', description: 'Install a plugin (--link for dev mode)', args: '<path>' },
       { name: 'uninstall', description: 'Uninstall a plugin', args: '<name>' },
       { name: 'active', description: 'List active plugins' },
       { name: 'activate', description: 'Activate a plugin', args: '<name>' },
@@ -218,8 +218,17 @@ export class PluginCommand extends Command {
     }
 
     try {
+      // Parse --link flag and filter it out from the path
+      const args = pluginPath.split(/\s+/);
+      const hasLinkFlag = args.includes('--link');
+      const pathArg = args.filter(arg => arg !== '--link').join(' ');
+
+      if (!pathArg) {
+        return this.createError('Plugin path required. Use /plugin install <path>');
+      }
+
       // Resolve path (handle relative paths, ~, etc.)
-      const resolvedPath = PathUtils.resolvePath(pluginPath);
+      const resolvedPath = PathUtils.resolvePath(pathArg);
 
       // Get PluginLoader from registry
       const pluginLoader = serviceRegistry.get<PluginLoaderService>('plugin_loader');
@@ -228,7 +237,11 @@ export class PluginCommand extends Command {
       }
 
       // Install the plugin
-      const result = await pluginLoader.installFromPath(resolvedPath, getPluginsDir());
+      const result = await pluginLoader.installFromPath(
+        resolvedPath,
+        getPluginsDir(),
+        hasLinkFlag ? { link: true } : undefined
+      );
 
       if (!result.success) {
         return this.createError(result.error || 'Failed to install plugin');
@@ -258,11 +271,12 @@ export class PluginCommand extends Command {
         const agentsCount = result.agents?.length || 0;
         const toolsText = `${toolsCount} tool${toolsCount === 1 ? '' : 's'}`;
         const agentsText = agentsCount > 0 ? ` and ${agentsCount} agent${agentsCount === 1 ? '' : 's'}` : '';
+        const actionText = hasLinkFlag ? 'linked' : 'updated';
 
         return {
           handled: true,
           response: [
-            `✓ Plugin '${result.pluginName}' updated successfully with ${toolsText}${agentsText}`,
+            `✓ Plugin '${result.pluginName}' ${actionText} successfully with ${toolsText}${agentsText}`,
             '',
             `Your existing configuration has been preserved.`,
             `To reconfigure, run: /plugin config ${result.pluginName}`,
@@ -343,8 +357,8 @@ export class PluginCommand extends Command {
       const loadedPlugins = pluginLoader.getLoadedPlugins();
 
       let output = '## Installed Plugins\n\n';
-      output += `| Status | Name | Version | Mode | Description | Tools | Agents |\n`;
-      output += `|--------|------|---------|------|-------------|-------|--------|\n`;
+      output += `| Status | Name | Version | Type | Mode | Description | Tools | Agents |\n`;
+      output += `|--------|------|---------|------|------|-------------|-------|--------|\n`;
 
       for (const pluginName of installedPlugins) {
         const mode = activationManager.getActivationMode(pluginName) ?? 'always';
@@ -357,6 +371,10 @@ export class PluginCommand extends Command {
         // Mode
         const modeStr = mode === 'always' ? 'always' : 'tagged';
 
+        // Check if plugin is linked
+        const isLinked = await pluginLoader.isPluginLinked(pluginName);
+        const typeStr = isLinked ? 'linked' : 'installed';
+
         if (pluginInfo) {
           const version = pluginInfo.manifest.version || '';
           const description = pluginInfo.manifest.description || '';
@@ -365,9 +383,9 @@ export class PluginCommand extends Command {
           const toolsStr = toolsCount > 0 ? `${toolsCount}` : '-';
           const agentsStr = agentsCount > 0 ? `${agentsCount}` : '-';
 
-          output += `| ${status} | ${pluginName} | ${version} | ${modeStr} | ${description} | ${toolsStr} | ${agentsStr} |\n`;
+          output += `| ${status} | ${pluginName} | ${version} | ${typeStr} | ${modeStr} | ${description} | ${toolsStr} | ${agentsStr} |\n`;
         } else {
-          output += `| ${status} | ${pluginName} | | ${modeStr} | | - | - |\n`;
+          output += `| ${status} | ${pluginName} | | ${typeStr} | ${modeStr} | | - | - |\n`;
         }
       }
 
@@ -425,6 +443,10 @@ export class PluginCommand extends Command {
       const isActive = activationManager.isActive(pluginName);
       const manifest = pluginInfo.manifest;
 
+      // Check if plugin is linked
+      const isLinked = await pluginLoader.isPluginLinked(pluginName);
+      const linkedSource = isLinked ? await pluginLoader.getLinkedPluginSource(pluginName) : null;
+
       let output = '';
 
       // Header
@@ -437,7 +459,15 @@ export class PluginCommand extends Command {
       }
 
       output += `Status: ${isActive ? 'Active ●' : 'Inactive ○'}\n`;
-      output += `Activation Mode: ${mode}\n\n`;
+      output += `Activation Mode: ${mode}\n`;
+
+      // Show type and source for linked plugins
+      if (isLinked && linkedSource) {
+        output += `Type: linked\n`;
+        output += `Source: ${linkedSource}\n\n`;
+      } else {
+        output += `Type: installed\n\n`;
+      }
 
       // Description
       if (manifest.description) {

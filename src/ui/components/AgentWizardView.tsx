@@ -325,19 +325,30 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
     }
   };
 
+  // Steps where TextInput is active (handles its own Ctrl+C)
+  const isTextInputStep = step === ConfigStep.DESCRIPTION ||
+                          step === ConfigStep.CUSTOMIZE_PROMPT ||
+                          step === ConfigStep.CUSTOMIZE_DESCRIPTION ||
+                          step === ConfigStep.CUSTOMIZE_NAME;
+
+  // Handle cancel from TextInput's onCtrlC (empty buffer)
+  const handleCtrlC = () => {
+    onCancel();
+  };
+
   // Handle keyboard input
   useInput((input, key) => {
-    // ESC or Ctrl+C - cancel
-    if (key.escape || (key.ctrl && input === 'c')) {
+    // ESC - always cancel
+    if (key.escape) {
       onCancel();
       return;
     }
 
-    // Handle text input steps (DESCRIPTION, CUSTOMIZE_PROMPT, CUSTOMIZE_DESCRIPTION, CUSTOMIZE_NAME)
-    const isTextInputStep = step === ConfigStep.DESCRIPTION ||
-                           step === ConfigStep.CUSTOMIZE_PROMPT ||
-                           step === ConfigStep.CUSTOMIZE_DESCRIPTION ||
-                           step === ConfigStep.CUSTOMIZE_NAME;
+    // Ctrl+C - only handle for non-TextInput steps or when in navigation mode
+    if (key.ctrl && input === 'c' && (!isTextInputStep || inNavigationMode)) {
+      onCancel();
+      return;
+    }
 
     if (isTextInputStep && inNavigationMode) {
       // In navigation mode, handle Continue/Back selection
@@ -539,6 +550,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 onCursorChange={setDescriptionCursor}
                 onSubmit={handleContinue}
                 onEscape={onCancel}
+                onCtrlC={handleCtrlC}
                 isActive={!inNavigationMode}
                 multiline={true}
                 placeholder="Describe your agent in detail..."
@@ -607,6 +619,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 onCursorChange={setPromptCursor}
                 onSubmit={handleContinue}
                 onEscape={onCancel}
+                onCtrlC={handleCtrlC}
                 isActive={!inNavigationMode}
                 multiline={true}
                 placeholder="System prompt..."
@@ -661,6 +674,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 onCursorChange={setDescRefinementCursor}
                 onSubmit={handleContinue}
                 onEscape={onCancel}
+                onCtrlC={handleCtrlC}
                 isActive={!inNavigationMode}
                 multiline={false}
                 placeholder="Brief description shown in listings"
@@ -715,6 +729,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 onCursorChange={setNameCursor}
                 onSubmit={handleContinue}
                 onEscape={onCancel}
+                onCtrlC={handleCtrlC}
                 isActive={!inNavigationMode}
                 multiline={false}
                 placeholder="agent-name"

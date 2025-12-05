@@ -124,10 +124,30 @@ export const ProjectWizardView: React.FC<ProjectWizardViewProps> = ({ onComplete
     generateAllyFile();
   };
 
+  // Steps where TextInput is active (handles its own Ctrl+C)
+  const isTextInputStep = step !== WizardStep.WELCOME &&
+                          step !== WizardStep.GENERATING &&
+                          step !== WizardStep.COMPLETED;
+
+  // Handle skip from TextInput's onCtrlC (empty buffer)
+  const handleCtrlC = () => {
+    if (onSkip) {
+      onSkip();
+    }
+  };
+
   // Handle keyboard input for non-text-input steps
   useInput((input, key) => {
-    // ESC or Ctrl+C - exit
-    if (key.escape || (key.ctrl && input === 'c')) {
+    // ESC - always exit
+    if (key.escape) {
+      if (onSkip) {
+        onSkip();
+      }
+      return;
+    }
+
+    // Ctrl+C - only handle for non-TextInput steps (TextInput handles its own)
+    if (key.ctrl && input === 'c' && !isTextInputStep) {
       if (onSkip) {
         onSkip();
       }
@@ -297,6 +317,7 @@ This file provides project-specific guidance to Code Ally when working with this
               onCursorChange={setProjectNameCursor}
               onSubmit={handleProjectNameSubmit}
               onEscape={onSkip}
+              onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
               placeholder="my-project"
@@ -332,6 +353,7 @@ This file provides project-specific guidance to Code Ally when working with this
               onCursorChange={setDescriptionCursor}
               onSubmit={handleDescriptionSubmit}
               onEscape={onSkip}
+              onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
               placeholder="A brief description"
@@ -367,6 +389,7 @@ This file provides project-specific guidance to Code Ally when working with this
               onCursorChange={setLanguageCursor}
               onSubmit={handleLanguageSubmit}
               onEscape={onSkip}
+              onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
               placeholder="TypeScript"
@@ -412,6 +435,7 @@ This file provides project-specific guidance to Code Ally when working with this
               onCursorChange={setSetupCommandCursor}
               onSubmit={handleSetupCommandSubmit}
               onEscape={onSkip}
+              onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
               placeholder="npm install"
@@ -457,6 +481,7 @@ This file provides project-specific guidance to Code Ally when working with this
               onCursorChange={setBuildCommandCursor}
               onSubmit={handleBuildCommandSubmit}
               onEscape={onSkip}
+              onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
               placeholder="npm run build"
@@ -502,6 +527,7 @@ This file provides project-specific guidance to Code Ally when working with this
               onCursorChange={setTestCommandCursor}
               onSubmit={handleTestCommandSubmit}
               onEscape={onSkip}
+              onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
               placeholder="npm test"
@@ -537,6 +563,7 @@ This file provides project-specific guidance to Code Ally when working with this
               onCursorChange={setFormatterCursor}
               onSubmit={handleFormatterSubmit}
               onEscape={onSkip}
+              onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
               placeholder="prettier"
@@ -572,6 +599,7 @@ This file provides project-specific guidance to Code Ally when working with this
               onCursorChange={setLinterCursor}
               onSubmit={handleLinterSubmit}
               onEscape={onSkip}
+              onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
               placeholder="eslint"

@@ -34,6 +34,7 @@ import type { AgentDefinition } from './interfaces.js';
 import type { AgentData } from '../services/AgentManager.js';
 import { parseFrontmatterYAML, extractFrontmatter } from '../utils/yamlUtils.js';
 import { validateToolName, validateAgentName } from '../utils/namingValidation.js';
+import { getPluginEnvsDir } from '../config/paths.js';
 
 /**
  * Plugin manifest schema
@@ -419,16 +420,18 @@ export class PluginLoader {
   /**
    * Install a plugin from a local filesystem path
    *
-   * Validates the plugin manifest, copies it to the plugins directory,
+   * Validates the plugin manifest, copies or links it to the plugins directory,
    * and loads it (triggering dependency installation if needed).
    *
    * @param sourcePath - Absolute path to the plugin directory
    * @param pluginsDir - Target plugins directory (defaults to PLUGINS_DIR)
+   * @param options - Installation options (link: create symlink instead of copying)
    * @returns Object with success status, plugin name, and loaded tools
    */
   async installFromPath(
     sourcePath: string,
-    pluginsDir: string
+    pluginsDir: string,
+    options?: { link?: boolean }
   ): Promise<{
     success: boolean;
     pluginName?: string;
@@ -436,6 +439,7 @@ export class PluginLoader {
     agents?: any[];
     error?: string;
     hadExistingConfig?: boolean;
+    isLinked?: boolean;
     error_details?: {
       message: string;
       operation: string;
@@ -529,16 +533,44 @@ export class PluginLoader {
           }
         }
 
-        await fs.rm(targetPath, { recursive: true, force: true });
+        // Remove existing plugin (safely handling both directories and symlinks)
+        const stats = await fs.lstat(targetPath);
+        if (stats.isSymbolicLink()) {
+          // It's a symlink - just unlink it (don't remove the source directory)
+          logger.debug(`[PluginLoader] Removing existing symlink for '${manifest.name}'`);
+          await fs.unlink(targetPath);
+        } else if (stats.isDirectory()) {
+          // It's a real directory - remove it recursively
+          logger.debug(`[PluginLoader] Removing existing directory for '${manifest.name}'`);
+          await fs.rm(targetPath, { recursive: true, force: true });
+        }
       } catch {
         // Target doesn't exist - fresh install
       }
 
-      // Copy plugin directory to plugins folder
+      // Copy or link plugin directory to plugins folder
+      const isLink = options?.link === true;
       logger.debug(
-        `[PluginLoader] ${isUpdate ? 'Updating' : 'Installing'} plugin '${manifest.name}' from ${sourcePath}`
+        `[PluginLoader] ${isUpdate ? 'Updating' : 'Installing'} plugin '${manifest.name}' from ${sourcePath}${isLink ? ' (linked)' : ''}`
       );
-      await this.copyDirectory(sourcePath, targetPath);
+
+      if (isLink) {
+        // Create symlink instead of copying
+        await fs.symlink(sourcePath, targetPath, 'dir');
+
+        // Create .linked marker file in plugin-envs directory
+        const linkedMarkerPath = this.getLinkedMarkerPath(manifest.name);
+        await fs.mkdir(getPluginEnvsDir(), { recursive: true });
+        await fs.writeFile(linkedMarkerPath, JSON.stringify({
+          source: sourcePath,
+          linked_at: new Date().toISOString()
+        }, null, 2));
+
+        logger.debug(`[PluginLoader] Created symlink and linked marker for '${manifest.name}'`);
+      } else {
+        // Copy directory as before
+        await this.copyDirectory(sourcePath, targetPath);
+      }
 
       // Restore the saved config if it existed
       if (savedConfig) {
@@ -597,6 +629,7 @@ export class PluginLoader {
         tools,
         agents,
         hadExistingConfig,
+        isLinked: isLink,
       };
     } catch (error) {
       return this.createPluginError(
@@ -610,7 +643,8 @@ export class PluginLoader {
   /**
    * Uninstall a plugin
    *
-   * Removes the plugin directory and its virtual environment.
+   * Removes the plugin directory (or symlink) and its virtual environment.
+   * Safely handles both regular directories and symlinks.
    *
    * @param pluginName - Name of the plugin to uninstall
    * @param pluginsDir - Plugins directory (defaults to PLUGINS_DIR)
@@ -642,9 +676,32 @@ export class PluginLoader {
         );
       }
 
-      // Remove plugin directory
+      // Check if this is a symlink or a directory
       logger.info(`[PluginLoader] Uninstalling plugin '${pluginName}'`);
-      await fs.rm(pluginPath, { recursive: true, force: true });
+      const stats = await fs.lstat(pluginPath);
+
+      if (stats.isSymbolicLink()) {
+        // It's a symlink - just unlink it (don't remove the source directory)
+        logger.debug(`[PluginLoader] Removing symlink for '${pluginName}'`);
+        await fs.unlink(pluginPath);
+      } else if (stats.isDirectory()) {
+        // It's a real directory - remove it recursively
+        logger.debug(`[PluginLoader] Removing directory for '${pluginName}'`);
+        await fs.rm(pluginPath, { recursive: true, force: true });
+      } else {
+        // Shouldn't happen, but handle it
+        logger.warn(`[PluginLoader] Plugin path is neither a symlink nor directory, removing anyway`);
+        await fs.unlink(pluginPath);
+      }
+
+      // Remove the .linked marker file if it exists
+      const linkedMarkerPath = this.getLinkedMarkerPath(pluginName);
+      try {
+        await fs.unlink(linkedMarkerPath);
+        logger.debug(`[PluginLoader] Removed linked marker for '${pluginName}'`);
+      } catch {
+        // Marker doesn't exist - that's fine
+      }
 
       // Remove plugin environment if it exists
       await this.envManager.removeEnvironment(pluginName);
@@ -790,19 +847,27 @@ export class PluginLoader {
    * Reload a single plugin after configuration
    *
    * Used to reload a plugin after its configuration has been provided.
-   * Reads the manifest, loads the configuration, and returns loaded tools.
-   * Note: This only returns tools for backward compatibility. Agents are
-   * loaded internally but not returned.
+   * Reads the manifest, loads the configuration, and returns loaded tools and agents.
    *
    * @param pluginName - Name of the plugin to reload
    * @param pluginPath - Path to the plugin directory
-   * @returns Array of loaded tool instances
+   * @returns Object containing tools, agents, and manifest
    */
-  async reloadPlugin(pluginName: string, pluginPath: string): Promise<BaseTool[]> {
+  async reloadPlugin(pluginName: string, pluginPath: string): Promise<{
+    tools: BaseTool[];
+    agents: AgentData[];
+    manifest: PluginManifest;
+  }> {
     logger.debug(`[PluginLoader] Reloading plugin '${pluginName}' from ${pluginPath}`);
 
     try {
       const { tools, agents } = await this.loadPlugin(pluginPath);
+
+      // Get the loaded plugin info which contains the manifest
+      const pluginInfo = this.loadedPlugins.get(pluginName);
+      if (!pluginInfo) {
+        throw new Error(`Plugin '${pluginName}' was loaded but not found in loadedPlugins registry`);
+      }
 
       if (tools.length > 0 || agents.length > 0) {
         logger.debug(
@@ -812,7 +877,11 @@ export class PluginLoader {
         logger.warn(`[PluginLoader] No tools or agents loaded when reloading plugin '${pluginName}'`);
       }
 
-      return tools;
+      return {
+        tools,
+        agents,
+        manifest: pluginInfo.manifest,
+      };
     } catch (error) {
       logger.error(
         `[PluginLoader] Failed to reload plugin '${pluginName}': ${
@@ -1243,6 +1312,55 @@ export class PluginLoader {
         }`
       );
       return true;
+    }
+  }
+
+  /**
+   * Get the path to the .linked marker file for a plugin
+   *
+   * The marker file is stored in the plugin-envs directory (not in the plugin
+   * directory itself) to avoid writing to the source directory.
+   *
+   * @param pluginName - Name of the plugin
+   * @returns Absolute path to the .linked marker file
+   */
+  private getLinkedMarkerPath(pluginName: string): string {
+    return join(getPluginEnvsDir(), `${pluginName}.linked`);
+  }
+
+  /**
+   * Check if a plugin is linked (symlinked) instead of copied
+   *
+   * @param pluginName - Name of the plugin to check
+   * @returns True if the plugin is linked, false otherwise
+   */
+  async isPluginLinked(pluginName: string): Promise<boolean> {
+    const linkedMarkerPath = this.getLinkedMarkerPath(pluginName);
+    try {
+      await fs.access(linkedMarkerPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get the source path for a linked plugin
+   *
+   * Reads the .linked marker file to retrieve the original source path
+   * that was symlinked during installation.
+   *
+   * @param pluginName - Name of the plugin
+   * @returns Source path if plugin is linked, null otherwise
+   */
+  async getLinkedPluginSource(pluginName: string): Promise<string | null> {
+    const linkedMarkerPath = this.getLinkedMarkerPath(pluginName);
+    try {
+      const content = await fs.readFile(linkedMarkerPath, 'utf-8');
+      const data = JSON.parse(content);
+      return data.source || null;
+    } catch {
+      return null;
     }
   }
 
