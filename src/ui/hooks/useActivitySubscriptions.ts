@@ -235,7 +235,9 @@ export const useActivitySubscriptions = (
       updates.executionStartTime = event.timestamp;
     }
 
-    if (event.data.shouldCollapse) {
+    // Skip collapse for linked plugin agents (dev mode) to keep tool calls visible
+    const isLinkedPluginAgent = event.data.result?._isLinkedPluginAgent === true;
+    if (event.data.shouldCollapse && !isLinkedPluginAgent) {
       updates.collapsed = true;
     } else if (event.data.collapsed !== undefined) {
       updates.collapsed = event.data.collapsed;

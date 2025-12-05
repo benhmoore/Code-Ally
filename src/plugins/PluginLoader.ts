@@ -1118,6 +1118,9 @@ export class PluginLoader {
       );
     }
 
+    // Check if this is a linked plugin (dev mode)
+    const isLinked = await this.isPluginLinked(manifest.name);
+
     // Create the wrapper instance
     const tool = new ExecutableToolWrapper(
       toolDef,
@@ -1126,7 +1129,8 @@ export class PluginLoader {
       this.activityStream,
       this.envManager,
       toolDef.timeout,
-      config
+      config,
+      isLinked
     );
 
     return tool;
@@ -1162,13 +1166,16 @@ export class PluginLoader {
    * @param pluginPath - Path to the plugin directory
    * @returns Array of parsed agent data with plugin context
    */
-  private async loadPluginAgents(manifest: PluginManifest, pluginPath: string): Promise<Array<AgentData & { _pluginName: string }>> {
+  private async loadPluginAgents(manifest: PluginManifest, pluginPath: string): Promise<Array<AgentData & { _pluginName: string; _isLinked?: boolean }>> {
     // Return early if no agents defined
     if (!manifest.agents || manifest.agents.length === 0) {
       return [];
     }
 
-    const agents: Array<AgentData & { _pluginName: string }> = [];
+    // Check if this plugin is linked (dev mode)
+    const isLinked = await this.isPluginLinked(manifest.name);
+
+    const agents: Array<AgentData & { _pluginName: string; _isLinked?: boolean }> = [];
     const seenAgentNames = new Set<string>();
 
     // Iterate through each agent definition
@@ -1217,7 +1224,7 @@ export class PluginLoader {
         }
 
         // Merge manifest values with parsed values (manifest takes precedence)
-        const mergedAgent: AgentData & { _pluginName: string } = {
+        const mergedAgent: AgentData & { _pluginName: string; _isLinked?: boolean } = {
           // Start with parsed file values
           ...parsedAgent,
           // Override with manifest values (these take precedence)
@@ -1233,6 +1240,8 @@ export class PluginLoader {
           can_see_agents: agentDef.can_see_agents !== undefined ? agentDef.can_see_agents : parsedAgent.can_see_agents,
           // Add plugin tracking metadata
           _pluginName: manifest.name,
+          // Track if from linked plugin (dev mode) for UI behavior
+          _isLinked: isLinked || undefined,
         };
 
         agents.push(mergedAgent);

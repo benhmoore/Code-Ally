@@ -506,25 +506,47 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       )}
 
       {/* Error output - Show clean error message from error_details */}
-      {!toolCall.collapsed && !hasAgentAncestor && toolCall.error && toolCall.result?.error_details && (() => {
+      {/* For linked plugins (_verboseErrors), always show errors even inside delegated agents */}
+      {!toolCall.collapsed && (!hasAgentAncestor || toolCall.result?._verboseErrors) && toolCall.error && toolCall.result?.error_details && (() => {
         // Use structured error_details.message (clean error without tool call formatting)
         const errorMessage = toolCall.result.error_details.message;
-        const firstLine = errorMessage.split('\n')[0] || 'Unknown error';
-        const truncated = firstLine.slice(0, TEXT_LIMITS.ERROR_DISPLAY_MAX);
-        const needsTruncation = errorMessage.length > TEXT_LIMITS.ERROR_DISPLAY_MAX;
+        // For linked plugins (_verboseErrors), show last 10 lines; otherwise truncate to first line
+        const isVerbose = toolCall.result._verboseErrors === true;
+        const allLines = errorMessage.split('\n');
+        const firstLine = allLines[0] || 'Unknown error';
+
+        let displayLines: string[];
+        let needsHint = false;
+
+        if (isVerbose) {
+          // Show last N lines for linked plugins (dev mode)
+          if (allLines.length > BUFFER_SIZES.LINKED_PLUGIN_ERROR_LINES) {
+            displayLines = allLines.slice(-BUFFER_SIZES.LINKED_PLUGIN_ERROR_LINES);
+            needsHint = true;
+          } else {
+            displayLines = allLines;
+          }
+        } else {
+          // Truncate to first 60 chars for regular plugins
+          const truncated = firstLine.slice(0, TEXT_LIMITS.ERROR_DISPLAY_MAX);
+          const needsTruncation = errorMessage.length > TEXT_LIMITS.ERROR_DISPLAY_MAX;
+          displayLines = [truncated + (needsTruncation ? '...' : '')];
+          needsHint = needsTruncation;
+        }
 
         return (
           <Box flexDirection="column">
-            <Box paddingLeft={indent.length + 4}>
-              <Text color="red" dimColor>
-                {truncated}
-                {needsTruncation && '...'}
-              </Text>
+            <Box paddingLeft={indent.length + 4} flexDirection="column">
+              {displayLines.map((line, i) => (
+                <Text key={i} color="red" dimColor>
+                  {line}
+                </Text>
+              ))}
             </Box>
-            {needsTruncation && (
+            {needsHint && (
               <Box paddingLeft={indent.length + 4}>
                 <Text color="gray" dimColor>
-                  Full error: /debug errors
+                  {isVerbose ? 'Full error: /debug dump' : 'Full error: /debug errors'}
                 </Text>
               </Box>
             )}
@@ -581,14 +603,21 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         // Sort by timestamp
         items.sort((a, b) => a.timestamp - b.timestamp);
 
-        // For agent delegations: limit tool calls + compaction notices to last 3
+        // For agent delegations: limit tool calls + compaction notices
+        // Linked plugin agents (dev mode) show last 10, regular agents show last 3
         // Interjections are always shown (they don't count toward the limit)
         if (isAgentDelegation && !config?.show_full_tool_output) {
           const interjectionItems = items.filter(i => i.type === 'interjection');
           const otherItems = items.filter(i => i.type !== 'interjection');
 
-          if (otherItems.length > BUFFER_SIZES.TOP_ITEMS_PREVIEW) {
-            const truncated = otherItems.slice(-BUFFER_SIZES.TOP_ITEMS_PREVIEW);
+          // Use expanded limit for linked plugin agents (dev mode), otherwise default
+          const isLinkedPluginAgent = toolCall.result?._isLinkedPluginAgent === true;
+          const itemLimit = isLinkedPluginAgent
+            ? BUFFER_SIZES.LINKED_PLUGIN_ITEMS_PREVIEW
+            : BUFFER_SIZES.TOP_ITEMS_PREVIEW;
+
+          if (otherItems.length > itemLimit) {
+            const truncated = otherItems.slice(-itemLimit);
             items.length = 0;
             items.push(...truncated, ...interjectionItems);
             items.sort((a, b) => a.timestamp - b.timestamp);

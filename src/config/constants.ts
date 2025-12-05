@@ -363,6 +363,12 @@ export const BUFFER_SIZES = {
   /** Top items preview size (3 items) */
   TOP_ITEMS_PREVIEW: 3,
 
+  /** Expanded items preview for linked plugins in dev mode (10 items) */
+  LINKED_PLUGIN_ITEMS_PREVIEW: 10,
+
+  /** Error lines to show for linked plugins in dev mode (10 lines) */
+  LINKED_PLUGIN_ERROR_LINES: 10,
+
   /** Default number of debug history items to show (5 items) */
   DEBUG_HISTORY_DEFAULT: 5,
 

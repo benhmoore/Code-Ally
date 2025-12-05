@@ -364,6 +364,11 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           Object.assign(successResponse, reminder);
         }
 
+        // Pass through linked plugin agent flag for UI behavior
+        if (result._isLinkedPluginAgent) {
+          successResponse._isLinkedPluginAgent = true;
+        }
+
         return this.formatSuccessResponse(successResponse);
       } else {
         return this.formatErrorResponse(
@@ -524,6 +529,11 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       // Include agent_id if available
       if (taskResult.agent_id) {
         response.agent_id = taskResult.agent_id;
+      }
+
+      // Flag linked plugin agents for UI behavior (no collapse, expanded tool limit)
+      if (agentData._isLinked) {
+        response._isLinkedPluginAgent = true;
       }
 
       return response;

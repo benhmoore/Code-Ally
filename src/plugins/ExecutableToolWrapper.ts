@@ -35,6 +35,7 @@ export class ExecutableToolWrapper extends BaseTool {
 	private readonly manifest: PluginManifest;
 	private readonly envManager: PluginEnvironmentManager;
 	private readonly subtextTemplate?: string;
+	private readonly isLinked: boolean;
 
 	/**
 	 * Creates a new ExecutableToolWrapper instance.
@@ -46,6 +47,7 @@ export class ExecutableToolWrapper extends BaseTool {
 	 * @param envManager - Plugin environment manager for venv paths
 	 * @param timeout - Maximum execution time in milliseconds (default: 120000ms / 2 minutes)
 	 * @param config - Optional plugin configuration to be injected as environment variables
+	 * @param isLinked - Whether this plugin is linked (dev mode) - disables output truncation
 	 */
 	constructor(
 		toolDef: ToolDefinition,
@@ -54,7 +56,8 @@ export class ExecutableToolWrapper extends BaseTool {
 		activityStream: ActivityStream,
 		envManager: PluginEnvironmentManager,
 		timeout: number = 120000,
-		config?: any
+		config?: any,
+		isLinked: boolean = false
 	) {
 		// BaseTool constructor only takes activityStream
 		super(activityStream);
@@ -85,6 +88,7 @@ export class ExecutableToolWrapper extends BaseTool {
 		this.manifest = manifest;
 		this.envManager = envManager;
 		this.subtextTemplate = toolDef.subtext;
+		this.isLinked = isLinked;
 	}
 
 	/**
@@ -126,10 +130,15 @@ export class ExecutableToolWrapper extends BaseTool {
 
 			return output;
 		} catch (error) {
-			return this.formatErrorResponse(
+			const result = this.formatErrorResponse(
 				error instanceof Error ? error.message : String(error),
 				'execution_error'
 			);
+			// For linked plugins, flag that verbose errors should be shown in UI
+			if (this.isLinked) {
+				result._verboseErrors = true;
+			}
+			return result;
 		}
 	}
 
@@ -273,9 +282,10 @@ Command: ${resolvedCommand} ${this.commandArgs.join(' ')}`
 			});
 
 			// Collect stdout with size limits and streaming
+			// Linked plugins (dev mode) skip truncation for full error visibility
 			child.stdout.on('data', (data) => {
 				const chunk = data.toString();
-				if (stdout.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
+				if (this.isLinked || stdout.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
 					stdout += chunk;
 					// Stream output for real-time feedback
 					this.emitOutputChunk(chunk);
@@ -288,9 +298,10 @@ Command: ${resolvedCommand} ${this.commandArgs.join(' ')}`
 			});
 
 			// Collect stderr with size limits
+			// Linked plugins (dev mode) skip truncation for full error visibility
 			child.stderr.on('data', (data) => {
 				const chunk = data.toString();
-				if (stderr.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
+				if (this.isLinked || stderr.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
 					stderr += chunk;
 					this.emitOutputChunk(chunk);
 				}

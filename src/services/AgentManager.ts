@@ -56,6 +56,7 @@ export interface AgentData {
   created_at?: string;
   updated_at?: string;
   _pluginName?: string; // Plugin source identifier (only for plugin-provided agents)
+  _isLinked?: boolean; // Whether this agent is from a linked plugin (dev mode)
 
   /**
    * List of agent names that can call this agent.
