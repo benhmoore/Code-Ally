@@ -805,8 +805,8 @@ export class ToolOrchestrator {
 
       // Tool call recording removed in simplified todo system
 
-      // Emit output chunks if result has content
-      if (result.success && (result as any).content) {
+      // Emit output chunk for tools that don't stream their own output
+      if (result.success && (result as any).content && !tool?.streamsOutput) {
         this.emitEvent({
           id,
           type: ActivityEventType.TOOL_OUTPUT_CHUNK,

@@ -42,6 +42,14 @@ export abstract class BaseTool {
   readonly suppressExecutionAnimation: boolean = false;
 
   /**
+   * Whether this tool streams output during execution via emitOutputChunk()
+   *
+   * When true, the orchestrator will not emit a final TOOL_OUTPUT_CHUNK
+   * with result.content, avoiding duplicate output in the UI.
+   */
+  readonly streamsOutput: boolean = false;
+
+  /**
    * Whether this tool should appear in the conversation UI
    * Set to false for tools that should be hidden from chat
    * (e.g., batch, todo)

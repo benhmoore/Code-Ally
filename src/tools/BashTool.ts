@@ -18,7 +18,8 @@ export class BashTool extends BaseTool {
   readonly name = 'bash';
   readonly description =
     'Execute shell commands. Use for running scripts, system operations, building/testing code';
-  readonly requiresConfirmation = true; // Destructive operations require confirmation
+  readonly requiresConfirmation = true;
+  readonly streamsOutput = true; // Output is emitted via emitOutputChunk() during execution
 
   private config?: Config;
 
