@@ -97,14 +97,14 @@ export class ToolManager {
 
     const tool = this.tools.get(activeDelegation.toolName);
     if (!tool) {
-      logger.warn(`[TOOL_MANAGER] Active delegation references unknown tool: ${activeDelegation.toolName}`);
+      logger.debug(`[TOOL_MANAGER] Active delegation references unknown tool: ${activeDelegation.toolName}`);
       return undefined;
     }
 
     // Validate that the tool implements InjectableTool interface
     // This ensures type safety - only tools with injectUserMessage() can be returned
     if (!isInjectableTool(tool)) {
-      logger.warn(`[TOOL_MANAGER] Active delegation tool '${activeDelegation.toolName}' does not implement InjectableTool interface`);
+      logger.debug(`[TOOL_MANAGER] Active delegation tool '${activeDelegation.toolName}' does not implement InjectableTool interface`);
       return undefined;
     }
 

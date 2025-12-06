@@ -540,10 +540,9 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         {step === ConfigStep.DESCRIPTION && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
-              <Text dimColor>Detailed Description ({descriptionBuffer.length} chars):</Text>
-            </Box>
-            <Box marginBottom={1}>
               <TextInput
+                label={`Detailed Description (${descriptionBuffer.length} chars):`}
+                labelColor="gray"
                 value={descriptionBuffer}
                 onValueChange={setDescriptionBuffer}
                 cursorPosition={descriptionCursor}
@@ -609,10 +608,9 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         {step === ConfigStep.CUSTOMIZE_PROMPT && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
-              <Text dimColor>Customize System Prompt ({promptBuffer.length} chars):</Text>
-            </Box>
-            <Box marginBottom={1}>
               <TextInput
+                label={`Customize System Prompt (${promptBuffer.length} chars):`}
+                labelColor="gray"
                 value={promptBuffer}
                 onValueChange={setPromptBuffer}
                 cursorPosition={promptCursor}
@@ -664,10 +662,9 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         {step === ConfigStep.CUSTOMIZE_DESCRIPTION && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
-              <Text dimColor>Customize Description:</Text>
-            </Box>
-            <Box marginBottom={1}>
               <TextInput
+                label="Customize Description:"
+                labelColor="gray"
                 value={descRefinementBuffer}
                 onValueChange={setDescRefinementBuffer}
                 cursorPosition={descRefinementCursor}
@@ -719,10 +716,9 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
         {step === ConfigStep.CUSTOMIZE_NAME && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
-              <Text dimColor>Customize Name:</Text>
-            </Box>
-            <Box marginBottom={1}>
               <TextInput
+                label="Customize Name:"
+                labelColor="gray"
                 value={nameBuffer}
                 onValueChange={setNameBuffer}
                 cursorPosition={nameCursor}

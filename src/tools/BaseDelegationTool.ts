@@ -294,7 +294,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
 
       if (!agentPoolService) {
         // Graceful fallback: AgentPoolService not available
-        logger.warn(`[${this.name.toUpperCase()}_TOOL] AgentPoolService not available, falling back to ephemeral agent`);
+        logger.debug(`[${this.name.toUpperCase()}_TOOL] AgentPoolService not available, falling back to ephemeral agent`);
         delegationAgent = new Agent(
           modelClient,
           toolManager,

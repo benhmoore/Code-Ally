@@ -304,6 +304,7 @@ export class ToolOrchestrator {
           collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
           shouldCollapse,
           hideOutput,
+          isLinkedPlugin: tool?.isLinkedPlugin || false,
         },
       });
     }
@@ -584,7 +585,7 @@ export class ToolOrchestrator {
     // Validate tool is allowed for this agent (prevents execution if restricted)
     const allowedTools = this.config.allowedTools;
     if (allowedTools !== undefined && !allowedTools.includes(toolName)) {
-      logger.warn(`[TOOL_ORCHESTRATOR] Agent '${this.agent.getAgentName()}' attempted unauthorized tool: ${toolName}`);
+      logger.debug(`[TOOL_ORCHESTRATOR] Agent '${this.agent.getAgentName()}' attempted unauthorized tool: ${toolName}`);
       const allowedList = allowedTools.length > 0 ? allowedTools.join(', ') : 'no tools';
       return createStructuredError(
         `Tool '${toolName}' is not available to this agent. Available tools: ${allowedList}`,
@@ -685,6 +686,7 @@ export class ToolOrchestrator {
           collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
           shouldCollapse, // Collapse after completion (for AgentTool)
           hideOutput, // Never show output (for AgentTool)
+          isLinkedPlugin: tool?.isLinkedPlugin || false,
         },
       });
     }

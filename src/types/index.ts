@@ -258,6 +258,7 @@ export interface ToolCallState {
   collapsed?: boolean; // For tools that should hide their children immediately
   shouldCollapse?: boolean; // For tools that should collapse after completion
   hideOutput?: boolean; // For tools that should never show output
+  isLinkedPlugin?: boolean; // For linked plugins (dev mode) that should show verbose output
   thinking?: string; // Thinking content for agent tools
   thinkingStartTime?: number; // When thinking started (for duration calculation)
   thinkingEndTime?: number; // When thinking completed (for duration calculation)

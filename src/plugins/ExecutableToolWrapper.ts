@@ -35,7 +35,11 @@ export class ExecutableToolWrapper extends BaseTool {
 	private readonly manifest: PluginManifest;
 	private readonly envManager: PluginEnvironmentManager;
 	private readonly subtextTemplate?: string;
-	private readonly isLinked: boolean;
+	/**
+	 * Whether this plugin is linked (dev mode).
+	 * Linked plugins show verbose output and errors in the UI.
+	 */
+	readonly isLinkedPlugin: boolean;
 
 	/**
 	 * Creates a new ExecutableToolWrapper instance.
@@ -88,7 +92,7 @@ export class ExecutableToolWrapper extends BaseTool {
 		this.manifest = manifest;
 		this.envManager = envManager;
 		this.subtextTemplate = toolDef.subtext;
-		this.isLinked = isLinked;
+		this.isLinkedPlugin = isLinked;
 	}
 
 	/**
@@ -130,15 +134,10 @@ export class ExecutableToolWrapper extends BaseTool {
 
 			return output;
 		} catch (error) {
-			const result = this.formatErrorResponse(
+			return this.formatErrorResponse(
 				error instanceof Error ? error.message : String(error),
 				'execution_error'
 			);
-			// For linked plugins, flag that verbose errors should be shown in UI
-			if (this.isLinked) {
-				result._verboseErrors = true;
-			}
-			return result;
 		}
 	}
 
@@ -285,7 +284,7 @@ Command: ${resolvedCommand} ${this.commandArgs.join(' ')}`
 			// Linked plugins (dev mode) skip truncation for full error visibility
 			child.stdout.on('data', (data) => {
 				const chunk = data.toString();
-				if (this.isLinked || stdout.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
+				if (this.isLinkedPlugin || stdout.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
 					stdout += chunk;
 					// Stream output for real-time feedback
 					this.emitOutputChunk(chunk);
@@ -301,7 +300,7 @@ Command: ${resolvedCommand} ${this.commandArgs.join(' ')}`
 			// Linked plugins (dev mode) skip truncation for full error visibility
 			child.stderr.on('data', (data) => {
 				const chunk = data.toString();
-				if (this.isLinked || stderr.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
+				if (this.isLinkedPlugin || stderr.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
 					stderr += chunk;
 					this.emitOutputChunk(chunk);
 				}

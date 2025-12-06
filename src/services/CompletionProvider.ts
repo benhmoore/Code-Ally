@@ -1085,23 +1085,19 @@ export class CompletionProvider {
       // Resolve relative paths
       let baseDir: string;
       let searchPattern: string;
-      let pathPrefix: string; // The prefix to prepend to insertText
 
       if (endsWithSlash) {
         // User typed trailing slash - show contents of this directory
         if (path.startsWith('/')) {
           // Absolute path: /foo/bar/ -> show contents of /foo/bar
           baseDir = path || '/';
-          pathPrefix = path === '/' ? '/' : `${path}/`;
         } else if (path.startsWith('~')) {
           // Home directory: ~/foo/ -> show contents of ~/foo
           const homedir = os.homedir();
           baseDir = path.replace('~', homedir);
-          pathPrefix = `${path}/`;
         } else {
           // Relative path: src/ -> show contents of src
           baseDir = path || '.';
-          pathPrefix = path === '.' ? '' : `${path}/`;
         }
         searchPattern = ''; // Show all entries in the directory
       } else {
@@ -1110,24 +1106,17 @@ export class CompletionProvider {
           // Absolute path
           baseDir = dirname(path) || '/';
           searchPattern = basename(path);
-          const dir = dirname(path);
-          pathPrefix = dir === '/' ? '/' : `${dir}/`;
         } else if (path.startsWith('~')) {
           // Home directory
           const homedir = os.homedir();
           const expandedPath = path.replace('~', homedir);
           baseDir = dirname(expandedPath);
           searchPattern = basename(expandedPath);
-          // Get the dirname in the original ~ format
-          const originalDir = dirname(path);
-          pathPrefix = originalDir === '~' ? '~/' : `${originalDir}/`;
         } else {
           // Relative path - check if it contains a separator
           const hasSeparator = path.includes('/') || path.includes('\\');
           baseDir = hasSeparator ? dirname(path) : '.';
           searchPattern = basename(path);
-          const dir = hasSeparator ? dirname(path) : '';
-          pathPrefix = dir ? `${dir}/` : '';
         }
       }
 
@@ -1140,13 +1129,12 @@ export class CompletionProvider {
       for (const entry of entries) {
         if (entry.name.startsWith(searchPattern) || searchPattern === '') {
           const isDir = entry.isDirectory();
-          const fullPath = `${pathPrefix}${entry.name}`;
 
           completions.push({
             value: isDir ? `${entry.name}/` : entry.name,
             description: isDir ? 'Directory' : 'File',
             type: 'file',
-            insertText: isDir ? `${fullPath}/` : fullPath,
+            insertText: isDir ? `${entry.name}/` : entry.name,
           });
         }
       }

@@ -270,7 +270,7 @@ export class SessionsTool extends BaseTool {
 
       if (!agentPoolService) {
         // Graceful fallback: AgentPoolService not available
-        logger.warn('[SESSIONS_TOOL] AgentPoolService not available, falling back to ephemeral agent');
+        logger.debug('[SESSIONS_TOOL] AgentPoolService not available, falling back to ephemeral agent');
         analysisAgent = new Agent(
           mainModelClient,
           toolManager,

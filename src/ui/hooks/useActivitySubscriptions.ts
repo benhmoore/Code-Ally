@@ -23,6 +23,7 @@ import { AgentManager } from '@services/AgentManager.js';
 import { PluginConfigManager } from '@plugins/PluginConfigManager.js';
 import { logger } from '@services/Logger.js';
 import { UI_DELAYS } from '@config/constants.js';
+import { sendTerminalNotification } from '../../utils/terminal.js';
 
 /**
  * Activity subscriptions state
@@ -189,6 +190,7 @@ export const useActivitySubscriptions = (
       collapsed: event.data.collapsed || false,
       shouldCollapse: event.data.shouldCollapse || false,
       hideOutput: event.data.hideOutput || false,
+      isLinkedPlugin: event.data.isLinkedPlugin || false,
     };
 
     actions.addToolCall(toolCall);
@@ -536,6 +538,9 @@ export const useActivitySubscriptions = (
       options,
     });
     modal.setPermissionSelectedIndex(0);
+
+    // Send terminal bell to notify user of permission prompt
+    sendTerminalNotification();
   });
 
   // Permission response events

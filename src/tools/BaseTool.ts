@@ -92,6 +92,13 @@ export abstract class BaseTool {
   readonly pluginName?: string;
 
   /**
+   * Whether this plugin is linked (dev mode)
+   * Linked plugins show verbose output and errors in the UI
+   * Set by ExecutableToolWrapper for plugins installed via symlink
+   */
+  readonly isLinkedPlugin?: boolean;
+
+  /**
    * Whether this is an internal tool restricted to specific agents
    * Set to true for specialized tools that shouldn't be available to all agents
    * (e.g., write-temp is only for explore agents)

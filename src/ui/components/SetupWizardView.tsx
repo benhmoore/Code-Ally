@@ -339,8 +339,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               </Box>
             )}
             <Box marginBottom={1}>
-              <Text color={UI_COLORS.PRIMARY}>Endpoint: </Text>
               <TextInput
+                label="Endpoint:"
                 value={endpointBuffer}
                 onValueChange={setEndpointBuffer}
                 cursorPosition={endpointCursor}

@@ -488,37 +488,44 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       )}
 
       {/* Output as threaded child (hidden if collapsed, has agent ancestor, or own hideOutput, unless show_full_tool_output is enabled) */}
-      {!toolCall.collapsed && !hasAgentAncestor && (!toolCall.hideOutput || config?.show_full_tool_output) && trimmedOutput && !toolCall.error && (
-        <Box flexDirection="column">
-          <Box>
-            <Text>{indent}    </Text>
-            <Text dimColor>→ </Text>
-            <Text dimColor>Output</Text>
+      {/* For linked plugins (dev mode), always show output - overrides all other settings */}
+      {(() => {
+        const shouldShowOutput = toolCall.isLinkedPlugin || (!hasAgentAncestor && (!toolCall.hideOutput || config?.show_full_tool_output));
+        if (toolCall.collapsed || !shouldShowOutput || !trimmedOutput || toolCall.error) return null;
+        return (
+          <Box flexDirection="column">
+            <Box>
+              <Text>{indent}    </Text>
+              <Text dimColor>→ </Text>
+              <Text dimColor>Output</Text>
+            </Box>
+            <Box paddingLeft={indent.length + 8}>
+              <Text dimColor>
+                {config?.show_full_tool_output || trimmedOutput.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
+                  ? trimmedOutput
+                  : `${trimmedOutput.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
+              </Text>
+            </Box>
           </Box>
-          <Box paddingLeft={indent.length + 8}>
-            <Text dimColor>
-              {config?.show_full_tool_output || trimmedOutput.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
-                ? trimmedOutput
-                : `${trimmedOutput.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
-            </Text>
-          </Box>
-        </Box>
-      )}
+        );
+      })()}
 
       {/* Error output - Show clean error message from error_details */}
-      {/* For linked plugins (_verboseErrors), always show errors even inside delegated agents */}
-      {!toolCall.collapsed && (!hasAgentAncestor || toolCall.result?._verboseErrors) && toolCall.error && toolCall.result?.error_details && (() => {
+      {/* For linked plugins (dev mode), always show errors - overrides all other settings */}
+      {(() => {
+        const shouldShowError = toolCall.isLinkedPlugin || !hasAgentAncestor;
+        if (toolCall.collapsed || !shouldShowError || !toolCall.error || !toolCall.result?.error_details) return null;
         // Use structured error_details.message (clean error without tool call formatting)
         const errorMessage = toolCall.result.error_details.message;
-        // For linked plugins (_verboseErrors), show last 10 lines; otherwise truncate to first line
-        const isVerbose = toolCall.result._verboseErrors === true;
+        // For linked plugins, show last N lines; otherwise truncate to first line
+        const isLinked = toolCall.isLinkedPlugin;
         const allLines = errorMessage.split('\n');
         const firstLine = allLines[0] || 'Unknown error';
 
         let displayLines: string[];
         let needsHint = false;
 
-        if (isVerbose) {
+        if (isLinked) {
           // Show last N lines for linked plugins (dev mode)
           if (allLines.length > BUFFER_SIZES.LINKED_PLUGIN_ERROR_LINES) {
             displayLines = allLines.slice(-BUFFER_SIZES.LINKED_PLUGIN_ERROR_LINES);
@@ -546,7 +553,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
             {needsHint && (
               <Box paddingLeft={indent.length + 4}>
                 <Text color="gray" dimColor>
-                  {isVerbose ? 'Full error: /debug dump' : 'Full error: /debug errors'}
+                  {isLinked ? 'Full error: /debug dump' : 'Full error: /debug errors'}
                 </Text>
               </Box>
             )}

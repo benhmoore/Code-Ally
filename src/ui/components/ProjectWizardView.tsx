@@ -309,8 +309,8 @@ This file provides project-specific guidance to Code Ally when working with this
             </Text>
           </Box>
           <Box marginBottom={1}>
-            <Text color={UI_COLORS.PRIMARY}>Project Name: </Text>
             <TextInput
+              label="Project Name:"
               value={projectNameBuffer}
               onValueChange={setProjectNameBuffer}
               cursorPosition={projectNameCursor}
@@ -345,8 +345,8 @@ This file provides project-specific guidance to Code Ally when working with this
             </Text>
           </Box>
           <Box marginBottom={1}>
-            <Text color={UI_COLORS.PRIMARY}>Description: </Text>
             <TextInput
+              label="Description:"
               value={descriptionBuffer}
               onValueChange={setDescriptionBuffer}
               cursorPosition={descriptionCursor}
@@ -381,8 +381,8 @@ This file provides project-specific guidance to Code Ally when working with this
             </Text>
           </Box>
           <Box marginBottom={1}>
-            <Text color={UI_COLORS.PRIMARY}>Language: </Text>
             <TextInput
+              label="Language:"
               value={languageBuffer}
               onValueChange={setLanguageBuffer}
               cursorPosition={languageCursor}
@@ -427,8 +427,8 @@ This file provides project-specific guidance to Code Ally when working with this
             </Box>
           )}
           <Box marginBottom={1}>
-            <Text color={UI_COLORS.PRIMARY}>Command: </Text>
             <TextInput
+              label="Command:"
               value={setupCommandBuffer}
               onValueChange={setSetupCommandBuffer}
               cursorPosition={setupCommandCursor}
@@ -473,8 +473,8 @@ This file provides project-specific guidance to Code Ally when working with this
             </Box>
           )}
           <Box marginBottom={1}>
-            <Text color={UI_COLORS.PRIMARY}>Command: </Text>
             <TextInput
+              label="Command:"
               value={buildCommandBuffer}
               onValueChange={setBuildCommandBuffer}
               cursorPosition={buildCommandCursor}
@@ -519,8 +519,8 @@ This file provides project-specific guidance to Code Ally when working with this
             </Box>
           )}
           <Box marginBottom={1}>
-            <Text color={UI_COLORS.PRIMARY}>Command: </Text>
             <TextInput
+              label="Command:"
               value={testCommandBuffer}
               onValueChange={setTestCommandBuffer}
               cursorPosition={testCommandCursor}
@@ -555,8 +555,8 @@ This file provides project-specific guidance to Code Ally when working with this
             </Text>
           </Box>
           <Box marginBottom={1}>
-            <Text color={UI_COLORS.PRIMARY}>Formatter: </Text>
             <TextInput
+              label="Formatter:"
               value={formatterBuffer}
               onValueChange={setFormatterBuffer}
               cursorPosition={formatterCursor}
@@ -591,8 +591,8 @@ This file provides project-specific guidance to Code Ally when working with this
             </Text>
           </Box>
           <Box marginBottom={1}>
-            <Text color={UI_COLORS.PRIMARY}>Linter: </Text>
             <TextInput
+              label="Linter:"
               value={linterBuffer}
               onValueChange={setLinterBuffer}
               cursorPosition={linterCursor}

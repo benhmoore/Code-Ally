@@ -426,18 +426,10 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
         ) : (
           <>
             <Box marginBottom={1}>
-              <Text color={UI_COLORS.PRIMARY}>{currentField}: </Text>
               <TextInput
-                value={isSecret ? '*'.repeat(currentInputBuffer.length) : currentInputBuffer}
-                onValueChange={(newValue) => {
-                  // For secret fields, track actual value separately
-                  if (isSecret) {
-                    // Simple secret handling - just track length
-                    setCurrentInputBuffer(newValue);
-                  } else {
-                    setCurrentInputBuffer(newValue);
-                  }
-                }}
+                label={`${currentField}:`}
+                value={currentInputBuffer}
+                onValueChange={setCurrentInputBuffer}
                 cursorPosition={currentInputCursor}
                 onCursorChange={setCurrentInputCursor}
                 onSubmit={handleTextFieldSubmit}
@@ -445,6 +437,7 @@ export const PluginConfigView: React.FC<PluginConfigViewProps> = ({
                 onCtrlC={handleCtrlC}
                 isActive={true}
                 multiline={false}
+                mask={isSecret ? '*' : undefined}
                 placeholder={currentProperty.default !== undefined ? String(currentProperty.default) : ''}
               />
             </Box>

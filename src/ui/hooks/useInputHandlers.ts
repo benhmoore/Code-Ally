@@ -111,7 +111,7 @@ export const useInputHandlers = (
 
           logger.debug('[APP] Successfully routed to tool:', activeTool.name, 'callId:', activeTool.callId);
         } else {
-          logger.warn('[APP] Active tool does not support message injection:', activeTool.name);
+          logger.debug('[APP] Active tool does not support message injection:', activeTool.name);
           routedToTool = false;
         }
       } catch (error) {

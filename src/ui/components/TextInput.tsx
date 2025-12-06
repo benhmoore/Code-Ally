@@ -51,6 +51,24 @@ export interface TextInputProps {
   borderColor?: string;
   /** Optional prompt prefix (e.g., "> " or "ally> ") - only used when bordered={true} */
   promptText?: string;
+  /**
+   * Mask character for hidden input (e.g., passwords).
+   * When set, displays this character for each character in the value,
+   * but the actual value is preserved for all callbacks.
+   * Example: mask="*" will display "****" for value "test"
+   */
+  mask?: string;
+  /**
+   * Optional label displayed above the input.
+   * When provided, renders in a vertical layout with the label on its own line.
+   * This ensures consistent layout regardless of terminal width.
+   */
+  label?: string;
+  /**
+   * Color for the label text.
+   * @default 'cyan' (UI_COLORS.PRIMARY)
+   */
+  labelColor?: string;
 }
 
 /**
@@ -73,6 +91,9 @@ export const TextInput: React.FC<TextInputProps> = ({
   bordered = false,
   borderColor = 'gray',
   promptText = '> ',
+  mask,
+  label,
+  labelColor = 'cyan',
 }) => {
   // Use refs to avoid stale closure issues with rapid input events
   const valueRef = useRef(value);
@@ -415,8 +436,16 @@ export const TextInput: React.FC<TextInputProps> = ({
     { isActive }
   );
 
-  // Split value into lines for rendering
-  const lines = value.split('\n');
+  // Apply mask for display if specified (e.g., password fields)
+  // The actual value is preserved in all callbacks - mask only affects rendering
+  // Preserve newlines in masked content so multiline still works correctly
+  // Use Array.from() for proper Unicode grapheme handling (emoji, combining chars)
+  const displayValue = mask
+    ? Array.from(value).map(char => char === '\n' ? '\n' : mask).join('')
+    : value;
+
+  // Split display value into lines for rendering
+  const lines = displayValue.split('\n');
   const isEmpty = value.trim().length === 0;
 
   // Calculate cursor line info
@@ -489,17 +518,23 @@ export const TextInput: React.FC<TextInputProps> = ({
     </>
   );
 
+  // Render the input field (bordered or inline)
+  const renderInput = () => (
+    bordered ? (
+      <Box flexDirection="column" borderStyle="round" borderColor={borderColor} paddingX={1} width="100%">
+        {renderContent()}
+      </Box>
+    ) : (
+      <Box flexDirection="column" width="100%" marginLeft={1}>
+        {renderContent()}
+      </Box>
+    )
+  );
+
   return (
     <Box flexDirection="column" width="100%">
-      {bordered ? (
-        <Box flexDirection="column" borderStyle="round" borderColor={borderColor} paddingX={1} width="100%">
-          {renderContent()}
-        </Box>
-      ) : (
-        <Box flexDirection="column" width="100%" marginLeft={1}>
-          {renderContent()}
-        </Box>
-      )}
+      {label && <Text color={labelColor}>{label}</Text>}
+      {renderInput()}
     </Box>
   );
 };

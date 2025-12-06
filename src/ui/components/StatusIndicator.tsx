@@ -485,7 +485,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
               <>
                 <Text>Working with </Text>
                 <Text color={UI_COLORS.PRIMARY} bold>
-                  {activeAgentName || activeSubAgents.join(', ')}
+                  {activeAgentName || activeSubAgents.map(getAgentDisplayName).join(', ')}
                 </Text>
                 {activeSubAgents.length > 1 && (
                   <Text dimColor> ({activeSubAgents.length} agents)</Text>

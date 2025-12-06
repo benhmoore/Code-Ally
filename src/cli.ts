@@ -460,14 +460,6 @@ async function handleOnceMode(
   // Send the message (don't echo it - user already typed it)
   try {
     const response = await agent.sendMessage(message);
-
-    // DEBUG: Log response details to diagnose blank response issue
-    console.log('DEBUG: Response type:', typeof response);
-    console.log('DEBUG: Response length:', response?.length);
-    console.log('DEBUG: Response value:', JSON.stringify(response));
-    console.log('DEBUG: First 100 chars:', response?.substring(0, 100));
-    console.log('---');
-
     console.log(response);
 
     // Save session only if explicitly requested

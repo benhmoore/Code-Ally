@@ -6,10 +6,11 @@
  * within the focused directory tree.
  */
 
-import { resolve, relative, isAbsolute, sep } from 'path';
+import { resolve, relative, sep } from 'path';
 import { realpath, access, stat } from 'fs/promises';
 import { constants } from 'fs';
 import { formatError } from '../utils/errorUtils.js';
+import { resolvePath } from '../utils/pathUtils.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
 
 interface IAdditionalDirsManager {
@@ -74,29 +75,13 @@ export class FocusManager {
   /**
    * Set focus to a directory relative to current working directory
    *
-   * @param relativePath - Path relative to current working directory
+   * @param inputPath - Path relative to current working directory
    * @returns Result indicating success or failure
    */
-  async setFocus(relativePath: string): Promise<FocusResult> {
+  async setFocus(inputPath: string): Promise<FocusResult> {
     try {
-      const currentWd = this.initialWorkingDirectory;
-
-      // Handle special cases
-      let focusPath: string;
-      if (relativePath === '.') {
-        focusPath = currentWd;
-      } else {
-        // Reject absolute paths
-        if (isAbsolute(relativePath)) {
-          return createFocusError(
-            'Focus path must be relative to current working directory',
-            'setFocus',
-            relativePath
-          );
-        }
-
-        focusPath = resolve(currentWd, relativePath);
-      }
+      // Resolve path (handles ~, absolute, and relative paths)
+      let focusPath = resolvePath(inputPath, this.initialWorkingDirectory);
 
       // Resolve symlinks
       focusPath = await realpath(focusPath);
@@ -106,32 +91,23 @@ export class FocusManager {
         await access(focusPath, constants.R_OK);
       } catch {
         return createFocusError(
-          `Focus directory is not accessible: ${relativePath}`,
+          `Focus directory is not accessible: ${inputPath}`,
           'setFocus',
-          relativePath
+          inputPath
         );
       }
 
       const stats = await stat(focusPath);
       if (!stats.isDirectory()) {
         return createFocusError(
-          `Focus path is not a directory: ${relativePath}`,
+          `Focus path is not a directory: ${inputPath}`,
           'setFocus',
-          relativePath
-        );
-      }
-
-      // Ensure focus is within current working directory
-      if (!focusPath.startsWith(currentWd)) {
-        return createFocusError(
-          `Focus directory must be within current working directory: ${relativePath}`,
-          'setFocus',
-          relativePath
+          inputPath
         );
       }
 
       this.focusDirectory = focusPath;
-      const relativeDisplay = relative(currentWd, focusPath);
+      const relativeDisplay = relative(this.initialWorkingDirectory, focusPath);
 
       return {
         success: true,
@@ -229,27 +205,9 @@ export class FocusManager {
       return '';
     }
 
-    // Expand user directory symbols first
-    let expanded = filePath;
-    if (filePath.startsWith('~/')) {
-      const home = process.env.HOME || process.env.USERPROFILE || '';
-      expanded = filePath.replace('~', home);
-    } else if (filePath === '~') {
-      expanded = process.env.HOME || process.env.USERPROFILE || '';
-    }
-
-    // No focus active - resolve normally
-    if (!this.isFocused()) {
-      return resolve(expanded);
-    }
-
-    // Already absolute - return normalized
-    if (isAbsolute(expanded)) {
-      return resolve(expanded);
-    }
-
-    // Relative path - resolve relative to focused directory
-    return resolve(this.focusDirectory!, expanded);
+    // Resolve path with appropriate base directory
+    const baseDir = this.isFocused() ? this.focusDirectory! : undefined;
+    return resolvePath(filePath, baseDir);
   }
 
   /**
@@ -277,11 +235,11 @@ export class FocusManager {
 
       // Check if path is in excluded files list
       if (this.excludedFiles.has(normalizedPath)) {
-        const relativePath = relative(this.initialWorkingDirectory, normalizedPath);
+        const inputPath = relative(this.initialWorkingDirectory, normalizedPath);
         return createFocusError(
-          `Access denied: path '${relativePath}' is excluded from access`,
+          `Access denied: path '${inputPath}' is excluded from access`,
           'validatePathInFocus',
-          relativePath
+          inputPath
         );
       }
 
@@ -300,11 +258,11 @@ export class FocusManager {
           }
 
           const focusDisplay = this.getFocusDisplay();
-          const relativePath = relative(this.initialWorkingDirectory, normalizedPath);
+          const inputPath = relative(this.initialWorkingDirectory, normalizedPath);
           return createFocusError(
-            `Access denied: path '${relativePath}' is outside focused directory '${focusDisplay}'`,
+            `Access denied: path '${inputPath}' is outside focused directory '${focusDisplay}'`,
             'validatePathInFocus',
-            relativePath
+            inputPath
           );
         }
       }

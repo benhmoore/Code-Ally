@@ -987,7 +987,7 @@ export class Agent {
         message,
         isSpecializedAgent: this.config.isSpecializedAgent || false,
         instanceId: this.instanceId,
-        agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
+        agentName: this.config.agentType || 'ally',
       },
     });
 
@@ -1172,7 +1172,7 @@ export class Agent {
             interrupted: true,
             isSpecializedAgent: this.config.isSpecializedAgent || false,
             instanceId: this.instanceId,
-            agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
+            agentName: this.config.agentType || 'ally',
           },
         });
 
@@ -1276,7 +1276,7 @@ export class Agent {
           interrupted: true,
           isSpecializedAgent: this.config.isSpecializedAgent || false,
           instanceId: this.instanceId,
-          agentName: this.config.baseAgentPrompt ? 'specialized' : 'main',
+          agentName: this.config.agentType || 'ally',
         },
       });
     }
@@ -2086,7 +2086,7 @@ export class Agent {
       const focusManager = registry.get<FocusManager>('focus_manager');
 
       if (!focusManager) {
-        logger.warn('[AGENT_FOCUS]', this.instanceId, 'FocusManager not available, skipping focus setup');
+        logger.debug('[AGENT_FOCUS]', this.instanceId, 'FocusManager not available, skipping focus setup');
         return;
       }
 

@@ -109,27 +109,21 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
     const setCursor = fieldName === 'title' ? setTitleCursor : fieldName === 'content' ? setContentCursor : setTagsCursor;
 
     return (
-      <Box flexDirection="column" marginBottom={1}>
-        {/* Field label */}
-        <Text bold color={isFocused ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DEFAULT}>
-          {label}:
-        </Text>
-
-        {/* Field input */}
-        <Box marginLeft={2}>
-          <TextInput
-            value={value}
-            onValueChange={(newValue) => onFieldChange(fieldName, newValue)}
-            cursorPosition={cursor}
-            onCursorChange={setCursor}
-            onSubmit={handleSubmit}
-            onEscape={onCancel}
-            onCtrlC={handleCtrlC}
-            isActive={isFocused}
-            multiline={isMultiline}
-            placeholder={placeholder}
-          />
-        </Box>
+      <Box marginBottom={1}>
+        <TextInput
+          label={`${label}:`}
+          labelColor={isFocused ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DEFAULT}
+          value={value}
+          onValueChange={(newValue) => onFieldChange(fieldName, newValue)}
+          cursorPosition={cursor}
+          onCursorChange={setCursor}
+          onSubmit={handleSubmit}
+          onEscape={onCancel}
+          onCtrlC={handleCtrlC}
+          isActive={isFocused}
+          multiline={isMultiline}
+          placeholder={placeholder}
+        />
       </Box>
     );
   };

@@ -672,7 +672,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
 
     if (!agentPoolService) {
       // Graceful fallback: AgentPoolService not available
-      logger.warn('[AGENT_TOOL] AgentPoolService not available, falling back to ephemeral agent');
+      logger.debug('[AGENT_TOOL] AgentPoolService not available, falling back to ephemeral agent');
       const agent = new Agent(modelClient, toolManager, this.activityStream, agentConfig, configManager, permissionManager);
       return { agent, pooledAgent: null, agentId: null };
     }
