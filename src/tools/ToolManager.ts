@@ -124,6 +124,8 @@ export class ToolManager {
     for (const tool of tools) {
       this.tools.set(tool.name, tool);
     }
+    // Clear cache after bulk registration
+    this.functionDefinitionsCache.clear();
   }
 
   /**

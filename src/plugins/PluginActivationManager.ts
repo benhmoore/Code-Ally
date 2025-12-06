@@ -178,8 +178,9 @@ export class PluginActivationManager {
    * @returns Object with arrays of activated and deactivated plugin names
    */
   parseAndActivateTags(message: string): { activated: string[]; deactivated: string[] } {
-    const activatePattern = /\+([a-z0-9_-]+)/gi;
-    const deactivatePattern = /-([a-z0-9_-]+)/gi;
+    // Use word boundary or start-of-string to avoid matching negative numbers like "-5"
+    const activatePattern = /(?:^|(?<=\s))\+([a-z0-9_-]+)/gi;
+    const deactivatePattern = /(?:^|(?<=\s))-([a-z][a-z0-9_-]*)/gi;
 
     const activated: string[] = [];
     const deactivated: string[] = [];

@@ -38,6 +38,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { FocusManager } from '../services/FocusManager.js';
 import { PluginConfigManager } from '../plugins/PluginConfigManager.js';
+import type { PluginLoaderService } from '../plugins/interfaces.js';
 import { logger, LogLevel } from '../services/Logger.js';
 import { useServiceInitialization } from './hooks/useServiceInitialization.js';
 import { useModalState } from './hooks/useModalState.js';
@@ -342,16 +343,20 @@ const AppContentComponent: React.FC<{
   // Check for pending plugin config requests on mount
   useEffect(() => {
     const checkPendingPluginConfig = async () => {
-      // Dynamic import to avoid circular dependencies
-      const { PluginLoader } = await import('../plugins/PluginLoader.js');
+      // Get the plugin loader service from registry
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const pluginLoader = serviceRegistry.get<PluginLoaderService>('plugin_loader');
+
+      if (!pluginLoader) {
+        return;
+      }
 
       // Check if there's a pending config request
-      const pendingRequest = PluginLoader.getPendingConfigRequest();
+      const pendingRequest = pluginLoader.getPendingConfigRequest();
       if (pendingRequest) {
         logger.debug('[App] Found pending plugin config request on mount:', pendingRequest.pluginName);
 
         // Load existing config if available
-        const serviceRegistry = ServiceRegistry.getInstance();
         const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
         let existingConfig: any = undefined;
 

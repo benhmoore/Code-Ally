@@ -170,18 +170,36 @@ interface ValidationResult {
 }
 
 /**
- * Pending plugin config requests (stored at module level for UI to check on mount)
+ * Plugin name validation pattern: lowercase alphanumeric, underscore, and hyphen
  */
-let pendingConfigRequests: Array<{
-  pluginName: string;
-  pluginPath: string;
-  schema: PluginConfigSchema;
-  author?: string;
-  description?: string;
-  version?: string;
-  tools?: any[];
-  agents?: any[];
-}> = [];
+const PLUGIN_NAME_PATTERN = /^[a-z0-9_-]+$/;
+
+/**
+ * Validate plugin name format
+ *
+ * Plugin names must:
+ * - Not start with '+' or '-' (reserved for activation tags)
+ * - Contain only lowercase letters, numbers, underscores, and hyphens
+ *
+ * @param name - Plugin name to validate
+ * @returns Object with valid flag and error message if invalid
+ */
+function validatePluginName(name: string): { valid: boolean; error?: string } {
+  if (name.startsWith('+') || name.startsWith('-')) {
+    return {
+      valid: false,
+      error: `Invalid plugin name '${name}': plugin names cannot start with '+' or '-'`
+    };
+  }
+  if (!PLUGIN_NAME_PATTERN.test(name)) {
+    return {
+      valid: false,
+      error: `Invalid plugin name '${name}': must contain only lowercase letters, numbers, underscores, and hyphens`
+    };
+  }
+  return { valid: true };
+}
+
 
 /**
  * Loaded plugin information
@@ -203,6 +221,16 @@ export class PluginLoader {
   private configManager: PluginConfigManager;
   private envManager: PluginEnvironmentManager;
   private loadedPlugins: Map<string, LoadedPluginInfo> = new Map();
+  private pendingConfigRequests: Array<{
+    pluginName: string;
+    pluginPath: string;
+    schema: PluginConfigSchema;
+    author?: string;
+    description?: string;
+    version?: string;
+    tools?: any[];
+    agents?: any[];
+  }> = [];
 
   constructor(activityStream: ActivityStream, configManager: PluginConfigManager) {
     this.activityStream = activityStream;
@@ -282,13 +310,9 @@ export class PluginLoader {
     if (!manifest.name || typeof manifest.name !== 'string') {
       errors.push("Missing required field 'name'");
     } else {
-      // Validate plugin name format: must not start with + or -
-      if (manifest.name.startsWith('+') || manifest.name.startsWith('-')) {
-        errors.push(`Invalid plugin name '${manifest.name}': plugin names cannot start with '+' or '-'`);
-      }
-      // Validate plugin name pattern: only lowercase alphanumeric, underscore, and hyphen
-      if (!/^[a-z0-9_-]+$/.test(manifest.name)) {
-        errors.push(`Invalid plugin name '${manifest.name}': must contain only lowercase letters, numbers, underscores, and hyphens`);
+      const nameValidation = validatePluginName(manifest.name);
+      if (!nameValidation.valid) {
+        errors.push(nameValidation.error!);
       }
     }
     if (!manifest.version || typeof manifest.version !== 'string') {
@@ -362,7 +386,7 @@ export class PluginLoader {
    * Get any pending configuration requests
    * Returns the first pending request and removes it from the queue
    */
-  static getPendingConfigRequest(): {
+  getPendingConfigRequest(): {
     pluginName: string;
     pluginPath: string;
     schema: PluginConfigSchema;
@@ -372,17 +396,17 @@ export class PluginLoader {
     tools?: any[];
     agents?: any[];
   } | null {
-    if (pendingConfigRequests.length === 0) {
+    if (this.pendingConfigRequests.length === 0) {
       return null;
     }
-    return pendingConfigRequests.shift() || null;
+    return this.pendingConfigRequests.shift() || null;
   }
 
   /**
    * Clear all pending configuration requests
    */
-  static clearPendingConfigRequests(): void {
-    pendingConfigRequests = [];
+  clearPendingConfigRequests(): void {
+    this.pendingConfigRequests = [];
   }
 
   /**
@@ -480,11 +504,9 @@ export class PluginLoader {
       }
 
       // Validate plugin name format
-      if (manifest.name.startsWith('+') || manifest.name.startsWith('-')) {
-        return this.createPluginError(`Invalid plugin name '${manifest.name}': plugin names cannot start with '+' or '-'`, 'installFromPath', sourcePath);
-      }
-      if (!/^[a-z0-9_-]+$/.test(manifest.name)) {
-        return this.createPluginError(`Invalid plugin name '${manifest.name}': must contain only lowercase letters, numbers, underscores, and hyphens`, 'installFromPath', sourcePath);
+      const nameValidation = validatePluginName(manifest.name);
+      if (!nameValidation.valid) {
+        return this.createPluginError(nameValidation.error!, 'installFromPath', sourcePath);
       }
 
       if (!manifest.tools || manifest.tools.length === 0) {
@@ -987,7 +1009,7 @@ export class PluginLoader {
         );
 
         // Store the request so UI can pick it up on mount
-        pendingConfigRequests.push({
+        this.pendingConfigRequests.push({
           pluginName: manifest.name,
           pluginPath: pluginPath,
           schema: manifest.config,

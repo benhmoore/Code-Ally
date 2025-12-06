@@ -120,12 +120,13 @@ export class PluginConfigManager {
             const encryptedValue = value.substring(prefix.length);
             decrypted[key] = await this.decrypt(encryptedValue);
           } catch (error) {
-            logger.warn(
-              `[PluginConfigManager] Failed to decrypt field '${key}': ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            );
-            // Leave the value as-is if decryption fails
+            // Decryption failure is a critical error - don't silently continue
+            // with encrypted value as it would cause cryptic downstream failures
+            const errorMsg = `Failed to decrypt secret field '${key}': ${
+              error instanceof Error ? error.message : String(error)
+            }. The encryption key may have changed, or the config file may be corrupted.`;
+            logger.error(`[PluginConfigManager] ${errorMsg}`);
+            throw new Error(errorMsg);
           }
         }
       }

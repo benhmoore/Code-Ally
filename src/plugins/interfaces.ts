@@ -210,6 +210,26 @@ export interface PluginLoaderService {
    * @returns Source path if linked, null otherwise
    */
   getLinkedPluginSource(pluginName: string): Promise<string | null>;
+
+  /**
+   * Get any pending configuration requests
+   * Returns the first pending request and removes it from the queue
+   */
+  getPendingConfigRequest(): {
+    pluginName: string;
+    pluginPath: string;
+    schema: PluginConfigSchema;
+    author?: string;
+    description?: string;
+    version?: string;
+    tools?: any[];
+    agents?: any[];
+  } | null;
+
+  /**
+   * Clear all pending configuration requests
+   */
+  clearPendingConfigRequests(): void;
 }
 
 /**

@@ -38,7 +38,10 @@ export class ConfigUtils {
 
       case 'boolean':
         if (typeof value === 'string') {
-          return value === 'true';
+          const lower = value.toLowerCase();
+          if (lower === 'true' || lower === '1' || lower === 'yes' || lower === 'on') return true;
+          if (lower === 'false' || lower === '0' || lower === 'no' || lower === 'off') return false;
+          return value === 'true'; // Fallback for unknown strings
         }
         return value;
 
@@ -63,11 +66,21 @@ export class ConfigUtils {
         return actualType === 'number' ||
           (actualType === 'string' && !isNaN(Number(value)) && value.trim() !== '');
 
-      case 'boolean':
-        return actualType === 'boolean' ||
-          (actualType === 'string' && (value === 'true' || value === 'false'));
+      case 'boolean': {
+        if (actualType === 'boolean') return true;
+        if (actualType === 'string') {
+          const lower = value.toLowerCase();
+          return ['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(lower);
+        }
+        return false;
+      }
 
       case 'string':
+        return actualType === 'string';
+
+      case 'choice':
+        // Choice validation is handled at schema level with choices array
+        // Here we just verify the value is a string (choice values are strings)
         return actualType === 'string';
 
       default:
