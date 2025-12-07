@@ -89,6 +89,7 @@ function getExploreThoroughnessGuidelines(thoroughness: string): string | null {
 - You CAN write temporary notes to /tmp using write-temp to organize findings
 - **Time limit: ~6 minutes maximum** - System reminders will notify you of remaining time
 - **Delegation strategy**: DEFAULT to delegation for complex explorations with multiple components
+- **Cross-validation**: For critical findings, consider redundant agent pairs on the same area—where they agree, report with high confidence; where they diverge, flag both perspectives
 - Break down into logical sub-explorations (e.g., architecture overview, then deep dives per component)
 - Use "overview then deep dive" pattern: First map the landscape, then delegate detailed investigations
 - Be comprehensive and meticulous (aim for 6-12 tool calls if not delegating)
@@ -112,6 +113,7 @@ function getExploreThoroughnessGuidelines(thoroughness: string): string | null {
 - You CAN write temporary notes to /tmp using write-temp to organize findings
 - **No time limit imposed** - Take the time needed to do a thorough job
 - **Delegation strategy**: PREFER delegation for any multi-part exploration (maximize efficiency)
+- **Cross-validation**: For critical or ambiguous findings, use redundant agent pairs on the same problem area—where they agree, report with high confidence; where they diverge, investigate further or flag both perspectives
 - Complex codebase explorations should almost always use delegation strategy
 - Consider "divide and conquer" pattern: Split by architectural boundaries or directories
 - Be comprehensive and systematic with tool usage

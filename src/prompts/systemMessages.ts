@@ -76,7 +76,7 @@ Planning: Multi-step features/refactors. Skip quick fixes.
 Agents: Auto-persist. Reusable via agent-ask.`;
 
 // Additional guidelines that apply to all agents
-const GENERAL_GUIDELINES = `Code: Check existing patterns before creating new code.
+const GENERAL_GUIDELINES = `Code: Check existing patterns before creating new code. Write clean, artful code that integrates naturally—never tacked on, never over-engineered.
 Files: Read before editing. Use batch edits (edits array) for edit and line-edit tools - provide all edits in a single array, edits are applied atomically and prevent line shifting issues. Ephemeral reads only for large files.
 Background processes: ALWAYS use bash(run_in_background=true) for dev servers, file watchers, or any long-running process. Examples: npm run dev, python -m http.server, npm start, vite, webpack serve. Monitor with bash-output, kill with kill-shell.
 Prohibited: No commits without request. No unsolicited explanations.`;

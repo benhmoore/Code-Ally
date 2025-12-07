@@ -786,7 +786,7 @@ export class ResponseProcessor {
           content: fallbackContent,
           isSpecializedAgent: context.isSpecializedAgent,
           instanceId: context.instanceId,
-          agentName: context.baseAgentPrompt ? 'specialized' : 'main',
+          agentName: context.agentName || (context.isSpecializedAgent ? 'agent' : 'main'),
         },
       });
 
@@ -838,7 +838,7 @@ export class ResponseProcessor {
         content: content,
         isSpecializedAgent: context.isSpecializedAgent,
         instanceId: context.instanceId,
-        agentName: context.baseAgentPrompt ? 'specialized' : 'main',
+        agentName: context.agentName || (context.isSpecializedAgent ? 'agent' : 'main'),
       },
     });
 

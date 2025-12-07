@@ -1625,7 +1625,7 @@ export class Agent {
             parentId: executionContext.parentCallId, // Use from execution context
             data: {
               acknowledgment: responseContent,
-              agentType: this.config.isSpecializedAgent ? 'specialized' : 'main',
+              agentType: this.agentName || (this.config.isSpecializedAgent ? 'agent' : 'main'),
             },
           });
         }
