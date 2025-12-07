@@ -84,7 +84,7 @@ Don't batch: dependent operations, file reads (use read's file_paths parameter i
       return this.formatErrorResponse(
         `Too many tools in batch: ${toolSpecs.length} requested, maximum is ${BUFFER_SIZES.MAX_BATCH_SIZE}. Split your request into smaller batches.`,
         'validation_error',
-        'Break your batch into smaller groups with 5 or fewer tool calls each.'
+        'Break your batch into smaller groups with 10 or fewer tool calls each.'
       );
     }
 

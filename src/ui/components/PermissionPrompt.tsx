@@ -52,6 +52,8 @@ export interface PermissionPromptProps {
   cursorPosition?: number;
   /** Cursor position change callback */
   onCursorChange?: (position: number) => void;
+  /** Number of permissions in the queue */
+  queueLength?: number;
 }
 
 /**
@@ -74,6 +76,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
   onInstructTextChange,
   cursorPosition = 0,
   onCursorChange = () => {},
+  queueLength,
 }) => {
   if (!visible) {
     return null;
@@ -101,6 +104,9 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
         <Text bold color={UI_COLORS.TEXT_DEFAULT}>
           {toolName}
         </Text>
+        {queueLength && queueLength > 1 && (
+          <Text dimColor> (1 of {queueLength})</Text>
+        )}
       </Box>
 
       {/* Auto-allow indicator (when enabled) */}

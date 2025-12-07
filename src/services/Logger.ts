@@ -26,7 +26,7 @@ export interface LogEntry {
 
 export class Logger {
   private static instance: Logger | null = null;
-  private logLevel: LogLevel = LogLevel.INFO;
+  private logLevel: LogLevel = LogLevel.ERROR;
   private logBuffer: LogEntry[] = [];
   private maxBufferSize: number = BUFFER_SIZES.MAX_LOG_BUFFER_SIZE;
 
@@ -48,6 +48,7 @@ export class Logger {
 
   /**
    * Configure logging from CLI flags
+   * Default level is ERROR - warnings and info messages are hidden unless verbose/debug is enabled
    */
   configure(options: { verbose?: boolean; debug?: boolean }): void {
     if (options.debug) {
@@ -57,7 +58,7 @@ export class Logger {
       this.logLevel = LogLevel.VERBOSE;
       console.log('[VERBOSE] Verbose logging enabled');
     } else {
-      this.logLevel = LogLevel.INFO;
+      this.logLevel = LogLevel.ERROR;
     }
   }
 

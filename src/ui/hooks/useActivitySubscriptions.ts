@@ -478,6 +478,13 @@ export const useActivitySubscriptions = (
   // User interrupt initiated
   useActivityEvent(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
     setIsCancelling(true);
+
+    // Defensively clear tool calls and sub-agents immediately on interrupt
+    // This ensures the UI is cleaned up even if AGENT_END events are delayed or lost
+    actions.clearToolCalls();
+    setActiveAgentsCount(0);
+    // Note: We don't clear activeSubAgents here as removeSubAgent is called per-agent
+    // and the list will be cleaned up as individual AGENT_END events arrive
   });
 
   // Diff preview
@@ -516,7 +523,7 @@ export const useActivitySubscriptions = (
     });
   });
 
-  // Permission request events
+  // Permission request events - enqueue to support concurrent permission prompts
   useActivityEvent(ActivityEventType.PERMISSION_REQUEST, (event) => {
     if (!event.id) {
       throw new Error(`PERMISSION_REQUEST event missing required 'id' field`);
@@ -528,7 +535,7 @@ export const useActivitySubscriptions = (
       throw new Error(`PERMISSION_REQUEST event missing required 'requestId' field. ID: ${event.id}`);
     }
 
-    modal.setPermissionRequest({
+    modal.addPermissionRequest({
       requestId,
       toolName,
       path,
@@ -537,16 +544,20 @@ export const useActivitySubscriptions = (
       sensitivity,
       options,
     });
-    modal.setPermissionSelectedIndex(0);
 
     // Send terminal bell to notify user of permission prompt
     sendTerminalNotification();
   });
 
-  // Permission response events
-  useActivityEvent(ActivityEventType.PERMISSION_RESPONSE, () => {
-    modal.setPermissionRequest(undefined);
-    modal.setPermissionSelectedIndex(0);
+  // Permission response events - dequeue by ID to show next pending request
+  useActivityEvent(ActivityEventType.PERMISSION_RESPONSE, (event) => {
+    const { requestId } = event.data || {};
+    if (requestId) {
+      modal.removePermissionRequest(requestId);
+    } else {
+      // Fallback: clear current if no requestId provided
+      modal.setPermissionRequest(undefined);
+    }
   });
 
   // Model select request events

@@ -666,17 +666,10 @@ export class Agent {
     // Clear conversation history (includes checkpoint tracking and token count)
     this.clearConversationHistory();
 
-    // Clear nested delegation state to prevent routing to stale agent instances
-    // Chain: agent → toolOrchestrator → toolManager → delegationContextManager
-    try {
-      const delegationManager = this.toolOrchestrator?.getToolManager()?.getDelegationContextManager();
-      if (delegationManager && typeof delegationManager.clearAll === 'function') {
-        delegationManager.clearAll();
-        logger.debug(`[AGENT] Cleared delegation context for agent ${this.instanceId}`);
-      }
-    } catch (error) {
-      logger.warn(`[AGENT] Failed to clear delegation context for agent ${this.instanceId}:`, error);
-    }
+    // NOTE: Do NOT call delegationManager.clearAll() here!
+    // The delegation manager is global/shared, so clearAll() would clear OTHER agents' delegations.
+    // Individual delegation contexts are cleared via transitionToCompleting() and clear() when each
+    // delegation completes in the tool code (AgentTool, BaseDelegationTool, etc.)
 
     // Reset per-invocation state counters
     this.timeoutContinuationAttempts = 0;
@@ -869,6 +862,11 @@ export class Agent {
     const parentCallId = executionContext?.parentCallId ?? this.config.parentCallId;
     const maxDuration = executionContext?.maxDuration ?? this.config.maxDuration;
     const thoroughness = executionContext?.thoroughness ?? this.config.thoroughness;
+
+    // Update ToolOrchestrator with fresh parentCallId for pooled agent reuse
+    if (parentCallId) {
+      this.toolOrchestrator.setParentCallId(parentCallId);
+    }
 
     // Runtime assertion: catch depth corruption bugs early
     // This should never happen if AgentTool validates depth correctly,
@@ -2357,7 +2355,7 @@ export class Agent {
         // Stern warning - agent is wasting significant context
         // PERSIST: false - Ephemeral, temporary coaching that becomes irrelevant after the turn
         result.system_reminder = createExploratorySternWarning(this.currentExploratoryStreak);
-        logger.warn('[AGENT_EXPLORATORY_STERN]', this.instanceId, `Injected stern exploratory warning after ${this.currentExploratoryStreak} consecutive calls`);
+        logger.debug('[AGENT_EXPLORATORY_STERN]', this.instanceId, `Injected stern exploratory warning after ${this.currentExploratoryStreak} consecutive calls`);
       } else if (this.currentExploratoryStreak >= threshold) {
         // Gentle reminder - suggest explore()
         // PERSIST: false - Ephemeral, temporary coaching that becomes irrelevant after the turn
@@ -2427,23 +2425,10 @@ export class Agent {
 
     // Clear delegation state to prevent memory leaks
     // This breaks circular references: DelegationContext → PooledAgent → Agent → DelegationContextManager
-    // Must happen before final resource disposal but after agent has completed work
-    try {
-      const toolOrchestrator = this.getToolOrchestrator();
-      if (toolOrchestrator && typeof toolOrchestrator.getToolManager === 'function') {
-        const toolManager = toolOrchestrator.getToolManager();
-        if (toolManager && typeof toolManager.getDelegationContextManager === 'function') {
-          const delegationManager = toolManager.getDelegationContextManager();
-          if (delegationManager && typeof delegationManager.clearAll === 'function') {
-            delegationManager.clearAll();
-            logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Cleared delegation state during cleanup');
-          }
-        }
-      }
-    } catch (error) {
-      // Graceful degradation - log warning but don't block cleanup
-      logger.warn('[AGENT_CLEANUP]', this.instanceId, 'Failed to clear delegation state during cleanup:', error);
-    }
+    // NOTE: Do NOT call delegationManager.clearAll() here!
+    // The delegation manager is global/shared, so clearAll() would clear OTHER agents' delegations.
+    // Individual delegation contexts are cleared via transitionToCompleting() and clear() when each
+    // delegation completes in the tool code (AgentTool, BaseDelegationTool, etc.)
 
     // Only close the model client if this is NOT a specialized subagent
     // Subagents share the client and shouldn't close it

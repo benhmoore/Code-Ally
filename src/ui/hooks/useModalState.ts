@@ -152,12 +152,15 @@ export interface LibraryClearConfirmRequest {
  * All modal state
  */
 export interface ModalState {
-  // Permission prompt
+  // Permission prompt (queue-based: permissionRequest is first in queue)
   permissionRequest?: PermissionRequestWithId;
+  permissionRequestQueueLength: number;
   permissionSelectedIndex: number;
   permissionInstructText: string;
   permissionCursorPosition: number;
   setPermissionRequest: (request?: PermissionRequestWithId) => void;
+  addPermissionRequest: (request: PermissionRequestWithId) => void;
+  removePermissionRequest: (requestId: string) => void;
   setPermissionSelectedIndex: (index: number) => void;
   setPermissionInstructText: (text: string) => void;
   setPermissionCursorPosition: (position: number) => void;
@@ -266,18 +269,58 @@ export interface ModalState {
  * ```
  */
 export const useModalState = (): ModalState => {
-  // Permission prompt
-  const [permissionRequest, setPermissionRequestInternal] = useState<PermissionRequestWithId | undefined>(undefined);
+  // Permission prompt - queue-based implementation for concurrent permission handling
+  const [permissionRequestQueue, setPermissionRequestQueue] = useState<PermissionRequestWithId[]>([]);
   const [permissionSelectedIndex, setPermissionSelectedIndex] = useState(0);
   const [permissionInstructText, setPermissionInstructText] = useState<string>('');
   const [permissionCursorPosition, setPermissionCursorPosition] = useState<number>(0);
 
-  // Wrap setPermissionRequest to clear instruction text and cursor when permission is cleared
+  // Computed current permission request (first in queue)
+  const permissionRequest = permissionRequestQueue[0];
+
+  // Add permission request to queue
+  const addPermissionRequest = (request: PermissionRequestWithId) => {
+    setPermissionRequestQueue(prev => [...prev, request]);
+  };
+
+  // Remove specific permission request from queue by ID
+  const removePermissionRequest = (requestId: string) => {
+    setPermissionRequestQueue(prev => {
+      // Check if we're removing the current (first) request
+      const removingCurrent = prev.length > 0 && prev[0]?.requestId === requestId;
+      const filtered = prev.filter(req => req.requestId !== requestId);
+
+      if (filtered.length === 0) {
+        // Clear instruction text and cursor when queue becomes empty
+        setPermissionInstructText('');
+        setPermissionCursorPosition(0);
+      }
+
+      // Only reset selection index when removing the current request
+      if (removingCurrent) {
+        setPermissionSelectedIndex(0);
+      }
+
+      return filtered;
+    });
+  };
+
+  // Backward-compatible setter: undefined clears current (first), otherwise replaces entire queue
   const setPermissionRequest = (request?: PermissionRequestWithId) => {
-    setPermissionRequestInternal(request);
     if (request === undefined) {
-      setPermissionInstructText('');
-      setPermissionCursorPosition(0);
+      // Clear current permission (remove first from queue)
+      setPermissionRequestQueue(prev => {
+        const newQueue = prev.slice(1);
+        if (newQueue.length === 0) {
+          setPermissionInstructText('');
+          setPermissionCursorPosition(0);
+        }
+        setPermissionSelectedIndex(0);
+        return newQueue;
+      });
+    } else {
+      // Replace entire queue with single request (legacy behavior)
+      setPermissionRequestQueue([request]);
     }
   };
 
@@ -338,10 +381,13 @@ export const useModalState = (): ModalState => {
   return {
     // Permission prompt
     permissionRequest,
+    permissionRequestQueueLength: permissionRequestQueue.length,
     permissionSelectedIndex,
     permissionInstructText,
     permissionCursorPosition,
     setPermissionRequest,
+    addPermissionRequest,
+    removePermissionRequest,
     setPermissionSelectedIndex,
     setPermissionInstructText,
     setPermissionCursorPosition,

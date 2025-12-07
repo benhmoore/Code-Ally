@@ -1214,6 +1214,7 @@ const AppContentComponent: React.FC<{
             onInstructTextChange={modal.setPermissionInstructText}
             cursorPosition={modal.permissionCursorPosition}
             onCursorChange={modal.setPermissionCursorPosition}
+            queueLength={modal.permissionRequestQueueLength}
           />
           {/* Hidden InputPrompt for keyboard handling only */}
           <Box height={0} overflow="hidden">

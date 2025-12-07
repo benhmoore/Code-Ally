@@ -116,6 +116,7 @@ export class TrustManager {
     {
       resolve: (choice: PermissionChoice) => void;
       reject: (error: Error) => void;
+      timeoutId: NodeJS.Timeout;
     }
   > = new Map();
 
@@ -500,8 +501,16 @@ export class TrustManager {
       // Generate unique ID for permission request: perm_{timestamp}_{7-char-random} (base-36, skip '0.' prefix)
       const requestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
+      // Set up timeout to reject orphaned permissions after 5 minutes
+      const timeoutId = setTimeout(() => {
+        if (this.pendingPermissions.has(requestId)) {
+          logger.warn(`Permission request ${requestId} timed out after 5 minutes`);
+          this.pendingPermissions.delete(requestId);
+          reject(new PermissionDeniedError('Permission request timed out'));
+        }
+      }, 5 * 60 * 1000);
+
       // Store resolver so we can complete it when response arrives
-      // No timeout - user must explicitly permit or deny
       this.pendingPermissions.set(requestId, {
         resolve: (choice: PermissionChoice) => {
           resolve(choice);
@@ -509,6 +518,7 @@ export class TrustManager {
         reject: (error: Error) => {
           reject(error);
         },
+        timeoutId,
       });
 
       // Extract command string for display if this is a bash operation
@@ -550,6 +560,9 @@ export class TrustManager {
       logger.error(`Unknown permission request ID: ${requestId}`);
       return;
     }
+
+    // Clear timeout to prevent it from firing after resolution
+    clearTimeout(pending.timeoutId);
 
     // Remove from pending and resolve with choice
     this.pendingPermissions.delete(requestId);

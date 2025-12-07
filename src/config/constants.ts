@@ -346,7 +346,7 @@ export const ANIMATION_TIMING = {
  */
 export const BUFFER_SIZES = {
   /** Maximum number of tools allowed in a single batch call */
-  MAX_BATCH_SIZE: 5,
+  MAX_BATCH_SIZE: 10,
 
   /** Idle message queue batch size */
   IDLE_MESSAGE_BATCH_SIZE: 10,

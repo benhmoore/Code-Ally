@@ -184,6 +184,12 @@ export class OllamaClient extends ModelClient {
     const requestId = `req-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
     logger.debug('[OLLAMA_CLIENT] Starting request:', requestId);
 
+    // Reset circuit breaker at the start of each new request
+    // This ensures each user request gets a fresh start, while the circuit breaker
+    // still protects against persistent failures during retries within this request
+    this.circuitBreakerFailures = 0;
+    this.circuitBreakerOpenUntil = 0;
+
     // Prepare payload
     const payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
 
