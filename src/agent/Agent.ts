@@ -641,6 +641,62 @@ export class Agent {
   }
 
   /**
+   * Reset agent state for reuse in pool
+   *
+   * Encapsulates all cleanup logic required when returning an agent to the pool
+   * for reuse. This is the single source of truth for agent reset operations.
+   *
+   * Clears:
+   * - Conversation history (messages, checkpoint tracking, token count)
+   * - Nested delegation contexts (prevents routing to stale agent instances)
+   * - Per-invocation state (timeouts, exploratory streaks, cleanup queue)
+   * - Loop detectors (thinking and response loop detection)
+   * - Interruption state
+   *
+   * Does NOT reset:
+   * - Agent configuration (isSpecializedAgent, allowedTools, etc.)
+   * - Agent identity (instanceId, agentDepth, agentCallStack)
+   * - Service dependencies (modelClient, toolManager, activityStream)
+   * - Readonly properties (agentDepth, agentCallStack, scopedRegistry)
+   *
+   * CRITICAL: This prevents context pollution when reusing pooled agents.
+   * System prompts and execution contexts are regenerated fresh on each invocation.
+   */
+  resetForReuse(): void {
+    // Clear conversation history (includes checkpoint tracking and token count)
+    this.clearConversationHistory();
+
+    // Clear nested delegation state to prevent routing to stale agent instances
+    // Chain: agent → toolOrchestrator → toolManager → delegationContextManager
+    try {
+      const delegationManager = this.toolOrchestrator?.getToolManager()?.getDelegationContextManager();
+      if (delegationManager && typeof delegationManager.clearAll === 'function') {
+        delegationManager.clearAll();
+        logger.debug(`[AGENT] Cleared delegation context for agent ${this.instanceId}`);
+      }
+    } catch (error) {
+      logger.warn(`[AGENT] Failed to clear delegation context for agent ${this.instanceId}:`, error);
+    }
+
+    // Reset per-invocation state counters
+    this.timeoutContinuationAttempts = 0;
+    this.currentExploratoryStreak = 0;
+    this.pendingCleanupIds = [];
+
+    // Reset loop detectors
+    this.thinkingLoopDetector.reset();
+    this.responseLoopDetector.reset();
+
+    // Reset interruption state
+    this.interruptionManager.reset();
+
+    // Reset request state
+    this.requestInProgress = false;
+
+    logger.debug(`[AGENT] Reset agent ${this.instanceId} for reuse`);
+  }
+
+  /**
    * Reset the tool call activity timer
    * Called by ToolOrchestrator when a tool call is executed
    */

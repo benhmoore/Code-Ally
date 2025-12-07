@@ -370,6 +370,27 @@ export class ConversationManager {
     let removed = 0;
     const cutoff = Date.now() - maxAge;
 
+    // Remove tool results from index before filtering
+    for (const msg of this.messages) {
+      // Keep messages without system-reminder tags
+      if (!msg.content.includes(SYSTEM_REMINDER.OPENING_TAG)) {
+        continue;
+      }
+
+      // Keep ephemeral reminders (handled by removeEphemeralSystemReminders)
+      if (!SYSTEM_REMINDER.PERSIST_PATTERN.test(msg.content)) {
+        continue;
+      }
+
+      // Check if this is a stale persistent reminder that will be removed
+      if (msg.timestamp && msg.timestamp < cutoff) {
+        // Remove from tool result index if it's a tool message
+        if (msg.role === 'tool' && msg.tool_call_id) {
+          this.toolResultIndex.delete(msg.tool_call_id);
+        }
+      }
+    }
+
     this.messages = this.messages.filter(msg => {
       // Keep messages without system-reminder tags
       if (!msg.content.includes(SYSTEM_REMINDER.OPENING_TAG)) {
@@ -602,6 +623,14 @@ export class ConversationManager {
 
     if (cutoffIndex === -1) {
       throw new Error('Target message not found in conversation history');
+    }
+
+    // Remove tool results from index for messages being removed
+    for (let i = cutoffIndex; i < this.messages.length; i++) {
+      const msg = this.messages[i];
+      if (msg && msg.role === 'tool' && msg.tool_call_id) {
+        this.toolResultIndex.delete(msg.tool_call_id);
+      }
     }
 
     // Preserve system message and truncate to just before the target message

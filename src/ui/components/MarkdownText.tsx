@@ -1349,37 +1349,3 @@ function stripInlineMarkdown(text: string): string {
 
   return stripped;
 }
-
-// Terminal hyperlinks (OSC 8) disabled - they corrupt Ink rendering
-// The functions below are kept for reference but not used
-//
-// function createTerminalLink(text: string, url: string): string {
-//   return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
-// }
-//
-// function isFilePath(text: string): boolean {
-//   if (text.startsWith('/') || text.startsWith('~')) return true;
-//   if (text.startsWith('./') || text.startsWith('../')) return true;
-//   const fileExtensions = /\.(ts|tsx|js|jsx|json|md|txt|py|java|cpp|c|h|css|html|xml|yaml|yml|toml|sh|bash|rs|go|rb|php|swift|kt|gradle|sql)$/i;
-//   return fileExtensions.test(text);
-// }
-//
-// function makeFilePathsClickable(text: string): string {
-//   const pathPattern = /(?:^|\s)((?:\.\.?\/|\/|~\/)?[\w\-./]+\.[\w]+)(?=\s|$|[,.:;)])/g;
-//   return text.replace(pathPattern, (match, filepath) => {
-//     const trimmedPath = filepath.trim();
-//     if (!isFilePath(trimmedPath)) return match;
-//     let absolutePath: string;
-//     if (trimmedPath.startsWith('/')) {
-//       absolutePath = trimmedPath;
-//     } else if (trimmedPath.startsWith('~')) {
-//       const homedir = process.env.HOME || process.env.USERPROFILE || '';
-//       absolutePath = trimmedPath.replace(/^~/, homedir);
-//     } else {
-//       absolutePath = path.resolve(process.cwd(), trimmedPath);
-//     }
-//     const fileUrl = `file://${absolutePath}`;
-//     const prefix = match.startsWith(' ') ? ' ' : '';
-//     return prefix + createTerminalLink(trimmedPath, fileUrl);
-//   });
-// }

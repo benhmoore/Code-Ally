@@ -266,56 +266,60 @@ const AppContentComponent: React.FC<{
 
   // Poll logger level and collect debug stats
   useEffect(() => {
+    // Always check debug mode state
+    const debugMode = logger.getLevel() === LogLevel.DEBUG;
+    setIsDebugMode(debugMode);
+
+    // Only run polling if debug mode is active
+    if (!debugMode) return;
+
     const updateDebugStats = () => {
-      const debugMode = logger.getLevel() === LogLevel.DEBUG;
-      setIsDebugMode(debugMode);
+      try {
+        const registry = ServiceRegistry.getInstance();
 
-      if (debugMode) {
-        try {
-          const registry = ServiceRegistry.getInstance();
+        // Get session ID
+        const sessionManager = registry.get<any>('session_manager');
+        const sessionId = sessionManager?.getCurrentSession() || 'none';
 
-          // Get session ID
-          const sessionManager = registry.get<any>('session_manager');
-          const sessionId = sessionManager?.getCurrentSession() || 'none';
+        // Get memory stats
+        const memUsage = process.memoryUsage();
+        const heapMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+        const rssMB = Math.round(memUsage.rss / 1024 / 1024);
 
-          // Get memory stats
-          const memUsage = process.memoryUsage();
-          const heapMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-          const rssMB = Math.round(memUsage.rss / 1024 / 1024);
+        // Get token stats
+        const tokenManager = registry.get<any>('token_manager');
+        const tokensUsed = tokenManager?.getCurrentTokenCount() || 0;
+        const tokensTotal = tokenManager?.contextSize || 200000;
 
-          // Get token stats
-          const tokenManager = registry.get<any>('token_manager');
-          const tokensUsed = tokenManager?.getCurrentTokenCount() || 0;
-          const tokensTotal = tokenManager?.contextSize || 200000;
+        // Get todo stats
+        const todoManager = registry.get<any>('todo_manager');
+        const todos = todoManager?.getTodos() || [];
+        const todoPending = todos.filter((t: any) => t.status === 'pending').length;
+        const todoCompleted = todos.filter((t: any) => t.status === 'completed').length;
+        const todoTotal = todos.length;
 
-          // Get todo stats
-          const todoManager = registry.get<any>('todo_manager');
-          const todos = todoManager?.getTodos() || [];
-          const todoPending = todos.filter((t: any) => t.status === 'pending').length;
-          const todoCompleted = todos.filter((t: any) => t.status === 'completed').length;
-          const todoTotal = todos.length;
-
-          setDebugStats({
-            sessionId,
-            heapMB,
-            rssMB,
-            tokensUsed,
-            tokensTotal,
-            todoPending,
-            todoCompleted,
-            todoTotal,
-          });
-        } catch (error) {
-          // Silently handle errors
-        }
+        setDebugStats({
+          sessionId,
+          heapMB,
+          rssMB,
+          tokensUsed,
+          tokensTotal,
+          todoPending,
+          todoCompleted,
+          todoTotal,
+        });
+      } catch (error) {
+        // Silently handle errors
       }
     };
 
+    // Run immediately when debug mode becomes active
     updateDebugStats();
-    const interval = setInterval(updateDebugStats, 1000); // Update every second
+    // Then update every second
+    const interval = setInterval(updateDebugStats, 1000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [isDebugMode]);
 
   // Fetch patches when rewind request is shown
   useEffect(() => {

@@ -47,6 +47,12 @@ export class SessionManager implements IService {
   private readonly DEBOUNCE_DELAY_MS = 2000; // 2 seconds
   private isShuttingDown: boolean = false;
 
+  // Session cache to avoid redundant disk reads
+  // Maps session name -> { session data, timestamp when loaded }
+  // Cache is invalidated after CACHE_TTL_MS or on operations that might change the file
+  private sessionCache: Map<string, { session: Session; loadedAt: number }> = new Map();
+  private readonly CACHE_TTL_MS = 1000; // 1 second - cache is fresh for this duration
+
   constructor(config: SessionManagerConfig = {}) {
     // Sessions are stored in .ally-sessions/ within the current working directory
     this.sessionsDir = join(process.cwd(), '.ally-sessions');
@@ -222,12 +228,16 @@ export class SessionManager implements IService {
 
     try {
       await fs.rename(sessionPath, quarantinePath);
+      // Invalidate cache since session is no longer valid
+      this.sessionCache.delete(sessionName);
       logger.warn(`Session ${sessionName} quarantined (${reason}): ${quarantinePath}`);
     } catch (error) {
       logger.error(`Failed to quarantine session ${sessionName}:`, error);
       // Only delete if quarantine fails
       try {
         await fs.unlink(sessionPath);
+        // Invalidate cache
+        this.sessionCache.delete(sessionName);
         logger.warn(`Deleted corrupted session file after quarantine failure: ${sessionName}`);
       } catch (deleteError) {
         logger.error(`Failed to delete session ${sessionName} after quarantine failure:`, deleteError);
@@ -270,10 +280,29 @@ export class SessionManager implements IService {
   /**
    * Load an existing session
    *
+   * Uses in-memory cache to avoid redundant disk reads when called multiple times
+   * in quick succession (within CACHE_TTL_MS). Cache is invalidated on writes.
+   *
    * @param sessionName - Name of the session to load
    * @returns Session data or null if not found
    */
   async loadSession(sessionName: string): Promise<Session | null> {
+    // Check cache first
+    const cached = this.sessionCache.get(sessionName);
+    if (cached) {
+      const age = Date.now() - cached.loadedAt;
+      if (age < this.CACHE_TTL_MS) {
+        logger.debug(`[SESSION] Cache hit for ${sessionName} (age: ${age}ms)`);
+        // Return a deep copy to prevent external modifications from affecting cache
+        return JSON.parse(JSON.stringify(cached.session));
+      } else {
+        // Cache expired, remove it
+        this.sessionCache.delete(sessionName);
+        logger.debug(`[SESSION] Cache expired for ${sessionName} (age: ${age}ms)`);
+      }
+    }
+
+    // Cache miss or expired - load from disk
     const sessionPath = this.getSessionPath(sessionName);
 
     try {
@@ -286,6 +315,14 @@ export class SessionManager implements IService {
       }
 
       const session = JSON.parse(content) as Session;
+
+      // Update cache with loaded session
+      this.sessionCache.set(sessionName, {
+        session: JSON.parse(JSON.stringify(session)), // Store a copy in cache
+        loadedAt: Date.now(),
+      });
+      logger.debug(`[SESSION] Loaded from disk and cached: ${sessionName}`);
+
       return session;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -345,7 +382,13 @@ export class SessionManager implements IService {
         // On POSIX systems, rename() is atomic and will replace the target file
         await fs.rename(tempPath, sessionPath);
 
-        logger.debug(`[SESSION] Saved session ${sessionName} atomically`);
+        // Update cache after successful write
+        this.sessionCache.set(sessionName, {
+          session: JSON.parse(JSON.stringify(session)), // Store a copy
+          loadedAt: Date.now(),
+        });
+
+        logger.debug(`[SESSION] Saved session ${sessionName} atomically and updated cache`);
       } catch (error) {
         // Clean up temp file if it exists
         try {
@@ -463,6 +506,9 @@ export class SessionManager implements IService {
     try {
       // Delete session file
       await fs.unlink(sessionPath);
+
+      // Invalidate cache
+      this.sessionCache.delete(sessionName);
 
       // Delete session directory (if it exists) - includes patches and other session data
       try {
@@ -718,6 +764,7 @@ export class SessionManager implements IService {
       session.updated_at = new Date().toISOString();
 
       // Clear debounce cache since we're writing directly
+      // The session cache will be updated automatically by saveSessionData()
       this.debouncedSession = null;
       this.debouncedSessionName = null;
 
@@ -752,6 +799,7 @@ export class SessionManager implements IService {
       session.updated_at = new Date().toISOString();
 
       // Clear debounce cache since we're writing directly
+      // The session cache will be updated automatically by saveSessionData()
       this.debouncedSession = null;
       this.debouncedSessionName = null;
 
@@ -843,6 +891,7 @@ export class SessionManager implements IService {
       session.updated_at = new Date().toISOString();
 
       // Clear debounce cache since we're writing directly
+      // The session cache will be updated automatically by saveSessionData()
       this.debouncedSession = null;
       this.debouncedSessionName = null;
 

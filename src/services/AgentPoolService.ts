@@ -183,61 +183,18 @@ export class AgentPoolService implements IService {
         reserved.metadata.lastAccessedAt = Date.now();
         reserved.metadata.useCount++;
 
-        // CRITICAL: Clear nested delegation state before reusing agent
-        // When reusing a pooled agent, we must clear any stale nested delegation contexts
-        // from previous tasks to prevent findDeepestDelegation() from routing to dead agent instances
-        //
-        // Scenario that this prevents:
-        // 1. Main → Agent1 (pool-agent-1) → Agent2
-        // 2. Agent2 delegation registered in Agent1's DelegationContextManager
-        // 3. Agent1 completes, released to pool
-        // 4. Main → Agent1 (same pool-agent-1 reused) → Agent3
-        // 5. User interjects
-        // 6. findDeepestDelegation() finds STALE Agent2 delegation in Agent1's manager
-        // 7. Routes to dead Agent2 instance → CRASH
-        //
-        // Chain: agent → toolOrchestrator → toolManager → delegationContextManager
-        // Use defensive programming with optional chaining to handle missing methods
+        // CRITICAL: Reset agent state before reusing from pool
+        // Encapsulated in Agent.resetForReuse() to maintain single source of truth
+        // for cleanup logic. This prevents context pollution from previous tasks.
         try {
           const agent = reserved.metadata.agent;
-          // Check if getToolOrchestrator method exists (may not exist in mock agents or older versions)
-          if (typeof agent.getToolOrchestrator === 'function') {
-            const toolOrchestrator = agent.getToolOrchestrator();
-            if (toolOrchestrator && typeof toolOrchestrator.getToolManager === 'function') {
-              const toolManager = toolOrchestrator.getToolManager();
-              if (toolManager && typeof toolManager.getDelegationContextManager === 'function') {
-                const delegationManager = toolManager.getDelegationContextManager();
-                if (delegationManager && typeof delegationManager.clearAll === 'function') {
-                  delegationManager.clearAll();
-                  logger.debug(
-                    `[AGENT_POOL] Cleared nested delegation state for reused agent ${reserved.metadata.agentId}`
-                  );
-                }
-              }
-            }
-          }
-        } catch (error) {
-          // Graceful degradation - if we can't clear delegation state, log and continue
-          // This shouldn't prevent agent reuse, but we should know about it
-          logger.warn(
-            `[AGENT_POOL] Failed to clear delegation state for agent ${reserved.metadata.agentId}:`,
-            error
-          );
-        }
-
-        // CRITICAL: Clear conversation history before reusing agent
-        // System prompt will be regenerated dynamically in sendMessage() with current context
-        try {
-          const agent = reserved.metadata.agent;
-          if (typeof agent.clearConversationHistory === 'function') {
-            agent.clearConversationHistory();
-            logger.debug(
-              `[AGENT_POOL] Cleared conversation history for reused agent ${reserved.metadata.agentId}`
-            );
+          if (typeof agent.resetForReuse === 'function') {
+            agent.resetForReuse();
+            logger.debug(`[AGENT_POOL] Reset agent state for reused agent ${reserved.metadata.agentId}`);
           }
         } catch (error) {
           logger.warn(
-            `[AGENT_POOL] Failed to clear conversation history for agent ${reserved.metadata.agentId}:`,
+            `[AGENT_POOL] Failed to reset agent state for agent ${reserved.metadata.agentId}:`,
             error
           );
         }

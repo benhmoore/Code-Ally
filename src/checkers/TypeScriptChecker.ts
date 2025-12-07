@@ -49,8 +49,8 @@ export class TypeScriptChecker implements FileChecker {
 
     try {
       if (tsconfigPath) {
-        // Project-aware checking: check entire project and filter to this file
-        const projectErrors = await this.checkWithProject(filePath, tsconfigPath);
+        // Project-aware checking: check with temp file to avoid full project rebuild
+        const projectErrors = await this.checkWithTempFile(filePath, content, tsconfigPath);
         errors.push(...projectErrors);
       } else {
         // Standalone checking: check single file
@@ -126,40 +126,64 @@ export class TypeScriptChecker implements FileChecker {
   }
 
   /**
-   * Check using project tsconfig.json
+   * Check using project tsconfig.json with a temporary file
+   *
+   * This avoids the performance issue of running tsc on the entire project
+   * by creating a temp file with the new content and checking just that file.
+   * The temp file is placed in the same directory as the original to preserve
+   * relative import resolution.
    */
-  private async checkWithProject(filePath: string, tsconfigPath: string): Promise<CheckIssue[]> {
+  private async checkWithTempFile(
+    filePath: string,
+    content: string,
+    tsconfigPath: string
+  ): Promise<CheckIssue[]> {
     const projectDir = path.dirname(tsconfigPath);
-    const absFilePath = path.resolve(filePath);
+    const fileDir = path.dirname(path.resolve(filePath));
+    const ext = path.extname(filePath);
 
-    const { stdout } = await this.runCommand(
-      'tsc',
-      ['--noEmit', '--pretty', 'false', '--project', tsconfigPath],
-      {
-        cwd: projectDir,
-        timeout: API_TIMEOUTS.TSC_PROJECT_CHECK_TIMEOUT,
-      }
-    );
+    // Create temp file in the same directory as the original file
+    // This preserves relative imports and project structure
+    const tmpPath = path.join(fileDir, `.tmp-check-${Date.now()}${ext}`);
 
-    // Parse output and filter to only this file's errors
-    const errors: CheckIssue[] = [];
-    for (const line of stdout.split('\n')) {
-      if (line.includes(absFilePath) && line.includes(': error TS')) {
-        const error = this.parseTscErrorLine(line);
-        if (error) {
-          errors.push(error);
+    try {
+      await fs.writeFile(tmpPath, content, 'utf-8');
+
+      // Check the temp file with project configuration
+      const { stdout } = await this.runCommand(
+        'tsc',
+        ['--noEmit', '--pretty', 'false', '--project', tsconfigPath, tmpPath],
+        {
+          cwd: projectDir,
+          timeout: API_TIMEOUTS.TSC_STANDALONE_CHECK_TIMEOUT, // Use shorter timeout for single file
+        }
+      );
+
+      // Parse tsc output
+      const errors: CheckIssue[] = [];
+      for (const line of stdout.split('\n')) {
+        if (line.includes(': error TS')) {
+          const error = this.parseTscErrorLine(line);
+          if (error) {
+            errors.push(error);
+          }
         }
       }
-    }
 
-    return errors;
+      return errors;
+    } finally {
+      // Clean up temporary file
+      await fs.unlink(tmpPath).catch((error) => {
+        logger.debug(`Failed to clean up temporary file ${tmpPath}:`, error);
+      });
+    }
   }
 
   /**
    * Check single file without project context
    */
   private async checkStandalone(filePath: string, content: string): Promise<CheckIssue[]> {
-    // Write content to temporary file
+    // Write content to temporary file in system temp directory
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tsc-check-'));
     const ext = path.extname(filePath);
     const tmpPath = path.join(tmpDir, `check${ext}`);

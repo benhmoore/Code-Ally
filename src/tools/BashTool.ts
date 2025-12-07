@@ -14,6 +14,30 @@ import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { BashProcessManager, CircularBuffer } from '../services/BashProcessManager.js';
 
+/**
+ * Whitelist of safe environment variables to pass to spawned processes.
+ * This prevents leaking sensitive data (API keys, tokens) to subprocesses.
+ */
+const SAFE_ENV_VARS = [
+  'PATH',
+  'HOME',
+  'USER',
+  'SHELL',
+  'TERM',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'NODE_ENV',
+  'TZ',
+  'PWD',
+  'OLDPWD',
+  'COLORTERM',
+  'TERM_PROGRAM',
+];
+
 export class BashTool extends BaseTool {
   readonly name = 'bash';
   readonly description =
@@ -123,6 +147,42 @@ export class BashTool extends BaseTool {
   }
 
   /**
+   * Create sanitized environment for spawned processes
+   * Filters environment to only include whitelisted variables
+   */
+  private getSafeEnvironment(): NodeJS.ProcessEnv {
+    const safeEnv: NodeJS.ProcessEnv = {};
+    for (const key of SAFE_ENV_VARS) {
+      if (process.env[key] !== undefined) {
+        safeEnv[key] = process.env[key];
+      }
+    }
+    return safeEnv;
+  }
+
+  /**
+   * Kill a process and its entire process group
+   *
+   * On Unix systems, uses negative PID to kill the entire process group.
+   * On Windows, kills only the main process.
+   */
+  private killProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+    if (!child.pid) return;
+
+    try {
+      if (process.platform !== 'win32' && child.pid) {
+        // On Unix, kill the entire process group (negative PID)
+        process.kill(-child.pid, signal);
+      } else {
+        // On Windows, just kill the process
+        child.kill(signal);
+      }
+    } catch (error) {
+      logger.debug('[BashTool] Error killing process:', error);
+    }
+  }
+
+  /**
    * Validate timeout parameter
    */
   private validateTimeout(timeout: any): number {
@@ -199,11 +259,13 @@ export class BashTool extends BaseTool {
     const outputBuffer = new CircularBuffer(10000); // 10k lines max
 
     // Spawn detached process
+    // Note: env is filtered to prevent leaking sensitive environment variables
     const child: ChildProcess = spawn(command, {
       cwd: workingDir,
       shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32', // Create process group on Unix
+      env: this.getSafeEnvironment(),
     });
 
     if (!child.pid) {
@@ -213,23 +275,6 @@ export class BashTool extends BaseTool {
         'Process did not receive a PID'
       );
     }
-
-    // Helper to kill process group (reused from foreground execution)
-    const killProcessGroup = (signal: NodeJS.Signals) => {
-      if (!child.pid) return;
-
-      try {
-        if (process.platform !== 'win32' && child.pid) {
-          // On Unix, kill the entire process group (negative PID)
-          process.kill(-child.pid, signal);
-        } else {
-          // On Windows, just kill the process
-          child.kill(signal);
-        }
-      } catch (error) {
-        logger.debug('[BashTool] Error killing background process:', error);
-      }
-    };
 
     // Pipe stdout to circular buffer
     if (child.stdout) {
@@ -261,7 +306,7 @@ export class BashTool extends BaseTool {
       processManager.addProcess(processInfo);
     } catch (error) {
       // Failed to add (probably hit limit) - kill the process
-      killProcessGroup('SIGTERM');
+      this.killProcessGroup(child, 'SIGTERM');
       return this.formatErrorResponse(
         formatError(error),
         'system_error'
@@ -484,39 +529,22 @@ export class BashTool extends BaseTool {
       // Spawn process
       // Use 'ignore' for stdin to prevent hanging on interactive prompts
       // Use detached: true on Unix to create a new process group for proper cleanup
+      // Note: env is filtered to prevent leaking sensitive environment variables
       const child: ChildProcess = spawn(command, {
         cwd: workingDir,
         shell: true,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32', // Create process group on Unix
+        env: this.getSafeEnvironment(),
       });
-
-      // Helper to kill process group (important for shell: true)
-      const killProcessGroup = (signal: NodeJS.Signals) => {
-        if (!child.pid) return;
-
-        try {
-          if (process.platform !== 'win32' && child.pid) {
-            // On Unix, kill the entire process group (negative PID)
-            // This ensures child processes like 'npm run dev' are also killed
-            process.kill(-child.pid, signal);
-          } else {
-            // On Windows, just kill the process
-            child.kill(signal);
-          }
-        } catch (error) {
-          // Process might have already exited
-          logger.debug('[BashTool] Error killing process:', error);
-        }
-      };
 
       // Set up abort handler
       let abortTimeoutHandle: NodeJS.Timeout | null = null;
       const abortHandler = () => {
-        killProcessGroup('SIGTERM');
+        this.killProcessGroup(child, 'SIGTERM');
         setTimeout(() => {
           if (child.exitCode === null) {
-            killProcessGroup('SIGKILL');
+            this.killProcessGroup(child, 'SIGKILL');
           }
         }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
 
@@ -570,10 +598,10 @@ export class BashTool extends BaseTool {
         if (child.exitCode === null && idleTime > TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT) {
           idleKilled = true;
           clearInterval(idleCheckInterval);
-          killProcessGroup('SIGTERM');
+          this.killProcessGroup(child, 'SIGTERM');
           setTimeout(() => {
             if (child.exitCode === null) {
-              killProcessGroup('SIGKILL');
+              this.killProcessGroup(child, 'SIGKILL');
             }
           }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
         }

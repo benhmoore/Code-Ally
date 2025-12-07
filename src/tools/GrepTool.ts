@@ -271,12 +271,14 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
 
       // Process files in batches to limit concurrency
       for (let i = 0; i < filesToSearch.length; i += READ_CONCURRENCY) {
-        // For files_with_matches mode, stop when we have enough unique files
+        // Early exit when limits are reached
         if (outputMode === 'files_with_matches' && filesWithMatches.size >= maxResults) {
           break;
         }
-        // For content mode, stop when we have enough matches
         if (outputMode === 'content' && matches.length >= maxResults) {
+          break;
+        }
+        if (outputMode === 'count' && fileCounts.size >= maxResults) {
           break;
         }
 
@@ -361,6 +363,17 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
               }
             }
           }
+        }
+
+        // Early exit after processing batch if limits reached
+        if (outputMode === 'files_with_matches' && filesWithMatches.size >= maxResults) {
+          break;
+        }
+        if (outputMode === 'content' && matches.length >= maxResults) {
+          break;
+        }
+        if (outputMode === 'count' && fileCounts.size >= maxResults) {
+          break;
         }
       }
 
@@ -457,7 +470,11 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
   ): GrepMatch[] {
     const matches: GrepMatch[] = [];
 
-    for (let i = 0; i < lines.length && matches.length < maxMatches; i++) {
+    for (let i = 0; i < lines.length; i++) {
+      if (matches.length >= maxMatches) {
+        break;
+      }
+
       const line = lines[i];
       if (line !== undefined && regex.test(line)) {
         const match: GrepMatch = {

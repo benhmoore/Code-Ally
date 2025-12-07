@@ -196,15 +196,10 @@ export class ResponseProcessor {
         this.conversationManager.addMessage(continuationPrompt);
 
         // Check for interruption before requesting continuation
-        if (this.interruptionManager.isInterrupted()) {
+        const interruptMessage = this.checkForInterruption();
+        if (interruptMessage !== null) {
           logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Agent interrupted before partial HTTP error continuation - stopping');
-          // Only show visual interrupt message for cancel type (not interjection)
-          if (this.interruptionManager.getInterruptionType() === 'cancel') {
-            this.interruptionManager.markRequestAsInterrupted();
-            return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-          }
-          // For interjections, return empty string to allow Agent.ts to handle gracefully
-          return '';
+          return interruptMessage;
         }
 
         // Get continuation from LLM
@@ -253,15 +248,10 @@ export class ResponseProcessor {
       this.conversationManager.addMessage(continuationPrompt);
 
       // Check for interruption before requesting continuation
-      if (this.interruptionManager.isInterrupted()) {
+      const interruptMessage = this.checkForInterruption();
+      if (interruptMessage !== null) {
         logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Agent interrupted before validation error continuation - stopping');
-        // Only show visual interrupt message for cancel type (not interjection)
-        if (this.interruptionManager.getInterruptionType() === 'cancel') {
-          this.interruptionManager.markRequestAsInterrupted();
-          return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-        }
-        // For interjections, return empty string to allow Agent.ts to handle gracefully
-        return '';
+        return interruptMessage;
       }
 
       // Get continuation from LLM
@@ -345,15 +335,10 @@ export class ResponseProcessor {
       this.conversationManager.addMessage(continuationPrompt);
 
       // Check for interruption before requesting continuation
-      if (this.interruptionManager.isInterrupted()) {
+      const interruptMessage = this.checkForInterruption();
+      if (interruptMessage !== null) {
         logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Agent interrupted before empty response continuation - stopping');
-        // Only show visual interrupt message for cancel type (not interjection)
-        if (this.interruptionManager.getInterruptionType() === 'cancel') {
-          this.interruptionManager.markRequestAsInterrupted();
-          return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-        }
-        // For interjections, return empty string to allow Agent.ts to handle gracefully
-        return '';
+        return interruptMessage;
       }
 
       // Get continuation from LLM
@@ -366,14 +351,9 @@ export class ResponseProcessor {
 
     if (toolCalls.length > 0) {
       // Check for interruption before processing tools
-      if (this.interruptionManager.isInterrupted()) {
-        // Only show visual interrupt message for cancel type (not interjection)
-        if (this.interruptionManager.getInterruptionType() === 'cancel') {
-          this.interruptionManager.markRequestAsInterrupted();
-          return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-        }
-        // For interjections, return empty string to allow Agent.ts to handle gracefully
-        return '';
+      const interruptMessage = this.checkForInterruption();
+      if (interruptMessage !== null) {
+        return interruptMessage;
       }
       // Reset validation counter on successful response with tool calls
       this.messageValidator.reset();
@@ -512,15 +492,10 @@ export class ResponseProcessor {
       this.conversationManager.addMessage(systemReminder);
 
       // Check for interruption before requesting final summary
-      if (this.interruptionManager.isInterrupted()) {
+      const interruptMessage = this.checkForInterruption();
+      if (interruptMessage !== null) {
         logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Agent interrupted before final summary - stopping');
-        // Only show visual interrupt message for cancel type (not interjection)
-        if (this.interruptionManager.getInterruptionType() === 'cancel') {
-          this.interruptionManager.markRequestAsInterrupted();
-          return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-        }
-        // For interjections, return empty string to allow Agent.ts to handle gracefully
-        return '';
+        return interruptMessage;
       }
 
       // Get final response from LLM (without executing tools)
@@ -561,15 +536,10 @@ export class ResponseProcessor {
     }
 
     // Check if agent was interrupted during tool execution
-    if (this.interruptionManager.isInterrupted()) {
+    const interruptMessage1 = this.checkForInterruption();
+    if (interruptMessage1 !== null) {
       logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Agent interrupted during tool execution - stopping follow-up');
-      // Only show visual interrupt message for cancel type (not interjection)
-      if (this.interruptionManager.getInterruptionType() === 'cancel') {
-        this.interruptionManager.markRequestAsInterrupted();
-        return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-      }
-      // For interjections, return empty string to allow Agent.ts to handle gracefully
-      return '';
+      return interruptMessage1;
     }
 
     // Add tool calls to history for cycle detection (AFTER execution)
@@ -606,15 +576,10 @@ export class ResponseProcessor {
     context.clearCurrentTurn();
 
     // Check if agent was interrupted before requesting follow-up
-    if (this.interruptionManager.isInterrupted()) {
+    const interruptMessage2 = this.checkForInterruption();
+    if (interruptMessage2 !== null) {
       logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Agent interrupted before follow-up LLM call - stopping');
-      // Only show visual interrupt message for cancel type (not interjection)
-      if (this.interruptionManager.getInterruptionType() === 'cancel') {
-        this.interruptionManager.markRequestAsInterrupted();
-        return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-      }
-      // For interjections, return empty string to allow Agent.ts to handle gracefully
-      return '';
+      return interruptMessage2;
     }
 
     // Get follow-up response from LLM
@@ -664,15 +629,10 @@ export class ResponseProcessor {
         this.conversationManager.addMessage(reminderMessage);
 
         // Check for interruption before requesting required tools
-        if (this.interruptionManager.isInterrupted()) {
+        const interruptMessage = this.checkForInterruption();
+        if (interruptMessage !== null) {
           logger.debug('[AGENT_REQUIRED_TOOLS]', context.instanceId, 'Agent interrupted before required tools retry - stopping');
-          // Only show visual interrupt message for cancel type (not interjection)
-          if (this.interruptionManager.getInterruptionType() === 'cancel') {
-            this.interruptionManager.markRequestAsInterrupted();
-            return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-          }
-          // For interjections, return empty string to allow Agent.ts to handle gracefully
-          return '';
+          return interruptMessage;
         }
 
         // Get new response from LLM
@@ -730,13 +690,10 @@ export class ResponseProcessor {
         context.autoSaveSession();
 
         // Check for interruption before retry
-        if (this.interruptionManager.isInterrupted()) {
+        const interruptMessage = this.checkForInterruption();
+        if (interruptMessage !== null) {
           logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Interrupted before requirements retry');
-          if (this.interruptionManager.getInterruptionType() === 'cancel') {
-            this.interruptionManager.markRequestAsInterrupted();
-            return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-          }
-          return '';
+          return interruptMessage;
         }
 
         // Get new response from LLM
@@ -766,15 +723,10 @@ export class ResponseProcessor {
         this.conversationManager.addMessage(continuationPrompt);
 
         // Check for interruption before requesting continuation
-        if (this.interruptionManager.isInterrupted()) {
+        const interruptMessage = this.checkForInterruption();
+        if (interruptMessage !== null) {
           logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Agent interrupted before empty after tools continuation - stopping');
-          // Only show visual interrupt message for cancel type (not interjection)
-          if (this.interruptionManager.getInterruptionType() === 'cancel') {
-            this.interruptionManager.markRequestAsInterrupted();
-            return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-          }
-          // For interjections, return empty string to allow Agent.ts to handle gracefully
-          return '';
+          return interruptMessage;
         }
 
         // Get continuation from LLM
@@ -941,5 +893,23 @@ export class ResponseProcessor {
     } catch (error) {
       logger.warn(`[RESPONSE_PROCESSOR] Error clearing delegations: ${error}`);
     }
+  }
+
+  /**
+   * Check for interruption and return appropriate message
+   *
+   * @returns Interruption message string if interrupted, null otherwise
+   */
+  private checkForInterruption(): string | null {
+    if (this.interruptionManager.isInterrupted()) {
+      // Only show visual interrupt message for cancel type (not interjection)
+      if (this.interruptionManager.getInterruptionType() === 'cancel') {
+        this.interruptionManager.markRequestAsInterrupted();
+        return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
+      }
+      // For interjections, return empty string to allow Agent.ts to handle gracefully
+      return '';
+    }
+    return null;
   }
 }

@@ -159,6 +159,24 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       );
     }
 
+    // Validate agent_type against path traversal attacks
+    // Only allow alphanumeric characters, hyphens, and underscores
+    const safeAgentTypePattern = /^[a-zA-Z0-9_-]+$/;
+    if (!safeAgentTypePattern.test(agentType)) {
+      return this.formatErrorResponse(
+        'agent_type contains invalid characters. Only alphanumeric characters, hyphens, and underscores are allowed',
+        'validation_error'
+      );
+    }
+
+    // Validate agent_type length to prevent excessively long names
+    if (agentType.length > 100) {
+      return this.formatErrorResponse(
+        'agent_type is too long. Maximum length is 100 characters',
+        'validation_error'
+      );
+    }
+
     // Validate thoroughness parameter
     if (!VALID_THOROUGHNESS.includes(thoroughness)) {
       return this.formatErrorResponse(

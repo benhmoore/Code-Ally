@@ -400,21 +400,27 @@ export class ToolManager {
    * @returns Tool result
    */
   /**
-   * Validate tool arguments and state before permission request
+   * Common validation logic for tool calls
    *
-   * Called by ToolOrchestrator BEFORE requesting permission for tools that require confirmation.
-   * This allows failing fast on invalid states without prompting the user.
+   * Performs all standard validation checks:
+   * 1. Tool existence
+   * 2. visible_to constraint
+   * 3. Duplicate call detection
+   * 4. Argument validation
    *
    * @param toolName - Name of the tool to validate
    * @param args - Tool arguments
    * @param currentAgentName - Current agent name for visibility checks
-   * @returns ToolResult with success=false if validation fails, or null if validation passes
+   * @returns Object with validation result: { valid: true, tool, duplicateCheck } or { valid: false, error }
    */
-  async validateBeforePermission(
+  private validateToolCall(
     toolName: string,
     args: Record<string, any>,
     currentAgentName?: string
-  ): Promise<ToolResult | null> {
+  ):
+    | { valid: true; tool: BaseTool; duplicateCheck: { isDuplicate: boolean; shouldBlock: boolean; message: string | null } }
+    | { valid: false; error: ToolResult } {
+    // Check tool existence
     const tool = this.tools.get(toolName);
     if (!tool) {
       const result = createStructuredError(
@@ -424,13 +430,13 @@ export class ToolManager {
         { requested_tool: toolName, available_tools: Array.from(this.tools.keys()) }
       );
       result.suggestion = `Available tools: ${Array.from(this.tools.keys()).join(', ')}`;
-      return result;
+      return { valid: false, error: result };
     }
 
     // Check visible_to constraint
     if (tool.visibleTo && tool.visibleTo.length > 0) {
       if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
-        return createStructuredError(
+        const result = createStructuredError(
           `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
           'agent_mismatch',
           toolName,
@@ -439,6 +445,7 @@ export class ToolManager {
             current_agent: currentAgentName || 'unknown'
           }
         );
+        return { valid: false, error: result };
       }
     }
 
@@ -452,7 +459,7 @@ export class ToolManager {
         { args }
       );
       result.suggestion = 'Avoid calling the same tool with identical arguments multiple times';
-      return result;
+      return { valid: false, error: result };
     }
 
     // Validate arguments
@@ -468,11 +475,37 @@ export class ToolManager {
       if (validation.suggestion) {
         result.suggestion = validation.suggestion;
       }
-      return result;
+      return { valid: false, error: result };
+    }
+
+    // All validations passed
+    return { valid: true, tool, duplicateCheck };
+  }
+
+  /**
+   * Validate tool arguments and state before permission request
+   *
+   * Called by ToolOrchestrator BEFORE requesting permission for tools that require confirmation.
+   * This allows failing fast on invalid states without prompting the user.
+   *
+   * @param toolName - Name of the tool to validate
+   * @param args - Tool arguments
+   * @param currentAgentName - Current agent name for visibility checks
+   * @returns ToolResult with success=false if validation fails, or null if validation passes
+   */
+  async validateBeforePermission(
+    toolName: string,
+    args: Record<string, any>,
+    currentAgentName?: string
+  ): Promise<ToolResult | null> {
+    // Perform common validation
+    const validationResult = this.validateToolCall(toolName, args, currentAgentName);
+    if (!validationResult.valid) {
+      return validationResult.error;
     }
 
     // Call tool-specific pre-permission validation
-    return await tool.validateBeforePermission(args);
+    return await validationResult.tool.validateBeforePermission(args);
   }
 
   async executeTool(
@@ -486,59 +519,13 @@ export class ToolManager {
     currentAgentName?: string,
     executionContext?: ToolExecutionContext
   ): Promise<ToolResult> {
-    const tool = this.tools.get(toolName);
-    if (!tool) {
-      const result = createStructuredError(
-        `Unknown tool: ${toolName}`,
-        'validation_error',
-        toolName,
-        { requested_tool: toolName, available_tools: Array.from(this.tools.keys()) }
-      );
-      result.suggestion = `Available tools: ${Array.from(this.tools.keys()).join(', ')}`;
-      return result;
+    // Perform common validation
+    const validationResult = this.validateToolCall(toolName, args, currentAgentName);
+    if (!validationResult.valid) {
+      return validationResult.error;
     }
 
-    // Check visible_to constraint (if specified and non-empty)
-    if (tool.visibleTo && tool.visibleTo.length > 0) {
-      if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
-        return createStructuredError(
-          `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
-          'agent_mismatch',
-          toolName,
-          {
-            visible_to: tool.visibleTo,
-            current_agent: currentAgentName || 'unknown'
-          }
-        );
-      }
-    }
-
-    const duplicateCheck = this.duplicateDetector.check(toolName, args);
-    if (duplicateCheck.shouldBlock) {
-      const result = createStructuredError(
-        duplicateCheck.message || 'Duplicate tool call detected',
-        'validation_error',
-        toolName,
-        { args }
-      );
-      result.suggestion = 'Avoid calling the same tool with identical arguments multiple times';
-      return result;
-    }
-
-    const functionDef = this.generateFunctionDefinition(tool);
-    const validation = this.validator.validateArguments(tool, functionDef, args);
-    if (!validation.valid) {
-      const result = createStructuredError(
-        validation.error || 'Validation failed',
-        validation.error_type || 'validation_error',
-        toolName,
-        { args, validation_errors: validation.error }
-      );
-      if (validation.suggestion) {
-        result.suggestion = validation.suggestion;
-      }
-      return result;
-    }
+    const { tool, duplicateCheck } = validationResult;
 
     try {
       const result = await tool.execute(args, callId, abortSignal, isUserInitiated, isContextFile, executionContext);

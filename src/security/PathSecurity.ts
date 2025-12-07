@@ -9,10 +9,62 @@
 
 import path from 'path';
 import { cwd } from 'process';
+import os from 'os';
 import { logger } from '../services/Logger.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import type { ConfigManager } from '../services/ConfigManager.js';
+
+/**
+ * Check if a path is within a parent directory (handles path boundary correctly)
+ * Avoids prefix attacks where '/tmpfile' would match '/tmp' with naive startsWith
+ */
+function isPathWithinDirectory(childPath: string, parentPath: string): boolean {
+  return childPath === parentPath || childPath.startsWith(parentPath + path.sep);
+}
+
+/**
+ * Validate that a temp directory is in a safe location
+ *
+ * @param tempDir Temp directory path to validate
+ * @returns true if temp directory is in a safe location, false otherwise
+ */
+function isSafeTempDirectory(tempDir: string): boolean {
+  try {
+    const absTempDir = path.resolve(tempDir);
+    const systemTmpDir = path.resolve(os.tmpdir());
+    const homeDir = path.resolve(os.homedir());
+    const workingDir = path.resolve(cwd());
+
+    // Allow if within system temp directory
+    if (isPathWithinDirectory(absTempDir, systemTmpDir)) {
+      return true;
+    }
+
+    // Allow if under /tmp or /var/tmp on Unix systems
+    if (process.platform !== 'win32') {
+      if (isPathWithinDirectory(absTempDir, '/tmp') || isPathWithinDirectory(absTempDir, '/var/tmp')) {
+        return true;
+      }
+    }
+
+    // Allow if under user's home directory
+    if (isPathWithinDirectory(absTempDir, homeDir)) {
+      return true;
+    }
+
+    // Allow if under current working directory
+    if (isPathWithinDirectory(absTempDir, workingDir)) {
+      return true;
+    }
+
+    // Not in a safe location
+    return false;
+  } catch (error) {
+    logger.debug(`Error validating temp directory: ${error}`);
+    return false;
+  }
+}
 
 /**
  * Check if a path is within the current working directory or temp directory
@@ -34,8 +86,8 @@ export function isPathWithinCwd(checkPath: string): boolean {
     // Get the current working directory
     const workingDir = path.resolve(cwd());
 
-    // Check if the path starts with CWD
-    if (absPath.startsWith(workingDir)) {
+    // Check if the path is within CWD
+    if (isPathWithinDirectory(absPath, workingDir)) {
       return true;
     }
 
@@ -46,8 +98,18 @@ export function isPathWithinCwd(checkPath: string): boolean {
       if (configManager) {
         const config = configManager.getConfig();
         const tempDir = path.resolve(config.temp_directory);
-        // Check if the path starts with temp directory
-        if (absPath.startsWith(tempDir)) {
+
+        // Validate that temp directory is in a safe location
+        if (!isSafeTempDirectory(tempDir)) {
+          logger.warn(
+            `Security: Configured temp_directory "${tempDir}" is outside safe locations. ` +
+            'Access denied to prevent potential security risk.'
+          );
+          return false;
+        }
+
+        // Check if the path is within temp directory
+        if (isPathWithinDirectory(absPath, tempDir)) {
           return true;
         }
       }
