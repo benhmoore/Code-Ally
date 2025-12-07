@@ -449,6 +449,142 @@ describe('OllamaClient', () => {
 
   });
 
+  describe('Streaming line buffering', () => {
+    it('should handle JSON objects split across network chunks', async () => {
+      // Simulate a large JSON object split across two network chunks
+      // This was a bug where TCP packet boundaries caused incomplete JSON
+      const fullJson = JSON.stringify({
+        message: {
+          role: 'assistant',
+          content: 'This is a response with a lot of content that spans multiple network packets',
+          tool_calls: [
+            {
+              id: 'call-123',
+              type: 'function',
+              function: {
+                name: 'bash',
+                arguments: { command: 'echo "hello world"' },
+              },
+            },
+          ],
+        },
+        done: true,
+      });
+
+      // Split the JSON in the middle of a string (simulating TCP packet boundary)
+      const splitPoint = Math.floor(fullJson.length / 2);
+      const chunk1 = fullJson.substring(0, splitPoint);
+      const chunk2 = fullJson.substring(splitPoint) + '\n';
+
+      let readCount = 0;
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi.fn().mockImplementation(() => {
+              readCount++;
+              if (readCount === 1) {
+                // First chunk - incomplete JSON (no newline)
+                return Promise.resolve({
+                  done: false,
+                  value: new TextEncoder().encode(chunk1),
+                });
+              } else if (readCount === 2) {
+                // Second chunk - completes the JSON (with newline)
+                return Promise.resolve({
+                  done: false,
+                  value: new TextEncoder().encode(chunk2),
+                });
+              } else {
+                return Promise.resolve({ done: true, value: undefined });
+              }
+            }),
+          }),
+        },
+      });
+
+      const messages: Message[] = [{ role: 'user', content: 'Test' }];
+
+      const result = await client.send(messages, { stream: true });
+
+      // Should successfully parse the complete JSON despite being split
+      expect(result.error).toBeUndefined();
+      expect(result.content).toBe('This is a response with a lot of content that spans multiple network packets');
+      expect(result.tool_calls).toBeDefined();
+      expect(result.tool_calls).toHaveLength(1);
+      expect(result.tool_calls![0].function.name).toBe('bash');
+    });
+
+    it('should handle multiple complete JSON objects in one chunk', async () => {
+      // Ollama sends newline-delimited JSON (NDJSON format)
+      const chunk1 = JSON.stringify({ message: { content: 'Hello ' }, done: false }) + '\n';
+      const chunk2 = JSON.stringify({ message: { content: 'World!' }, done: true }) + '\n';
+      const combinedChunk = chunk1 + chunk2;
+
+      let readCount = 0;
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi.fn().mockImplementation(() => {
+              readCount++;
+              if (readCount === 1) {
+                return Promise.resolve({
+                  done: false,
+                  value: new TextEncoder().encode(combinedChunk),
+                });
+              } else {
+                return Promise.resolve({ done: true, value: undefined });
+              }
+            }),
+          }),
+        },
+      });
+
+      const messages: Message[] = [{ role: 'user', content: 'Test' }];
+
+      const result = await client.send(messages, { stream: true });
+
+      // Should accumulate content from both JSON objects
+      expect(result.content).toBe('Hello World!');
+    });
+
+    it('should handle final JSON without trailing newline', async () => {
+      // Some servers might not send a trailing newline for the last chunk
+      const jsonWithoutNewline = JSON.stringify({
+        message: { content: 'Final response' },
+        done: true,
+      });
+
+      let readCount = 0;
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi.fn().mockImplementation(() => {
+              readCount++;
+              if (readCount === 1) {
+                return Promise.resolve({
+                  done: false,
+                  value: new TextEncoder().encode(jsonWithoutNewline),
+                });
+              } else {
+                return Promise.resolve({ done: true, value: undefined });
+              }
+            }),
+          }),
+        },
+      });
+
+      const messages: Message[] = [{ role: 'user', content: 'Test' }];
+
+      const result = await client.send(messages, { stream: true });
+
+      // Should parse the final buffer after stream ends
+      expect(result.content).toBe('Final response');
+    });
+  });
+
   describe('Payload preparation', () => {
     it('should prepare payload with correct structure', async () => {
       mockFetch.mockResolvedValueOnce({

@@ -466,6 +466,11 @@ export class OllamaClient extends ModelClient {
     let thinkingComplete = false; // Track if thinking block completed
     let streamTimedOut = false; // Track if stream timeout occurred
 
+    // Line buffer to handle JSON objects that span multiple network chunks
+    // Network chunks are determined by TCP packet sizes (~1500 bytes MTU), not JSON boundaries
+    // A large JSON object (e.g., tool call with code) can span multiple packets
+    let lineBuffer = '';
+
     try {
       while (true) {
         // Check for interruption via abort signal
@@ -486,10 +491,21 @@ export class OllamaClient extends ModelClient {
         const { done, value } = await Promise.race([readPromise, timeoutPromise]);
         if (done) break;
 
+        // Decode the chunk and prepend any buffered incomplete line from previous iteration
         const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n').filter(line => line.trim());
+        lineBuffer += chunk;
+
+        // Split by newline - Ollama sends one JSON object per line (NDJSON format)
+        const lines = lineBuffer.split('\n');
+
+        // The last element may be incomplete (no trailing newline yet)
+        // Keep it in the buffer for the next iteration
+        lineBuffer = lines.pop() || '';
 
         for (const line of lines) {
+          // Skip empty lines
+          if (!line.trim()) continue;
+
           try {
             const chunkData: any = JSON.parse(line);
             const message = chunkData.message || {};
@@ -557,9 +573,54 @@ export class OllamaClient extends ModelClient {
               break;
             }
           } catch (parseError) {
-            // Skip malformed chunks
+            // Log parse error with context for debugging
+            // This should now be rare since we properly buffer incomplete lines
             logger.warn('Failed to parse stream chunk:', parseError);
+            logger.debug('[OLLAMA_CLIENT] Malformed line content:', line.substring(0, 200));
           }
+        }
+      }
+
+      // Process any remaining content in the lineBuffer after stream ends
+      // This handles the case where the final JSON object didn't end with a newline
+      if (lineBuffer.trim()) {
+        try {
+          const chunkData: any = JSON.parse(lineBuffer);
+          const message = chunkData.message || {};
+
+          // Process final content chunk
+          const contentChunk = message.content || '';
+          if (contentChunk) {
+            aggregatedContent += contentChunk;
+            aggregatedMessage.content = aggregatedContent;
+            contentWasStreamed = true;
+
+            if (this.activityStream) {
+              this.activityStream.emit({
+                id: `assistant-${requestId}-${Date.now()}`,
+                type: ActivityEventType.ASSISTANT_CHUNK,
+                timestamp: Date.now(),
+                data: { chunk: contentChunk },
+              });
+            }
+          }
+
+          // Process final thinking chunk
+          const thinkingChunk = message.thinking || '';
+          if (thinkingChunk) {
+            hadThinking = true;
+            aggregatedThinking += thinkingChunk;
+            aggregatedMessage.thinking = aggregatedThinking;
+          }
+
+          // Process final tool calls
+          if (message.tool_calls) {
+            aggregatedMessage.tool_calls = message.tool_calls;
+          }
+        } catch (parseError) {
+          // Final buffer wasn't valid JSON - log for debugging
+          logger.warn('[OLLAMA_CLIENT] Failed to parse final buffer content:', parseError);
+          logger.debug('[OLLAMA_CLIENT] Final buffer content:', lineBuffer.substring(0, 200));
         }
       }
     } catch (error: any) {
