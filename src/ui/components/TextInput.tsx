@@ -423,11 +423,23 @@ export const TextInput: React.FC<TextInputProps> = ({
           }
         }
 
-        // Regular insertion (no paths detected or single character)
+        // Calculate new value and cursor position
         const before = currentValue.slice(0, currentCursor);
         const after = currentValue.slice(currentCursor);
         const newValue = before + normalizedInput + after;
         const newCursor = currentCursor + normalizedInput.length;
+
+        // Multiline paste: two-phase render to help ink handle the height change
+        // Phase 1 sets minimal content, Phase 2 (next tick) sets actual content
+        // This prevents ink's diff algorithm from getting confused by sudden height jumps
+        if (normalizedInput.includes('\n')) {
+          onValueChange(' ');
+          setImmediate(() => {
+            onValueChange(newValue);
+            onCursorChange(newCursor);
+          });
+          return;
+        }
 
         onValueChange(newValue);
         onCursorChange(newCursor);
