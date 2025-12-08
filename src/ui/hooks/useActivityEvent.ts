@@ -47,16 +47,26 @@ export const useActivityEvent = (
   const activityStream = useActivityStream();
   const callbackRef = useRef(callback);
 
+  // Store the wrapper function in a ref so it has stable identity
+  // This ensures subscribe/unsubscribe work with the same function reference
+  const wrapperRef = useRef<ActivityCallback | null>(null);
+
   // Always keep the ref updated with the latest callback
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
 
   useEffect(() => {
-    // Subscribe with a wrapper that calls the ref (always gets latest callback)
-    const unsubscribe = activityStream.subscribe(eventType, (...args) => {
-      callbackRef.current(...args);
-    });
+    // Create wrapper once and reuse the same reference
+    // This ensures the unsubscribe function can properly remove the listener
+    if (!wrapperRef.current) {
+      wrapperRef.current = (...args) => {
+        callbackRef.current(...args);
+      };
+    }
+
+    // Subscribe with the stable wrapper function
+    const unsubscribe = activityStream.subscribe(eventType, wrapperRef.current);
 
     // Cleanup on unmount or when dependencies change
     return () => {

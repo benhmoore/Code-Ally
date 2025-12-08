@@ -200,6 +200,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   // Batching mechanism for tool call updates
   const pendingUpdatesRef = useRef<Map<string, Partial<ToolCallState>>>(new Map());
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const maxBatchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Actions
   const addMessage = useCallback((message: Message) => {
@@ -293,24 +294,42 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     const existing = pendingUpdatesRef.current.get(id) || {};
     pendingUpdatesRef.current.set(id, { ...existing, ...updates });
 
-    // Clear existing timeout
+    // Set max batch timeout on first update (prevents indefinite batching under load)
+    if (!maxBatchTimeoutRef.current) {
+      maxBatchTimeoutRef.current = setTimeout(() => {
+        flushPendingUpdates();
+        maxBatchTimeoutRef.current = null;
+        if (updateTimeoutRef.current) {
+          clearTimeout(updateTimeoutRef.current);
+          updateTimeoutRef.current = null;
+        }
+      }, UI_DELAYS.STREAMING_CONTENT_BATCH_FLUSH); // Max 100ms wait
+    }
+
+    // Reset debounce timer on each update
     if (updateTimeoutRef.current) {
       clearTimeout(updateTimeoutRef.current);
     }
-
-    // Batch updates - flush after one frame
     updateTimeoutRef.current = setTimeout(() => {
       flushPendingUpdates();
+      updateTimeoutRef.current = null;
+      if (maxBatchTimeoutRef.current) {
+        clearTimeout(maxBatchTimeoutRef.current);
+        maxBatchTimeoutRef.current = null;
+      }
     }, UI_DELAYS.TOOL_CALL_BATCH_FLUSH);
   }, [flushPendingUpdates]);
 
-  // Cleanup timeout on unmount
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       if (updateTimeoutRef.current) {
         clearTimeout(updateTimeoutRef.current);
-        flushPendingUpdates();
       }
+      if (maxBatchTimeoutRef.current) {
+        clearTimeout(maxBatchTimeoutRef.current);
+      }
+      flushPendingUpdates();
     };
   }, [flushPendingUpdates]);
 

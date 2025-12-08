@@ -29,8 +29,6 @@ import { sendTerminalNotification } from '../../utils/terminal.js';
  * Activity subscriptions state
  */
 export interface ActivitySubscriptionsState {
-  /** Number of active background agents (subagents, todo generator, etc.) */
-  activeAgentsCount: number;
   /** Cancellation state for immediate visual feedback */
   isCancelling: boolean;
 }
@@ -51,7 +49,7 @@ export interface ActivitySubscriptionsState {
  *
  * @example
  * ```tsx
- * const { activeAgentsCount, isCancelling } = useActivitySubscriptions(
+ * const { isCancelling } = useActivitySubscriptions(
  *   state,
  *   actions,
  *   modal,
@@ -72,9 +70,6 @@ export const useActivitySubscriptions = (
 
   // Track thinking start times (keyed by parentId or 'root' for main agent)
   const thinkingStartTimes = useRef<Map<string, number>>(new Map());
-
-  // Track active background agents (subagents, todo generator, etc.)
-  const [activeAgentsCount, setActiveAgentsCount] = useState(0);
 
   // Track cancellation state for immediate visual feedback
   const [isCancelling, setIsCancelling] = useState(false);
@@ -310,7 +305,7 @@ export const useActivitySubscriptions = (
       streamingContentRef.current += chunk;
       // Accumulate chunk for batched state update
       pendingStreamingChunks.current += chunk;
-      // Schedule batched flush (50ms window)
+      // Schedule batched flush (100ms throttle window)
       scheduleStreamingFlush.current();
     }
   });
@@ -406,14 +401,15 @@ export const useActivitySubscriptions = (
     const agentName = event.data?.agentName;
 
     if (isSpecialized) {
-      setActiveAgentsCount((prev) => prev + 1);
-
       // Track sub-agent name if available
       if (agentName) {
         actions.addSubAgent(agentName);
       }
     } else {
-      // Cancel any pending streaming flush to prevent stale data
+      // Flush any pending streaming content before clearing
+      flushStreamingContent.current();
+
+      // Cancel any pending streaming flush timer (already flushed above)
       if (streamingFlushTimerRef.current) {
         clearTimeout(streamingFlushTimerRef.current);
         streamingFlushTimerRef.current = null;
@@ -441,14 +437,36 @@ export const useActivitySubscriptions = (
     const contextUsage = event.data?.contextUsage;
 
     if (isSpecialized) {
-      setActiveAgentsCount((prev) => Math.max(0, prev - 1));
-
       // Remove sub-agent from tracking if available
       if (agentName) {
         actions.removeSubAgent(agentName);
       }
+
+      // Record delegation tool call in history (AGENT_END fires before TOOL_CALL_END for delegations)
+      // This ensures delegation tools are captured in ToolCallHistory for /debug agent
+      if (event.id) {
+        const toolCall = state.activeToolCalls.find((tc: ToolCallState) => tc.id === event.id);
+        if (toolCall) {
+          const completedCall: ToolCallState = {
+            ...toolCall,
+            status: wasInterrupted ? 'error' : 'success',
+            endTime: event.timestamp || Date.now(),
+            output: event.data?.result || event.data?.output,
+            contextUsage,
+          };
+
+          const serviceRegistry = ServiceRegistry.getInstance();
+          const toolCallHistory = serviceRegistry.getToolCallHistory();
+          if (toolCallHistory) {
+            toolCallHistory.addCall(completedCall);
+          }
+        }
+      }
     } else {
-      // Cancel any pending streaming flush to prevent stale data
+      // Flush any pending streaming content before clearing
+      flushStreamingContent.current();
+
+      // Cancel any pending streaming flush timer (already flushed above)
       if (streamingFlushTimerRef.current) {
         clearTimeout(streamingFlushTimerRef.current);
         streamingFlushTimerRef.current = null;
@@ -482,9 +500,12 @@ export const useActivitySubscriptions = (
     // Defensively clear tool calls and sub-agents immediately on interrupt
     // This ensures the UI is cleaned up even if AGENT_END events are delayed or lost
     actions.clearToolCalls();
-    setActiveAgentsCount(0);
-    // Note: We don't clear activeSubAgents here as removeSubAgent is called per-agent
-    // and the list will be cleaned up as individual AGENT_END events arrive
+
+    // Clear all active sub-agents immediately to prevent UI inconsistency
+    // Individual AGENT_END events may be delayed or lost during interrupt
+    state.activeSubAgents.forEach(agentName => {
+      actions.removeSubAgent(agentName);
+    });
   });
 
   // Diff preview
@@ -1533,7 +1554,6 @@ export const useActivitySubscriptions = (
   });
 
   return {
-    activeAgentsCount,
     isCancelling,
   };
 };

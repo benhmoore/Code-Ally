@@ -38,6 +38,7 @@ export class DebugCommand extends Command {
       { name: 'calls', description: 'Show recent tool calls' },
       { name: 'errors', description: 'Show failed tool calls' },
       { name: 'dump', description: 'Generate debug dump file' },
+      { name: 'agent', description: 'Export agent prompts/responses to file', args: '[n]' },
     ],
   };
 
@@ -66,6 +67,7 @@ export class DebugCommand extends Command {
   /debug calls [n]     - Show last N tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
   /debug errors [n]    - Show last N failed tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
   /debug dump [n]      - Dump debug info to file (last N entries, default: ${BUFFER_SIZES.MAX_LOG_BUFFER_SIZE})
+  /debug agent [n]     - Export last N agent prompts/responses to file (default: 5)
 `,
       };
     }
@@ -112,9 +114,15 @@ export class DebugCommand extends Command {
           parts.length > 1 ? parts[1] : undefined
         );
 
+      case 'agent':
+        return this.handleDebugAgent(
+          serviceRegistry,
+          parts.length > 1 ? parts[1] : undefined
+        );
+
       default:
         return this.createError(
-          `Unknown debug subcommand: ${subcommand}. Available: enable, disable, calls, errors, dump`
+          `Unknown debug subcommand: ${subcommand}. Available: enable, disable, calls, errors, dump, agent`
         );
     }
   }
@@ -415,6 +423,190 @@ export class DebugCommand extends Command {
       return this.createError(
         `Failed to write debug dump: ${error instanceof Error ? error.message : String(error)}`
       );
+    }
+  }
+
+  /**
+   * Export agent prompts and responses to a file
+   *
+   * Filters tool call history for delegation tools (agent, explore, plan)
+   * and exports full prompts and responses without truncation.
+   */
+  private async handleDebugAgent(
+    serviceRegistry: ServiceRegistry,
+    countStr: string | undefined
+  ): Promise<CommandResult> {
+    // Agent delegation tool names
+    const AGENT_TOOLS = ['agent', 'explore', 'plan', 'manage-agents'];
+    const DEFAULT_AGENT_COUNT = 5;
+
+    try {
+      // Parse count parameter
+      let count = DEFAULT_AGENT_COUNT;
+
+      if (countStr) {
+        const parsed = parseInt(countStr, 10);
+
+        if (isNaN(parsed) || parsed < 1) {
+          return this.createError('Invalid count. Must be a positive number.');
+        }
+
+        count = parsed;
+      }
+
+      // Get tool call history
+      const toolCallHistory = serviceRegistry.getToolCallHistory();
+      if (!toolCallHistory) {
+        return this.createError('Tool call history not available');
+      }
+
+      // Filter to agent-related tool calls only
+      const allCalls = toolCallHistory.getAll();
+      const agentCalls = allCalls.filter(call => AGENT_TOOLS.includes(call.toolName));
+
+      if (agentCalls.length === 0) {
+        return {
+          handled: true,
+          response: 'No agent calls in history.',
+        };
+      }
+
+      // Get the last N agent calls (most recent last in array, so slice from end)
+      const calls = agentCalls.slice(-count);
+      const actualCount = calls.length;
+
+      // Generate timestamp for filename
+      const now = new Date();
+      const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5);
+      const filename = `codeally-agent-debug-${timestamp}.txt`;
+      const homeDir = os.homedir();
+      const filepath = path.join(homeDir, filename);
+
+      // Build content
+      let content = '';
+
+      // Header
+      content += '='.repeat(80) + '\n';
+      content += 'CodeAlly Agent Debug Export\n';
+      content += `Generated: ${now.toLocaleString()}\n`;
+      content += `Showing last ${actualCount} agent call${actualCount !== 1 ? 's' : ''}`;
+      if (agentCalls.length > actualCount) {
+        content += ` of ${agentCalls.length} total`;
+      }
+      content += '\n';
+      content += '='.repeat(80) + '\n\n';
+
+      // Format each agent call (most recent first for readability)
+      for (let i = calls.length - 1; i >= 0; i--) {
+        const call = calls[i];
+        if (!call) continue;
+
+        const callNumber = calls.length - i;
+        content += this.formatAgentCall(call, callNumber);
+      }
+
+      // Write to file
+      fs.writeFileSync(filepath, content, 'utf-8');
+
+      return {
+        handled: true,
+        response: `Agent debug export written to: ${filepath}\n\nContains ${actualCount} agent call${actualCount !== 1 ? 's' : ''}${agentCalls.length > actualCount ? ` (of ${agentCalls.length} total in history)` : ''}.`,
+      };
+    } catch (error) {
+      return this.createError(
+        `Failed to write agent debug export: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  /**
+   * Format a single agent call for the debug export
+   */
+  private formatAgentCall(call: ToolCallState, callNumber: number): string {
+    let output = '';
+
+    // Header
+    const timeAgo = this.formatTimeAgo(call.endTime || call.startTime);
+    const agentType = call.arguments?.agent_type || call.toolName;
+    const statusIcon = call.status === 'success' ? '✓' : '✗';
+
+    output += '━'.repeat(80) + '\n';
+    output += `AGENT #${callNumber} - ${agentType} (${timeAgo}) ${statusIcon}\n`;
+    output += '━'.repeat(80) + '\n';
+
+    // Metadata
+    const isoTime = new Date(call.startTime).toISOString();
+    output += `Timestamp: ${isoTime}\n`;
+    output += `Tool: ${call.toolName}\n`;
+
+    if (call.arguments?.agent_type && call.arguments.agent_type !== call.toolName) {
+      output += `Agent Type: ${call.arguments.agent_type}\n`;
+    }
+
+    if (call.arguments?.thoroughness) {
+      output += `Thoroughness: ${call.arguments.thoroughness}\n`;
+    }
+
+    if (call.agentModel) {
+      output += `Model: ${call.agentModel}\n`;
+    }
+
+    if (call.endTime && call.startTime) {
+      const duration = call.endTime - call.startTime;
+      output += `Duration: ${this.formatDuration(duration)}\n`;
+    }
+
+    output += `Status: ${call.status}\n`;
+
+    // Context files (if provided)
+    if (call.arguments?.context_files && Array.isArray(call.arguments.context_files) && call.arguments.context_files.length > 0) {
+      output += '\nContext Files:\n';
+      for (const file of call.arguments.context_files) {
+        output += `  - ${file}\n`;
+      }
+    }
+
+    // Thinking (if available)
+    if (call.thinking) {
+      output += '\nTHINKING:\n';
+      output += '─'.repeat(80) + '\n';
+      output += call.thinking + '\n';
+    }
+
+    // Initial prompt (no truncation)
+    output += '\nINITIAL PROMPT:\n';
+    output += '─'.repeat(80) + '\n';
+    const prompt = call.arguments?.task_prompt || call.arguments?.prompt || JSON.stringify(call.arguments, null, 2);
+    output += prompt + '\n';
+
+    // Final response (no truncation)
+    output += '\nFINAL RESPONSE:\n';
+    output += '─'.repeat(80) + '\n';
+    if (call.output) {
+      output += call.output + '\n';
+    } else if (call.error) {
+      output += `[ERROR] ${call.error}\n`;
+    } else {
+      output += '[No output]\n';
+    }
+
+    output += '\n';
+
+    return output;
+  }
+
+  /**
+   * Format duration in human-readable form
+   */
+  private formatDuration(ms: number): string {
+    if (ms < 1000) {
+      return `${ms}ms`;
+    } else if (ms < 60000) {
+      return `${(ms / 1000).toFixed(1)}s`;
+    } else {
+      const minutes = Math.floor(ms / 60000);
+      const seconds = Math.floor((ms % 60000) / 1000);
+      return `${minutes}m ${seconds}s`;
     }
   }
 

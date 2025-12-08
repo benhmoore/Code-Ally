@@ -177,6 +177,7 @@ export class Agent {
 
   // Request state
   private requestInProgress: boolean = false;
+  private agentEndEmitted: boolean = false;
 
   // Interruption management - delegated to InterruptionManager
   private interruptionManager: InterruptionManager;
@@ -1053,6 +1054,7 @@ export class Agent {
       // Reset interrupted flag and mark request in progress
       this.interruptionManager.reset();
       this.requestInProgress = true;
+      this.agentEndEmitted = false;
 
       // Send to LLM and process response
       const response = await this.getLLMResponse({
@@ -1229,6 +1231,7 @@ export class Agent {
             agentName: this.config.agentType || 'ally',
           },
         });
+        this.agentEndEmitted = true;
 
         // Return concise message to user
         return PERMISSION_MESSAGES.USER_FACING_DENIAL;
@@ -1270,6 +1273,22 @@ export class Agent {
     const message = context.reason || PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
     const wasTimeout = context.isTimeout;
 
+    // Emit AGENT_END event if not already emitted
+    if (!this.agentEndEmitted) {
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.AGENT_END,
+        timestamp: Date.now(),
+        data: {
+          interrupted: true,
+          isSpecializedAgent: this.config.isSpecializedAgent || false,
+          instanceId: this.instanceId,
+          agentName: this.config.agentType || 'ally',
+        },
+      });
+      this.agentEndEmitted = true;
+    }
+
     // Clear interruption state
     this.interruptionManager.reset();
 
@@ -1287,6 +1306,7 @@ export class Agent {
    */
   private cleanupRequestState(): void {
     this.requestInProgress = false;
+    this.agentEndEmitted = false;
     this.interruptionManager.cleanup();
     this.stopActivityMonitoring();
 
@@ -1333,6 +1353,7 @@ export class Agent {
           agentName: this.config.agentType || 'ally',
         },
       });
+      this.agentEndEmitted = true;
     }
   }
 
@@ -1679,6 +1700,23 @@ export class Agent {
         // Regular cancel - mark as interrupted for next request
         logger.debug('[AGENT]', this.instanceId, 'Returning USER_FACING_INTERRUPTION (regular cancel after timeout)');
         this.interruptionManager.markRequestAsInterrupted();
+
+        // Emit AGENT_END event if not already emitted
+        if (!this.agentEndEmitted) {
+          this.emitEvent({
+            id: this.generateId(),
+            type: ActivityEventType.AGENT_END,
+            timestamp: Date.now(),
+            data: {
+              interrupted: true,
+              isSpecializedAgent: this.config.isSpecializedAgent || false,
+              instanceId: this.instanceId,
+              agentName: this.config.agentType || 'ally',
+            },
+          });
+          this.agentEndEmitted = true;
+        }
+
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
     }
@@ -1727,6 +1765,23 @@ export class Agent {
         // Regular cancel - mark as interrupted for next request
         logger.debug('[AGENT]', this.instanceId, 'Returning USER_FACING_INTERRUPTION (interrupted after ResponseProcessor)');
         this.interruptionManager.markRequestAsInterrupted();
+
+        // Emit AGENT_END event if not already emitted
+        if (!this.agentEndEmitted) {
+          this.emitEvent({
+            id: this.generateId(),
+            type: ActivityEventType.AGENT_END,
+            timestamp: Date.now(),
+            data: {
+              interrupted: true,
+              isSpecializedAgent: this.config.isSpecializedAgent || false,
+              instanceId: this.instanceId,
+              agentName: this.config.agentType || 'ally',
+            },
+          });
+          this.agentEndEmitted = true;
+        }
+
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
     }
@@ -2412,11 +2467,11 @@ export class Agent {
     // Clean up ActivityStream listeners to prevent memory leaks
     // This is critical for long-running sessions with many agents
     //
-    // WARNING: If this agent shares an ActivityStream with other components
-    // (e.g., via AgentPoolService), this will clear ALL listeners from the
-    // shared stream. Ensure this agent is the last user of the stream, or
-    // use scoped streams (ActivityStream.createScoped()) for isolation.
-    if (this.activityStream && typeof this.activityStream.cleanup === 'function') {
+    // IMPORTANT: Specialized agents share an ActivityStream with the main agent
+    // (via AgentPoolService), so they must NOT cleanup the shared stream.
+    // Only the main/root agent (isSpecializedAgent=false) should cleanup.
+    // This prevents destroying ALL UI subscriptions when any delegated agent finishes.
+    if (!this.config.isSpecializedAgent && this.activityStream && typeof this.activityStream.cleanup === 'function') {
       this.activityStream.cleanup();
     }
 
