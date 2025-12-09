@@ -264,6 +264,7 @@ export class OllamaClient extends ModelClient {
 
             const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
             logger.debug(`[OLLAMA_CLIENT] Network error on request ${requestId}, retrying in ${backoffSeconds}s...`);
+            this.emitStatusMessage(`Connection failed, retrying in ${backoffSeconds}s...`);
             await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
             attempt++;
             continue;
@@ -279,6 +280,7 @@ export class OllamaClient extends ModelClient {
 
             const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
             logger.debug(`[OLLAMA_CLIENT] HTTP ${error.httpStatus} error on request ${requestId}, retrying in ${backoffSeconds}s...`);
+            this.emitStatusMessage(`Server error (HTTP ${error.httpStatus}), retrying in ${backoffSeconds}s...`);
             await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
             attempt++;
             continue;
@@ -293,6 +295,7 @@ export class OllamaClient extends ModelClient {
 
             const backoffSeconds = Math.min(1 + attempt, RETRY_CONFIG.MAX_BACKOFF_SECONDS);
             logger.debug(`[OLLAMA_CLIENT] JSON parse error on request ${requestId}, retrying in ${backoffSeconds}s...`);
+            this.emitStatusMessage(`Response parse error, retrying in ${backoffSeconds}s...`);
             await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
             attempt++;
             continue;
@@ -308,6 +311,7 @@ export class OllamaClient extends ModelClient {
 
             const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
             logger.debug(`[OLLAMA_CLIENT] Stream timeout on request ${requestId}, retrying in ${backoffSeconds}s (attempt ${attempt + 1})...`);
+            this.emitStatusMessage(`Stream timeout, retrying in ${backoffSeconds}s...`);
             await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
             attempt++;
             continue;
@@ -948,5 +952,19 @@ export class OllamaClient extends ModelClient {
    */
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Emit a status message for user-visible connection events
+   */
+  private emitStatusMessage(message: string): void {
+    if (this.activityStream) {
+      this.activityStream.emit({
+        id: `status-${Date.now()}`,
+        type: ActivityEventType.STATUS_MESSAGE,
+        timestamp: Date.now(),
+        data: { message },
+      });
+    }
   }
 }

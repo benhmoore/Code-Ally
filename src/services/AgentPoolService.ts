@@ -170,9 +170,29 @@ export class AgentPoolService implements IService {
    * @returns PooledAgent with release function
    */
   async acquire(agentConfig: AgentConfig, customToolManager?: ToolManager, customModelClient?: ModelClient): Promise<PooledAgent> {
-    // If requesting initial messages (context files), always create a fresh agent
-    // to avoid context pollution from previous tasks
+    // Compute early: agents with initial messages are "fresh" (one-off, not pooled for reuse)
     const shouldCreateFresh = agentConfig.initialMessages && agentConfig.initialMessages.length > 0;
+
+    // RUNTIME ASSERTION: Pooled agents must be specialized to prevent shared resource cleanup
+    //
+    // Pooled agents share ActivityStream with the main agent. If a pooled agent has
+    // isSpecializedAgent=false, it would call activityStream.cleanup() on finalization
+    // and destroy all UI subscriptions.
+    //
+    // This assertion fires when:
+    // - Agent has custom ToolManager (filtered tools) - always requires specialization
+    // - Agent will be pooled for reuse (!shouldCreateFresh) - always requires specialization
+    //
+    // Fresh agents (with initialMessages) are exempt because they're one-off and not reused,
+    // though callers should still use isSpecializedAgent=true for consistency.
+    const requiresSpecialization = customToolManager || !shouldCreateFresh;
+    if (requiresSpecialization && agentConfig.isSpecializedAgent !== true) {
+      throw new Error(
+        `[AGENT_POOL] Invalid configuration: Pooled agent must have isSpecializedAgent=true, ` +
+        `but got ${agentConfig.isSpecializedAgent}. Pooled agents share ActivityStream and ` +
+        `MUST NOT cleanup shared resources on finalization.`
+      );
+    }
 
     const reserved = shouldCreateFresh ? null : this.findAndReserveAgent(agentConfig);
 

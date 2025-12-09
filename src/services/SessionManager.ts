@@ -52,11 +52,33 @@ export class SessionManager implements IService {
   // Cache is invalidated after CACHE_TTL_MS or on operations that might change the file
   private sessionCache: Map<string, { session: Session; loadedAt: number }> = new Map();
   private readonly CACHE_TTL_MS = 1000; // 1 second - cache is fresh for this duration
+  private readonly MAX_CACHE_ENTRIES = 50; // FIFO eviction limit to prevent unbounded memory growth
 
   constructor(config: SessionManagerConfig = {}) {
     // Sessions are stored in .ally-sessions/ within the current working directory
     this.sessionsDir = join(process.cwd(), '.ally-sessions');
     this.maxSessions = config.maxSessions ?? BUFFER_SIZES.MAX_SESSIONS_DEFAULT;
+  }
+
+  /**
+   * Evict the oldest cache entry if the cache exceeds MAX_CACHE_ENTRIES.
+   *
+   * Note: This implements FIFO (First In, First Out) eviction, not LRU.
+   * JavaScript Map preserves insertion order, but Map.set() on an existing key
+   * does NOT move it to the end—it stays in its original position. True LRU
+   * would require delete+re-insert on every access.
+   *
+   * FIFO is acceptable here because the cache has a short TTL (1 second),
+   * so access patterns matter less than preventing unbounded growth.
+   */
+  private evictOldestCacheEntryIfNeeded(): void {
+    if (this.sessionCache.size > this.MAX_CACHE_ENTRIES) {
+      const oldestKey = this.sessionCache.keys().next().value;
+      if (oldestKey) {
+        this.sessionCache.delete(oldestKey);
+        logger.debug(`[SESSION] Evicted oldest cache entry: ${oldestKey}`);
+      }
+    }
   }
 
   /**
@@ -321,6 +343,7 @@ export class SessionManager implements IService {
         session: JSON.parse(JSON.stringify(session)), // Store a copy in cache
         loadedAt: Date.now(),
       });
+      this.evictOldestCacheEntryIfNeeded();
       logger.debug(`[SESSION] Loaded from disk and cached: ${sessionName}`);
 
       return session;
@@ -387,6 +410,7 @@ export class SessionManager implements IService {
           session: JSON.parse(JSON.stringify(session)), // Store a copy
           loadedAt: Date.now(),
         });
+        this.evictOldestCacheEntryIfNeeded();
 
         logger.debug(`[SESSION] Saved session ${sessionName} atomically and updated cache`);
       } catch (error) {

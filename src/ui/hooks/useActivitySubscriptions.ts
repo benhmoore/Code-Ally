@@ -493,16 +493,21 @@ export const useActivitySubscriptions = (
     setIsCancelling(false);
   });
 
-  // User interrupt initiated
+  /**
+   * Interrupt handler - clears UI state defensively.
+   *
+   * IDEMPOTENCY CONTRACT:
+   * These operations are safe to call multiple times:
+   * - clearToolCalls(): Sets array to empty (idempotent)
+   * - removeSubAgent(): Filters by name, no-op if already removed
+   *
+   * This defensive approach ensures UI cleanup even if AGENT_END events
+   * are delayed or lost. Late-arriving AGENT_END events will safely
+   * attempt to remove already-cleared state with no adverse effects.
+   */
   useActivityEvent(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
     setIsCancelling(true);
-
-    // Defensively clear tool calls and sub-agents immediately on interrupt
-    // This ensures the UI is cleaned up even if AGENT_END events are delayed or lost
     actions.clearToolCalls();
-
-    // Clear all active sub-agents immediately to prevent UI inconsistency
-    // Individual AGENT_END events may be delayed or lost during interrupt
     state.activeSubAgents.forEach(agentName => {
       actions.removeSubAgent(agentName);
     });
@@ -541,6 +546,19 @@ export const useActivitySubscriptions = (
       error: event.data?.error || 'Unknown error',
       endTime: event.timestamp,
       diffPreview: undefined, // Clear diff preview on error (operation didn't complete)
+    });
+  });
+
+  // Status message events (connection retries, etc.)
+  useActivityEvent(ActivityEventType.STATUS_MESSAGE, (event) => {
+    if (!event.id || !event.timestamp) {
+      return;
+    }
+
+    actions.addStatusMessage({
+      id: event.id,
+      timestamp: event.timestamp,
+      message: event.data?.message || '',
     });
   });
 

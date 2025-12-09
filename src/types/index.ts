@@ -145,6 +145,10 @@ export interface ToolResult {
   system_reminder?: string;
   system_reminder_persist?: boolean;
   _non_truncatable?: boolean; // If true, this result should never be truncated - operation must fail if insufficient context
+
+  /** stderr output from plugin tools, captured for debugging (e.g., plugin print statements) */
+  logs?: string;
+
   [key: string]: any;
 }
 
@@ -215,6 +219,7 @@ export enum ActivityEventType {
   LIBRARY_CLEAR_CONFIRM_REQUEST = 'library_clear_confirm_request',
   LIBRARY_CLEAR_CONFIRM_RESPONSE = 'library_clear_confirm_response',
   CONVERSATION_CLEAR = 'conversation_clear',
+  STATUS_MESSAGE = 'status_message',
 }
 
 export interface ActivityEvent {

@@ -34,6 +34,15 @@ export interface RewindNotice {
 }
 
 /**
+ * Status message for UI display (connection retries, etc.)
+ */
+export interface StatusMessage {
+  id: string;
+  timestamp: number;
+  message: string;
+}
+
+/**
  * Global application state
  */
 export interface AppState {
@@ -66,6 +75,9 @@ export interface AppState {
 
   /** Rewind notices to display in conversation */
   rewindNotices: RewindNotice[];
+
+  /** Status messages to display in conversation (connection retries, etc.) */
+  statusMessages: StatusMessage[];
 
   /** Counter to force Static component remount (for rewind/compaction) */
   staticRemountKey: number;
@@ -128,6 +140,12 @@ export interface AppActions {
 
   /** Clear all rewind notices */
   clearRewindNotices: () => void;
+
+  /** Add a status message */
+  addStatusMessage: (message: StatusMessage) => void;
+
+  /** Clear all status messages */
+  clearStatusMessages: () => void;
 
   /** Force Static component to remount (for rewind/compaction) */
   forceStaticRemount: () => void;
@@ -192,6 +210,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [isCompacting, setIsCompacting] = useState<boolean>(false);
   const [compactionNotices, setCompactionNotices] = useState<CompactionNotice[]>([]);
   const [rewindNotices, setRewindNotices] = useState<RewindNotice[]>([]);
+  const [statusMessages, setStatusMessages] = useState<StatusMessage[]>([]);
   const [staticRemountKey, setStaticRemountKey] = useState<number>(0);
   const [currentAgent, setCurrentAgentState] = useState<string>(initialConfig.default_agent || 'ally');
   const [currentAgentModel, setCurrentAgentModel] = useState<string>(initialConfig.model || '');
@@ -357,6 +376,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setRewindNotices([]);
   }, []);
 
+  const addStatusMessage = useCallback((message: StatusMessage) => {
+    setStatusMessages((prev) => [...prev, message]);
+  }, []);
+
+  const clearStatusMessages = useCallback(() => {
+    setStatusMessages([]);
+  }, []);
+
   const forceStaticRemount = useCallback(() => {
     setStaticRemountKey((prev) => prev + 1);
   }, []);
@@ -429,11 +456,12 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     isCompacting,
     compactionNotices,
     rewindNotices,
+    statusMessages,
     staticRemountKey,
     currentAgent,
     currentAgentModel,
     activeSubAgents,
-  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents]);
+  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, statusMessages, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents]);
 
   // Memoize actions object to prevent unnecessary context updates
   const actions = React.useMemo(() => ({
@@ -452,12 +480,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     clearCompactionNotices,
     addRewindNotice,
     clearRewindNotices,
+    addStatusMessage,
+    clearStatusMessages,
     forceStaticRemount,
     resetConversationView,
     setCurrentAgent,
     addSubAgent,
     removeSubAgent,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, forceStaticRemount, resetConversationView, setCurrentAgent, addSubAgent, removeSubAgent]);
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, addStatusMessage, clearStatusMessages, forceStaticRemount, resetConversationView, setCurrentAgent, addSubAgent, removeSubAgent]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

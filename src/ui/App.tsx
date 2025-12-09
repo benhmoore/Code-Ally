@@ -434,6 +434,7 @@ const AppContentComponent: React.FC<{
         contextUsage={state.contextUsage}
         compactionNotices={state.compactionNotices}
         rewindNotices={state.rewindNotices}
+        statusMessages={state.statusMessages}
         staticRemountKey={state.staticRemountKey}
         config={effectiveConfig}
         activePluginCount={activePluginCount}

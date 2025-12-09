@@ -343,6 +343,10 @@ Stderr: ${stderr || '(none)'}`
 				// Process successful exit
 				try {
 					const result = this.parsePluginOutput(stdout, stderr, outputTruncated);
+					// Include stderr in result.logs for debugging (plugin print statements)
+					if (stderr && stderr.trim()) {
+						result.logs = stderr;
+					}
 					resolve(result);
 				} catch (error) {
 					reject(error);

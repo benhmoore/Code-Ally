@@ -61,6 +61,9 @@ export const API_TIMEOUTS = {
 
   /** Process SIGTERM grace period before SIGKILL (2 seconds) */
   PROCESS_KILL_GRACE_PERIOD: 2000,
+
+  /** Permission request timeout for orphaned requests (2 minutes) */
+  PERMISSION_REQUEST_TIMEOUT: 2 * 60 * 1000,
 } as const;
 
 /**

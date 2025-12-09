@@ -631,6 +631,11 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           }
         }
 
+        // Don't render anything if no items to show
+        if (items.length === 0) {
+          return null;
+        }
+
         // Render items in order
         return (
           <>

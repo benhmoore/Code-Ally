@@ -590,6 +590,13 @@ export class DebugCommand extends Command {
       output += '[No output]\n';
     }
 
+    // Show logs/stderr from plugin tools (no truncation for agent export)
+    if (call.result?.logs) {
+      output += '\nLOGS (stderr):\n';
+      output += '─'.repeat(80) + '\n';
+      output += call.result.logs + '\n';
+    }
+
     output += '\n';
 
     return output;
@@ -713,15 +720,21 @@ export class DebugCommand extends Command {
       output += `${indent}│ Tool: ${msg.name}\n`;
     }
 
-    // Show thinking if present
+    // Show thinking if present (full content for debug dump)
     if (msg.thinking) {
-      const thinkingPreview = this.truncateString(msg.thinking, 100);
-      output += `${indent}│ Thinking: ${thinkingPreview}\n`;
+      const thinkingLines = msg.thinking.split('\n');
+      if (thinkingLines.length === 1 && thinkingLines[0] && thinkingLines[0].length < 80) {
+        output += `${indent}│ Thinking: ${thinkingLines[0]}\n`;
+      } else {
+        output += `${indent}│ Thinking:\n`;
+        for (const line of thinkingLines) {
+          output += `${indent}│   ${line}\n`;
+        }
+      }
     }
 
-    // Show content
-    const contentPreview = this.truncateString(msg.content, 500);
-    const lines = contentPreview.split('\n');
+    // Show content (full content for debug dump)
+    const lines = msg.content.split('\n');
 
     if (lines.length === 1 && lines[0] && lines[0].length < 80) {
       // Short single-line content
@@ -734,11 +747,6 @@ export class DebugCommand extends Command {
           output += `${indent}│   ${line}\n`;
         }
       }
-    }
-
-    // Show truncation indicator
-    if (msg.content.length > 500) {
-      output += `${indent}│   ... (${msg.content.length} chars total)\n`;
     }
 
     // Show metadata if present
@@ -782,18 +790,42 @@ export class DebugCommand extends Command {
       output += `${indent}│   ... (${argLines.length - 5} more lines)\n`;
     }
 
-    // Show error if present
+    // Show error if present (full content for debug dump)
     if (call.error) {
-      const errorPreview = this.truncateString(call.error, 200);
-      output += `${indent}│ Error: ${errorPreview}\n`;
+      const errorLines = call.error.split('\n');
+      if (errorLines.length === 1) {
+        output += `${indent}│ Error: ${call.error}\n`;
+      } else {
+        output += `${indent}│ Error:\n`;
+        for (const line of errorLines) {
+          output += `${indent}│   ${line}\n`;
+        }
+      }
     }
 
-    // Show output preview
+    // Show output (full content for debug dump)
     if (call.output) {
-      const outputPreview = this.truncateString(call.output, 200);
-      output += `${indent}│ Output: ${outputPreview}\n`;
-      if (call.output.length > 200) {
-        output += `${indent}│   ... (${call.output.length} chars total)\n`;
+      const outputLines = call.output.split('\n');
+      if (outputLines.length === 1 && outputLines[0] && outputLines[0].length < 80) {
+        output += `${indent}│ Output: ${outputLines[0]}\n`;
+      } else {
+        output += `${indent}│ Output:\n`;
+        for (const line of outputLines) {
+          output += `${indent}│   ${line}\n`;
+        }
+      }
+    }
+
+    // Show logs/stderr from plugin tools (full content for debug dump)
+    if (call.result?.logs) {
+      const logsLines = call.result.logs.split('\n');
+      if (logsLines.length === 1 && logsLines[0] && logsLines[0].length < 80) {
+        output += `${indent}│ Logs: ${logsLines[0]}\n`;
+      } else {
+        output += `${indent}│ Logs (stderr):\n`;
+        for (const line of logsLines) {
+          output += `${indent}│   ${line}\n`;
+        }
       }
     }
 
@@ -855,6 +887,20 @@ export class DebugCommand extends Command {
       }
 
       output += truncated + '\n\n';
+    }
+
+    // Show logs/stderr from plugin tools
+    if (call.result?.logs) {
+      const truncatedLogs = this.truncateString(call.result.logs, 500);
+      const logsCharCount = call.result.logs.length;
+
+      if (logsCharCount > 500) {
+        output += `Logs (stderr): (${logsCharCount} chars, showing first 500)\n`;
+      } else {
+        output += 'Logs (stderr):\n';
+      }
+
+      output += truncatedLogs + '\n\n';
     }
 
     return output;

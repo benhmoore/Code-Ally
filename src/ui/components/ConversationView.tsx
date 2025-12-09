@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, Static } from 'ink';
 import { Message, ToolCallState, SessionInfo } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
-import { CompactionNotice, RewindNotice } from '../contexts/AppContext.js';
+import { CompactionNotice, RewindNotice, StatusMessage } from '../contexts/AppContext.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -51,6 +51,8 @@ interface ConversationViewProps {
   compactionNotices?: CompactionNotice[];
   /** Rewind notices to display */
   rewindNotices?: RewindNotice[];
+  /** Status messages to display (connection retries, etc.) */
+  statusMessages?: StatusMessage[];
   /** Key to force Static remount for compaction/rewind */
   staticRemountKey: number;
   /** Config for displaying model info */
@@ -176,13 +178,14 @@ function renderToolCallTree(
 }
 
 /**
- * Item that can be rendered chronologically (either a message, tool call, compaction notice, or rewind notice)
+ * Item that can be rendered chronologically (either a message, tool call, compaction notice, rewind notice, or status message)
  */
 type TimelineItem =
   | { type: 'message'; message: Message; index: number; timestamp: number }
   | { type: 'toolCall'; toolCall: ToolCallState & { children?: ToolCallState[] }; timestamp: number }
   | { type: 'compactionNotice'; notice: CompactionNotice; timestamp: number }
-  | { type: 'rewindNotice'; notice: RewindNotice; timestamp: number };
+  | { type: 'rewindNotice'; notice: RewindNotice; timestamp: number }
+  | { type: 'statusMessage'; statusMessage: StatusMessage; timestamp: number };
 
 
 /**
@@ -194,21 +197,28 @@ const ActiveContent = React.memo<{
   contextUsage: number;
   config?: any;
   compactionNotices?: CompactionNotice[];
-}>(({ runningToolCalls, streamingContent, config, compactionNotices }) => (
-  <>
-    {runningToolCalls.map((toolCall) => (
-      <Box key={`running-tool-${toolCall.id}`} paddingLeft={2}>
-        {renderToolCallTree(toolCall, 0, config, compactionNotices)}
-      </Box>
-    ))}
+}>(({ runningToolCalls, streamingContent, config, compactionNotices }) => {
+  // Early return null if nothing to render - prevents empty Box from taking space
+  if (runningToolCalls.length === 0 && !streamingContent) {
+    return null;
+  }
 
-    {streamingContent && (
-      <Box paddingLeft={2}>
-        <Text dimColor>{streamingContent}</Text>
-      </Box>
-    )}
-  </>
-));
+  return (
+    <Box flexDirection="column">
+      {runningToolCalls.map((toolCall) => (
+        <Box key={`running-tool-${toolCall.id}`} paddingLeft={2}>
+          {renderToolCallTree(toolCall, 0, config, compactionNotices)}
+        </Box>
+      ))}
+
+      {streamingContent && (
+        <Box paddingLeft={2}>
+          <Text dimColor>{streamingContent}</Text>
+        </Box>
+      )}
+    </Box>
+  );
+});
 
 /**
  * ConversationView - renders completed and active content separately
@@ -222,6 +232,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   contextUsage,
   compactionNotices = [],
   rewindNotices = [],
+  statusMessages = [],
   staticRemountKey,
   config,
   activePluginCount,
@@ -229,6 +240,14 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   currentAgent,
 }) => {
   const terminalWidth = useContentWidth();
+
+  // Ref to store compactionNotices for use in memoized callbacks without triggering recalculation
+  // This prevents the completedJSXItems useMemo from being invalidated when compactionNotices changes
+  // which was causing Ink's Static component to recalculate layout and accumulate blank lines
+  const compactionNoticesRef = useRef(compactionNotices);
+  useEffect(() => {
+    compactionNoticesRef.current = compactionNotices;
+  }, [compactionNotices]);
 
   // Get git branch on mount
   const [gitBranch, setGitBranch] = useState<string | null>(null);
@@ -263,7 +282,12 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   // Memoize toolCallTree with reference equality check to prevent unnecessary recalculations
   const toolCallTree = React.useMemo(() => buildToolCallTree(activeToolCalls), [activeToolCalls]);
 
-  // Separate completed from running tool calls
+  // Track completed tool IDs to stabilize completedToolCalls reference
+  // This prevents the Static component from recalculating when only running tools update
+  const prevCompletedIdsRef = useRef<Set<string>>(new Set());
+  const prevCompletedToolCallsRef = useRef<(ToolCallState & { children?: ToolCallState[] })[]>([]);
+
+  // Separate completed from running tool calls with stable references
   const { completedToolCalls, runningToolCalls } = React.useMemo(() => {
     const completed = toolCallTree.filter(
       (tc) => tc.status === 'success' || tc.status === 'error' || tc.status === 'cancelled'
@@ -271,6 +295,23 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     const running = toolCallTree.filter(
       (tc) => tc.status === 'executing' || tc.status === 'pending' || tc.status === 'validating'
     );
+
+    // Check if completed tools set has actually changed (by ID)
+    const currentCompletedIds = new Set(completed.map(tc => tc.id));
+    const prevIds = prevCompletedIdsRef.current;
+
+    // Compare sets: same size and all current IDs exist in previous
+    const sameCompletedSet = currentCompletedIds.size === prevIds.size &&
+      [...currentCompletedIds].every(id => prevIds.has(id));
+
+    if (sameCompletedSet) {
+      // Return previous reference to prevent downstream recalculation
+      return { completedToolCalls: prevCompletedToolCallsRef.current, runningToolCalls: running };
+    }
+
+    // Completed set changed - update refs and return new array
+    prevCompletedIdsRef.current = currentCompletedIds;
+    prevCompletedToolCallsRef.current = completed;
     return { completedToolCalls: completed, runningToolCalls: running };
   }, [toolCallTree]);
 
@@ -344,9 +385,18 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       });
     });
 
+    // Add status messages (connection retries, etc.)
+    statusMessages.forEach((statusMsg) => {
+      timeline.push({
+        type: 'statusMessage',
+        statusMessage: statusMsg,
+        timestamp: statusMsg.timestamp,
+      });
+    });
+
     timeline.sort((a, b) => a.timestamp - b.timestamp);
     return timeline;
-  }, [messages, completedToolCalls, compactionNotices, rewindNotices]);
+  }, [messages, completedToolCalls, compactionNotices, rewindNotices, statusMessages]);
 
   // Pre-render timeline items as JSX for Static component
   const completedJSXItems = React.useMemo(() => {
@@ -366,9 +416,11 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           </Box>
         );
       } else if (item.type === 'toolCall') {
+        // Use ref to access compactionNotices without adding it as a useMemo dependency
+        // This prevents Static component layout recalculation on every compaction notice change
         items.push(
           <Box key={`tool-${item.toolCall.id}`} {...spacing} paddingLeft={2}>
-            {renderToolCallTree(item.toolCall, 0, config, compactionNotices)}
+            {renderToolCallTree(item.toolCall, 0, config, compactionNoticesRef.current)}
           </Box>
         );
       } else if (item.type === 'compactionNotice') {
@@ -418,11 +470,20 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
             <Box><Text dimColor>{divider}</Text></Box>
           </Box>
         );
+      } else if (item.type === 'statusMessage') {
+        // Status message (connection retries, etc.) - displayed in red
+        items.push(
+          <Box key={`status-${item.statusMessage.id}`} {...spacing} paddingLeft={2}>
+            <Text color={UI_COLORS.ERROR}>{item.statusMessage.message}</Text>
+          </Box>
+        );
       }
     });
 
     return items;
-  }, [completedTimeline, terminalWidth, config, compactionNotices, currentAgent]);
+    // Note: compactionNotices is accessed via ref to avoid unnecessary recalculation
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [completedTimeline, terminalWidth, config, currentAgent]);
 
   return (
     <Box flexDirection="column">
@@ -493,9 +554,10 @@ export const ConversationView = React.memo(ConversationViewComponent, (prevProps
   const contextSame = prevProps.contextUsage === nextProps.contextUsage;
   const compactionNoticesSame = prevProps.compactionNotices === nextProps.compactionNotices;
   const rewindNoticesSame = prevProps.rewindNotices === nextProps.rewindNotices;
+  const statusMessagesSame = prevProps.statusMessages === nextProps.statusMessages;
   const isThinkingSame = prevProps.isThinking === nextProps.isThinking;
   const staticKeySame = prevProps.staticRemountKey === nextProps.staticRemountKey;
   const configSame = prevProps.config === nextProps.config;
 
-  return messagesSame && streamingSame && toolCallsSame && contextSame && compactionNoticesSame && rewindNoticesSame && isThinkingSame && staticKeySame && configSame;
+  return messagesSame && streamingSame && toolCallsSame && contextSame && compactionNoticesSame && rewindNoticesSame && statusMessagesSame && isThinkingSame && staticKeySame && configSame;
 });

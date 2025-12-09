@@ -17,7 +17,7 @@
 
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ActivityEvent } from '../types/index.js';
-import { TEXT_LIMITS, PERMISSION_MESSAGES } from '../config/constants.js';
+import { API_TIMEOUTS, TEXT_LIMITS, PERMISSION_MESSAGES } from '../config/constants.js';
 import { PermissionDeniedError } from '../security/PathSecurity.js';
 import { logger } from '../services/Logger.js';
 
@@ -501,14 +501,14 @@ export class TrustManager {
       // Generate unique ID for permission request: perm_{timestamp}_{7-char-random} (base-36, skip '0.' prefix)
       const requestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-      // Set up timeout to reject orphaned permissions after 5 minutes
+      // Set up timeout to reject orphaned permissions after 2 minutes
       const timeoutId = setTimeout(() => {
         if (this.pendingPermissions.has(requestId)) {
-          logger.warn(`Permission request ${requestId} timed out after 5 minutes`);
+          logger.warn(`Permission request ${requestId} timed out after 2 minutes`);
           this.pendingPermissions.delete(requestId);
           reject(new PermissionDeniedError('Permission request timed out'));
         }
-      }, 5 * 60 * 1000);
+      }, API_TIMEOUTS.PERMISSION_REQUEST_TIMEOUT);
 
       // Store resolver so we can complete it when response arrives
       this.pendingPermissions.set(requestId, {
