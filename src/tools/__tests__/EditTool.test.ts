@@ -71,12 +71,11 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'World',
-        new_string: 'Universe',
+        edits: [{ old_string: 'World', new_string: 'Universe' }],
       });
 
       expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(1);
+      expect(result.edits_applied).toBe(1);
 
       const newContent = await fs.readFile(filePath, 'utf-8');
       expect(newContent).toBe('Hello Universe');
@@ -92,12 +91,11 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'Line 2\nLine 3',
-        new_string: 'New Line',
+        edits: [{ old_string: 'Line 2\nLine 3', new_string: 'New Line' }],
       });
 
       expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(1);
+      expect(result.edits_applied).toBe(1);
 
       const newContent = await fs.readFile(filePath, 'utf-8');
       expect(newContent).toBe('Line 1\nNew Line');
@@ -113,8 +111,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: '  return true;',
-        new_string: '  return false;',
+        edits: [{ old_string: '  return true;', new_string: '  return false;' }],
       });
 
       expect(result.success).toBe(true);
@@ -135,13 +132,11 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'foo',
-        new_string: 'qux',
-        replace_all: true,
+        edits: [{ old_string: 'foo', new_string: 'qux', replace_all: true }],
       });
 
       expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(3);
+      expect(result.total_replacements).toBe(3);
 
       const newContent = await fs.readFile(filePath, 'utf-8');
       expect(newContent).toBe('qux bar qux baz qux');
@@ -157,13 +152,11 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'foo',
-        new_string: 'qux',
-        replace_all: false,
+        edits: [{ old_string: 'foo', new_string: 'qux', replace_all: false }],
       });
 
       expect(result.success).toBe(true);
-      expect(result.replacements_made).toBe(1);
+      expect(result.edits_applied).toBe(1);
 
       const newContent = await fs.readFile(filePath, 'utf-8');
       expect(newContent).toBe('qux bar baz');
@@ -179,8 +172,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'foo',
-        new_string: 'qux',
+        edits: [{ old_string: 'foo', new_string: 'qux' }],
       });
 
       expect(result.success).toBe(false);
@@ -192,8 +184,7 @@ describe('EditTool', () => {
   describe('validation', () => {
     it('should require file_path parameter', async () => {
       const result = await editTool.execute({
-        old_string: 'old',
-        new_string: 'new',
+        edits: [{ old_string: 'old', new_string: 'new' }],
       });
 
       expect(result.success).toBe(false);
@@ -201,31 +192,51 @@ describe('EditTool', () => {
       expect(result.error_type).toBe('validation_error');
     });
 
-    it('should require old_string parameter', async () => {
+    it('should require edits array', async () => {
       const result = await editTool.execute({
         file_path: join(tempDir, 'test.txt'),
-        new_string: 'new',
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('old_string parameter is required');
+      expect(result.error).toContain('edits array required');
     });
 
-    it('should require new_string parameter', async () => {
+    it('should require old_string in edit operation', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      await fs.writeFile(filePath, 'Hello World');
+      await trackFullFile(filePath);
+
       const result = await editTool.execute({
-        file_path: join(tempDir, 'test.txt'),
-        old_string: 'old',
+        file_path: filePath,
+        edits: [{ new_string: 'new' }],
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('new_string parameter is required');
+      expect(result.error).toContain('old_string is required');
+    });
+
+    it('should require new_string in edit operation', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      await fs.writeFile(filePath, 'Hello World');
+      await trackFullFile(filePath);
+
+      const result = await editTool.execute({
+        file_path: filePath,
+        edits: [{ old_string: 'old' }],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('new_string is required');
     });
 
     it('should reject same old_string and new_string', async () => {
+      const filePath = join(tempDir, 'test.txt');
+      await fs.writeFile(filePath, 'Hello World');
+      await trackFullFile(filePath);
+
       const result = await editTool.execute({
-        file_path: join(tempDir, 'test.txt'),
-        old_string: 'same',
-        new_string: 'same',
+        file_path: filePath,
+        edits: [{ old_string: 'same', new_string: 'same' }],
       });
 
       expect(result.success).toBe(false);
@@ -235,8 +246,7 @@ describe('EditTool', () => {
     it('should fail if file does not exist', async () => {
       const result = await editTool.execute({
         file_path: join(tempDir, 'nonexistent.txt'),
-        old_string: 'old',
-        new_string: 'new',
+        edits: [{ old_string: 'old', new_string: 'new' }],
       });
 
       expect(result.success).toBe(false);
@@ -250,8 +260,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: dirPath,
-        old_string: 'old',
-        new_string: 'new',
+        edits: [{ old_string: 'old', new_string: 'new' }],
       });
 
       expect(result.success).toBe(false);
@@ -267,13 +276,12 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'NotFound',
-        new_string: 'New',
+        edits: [{ old_string: 'NotFound', new_string: 'New' }],
       });
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('old_string not found');
-      expect(result.error_type).toBe('user_error');
+      expect(result.error_type).toBe('validation_error');
     });
   });
 
@@ -288,14 +296,13 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'hello world',
-        new_string: 'New',
+        edits: [{ old_string: 'hello world', new_string: 'New' }],
       });
 
       expect(result.success).toBe(false);
-      expect(result.suggestion).toBeDefined();
-      expect(result.suggestion).toContain('Similar strings found');
-      expect(result.suggestion).toContain('Capitalization');
+      // Similar strings are now included in the error message
+      expect(result.error).toContain('Similar strings found');
+      expect(result.error).toContain('Capitalization');
     });
 
     it('should find exact substring matches', async () => {
@@ -308,8 +315,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'longer',
-        new_string: 'shorter',
+        edits: [{ old_string: 'longer', new_string: 'shorter' }],
       });
 
       // "longer" should be found as exact substring, so this should succeed
@@ -328,8 +334,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'this ',
-        new_string: '',
+        edits: [{ old_string: 'this ', new_string: '' }],
       });
 
       expect(result.success).toBe(true);
@@ -348,8 +353,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'Single line',
-        new_string: 'Multiple\nLines',
+        edits: [{ old_string: 'Single line', new_string: 'Multiple\nLines' }],
       });
 
       expect(result.success).toBe(true);
@@ -368,8 +372,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: '$10.00',
-        new_string: '$20.00',
+        edits: [{ old_string: '$10.00', new_string: '$20.00' }],
       });
 
       expect(result.success).toBe(true);
@@ -388,8 +391,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: '世界',
-        new_string: 'World',
+        edits: [{ old_string: '世界', new_string: 'World' }],
       });
 
       expect(result.success).toBe(true);
@@ -410,8 +412,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'World',
-        new_string: 'Universe',
+        edits: [{ old_string: 'World', new_string: 'Universe' }],
       });
 
       expect(result.success).toBe(true);
@@ -428,8 +429,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'World',
-        new_string: 'Universe',
+        edits: [{ old_string: 'World', new_string: 'Universe' }],
         show_updated_context: true,
       });
 
@@ -447,8 +447,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'World',
-        new_string: 'Universe',
+        edits: [{ old_string: 'World', new_string: 'Universe' }],
         show_updated_context: false,
       });
 
@@ -466,9 +465,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'foo',
-        new_string: 'qux',
-        replace_all: true,
+        edits: [{ old_string: 'foo', new_string: 'qux', replace_all: true }],
         show_updated_context: true,
       });
 
@@ -492,9 +489,8 @@ describe('EditTool', () => {
       expect(def.type).toBe('function');
       expect(def.function.name).toBe('edit');
       expect(def.function.parameters.required).toContain('file_path');
-      expect(def.function.parameters.required).toContain('old_string');
-      expect(def.function.parameters.required).toContain('new_string');
-      expect(def.function.parameters.properties.replace_all).toBeDefined();
+      expect(def.function.parameters.required).toContain('edits');
+      expect(def.function.parameters.properties.edits).toBeDefined();
       expect(def.function.parameters.properties.show_updated_context).toBeDefined();
     });
 
@@ -503,28 +499,30 @@ describe('EditTool', () => {
         success: true,
         error: '',
         file_path: '/test/file.txt',
-        replacements_made: 3,
+        edits_applied: 3,
+        total_replacements: 5,
       };
 
       const preview = editTool.getResultPreview(result, 3);
 
       expect(preview.length).toBeGreaterThan(0);
-      expect(preview[0]).toContain('3 replacement');
+      expect(preview[0]).toContain('3 operation');
       expect(preview[0]).toContain('/test/file.txt');
     });
 
-    it('should handle singular replacement in preview', () => {
+    it('should handle singular operation in preview', () => {
       const result = {
         success: true,
         error: '',
         file_path: '/test/file.txt',
-        replacements_made: 1,
+        edits_applied: 1,
+        total_replacements: 1,
       };
 
       const preview = editTool.getResultPreview(result, 3);
 
       expect(preview.length).toBeGreaterThan(0);
-      expect(preview[0]).toContain('1 replacement');
+      expect(preview[0]).toContain('1 operation');
     });
   });
 
@@ -544,8 +542,7 @@ describe('EditTool', () => {
       // First edit: replace foo (clears all read state)
       const result1 = await editTool.execute({
         file_path: filePath,
-        old_string: 'foo',
-        new_string: 'modified_foo',
+        edits: [{ old_string: 'foo', new_string: 'modified_foo' }],
       });
 
       expect(result1.success).toBe(true);
@@ -553,16 +550,12 @@ describe('EditTool', () => {
       // Second edit: try to edit bar (should fail because read state was cleared)
       const result2 = await editTool.execute({
         file_path: filePath,
-        old_string: 'bar',
-        new_string: 'modified',
+        edits: [{ old_string: 'bar', new_string: 'modified' }],
       });
 
       expect(result2.success).toBe(false);
       expect(result2.error_type).toBe('validation_error');
-      expect(result2.error).toContain('Lines not read');
-      if (result2.suggestion) {
-        expect(result2.suggestion).toContain('Use the Read tool');
-      }
+      expect(result2.error).toContain('not read');
 
       // Cleanup
       (registry as any)._services?.clear();
@@ -582,16 +575,12 @@ describe('EditTool', () => {
       // Try to edit
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'foo',
-        new_string: 'bar',
+        edits: [{ old_string: 'foo', new_string: 'bar' }],
       });
 
       expect(result.success).toBe(false);
       expect(result.error_type).toBe('validation_error');
-      if (result.suggestion) {
-        expect(result.suggestion).not.toContain('invalidated');
-        expect(result.suggestion).toContain('Use the Read tool');
-      }
+      expect(result.error).toContain('not read');
 
       // Cleanup
       (registry as any)._services?.clear();
@@ -616,8 +605,7 @@ describe('EditTool', () => {
       // Execute edit
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'foo',
-        new_string: 'bar',
+        edits: [{ old_string: 'foo', new_string: 'bar' }],
       });
 
       expect(result.success).toBe(true);
@@ -642,8 +630,7 @@ describe('EditTool', () => {
 
       const result = await editTool.execute({
         file_path: filePath,
-        old_string: 'Hello World',
-        new_string: 'Hello Universe',
+        edits: [{ old_string: 'Hello World', new_string: 'Hello Universe' }],
       });
 
       if (!result.success) {

@@ -242,6 +242,20 @@ export abstract class BaseTool {
   }
 
   /**
+   * Optional argument validation
+   *
+   * Validates tool-specific arguments before execution.
+   * Called by ToolValidator during argument validation phase.
+   *
+   * @param _args - Tool-specific parameters
+   * @returns ValidationResult with valid=false if validation fails, or null if validation passes
+   */
+  validateArgs(_args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+    // Default: no validation
+    return null;
+  }
+
+  /**
    * Optional validation before permission request
    *
    * Called BEFORE permission is requested for tools that require confirmation.

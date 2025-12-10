@@ -173,7 +173,7 @@ describe('TrustManager', () => {
 
       expect(() => {
         throw new PermissionDeniedError();
-      }).toThrow('Permission denied by user');
+      }).toThrow('The user denied permission for this operation');
     });
   });
 });

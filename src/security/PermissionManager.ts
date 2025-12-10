@@ -122,15 +122,14 @@ export class PermissionManager {
         // Check if it's a potential file path
         if (argValue.includes('/') || argValue.includes('\\') || argValue.includes('.')) {
           try {
-            // Verify it doesn't resolve to a path outside CWD
+            // Verify it doesn't resolve to a path outside allowed directories
             const absPath = path.resolve(argValue);
-            if (!absPath.startsWith(this.startDirectory)) {
+            if (!isPathWithinCwd(absPath)) {
               logger.debug(
-                `Path outside CWD detected in ${toolName} argument ${argName}: ${argValue}`
+                `Path outside allowed directories detected in ${toolName} argument ${argName}: ${argValue}`
               );
               throw new DirectoryTraversalError(
-                `Access denied: The path '${argValue}' in argument '${argName}' is outside the working directory. ` +
-                  `Operations are restricted to '${this.startDirectory}' and its subdirectories.`
+                `Access denied: The path '${argValue}' in argument '${argName}' is outside allowed directories.`
               );
             }
           } catch (error) {

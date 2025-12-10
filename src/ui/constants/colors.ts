@@ -233,28 +233,6 @@ export function getContextUsageColor(percent: number): UIColor {
 }
 
 /**
- * Helper function to get todo color based on status
- *
- * @param status - Todo status
- * @returns Color for the given status
- */
-export function getTodoColorNew(
-  status: 'in_progress' | 'completed' | 'proposed' | 'pending'
-): UIColor {
-  switch (status) {
-    case 'in_progress':
-      return UI_COLORS.PRIMARY; // Yellow for active
-    case 'completed':
-      return UI_COLORS.TEXT_DEFAULT; // White for done
-    case 'proposed':
-    case 'pending':
-      return UI_COLORS.TEXT_DIM; // Gray for waiting
-    default:
-      return UI_COLORS.TEXT_DIM;
-  }
-}
-
-/**
  * Initialize the primary UI color
  *
  * This function sets UI_COLORS.PRIMARY to a custom color, enabling profile-specific

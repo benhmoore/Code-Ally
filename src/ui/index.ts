@@ -24,7 +24,3 @@ export type {
 // Hooks
 export { useActivityStream } from './hooks/useActivityStream.js';
 export { useActivityEvent } from './hooks/useActivityEvent.js';
-export { useToolState } from './hooks/useToolState.js';
-export type { ToolState } from './hooks/useToolState.js';
-export { useAnimation, useFrameAnimation } from './hooks/useAnimation.js';
-export type { AnimationState, UseAnimationOptions } from './hooks/useAnimation.js';

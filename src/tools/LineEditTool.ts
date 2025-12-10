@@ -13,6 +13,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import { createUnifiedDiff } from '../utils/diffUtils.js';
+import { isPathWithinCwd } from '../security/PathSecurity.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import * as fs from 'fs/promises';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -40,6 +41,68 @@ export class LineEditTool extends BaseTool {
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
+  }
+
+  /**
+   * Validate LineEditTool arguments
+   */
+  validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+    // Validate path
+    const filePath = args.file_path;
+    if (!filePath || typeof filePath !== 'string') {
+      return null; // Let other validation catch this
+    }
+
+    try {
+      const absolutePath = resolvePath(filePath);
+      if (!isPathWithinCwd(absolutePath)) {
+        return {
+          valid: false,
+          error: 'Path is outside the current working directory',
+          error_type: 'security_error',
+          suggestion: 'File paths must be within the current working directory. Use relative paths like "src/file.ts"',
+        };
+      }
+    } catch (error) {
+      // Path resolution failed - let the tool handle it
+      return null;
+    }
+
+    // Validate line_number parameter
+    if (args.line_number !== undefined && args.line_number !== null) {
+      const lineNumber = Number(args.line_number);
+      if (isNaN(lineNumber) || lineNumber < 1) {
+        return {
+          valid: false,
+          error: 'line_number must be >= 1 (line numbers are 1-indexed)',
+          error_type: 'validation_error',
+          suggestion: 'Line numbers are 1-indexed. Example: line_number=10',
+        };
+      }
+      if (lineNumber > 1000000) {
+        return {
+          valid: false,
+          error: 'line_number is unreasonably large (max 1000000)',
+          error_type: 'validation_error',
+          suggestion: 'Check that line_number is correct',
+        };
+      }
+    }
+
+    // Validate num_lines for delete operation
+    if (args.operation === 'delete' && args.num_lines !== undefined && args.num_lines !== null) {
+      const numLines = Number(args.num_lines);
+      if (isNaN(numLines) || numLines < 1) {
+        return {
+          valid: false,
+          error: 'num_lines must be >= 1 for delete operation',
+          error_type: 'validation_error',
+          suggestion: 'Example: num_lines=5 (delete 5 lines)',
+        };
+      }
+    }
+
+    return null;
   }
 
   /**

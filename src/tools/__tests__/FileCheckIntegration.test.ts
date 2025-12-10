@@ -13,16 +13,37 @@ import { WriteTool } from '../WriteTool.js';
 import { EditTool } from '../EditTool.js';
 import { LineEditTool } from '../LineEditTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { ReadStateManager } from '@services/ReadStateManager.js';
 
 describe('Automatic File Checking After Modification', () => {
   let writeTool: WriteTool;
   let editTool: EditTool;
   let lineEditTool: LineEditTool;
   let activityStream: ActivityStream;
+  let readStateManager: ReadStateManager;
+  let registry: ServiceRegistry;
   let tmpDir: string;
+
+  // Helper function to track file read state
+  const trackFullFile = async (filePath: string) => {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const lines = content.split('\n').length;
+    readStateManager.trackRead(filePath, 1, lines);
+  };
 
   beforeEach(async () => {
     activityStream = new ActivityStream();
+    readStateManager = new ReadStateManager();
+    registry = ServiceRegistry.getInstance();
+
+    // Clear any existing services
+    registry['_services'].clear();
+    registry['_descriptors'].clear();
+
+    // Register read state manager
+    registry.registerInstance('read_state_manager', readStateManager);
+
     writeTool = new WriteTool(activityStream);
     editTool = new EditTool(activityStream);
     lineEditTool = new LineEditTool(activityStream);
@@ -31,6 +52,10 @@ describe('Automatic File Checking After Modification', () => {
 
   afterEach(async () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
+
+    // Clear service registry
+    registry['_services'].clear();
+    registry['_descriptors'].clear();
   });
 
   describe('WriteTool', () => {
@@ -86,11 +111,13 @@ describe('Automatic File Checking After Modification', () => {
       // First write a valid JSON file
       await fs.writeFile(jsonPath, '{"name": "original"}', 'utf-8');
 
-      // Edit it
+      // Track the file as read
+      await trackFullFile(jsonPath);
+
+      // Edit it using batch API
       const result = await editTool.execute({
         file_path: jsonPath,
-        old_string: '"original"',
-        new_string: '"modified"',
+        edits: [{ old_string: '"original"', new_string: '"modified"' }],
       });
 
       expect(result.success).toBe(true);
@@ -105,11 +132,13 @@ describe('Automatic File Checking After Modification', () => {
       // Write a valid JSON file
       await fs.writeFile(jsonPath, '{"name": "test"}', 'utf-8');
 
+      // Track the file as read
+      await trackFullFile(jsonPath);
+
       // Edit it to make it invalid
       const result = await editTool.execute({
         file_path: jsonPath,
-        old_string: '"test"',
-        new_string: '"test",',
+        edits: [{ old_string: '"test"', new_string: '"test",' }],
       });
 
       expect(result.success).toBe(true);
@@ -130,12 +159,13 @@ describe('Automatic File Checking After Modification', () => {
         'utf-8'
       );
 
-      // Replace a line
+      // Track the file as read
+      await trackFullFile(jsonPath);
+
+      // Replace a line using batch API
       const result = await lineEditTool.execute({
         file_path: jsonPath,
-        operation: 'replace',
-        line_number: 2,
-        content: '  "name": "modified",',
+        edits: [{ operation: 'replace', line_number: 2, content: '  "name": "modified",' }],
       });
 
       expect(result.success).toBe(true);
@@ -154,12 +184,13 @@ describe('Automatic File Checking After Modification', () => {
         'utf-8'
       );
 
-      // Insert an invalid line
+      // Track the file as read
+      await trackFullFile(jsonPath);
+
+      // Insert an invalid line using batch API
       const result = await lineEditTool.execute({
         file_path: jsonPath,
-        operation: 'insert',
-        line_number: 2,
-        content: '  invalid syntax here,',
+        edits: [{ operation: 'insert', line_number: 2, content: '  invalid syntax here,' }],
       });
 
       expect(result.success).toBe(true);

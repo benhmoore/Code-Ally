@@ -62,7 +62,7 @@ describe('AgentPoolService', () => {
 
   describe('acquire', () => {
     it('should create new agent when pool is empty', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
 
       expect(result.agent).toBeDefined();
@@ -72,7 +72,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should return different agentIds for different agents', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
       const result2 = await pool.acquire(config);
@@ -81,7 +81,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should reuse existing agent with matching config', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // Acquire and release
       const result1 = await pool.acquire(config);
@@ -96,7 +96,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should NOT reuse agent that is in use', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // Acquire but don't release
       const result1 = await pool.acquire(config);
@@ -108,7 +108,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should NOT reuse agent currently being acquired (race condition fix)', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // First acquire and release to populate pool
       const result1 = await pool.acquire(config);
@@ -126,7 +126,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should evict LRU when pool at capacity', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // Fill pool to capacity (3)
       const result1 = await pool.acquire(config);
@@ -150,7 +150,7 @@ describe('AgentPoolService', () => {
 
     it('should create fresh agent when initialMessages provided', async () => {
       const config: AgentConfig = {
-        isSpecializedAgent: false,
+        isSpecializedAgent: true,
         initialMessages: [{ role: 'user', content: 'test' }],
       };
 
@@ -168,7 +168,7 @@ describe('AgentPoolService', () => {
 
     it('should use custom ToolManager when provided', async () => {
       const customToolManager = {} as ToolManager;
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result = await pool.acquire(config, customToolManager);
 
@@ -178,7 +178,7 @@ describe('AgentPoolService', () => {
 
     it('should use custom ModelClient when provided', async () => {
       const customModelClient = {} as ModelClient;
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result = await pool.acquire(config, undefined, customModelClient);
 
@@ -188,11 +188,11 @@ describe('AgentPoolService', () => {
 
     it('should match agents by _poolKey if present', async () => {
       const config1: AgentConfig = {
-        isSpecializedAgent: false,
+        isSpecializedAgent: true,
         _poolKey: 'custom-key-1',
       };
       const config2: AgentConfig = {
-        isSpecializedAgent: true, // Different flag
+        isSpecializedAgent: true, // Same flag now (both must be true for pooling)
         _poolKey: 'custom-key-1', // Same key
       };
 
@@ -210,11 +210,11 @@ describe('AgentPoolService', () => {
 
     it('should not match agents with different _poolKey', async () => {
       const config1: AgentConfig = {
-        isSpecializedAgent: false,
+        isSpecializedAgent: true,
         _poolKey: 'key-1',
       };
       const config2: AgentConfig = {
-        isSpecializedAgent: false,
+        isSpecializedAgent: true,
         _poolKey: 'key-2',
       };
 
@@ -231,7 +231,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should update agent metadata on acquire', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result = await pool.acquire(config);
       const agentId = result.agentId;
@@ -246,7 +246,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should increment useCount on reuse', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
       const agentId = result1.agentId;
@@ -264,7 +264,7 @@ describe('AgentPoolService', () => {
 
   describe('release', () => {
     it('should mark agent as not in use', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
       const agentId = result.agentId;
 
@@ -275,7 +275,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should update last accessed time', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
       const agentId = result.agentId;
 
@@ -294,7 +294,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should make agent available for reuse', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
       const agentId = result1.agentId;
@@ -309,7 +309,7 @@ describe('AgentPoolService', () => {
     it('should handle release of unknown agent gracefully', async () => {
       // Create a release function with a non-existent agentId
       // This simulates calling release after the agent was removed
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
 
       // Remove the agent
@@ -322,7 +322,7 @@ describe('AgentPoolService', () => {
 
   describe('evictLRU', () => {
     it('should evict least recently used agent', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // Create 3 agents and release them
       const result1 = await pool.acquire(config);
@@ -353,7 +353,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should skip agents that are in use', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // Create 3 agents
       const result1 = await pool.acquire(config);
@@ -386,7 +386,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should skip agents being acquired (race condition fix)', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // Fill pool
       const result1 = await pool.acquire(config);
@@ -407,7 +407,7 @@ describe('AgentPoolService', () => {
       const { logger } = await import('../Logger.js');
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // Create 3 agents and keep them all in use
       const result1 = await pool.acquire(config);
@@ -440,7 +440,7 @@ describe('AgentPoolService', () => {
         cleanup: mockCleanup,
       }));
 
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
       const agentId = result.agentId;
 
@@ -451,7 +451,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should remove agent from pool', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
       const agentId = result.agentId;
 
@@ -467,7 +467,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should return false if agent is in use', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
       const agentId = result.agentId;
 
@@ -484,7 +484,7 @@ describe('AgentPoolService', () => {
       const { logger } = await import('../Logger.js');
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
       const agentId = result.agentId;
 
@@ -501,7 +501,7 @@ describe('AgentPoolService', () => {
 
   describe('cleanup', () => {
     it('should cleanup all agents in pool', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       await pool.acquire(config);
       await pool.acquire(config);
@@ -513,7 +513,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should clear pool map', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
       const result2 = await pool.acquire(config);
@@ -538,7 +538,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should return accurate stats with agents', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
       const result2 = await pool.acquire(config);
@@ -557,7 +557,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should calculate agent ages correctly', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result = await pool.acquire(config);
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -573,7 +573,7 @@ describe('AgentPoolService', () => {
 
   describe('clearPool', () => {
     it('should remove all agents', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       await pool.acquire(config);
       await pool.acquire(config);
@@ -584,7 +584,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should reset agent ID counter', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
       await pool.clearPool();
@@ -599,7 +599,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should remove agents even if in use', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
       const result2 = await pool.acquire(config);
@@ -617,7 +617,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should return all agent IDs', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
       const result2 = await pool.acquire(config);
@@ -639,7 +639,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should return true for existing agent', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
 
       expect(pool.hasAgent(result.agentId)).toBe(true);
@@ -648,7 +648,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should return false after agent removed', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
       const agentId = result.agentId;
 
@@ -665,7 +665,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should return metadata for existing agent', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);
       const agentId = result.agentId;
 
@@ -686,7 +686,7 @@ describe('AgentPoolService', () => {
 
   describe('concurrent operations', () => {
     it('should handle multiple concurrent acquires', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const results = await Promise.all([
         pool.acquire(config),
@@ -705,7 +705,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should handle concurrent acquire and release', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
       const releasePromise = new Promise(resolve => {
@@ -724,7 +724,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should prevent race condition with acquiringAgents set', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // First acquire and release to populate pool
       const result1 = await pool.acquire(config);
@@ -744,7 +744,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should atomically reserve agents under high concurrent load', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // Pre-populate pool with 5 released agents
       const initialAgents = await Promise.all([
@@ -773,7 +773,7 @@ describe('AgentPoolService', () => {
     });
 
     it('should handle rapid acquire-release cycles without duplication', async () => {
-      const config: AgentConfig = { isSpecializedAgent: false };
+      const config: AgentConfig = { isSpecializedAgent: true };
 
       // Perform 100 rapid acquire-release cycles
       for (let i = 0; i < 100; i++) {

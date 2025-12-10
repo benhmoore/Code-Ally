@@ -56,6 +56,53 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
   }
 
   /**
+   * Validate GrepTool arguments
+   */
+  validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+    // Validate regex pattern syntax
+    if (args.pattern && typeof args.pattern === 'string') {
+      try {
+        const flags = args['-i'] || args.case_insensitive ? 'i' : '';
+        new RegExp(args.pattern, flags);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Invalid regex';
+        return {
+          valid: false,
+          error: `Invalid regex pattern: ${errorMsg}`,
+          error_type: 'validation_error',
+          suggestion: 'Use simpler patterns or escape special characters like . * + ? [ ] ( ) { } | \\',
+        };
+      }
+    }
+
+    // Validate context line parameters
+    const contextParams = ['-A', '-B', '-C'];
+    for (const param of contextParams) {
+      if (args[param] !== undefined && args[param] !== null) {
+        const value = Number(args[param]);
+        if (isNaN(value) || value < 0) {
+          return {
+            valid: false,
+            error: `${param} must be a non-negative number`,
+            error_type: 'validation_error',
+            suggestion: `Example: ${param}=3 (show 3 context lines)`,
+          };
+        }
+        if (value > 20) {
+          return {
+            valid: false,
+            error: `${param} cannot exceed 20 (max context lines)`,
+            error_type: 'validation_error',
+            suggestion: 'Maximum context is 20 lines',
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Provide custom function definition
    */
   getFunctionDefinition(): FunctionDefinition {

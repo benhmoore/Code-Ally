@@ -10,7 +10,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ActivityStream } from '../ActivityStream.js';
 import { ActivityEventType } from '@shared/index.js';
 import type { ActivityEvent } from '@shared/index.js';
-import type { EventSubscriptionManager } from '@plugins/EventSubscriptionManager.js';
 
 describe('ActivityStream', () => {
   let stream: ActivityStream;
@@ -546,95 +545,6 @@ describe('ActivityStream', () => {
       stream.cleanup();
 
       expect(stream.getListenerCount()).toBe(0);
-    });
-  });
-
-  describe('EventSubscriptionManager integration', () => {
-    it('should forward approved events to EventSubscriptionManager', () => {
-      const mockManager = {
-        dispatch: vi.fn(),
-      } as unknown as EventSubscriptionManager;
-
-      const rootStream = new ActivityStream(undefined, mockManager);
-
-      const event: ActivityEvent = {
-        id: '1',
-        type: ActivityEventType.TOOL_CALL_START,
-        timestamp: Date.now(),
-        data: { toolName: 'test' },
-      };
-
-      rootStream.emit(event);
-
-      expect(mockManager.dispatch).toHaveBeenCalledWith('TOOL_CALL_START', { toolName: 'test' });
-    });
-
-    it('should not forward events from scoped streams', () => {
-      const mockManager = {
-        dispatch: vi.fn(),
-      } as unknown as EventSubscriptionManager;
-
-      const rootStream = new ActivityStream(undefined, mockManager);
-      const scopedStream = rootStream.createScoped('parent-123');
-
-      const event: ActivityEvent = {
-        id: '1',
-        type: ActivityEventType.TOOL_CALL_START,
-        timestamp: Date.now(),
-        data: { toolName: 'test' },
-      };
-
-      scopedStream.emit(event);
-
-      // Should NOT forward from scoped streams
-      expect(mockManager.dispatch).not.toHaveBeenCalled();
-    });
-
-    it('should not forward events with null or undefined data', () => {
-      const mockManager = {
-        dispatch: vi.fn(),
-      } as unknown as EventSubscriptionManager;
-
-      const rootStream = new ActivityStream(undefined, mockManager);
-
-      const event1: ActivityEvent = {
-        id: '1',
-        type: ActivityEventType.TOOL_CALL_START,
-        timestamp: Date.now(),
-        data: null,
-      };
-
-      const event2: ActivityEvent = {
-        id: '2',
-        type: ActivityEventType.TOOL_CALL_START,
-        timestamp: Date.now(),
-        data: undefined,
-      };
-
-      rootStream.emit(event1);
-      rootStream.emit(event2);
-
-      expect(mockManager.dispatch).not.toHaveBeenCalled();
-    });
-
-    it('should not forward unapproved event types', () => {
-      const mockManager = {
-        dispatch: vi.fn(),
-      } as unknown as EventSubscriptionManager;
-
-      const rootStream = new ActivityStream(undefined, mockManager);
-
-      const event: ActivityEvent = {
-        id: '1',
-        type: ActivityEventType.ASSISTANT_CHUNK,
-        timestamp: Date.now(),
-        data: { content: 'test' },
-      };
-
-      rootStream.emit(event);
-
-      // ASSISTANT_CHUNK is not in the approved list
-      expect(mockManager.dispatch).not.toHaveBeenCalled();
     });
   });
 

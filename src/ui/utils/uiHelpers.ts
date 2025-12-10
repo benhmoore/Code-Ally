@@ -33,27 +33,6 @@ export function createDivider(terminalWidth: number): string {
 }
 
 /**
- * Creates an indentation string based on nesting level
- *
- * Used for threaded displays like nested tool calls, where each level
- * is indented by 4 spaces. This matches the indentation pattern used
- * in ToolCallDisplay component.
- *
- * @param level - Nesting level (0 = no indentation)
- * @returns A string of spaces for the specified indentation level
- *
- * @example
- * ```typescript
- * indentByLevel(0);  // Returns: ''
- * indentByLevel(1);  // Returns: '    ' (4 spaces)
- * indentByLevel(2);  // Returns: '        ' (8 spaces)
- * ```
- */
-export function indentByLevel(level: number): string {
-  return '    '.repeat(level);
-}
-
-/**
  * Checks if a tool name represents an agent delegation tool
  *
  * Agent delegation tools (like 'agent', 'explore', 'plan') are special

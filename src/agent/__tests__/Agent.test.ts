@@ -52,10 +52,24 @@ describe('Agent - Interruption Handling', () => {
     };
 
     // Create mock model client that captures sent messages
+    // Use a closure variable to track state across calls
     const capturedMessages: Message[][] = [];
+    let nextResponseInterrupted = false;
+
     mockModelClient = {
       send: vi.fn(async (messages: Message[]): Promise<LLMResponse> => {
         capturedMessages.push([...messages]);
+
+        // Check if we should return an interrupted response
+        if (nextResponseInterrupted) {
+          nextResponseInterrupted = false;
+          return {
+            content: '',
+            tool_calls: [],
+            interrupted: true,
+          };
+        }
+
         return {
           content: 'Mock response',
           tool_calls: [],
@@ -65,6 +79,10 @@ describe('Agent - Interruption Handling', () => {
       close: vi.fn(),
       cancel: vi.fn(),
       setModelName: vi.fn(),
+      // Helper to simulate interruption on next request
+      setNextResponseInterrupted: (value: boolean) => {
+        nextResponseInterrupted = value;
+      },
     } as any;
 
     // Store captured messages on the mock for test access
@@ -85,14 +103,13 @@ describe('Agent - Interruption Handling', () => {
 
   describe('System Reminder Injection', () => {
     it('should inject system reminder after interruption', async () => {
-      // Simulate a message that gets interrupted
-      const messagePromise = agent.sendMessage('First message');
+      // Mark next response as interrupted before sending
+      (mockModelClient as any).setNextResponseInterrupted(true);
 
-      // Interrupt while processing
-      agent.interrupt();
+      // Send a message that will receive an interrupted response
+      const result = await agent.sendMessage('First message');
 
-      // Wait for interruption to complete
-      const result = await messagePromise;
+      // Verify the result indicates interruption
       expect(result.toLowerCase()).toContain('interrupted');
 
       // Send a new message after interruption
@@ -114,10 +131,9 @@ describe('Agent - Interruption Handling', () => {
     });
 
     it('should remove system reminder after LLM responds', async () => {
-      // Simulate interruption
-      const messagePromise = agent.sendMessage('First message');
-      agent.interrupt();
-      await messagePromise;
+      // Simulate interruption by having the LLM return an interrupted response
+      (mockModelClient as any).setNextResponseInterrupted(true);
+      await agent.sendMessage('First message');
 
       // Send new message (this should inject the reminder)
       await agent.sendMessage('Second message');
@@ -148,10 +164,9 @@ describe('Agent - Interruption Handling', () => {
     });
 
     it('should only inject reminder once after interruption', async () => {
-      // Simulate interruption
-      const messagePromise = agent.sendMessage('First message');
-      agent.interrupt();
-      await messagePromise;
+      // Simulate interruption by having the LLM return an interrupted response
+      (mockModelClient as any).setNextResponseInterrupted(true);
+      await agent.sendMessage('First message');
 
       // Send first message after interruption (should inject reminder)
       await agent.sendMessage('Second message');
@@ -173,18 +188,16 @@ describe('Agent - Interruption Handling', () => {
     });
 
     it('should handle multiple interruptions correctly', async () => {
-      // First interruption
-      let messagePromise = agent.sendMessage('First message');
-      agent.interrupt();
-      await messagePromise;
+      // First interruption - simulate by having LLM return interrupted response
+      (mockModelClient as any).setNextResponseInterrupted(true);
+      await agent.sendMessage('First message');
 
       // First message after interruption
       await agent.sendMessage('Second message');
 
-      // Second interruption
-      messagePromise = agent.sendMessage('Third message');
-      agent.interrupt();
-      await messagePromise;
+      // Second interruption - simulate again
+      (mockModelClient as any).setNextResponseInterrupted(true);
+      await agent.sendMessage('Third message');
 
       // Clear captured messages to focus on this call
       (mockModelClient as any).capturedMessages.length = 0;

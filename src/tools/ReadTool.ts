@@ -42,6 +42,39 @@ For exploratory work (unknown file locations, multi-file pattern analysis), use 
   }
 
   /**
+   * Validate ReadTool arguments
+   */
+  validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+    // Validate limit parameter
+    if (args.limit !== undefined && args.limit !== null) {
+      const limit = Number(args.limit);
+      if (isNaN(limit) || limit < 0) {
+        return {
+          valid: false,
+          error: 'limit must be a non-negative number',
+          error_type: 'validation_error',
+          suggestion: 'Example: limit=100 (or 0 for all lines)',
+        };
+      }
+    }
+
+    // Validate offset parameter
+    if (args.offset !== undefined && args.offset !== null) {
+      const offset = Number(args.offset);
+      if (isNaN(offset)) {
+        return {
+          valid: false,
+          error: 'offset must be a number (positive: 1-based line number, negative: count from end)',
+          error_type: 'validation_error',
+          suggestion: 'Example: offset=1 (starts at line 1) or offset=-20 (last 20 lines with limit=20)',
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Get remaining context budget from TokenManager
    * Uses same calculation as ToolResultManager
    */

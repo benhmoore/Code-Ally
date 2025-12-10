@@ -21,14 +21,9 @@ export { MessageHistory, type MessageHistoryOptions } from './MessageHistory.js'
 
 // Function calling utilities
 export {
-  convertToolSchemaToFunctionDefinition,
-  convertToolSchemasToFunctionDefinitions,
   parseToolCallArguments,
-  validateFunctionArguments,
   extractToolCallData,
   createToolResultMessage,
   hasToolCalls,
   isValidToolCall,
-  sanitizeToolCallArguments,
-  type ToolSchema,
 } from './FunctionCalling.js';

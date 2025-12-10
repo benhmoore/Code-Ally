@@ -89,6 +89,33 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
   }
 
   /**
+   * Validate AgentTool arguments
+   */
+  validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+    // Validate task_prompt is non-empty
+    if (args.task_prompt && typeof args.task_prompt === 'string') {
+      if (args.task_prompt.trim().length === 0) {
+        return {
+          valid: false,
+          error: 'task_prompt cannot be empty',
+          error_type: 'validation_error',
+          suggestion: 'Provide a clear task description for the agent',
+        };
+      }
+      if (args.task_prompt.length > 50000) {
+        return {
+          valid: false,
+          error: 'task_prompt is too long (max 50000 characters)',
+          error_type: 'validation_error',
+          suggestion: 'Break down into smaller tasks or provide a more concise prompt',
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Provide custom function definition
    */
   getFunctionDefinition(): FunctionDefinition {

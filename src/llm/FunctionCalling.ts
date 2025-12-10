@@ -9,95 +9,8 @@
  * Supports the OpenAI function calling format used by Ollama.
  */
 
-import { FunctionDefinition, ParameterSchema } from '../types/index.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
-
-/**
- * Tool schema definition (simplified)
- */
-export interface ToolSchema {
-  name: string;
-  description: string;
-  parameters: Record<
-    string,
-    {
-      type: string;
-      description?: string;
-      required?: boolean;
-      items?: any;
-      properties?: any;
-    }
-  >;
-}
-
-/**
- * Convert a tool schema to an OpenAI function definition
- *
- * @param schema - Tool schema
- * @returns OpenAI function definition
- *
- * @example
- * ```typescript
- * const schema: ToolSchema = {
- *   name: 'bash',
- *   description: 'Execute bash commands',
- *   parameters: {
- *     command: {
- *       type: 'string',
- *       description: 'The command to execute',
- *       required: true
- *     }
- *   }
- * };
- *
- * const functionDef = convertToolSchemaToFunctionDefinition(schema);
- * ```
- */
-export function convertToolSchemaToFunctionDefinition(schema: ToolSchema): FunctionDefinition {
-  const properties: Record<string, ParameterSchema> = {};
-  const required: string[] = [];
-
-  // Convert parameters to properties
-  for (const [paramName, paramDef] of Object.entries(schema.parameters)) {
-    properties[paramName] = {
-      type: paramDef.type as any,
-      description: paramDef.description,
-      items: paramDef.items,
-      properties: paramDef.properties,
-      required: paramDef.required ? [paramName] : undefined,
-    };
-
-    if (paramDef.required) {
-      required.push(paramName);
-    }
-  }
-
-  return {
-    type: 'function',
-    function: {
-      name: schema.name,
-      description: schema.description,
-      parameters: {
-        type: 'object',
-        properties,
-        required: required.length > 0 ? required : undefined,
-      },
-    },
-  };
-}
-
-/**
- * Convert multiple tool schemas to function definitions
- *
- * @param schemas - Array of tool schemas
- * @returns Array of function definitions
- */
-export function convertToolSchemasToFunctionDefinitions(
-  schemas: ToolSchema[]
-): FunctionDefinition[] {
-  return schemas.map(convertToolSchemaToFunctionDefinition);
-}
 
 /**
  * Parse tool call arguments from string or object
@@ -119,63 +32,6 @@ export function parseToolCallArguments(args: string | Record<string, any>): Reco
   }
 
   return args || {};
-}
-
-/**
- * Validate function arguments against a parameter schema
- *
- * Performs basic type checking and required field validation.
- *
- * @param args - Arguments to validate
- * @param schema - Parameter schema
- * @returns Validation result with errors
- */
-export function validateFunctionArguments(
-  args: Record<string, any>,
-  schema: FunctionDefinition['function']['parameters']
-): { valid: boolean; errors: string[] } {
-  const errors: string[] = [];
-
-  // Check required fields
-  if (schema.required) {
-    for (const requiredField of schema.required) {
-      if (!(requiredField in args)) {
-        errors.push(`Missing required parameter: ${requiredField}`);
-      }
-    }
-  }
-
-  // Basic type checking
-  for (const [paramName, paramSchema] of Object.entries(schema.properties || {})) {
-    if (paramName in args) {
-      const value = args[paramName];
-      const expectedType = paramSchema.type;
-
-      const actualType = Array.isArray(value) ? 'array' : typeof value;
-
-      // Map JavaScript types to JSON schema types
-      const typeMap: Record<string, string[]> = {
-        string: ['string'],
-        number: ['number', 'integer'],
-        integer: ['number'],
-        boolean: ['boolean'],
-        object: ['object'],
-        array: ['array'],
-      };
-
-      const validTypes = typeMap[expectedType] || [expectedType];
-      if (!validTypes.includes(actualType)) {
-        errors.push(
-          `Parameter '${paramName}' has invalid type. Expected ${expectedType}, got ${actualType}`
-        );
-      }
-    }
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
 }
 
 /**
@@ -269,22 +125,3 @@ export function isValidToolCall(toolCall: any): boolean {
   return true;
 }
 
-/**
- * Sanitize tool call arguments
- *
- * Removes undefined values and ensures proper types.
- *
- * @param args - Arguments to sanitize
- * @returns Sanitized arguments
- */
-export function sanitizeToolCallArguments(args: Record<string, any>): Record<string, any> {
-  const sanitized: Record<string, any> = {};
-
-  for (const [key, value] of Object.entries(args)) {
-    if (value !== undefined && value !== null) {
-      sanitized[key] = value;
-    }
-  }
-
-  return sanitized;
-}

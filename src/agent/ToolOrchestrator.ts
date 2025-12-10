@@ -103,7 +103,7 @@ export class ToolOrchestrator {
   private toolResultManager: ToolResultManager | null = null;
   private permissionManager: PermissionManager | null = null;
   private parentCallId?: string; // Parent context for nested agents
-  private cycleDetectionResults: Map<string, import('./CycleDetector.js').CycleInfo> = new Map();
+  private cycleDetectionResults: Map<string, import('./LoopDetector.js').CycleInfo> = new Map();
 
   constructor(
     toolManager: ToolManager,
@@ -162,7 +162,7 @@ export class ToolOrchestrator {
    */
   async executeToolCalls(
     toolCalls: ToolCall[],
-    cycles?: Map<string, import('./CycleDetector.js').CycleInfo>
+    cycles?: Map<string, import('./LoopDetector.js').CycleInfo>
   ): Promise<ToolResult[]> {
     logger.debug('[TOOL_ORCHESTRATOR] executeToolCalls called with', toolCalls.length, 'tool calls');
 

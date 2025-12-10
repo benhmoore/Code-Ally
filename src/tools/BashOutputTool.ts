@@ -39,6 +39,10 @@ export class BashOutputTool extends BaseTool {
               type: 'string',
               description: 'Optional regex pattern to filter output lines. Only lines matching this pattern will be returned.',
             },
+            lines: {
+              type: 'integer',
+              description: 'Number of lines to return from the end of output (default: 20, use -1 for all lines)',
+            },
           },
           required: ['shell_id'],
         },
@@ -51,6 +55,10 @@ export class BashOutputTool extends BaseTool {
 
     const shellId = args.shell_id as string;
     const filterPattern = args.filter as string | undefined;
+    const linesParam = args.lines as number | undefined;
+
+    // Default to 20 lines, -1 means all lines
+    const lineCount = linesParam === -1 ? undefined : (linesParam ?? 20);
 
     if (!shellId) {
       return this.formatErrorResponse(
@@ -97,7 +105,7 @@ export class BashOutputTool extends BaseTool {
     }
 
     // Read output from buffer
-    const lines = processInfo.outputBuffer.getLines(undefined, filterRegex);
+    const lines = processInfo.outputBuffer.getLines(lineCount, filterRegex);
     const output = lines.join('\n');
 
     // Build status information
@@ -106,7 +114,7 @@ export class BashOutputTool extends BaseTool {
       ? 'running'
       : `exited with code ${processInfo.exitCode}`;
 
-    const lineCount = lines.length;
+    const returnedLineCount = lines.length;
     const totalBufferSize = processInfo.outputBuffer.size();
 
     // Format response with optional filter_applied field
@@ -116,7 +124,7 @@ export class BashOutputTool extends BaseTool {
       pid: processInfo.pid,
       command: processInfo.command,
       status,
-      output_lines: lineCount,
+      output_lines: returnedLineCount,
       total_buffer_lines: totalBufferSize,
       ...(filterPattern ? { filter_applied: filterPattern } : {}),
     });

@@ -13,6 +13,7 @@ import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
+import { isPathWithinCwd } from '../security/PathSecurity.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -24,6 +25,33 @@ export class WriteTool extends BaseTool {
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
+  }
+
+  /**
+   * Validate WriteTool arguments
+   */
+  validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+    const filePath = args.file_path;
+    if (!filePath || typeof filePath !== 'string') {
+      return null; // Let other validation catch this
+    }
+
+    try {
+      const absolutePath = resolvePath(filePath);
+      if (!isPathWithinCwd(absolutePath)) {
+        return {
+          valid: false,
+          error: 'Path is outside the current working directory',
+          error_type: 'security_error',
+          suggestion: 'File paths must be within the current working directory. Use relative paths like "src/file.ts"',
+        };
+      }
+    } catch (error) {
+      // Path resolution failed - let the tool handle it
+      return null;
+    }
+
+    return null;
   }
 
   /**

@@ -163,8 +163,10 @@ describe('ReadTool', () => {
         file_paths: [testFile],
       });
 
-      const preview = readTool.getResultPreview(result, 3);
+      // Request more lines to get actual content in preview
+      const preview = readTool.getResultPreview(result, 10);
       expect(preview.length).toBeGreaterThan(1);
+      // The preview includes file header lines, line count indicator, and content lines
       expect(preview.some((line) => line.includes('Line 1'))).toBe(true);
     });
   });

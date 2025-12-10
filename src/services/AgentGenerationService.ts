@@ -7,15 +7,12 @@
 
 import type { ModelClient } from '../llm/ModelClient.js';
 import { validateAgentName } from '../utils/namingValidation.js';
+import type { CancellableService } from '../types/CancellableService.js';
 
 export interface AgentGenerationResult {
   name: string;
   description: string;
   systemPrompt: string;
-}
-
-export interface CancellableService {
-  cancel(): void;
 }
 
 export class AgentGenerationService implements CancellableService {
@@ -134,10 +131,4 @@ Do not include any text before or after the JSON. The name must be lowercase wit
     }
   }
 
-  /**
-   * Check if generation is in progress
-   */
-  isActive(): boolean {
-    return this.isGenerating;
-  }
 }

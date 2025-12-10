@@ -53,6 +53,57 @@ export class BashTool extends BaseTool {
   }
 
   /**
+   * Validate BashTool arguments
+   */
+  validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+    // Skip timeout validation for background processes (timeout is ignored)
+    const runInBackground = args.run_in_background === true;
+
+    // Validate timeout parameter (only for foreground processes)
+    if (!runInBackground && args.timeout !== undefined && args.timeout !== null) {
+      const timeout = Number(args.timeout);
+      if (isNaN(timeout) || timeout <= 0) {
+        return {
+          valid: false,
+          error: 'timeout must be a positive number (in seconds)',
+          error_type: 'validation_error',
+          suggestion: 'Example: timeout=30 (30 seconds)',
+        };
+      }
+      if (timeout > 600) {
+        return {
+          valid: false,
+          error: 'timeout cannot exceed 600 seconds (10 minutes)',
+          error_type: 'validation_error',
+          suggestion: 'Maximum timeout is 600 seconds',
+        };
+      }
+    }
+
+    // Validate command length
+    if (args.command !== undefined && args.command !== null && typeof args.command === 'string') {
+      if (args.command.length === 0) {
+        return {
+          valid: false,
+          error: 'command cannot be empty',
+          error_type: 'validation_error',
+          suggestion: 'Example: command="ls -la"',
+        };
+      }
+      if (args.command.length > 10000) {
+        return {
+          valid: false,
+          error: 'command is too long (max 10000 characters)',
+          error_type: 'validation_error',
+          suggestion: 'Consider breaking into smaller commands or using a script file',
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Provide custom function definition for better LLM guidance
    */
   getFunctionDefinition(): FunctionDefinition {

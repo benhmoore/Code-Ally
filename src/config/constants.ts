@@ -922,7 +922,7 @@ export const AGENT_POOL = {
 // ===========================================
 
 /**
- * Configuration for ThinkingLoopDetector to identify repetitive thinking patterns
+ * Configuration for thinking loop detection.
  *
  * Detects when models get stuck in loops:
  * - Reconstruction cycles: Repeatedly reconsidering/rethinking decisions

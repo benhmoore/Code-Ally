@@ -5,10 +5,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ToolValidator, ValidationResult } from '../ToolValidator.js';
 import { BaseTool } from '../BaseTool.js';
+import { ReadTool } from '../ReadTool.js';
+import { BashTool } from '../BashTool.js';
+import { GrepTool } from '../GrepTool.js';
+import { LineEditTool } from '../LineEditTool.js';
+import { AgentTool } from '../AgentTool.js';
 import { ToolResult, FunctionDefinition } from '@shared/index.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 
-// Mock tool for testing
+// Mock tool for testing basic functionality
 class MockTool extends BaseTool {
   readonly name = 'mock';
   readonly description = 'Mock tool for testing';
@@ -21,13 +26,21 @@ class MockTool extends BaseTool {
 
 describe('ToolValidator', () => {
   let validator: ToolValidator;
-  let mockTool: MockTool;
   let activityStream: ActivityStream;
+  let readTool: ReadTool;
+  let bashTool: BashTool;
+  let grepTool: GrepTool;
+  let lineEditTool: LineEditTool;
+  let agentTool: AgentTool;
 
   beforeEach(() => {
     validator = new ToolValidator();
     activityStream = new ActivityStream();
-    mockTool = new MockTool(activityStream);
+    readTool = new ReadTool(activityStream);
+    bashTool = new BashTool(activityStream);
+    grepTool = new GrepTool(activityStream);
+    lineEditTool = new LineEditTool(activityStream);
+    agentTool = new AgentTool(activityStream);
   });
 
   describe('ReadTool validation', () => {
@@ -49,8 +62,7 @@ describe('ToolValidator', () => {
     };
 
     it('should reject negative limit', () => {
-      mockTool.name = 'read';
-      const result = validator.validateArguments(mockTool, readFunctionDef, {
+      const result = validator.validateArguments(readTool, readFunctionDef, {
         file_paths: ['test.txt'],
         limit: -5,
       });
@@ -61,8 +73,7 @@ describe('ToolValidator', () => {
     });
 
     it('should accept negative offset', () => {
-      mockTool.name = 'read';
-      const result = validator.validateArguments(mockTool, readFunctionDef, {
+      const result = validator.validateArguments(readTool, readFunctionDef, {
         file_paths: ['test.txt'],
         offset: -20,
       });
@@ -71,8 +82,7 @@ describe('ToolValidator', () => {
     });
 
     it('should accept valid limit and offset', () => {
-      mockTool.name = 'read';
-      const result = validator.validateArguments(mockTool, readFunctionDef, {
+      const result = validator.validateArguments(readTool, readFunctionDef, {
         file_paths: ['test.txt'],
         limit: 100,
         offset: 50,
@@ -82,8 +92,7 @@ describe('ToolValidator', () => {
     });
 
     it('should accept limit=0 (all lines)', () => {
-      mockTool.name = 'read';
-      const result = validator.validateArguments(mockTool, readFunctionDef, {
+      const result = validator.validateArguments(readTool, readFunctionDef, {
         file_paths: ['test.txt'],
         limit: 0,
       });
@@ -110,8 +119,7 @@ describe('ToolValidator', () => {
     };
 
     it('should reject zero timeout', () => {
-      mockTool.name = 'bash';
-      const result = validator.validateArguments(mockTool, bashFunctionDef, {
+      const result = validator.validateArguments(bashTool, bashFunctionDef, {
         command: 'ls',
         timeout: 0,
       });
@@ -121,8 +129,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject negative timeout', () => {
-      mockTool.name = 'bash';
-      const result = validator.validateArguments(mockTool, bashFunctionDef, {
+      const result = validator.validateArguments(bashTool, bashFunctionDef, {
         command: 'ls',
         timeout: -10,
       });
@@ -132,8 +139,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject timeout > 600 seconds', () => {
-      mockTool.name = 'bash';
-      const result = validator.validateArguments(mockTool, bashFunctionDef, {
+      const result = validator.validateArguments(bashTool, bashFunctionDef, {
         command: 'ls',
         timeout: 700,
       });
@@ -143,8 +149,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject empty command', () => {
-      mockTool.name = 'bash';
-      const result = validator.validateArguments(mockTool, bashFunctionDef, {
+      const result = validator.validateArguments(bashTool, bashFunctionDef, {
         command: '',
       });
 
@@ -153,8 +158,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject extremely long commands', () => {
-      mockTool.name = 'bash';
-      const result = validator.validateArguments(mockTool, bashFunctionDef, {
+      const result = validator.validateArguments(bashTool, bashFunctionDef, {
         command: 'a'.repeat(20000),
       });
 
@@ -163,8 +167,7 @@ describe('ToolValidator', () => {
     });
 
     it('should accept valid timeout', () => {
-      mockTool.name = 'bash';
-      const result = validator.validateArguments(mockTool, bashFunctionDef, {
+      const result = validator.validateArguments(bashTool, bashFunctionDef, {
         command: 'ls -la',
         timeout: 30,
       });
@@ -193,8 +196,7 @@ describe('ToolValidator', () => {
     };
 
     it('should reject invalid regex pattern', () => {
-      mockTool.name = 'grep';
-      const result = validator.validateArguments(mockTool, grepFunctionDef, {
+      const result = validator.validateArguments(grepTool, grepFunctionDef, {
         pattern: '[invalid(',
       });
 
@@ -204,8 +206,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject negative context lines', () => {
-      mockTool.name = 'grep';
-      const result = validator.validateArguments(mockTool, grepFunctionDef, {
+      const result = validator.validateArguments(grepTool, grepFunctionDef, {
         pattern: 'test',
         '-A': -1,
       });
@@ -215,8 +216,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject context lines > 20', () => {
-      mockTool.name = 'grep';
-      const result = validator.validateArguments(mockTool, grepFunctionDef, {
+      const result = validator.validateArguments(grepTool, grepFunctionDef, {
         pattern: 'test',
         '-C': 25,
       });
@@ -226,8 +226,7 @@ describe('ToolValidator', () => {
     });
 
     it('should accept valid regex and context', () => {
-      mockTool.name = 'grep';
-      const result = validator.validateArguments(mockTool, grepFunctionDef, {
+      const result = validator.validateArguments(grepTool, grepFunctionDef, {
         pattern: 'class.*Test',
         '-A': 3,
         '-B': 3,
@@ -258,8 +257,7 @@ describe('ToolValidator', () => {
     };
 
     it('should reject line_number < 1', () => {
-      mockTool.name = 'line-edit';
-      const result = validator.validateArguments(mockTool, lineEditFunctionDef, {
+      const result = validator.validateArguments(lineEditTool, lineEditFunctionDef, {
         file_path: 'test.txt',
         operation: 'replace',
         line_number: 0,
@@ -272,8 +270,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject unreasonably large line_number', () => {
-      mockTool.name = 'line-edit';
-      const result = validator.validateArguments(mockTool, lineEditFunctionDef, {
+      const result = validator.validateArguments(lineEditTool, lineEditFunctionDef, {
         file_path: 'test.txt',
         operation: 'replace',
         line_number: 2000000,
@@ -285,8 +282,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject negative num_lines for delete', () => {
-      mockTool.name = 'line-edit';
-      const result = validator.validateArguments(mockTool, lineEditFunctionDef, {
+      const result = validator.validateArguments(lineEditTool, lineEditFunctionDef, {
         file_path: 'test.txt',
         operation: 'delete',
         line_number: 5,
@@ -298,8 +294,7 @@ describe('ToolValidator', () => {
     });
 
     it('should accept valid line edit', () => {
-      mockTool.name = 'line-edit';
-      const result = validator.validateArguments(mockTool, lineEditFunctionDef, {
+      const result = validator.validateArguments(lineEditTool, lineEditFunctionDef, {
         file_path: 'test.txt',
         operation: 'replace',
         line_number: 10,
@@ -328,8 +323,7 @@ describe('ToolValidator', () => {
     };
 
     it('should reject empty task_prompt', () => {
-      mockTool.name = 'agent';
-      const result = validator.validateArguments(mockTool, agentFunctionDef, {
+      const result = validator.validateArguments(agentTool, agentFunctionDef, {
         task_prompt: '   ',
       });
 
@@ -338,8 +332,7 @@ describe('ToolValidator', () => {
     });
 
     it('should reject extremely long task_prompt', () => {
-      mockTool.name = 'agent';
-      const result = validator.validateArguments(mockTool, agentFunctionDef, {
+      const result = validator.validateArguments(agentTool, agentFunctionDef, {
         task_prompt: 'a'.repeat(60000),
       });
 
@@ -348,8 +341,7 @@ describe('ToolValidator', () => {
     });
 
     it('should accept valid task_prompt', () => {
-      mockTool.name = 'agent';
-      const result = validator.validateArguments(mockTool, agentFunctionDef, {
+      const result = validator.validateArguments(agentTool, agentFunctionDef, {
         task_prompt: 'Analyze this code and suggest improvements',
       });
 
@@ -358,6 +350,12 @@ describe('ToolValidator', () => {
   });
 
   describe('Type validation', () => {
+    let mockTool: MockTool;
+
+    beforeEach(() => {
+      mockTool = new MockTool(activityStream);
+    });
+
     const typeFunctionDef: FunctionDefinition = {
       type: 'function',
       function: {
@@ -377,7 +375,6 @@ describe('ToolValidator', () => {
     };
 
     it('should reject wrong type for string parameter', () => {
-      mockTool.name = 'test';
       const result = validator.validateArguments(mockTool, typeFunctionDef, {
         string_param: 123,
       });
@@ -388,7 +385,6 @@ describe('ToolValidator', () => {
     });
 
     it('should reject wrong type for number parameter', () => {
-      mockTool.name = 'test';
       const result = validator.validateArguments(mockTool, typeFunctionDef, {
         string_param: 'test',
         number_param: 'not a number',
@@ -400,7 +396,6 @@ describe('ToolValidator', () => {
     });
 
     it('should accept correct types', () => {
-      mockTool.name = 'test';
       const result = validator.validateArguments(mockTool, typeFunctionDef, {
         string_param: 'hello',
         number_param: 42,

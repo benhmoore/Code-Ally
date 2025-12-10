@@ -24,20 +24,10 @@ export interface LogEntry {
   message: string;
 }
 
-export class Logger {
-  private static instance: Logger | null = null;
+class Logger {
   private logLevel: LogLevel = LogLevel.ERROR;
   private logBuffer: LogEntry[] = [];
   private maxBufferSize: number = BUFFER_SIZES.MAX_LOG_BUFFER_SIZE;
-
-  private constructor() {}
-
-  static getInstance(): Logger {
-    if (!Logger.instance) {
-      Logger.instance = new Logger();
-    }
-    return Logger.instance;
-  }
 
   /**
    * Set the global log level
@@ -173,35 +163,7 @@ export class Logger {
   getAllLogs(): LogEntry[] {
     return [...this.logBuffer];
   }
-
-  /**
-   * Get logs filtered by level
-   */
-  getLogsByLevel(level: LogLevel): LogEntry[] {
-    return this.logBuffer.filter(entry => entry.level === level);
-  }
-
-  /**
-   * Get logs at or above a certain level
-   */
-  getLogsAtOrAbove(level: LogLevel): LogEntry[] {
-    return this.logBuffer.filter(entry => entry.level >= level);
-  }
-
-  /**
-   * Clear all stored logs
-   */
-  clearLogs(): void {
-    this.logBuffer = [];
-  }
-
-  /**
-   * Get the number of stored log entries
-   */
-  getLogCount(): number {
-    return this.logBuffer.length;
-  }
 }
 
-// Export singleton instance for convenience
-export const logger = Logger.getInstance();
+// Singleton instance - the only way to access the logger
+export const logger = new Logger();

@@ -1,5 +1,3 @@
-import { ActivityEventType } from '../../types/index.js';
-
 /**
  * Information about a detected loop in a stream.
  *
@@ -46,50 +44,4 @@ export interface LoopPattern {
    * @returns LoopInfo if a loop is detected, null otherwise
    */
   check(text: string): LoopInfo | null;
-}
-
-/**
- * Configuration for a stream loop detector.
- *
- * Defines which stream to monitor, what patterns to check for,
- * timing parameters, and the callback to invoke on detection.
- */
-export interface StreamLoopDetectorConfig {
-  /**
-   * The activity event type to monitor for loop detection.
-   * Example: ActivityEventType.THOUGHT_CHUNK for thinking loops
-   */
-  eventType: ActivityEventType;
-
-  /**
-   * Array of pattern strategies to check against the stream.
-   * Patterns are checked in order; first match triggers detection.
-   */
-  patterns: LoopPattern[];
-
-  /**
-   * Grace period before starting loop detection (milliseconds).
-   * Allows the stream to establish normal patterns before monitoring.
-   */
-  warmupPeriodMs: number;
-
-  /**
-   * How often to check for loops (milliseconds).
-   * Balance between responsiveness and performance overhead.
-   */
-  checkIntervalMs: number;
-
-  /**
-   * Optional identifier for this detector instance.
-   * Useful for logging and debugging multiple detectors.
-   */
-  instanceId?: string;
-
-  /**
-   * Callback invoked when a loop is detected.
-   * Should handle the loop appropriately (e.g., interrupt, log, notify).
-   *
-   * @param info - Information about the detected loop
-   */
-  onLoopDetected: (info: LoopInfo) => void;
 }

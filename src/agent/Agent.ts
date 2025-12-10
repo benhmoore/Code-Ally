@@ -25,7 +25,6 @@ import { RequiredToolTracker } from './RequiredToolTracker.js';
 import { RequirementValidator } from './RequirementTracker.js';
 import { MessageValidator } from './MessageValidator.js';
 import { ConversationManager } from './ConversationManager.js';
-import { CycleDetector } from './CycleDetector.js';
 import { TurnManager } from './TurnManager.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { ConfigManager } from '../services/ConfigManager.js';
@@ -34,8 +33,7 @@ import { isPermissionDeniedError } from '../security/PathSecurity.js';
 import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
 import { SessionPersistence } from './SessionPersistence.js';
 import { AgentCompactor } from './AgentCompactor.js';
-import { ContextCoordinator } from './ContextCoordinator.js';
-import { StreamLoopDetector } from './StreamLoopDetector.js';
+import { LoopDetector } from './LoopDetector.js';
 import { LoopInfo } from './types/loopDetection.js';
 import type { LinkedPluginWatcher } from '../plugins/LinkedPluginWatcher.js';
 import {
@@ -204,11 +202,8 @@ export class Agent {
   // Activity monitoring - detects agents stuck generating tokens without tool calls
   private activityMonitor: ActivityMonitor;
 
-  // Thinking loop detection - detects repetitive patterns in extended thinking
-  private thinkingLoopDetector: StreamLoopDetector;
-
-  // Response loop detection - detects repetitive patterns in assistant responses
-  private responseLoopDetector: StreamLoopDetector;
+  // Unified loop detection - detects repetitive patterns and tool call cycles
+  private loopDetector: LoopDetector;
 
   // Required tool calls tracking - delegated to RequiredToolTracker
   private requiredToolTracker: RequiredToolTracker;
@@ -222,9 +217,6 @@ export class Agent {
   // Conversation management - delegated to ConversationManager
   private conversationManager: ConversationManager;
 
-  // Cycle detection - delegated to CycleDetector
-  private cycleDetector: CycleDetector;
-
   // Turn management - delegated to TurnManager
   private turnManager: TurnManager;
 
@@ -236,9 +228,6 @@ export class Agent {
 
   // Compaction - delegated to AgentCompactor
   private agentCompactor: AgentCompactor;
-
-  // Context coordination - delegated to ContextCoordinator
-  private contextCoordinator: ContextCoordinator;
 
   // Timeout continuation tracking - counts attempts to continue after activity timeout
   private timeoutContinuationAttempts: number = 0;
@@ -311,14 +300,6 @@ export class Agent {
     // Connect ToolManager to ConversationManager for file tracking
     this.toolManager.setConversationManager(this.conversationManager);
 
-    // Create cycle detector
-    this.cycleDetector = new CycleDetector({
-      maxHistory: AGENT_CONFIG.MAX_TOOL_HISTORY,
-      cycleThreshold: AGENT_CONFIG.CYCLE_THRESHOLD,
-      instanceId: this.instanceId,
-    });
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'CycleDetector created');
-
     // Create turn manager
     this.turnManager = new TurnManager({
       maxDuration: config.maxDuration,
@@ -387,33 +368,35 @@ export class Agent {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Activity monitor enabled:', activityTimeoutMs, 'ms');
     }
 
-    // Create thinking loop detector
-    this.thinkingLoopDetector = new StreamLoopDetector({
-      eventType: ActivityEventType.THOUGHT_CHUNK,
-      patterns: [
-        new ReconstructionCyclePattern(),
-        new RepeatedQuestionPattern(),
-        new RepeatedActionPattern(),
-      ],
-      warmupPeriodMs: THINKING_LOOP_DETECTOR.WARMUP_PERIOD_MS,
-      checkIntervalMs: THINKING_LOOP_DETECTOR.CHECK_INTERVAL_MS,
+    // Create unified loop detector
+    this.loopDetector = new LoopDetector({
       instanceId: this.instanceId,
-      onLoopDetected: (info) => this.handleThinkingLoop(info),
+      thinkingLoopConfig: {
+        eventType: ActivityEventType.THOUGHT_CHUNK,
+        patterns: [
+          new ReconstructionCyclePattern(),
+          new RepeatedQuestionPattern(),
+          new RepeatedActionPattern(),
+        ],
+        warmupPeriodMs: THINKING_LOOP_DETECTOR.WARMUP_PERIOD_MS,
+        checkIntervalMs: THINKING_LOOP_DETECTOR.CHECK_INTERVAL_MS,
+        onLoopDetected: (info) => this.handleThinkingLoop(info),
+      },
+      responseLoopConfig: {
+        eventType: ActivityEventType.ASSISTANT_CHUNK,
+        patterns: [
+          new CharacterRepetitionPattern(),
+          new PhraseRepetitionPattern(),
+          new SentenceRepetitionPattern(),
+        ],
+        warmupPeriodMs: RESPONSE_LOOP_DETECTOR.WARMUP_PERIOD_MS,
+        checkIntervalMs: RESPONSE_LOOP_DETECTOR.CHECK_INTERVAL_MS,
+        onLoopDetected: (info) => this.handleResponseLoop(info),
+      },
+      maxToolHistory: AGENT_CONFIG.MAX_TOOL_HISTORY,
+      cycleThreshold: AGENT_CONFIG.CYCLE_THRESHOLD,
     }, this.activityStream);
-
-    // Create response loop detector
-    this.responseLoopDetector = new StreamLoopDetector({
-      eventType: ActivityEventType.ASSISTANT_CHUNK,
-      patterns: [
-        new CharacterRepetitionPattern(),
-        new PhraseRepetitionPattern(),
-        new SentenceRepetitionPattern(),
-      ],
-      warmupPeriodMs: RESPONSE_LOOP_DETECTOR.WARMUP_PERIOD_MS,
-      checkIntervalMs: RESPONSE_LOOP_DETECTOR.CHECK_INTERVAL_MS,
-      instanceId: this.instanceId,
-      onLoopDetected: (info) => this.handleResponseLoop(info),
-    }, this.activityStream);
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'LoopDetector created');
 
     // Create agent's own TokenManager for isolated context tracking
     this.tokenManager = new TokenManager(config.config.context_size);
@@ -432,13 +415,6 @@ export class Agent {
       this.conversationManager,
       this.tokenManager,
       activityStream
-    );
-
-    // Create context coordinator for context usage tracking
-    this.contextCoordinator = new ContextCoordinator(
-      this.tokenManager,
-      this.conversationManager,
-      this.instanceId
     );
 
     // Create tool orchestrator
@@ -469,8 +445,8 @@ export class Agent {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added', config.initialMessages.length, 'initial messages');
 
       // Update token count after adding initial messages
-      this.contextCoordinator.updateTokenCount();
-      const contextUsage = this.contextCoordinator.getContextUsagePercentage();
+      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
+      const contextUsage = this.tokenManager.getContextUsagePercentage();
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Context usage after initial messages:', contextUsage + '%');
     }
   }
@@ -487,7 +463,7 @@ export class Agent {
    * Used by delegation tools to report context usage in AGENT_END events.
    */
   public getContextUsagePercentage(): number {
-    return this.contextCoordinator.getContextUsagePercentage();
+    return this.tokenManager.getContextUsagePercentage();
   }
 
   /**
@@ -580,7 +556,7 @@ export class Agent {
     this.conversationManager.addMessages(messages);
 
     // Recalculate token count after bulk load
-    this.contextCoordinator.updateTokenCount();
+    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
 
     logger.debug('[AGENT]', this.instanceId, 'Loaded', messages.length, 'messages');
   }
@@ -612,7 +588,7 @@ export class Agent {
 
     // Recalculate token count after removal
     if (result.removed_count > 0) {
-      this.contextCoordinator.updateTokenCount();
+      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
     }
 
     logger.debug(
@@ -637,7 +613,7 @@ export class Agent {
     this.conversationManager.clearMessages();
     this.resetCheckpointTracking();
     // Reset token count after clearing
-    this.contextCoordinator.updateTokenCount();
+    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
     logger.debug(`[AGENT] Cleared conversation history for agent ${this.instanceId}`);
   }
 
@@ -678,8 +654,7 @@ export class Agent {
     this.pendingCleanupIds = [];
 
     // Reset loop detectors
-    this.thinkingLoopDetector.reset();
-    this.responseLoopDetector.reset();
+    this.loopDetector.resetTextDetectors();
 
     // Reset interruption state
     this.interruptionManager.reset();
@@ -777,9 +752,9 @@ export class Agent {
   }
 
   /**
-   * Handle thinking loop detection
+   * Handle thinking loop detection.
    *
-   * Called when StreamLoopDetector identifies repetitive thinking patterns.
+   * Called when LoopDetector identifies repetitive thinking patterns.
    * Sets interruption context and cancels the LLM request mid-stream.
    */
   private handleThinkingLoop(info: LoopInfo): void {
@@ -807,9 +782,9 @@ export class Agent {
   }
 
   /**
-   * Handle response loop detection
+   * Handle response loop detection.
    *
-   * Called when StreamLoopDetector identifies repetitive response patterns.
+   * Called when LoopDetector identifies repetitive response patterns.
    * Sets interruption context and cancels the LLM request mid-stream.
    */
   private handleResponseLoop(info: LoopInfo): void {
@@ -893,14 +868,8 @@ export class Agent {
     // Start activity monitoring for specialized agents
     this.startActivityMonitoring();
 
-    // Clear tool call cycle history on new user input
-    this.cycleDetector.clearHistory();
-
-    // Reset thinking loop detector on new user input
-    this.thinkingLoopDetector.reset();
-
-    // Reset response loop detector on new user input
-    this.responseLoopDetector.reset();
+    // Reset all loop detection (tool cycles and text loops) on new user input
+    this.loopDetector.reset();
 
     // Reset timeout continuation counter on new user input
     this.timeoutContinuationAttempts = 0;
@@ -1311,8 +1280,7 @@ export class Agent {
     this.stopActivityMonitoring();
 
     // Stop both loop detectors
-    this.thinkingLoopDetector.stop();
-    this.responseLoopDetector.stop();
+    this.loopDetector.stopTextDetectors();
 
     // Ensure Ollama active flag is reset
     const registry = ServiceRegistry.getInstance();
@@ -1624,8 +1592,7 @@ export class Agent {
         this.interruptionManager.reset();
 
         // Reset loop detectors for fresh monitoring after interjection
-        this.thinkingLoopDetector.reset();
-        this.responseLoopDetector.reset();
+        this.loopDetector.resetTextDetectors();
 
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection, continuing...');
@@ -1663,7 +1630,7 @@ export class Agent {
             `Attempting continuation (attempt ${this.timeoutContinuationAttempts})`);
 
           // Ensure context room before adding continuation message
-          const contextUsage = this.contextCoordinator.getContextUsagePercentage();
+          const contextUsage = this.tokenManager.getContextUsagePercentage();
           if (contextUsage >= this.config.config.compact_threshold) {
             logger.debug('[AGENT_RETRY]', this.instanceId,
               `Context at ${contextUsage}% (>= ${this.config.config.compact_threshold}%), triggering auto-compaction before timeout continuation`);
@@ -1686,8 +1653,7 @@ export class Agent {
           this.startActivityMonitoring();
 
           // Reset loop detectors for fresh monitoring on retry
-          this.thinkingLoopDetector.reset();
-          this.responseLoopDetector.reset();
+          this.loopDetector.resetTextDetectors();
 
           // Get new response from LLM
           logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId, 'Requesting continuation after timeout...');
@@ -1752,8 +1718,7 @@ export class Agent {
         this.interruptionManager.reset();
 
         // Reset loop detectors for fresh monitoring after interjection
-        this.thinkingLoopDetector.reset();
-        this.responseLoopDetector.reset();
+        this.loopDetector.resetTextDetectors();
 
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection after ResponseProcessor, continuing...');
@@ -1846,22 +1811,22 @@ export class Agent {
           throw error;
         }
       },
-      detectCycles: (toolCalls) => this.cycleDetector.detectCycles(toolCalls),
+      detectCycles: (toolCalls) => this.loopDetector.detectCycles(toolCalls),
       recordToolCalls: (toolCalls, results) => {
-        this.cycleDetector.recordToolCalls(toolCalls, results);
+        this.loopDetector.recordToolCalls(toolCalls, results);
         // Increment checkpoint counters after successful tool execution
         this.incrementToolCallCounters(toolCalls.length);
       },
-      clearCyclesIfBroken: () => this.cycleDetector.clearIfBroken(),
+      clearCyclesIfBroken: () => this.loopDetector.clearCyclesIfBroken(),
       clearCurrentTurn: () => this.toolManager.clearCurrentTurn(),
       startToolExecution: () => this.startToolExecution(),
-      getContextUsagePercentage: () => this.contextCoordinator.getContextUsagePercentage(),
+      getContextUsagePercentage: () => this.tokenManager.getContextUsagePercentage(),
       contextWarningThreshold: CONTEXT_THRESHOLDS.WARNING,
       cleanupEphemeralMessages: () => this.cleanupEphemeralMessages(),
       ensureContextRoom: async () => {
         // Check if context usage is at or above compact threshold before adding retry messages
         // This prevents infinite loops where retry messages fill up context
-        const contextUsage = this.contextCoordinator.getContextUsagePercentage();
+        const contextUsage = this.tokenManager.getContextUsagePercentage();
         if (contextUsage >= this.config.config.compact_threshold) {
           logger.debug('[AGENT_RETRY]', this.instanceId,
             `Context at ${contextUsage}% (>= ${this.config.config.compact_threshold}%), triggering auto-compaction before retry`);
@@ -1884,7 +1849,7 @@ export class Agent {
         `Cleaned up ${removedCount} ephemeral message(s)`);
 
       // Update token count after cleanup
-      this.contextCoordinator.updateTokenCount();
+      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
 
       // Auto-save after cleanup
       this.autoSaveSession();
@@ -1964,10 +1929,10 @@ export class Agent {
     this.conversationManager.addMessage(messageWithMetadata);
 
     // Update token count incrementally with new message (O(1) instead of O(n))
-    this.contextCoordinator.addMessageTokens(messageWithMetadata);
+    this.tokenManager.addMessageTokens(messageWithMetadata);
 
     // Emit context usage update event for real-time UI updates
-    const contextUsage = this.contextCoordinator.getContextUsagePercentage();
+    const contextUsage = this.tokenManager.getContextUsagePercentage();
     this.emitEvent({
       id: this.generateId(),
       type: ActivityEventType.CONTEXT_USAGE_UPDATE,
@@ -2060,7 +2025,7 @@ export class Agent {
       id: msg.id || generateMessageId(),
     })));
     // Recalculate token count after compaction
-    this.contextCoordinator.updateTokenCount();
+    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages updated after compaction, count:', this.conversationManager.getMessageCount());
   }
 
@@ -2104,7 +2069,7 @@ export class Agent {
     this.conversationManager.setMessages(systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages);
 
     // Recalculate token count after rewind
-    this.contextCoordinator.updateTokenCount();
+    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
 
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Rewound to message', userMessageIndex, '- Total messages now:', this.conversationManager.getMessageCount());
 

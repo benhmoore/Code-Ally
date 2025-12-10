@@ -14,6 +14,7 @@ import { logger } from '../services/Logger.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import type { ConfigManager } from '../services/ConfigManager.js';
+import type { AdditionalDirectoriesManager } from '../services/AdditionalDirectoriesManager.js';
 
 /**
  * Check if a path is within a parent directory (handles path boundary correctly)
@@ -67,10 +68,11 @@ function isSafeTempDirectory(tempDir: string): boolean {
 }
 
 /**
- * Check if a path is within the current working directory or temp directory
+ * Check if a path is within the current working directory, temp directory,
+ * or any directory added via /add-dir
  *
  * @param checkPath Path to validate
- * @returns true if path is within CWD or temp directory, false otherwise
+ * @returns true if path is within an allowed directory, false otherwise
  */
 export function isPathWithinCwd(checkPath: string): boolean {
   try {
@@ -91,9 +93,17 @@ export function isPathWithinCwd(checkPath: string): boolean {
       return true;
     }
 
-    // Also allow access to configured temp directory
+    // Check additional directories and temp directory via ServiceRegistry
     try {
       const registry = ServiceRegistry.getInstance();
+
+      // Check additional directories added via /add-dir
+      const additionalDirsManager = registry.get<AdditionalDirectoriesManager>('additional_dirs_manager');
+      if (additionalDirsManager?.isPathInAdditionalDirectory(absPath)) {
+        return true;
+      }
+
+      // Also allow access to configured temp directory
       const configManager = registry.get<ConfigManager>('config');
       if (configManager) {
         const config = configManager.getConfig();
@@ -114,8 +124,8 @@ export function isPathWithinCwd(checkPath: string): boolean {
         }
       }
     } catch (error) {
-      // If we can't get config, just use CWD check
-      logger.debug(`Could not check temp directory: ${error}`);
+      // If we can't get services, just use CWD check
+      logger.debug(`Could not check additional directories: ${error}`);
     }
 
     return false;
@@ -201,106 +211,6 @@ export function hasPathTraversalPatterns(inputStr: string): boolean {
 
   // No dangerous patterns found and path is safe
   return false;
-}
-
-/**
- * Check if a command contains extremely dangerous path patterns
- *
- * @param command Command to check
- * @returns true if command contains dangerous patterns, false otherwise
- */
-export function hasDangerousPathPatterns(command: string): boolean {
-  const dangerousPatterns = [
-    '/etc/passwd',
-    '/etc/shadow',
-    '/etc/sudoers',
-    '/boot/',
-    '/sys/',
-    '/proc/',
-    '/dev/sd', // Disk devices
-    '$(pwd)',
-    '`pwd`',
-    '${HOME}',
-    '$HOME/.*', // Home directory access via variables
-  ];
-
-  const normalizedCommand = command.toLowerCase();
-
-  return dangerousPatterns.some((pattern) =>
-    normalizedCommand.includes(pattern.toLowerCase())
-  );
-}
-
-/**
- * Sensitivity tiers for commands
- */
-export enum CommandSensitivityTier {
-  EXTREMELY_SENSITIVE = 'EXTREMELY_SENSITIVE',
-  SENSITIVE = 'SENSITIVE',
-  NORMAL = 'NORMAL',
-}
-
-/**
- * Determine the sensitivity tier of a command
- *
- * @param command Command to classify
- * @returns Sensitivity tier
- */
-export function getCommandSensitivityTier(command: string): CommandSensitivityTier {
-  if (!command || !command.trim()) {
-    return CommandSensitivityTier.NORMAL;
-  }
-
-  const normalizedCommand = command.toLowerCase();
-
-  // Extremely sensitive patterns
-  const extremelyDangerousPatterns = [
-    'rm -rf /',
-    'rm -rf /*',
-    'rm -rf ~',
-    'rm -rf ~/*',
-    ':(){:|:&};:',
-    'mkfs',
-    'dd if=',
-    'dd of=/dev/',
-    '> /dev/sd',
-    'wget',
-    'curl',
-    'nc ',
-    'netcat',
-    '/etc/passwd',
-    '/etc/shadow',
-    'sudo ',
-    'chmod 777',
-    'chmod -R 777',
-  ];
-
-  for (const pattern of extremelyDangerousPatterns) {
-    if (normalizedCommand.includes(pattern.toLowerCase())) {
-      return CommandSensitivityTier.EXTREMELY_SENSITIVE;
-    }
-  }
-
-  // Sensitive patterns
-  const sensitivePatterns = [
-    'rm ',
-    'mv ',
-    'cp ',
-    'chmod',
-    'chown',
-    'git push',
-    'git reset --hard',
-    'npm publish',
-    'pip install',
-  ];
-
-  for (const pattern of sensitivePatterns) {
-    if (normalizedCommand.includes(pattern.toLowerCase())) {
-      return CommandSensitivityTier.SENSITIVE;
-    }
-  }
-
-  return CommandSensitivityTier.NORMAL;
 }
 
 /**
