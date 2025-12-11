@@ -793,6 +793,9 @@ export const TEXT_LIMITS = {
   /** Model name display length (truncated for status line) */
   MODEL_NAME_DISPLAY_MAX: 5,
 
+  /** Maximum words for question/answer display in tool output */
+  QUESTION_ANSWER_MAX_WORDS: 12,
+
   /** ISO datetime string length (YYYY-MM-DD HH:MM:SS format) */
   ISO_DATETIME_LENGTH: 19,
 

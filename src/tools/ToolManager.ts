@@ -9,6 +9,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolValidator } from './ToolValidator.js';
 import { FunctionDefinition, ToolResult, ToolExecutionContext } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { FormManager } from '../services/FormManager.js';
 import { formatError, createStructuredError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -57,6 +58,10 @@ export class ToolManager {
       const validation = validateToolName(tool.name);
       if (!validation.valid) {
         throw new Error(`Failed to initialize tool: ${validation.error}`);
+      }
+      // Validate tool configuration (e.g., mutually exclusive flags)
+      if (typeof tool.validateConfiguration === 'function') {
+        tool.validateConfiguration();
       }
       this.tools.set(tool.name, tool);
     }
@@ -172,6 +177,21 @@ export class ToolManager {
     // Invalidate cache when tool is unregistered
     this.functionDefinitionsCache.clear();
     logger.debug(`[TOOL_MANAGER] Unregistered contextual tool: ${toolName}`);
+  }
+
+  /**
+   * Inject FormManager into all registered tools
+   *
+   * This enables tools to request interactive forms during execution.
+   * Should be called after FormManager is created during initialization.
+   *
+   * @param formManager - FormManager instance to inject
+   */
+  setFormManager(formManager: FormManager): void {
+    for (const tool of this.tools.values()) {
+      tool.setFormManager(formManager);
+    }
+    logger.debug(`[TOOL_MANAGER] FormManager injected into ${this.tools.size} tools`);
   }
 
   /**

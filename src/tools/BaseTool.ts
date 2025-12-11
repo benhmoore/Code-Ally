@@ -5,13 +5,14 @@
  * and event emission. All concrete tools must extend this class.
  */
 
-import { ToolResult, ActivityEvent, ActivityEventType, ErrorType, ToolExecutionContext } from '../types/index.js';
+import { ToolResult, ActivityEvent, ActivityEventType, ErrorType, ToolExecutionContext, FormSchema } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
+import { FormManager, FormCancelledError } from '../services/FormManager.js';
 
 export abstract class BaseTool {
   /**
@@ -70,6 +71,24 @@ export abstract class BaseTool {
    * Default: false (full cleanup)
    */
   readonly persistAgent: boolean = false;
+
+  /**
+   * Whether this tool should hide its output in the UI
+   * Set to true for tools where output is not useful to display (e.g., file edits shown via diff)
+   * Default: false
+   */
+  readonly hideOutput: boolean = false;
+
+  /**
+   * Whether this tool should always show its full output without truncation
+   * Set to true for tools whose output must be displayed completely (e.g., user questions/answers)
+   * When true:
+   * - Output is shown even when called from delegated agents (ignores hasAgentAncestor)
+   * - Output is never truncated regardless of length
+   * IMPORTANT: Cannot be true if hideOutput is true
+   * Default: false
+   */
+  readonly alwaysShowFullOutput: boolean = false;
 
   /**
    * Whether this tool should collapse its children when complete
@@ -139,9 +158,24 @@ export abstract class BaseTool {
   readonly visibleTo?: string[];
 
   /**
+   * Whether this tool supports interactive forms
+   */
+  readonly supportsInteractiveForm: boolean = false;
+
+  /**
+   * Static form schema (if declared statically rather than dynamically)
+   */
+  readonly formSchema?: FormSchema;
+
+  /**
    * Activity stream for emitting events
    */
   protected activityStream: ActivityStream;
+
+  /**
+   * FormManager for interactive form requests (injected by ToolManager)
+   */
+  protected formManager?: FormManager;
 
   /**
    * Current parameters (for error context)
@@ -150,6 +184,26 @@ export abstract class BaseTool {
 
   constructor(activityStream: ActivityStream) {
     this.activityStream = activityStream;
+  }
+
+  /**
+   * Validate tool configuration. Called by ToolManager during registration.
+   * @throws Error if tool has invalid configuration
+   */
+  validateConfiguration(): void {
+    if (this.hideOutput && this.alwaysShowFullOutput) {
+      throw new Error(
+        `Tool "${this.name}" cannot have both hideOutput and alwaysShowFullOutput set to true`
+      );
+    }
+  }
+
+  /**
+   * Set the FormManager for interactive forms
+   * Called by ToolManager during tool registration
+   */
+  setFormManager(formManager: FormManager): void {
+    this.formManager = formManager;
   }
 
   /**
@@ -305,6 +359,30 @@ export abstract class BaseTool {
         chunk,
       },
     });
+  }
+
+  /**
+   * Request a form from the user during tool execution.
+   * Returns the form data when user submits.
+   * Throws FormCancelledError if user cancels.
+   *
+   * @param schema - Form schema defining fields
+   * @param initialValues - Optional initial values for fields
+   * @returns Promise resolving to form data
+   */
+  protected async requestForm(
+    schema: FormSchema,
+    initialValues?: Record<string, any>
+  ): Promise<Record<string, any>> {
+    if (!this.formManager) {
+      throw new Error('FormManager not available - cannot request form');
+    }
+    return this.formManager.requestForm(
+      this.name,
+      schema,
+      initialValues,
+      this.currentCallId
+    );
   }
 
   /**
@@ -647,3 +725,6 @@ export abstract class BaseTool {
     }
   }
 }
+
+// Export FormCancelledError for tools to catch
+export { FormCancelledError };

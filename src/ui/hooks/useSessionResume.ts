@@ -99,6 +99,7 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
 
         // Prefer stored metadata over current tool definitions (for backwards compatibility with version changes)
         let visibleInChat = true; // Default to visible
+        let alwaysShowFullOutput = false; // Default to not always showing full output
         let status: 'success' | 'error' | 'pending' | 'validating' | 'scheduled' | 'executing' | 'cancelled' = 'success';
 
         // First, try to get visibility from stored metadata
@@ -109,6 +110,16 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
           const toolDef = toolManager.getTool(tc.function.name);
           if (toolDef) {
             visibleInChat = toolDef.visibleInChat ?? true;
+          }
+        }
+
+        // Get display flags from tool definition
+        let hideOutput = false;
+        if (toolManager) {
+          const toolDef = toolManager.getTool(tc.function.name);
+          if (toolDef) {
+            alwaysShowFullOutput = (toolDef as any).alwaysShowFullOutput ?? false;
+            hideOutput = (toolDef as any).hideOutput ?? false;
           }
         }
 
@@ -160,6 +171,8 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
           startTime: baseTimestamp + index, // Slightly offset multiple calls in same message
           endTime: result?.timestamp,
           visibleInChat: visibleInChat,
+          hideOutput,
+          alwaysShowFullOutput,
           // Add reconstructed tool context fields
           ...(parentId !== undefined && { parentId }),
           ...(thinking !== undefined && { thinking }),

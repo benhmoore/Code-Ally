@@ -276,8 +276,8 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
       const config = configManager?.getConfig();
       const endpoint = config?.endpoint || 'http://localhost:11434';
 
-      const { testModelToolCalling } = await import('@llm/ModelValidation.js');
-      const result = await testModelToolCalling(endpoint, modelName);
+      const { testModelCapabilities } = await import('@llm/ModelValidation.js');
+      const result = await testModelCapabilities(endpoint, modelName);
 
       setModelSupportsTools(result.supportsTools);
 

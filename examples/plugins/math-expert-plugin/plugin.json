@@ -507,6 +507,28 @@
         "math-expert"
       ],
       "subtext": "{reason}"
+    },
+    {
+      "name": "interactive-solver",
+      "description": "Interactively solve a mathematical expression with user confirmation. Presents a form where the user can enter or edit the expression before calculation. Use this when the user wants to interactively work through a problem or when you want to confirm an expression before evaluating it.",
+      "command": "python3",
+      "args": [
+        "tools/interactive-solver.py"
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "Optional: Expression to prefill in the form. Leave empty to let the user enter from scratch."
+          }
+        }
+      },
+      "visible_to": [
+        "math-expert"
+      ],
+      "subtext": "Interactive: {expression}",
+      "interactive": true
     }
   ],
   "agents": [
@@ -530,7 +552,8 @@
         "matrix-eigenvalues",
         "solve-ode",
         "solve-ode-ivp",
-        "cannot-calculate"
+        "cannot-calculate",
+        "interactive-solver"
       ]
     }
   ],

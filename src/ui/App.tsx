@@ -31,6 +31,7 @@ import { StatusIndicator } from './components/StatusIndicator.js';
 import { UndoPrompt } from './components/UndoPrompt.js';
 import { UndoFileList } from './components/UndoFileList.js';
 import { LibraryClearConfirmation } from './components/LibraryClearConfirmation.js';
+import { ToolFormWizard } from './components/ToolFormWizard.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { Agent } from '../agent/Agent.js';
 import { PatchManager, PatchMetadata } from '../services/PatchManager.js';
@@ -1191,6 +1192,59 @@ const AppContentComponent: React.FC<{
             />
           </Box>
         </Box>
+      ) : modal.toolFormRequest ? (
+        /* Tool Form Wizard (replaces input when active) */
+        (() => {
+          const formRequest = modal.toolFormRequest;
+          return (
+            <Box marginTop={1} flexDirection="column">
+              <StatusIndicator
+                isProcessing={state.isThinking}
+                isCompacting={state.isCompacting}
+                isCancelling={isCancelling}
+                recentMessages={state.messages.slice(-3)}
+                sessionLoaded={sessionLoaded}
+                isResuming={!!resumeSession}
+                activeToolCalls={state.activeToolCalls}
+                activeSubAgents={state.activeSubAgents}
+              />
+              <ToolFormWizard
+                request={formRequest}
+                fieldIndex={modal.toolFormFieldIndex}
+                values={modal.toolFormValues}
+                errors={modal.toolFormErrors}
+                queueLength={modal.toolFormQueueLength}
+                onFieldIndexChange={modal.setToolFormFieldIndex}
+                onValueChange={modal.setToolFormValue}
+                onErrorChange={modal.setToolFormError}
+                onComplete={(data) => {
+                  activityStream.emit({
+                    id: `response_${formRequest.requestId}`,
+                    type: ActivityEventType.TOOL_FORM_RESPONSE,
+                    timestamp: Date.now(),
+                    data: {
+                      requestId: formRequest.requestId,
+                      callId: formRequest.callId,
+                      data,
+                    },
+                  });
+                }}
+                onCancel={() => {
+                  activityStream.emit({
+                    id: `cancel_${formRequest.requestId}`,
+                    type: ActivityEventType.TOOL_FORM_CANCEL,
+                    timestamp: Date.now(),
+                    data: {
+                      requestId: formRequest.requestId,
+                      callId: formRequest.callId,
+                      toolName: formRequest.toolName,
+                    },
+                  });
+                }}
+              />
+            </Box>
+          );
+        })()
       ) : modal.permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">

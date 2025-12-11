@@ -17,6 +17,7 @@ import { formatError } from '@utils/errorUtils.js';
 import { BYTE_CONVERSIONS, FORMATTING } from '@config/constants.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
+import { testModelCapabilities } from '@llm/ModelValidation.js';
 
 export class ModelCommand extends Command {
   static readonly metadata: CommandMetadata = {
@@ -74,6 +75,18 @@ export class ModelCommand extends Command {
     // Direct model name provided - set it immediately
     if (modelName) {
       try {
+        // Get endpoint from config
+        const config = configManager.getConfig();
+        const endpoint = config.endpoint || 'http://localhost:11434';
+
+        // Test model capabilities (cached after first test)
+        const capabilities = await testModelCapabilities(endpoint, modelName);
+
+        // For ally model, require tool support
+        if (modelType === 'ally' && !capabilities.supportsTools) {
+          return this.createError(`Model '${modelName}' does not support tools. Ally model requires tool support.`);
+        }
+
         const configKey = modelType === 'service' ? 'service_model' : 'model';
         await configManager.setValue(configKey, modelName);
 
@@ -84,8 +97,11 @@ export class ModelCommand extends Command {
           modelClient.setModelName(modelName);
         }
 
+        // Enhance response message with capability info
         const typeName = modelType === 'service' ? 'Service model' : 'Model';
-        return this.createResponse(`${typeName} changed to: ${modelName}`);
+        const capInfo = capabilities.fromCache ? ' (cached)' : '';
+        const imageNote = capabilities.supportsImages ? '' : ' (no image support)';
+        return this.createResponse(`${typeName} changed to: ${modelName}${capInfo}${imageNote}`);
       } catch (error) {
         return this.createError(`Error changing model: ${formatError(error)}`);
       }

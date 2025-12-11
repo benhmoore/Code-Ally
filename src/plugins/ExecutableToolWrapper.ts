@@ -1,4 +1,4 @@
-import { BaseTool } from '../tools/BaseTool.js';
+import { BaseTool, FormCancelledError } from '../tools/BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn, ChildProcess } from 'child_process';
@@ -40,6 +40,12 @@ export class ExecutableToolWrapper extends BaseTool {
 	 * Linked plugins show verbose output and errors in the UI.
 	 */
 	readonly isLinkedPlugin: boolean;
+
+	/**
+	 * Whether this tool supports interactive forms.
+	 * When true, stdin is kept open after writing args to allow form responses.
+	 */
+	readonly isInteractive: boolean;
 
 	/**
 	 * Creates a new ExecutableToolWrapper instance.
@@ -93,6 +99,7 @@ export class ExecutableToolWrapper extends BaseTool {
 		this.envManager = envManager;
 		this.subtextTemplate = toolDef.subtext;
 		this.isLinkedPlugin = isLinked;
+		this.isInteractive = toolDef.interactive ?? false;
 	}
 
 	/**
@@ -207,6 +214,100 @@ export class ExecutableToolWrapper extends BaseTool {
 	}
 
 	/**
+	 * Safely write to child process stdin with error handling.
+	 * Checks if stdin is writable before writing to avoid errors on closed streams.
+	 *
+	 * @param child - Child process to write to
+	 * @param data - Data to write
+	 * @returns true if write succeeded, false otherwise
+	 */
+	private safeStdinWrite(child: ChildProcess, data: string): boolean {
+		if (!child.stdin || !child.stdin.writable) {
+			logger.debug(`[ExecutableToolWrapper] Cannot write to stdin: stream not writable`);
+			return false;
+		}
+		try {
+			child.stdin.write(data);
+			return true;
+		} catch (error) {
+			logger.debug(`[ExecutableToolWrapper] stdin write failed: ${error instanceof Error ? error.message : String(error)}`);
+			return false;
+		}
+	}
+
+	/**
+	 * Attempts to extract a form request from the stdout buffer.
+	 * Searches for JSON objects containing __ally_form_request marker.
+	 *
+	 * @param buffer - Current stdout buffer content
+	 * @returns Object with formRequest and remaining buffer if found, null otherwise
+	 */
+	private extractFormRequest(buffer: string): { formRequest: any; remaining: string } | null {
+		// Look for JSON object containing __ally_form_request
+		const marker = '"__ally_form_request"';
+		const markerIndex = buffer.indexOf(marker);
+		if (markerIndex === -1) return null;
+
+		// Find the start of the JSON object (scan backwards for nearest '{')
+		// We want the innermost/nearest opening brace, not the outermost
+		let startIndex = -1;
+		for (let i = markerIndex; i >= 0; i--) {
+			if (buffer[i] === '{') {
+				startIndex = i;
+				break; // Stop at first (nearest) opening brace
+			}
+		}
+		if (startIndex === -1) return null;
+
+		// Find the end of the JSON object (scan forwards for matching '}')
+		let braceCount = 0;
+		let endIndex = -1;
+		for (let i = startIndex; i < buffer.length; i++) {
+			if (buffer[i] === '{') braceCount++;
+			if (buffer[i] === '}') {
+				braceCount--;
+				if (braceCount === 0) {
+					endIndex = i;
+					break;
+				}
+			}
+		}
+		if (endIndex === -1) return null; // Incomplete JSON
+
+		try {
+			const jsonStr = buffer.substring(startIndex, endIndex + 1);
+			const parsed = JSON.parse(jsonStr);
+			if (parsed.__ally_form_request) {
+				const remaining = buffer.substring(0, startIndex) + buffer.substring(endIndex + 1);
+				return { formRequest: parsed, remaining };
+			}
+		} catch {
+			return null;
+		}
+		return null;
+	}
+
+	/**
+	 * Handles a form request from the plugin, sends response back via stdin.
+	 */
+	private async handleFormRequest(child: ChildProcess, formRequest: any): Promise<void> {
+		try {
+			const formData = await this.formManager!.requestForm(
+				this.name,
+				formRequest.schema,
+				formRequest.initialValues
+			);
+			const response = { __ally_form_response: true, success: true, data: formData };
+			this.safeStdinWrite(child, JSON.stringify(response) + '\n');
+		} catch (error) {
+			const response = error instanceof FormCancelledError
+				? { __ally_form_response: true, success: false, cancelled: true }
+				: { __ally_form_response: true, success: false, error: error instanceof Error ? error.message : String(error) };
+			this.safeStdinWrite(child, JSON.stringify(response) + '\n');
+		}
+	}
+
+	/**
 	 * Spawns the external process and manages its execution.
 	 *
 	 * @param args - Resolved arguments to pass to the plugin
@@ -251,10 +352,17 @@ export class ExecutableToolWrapper extends BaseTool {
 
 			// Write arguments to stdin as JSON early to avoid double-rejection
 			// This happens before event handlers are set up to catch write errors cleanly
+			// Note: We only keep stdin open for interactive tools that support form requests
 			try {
 				const input = JSON.stringify(args);
-				child.stdin.write(input);
-				child.stdin.end();
+				if (this.formManager && this.isInteractive) {
+					// Interactive tool with form manager: write with newline and keep stdin open
+					child.stdin.write(input + '\n');
+				} else {
+					// Non-interactive tool: write without newline and close stdin
+					child.stdin.write(input);
+					child.stdin.end();
+				}
 			} catch (error) {
 				child.kill();
 				reject(new Error(
@@ -282,11 +390,26 @@ Command: ${resolvedCommand} ${this.commandArgs.join(' ')}`
 
 			// Collect stdout with size limits and streaming
 			// Linked plugins (dev mode) skip truncation for full error visibility
+			// Also handles form requests from plugins
 			child.stdout.on('data', (data) => {
 				const chunk = data.toString();
 				if (this.isLinkedPlugin || stdout.length + chunk.length <= TOOL_LIMITS.MAX_PLUGIN_OUTPUT_SIZE) {
 					stdout += chunk;
-					// Stream output for real-time feedback
+
+					// Check for form request in accumulated stdout (only for interactive tools)
+					if (this.formManager && this.isInteractive) {
+						const formRequestData = this.extractFormRequest(stdout);
+						if (formRequestData) {
+							const { formRequest, remaining } = formRequestData;
+							stdout = remaining;
+							// Handle async form request with error boundary
+							this.handleFormRequest(child, formRequest).catch(err => {
+								logger.error(`[ExecutableToolWrapper] Form request failed: ${err instanceof Error ? err.message : String(err)}`);
+							});
+							return; // Don't emit form request JSON as output
+						}
+					}
+
 					this.emitOutputChunk(chunk);
 				} else if (!outputTruncated) {
 					outputTruncated = true;

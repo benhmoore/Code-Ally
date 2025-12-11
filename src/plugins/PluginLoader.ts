@@ -129,6 +129,13 @@ export interface ToolDefinition {
    * Example: "{a} + {b}" will display "5 + 3" when a=5 and b=3
    */
   subtext?: string;
+
+  /**
+   * Whether this tool supports interactive forms via the form request protocol.
+   * When true, stdin is kept open after writing args to allow form responses.
+   * Default: false
+   */
+  interactive?: boolean;
 }
 
 /**

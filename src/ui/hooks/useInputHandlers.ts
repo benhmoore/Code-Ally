@@ -25,6 +25,8 @@ import { PERMISSION_MESSAGES } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
 import { fileToBase64, isImageFile } from '@utils/imageUtils.js';
 import { resolvePath } from '@utils/pathUtils.js';
+import { ModelCapabilitiesIndex } from '@services/ModelCapabilitiesIndex.js';
+import { ConfigManager } from '@services/ConfigManager.js';
 import { createStructuredError } from '@utils/errorUtils.js';
 
 /**
@@ -384,7 +386,36 @@ export const useInputHandlers = (
         ...(mentions?.directories && { directories: mentions.directories.filter(dirPath => trimmed.includes(dirPath)) }),
       };
 
-      // Process images if present
+      // Check if current model supports images
+      let modelSupportsImages = true; // Default to true if we can't determine
+      try {
+        const configManager = serviceRegistry.get<ConfigManager>('config_manager');
+        if (configManager) {
+          const config = configManager.getConfig();
+          const endpoint = config.endpoint || 'http://localhost:11434';
+          const modelName = config.model;
+          if (modelName) {
+            const capabilitiesIndex = ModelCapabilitiesIndex.getInstance();
+            await capabilitiesIndex.load();
+            const capabilities = capabilitiesIndex.getCapabilities(modelName, endpoint);
+            if (capabilities) {
+              modelSupportsImages = capabilities.supportsImages;
+            }
+          }
+        }
+      } catch (error) {
+        logger.debug('[INPUT] Failed to check model image support, assuming supported:', error);
+      }
+
+      // If model doesn't support images, treat image paths as regular files
+      if (!modelSupportsImages && filteredMentions?.images && filteredMentions.images.length > 0) {
+        // Move images to files array so they're treated as regular file paths
+        filteredMentions.files = [...(filteredMentions.files || []), ...filteredMentions.images];
+        filteredMentions.images = [];
+        logger.debug('[INPUT] Model does not support images, treating image paths as files');
+      }
+
+      // Process images if present and model supports them
       let base64Images: string[] | undefined;
       if (filteredMentions?.images && filteredMentions.images.length > 0) {
         try {
@@ -417,8 +448,10 @@ export const useInputHandlers = (
       });
 
       // Handle file mentions - execute read tool before sending user message
-      // Filter out image files (they're processed separately above)
-      const readableFiles = filteredMentions?.files?.filter(filePath => !isImageFile(filePath)) || [];
+      // Filter out image files only if model supports images (they're processed separately above)
+      const readableFiles = modelSupportsImages
+        ? (filteredMentions?.files?.filter(filePath => !isImageFile(filePath)) || [])
+        : (filteredMentions?.files || []);
 
       if (readableFiles.length > 0) {
         // Declare variables outside try block so they're accessible in catch

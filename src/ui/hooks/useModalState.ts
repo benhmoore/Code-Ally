@@ -15,10 +15,10 @@
  * - Library selector
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { ModelOption } from '../components/ModelSelector.js';
 import { PermissionRequest } from '../components/PermissionPrompt.js';
-import type { SessionInfo, Message, PromptInfo } from '@shared/index.js';
+import type { SessionInfo, Message, PromptInfo, FormRequest } from '@shared/index.js';
 import type { FileChangeStats } from '../components/RewindOptionsSelector.js';
 import type { UndoPreview } from '@services/PatchManager.js';
 
@@ -239,6 +239,19 @@ export interface ModalState {
   libraryClearConfirmRequest?: LibraryClearConfirmRequest;
   setLibraryClearConfirmRequest: (request?: LibraryClearConfirmRequest) => void;
 
+  // Tool form wizard (queue-based like permission requests)
+  toolFormRequest?: FormRequest;
+  toolFormQueue: FormRequest[];
+  toolFormQueueLength: number;
+  toolFormFieldIndex: number;
+  toolFormValues: Record<string, any>;
+  toolFormErrors: Record<string, string>;
+  addToolFormRequest: (request: FormRequest) => void;
+  removeToolFormRequest: (requestId: string) => void;
+  setToolFormFieldIndex: (index: number) => void;
+  setToolFormValue: (field: string, value: any) => void;
+  setToolFormError: (field: string, error: string | null) => void;
+
   // Input buffer (preserve across modal renders)
   inputBuffer: string;
   setInputBuffer: (buffer: string) => void;
@@ -372,6 +385,70 @@ export const useModalState = (): ModalState => {
   // Library clear confirmation
   const [libraryClearConfirmRequest, setLibraryClearConfirmRequest] = useState<LibraryClearConfirmRequest | undefined>(undefined);
 
+  // Tool form wizard - queue-based implementation like permission requests
+  const [toolFormQueue, setToolFormQueue] = useState<FormRequest[]>([]);
+  const [toolFormFieldIndex, setToolFormFieldIndex] = useState(0);
+  const [toolFormValues, setToolFormValues] = useState<Record<string, any>>({});
+  const [toolFormErrors, setToolFormErrors] = useState<Record<string, string>>({});
+
+  // Computed current tool form request (first in queue)
+  const toolFormRequest = toolFormQueue[0];
+
+  // Add tool form request to queue
+  const addToolFormRequest = useCallback((request: FormRequest) => {
+    setToolFormQueue(prev => [...prev, request]);
+    // Initialize form values with initial values or defaults
+    if (request.initialValues) {
+      setToolFormValues(request.initialValues);
+    } else {
+      setToolFormValues({});
+    }
+    setToolFormFieldIndex(0);
+    setToolFormErrors({});
+  }, []);
+
+  // Remove specific tool form request from queue by ID
+  const removeToolFormRequest = useCallback((requestId: string) => {
+    setToolFormQueue(prev => {
+      const filtered = prev.filter(r => r.requestId !== requestId);
+      // If we removed the current request, reset field state for next
+      if (prev[0]?.requestId === requestId && filtered.length > 0) {
+        const next = filtered[0]!;
+        setToolFormValues(next.initialValues || {});
+        setToolFormFieldIndex(0);
+        setToolFormErrors({});
+      } else if (filtered.length === 0) {
+        setToolFormValues({});
+        setToolFormFieldIndex(0);
+        setToolFormErrors({});
+      }
+      return filtered;
+    });
+  }, []);
+
+  // Update a single form field value
+  const setToolFormValue = useCallback((field: string, value: any) => {
+    setToolFormValues(prev => ({ ...prev, [field]: value }));
+    // Clear error for this field when value changes
+    setToolFormErrors(prev => {
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []);
+
+  // Set or clear an error for a specific field
+  const setToolFormError = useCallback((field: string, error: string | null) => {
+    setToolFormErrors(prev => {
+      if (error === null) {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      }
+      return { ...prev, [field]: error };
+    });
+  }, []);
+
   // Input buffer
   const [inputBuffer, setInputBuffer] = useState<string>('');
 
@@ -463,6 +540,19 @@ export const useModalState = (): ModalState => {
     // Library clear confirmation
     libraryClearConfirmRequest,
     setLibraryClearConfirmRequest,
+
+    // Tool form wizard
+    toolFormRequest,
+    toolFormQueue,
+    toolFormQueueLength: toolFormQueue.length,
+    toolFormFieldIndex,
+    toolFormValues,
+    toolFormErrors,
+    addToolFormRequest,
+    removeToolFormRequest,
+    setToolFormFieldIndex,
+    setToolFormValue,
+    setToolFormError,
 
     // Input buffer
     inputBuffer,

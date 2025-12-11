@@ -126,6 +126,7 @@ export type ErrorType =
   | 'user_error'
   | 'file_error'
   | 'agent_mismatch'
+  | 'form_cancelled'
   | 'general';
 
 export interface ToolResult {
@@ -220,6 +221,9 @@ export enum ActivityEventType {
   LIBRARY_CLEAR_CONFIRM_RESPONSE = 'library_clear_confirm_response',
   CONVERSATION_CLEAR = 'conversation_clear',
   STATUS_MESSAGE = 'status_message',
+  TOOL_FORM_REQUEST = 'tool_form_request',
+  TOOL_FORM_RESPONSE = 'tool_form_response',
+  TOOL_FORM_CANCEL = 'tool_form_cancel',
 }
 
 export interface ActivityEvent {
@@ -263,6 +267,7 @@ export interface ToolCallState {
   collapsed?: boolean; // For tools that should hide their children immediately
   shouldCollapse?: boolean; // For tools that should collapse after completion
   hideOutput?: boolean; // For tools that should never show output
+  alwaysShowFullOutput?: boolean; // For tools that must always show full output without truncation
   isLinkedPlugin?: boolean; // For linked plugins (dev mode) that should show verbose output
   thinking?: string; // Thinking content for agent tools
   thinkingStartTime?: number; // When thinking started (for duration calculation)
@@ -442,4 +447,65 @@ export interface ToolExecutionContext {
   registryScope?: any; // ScopedServiceRegistryProxy - typed as 'any' to avoid circular dependency
   /** Current agent name for validation */
   agentName?: string;
+  /** Form response data from user interaction (populated after form submission) */
+  formResponse?: Record<string, any>;
+}
+
+// ===========================
+// Tool Form Types
+// ===========================
+
+/** Supported field types for tool forms */
+export type FormFieldType = 'string' | 'number' | 'boolean' | 'choice' | 'textarea' | 'label';
+
+/** Choice option for choice-type fields */
+export interface FormFieldChoice {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+/** Validation rules for form fields */
+export interface FormFieldValidation {
+  min?: number;        // For number fields
+  max?: number;        // For number fields
+  minLength?: number;  // For string/textarea fields
+  maxLength?: number;  // For string/textarea fields
+  pattern?: string;    // Regex pattern for string fields
+}
+
+/** Definition of a single form field */
+export interface FormField {
+  name: string;
+  type: FormFieldType;
+  label: string;
+  description?: string;
+  required?: boolean;
+  default?: any;
+  secret?: boolean;                   // Mask input (for sensitive data)
+  choices?: FormFieldChoice[];        // For 'choice' type fields
+  validation?: FormFieldValidation;
+  multiSelect?: boolean;              // For 'choice' type: allow multiple selections
+}
+
+/** Schema defining a tool form */
+export interface FormSchema {
+  title: string;
+  description?: string;
+  fields: FormField[];
+}
+
+/** Request for tool form display */
+export interface FormRequest {
+  requestId: string;
+  toolName: string;
+  schema: FormSchema;
+  initialValues?: Record<string, any>;
+  callId?: string;  // Associated tool call ID
+}
+
+/** Response from tool form submission */
+export interface FormResponse {
+  requestId: string;
+  data: Record<string, any>;
 }

@@ -191,6 +191,12 @@ export class RepeatedActionPattern implements LoopPattern {
 const CHAR_REPETITION_MAX_LENGTH = 5; // Maximum character pattern length to check
 
 /**
+ * Characters commonly used in markdown formatting that should not trigger
+ * repetition detection when used alone (e.g., horizontal rules: ---, ===, ***)
+ */
+const MARKDOWN_FORMATTING_CHARS = new Set(['-', '=', '_', '*', '#', '~']);
+
+/**
  * CharacterRepetitionPattern - Detects character/token glitches
  *
  * Identifies repetitive character patterns like "2.2.2.2.2..." which
@@ -200,6 +206,8 @@ const CHAR_REPETITION_MAX_LENGTH = 5; // Maximum character pattern length to che
  * - Pattern: Same 1-5 chars repeated 30+ times consecutively
  * - Example: "2." repeated 30 times = "2.2.2.2.2.2.2.2.2.2..."
  * - Regex: `(.{1,5})\1{29,}` matches pattern repeated 30+ times
+ * - Excludes: Single markdown formatting characters (-, =, _, *, #, ~)
+ *   which are legitimately used for horizontal rules, headers, etc.
  */
 export class CharacterRepetitionPattern implements LoopPattern {
   readonly name = 'character_repetition';
@@ -228,6 +236,12 @@ export class CharacterRepetitionPattern implements LoopPattern {
 
         // Extract the repeated unit (first unitLength characters)
         const repeatedUnit = firstMatch.substring(0, unitLength);
+
+        // Skip single-character markdown formatting (horizontal rules, etc.)
+        // These are legitimate uses: ---, ===, ***, ___, ###, ~~~
+        if (unitLength === 1 && MARKDOWN_FORMATTING_CHARS.has(repeatedUnit)) {
+          continue;
+        }
 
         // Count how many times it repeated
         const repetitionCount = Math.floor(firstMatch.length / unitLength);

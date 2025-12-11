@@ -18,7 +18,7 @@ import { ConfigManager } from '@services/ConfigManager.js';
 import { logger } from '@services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
-import { testModelToolCalling } from '@llm/ModelValidation.js';
+import { testModelCapabilities } from '@llm/ModelValidation.js';
 import { ModalContainer } from './ModalContainer.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
@@ -158,7 +158,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     if (step === SetupStep.VALIDATING_ENDPOINT) {
       validateEndpointAndFetchModels();
     } else if (step === SetupStep.VALIDATING_MODEL) {
-      validateModelToolSupport();
+      validateModelCapabilities();
     }
   }, [step]);
 
@@ -193,7 +193,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
   };
 
-  const validateModelToolSupport = async () => {
+  const validateModelCapabilities = async () => {
     setError(null);
 
     const selectedModel = availableModels[selectedModelIndex];
@@ -204,8 +204,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
 
     try {
-      // Test model tool calling support using extracted utility
-      const result = await testModelToolCalling(endpoint, selectedModel);
+      // Test model capabilities using extracted utility
+      const result = await testModelCapabilities(endpoint, selectedModel);
 
       if (!result.supportsTools) {
         setError(`Model '${selectedModel}' does not support tools. Please select a different model.`);

@@ -296,7 +296,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Fall back to startTime for tools that don't require permission
   const startTime = toolCall.executionStartTime || toolCall.startTime;
   const endTime = toolCall.endTime || Date.now();
-  const duration = Math.max(0, endTime - startTime); // Ensure non-negative
+  const duration = Math.max(0, endTime - startTime);
   const durationStr = formatDuration(duration);
 
   // Check if this is an agent delegation
@@ -488,24 +488,59 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       )}
 
       {/* Output as threaded child (hidden if collapsed, has agent ancestor, or own hideOutput, unless show_full_tool_output is enabled) */}
-      {/* For linked plugins (dev mode), always show output - overrides all other settings */}
+      {/* For linked plugins (dev mode) or alwaysShowFullOutput tools, always show output - overrides all other settings */}
       {(() => {
-        const shouldShowOutput = toolCall.isLinkedPlugin || (!hasAgentAncestor && (!toolCall.hideOutput || config?.show_full_tool_output));
+        const shouldShowOutput = toolCall.isLinkedPlugin || toolCall.alwaysShowFullOutput || (!hasAgentAncestor && (!toolCall.hideOutput || config?.show_full_tool_output));
         if (toolCall.collapsed || !shouldShowOutput || !trimmedOutput || toolCall.error) return null;
+
+        // Get the output text to display
+        // alwaysShowFullOutput tools never truncate
+        const displayOutput = config?.show_full_tool_output || toolCall.alwaysShowFullOutput || trimmedOutput.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
+          ? trimmedOutput
+          : `${trimmedOutput.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`;
+
+        // Split into lines to put first line inline with arrow
+        const outputLines = displayOutput.split('\n');
+
+        // Helper to render a line, with special handling for "Question → Answer" format
+        const renderLine = (line: string, idx: number, isFirst: boolean) => {
+          const arrowMatch = line.match(/^(.+?) → (.+)$/);
+          if (arrowMatch) {
+            // Render question dimmed, answer bold
+            return (
+              <Box key={idx}>
+                {isFirst ? (
+                  <>
+                    <Text>{indent}    </Text>
+                    <Text dimColor>→ </Text>
+                  </>
+                ) : (
+                  <Text>{indent}      </Text>
+                )}
+                <Text dimColor>{arrowMatch[1]} → </Text>
+                <Text bold>{arrowMatch[2]}</Text>
+              </Box>
+            );
+          }
+          // Default rendering
+          return (
+            <Box key={idx}>
+              {isFirst ? (
+                <>
+                  <Text>{indent}    </Text>
+                  <Text dimColor>→ </Text>
+                </>
+              ) : (
+                <Text>{indent}      </Text>
+              )}
+              <Text dimColor>{line}</Text>
+            </Box>
+          );
+        };
+
         return (
           <Box flexDirection="column">
-            <Box>
-              <Text>{indent}    </Text>
-              <Text dimColor>→ </Text>
-              <Text dimColor>Output</Text>
-            </Box>
-            <Box paddingLeft={indent.length + 8}>
-              <Text dimColor>
-                {config?.show_full_tool_output || trimmedOutput.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
-                  ? trimmedOutput
-                  : `${trimmedOutput.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`}
-              </Text>
-            </Box>
+            {outputLines.map((line, idx) => renderLine(line, idx, idx === 0))}
           </Box>
         );
       })()}

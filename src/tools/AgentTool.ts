@@ -21,11 +21,14 @@ import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, ID_GENERATION, AGENT_CONFIG, PERMISSION_MESSAGES, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
+import { ModelCapabilitiesIndex } from '../services/ModelCapabilitiesIndex.js';
+import { fileToBase64 } from '../utils/imageUtils.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
 import { extractSummaryFromConversation } from '../utils/agentUtils.js';
+import { FormManager } from '../services/FormManager.js';
 
 /**
  * Parameters for agent execution
@@ -38,6 +41,7 @@ interface AgentExecutionParams {
   depth: number;
   parentAgentName?: string;
   initialMessages?: Message[];
+  contextImages?: string[];
 }
 
 /**
@@ -146,6 +150,13 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
                 type: 'string',
               },
             },
+            context_images: {
+              type: 'array',
+              description: 'Optional image file paths to pass to the agent. Images are loaded and sent if the agent\'s model supports vision.',
+              items: {
+                type: 'string',
+              },
+            },
           },
           required: ['task_prompt'],
         },
@@ -160,6 +171,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     const taskPrompt = args.task_prompt;
     const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
     const contextFiles = args.context_files;
+    const contextImages = args.context_images;
 
     // Validate task_prompt parameter
     if (!taskPrompt || typeof taskPrompt !== 'string') {
@@ -228,6 +240,25 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           'context_files must contain only strings',
           'validation_error',
           'Example: agent(task_prompt="...", context_files=["src/file1.ts", "src/file2.ts"])'
+        );
+      }
+    }
+
+    // Validate context_images parameter if provided
+    if (contextImages !== undefined) {
+      if (!Array.isArray(contextImages)) {
+        return this.formatErrorResponse(
+          'context_images must be an array of image file paths',
+          'validation_error',
+          'Example: agent(task_prompt="...", context_images=["screenshot.png", "diagram.jpg"])'
+        );
+      }
+      // Validate each item is a string
+      if (!contextImages.every((f: any) => typeof f === 'string')) {
+        return this.formatErrorResponse(
+          'context_images must contain only strings',
+          'validation_error',
+          'Example: agent(task_prompt="...", context_images=["screenshot.png", "diagram.jpg"])'
         );
       }
     }
@@ -378,6 +409,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       depth: newDepth,
       parentAgentName: currentAgentName,
       initialMessages,
+      contextImages,
     });
   }
 
@@ -444,7 +476,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
    * Agents always persist in the agent pool for reuse.
    */
   private async executeSingleAgent(params: AgentExecutionParams): Promise<any> {
-    const { agentType, taskPrompt, thoroughness, callId, depth, parentAgentName, initialMessages } = params;
+    const { agentType, taskPrompt, thoroughness, callId, depth, parentAgentName, initialMessages, contextImages } = params;
 
     logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentType, 'callId:', callId, 'thoroughness:', thoroughness);
     const startTime = Date.now();
@@ -529,6 +561,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         depth,
         parentAgentName,
         initialMessages,
+        contextImages,
       });
       logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
 
@@ -761,15 +794,20 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     callId: string;
     maxDuration: number | undefined;
     thoroughness: string;
+    images?: string[];
   }): Promise<string> {
-    const { agent, agentType, taskPrompt, callId, maxDuration, thoroughness } = params;
+    const { agent, agentType, taskPrompt, callId, maxDuration, thoroughness, images } = params;
 
     logger.debug('[AGENT_TOOL] Sending message to sub-agent...');
-    const response = await agent.sendMessage(`Execute this task: ${taskPrompt}`, {
-      parentCallId: callId,
-      maxDuration,
-      thoroughness,
-    });
+    const response = await agent.sendMessage(
+      `Execute this task: ${taskPrompt}`,
+      {
+        parentCallId: callId,
+        maxDuration,
+        thoroughness,
+      },
+      images
+    );
     logger.debug('[AGENT_TOOL] Sub-agent response received, length:', response?.length || 0);
 
     // Ensure we have a substantial response
@@ -902,7 +940,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
    * Agents always persist in the agent pool for reuse.
    */
   private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string }> {
-    const { agentData, agentType, taskPrompt, thoroughness, callId, depth, initialMessages } = params;
+    const { agentData, agentType, taskPrompt, thoroughness, callId, depth, initialMessages, contextImages } = params;
 
     logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
 
@@ -955,6 +993,14 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       logger.debug('[AGENT_TOOL] Created filtered ToolManager with', filteredTools.length, 'tools');
     }
 
+    // Inject FormManager into the effective ToolManager (needed for interactive forms)
+    const effectiveToolManager = filteredToolManager || toolManager;
+    const formManager = registry.get<FormManager>('form_manager');
+    if (formManager) {
+      effectiveToolManager.setFormManager(formManager);
+      logger.debug('[AGENT_TOOL] FormManager injected into agent ToolManager');
+    }
+
     // 5. Create scoped registry for this agent (NO global mutation!)
     // This will be stored in the agent and passed to all child tool executions
     const scopedRegistry = new ScopedServiceRegistryProxy(registry);
@@ -980,7 +1026,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     logger.debug('[AGENT_TOOL] Creating sub-agent with parentCallId:', callId);
     const { agent: subAgent, pooledAgent, agentId } = await this.acquireOrCreateAgent({
       agentConfig,
-      toolManager: filteredToolManager || toolManager, // Use filtered manager if available
+      toolManager: effectiveToolManager,
       modelClient,
       targetModel,
       config,
@@ -1006,6 +1052,33 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       startTime: Date.now(),
     });
 
+    // 10b. Process context_images if provided
+    let processedImages: string[] | undefined;
+    if (contextImages && contextImages.length > 0) {
+      // Check if target model supports images
+      const endpoint = config.endpoint || 'http://localhost:11434';
+      const capabilitiesIndex = ModelCapabilitiesIndex.getInstance();
+      await capabilitiesIndex.load();
+      const capabilities = capabilitiesIndex.getCapabilities(targetModel, endpoint);
+
+      if (capabilities && !capabilities.supportsImages) {
+        logger.debug(`[AGENT_TOOL] Model ${targetModel} does not support images, skipping context_images`);
+      } else {
+        // Convert image paths to base64
+        try {
+          processedImages = await Promise.all(
+            contextImages.map(async (imagePath) => {
+              return await fileToBase64(imagePath);
+            })
+          );
+          logger.debug(`[AGENT_TOOL] Loaded ${processedImages.length} context images for agent`);
+        } catch (error) {
+          logger.warn(`[AGENT_TOOL] Failed to load context images: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          // Continue without images rather than failing the entire task
+        }
+      }
+    }
+
     try {
       // 11. Execute agent (scoped registry already set in agent config)
       const finalResponse = await this.executeAgent({
@@ -1015,6 +1088,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         callId,
         maxDuration,
         thoroughness,
+        images: processedImages,
       });
 
       // 12. Format response

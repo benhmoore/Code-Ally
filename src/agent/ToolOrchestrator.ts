@@ -34,6 +34,7 @@ import {
 } from '../utils/messageUtils.js';
 import { TOOL_NAMES } from '../config/toolDefaults.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
+import { FormCancelledError } from '../services/FormManager.js';
 
 /**
  * Tool call structure from LLM
@@ -290,6 +291,7 @@ export class ToolOrchestrator {
       const tool = this.toolManager.getTool(toolCall.function.name);
       const shouldCollapse = (tool as any)?.shouldCollapse || false;
       const hideOutput = (tool as any)?.hideOutput || false;
+      const alwaysShowFullOutput = (tool as any)?.alwaysShowFullOutput || false;
 
       this.emitEvent({
         id: toolCall.id,
@@ -304,6 +306,7 @@ export class ToolOrchestrator {
           collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
           shouldCollapse,
           hideOutput,
+          alwaysShowFullOutput,
           isLinkedPlugin: tool?.isLinkedPlugin || false,
         },
       });
@@ -353,6 +356,7 @@ export class ToolOrchestrator {
               const tool = this.toolManager.getTool(toolCall.function.name);
               const shouldCollapse = (tool as any)?.shouldCollapse || false;
               const hideOutput = (tool as any)?.hideOutput || false;
+              const alwaysShowFullOutput = (tool as any)?.alwaysShowFullOutput || false;
 
               let resultData: ToolResult;
               if (j === i) {
@@ -399,6 +403,7 @@ export class ToolOrchestrator {
                   collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
                   shouldCollapse,
                   hideOutput,
+                  alwaysShowFullOutput,
                 },
               });
             }
@@ -577,7 +582,8 @@ export class ToolOrchestrator {
     emitStartEvent: boolean = true
   ): Promise<ToolResult> {
     const { id, function: func } = toolCall;
-    const { name: toolName, arguments: args } = func;
+    const { name: toolName } = func;
+    let args = func.arguments;
 
     // Get the tool to check properties
     const tool = this.toolManager.getTool(toolName);
@@ -624,6 +630,7 @@ export class ToolOrchestrator {
     // Prepare tool display properties (needed for both START and END events)
     const shouldCollapse = (tool as any)?.shouldCollapse || false;
     const hideOutput = (tool as any)?.hideOutput || false;
+    const alwaysShowFullOutput = (tool as any)?.alwaysShowFullOutput || false;
 
     /**
      * COLLAPSED FLAG STATE MACHINE
@@ -685,7 +692,8 @@ export class ToolOrchestrator {
           isTransparent: tool?.isTransparentWrapper || false,
           collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
           shouldCollapse, // Collapse after completion (for AgentTool)
-          hideOutput, // Never show output (for AgentTool)
+          hideOutput, // Never show output (for tools like edit)
+          alwaysShowFullOutput, // Always show full output without truncation
           isLinkedPlugin: tool?.isLinkedPlugin || false,
         },
       });
@@ -736,9 +744,55 @@ export class ToolOrchestrator {
               collapsed: false,
               shouldCollapse,
               hideOutput,
+              alwaysShowFullOutput,
             },
           });
           return validationResult;
+        }
+      }
+
+      // Handle static form schema (before permission check)
+      if (tool && tool.supportsInteractiveForm && tool.formSchema) {
+        try {
+          const registry = ServiceRegistry.getInstance();
+          const formManager = registry.get<import('../services/FormManager.js').FormManager>('form_manager');
+
+          if (!formManager) {
+            throw new Error('FormManager not available - cannot request form');
+          }
+
+          const formData = await formManager.requestForm(toolName, tool.formSchema, args, id);
+          // Merge form data into args
+          args = { ...args, ...formData };
+        } catch (error) {
+          if (error instanceof FormCancelledError) {
+            const cancelledResult = createStructuredError(
+              'Form cancelled by user',
+              'form_cancelled',
+              toolName,
+              args
+            );
+            this.emitEvent({
+              id,
+              type: ActivityEventType.TOOL_CALL_END,
+              timestamp: Date.now(),
+              parentId: effectiveParentId,
+              data: {
+                toolName,
+                result: cancelledResult,
+                success: false,
+                error: cancelledResult.error,
+                visibleInChat: true,
+                isTransparent: tool?.isTransparentWrapper || false,
+                collapsed: false,
+                shouldCollapse,
+                hideOutput,
+                alwaysShowFullOutput,
+              },
+            });
+            return cancelledResult;
+          }
+          throw error;
         }
       }
 
@@ -848,6 +902,7 @@ export class ToolOrchestrator {
             collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
             shouldCollapse,
             hideOutput,
+            alwaysShowFullOutput,
           },
         });
 

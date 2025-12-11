@@ -14,6 +14,7 @@ import { ServiceRegistry } from './services/ServiceRegistry.js';
 import { ConfigManager } from './services/ConfigManager.js';
 import { SessionManager } from './services/SessionManager.js';
 import { ActivityStream } from './services/ActivityStream.js';
+import { FormManager } from './services/FormManager.js';
 import { PathResolver } from './services/PathResolver.js';
 import { TodoManager } from './services/TodoManager.js';
 import { OllamaClient } from './llm/OllamaClient.js';
@@ -936,6 +937,7 @@ async function main() {
     const { SessionsTool } = await import('./tools/SessionsTool.js');
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
+    const { AskUserQuestionTool } = await import('./tools/AskUserQuestionTool.js');
 
     const tools = [
       new BashTool(activityStream, config),
@@ -965,6 +967,7 @@ async function main() {
       new SessionsTool(activityStream),
       new LintTool(activityStream),
       new FormatTool(activityStream),
+      new AskUserQuestionTool(activityStream), // Interactive user questions
     ];
 
     // Load user plugins from profile-specific plugins directory
@@ -1015,6 +1018,14 @@ async function main() {
     // Create tool manager with all tools
     const toolManager = new ToolManager(allTools, activityStream);
     registry.registerInstance('tool_manager', toolManager);
+
+    // Create form manager for interactive tool forms
+    const formManager = new FormManager(activityStream);
+    registry.registerInstance('form_manager', formManager);
+
+    // Inject FormManager into all tools for interactive form support
+    toolManager.setFormManager(formManager);
+    logger.debug('[CLI] FormManager created and injected into tools');
 
     // Create trust manager for permission tracking
     // Note: autoAllowModeGetter will be set after UI initialization

@@ -7,7 +7,7 @@
  */
 
 import { useRef, useEffect, useState } from 'react';
-import { ActivityEventType, Message, ToolCallState } from '@shared/index.js';
+import { ActivityEventType, Message, ToolCallState, FormRequest } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
@@ -185,6 +185,7 @@ export const useActivitySubscriptions = (
       collapsed: event.data.collapsed || false,
       shouldCollapse: event.data.shouldCollapse || false,
       hideOutput: event.data.hideOutput || false,
+      alwaysShowFullOutput: event.data.alwaysShowFullOutput || false,
       isLinkedPlugin: event.data.isLinkedPlugin || false,
     };
 
@@ -599,6 +600,47 @@ export const useActivitySubscriptions = (
     }
   });
 
+  // Tool form request - add to queue and track start time for duration exclusion
+  useActivityEvent(ActivityEventType.TOOL_FORM_REQUEST, (event) => {
+    const { requestId, toolName, schema, initialValues, callId } = event.data || {};
+
+    // Validate required fields
+    if (!requestId || !toolName || !schema) {
+      logger.warn('[useActivitySubscriptions] Invalid TOOL_FORM_REQUEST: missing required fields', {
+        hasRequestId: !!requestId,
+        hasToolName: !!toolName,
+        hasSchema: !!schema,
+      });
+      return;
+    }
+
+    const formRequest: FormRequest = {
+      requestId,
+      toolName,
+      schema,
+      initialValues: initialValues || {},
+      callId,
+    };
+    modal.addToolFormRequest(formRequest);
+    sendTerminalNotification();
+  });
+
+  // Tool form response - remove from queue
+  useActivityEvent(ActivityEventType.TOOL_FORM_RESPONSE, (event) => {
+    const { requestId } = event.data;
+    if (requestId) {
+      modal.removeToolFormRequest(requestId);
+    }
+  });
+
+  // Tool form cancel - remove from queue
+  useActivityEvent(ActivityEventType.TOOL_FORM_CANCEL, (event) => {
+    const { requestId } = event.data;
+    if (requestId) {
+      modal.removeToolFormRequest(requestId);
+    }
+  });
+
   // Model select request events
   useActivityEvent(ActivityEventType.MODEL_SELECT_REQUEST, (event) => {
     const { requestId, models, currentModel, modelType, typeName } = event.data;
@@ -937,6 +979,22 @@ export const useActivitySubscriptions = (
 
       if (configManager) {
         try {
+          const config = configManager.getConfig();
+          const endpoint = config.endpoint || 'http://localhost:11434';
+
+          // Test model capabilities before switching
+          const { testModelCapabilities } = await import('@llm/ModelValidation.js');
+          const capabilities = await testModelCapabilities(endpoint, modelName);
+
+          // For ally model, require tool support
+          if (effectiveModelType === 'ally' && !capabilities.supportsTools) {
+            actions.addMessage({
+              role: 'assistant',
+              content: `Model '${modelName}' does not support tools. Ally model requires tool support.`,
+            });
+            return;
+          }
+
           const configKey = effectiveModelType === 'service' ? 'service_model' : 'model';
           const clientKey = effectiveModelType === 'service' ? 'service_model_client' : 'model_client';
 
@@ -954,9 +1012,11 @@ export const useActivitySubscriptions = (
           }
 
           const typeName = effectiveModelType === 'service' ? 'Service model' : 'Model';
+          const capInfo = capabilities.fromCache ? ' (cached)' : '';
+          const imageNote = capabilities.supportsImages ? '' : ' (no image support)';
           actions.addMessage({
             role: 'assistant',
-            content: `${typeName} changed to: ${modelName}`,
+            content: `${typeName} changed to: ${modelName}${capInfo}${imageNote}`,
           });
         } catch (error) {
           actions.addMessage({

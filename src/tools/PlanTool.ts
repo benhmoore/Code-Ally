@@ -20,8 +20,8 @@ import { REASONING_EFFORT, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS 
 import { createPlanAcceptedReminder } from '../utils/messageUtils.js';
 import type { Config } from '../types/index.js';
 
-// Planning tools: read-only tools + explore for nested research + TodoWrite for task creation
-const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-write'];
+// Planning tools: read-only tools + explore for nested research + TodoWrite for task creation + ask-user-question for clarification
+const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-write', 'ask-user-question'];
 
 // Base prompt for planning (without thoroughness-specific guidelines)
 const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistant. You excel at researching codebases to create detailed, actionable implementation plans grounded in existing patterns and architecture.
@@ -36,6 +36,7 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 
 ## Tool Usage Guidelines
 
+- Use ask-user-question to clarify ambiguous requirements BEFORE researching
 - Use Tree to understand project structure and organization
 - Use Glob for broad file pattern matching to find similar implementations
 - Use Grep for searching code patterns, conventions, and specific implementations
@@ -47,7 +48,7 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 
 ## Planning Process
 
-1. **Understand Requirements** - Parse the task, identify key components and scope
+1. **Clarify Requirements** - If requirements are ambiguous, have multiple valid approaches, or lack key details (technology choices, scope, constraints), use ask-user-question to clarify BEFORE researching. Don't assume.
 2. **Assess Codebase State** - Determine if this is an empty/new project or existing codebase
 3. **Research Patterns** - Find similar implementations (or note if starting from scratch)
 4. **Analyze Architecture** - Identify conventions, patterns, file organization, and code style
