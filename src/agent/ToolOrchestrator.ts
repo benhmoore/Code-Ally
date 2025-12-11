@@ -269,12 +269,19 @@ export class ToolOrchestrator {
 
     // Create tool properties cache for this batch execution
     // Avoids redundant tool lookups during START and END event emissions
-    const toolPropsCache = new Map<string, { shouldCollapse: boolean, hideOutput: boolean, alwaysShowFullOutput: boolean }>();
+    const toolPropsCache = new Map<string, {
+      shouldCollapse: boolean;
+      hideOutput: boolean;
+      alwaysShowFullOutput: boolean;
+      displayColor?: string;
+      displayIcon?: string;
+      hideToolName?: boolean;
+    }>();
 
     /**
      * Helper to get tool properties with caching
      * @param toolName - Name of the tool
-     * @returns Tool properties (shouldCollapse, hideOutput, alwaysShowFullOutput)
+     * @returns Tool properties (shouldCollapse, hideOutput, alwaysShowFullOutput, display props)
      */
     const getToolProps = (toolName: string) => {
       let props = toolPropsCache.get(toolName);
@@ -284,6 +291,9 @@ export class ToolOrchestrator {
           shouldCollapse: (tool as any)?.shouldCollapse || false,
           hideOutput: (tool as any)?.hideOutput || false,
           alwaysShowFullOutput: (tool as any)?.alwaysShowFullOutput || false,
+          displayColor: (tool as any)?.displayColor,
+          displayIcon: (tool as any)?.displayIcon,
+          hideToolName: (tool as any)?.hideToolName || false,
         };
         toolPropsCache.set(toolName, props);
       }
@@ -309,6 +319,9 @@ export class ToolOrchestrator {
           hideOutput,
           alwaysShowFullOutput,
           isLinkedPlugin: tool?.isLinkedPlugin || false,
+          displayColor: getToolProps(toolCall.function.name).displayColor,
+          displayIcon: getToolProps(toolCall.function.name).displayIcon,
+          hideToolName: getToolProps(toolCall.function.name).hideToolName,
         },
       });
     }
@@ -524,12 +537,19 @@ export class ToolOrchestrator {
 
     // Create tool properties cache for this batch execution
     // Avoids redundant tool lookups during START and END event emissions
-    const toolPropsCache = new Map<string, { shouldCollapse: boolean, hideOutput: boolean, alwaysShowFullOutput: boolean }>();
+    const toolPropsCache = new Map<string, {
+      shouldCollapse: boolean;
+      hideOutput: boolean;
+      alwaysShowFullOutput: boolean;
+      displayColor?: string;
+      displayIcon?: string;
+      hideToolName?: boolean;
+    }>();
 
     /**
      * Helper to get tool properties with caching
      * @param toolName - Name of the tool
-     * @returns Tool properties (shouldCollapse, hideOutput, alwaysShowFullOutput)
+     * @returns Tool properties (shouldCollapse, hideOutput, alwaysShowFullOutput, display props)
      */
     const getToolProps = (toolName: string) => {
       let props = toolPropsCache.get(toolName);
@@ -539,6 +559,9 @@ export class ToolOrchestrator {
           shouldCollapse: (tool as any)?.shouldCollapse || false,
           hideOutput: (tool as any)?.hideOutput || false,
           alwaysShowFullOutput: (tool as any)?.alwaysShowFullOutput || false,
+          displayColor: (tool as any)?.displayColor,
+          displayIcon: (tool as any)?.displayIcon,
+          hideToolName: (tool as any)?.hideToolName || false,
         };
         toolPropsCache.set(toolName, props);
       }
@@ -733,6 +756,9 @@ export class ToolOrchestrator {
           hideOutput, // Never show output (for tools like edit)
           alwaysShowFullOutput, // Always show full output without truncation
           isLinkedPlugin: tool?.isLinkedPlugin || false,
+          displayColor: tool?.displayColor,
+          displayIcon: tool?.displayIcon,
+          hideToolName: tool?.hideToolName || false,
         },
       });
     }

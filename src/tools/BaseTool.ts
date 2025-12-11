@@ -40,6 +40,27 @@ export abstract class BaseTool {
   readonly displayName?: string;
 
   /**
+   * Optional custom color for UI display
+   * Overrides the status-based color (e.g., 'cyan', 'magenta', '#50fa7b')
+   * Use for tools that need distinctive visual treatment
+   */
+  readonly displayColor?: string;
+
+  /**
+   * Optional custom icon for UI display
+   * Replaces the status icon (→/✓/✗) with a custom Unicode character
+   * Example: '✦' for cleanup tools, '⚡' for fast operations
+   */
+  readonly displayIcon?: string;
+
+  /**
+   * Whether to hide the tool name in display
+   * When true, only shows the subtext (from formatSubtext) as the display line
+   * Useful for "notice" style tools that show a message rather than "Tool Name · params"
+   */
+  readonly hideToolName: boolean = false;
+
+  /**
    * Whether to suppress the standard execution animation
    * Set to true if tool manages its own display (e.g., AgentTool)
    */

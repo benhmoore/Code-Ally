@@ -10,8 +10,11 @@
 
 import { promises as fs } from 'fs';
 import { dirname, basename } from 'path';
+import path from 'path';
 import * as os from 'os';
 import { AgentManager } from './AgentManager.js';
+import { ServiceRegistry } from './ServiceRegistry.js';
+import type { FileInteractionTracker } from './FileInteractionTracker.js';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { CACHE_TIMEOUTS, BUFFER_SIZES, REASONING_EFFORT_API_VALUES, API_TIMEOUTS } from '../config/constants.js';
@@ -354,7 +357,12 @@ export class CompletionProvider {
     }
 
     // Complete file paths for /open (user typed "/open ")
+    // Show recent files first when no path typed, then fall back to file completions
     if (command === '/open' && wordCount >= 2) {
+      const recentCompletions = this.getRecentFileCompletions(context.currentWord);
+      if (recentCompletions.length > 0) {
+        return recentCompletions;
+      }
       return await this.getFileCompletions(context);
     }
 
@@ -639,6 +647,63 @@ export class CompletionProvider {
       }));
     } catch (error) {
       logger.debug(`Unable to get additional directory completions: ${formatError(error)}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get recent file completions for /open command
+   *
+   * Returns recently touched files from the FileInteractionTracker.
+   * Falls back to empty array if no recent files or if user is typing a path.
+   */
+  private getRecentFileCompletions(prefix: string): Completion[] {
+    try {
+      // If user is typing a path (has separator or starts with . or ~), use file completions instead
+      if (prefix && (prefix.includes('/') || prefix.includes('\\') || prefix.startsWith('.') || prefix.startsWith('~'))) {
+        return [];
+      }
+
+      const registry = ServiceRegistry.getInstance();
+      const tracker = registry.get<FileInteractionTracker>('file_interaction_tracker');
+
+      if (!tracker) {
+        return [];
+      }
+
+      const recentFiles = tracker.getRecentFiles(10);
+      if (recentFiles.length === 0) {
+        return [];
+      }
+
+      const cwd = process.cwd();
+      const lowerPrefix = prefix.toLowerCase();
+
+      // Filter and format recent files
+      return recentFiles
+        .filter(filePath => {
+          if (!prefix) return true;
+          // Match against filename or relative path
+          const relativePath = filePath.startsWith(cwd + path.sep)
+            ? path.relative(cwd, filePath)
+            : filePath;
+          const fileName = path.basename(filePath);
+          return fileName.toLowerCase().includes(lowerPrefix) ||
+                 relativePath.toLowerCase().includes(lowerPrefix);
+        })
+        .map(filePath => {
+          // Show relative path if within cwd, otherwise absolute
+          const displayPath = filePath.startsWith(cwd + path.sep)
+            ? path.relative(cwd, filePath)
+            : filePath;
+          return {
+            value: displayPath,
+            description: 'Recent file',
+            type: 'file' as const,
+          };
+        });
+    } catch (error) {
+      logger.debug(`Unable to get recent file completions: ${formatError(error)}`);
       return [];
     }
   }

@@ -300,6 +300,12 @@ export interface ToolCallState {
     operationType: string;
     editsCount?: number;
   };
+  /** Custom display color (overrides status-based color) */
+  displayColor?: string;
+  /** Custom display icon (replaces status icon) */
+  displayIcon?: string;
+  /** Hide tool name, show only subtext */
+  hideToolName?: boolean;
 }
 
 // ===========================

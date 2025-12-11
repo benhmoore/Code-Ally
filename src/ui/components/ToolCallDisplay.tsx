@@ -369,12 +369,16 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Indent based on level
   const indent = '    '.repeat(level);
 
-  // Status indicator
-  const statusColor = getStatusColor(toolCall.status);
+  // Status indicator - use custom color if provided, otherwise status-based
+  const statusColor = toolCall.displayColor || getStatusColor(toolCall.status);
   const statusIcon = getStatusIcon(toolCall.status);
 
-  // Prefix icon: arrow for running (flashing), status icon for completed
-  const prefixIcon = isRunning ? (arrowVisible ? UI_SYMBOLS.NAVIGATION.ARROW_RIGHT : ' ') : statusIcon;
+  // Prefix icon: custom icon if provided, otherwise arrow for running (flashing), status icon for completed
+  const prefixIcon = toolCall.displayIcon
+    ? toolCall.displayIcon
+    : isRunning
+      ? (arrowVisible ? UI_SYMBOLS.NAVIGATION.ARROW_RIGHT : ' ')
+      : statusIcon;
 
   const toolCallCount = toolCall.totalChildCount || 0;
 
@@ -390,38 +394,45 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         {/* Status prefix icon */}
         <Text color={statusColor}>{prefixIcon} </Text>
 
-        {/* Tool name (or agent name for agent tool) */}
-        <Text color={statusColor} bold={level === 0}>
-          {displayName}
-        </Text>
+        {/* Tool name (or agent name for agent tool) - hidden if hideToolName is true */}
+        {!toolCall.hideToolName && (
+          <Text color={statusColor} bold={level === 0}>
+            {displayName}
+          </Text>
+        )}
+
+        {/* When hideToolName is true, show subtext as the main content */}
+        {toolCall.hideToolName && subtext && (
+          <Text color={statusColor}>{subtext}</Text>
+        )}
 
         {/* Model - show for agent delegations only if different from primary */}
-        {isAgentDelegation && toolCall.agentModel && config?.model && toolCall.agentModel !== config.model && (
+        {!toolCall.hideToolName && isAgentDelegation && toolCall.agentModel && config?.model && toolCall.agentModel !== config.model && (
           <Text dimColor> · {toolCall.agentModel}</Text>
         )}
 
         {/* Thoroughness - show for agent delegations */}
-        {thoroughness && (
+        {!toolCall.hideToolName && thoroughness && (
           <Text dimColor> · {thoroughness}</Text>
         )}
 
         {/* Compacting indicator - only show when agent is compacting */}
-        {isAgentDelegation && toolCall.isCompacting && (
+        {!toolCall.hideToolName && isAgentDelegation && toolCall.isCompacting && (
           <Text dimColor> · compacting</Text>
         )}
 
-        {/* Subtext - contextual information (not shown inline for agents) */}
-        {subtext && !isAgentDelegation && (
+        {/* Subtext - contextual information (not shown inline for agents or when hideToolName) */}
+        {!toolCall.hideToolName && subtext && !isAgentDelegation && (
           <Text dimColor> · {subtext}</Text>
         )}
 
-        {/* Arguments preview - only show if config enabled */}
-        {argsPreview && config?.show_tool_parameters_in_chat && (
+        {/* Arguments preview - only show if config enabled and not hideToolName */}
+        {!toolCall.hideToolName && argsPreview && config?.show_tool_parameters_in_chat && (
           <Text dimColor> ({argsPreview})</Text>
         )}
 
-        {/* Duration - always show for agents, show for others if > 5 seconds */}
-        {(isAgentDelegation || duration > UI_DELAYS.TOOL_DURATION_DISPLAY_THRESHOLD) && (
+        {/* Duration - always show for agents, show for others if > 5 seconds (not for hideToolName) */}
+        {!toolCall.hideToolName && (isAgentDelegation || duration > UI_DELAYS.TOOL_DURATION_DISPLAY_THRESHOLD) && (
           <Text dimColor> · {durationStr}</Text>
         )}
       </Box>

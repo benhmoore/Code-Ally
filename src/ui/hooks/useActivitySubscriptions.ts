@@ -187,6 +187,9 @@ export const useActivitySubscriptions = (
       hideOutput: event.data.hideOutput || false,
       alwaysShowFullOutput: event.data.alwaysShowFullOutput || false,
       isLinkedPlugin: event.data.isLinkedPlugin || false,
+      displayColor: event.data.displayColor,
+      displayIcon: event.data.displayIcon,
+      hideToolName: event.data.hideToolName || false,
     };
 
     actions.addToolCall(toolCall);

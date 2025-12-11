@@ -682,6 +682,72 @@ export class ConversationManager {
   }
 
   /**
+   * Get the index of the most recent user message (turn boundary)
+   *
+   * A "turn" is defined as everything from a user message until the next user message.
+   * This method finds the boundary of the current turn by locating the most recent
+   * user message in the conversation.
+   *
+   * @returns Index of the most recent user message, or 0 if no user message exists
+   */
+  getCurrentTurnBoundaryIndex(): number {
+    // Scan backwards to find the most recent user message
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      if (this.messages[i]?.role === 'user') {
+        return i;
+      }
+    }
+    // No user message found - everything is "current turn"
+    return 0;
+  }
+
+  /**
+   * Partition tool call IDs by turn (current vs prior)
+   *
+   * Takes an array of tool_call_ids and partitions them into two groups:
+   * - currentTurn: Tool results that appear at or after the most recent user message
+   * - priorTurns: Tool results that appear before the most recent user message
+   *
+   * Uses the toolResultIndex for O(1) message lookup. IDs not found in the index
+   * are silently skipped (not included in either array).
+   *
+   * @param toolCallIds - Array of tool call IDs to partition
+   * @returns Object with currentTurn and priorTurns arrays
+   */
+  partitionByTurn(toolCallIds: string[]): { currentTurn: string[]; priorTurns: string[] } {
+    const turnBoundary = this.getCurrentTurnBoundaryIndex();
+    const currentTurn: string[] = [];
+    const priorTurns: string[] = [];
+
+    for (const toolCallId of toolCallIds) {
+      // O(1) lookup in toolResultIndex
+      const toolResultMessage = this.toolResultIndex.get(toolCallId);
+
+      if (!toolResultMessage) {
+        // ID not found - skip silently
+        continue;
+      }
+
+      // Find the message index in the messages array
+      const messageIndex = this.messages.indexOf(toolResultMessage);
+
+      if (messageIndex === -1) {
+        // Message not found in array (shouldn't happen, but handle defensively)
+        continue;
+      }
+
+      // Partition based on turn boundary
+      if (messageIndex >= turnBoundary) {
+        currentTurn.push(toolCallId);
+      } else {
+        priorTurns.push(toolCallId);
+      }
+    }
+
+    return { currentTurn, priorTurns };
+  }
+
+  /**
    * Check if conversation has any user messages
    *
    * @returns True if at least one user message exists

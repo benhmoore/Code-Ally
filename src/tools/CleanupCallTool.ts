@@ -6,7 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition, Message } from '../types/index.js';
+import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -27,9 +27,14 @@ export class CleanupCallTool extends BaseTool {
   readonly description =
     'Remove tool result messages from conversation to free up context space. Useful for cleaning up large tool outputs after extracting the needed information.';
   readonly requiresConfirmation = false;
-  readonly visibleInChat = false; // Hidden from chat - internal context management
-  readonly hideOutput = true; // Hide output details
+  readonly visibleInChat = true; // Show as a notice in chat
+  readonly hideOutput = true; // Hide detailed output
   readonly breaksExploratoryStreak = false; // Part of cleanup → explore workflow
+
+  // Custom display: cyan notice with sparkle icon
+  readonly displayColor = 'cyan';
+  readonly displayIcon = '✦';
+  readonly hideToolName = true; // Show only the subtext message
 
   /**
    * Usage guidance for LLM on when/how to use this tool
@@ -48,6 +53,20 @@ Example:
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
+  }
+
+  /**
+   * Format subtext for display - shows cleanup summary
+   */
+  formatSubtext(_args: Record<string, any>, result?: any): string | null {
+    if (!result) {
+      return 'Cleaning up...';
+    }
+    const count = (result.immediate_count ?? 0) + (result.queued_count ?? 0);
+    if (count === 0) {
+      return null; // Don't show if nothing was cleaned
+    }
+    return `Ally cleaned up ${count} tool call${count !== 1 ? 's' : ''}.`;
   }
 
   /**
@@ -124,7 +143,7 @@ Example:
         );
       }
 
-      // Validate IDs exist in conversation before queuing
+      // Get conversation manager
       const conversationManager = agent.getConversationManager();
       if (!conversationManager) {
         return this.formatErrorResponse(
@@ -133,51 +152,54 @@ Example:
         );
       }
 
-      // Check which IDs exist (don't remove yet, just validate)
-      const messages = conversationManager.getMessages();
-      const existingIds = new Set(
-        messages
-          .filter((msg: Message) => msg.role === 'tool' && msg.tool_call_id)
-          .map((msg: Message) => msg.tool_call_id as string)
-      );
+      // Partition IDs into current turn and prior turns
+      const { currentTurn, priorTurns } = conversationManager.partitionByTurn(toolCallIds);
 
-      const validIds: string[] = [];
-      const notFoundIds: string[] = [];
+      // Calculate not found IDs
+      const validIds = [...currentTurn, ...priorTurns];
+      const notFoundIds = toolCallIds.filter((id: string) => !validIds.includes(id));
 
-      for (const id of toolCallIds) {
-        if (existingIds.has(id)) {
-          validIds.push(id);
-        } else {
-          notFoundIds.push(id);
-        }
+      // Immediately remove prior-turn results
+      let immediateResult = { removed_count: 0, removed_ids: [], not_found_ids: [] };
+      if (priorTurns.length > 0) {
+        immediateResult = conversationManager.removeToolResults(priorTurns);
       }
 
-      // Queue valid IDs for cleanup at end of turn
-      if (validIds.length > 0) {
-        agent.queueCleanup(validIds);
+      // Queue current-turn results for deferred cleanup
+      if (currentTurn.length > 0) {
+        agent.queueCleanup(currentTurn);
       }
 
       // Format success response
-      let message = `Queued ${validIds.length} tool result(s) for cleanup at end of turn.`;
+      const totalCleaned = immediateResult.removed_count + currentTurn.length;
+      let message = '';
 
-      if (validIds.length > 0) {
-        message += `\n\nQueued for cleanup:\n${validIds.map(id => `  - ${id}`).join('\n')}`;
+      if (totalCleaned === 0) {
+        message = 'No tool results were cleaned up. All provided IDs were not found in the conversation.';
+      } else {
+        message = `Cleaned up ${totalCleaned} tool result(s):\n`;
+        message += `  - ${immediateResult.removed_count} removed immediately (prior turns)\n`;
+        message += `  - ${currentTurn.length} queued for end of turn (current turn)`;
+
+        if (immediateResult.removed_count > 0) {
+          message += `\n\nRemoved immediately:\n${immediateResult.removed_ids.map((id: string) => `  - ${id}`).join('\n')}`;
+        }
+
+        if (currentTurn.length > 0) {
+          message += `\n\nQueued for end of turn:\n${currentTurn.map((id: string) => `  - ${id}`).join('\n')}`;
+        }
       }
 
       if (notFoundIds.length > 0) {
-        message += `\n\nTool call IDs not found in conversation:\n${notFoundIds.map(id => `  - ${id}`).join('\n')}`;
-      }
-
-      if (validIds.length === 0) {
-        message = 'No tool results were queued for cleanup. All provided IDs were not found in the conversation.';
-      } else {
-        message += '\n\nThese results will be removed from context after this response completes.';
+        message += `\n\nTool call IDs not found in conversation:\n${notFoundIds.map((id: string) => `  - ${id}`).join('\n')}`;
       }
 
       return this.formatSuccessResponse({
         content: message,
-        queued_count: validIds.length,
-        queued_ids: validIds,
+        immediate_count: immediateResult.removed_count,
+        immediate_ids: immediateResult.removed_ids,
+        queued_count: currentTurn.length,
+        queued_ids: currentTurn,
         not_found_ids: notFoundIds,
       });
     } catch (error) {
