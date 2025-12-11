@@ -108,6 +108,17 @@ export const UI_COLORS = {
    */
   MEMORY: 'cyan' as const,
 
+  /**
+   * Cyan - Meta/housekeeping tools
+   *
+   * Usage:
+   * - Tools that operate on conversation state (not external resources)
+   * - Todo management (TodoWriteTool)
+   * - Context cleanup (CleanupCallTool)
+   * - Other orchestration/management tools
+   */
+  META: 'cyan' as const,
+
   // ============================================================================
   // SECONDARY COLORS
   // ============================================================================

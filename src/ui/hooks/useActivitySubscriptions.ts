@@ -919,9 +919,21 @@ export const useActivitySubscriptions = (
     }
   });
 
-  // Compaction complete
+  // Compaction complete (success or error)
   useActivityEvent(ActivityEventType.COMPACTION_COMPLETE, (event) => {
-    const { oldContextUsage, newContextUsage, threshold, compactedMessages, parentId } = event.data;
+    const { oldContextUsage, newContextUsage, threshold, compactedMessages, parentId, error, errorMessage } = event.data;
+
+    // Handle error case - just clear compacting state without resetting conversation
+    if (error) {
+      if (parentId) {
+        scheduleToolUpdate.current(parentId, { isCompacting: false });
+      } else {
+        actions.setIsCompacting(false);
+      }
+      // Error will be shown via Agent error handling, just unstick the UI
+      logger.debug('[useActivitySubscriptions] Compaction error:', errorMessage);
+      return;
+    }
 
     // For delegated agent compaction, only add the notice and clear compacting state
     // Don't touch main agent's conversation or tool calls

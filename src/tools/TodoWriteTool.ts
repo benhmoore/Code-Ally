@@ -17,6 +17,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager, TodoStatus } from '../services/TodoManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { autoSaveTodos } from '../utils/todoUtils.js';
+import { UI_COLORS } from '../ui/constants/colors.js';
 
 /**
  * Todo item as provided by the agent (without ID)
@@ -35,6 +36,11 @@ export class TodoWriteTool extends BaseTool {
   readonly visibleInChat = true;
   readonly hideOutput = true; // Todo updates shown in status bar, not chat
   readonly breaksExploratoryStreak = false; // Task management, not productive work
+
+  // Custom display
+  readonly displayName = 'Update Todos';
+  readonly displayColor = UI_COLORS.META;
+  readonly displayIcon = '✎';
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

@@ -10,6 +10,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError } from '../utils/errorUtils.js';
+import { UI_COLORS } from '../ui/constants/colors.js';
 
 /**
  * Tool for removing tool result messages from conversation history
@@ -31,8 +32,8 @@ export class CleanupCallTool extends BaseTool {
   readonly hideOutput = true; // Hide detailed output
   readonly breaksExploratoryStreak = false; // Part of cleanup → explore workflow
 
-  // Custom display: cyan notice with sparkle icon
-  readonly displayColor = 'cyan';
+  // Custom display: meta tool notice with sparkle icon
+  readonly displayColor = UI_COLORS.META;
   readonly displayIcon = '✦';
   readonly hideToolName = true; // Show only the subtext message
 

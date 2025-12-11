@@ -84,6 +84,9 @@ export interface CompactionOptions {
  * Coordinates conversation compaction with context usage monitoring
  */
 export class AgentCompactor {
+  /** Guard flag to prevent concurrent compaction operations */
+  private isCompacting = false;
+
   constructor(
     private modelClient: ModelClient,
     private conversationManager: ConversationManager,
@@ -103,6 +106,11 @@ export class AgentCompactor {
    * @returns true if compaction was performed, false otherwise
    */
   async checkAndPerformAutoCompaction(context: CompactionContext): Promise<boolean> {
+    // Guard: prevent concurrent compaction operations
+    if (this.isCompacting) {
+      logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Skipping - compaction already in progress');
+      return false;
+    }
 
     // Get TokenManager (instance variable)
     if (typeof this.tokenManager.getContextUsagePercentage !== 'function') {
@@ -130,6 +138,10 @@ export class AgentCompactor {
     logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId,
       `Context at ${contextUsage}%, threshold ${threshold}% - triggering compaction`);
 
+    // Set guard flag
+    this.isCompacting = true;
+    let compactionStarted = false;
+
     try {
       // Emit compaction start event
       this.emitEvent({
@@ -140,6 +152,7 @@ export class AgentCompactor {
           parentId: context.parentCallId,
         },
       });
+      compactionStarted = true;
 
       let compacted: Message[];
 
@@ -177,6 +190,17 @@ export class AgentCompactor {
 
       const newContextUsage = this.tokenManager.getContextUsagePercentage();
 
+      // Verify compaction actually reduced context meaningfully
+      // If we're still at or above threshold, compaction failed to help
+      if (newContextUsage >= threshold) {
+        const contextSize = this.tokenManager.getContextSize();
+        throw new Error(
+          `Compaction did not reduce context usage meaningfully (${contextUsage}% -> ${newContextUsage}%). ` +
+          `Context size (${contextSize} tokens) is too small for the current system prompt. ` +
+          `Increase context_size in your configuration.`
+        );
+      }
+
       // Get the last message's timestamp to place notice before it
       // Find the last non-system message timestamp
       const lastMessageTimestamp = this.conversationManager.getMessages()
@@ -203,6 +227,29 @@ export class AgentCompactor {
       logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, `Compaction complete - Context now at ${newContextUsage}%`);
       return true;
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Check if this is a "context too small" error - these are unrecoverable
+      if (errorMessage.includes('Context size too small') || errorMessage.includes('did not reduce context')) {
+        logger.error('[AGENT_AUTO_COMPACT]', context.instanceId, 'Context size too small:', errorMessage);
+
+        // Emit error completion to unstick UI before re-throwing
+        if (compactionStarted) {
+          this.emitEvent({
+            id: context.generateId(),
+            type: ActivityEventType.COMPACTION_COMPLETE,
+            timestamp: Date.now(),
+            data: {
+              parentId: context.parentCallId,
+              error: true,
+              errorMessage,
+            },
+          });
+        }
+
+        throw error; // Re-throw - this is unrecoverable, user must increase context_size
+      }
+
       logger.error('[AGENT_AUTO_COMPACT]', context.instanceId, 'Compaction failed:', error);
 
       // Fallback: if summarization fails, try emergency truncation
@@ -214,13 +261,62 @@ export class AgentCompactor {
         this.conversationManager.setMessages(compacted);
         this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
         const newContextUsage = this.tokenManager.getContextUsagePercentage();
+
+        // Verify fallback actually helped
+        if (newContextUsage >= threshold) {
+          const contextSize = this.tokenManager.getContextSize();
+          throw new Error(
+            `Emergency truncation fallback did not reduce context (${contextUsage}% -> ${newContextUsage}%). ` +
+            `Context size (${contextSize} tokens) is too small. Increase context_size in your configuration.`
+          );
+        }
+
+        // Emit success event for fallback path
+        const lastMessageTimestamp = this.conversationManager.getMessages()
+          .filter(m => m.role !== 'system')
+          .reduce((latest, msg) => Math.max(latest, msg.timestamp || 0), 0);
+        const noticeTimestamp = lastMessageTimestamp > 0 ? lastMessageTimestamp - 1 : Date.now();
+
+        this.emitEvent({
+          id: context.generateId(),
+          type: ActivityEventType.COMPACTION_COMPLETE,
+          timestamp: noticeTimestamp,
+          data: {
+            parentId: context.parentCallId,
+            oldContextUsage: contextUsage,
+            newContextUsage,
+            threshold,
+            compactedMessages: this.conversationManager.getMessages(),
+            wasEmergencyFallback: true,
+          },
+        });
+
         logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId,
           `Emergency truncation fallback succeeded - Context now at ${newContextUsage}%`);
         return true;
       } catch (fallbackError) {
+        const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
         logger.error('[AGENT_AUTO_COMPACT]', context.instanceId, 'Emergency truncation fallback also failed:', fallbackError);
-        return false;
+
+        // Emit error completion to unstick UI
+        if (compactionStarted) {
+          this.emitEvent({
+            id: context.generateId(),
+            type: ActivityEventType.COMPACTION_COMPLETE,
+            timestamp: Date.now(),
+            data: {
+              parentId: context.parentCallId,
+              error: true,
+              errorMessage: fallbackErrorMessage,
+            },
+          });
+        }
+
+        throw fallbackError; // Re-throw - context_size errors are unrecoverable
       }
+    } finally {
+      // Always reset guard flag
+      this.isCompacting = false;
     }
   }
 
@@ -327,12 +423,34 @@ export class AgentCompactor {
    *
    * @param messages - Messages to truncate
    * @returns Truncated message array
+   * @throws Error if system prompt alone exceeds target budget (context_size too small)
    */
   private performEmergencyTruncation(messages: readonly Message[]): Message[] {
     const result: Message[] = [];
 
     // Always preserve system message
     const systemMessage = messages[0]?.role === 'system' ? messages[0] : null;
+
+    // Calculate system prompt tokens FIRST to ensure we have room for messages
+    const systemPromptTokens = systemMessage
+      ? this.tokenManager.estimateMessageTokens(systemMessage)
+      : 0;
+
+    // Target budget for the entire conversation after truncation
+    const targetTokens = Math.floor(
+      this.tokenManager.getContextSize() * EMERGENCY_TRUNCATION_TARGET_PERCENT / 100
+    );
+
+    // Check if system prompt alone exceeds target - this means context_size is too small
+    if (systemPromptTokens >= targetTokens) {
+      const contextSize = this.tokenManager.getContextSize();
+      throw new Error(
+        `Context size too small for operation. System prompt (${systemPromptTokens} tokens) ` +
+        `exceeds emergency truncation target (${targetTokens} tokens, ${EMERGENCY_TRUNCATION_TARGET_PERCENT}% of ${contextSize}). ` +
+        `Increase context_size in your configuration to at least ${Math.ceil(systemPromptTokens / (EMERGENCY_TRUNCATION_TARGET_PERCENT / 100))} tokens.`
+      );
+    }
+
     if (systemMessage) {
       result.push(systemMessage);
     }
@@ -347,13 +465,10 @@ export class AgentCompactor {
       return result;
     }
 
-    // Emergency truncation strategy: keep only the most recent messages
-    // that fit within target context to leave room for responses
-    const targetTokens = Math.floor(
-      this.tokenManager.getContextSize() * EMERGENCY_TRUNCATION_TARGET_PERCENT / 100
-    );
+    // Available budget for non-system messages (subtract system prompt from target)
+    const availableForMessages = targetTokens - systemPromptTokens;
 
-    // Start from the end and work backwards, keeping messages until we exceed target
+    // Start from the end and work backwards, keeping messages until we exceed available budget
     const keptMessages: Message[] = [];
     let totalTokens = 0;
 
@@ -361,8 +476,8 @@ export class AgentCompactor {
       const msg = nonEphemeralMessages[i]!;
       const msgTokens = this.tokenManager.estimateMessageTokens(msg);
 
-      if (totalTokens + msgTokens > targetTokens && keptMessages.length > 0) {
-        // Would exceed target, stop adding more
+      if (totalTokens + msgTokens > availableForMessages && keptMessages.length > 0) {
+        // Would exceed available budget, stop adding more
         break;
       }
 
@@ -450,6 +565,13 @@ export class AgentCompactor {
     let messagesToSummarize = lastUserMessage
       ? otherMessages.slice(0, otherMessages.lastIndexOf(lastUserMessage))
       : [...otherMessages];
+
+    // Guard: if we have no messages to actually summarize (e.g., lastUserMessage is first),
+    // return unchanged - there's nothing meaningful to compact
+    if (messagesToSummarize.length < BUFFER_SIZES.MIN_MESSAGES_TO_SUMMARIZE) {
+      logger.debug('[AGENT_COMPACT]', 'Not enough messages to summarize after excluding last user message');
+      return [...messages];
+    }
 
     // Build fixed parts of summarization request (system prompt + user request)
     const summarizationSystemContent = `You are summarizing a coding conversation to save context space.
@@ -567,6 +689,14 @@ Requirements:
     const response = await this.modelClient.send(summarizationRequest, {
       stream: false,
     });
+
+    // Validate LLM response - handle error responses and empty content
+    if (response.error) {
+      throw new Error(`LLM summarization failed: ${response.error_message || 'Unknown error'}`);
+    }
+    if (!response.content) {
+      throw new Error('LLM summarization returned empty response');
+    }
 
     const summary = response.content.trim();
 

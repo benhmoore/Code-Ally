@@ -41,7 +41,7 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 - Use Glob for broad file pattern matching to find similar implementations
 - Use Grep for searching code patterns, conventions, and specific implementations
 - Use Read to study specific files and understand implementation details in depth
-- Use Explore to delegate complex multi-file pattern analysis and architectural investigations
+- Use Explore for complex multi-file pattern analysis (local codebase only, no internet)
 - Use Batch to execute multiple searches in parallel for efficiency
 - Use todo-write to create implementation tasks in logical order
 - Adapt your research depth based on the thoroughness level specified

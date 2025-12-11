@@ -11,6 +11,7 @@ import { createTwoFilesPatch } from 'diff';
 import { FORMATTING } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { getDisplayPath } from '@utils/pathUtils.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
 
 export interface DiffLine {
   type: 'add' | 'remove' | 'context' | 'header' | 'meta';
@@ -37,6 +38,11 @@ interface DiffHunk {
   lines: DiffLine[];
 }
 
+// Line number column width: "     1 │ " = LINE_NUMBER_WIDTH + 3 (space, pipe, space)
+const LINE_NUMBER_COLUMN_WIDTH = FORMATTING.LINE_NUMBER_WIDTH + 3;
+// Prefix width: "+ " or "- " or "  " = 2 chars
+const PREFIX_WIDTH = 2;
+
 /**
  * DiffDisplay Component
  *
@@ -54,6 +60,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
   maxLinesPerHunk = 10,
   editsCount,
 }) => {
+  const contentWidth = useContentWidth();
   const diffLines = generateDiffLines(oldContent, newContent, filePath);
 
   // Group lines into hunks
@@ -97,6 +104,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
             hunk={hunk}
             maxLines={maxLinesPerHunk}
             isLast={hunkIdx === hunks.length - 1}
+            contentWidth={contentWidth}
           />
         ))}
       </Box>
@@ -107,10 +115,11 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
 /**
  * Display a single hunk with optional truncation
  */
-const DiffHunkDisplay: React.FC<{ hunk: DiffHunk; maxLines: number; isLast: boolean }> = ({
+const DiffHunkDisplay: React.FC<{ hunk: DiffHunk; maxLines: number; isLast: boolean; contentWidth: number }> = ({
   hunk,
   maxLines,
   isLast,
+  contentWidth,
 }) => {
   const displayLines = maxLines > 0 ? hunk.lines.slice(0, maxLines) : hunk.lines;
   const truncated = maxLines > 0 && hunk.lines.length > maxLines;
@@ -119,7 +128,7 @@ const DiffHunkDisplay: React.FC<{ hunk: DiffHunk; maxLines: number; isLast: bool
   return (
     <Box flexDirection="column">
       {displayLines.map((line, idx) => (
-        <DiffLine key={idx} line={line} />
+        <DiffLineComponent key={idx} line={line} contentWidth={contentWidth} />
       ))}
       {truncated && (
         <Box>
@@ -138,9 +147,9 @@ const DiffHunkDisplay: React.FC<{ hunk: DiffHunk; maxLines: number; isLast: bool
 };
 
 /**
- * Render a single diff line with appropriate styling
+ * Render a single diff line with appropriate styling and truncation for long lines
  */
-const DiffLine: React.FC<{ line: DiffLine }> = ({ line }) => {
+const DiffLineComponent: React.FC<{ line: DiffLine; contentWidth: number }> = ({ line, contentWidth }) => {
   // Determine styling based on line type
   const isDimmed = line.type === 'header' || line.type === 'meta';
 
@@ -168,14 +177,19 @@ const DiffLine: React.FC<{ line: DiffLine }> = ({ line }) => {
     ? (lineNum ? lineNum.toString().padStart(FORMATTING.LINE_NUMBER_WIDTH, ' ') : ' '.repeat(FORMATTING.LINE_NUMBER_WIDTH))
     : '';
 
+  // Calculate available width for line content (terminal width - line number column - prefix)
+  const availableWidth = Math.max(20, contentWidth - LINE_NUMBER_COLUMN_WIDTH - PREFIX_WIDTH);
+
   return (
     <Box>
       {hasLineNumber && (
         <Text dimColor>{lineNumDisplay} │ </Text>
       )}
-      <Text color={color} dimColor={isDimmed}>
-        {prefix}{line.content}
-      </Text>
+      <Box width={availableWidth}>
+        <Text color={color} dimColor={isDimmed} wrap="truncate">
+          {prefix}{line.content}
+        </Text>
+      </Box>
     </Box>
   );
 };

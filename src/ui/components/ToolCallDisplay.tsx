@@ -369,16 +369,21 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Indent based on level
   const indent = '    '.repeat(level);
 
-  // Status indicator - use custom color if provided, otherwise status-based
-  const statusColor = toolCall.displayColor || getStatusColor(toolCall.status);
+  // Status indicator - errors/cancellations always use standard styling for consistency
+  const isErrorState = toolCall.status === 'error' || toolCall.status === 'cancelled';
+  const statusColor = isErrorState
+    ? getStatusColor(toolCall.status)
+    : (toolCall.displayColor || getStatusColor(toolCall.status));
   const statusIcon = getStatusIcon(toolCall.status);
 
-  // Prefix icon: custom icon if provided, otherwise arrow for running (flashing), status icon for completed
-  const prefixIcon = toolCall.displayIcon
-    ? toolCall.displayIcon
-    : isRunning
-      ? (arrowVisible ? UI_SYMBOLS.NAVIGATION.ARROW_RIGHT : ' ')
-      : statusIcon;
+  // Prefix icon: errors always show standard icon, otherwise custom or status-based
+  const prefixIcon = isErrorState
+    ? statusIcon
+    : toolCall.displayIcon
+      ? toolCall.displayIcon
+      : isRunning
+        ? (arrowVisible ? UI_SYMBOLS.NAVIGATION.ARROW_RIGHT : ' ')
+        : statusIcon;
 
   const toolCallCount = toolCall.totalChildCount || 0;
 

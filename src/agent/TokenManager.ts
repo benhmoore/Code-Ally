@@ -16,6 +16,12 @@ import { tokenCounter } from '../services/TokenCounter.js';
 /**
  * TokenManager manages token counting and context tracking
  */
+/** Maximum entries in message token cache before cleanup triggers */
+const MAX_CACHE_SIZE = 1000;
+
+/** Target cache size after cleanup (keeps most recent entries) */
+const CACHE_CLEANUP_TARGET = 500;
+
 export class TokenManager {
   private contextSize: number;
   private currentTokenCount: number = 0;
@@ -116,10 +122,61 @@ export class TokenManager {
   /**
    * Update the current token count based on messages
    *
+   * Also prunes stale cache entries that are no longer in the message array.
+   * This prevents unbounded cache growth after compaction removes old messages.
+   *
    * @param messages Current message array
    */
   updateTokenCount(messages: readonly Message[]): void {
     this.currentTokenCount = this.estimateMessagesTokens(messages);
+
+    // Prune cache entries not in current messages to prevent memory leak
+    // Only prune when cache is getting large to avoid overhead on every update
+    if (this.messageTokenCache.size > MAX_CACHE_SIZE) {
+      this.pruneCache(messages);
+    }
+  }
+
+  /**
+   * Prune stale cache entries, keeping only those for current messages
+   *
+   * Called automatically when cache exceeds MAX_CACHE_SIZE.
+   * Can also be called manually after operations that remove many messages (e.g., compaction).
+   *
+   * @param messages Current message array to retain cache entries for
+   */
+  pruneCache(messages: readonly Message[]): void {
+    // Build set of current message IDs for O(1) lookup
+    const currentIds = new Set<string>();
+    for (const msg of messages) {
+      if (msg.id) {
+        currentIds.add(msg.id);
+      }
+    }
+
+    // Remove entries not in current messages
+    const entriesToDelete: string[] = [];
+    for (const id of this.messageTokenCache.keys()) {
+      if (!currentIds.has(id)) {
+        entriesToDelete.push(id);
+      }
+    }
+
+    for (const id of entriesToDelete) {
+      this.messageTokenCache.delete(id);
+    }
+
+    // If still above target after removing stale entries, trim oldest
+    // (Map maintains insertion order, so oldest entries are first)
+    if (this.messageTokenCache.size > CACHE_CLEANUP_TARGET) {
+      const excess = this.messageTokenCache.size - CACHE_CLEANUP_TARGET;
+      const iterator = this.messageTokenCache.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value, done } = iterator.next();
+        if (done) break;
+        this.messageTokenCache.delete(value);
+      }
+    }
   }
 
   /**
@@ -148,6 +205,10 @@ export class TokenManager {
   /**
    * Get context usage as a percentage (0-100)
    *
+   * Uses Math.floor for conservative reporting - this prevents edge cases where
+   * 94.5% rounds to 95% and falsely triggers "compaction didn't reduce context"
+   * errors when actual usage is below threshold.
+   *
    * @returns Usage percentage, capped at 100
    */
   getContextUsagePercentage(): number {
@@ -155,7 +216,7 @@ export class TokenManager {
       return 0;
     }
     const percentage = (this.currentTokenCount / this.contextSize) * 100;
-    return Math.min(100, Math.round(percentage));
+    return Math.min(100, Math.floor(percentage));
   }
 
   /**
@@ -338,6 +399,7 @@ export class TokenManager {
     remainingTokens: number;
     usagePercentage: number;
     trackedFiles: number;
+    cacheSize: number;
   } {
     return {
       contextSize: this.contextSize,
@@ -345,6 +407,7 @@ export class TokenManager {
       remainingTokens: this.getRemainingTokens(),
       usagePercentage: this.getContextUsagePercentage(),
       trackedFiles: this.seenFiles.size,
+      cacheSize: this.messageTokenCache.size,
     };
   }
 }

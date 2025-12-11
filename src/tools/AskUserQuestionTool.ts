@@ -22,6 +22,7 @@ import { ToolResult, FunctionDefinition, FormSchema, FormField } from '../types/
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
+import { UI_COLORS } from '../ui/constants/colors.js';
 
 /**
  * Truncate text to a maximum number of words, adding ellipsis if truncated
@@ -68,6 +69,10 @@ export class AskUserQuestionTool extends BaseTool {
   readonly requiresConfirmation = false;
   readonly supportsInteractiveForm = true;
   readonly alwaysShowFullOutput = true;
+
+  // Custom display
+  readonly displayColor = UI_COLORS.META;
+  readonly displayIcon = '◇';
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
