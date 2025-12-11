@@ -12,12 +12,11 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { FocusManager } from '../services/FocusManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateExists } from '../utils/pathValidator.js';
-import { isBinaryContent } from '../utils/fileUtils.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TOOL_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
-import * as fs from 'fs/promises';
+import { rgPath } from '@vscode/ripgrep';
+import { spawn } from 'child_process';
 import * as path from 'path';
-import fg from 'fast-glob';
 
 type OutputMode = 'files_with_matches' | 'content' | 'count';
 
@@ -38,7 +37,7 @@ export class GrepTool extends BaseTool {
   readonly name = 'grep';
   readonly displayName = 'Search';
   readonly description =
-    'Search files for text patterns with multiple output modes. Use for finding code patterns, text search across files, regex matching. Supports files_with_matches (default), content (with context), and count modes. Supports multiline regex patterns.';
+    'Search files for text patterns using ripgrep. Use for finding code patterns, text search across files, regex matching. Supports files_with_matches (default), content (with context), and count modes. Supports multiline regex patterns.';
   readonly requiresConfirmation = false; // Read-only operation
   readonly isExploratoryTool = true;
   readonly usageGuidance = `**When to use grep:**
@@ -59,21 +58,9 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
    * Validate GrepTool arguments
    */
   validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
-    // Validate regex pattern syntax
-    if (args.pattern && typeof args.pattern === 'string') {
-      try {
-        const flags = args['-i'] || args.case_insensitive ? 'i' : '';
-        new RegExp(args.pattern, flags);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Invalid regex';
-        return {
-          valid: false,
-          error: `Invalid regex pattern: ${errorMsg}`,
-          error_type: 'validation_error',
-          suggestion: 'Use simpler patterns or escape special characters like . * + ? [ ] ( ) { } | \\',
-        };
-      }
-    }
+    // Note: Regex pattern validation is deferred to ripgrep execution
+    // since JS RegExp and Rust regex have different syntax rules.
+    // Invalid patterns will be caught and reported by ripgrep.
 
     // Validate context line parameters
     const contextParams = ['-A', '-B', '-C'];
@@ -116,7 +103,7 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
           properties: {
             pattern: {
               type: 'string',
-              description: 'Regex pattern to search',
+              description: 'Regex pattern to search (Rust regex syntax, compatible with most PCRE patterns)',
             },
             path: {
               type: 'string',
@@ -154,6 +141,10 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
               type: 'boolean',
               description: 'Enable multiline mode where . matches newlines',
             },
+            pcre2: {
+              type: 'boolean',
+              description: 'Enable PCRE2 engine for backreferences and lookahead/lookbehind',
+            },
             max_results: {
               type: 'integer',
               description: `Max results (default: ${GrepTool.MAX_RESULTS})`,
@@ -172,29 +163,12 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
     // Extract and validate parameters
     const pattern = args.pattern as string;
     const searchPath = (args.path as string) || '.';
-
     const fileType = args.type as string | undefined;
-    let filePattern = (args.glob as string) || '*';
-
-    // Apply file type shortcuts (overrides glob if provided)
-    if (fileType) {
-      const typeMap: Record<string, string> = {
-        ts: '**/*.{ts,tsx}',
-        tsx: '**/*.tsx',
-        js: '**/*.{js,jsx}',
-        jsx: '**/*.jsx',
-        py: '**/*.py',
-        rust: '**/*.rs',
-        go: '**/*.go',
-        java: '**/*.java',
-        c: '**/*.{c,h}',
-        cpp: '**/*.{cpp,hpp,cc,cxx}',
-        all_code: '**/*.{ts,tsx,js,jsx,py,go,java,c,cpp,rs,rb}',
-      };
-      filePattern = typeMap[fileType] || filePattern;
-    }
-
+    const filePattern = args.glob as string | undefined;
     const caseInsensitive = Boolean(args['-i']);
+    const multiline = Boolean(args.multiline);
+    const pcre2 = Boolean(args.pcre2);
+    const outputMode = (args.output_mode as OutputMode) || 'files_with_matches';
 
     const linesAfter = Math.min(
       Math.max(0, Number(args['-A']) || 0),
@@ -213,9 +187,6 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
     const contextAfter = linesContext > 0 ? linesContext : linesAfter;
     const contextBefore = linesContext > 0 ? linesContext : linesBefore;
 
-    const multiline = Boolean(args.multiline);
-    const outputMode = (args.output_mode as OutputMode) || 'files_with_matches';
-
     const maxResults = Math.min(
       Number(args.max_results) || GrepTool.MAX_RESULTS,
       GrepTool.MAX_RESULTS
@@ -226,22 +197,6 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
         'pattern parameter is required',
         'validation_error',
         'Example: grep(pattern="class.*Test", path="src/")'
-      );
-    }
-
-    // Compile regex
-    let regex: RegExp;
-    try {
-      let flags = caseInsensitive ? 'gi' : 'g';
-      if (multiline) {
-        flags += 's'; // 's' flag makes '.' match newlines
-      }
-      regex = new RegExp(pattern, flags);
-    } catch (error) {
-      return this.formatErrorResponse(
-        `Invalid regex pattern: ${formatError(error)}`,
-        'validation_error',
-        'Use simpler patterns or escape special characters'
       );
     }
 
@@ -272,196 +227,119 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
         );
       }
 
-      // Determine if searching a single file or directory
-      const stats = await fs.stat(absolutePath);
-      let filesToSearch: string[];
+      // Build ripgrep arguments
+      const rgArgs: string[] = [
+        '--json',
+        '--no-ignore', // Don't use gitignore (we control filtering)
+        '-e', pattern,
+      ];
 
-      if (stats.isFile()) {
-        filesToSearch = [absolutePath];
-      } else if (stats.isDirectory()) {
-        // Use fast-glob to find matching files
-        const globPattern = path.join(absolutePath, '**', filePattern);
-        const matchedFiles = await fg(globPattern, {
-          dot: false,
-          onlyFiles: true,
-          ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],
-        });
-
-        // Filter out excluded files if focus manager has exclusions
-        if (focusManager) {
-          filesToSearch = [];
-          for (const filePath of matchedFiles) {
-            const validation = await focusManager.validatePathInFocus(filePath);
-            if (validation.success) {
-              filesToSearch.push(filePath);
-            }
-          }
-        } else {
-          filesToSearch = matchedFiles;
-        }
-      } else {
-        return this.formatErrorResponse(
-          `Not a file or directory: ${searchPath}`,
-          'validation_error'
-        );
+      // Add case insensitive flag
+      if (caseInsensitive) {
+        rgArgs.push('-i');
       }
 
-      // Search files (parallel with concurrency limit)
-      const READ_CONCURRENCY = 10; // Optimal concurrency for file reading
-      const matches: GrepMatch[] = [];
+      // Add multiline flags
+      if (multiline) {
+        rgArgs.push('-U', '--multiline-dotall');
+      }
+
+      // Enable PCRE2 for advanced patterns (backreferences, lookahead/lookbehind)
+      if (pcre2) {
+        rgArgs.push('--pcre2');
+      }
+
+      // Add context flags
+      if (contextAfter > 0) {
+        rgArgs.push('-A', contextAfter.toString());
+      }
+      if (contextBefore > 0) {
+        rgArgs.push('-B', contextBefore.toString());
+      }
+
+      // Add glob pattern if provided
+      if (filePattern) {
+        rgArgs.push('-g', filePattern);
+      }
+
+      // Add type filter if provided (ripgrep has built-in types)
+      if (fileType) {
+        rgArgs.push('-t', fileType);
+      }
+
+      // Add standard exclusions
+      rgArgs.push('--glob', '!node_modules/**');
+      rgArgs.push('--glob', '!.git/**');
+      rgArgs.push('--glob', '!dist/**');
+      rgArgs.push('--glob', '!build/**');
+
+      // Limit file size
+      rgArgs.push('--max-filesize', `${GrepTool.MAX_FILE_SIZE}`);
+
+      // Add search path
+      rgArgs.push(absolutePath);
+
+      // Spawn ripgrep process
+      const rgResult = await this.executeRipgrep(rgArgs);
+
+      // Parse JSON output
+      const rawMatches = this.parseRipgrepJson(rgResult.stdout);
+
+      // Apply focus manager filtering if active
+      let filteredMatches = rawMatches;
+      if (focusManager && focusManager.isFocused()) {
+        filteredMatches = [];
+        for (const match of rawMatches) {
+          const validation = await focusManager.validatePathInFocus(match.file);
+          if (validation.success) {
+            filteredMatches.push(match);
+          }
+        }
+      }
+
+      // Apply max_results limit globally
+      const matches = filteredMatches.slice(0, maxResults);
+
+      // Count statistics
       const filesWithMatches = new Set<string>();
       const fileCounts = new Map<string, number>();
-      let filesSearched = 0;
-      let filesSkippedLarge = 0;
-      let filesSkippedBinary = 0;
-      let filesSkippedError = 0;
 
-      // Process files in batches to limit concurrency
-      for (let i = 0; i < filesToSearch.length; i += READ_CONCURRENCY) {
-        // Early exit when limits are reached
-        if (outputMode === 'files_with_matches' && filesWithMatches.size >= maxResults) {
-          break;
-        }
-        if (outputMode === 'content' && matches.length >= maxResults) {
-          break;
-        }
-        if (outputMode === 'count' && fileCounts.size >= maxResults) {
-          break;
-        }
-
-        const batch = filesToSearch.slice(i, i + READ_CONCURRENCY);
-        const results = await Promise.allSettled(
-          batch.map(async (filePath) => {
-            // Check file size
-            const fileStats = await fs.stat(filePath);
-            if (fileStats.size > GrepTool.MAX_FILE_SIZE) {
-              return { type: 'skipped_large' as const, filePath };
-            }
-
-            // Read file
-            const content = await fs.readFile(filePath, { encoding: 'utf-8' });
-
-            // Check for binary content
-            if (isBinaryContent(content)) {
-              return { type: 'skipped_binary' as const, filePath };
-            }
-
-            return { type: 'success' as const, filePath, content };
-          })
-        );
-
-        // Process results from this batch
-        for (const result of results) {
-          if (result.status === 'rejected') {
-            filesSkippedError++;
-            continue;
-          }
-
-          const value = result.value;
-          if (value.type === 'skipped_large') {
-            filesSkippedLarge++;
-            continue;
-          }
-          if (value.type === 'skipped_binary') {
-            filesSkippedBinary++;
-            continue;
-          }
-
-          // Success - process file content
-          filesSearched++;
-          const { filePath, content } = value;
-
-          // Search based on mode
-          if (multiline) {
-            // For multiline mode, search entire content at once
-            const fileMatches = this.searchMultiline(
-              content,
-              regex,
-              filePath,
-              contextBefore,
-              contextAfter,
-              outputMode === 'content' ? maxResults - matches.length : Number.MAX_SAFE_INTEGER
-            );
-
-            if (fileMatches.length > 0) {
-              filesWithMatches.add(filePath);
-              fileCounts.set(filePath, fileMatches.length);
-              if (outputMode === 'content') {
-                matches.push(...fileMatches);
-              }
-            }
-          } else {
-            // Search line by line
-            const lines = content.split('\n');
-            const fileMatches = this.searchLines(
-              lines,
-              regex,
-              filePath,
-              contextBefore,
-              contextAfter,
-              outputMode === 'content' ? maxResults - matches.length : Number.MAX_SAFE_INTEGER
-            );
-
-            if (fileMatches.length > 0) {
-              filesWithMatches.add(filePath);
-              fileCounts.set(filePath, fileMatches.length);
-              if (outputMode === 'content') {
-                matches.push(...fileMatches);
-              }
-            }
-          }
-        }
-
-        // Early exit after processing batch if limits reached
-        if (outputMode === 'files_with_matches' && filesWithMatches.size >= maxResults) {
-          break;
-        }
-        if (outputMode === 'content' && matches.length >= maxResults) {
-          break;
-        }
-        if (outputMode === 'count' && fileCounts.size >= maxResults) {
-          break;
-        }
+      for (const match of matches) {
+        filesWithMatches.add(match.file);
+        fileCounts.set(match.file, (fileCounts.get(match.file) || 0) + 1);
       }
 
       // Format results based on output mode
-      const totalSkipped = filesSkippedLarge + filesSkippedBinary + filesSkippedError;
       let content = '';
       let responseData: any = {
         output_mode: outputMode,
-        files_searched: filesSearched,
-        files_skipped: totalSkipped,
-        files_skipped_large: filesSkippedLarge,
-        files_skipped_binary: filesSkippedBinary,
-        files_skipped_error: filesSkippedError,
+        files_searched: filesWithMatches.size,
+        files_skipped: 0,
+        files_skipped_large: 0,
+        files_skipped_binary: 0,
+        files_skipped_error: 0,
       };
 
       if (outputMode === 'files_with_matches') {
-        // Only return unique file paths
-        const fileList = Array.from(filesWithMatches).slice(0, maxResults);
+        const fileList = Array.from(filesWithMatches);
         content = fileList.join('\n');
         responseData.files = fileList;
         responseData.total_files = fileList.length;
-        responseData.limited_results = filesWithMatches.size > maxResults;
+        responseData.limited_results = filteredMatches.length > maxResults;
       } else if (outputMode === 'count') {
-        // Return files with their match counts
         const countList: FileCount[] = Array.from(fileCounts.entries())
-          .map(([file, count]) => ({ file, count }))
-          .slice(0, maxResults);
+          .map(([file, count]) => ({ file, count }));
 
         const contentLines = countList.map((fc) => `${fc.count}:${fc.file}`);
         content = contentLines.join('\n');
         responseData.file_counts = countList;
         responseData.total_files = countList.length;
         responseData.total_matches = Array.from(fileCounts.values()).reduce((a, b) => a + b, 0);
-        responseData.limited_results = fileCounts.size > maxResults;
+        responseData.limited_results = filteredMatches.length > maxResults;
       } else {
         // content mode - show matching lines with context
-        const limitedResults = matches.length > maxResults;
-        const matchesToReturn = matches.slice(0, maxResults);
-
         const contentLines: string[] = [];
-        for (const match of matchesToReturn) {
+        for (const match of matches) {
           // Add context before
           if (match.before && match.before.length > 0) {
             for (let i = 0; i < match.before.length; i++) {
@@ -481,9 +359,9 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
         }
 
         content = contentLines.join('\n');
-        responseData.matches = matchesToReturn;
+        responseData.matches = matches;
         responseData.total_matches = matches.length;
-        responseData.limited_results = limitedResults;
+        responseData.limited_results = filteredMatches.length > maxResults;
 
         // Group matches by file for easier LLM navigation
         const matchesByFile: Record<string, number> = {};
@@ -497,110 +375,122 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
 
       return this.formatSuccessResponse(responseData);
     } catch (error) {
+      const errorMsg = formatError(error);
+
+      // Check if it's a regex parse error from ripgrep
+      if (errorMsg.includes('regex parse error') || errorMsg.includes('error: unclosed')) {
+        return this.formatErrorResponse(
+          `Invalid regex pattern: ${errorMsg}`,
+          'validation_error',
+          'Use simpler patterns or escape special characters'
+        );
+      }
+
       return this.formatErrorResponse(
-        `Error searching files: ${formatError(error)}`,
+        `Error searching files: ${errorMsg}`,
         'system_error'
       );
     }
   }
 
   /**
-   * Search lines for pattern matches
+   * Execute ripgrep and return stdout/stderr
    */
-  private searchLines(
-    lines: string[],
-    regex: RegExp,
-    filePath: string,
-    contextBefore: number,
-    contextAfter: number,
-    maxMatches: number
-  ): GrepMatch[] {
+  private executeRipgrep(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const process = spawn(rgPath, args, { shell: false });
+
+      let stdout = '';
+      let stderr = '';
+
+      process.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      process.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      process.on('close', (code) => {
+        // Exit codes: 0 = matches found, 1 = no matches, 2+ = error
+        if (code === 0 || code === 1) {
+          resolve({ stdout, stderr });
+        } else {
+          reject(new Error(`ripgrep exited with code ${code}: ${stderr}`));
+        }
+      });
+
+      process.on('error', (error) => {
+        reject(error);
+      });
+    });
+  }
+
+  /**
+   * Parse ripgrep JSON output into GrepMatch array
+   */
+  private parseRipgrepJson(stdout: string): GrepMatch[] {
     const matches: GrepMatch[] = [];
+    const lines = stdout.split('\n').filter((line) => line.trim() !== '');
 
-    for (let i = 0; i < lines.length; i++) {
-      if (matches.length >= maxMatches) {
-        break;
-      }
+    let currentMatch: GrepMatch | null = null;
+    let contextBefore: string[] = [];
 
-      const line = lines[i];
-      if (line !== undefined && regex.test(line)) {
-        const match: GrepMatch = {
-          file: filePath,
-          line: i + 1,
-          content: line,
-        };
+    for (const line of lines) {
+      try {
+        const json = JSON.parse(line);
 
-        // Add context lines if requested
-        if (contextBefore > 0) {
-          const beforeStart = Math.max(0, i - contextBefore);
-          match.before = lines.slice(beforeStart, i);
+        if (json.type === 'match') {
+          // Save previous match if exists
+          if (currentMatch) {
+            matches.push(currentMatch);
+            contextBefore = [];
+          }
+
+          const filePath = json.data.path.text;
+          const lineNumber = json.data.line_number;
+          const content = json.data.lines.text.replace(/\n$/, ''); // Remove trailing newline
+
+          currentMatch = {
+            file: filePath,
+            line: lineNumber,
+            content: content,
+          };
+
+          // Add context before if we collected any
+          if (contextBefore.length > 0) {
+            currentMatch.before = contextBefore;
+            contextBefore = [];
+          }
+        } else if (json.type === 'context') {
+          const contextLine = json.data.lines.text.replace(/\n$/, '');
+
+          if (currentMatch) {
+            // Context after a match
+            if (!currentMatch.after) {
+              currentMatch.after = [];
+            }
+            currentMatch.after.push(contextLine);
+          } else {
+            // Context before a match
+            contextBefore.push(contextLine);
+          }
         }
-
-        if (contextAfter > 0) {
-          const afterEnd = Math.min(lines.length, i + contextAfter + 1);
-          match.after = lines.slice(i + 1, afterEnd);
-        }
-
-        matches.push(match);
+      } catch (error) {
+        // Skip lines that don't parse as JSON
+        continue;
       }
+    }
+
+    // Don't forget the last match
+    if (currentMatch) {
+      matches.push(currentMatch);
     }
 
     return matches;
   }
 
-  /**
-   * Search content for multiline pattern matches
-   */
-  private searchMultiline(
-    content: string,
-    regex: RegExp,
-    filePath: string,
-    contextBefore: number,
-    contextAfter: number,
-    maxMatches: number
-  ): GrepMatch[] {
-    const matches: GrepMatch[] = [];
-    const lines = content.split('\n');
 
-    // Find all matches in the content
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(content)) !== null && matches.length < maxMatches) {
-      // Find which line this match starts on
-      const beforeMatch = content.substring(0, match.index);
-      const lineNumber = beforeMatch.split('\n').length;
-
-      // Get the matched content (may span multiple lines)
-      const matchedText = match[0];
-
-      const grepMatch: GrepMatch = {
-        file: filePath,
-        line: lineNumber,
-        content: matchedText,
-      };
-
-      // Add context lines if requested
-      if (contextBefore > 0) {
-        const beforeStart = Math.max(0, lineNumber - 1 - contextBefore);
-        grepMatch.before = lines.slice(beforeStart, lineNumber - 1);
-      }
-
-      if (contextAfter > 0) {
-        const matchLineCount = matchedText.split('\n').length;
-        const afterStart = lineNumber - 1 + matchLineCount;
-        const afterEnd = Math.min(lines.length, afterStart + contextAfter);
-        grepMatch.after = lines.slice(afterStart, afterEnd);
-      }
-
-      matches.push(grepMatch);
-    }
-
-    return matches;
-  }
-
-
-  /**
-   * Custom result preview
-   */
   /**
    * Get truncation guidance for grep output
    */
