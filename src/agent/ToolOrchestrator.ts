@@ -27,7 +27,8 @@ import { TodoManager } from '../services/TodoManager.js';
 import { BashProcessManager } from '../services/BashProcessManager.js';
 import { formatError, createStructuredError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
-import { ID_GENERATION, SYSTEM_REMINDER } from '../config/constants.js';
+import { ID_GENERATION, SYSTEM_REMINDER, TOOL_GUIDANCE } from '../config/constants.js';
+import { createExploratoryGentleWarning, createExploratorySternWarning } from '../utils/messageUtils.js';
 import {
   createTimeReminder,
   createFocusReminder,
@@ -74,7 +75,6 @@ export interface IAgentForOrchestrator {
     getContextUsagePercentage(): number;
     trackToolResult(toolCallId: string, content: string): string | null;
   };
-  maybeInjectExploratoryReminder(toolCall: import('../types/index.js').ToolCall, result: any): void;
   /**
    * Generate a checkpoint reminder if threshold reached
    * @returns Non-empty checkpoint text, or null if not needed
@@ -94,6 +94,9 @@ export class ToolOrchestrator {
   private permissionManager: PermissionManager | null = null;
   private parentCallId?: string; // Parent context for nested agents
   private cycleDetectionResults: Map<string, import('./LoopDetector.js').CycleInfo> = new Map();
+
+  // Exploratory tool tracking - counts consecutive streak of exploratory tool calls
+  private currentExploratoryStreak: number = 0;
 
   constructor(
     toolManager: ToolManager,
@@ -141,6 +144,49 @@ export class ToolOrchestrator {
    */
   getToolManager(): ToolManager {
     return this.toolManager;
+  }
+
+  /**
+   * Reset the exploratory tool streak counter
+   * Called at turn start and when agent is reset for reuse
+   */
+  resetExploratoryStreak(): void {
+    this.currentExploratoryStreak = 0;
+  }
+
+  /**
+   * Maybe inject exploratory tool reminder into a result
+   * Tracks consecutive exploratory tools and suggests explore() when threshold is reached
+   */
+  private maybeInjectExploratoryReminder(toolCall: ToolCall, result: any): void {
+    // Skip for specialized agents - they're supposed to explore
+    if (this.config.isSpecializedAgent) {
+      return;
+    }
+
+    const toolName = toolCall.function.name;
+    const tool = this.toolManager.getTool(toolName);
+
+    if (tool?.isExploratoryTool) {
+      this.currentExploratoryStreak++;
+
+      const threshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD;
+      const sternThreshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_STERN_THRESHOLD;
+
+      if (this.currentExploratoryStreak >= sternThreshold) {
+        result.system_reminder = createExploratorySternWarning(this.currentExploratoryStreak);
+        logger.debug('[TOOL_ORCHESTRATOR_EXPLORATORY]', `Stern warning after ${this.currentExploratoryStreak} consecutive exploratory calls`);
+      } else if (this.currentExploratoryStreak >= threshold) {
+        result.system_reminder = createExploratoryGentleWarning(this.currentExploratoryStreak);
+        logger.debug('[TOOL_ORCHESTRATOR_EXPLORATORY]', `Gentle reminder after ${this.currentExploratoryStreak} consecutive exploratory calls`);
+      }
+    } else {
+      // Non-exploratory tool - check if it breaks the streak
+      if (tool?.breaksExploratoryStreak !== false && this.currentExploratoryStreak > 0) {
+        logger.debug('[TOOL_ORCHESTRATOR_EXPLORATORY]', `Streak reset after ${toolName}`);
+        this.currentExploratoryStreak = 0;
+      }
+    }
   }
 
   /**
@@ -415,7 +461,7 @@ export class ToolOrchestrator {
         if (toolCall && result) {
           // Inject exploratory tool reminder before processing result
           // This ensures the system_reminder is present when formatToolResult() runs
-          this.agent.maybeInjectExploratoryReminder(toolCall, result);
+          this.maybeInjectExploratoryReminder(toolCall, result);
 
           // Inject checkpoint reminder into first result only
           if (i === 0 && checkpointReminder) {
@@ -508,7 +554,7 @@ export class ToolOrchestrator {
 
       // Inject exploratory tool reminder before processing result
       // This ensures the system_reminder is present when formatToolResult() runs
-      this.agent.maybeInjectExploratoryReminder(toolCall, result);
+      this.maybeInjectExploratoryReminder(toolCall, result);
 
       // Inject checkpoint reminder into first result only
       if (isFirstTool && checkpointReminder) {

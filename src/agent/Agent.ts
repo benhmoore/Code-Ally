@@ -26,6 +26,7 @@ import { RequirementValidator } from './RequirementTracker.js';
 import { MessageValidator } from './MessageValidator.js';
 import { ConversationManager } from './ConversationManager.js';
 import { TurnManager } from './TurnManager.js';
+import { CheckpointTracker } from './CheckpointTracker.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { ConfigManager } from '../services/ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
@@ -33,6 +34,7 @@ import { isPermissionDeniedError } from '../security/PathSecurity.js';
 import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
 import { SessionPersistence } from './SessionPersistence.js';
 import { AgentCompactor } from './AgentCompactor.js';
+import { AgentLifecycleHandler } from './AgentLifecycleHandler.js';
 import { LoopDetector } from './LoopDetector.js';
 import { LoopInfo } from './types/loopDetection.js';
 import type { LinkedPluginWatcher } from '../plugins/LinkedPluginWatcher.js';
@@ -44,19 +46,16 @@ import {
   PhraseRepetitionPattern,
   SentenceRepetitionPattern,
 } from './patterns/loopPatterns.js';
-import { Message, ActivityEventType, Config, ToolCall } from '../types/index.js';
+import { Message, ActivityEventType, Config } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { unwrapBatchToolCalls } from '../utils/toolCallUtils.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { POLLING_INTERVALS, TEXT_LIMITS, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE, TOKEN_MANAGEMENT, THINKING_LOOP_DETECTOR, RESPONSE_LOOP_DETECTOR } from '../config/constants.js';
+import { POLLING_INTERVALS, TEXT_LIMITS, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOKEN_MANAGEMENT, THINKING_LOOP_DETECTOR, RESPONSE_LOOP_DETECTOR } from '../config/constants.js';
 import {
   createInterruptionReminder,
   createEmptyTodoReminder,
   createActiveTodoReminder,
-  createCheckpointReminder,
-  createExploratoryGentleWarning,
-  createExploratorySternWarning,
   createActivityTimeoutContinuationReminder,
   createThinkingLoopContinuationReminder,
 } from '../utils/messageUtils.js';
@@ -170,6 +169,7 @@ export class Agent {
   private activityStream: ActivityStream;
   private toolOrchestrator: ToolOrchestrator;
   private config: AgentConfig;
+  private readonly appConfig: Config; // Unwrapped application config for cleaner access
 
   // Agent name from agentType in config (for tool-agent binding)
   private agentName?: string;
@@ -230,22 +230,18 @@ export class Agent {
   // Compaction - delegated to AgentCompactor
   private agentCompactor: AgentCompactor;
 
+  // Lifecycle handling - idle coordinator, auto-cleanup
+  private lifecycleHandler: AgentLifecycleHandler;
+
   // Timeout continuation tracking - counts attempts to continue after activity timeout
   private timeoutContinuationAttempts: number = 0;
-
-  // Exploratory tool tracking - counts consecutive streak of exploratory tool calls
-  // Used to suggest explore() when many consecutive read/grep/glob/ls/tree calls are made
-  // Resets to 0 when a non-exploratory tool is called (e.g., write, edit)
-  private currentExploratoryStreak: number = 0;
 
   // Cleanup queue - tool call IDs to remove at end of turn
   // cleanup-call queues IDs here, they're removed after model completes response
   private pendingCleanupIds: string[] = [];
 
   // Checkpoint reminder tracking - monitors tool calls to inject progress reminders
-  private toolCallsSinceStart: number = 0;
-  private toolCallsSinceLastCheckpoint: number = 0;
-  private initialUserPrompt: string = '';
+  private checkpointTracker: CheckpointTracker;
 
   // Focus management - tracks if this agent set focus and needs to restore it
   private previousFocus: string | null = null;
@@ -264,6 +260,7 @@ export class Agent {
     this.toolManager = toolManager;
     this.activityStream = activityStream;
     this.config = config;
+    this.appConfig = config.config; // Unwrap application config once
 
     // Store agent name from agentType in config (for tool-agent binding)
     this.agentName = config.agentType;
@@ -316,6 +313,9 @@ export class Agent {
     this.interruptionManager = new InterruptionManager();
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'InterruptionManager created');
 
+    // Create checkpoint tracker
+    this.checkpointTracker = new CheckpointTracker(this.instanceId);
+
     // Create required tool tracker
     this.requiredToolTracker = new RequiredToolTracker(this.instanceId);
     if (config.requiredToolCalls && config.requiredToolCalls.length > 0) {
@@ -354,7 +354,7 @@ export class Agent {
 
     // Create activity monitor for detecting agents stuck generating tokens
     // Only enabled for specialized agents (subagents) to detect infinite loops
-    const activityTimeoutMs = config.config.tool_call_activity_timeout * 1000;
+    const activityTimeoutMs = this.appConfig.tool_call_activity_timeout * 1000;
     this.activityMonitor = new ActivityMonitor({
       timeoutMs: activityTimeoutMs,
       checkIntervalMs: POLLING_INTERVALS.AGENT_WATCHDOG,
@@ -400,8 +400,8 @@ export class Agent {
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'LoopDetector created');
 
     // Create agent's own TokenManager for isolated context tracking
-    this.tokenManager = new TokenManager(config.config.context_size);
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'TokenManager created with context size:', config.config.context_size);
+    this.tokenManager = new TokenManager(this.appConfig.context_size);
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'TokenManager created with context size:', this.appConfig.context_size);
 
     // Create agent's own ToolResultManager using agent's TokenManager
     this.toolResultManager = new ToolResultManager(
@@ -428,6 +428,8 @@ export class Agent {
       permissionManager
     );
 
+    // Create lifecycle handler for peripheral concerns
+    this.lifecycleHandler = new AgentLifecycleHandler(this.instanceId);
 
     // Setup focus if focusDirectory is provided
     if (config.focusDirectory) {
@@ -612,7 +614,7 @@ export class Agent {
    */
   clearConversationHistory(): void {
     this.conversationManager.clearMessages();
-    this.resetCheckpointTracking();
+    this.checkpointTracker.reset();
     // Reset token count after clearing
     this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
     logger.debug(`[AGENT] Cleared conversation history for agent ${this.instanceId}`);
@@ -651,17 +653,26 @@ export class Agent {
 
     // Reset per-invocation state counters
     this.timeoutContinuationAttempts = 0;
-    this.currentExploratoryStreak = 0;
+    this.toolOrchestrator.resetExploratoryStreak();
     this.pendingCleanupIds = [];
 
-    // Reset loop detectors
-    this.loopDetector.resetTextDetectors();
+    // Reset ALL loop detection (text patterns + tool cycle history)
+    this.loopDetector.reset();
 
     // Reset interruption state
     this.interruptionManager.reset();
 
-    // Reset request state
+    // Reset request state flags
     this.requestInProgress = false;
+    this.agentEndEmitted = false;
+
+    // Reset turn timing for fresh invocation
+    this.turnManager.clearTurn();
+
+    // Reset focus state for pool reuse (prevents context seepage)
+    this.didSetFocus = false;
+    this.previousFocus = null;
+    this.focusReady = null;
 
     logger.debug(`[AGENT] Reset agent ${this.instanceId} for reuse`);
   }
@@ -722,94 +733,44 @@ export class Agent {
   }
 
   /**
-   * Handle activity timeout by interrupting the agent
-   *
-   * This is invoked by ActivityMonitor when timeout is detected.
-   *
-   * @param elapsedMs - Milliseconds elapsed since last activity
+   * Unified handler for interruption events (timeouts, loops)
+   * Prevents double interruption and sets appropriate context
    */
-  private handleActivityTimeout(elapsedMs: number): void {
-    // Safety check: prevent double interruption if already interrupted
-    // This can happen when both parent and child agents timeout simultaneously
+  private handleInterruptionEvent(tag: string, reason: string, isTimeout: boolean): void {
     if (this.interruptionManager.isInterrupted()) {
-      logger.debug('[AGENT_TIMEOUT]', this.instanceId, 'Already interrupted, skipping timeout handler');
+      logger.debug(tag, this.instanceId, 'Already interrupted, skipping handler');
       return;
     }
 
-    const elapsedSeconds = Math.round(elapsedMs / 1000);
+    logger.debug(tag, this.instanceId, reason);
 
-    // Set interruption context for continuation
-    // No longer limiting continuation attempts - will retry indefinitely
     this.interruptionManager.setInterruptionContext({
-      reason: `Activity timeout: no tool calls for ${elapsedSeconds} seconds`,
-      isTimeout: true,
+      reason,
+      isTimeout,
       canContinueAfterTimeout: true,
     });
 
-    // Interrupt current request (cancels LLM streaming)
     this.interrupt();
-
-    // Monitoring will restart when we retry
   }
 
-  /**
-   * Handle thinking loop detection.
-   *
-   * Called when LoopDetector identifies repetitive thinking patterns.
-   * Sets interruption context and cancels the LLM request mid-stream.
-   */
+  /** Handle activity timeout - invoked by ActivityMonitor */
+  private handleActivityTimeout(elapsedMs: number): void {
+    const elapsedSeconds = Math.round(elapsedMs / 1000);
+    this.handleInterruptionEvent(
+      '[AGENT_TIMEOUT]',
+      `Activity timeout: no tool calls for ${elapsedSeconds} seconds`,
+      true
+    );
+  }
+
+  /** Handle thinking loop - invoked by LoopDetector */
   private handleThinkingLoop(info: LoopInfo): void {
-    // Safety check: prevent double interruption
-    if (this.interruptionManager.isInterrupted()) {
-      logger.debug('[THINKING_LOOP]', this.instanceId, 'Already interrupted, skipping loop handler');
-      return;
-    }
-
-    logger.debug(
-      '[THINKING_LOOP]',
-      this.instanceId,
-      `Detected: ${info.reason}`
-    );
-
-    // Set interruption context
-    this.interruptionManager.setInterruptionContext({
-      reason: `Thinking loop: ${info.reason}`,
-      isTimeout: false,
-      canContinueAfterTimeout: true, // Enable continuation with warning
-    });
-
-    // Interrupt current request (cancels LLM streaming)
-    this.interrupt();
+    this.handleInterruptionEvent('[THINKING_LOOP]', `Thinking loop: ${info.reason}`, false);
   }
 
-  /**
-   * Handle response loop detection.
-   *
-   * Called when LoopDetector identifies repetitive response patterns.
-   * Sets interruption context and cancels the LLM request mid-stream.
-   */
+  /** Handle response loop - invoked by LoopDetector */
   private handleResponseLoop(info: LoopInfo): void {
-    // Safety check: prevent double interruption
-    if (this.interruptionManager.isInterrupted()) {
-      logger.debug('[RESPONSE_LOOP]', this.instanceId, 'Already interrupted, skipping loop handler');
-      return;
-    }
-
-    logger.debug(
-      '[RESPONSE_LOOP]',
-      this.instanceId,
-      `Detected: ${info.reason}`
-    );
-
-    // Set interruption context
-    this.interruptionManager.setInterruptionContext({
-      reason: `Response loop: ${info.reason}`,
-      isTimeout: false,
-      canContinueAfterTimeout: true, // Enable continuation with warning
-    });
-
-    // Interrupt current request (cancels LLM streaming)
-    this.interrupt();
+    this.handleInterruptionEvent('[RESPONSE_LOOP]', `Response loop: ${info.reason}`, false);
   }
 
   /**
@@ -876,7 +837,7 @@ export class Agent {
     this.timeoutContinuationAttempts = 0;
 
     // Reset exploratory tool streak on new user input
-    this.currentExploratoryStreak = 0;
+    this.toolOrchestrator.resetExploratoryStreak();
 
     // Reset cleanup queue on new user input
     this.pendingCleanupIds = [];
@@ -884,9 +845,7 @@ export class Agent {
     // Reset checkpoint counters at turn start
     // Ensures counters only track within this turn, not across turns
     // Counters accumulate across all tool calls in this turn (including continuation loops)
-    this.toolCallsSinceStart = 0;
-    this.toolCallsSinceLastCheckpoint = 0;
-    logger.debug('[AGENT_CHECKPOINT]', this.instanceId, 'Reset checkpoint counters for new turn');
+    this.checkpointTracker.reset();
 
     // Reset turn start time for specialized agents on each new turn
     if (this.config.isSpecializedAgent && this.turnManager.getMaxDuration() !== undefined) {
@@ -894,54 +853,18 @@ export class Agent {
     }
 
     // Parse and activate/deactivate plugins from the message
-    try {
-      const registry = ServiceRegistry.getInstance();
-      const activationManager = registry.getPluginActivationManager();
-      const { activated, deactivated } = activationManager.parseAndActivateTags(message);
-
-      // Build system message if any plugins were activated or deactivated
-      const messageParts: string[] = [];
-      if (activated.length > 0) {
-        messageParts.push(`Activated plugins: ${activated.join(', ')}`);
-      }
-      if (deactivated.length > 0) {
-        messageParts.push(`Deactivated plugins: ${deactivated.join(', ')}`);
-      }
-
-      if (messageParts.length > 0) {
-        const systemMessage: Message = {
-          role: 'system',
-          content: `[System: ${messageParts.join('. ')}. Tools from active plugins are now available.]`,
-          timestamp: Date.now(),
-        };
-        this.conversationManager.addMessage(systemMessage);
-      } else {
-        logger.debug('[AGENT_PLUGIN_ACTIVATION] No plugins activated or deactivated from tags');
-      }
-    } catch (error) {
-      // If PluginActivationManager is not registered, just log and continue
-      // This ensures backward compatibility and doesn't break existing functionality
-      logger.debug(
-        `[AGENT_PLUGIN_ACTIVATION] Could not parse plugin tags: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
+    const { systemMessage } = this.lifecycleHandler.parsePluginActivations(message);
+    if (systemMessage) {
+      this.conversationManager.addMessage(systemMessage);
     }
 
-    // Notify idle coordinator about user message and set Ollama active
-    const registry = ServiceRegistry.getInstance();
-    const coordinator = registry.get('idle_task_coordinator');
-    if (coordinator) {
-      (coordinator as any).notifyUserMessage();
-      (coordinator as any).setOllamaActive(true);
-      logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Notified idle coordinator: user message, Ollama active');
-    }
+    // Notify lifecycle services about user message
+    this.lifecycleHandler.notifyUserMessageStart();
 
     // Capture user prompt for this turn
     // Used for checkpoint reminders to remind agent of current turn's goal
     // Updated each turn since user messages provide natural cross-turn checkpoints
-    this.initialUserPrompt = message;
-    logger.debug('[AGENT_CHECKPOINT]', this.instanceId, 'Captured user prompt for turn');
+    this.checkpointTracker.setInitialPrompt(message);
 
     // Add user message
     const userMessage: Message = {
@@ -1042,68 +965,14 @@ export class Agent {
       });
 
       // Execute any pending cleanups before returning
-      // cleanup-call queues removals during turn, we execute them now that turn is complete
       this.executePendingCleanups();
 
-      // Notify idle coordinator that Ollama is idle and check for idle tasks
-      if (coordinator) {
-        (coordinator as any).setOllamaActive(false);
-        logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Ollama inactive, checking for idle tasks');
+      // Handle post-response lifecycle tasks (idle coordinator, queued cleanups)
+      await this.lifecycleHandler.handlePostResponse(
+        this.conversationManager.getMessages(),
+        (ids) => this.queueCleanup(ids)
+      );
 
-        // Trigger idle tasks with recent messages and context
-        const projectContextDetector = registry.get('project_context_detector');
-        const sessionManager = registry.get('session_manager');
-        const currentSession = sessionManager ? (sessionManager as any).getCurrentSession() : null;
-
-        // Only include session title if it's meaningful (not undefined and not default session_* format)
-        const sessionTitle = currentSession?.title;
-        const hasMeaningfulTitle = sessionTitle && !sessionTitle.startsWith('session_');
-
-        (coordinator as any).checkAndRunIdleTasks(
-          this.conversationManager.getMessages(),
-          {
-            os: process.platform,
-            sessionTitle: hasMeaningfulTitle ? sessionTitle : undefined,
-            cwd: process.cwd(),
-            projectContext: projectContextDetector ? (projectContextDetector as any).getCached() : undefined
-          }
-        ).catch((error: Error) => {
-          logger.debug('[AGENT_IDLE_COORD] Error checking idle tasks:', error);
-        });
-      }
-
-      // Check for queued tool cleanups from idle analysis
-      const autoToolCleanup = registry.get('auto_tool_cleanup');
-      if (autoToolCleanup) {
-        try {
-          const sessionManager = registry.get('session_manager');
-          const currentSession = sessionManager ? (sessionManager as any).getCurrentSession() : null;
-          if (currentSession) {
-            // Load session to check for pending cleanups
-            const session = await (sessionManager as any).loadSession(currentSession);
-            const pendingCleanups = session?.metadata?.pendingToolCleanups;
-
-            if (pendingCleanups && Array.isArray(pendingCleanups) && pendingCleanups.length > 0) {
-              logger.debug('[AGENT]', `Executing ${pendingCleanups.length} queued tool cleanups:`, pendingCleanups.join(', '));
-
-              // Queue for cleanup (will execute at end of turn)
-              this.queueCleanup(pendingCleanups);
-
-              // Clear from session metadata
-              await (sessionManager as any).updateMetadata(currentSession, {
-                pendingToolCleanups: [],
-              });
-
-              logger.debug('[AGENT]', 'Queued cleanups cleared from session metadata');
-            }
-          }
-        } catch (error) {
-          logger.debug('[AGENT]', 'Error checking for pending tool cleanups:', error);
-        }
-      }
-
-      logger.debug('[AGENT]', this.instanceId, 'sendMessage returning finalResponse. Type:', typeof finalResponse, 'Length:', finalResponse?.length);
-      logger.debug('[AGENT]', this.instanceId, 'finalResponse preview:', finalResponse?.substring(0, 100));
       return finalResponse;
     } catch (error) {
       logger.debug('[AGENT]', this.instanceId, 'sendMessage caught exception:', error instanceof Error ? error.message : String(error));
@@ -1114,94 +983,24 @@ export class Agent {
       if (isPermissionDeniedError(error)) {
         // Check if there's a pending user interjection (from INSTRUCT option)
         // Expected message order: [assistant with tool_use] → [user interjection] → [tool result: denied]
-        // The interjection is added AFTER the assistant message but BEFORE the tool result,
-        // so we search for interjections after the last assistant message
+        // The interjection is added AFTER the assistant message but BEFORE the tool result
         const messages = this.conversationManager.getMessages();
+        const lastAssistantIdx = this.findLastAssistantMessageIndex(messages);
 
-        // Find the last assistant message index
-        let lastAssistantIdx = -1;
-        for (let i = messages.length - 1; i >= 0; i--) {
-          if (messages[i]?.role === 'assistant') {
-            lastAssistantIdx = i;
-            break;
-          }
-        }
-
-        // Check if there's a user interjection after the last assistant message
-        const hasPendingInterjection = messages.slice(lastAssistantIdx + 1).some(
-          (msg) => msg?.role === 'user' && msg?.metadata?.isInterjection === true
-        );
-
-        if (hasPendingInterjection) {
-          // User provided instructions via INSTRUCT - continue processing
-          // The conversation now has: permission denial tool result + user instruction
-          // Use a loop to handle multiple consecutive interjections
-          while (true) {
-            logger.debug('[AGENT]', this.instanceId, 'Permission denied but user provided instructions - continuing with interjection');
-
-            // Reset interruption state since we're continuing
-            this.interruptionManager.reset();
-
-            try {
-              // Continue the conversation with the user's instruction
-              const response = await this.getLLMResponse({
-                parentCallId,
-                maxDuration,
-                thoroughness,
-              });
-
-              return await this.processLLMResponse(response, {
-                parentCallId,
-                maxDuration,
-                thoroughness,
-              });
-            } catch (retryError) {
-              // Check if this is another permission denial with interjection
-              if (isPermissionDeniedError(retryError)) {
-                const retryMessages = this.conversationManager.getMessages();
-
-                // Find the last assistant message index again
-                let retryLastAssistantIdx = -1;
-                for (let i = retryMessages.length - 1; i >= 0; i--) {
-                  if (retryMessages[i]?.role === 'assistant') {
-                    retryLastAssistantIdx = i;
-                    break;
-                  }
-                }
-
-                // Check for another interjection
-                const retryHasPendingInterjection = retryMessages.slice(retryLastAssistantIdx + 1).some(
-                  (msg) => msg?.role === 'user' && msg?.metadata?.isInterjection === true
-                );
-
-                if (retryHasPendingInterjection) {
-                  // Loop again to handle the new interjection
-                  continue;
-                }
-              }
-              // No interjection or not a permission error - propagate the error
-              throw retryError;
-            }
-          }
+        if (this.hasPendingInterjection(messages, lastAssistantIdx)) {
+          // User provided instructions via INSTRUCT - continue processing with interjection loop
+          return await this.continueWithInterjection({
+            parentCallId,
+            maxDuration,
+            thoroughness,
+          });
         }
 
         // No interjection - treat as critical interruption
         // Ensure interruption is marked
         this.interruptionManager.markRequestAsInterrupted();
 
-        // Emit agent end event with interruption
-        this.emitEvent({
-          id: this.generateId(),
-          type: ActivityEventType.AGENT_END,
-          timestamp: Date.now(),
-          data: {
-            interrupted: true,
-            isSpecializedAgent: this.config.isSpecializedAgent || false,
-            instanceId: this.instanceId,
-            agentName: this.config.agentType || 'ally',
-          },
-        });
-        this.agentEndEmitted = true;
+        this.emitAgentEnd(true);
 
         // Return concise message to user
         return PERMISSION_MESSAGES.USER_FACING_DENIAL;
@@ -1243,21 +1042,7 @@ export class Agent {
     const message = context.reason || PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
     const wasTimeout = context.isTimeout;
 
-    // Emit AGENT_END event if not already emitted
-    if (!this.agentEndEmitted) {
-      this.emitEvent({
-        id: this.generateId(),
-        type: ActivityEventType.AGENT_END,
-        timestamp: Date.now(),
-        data: {
-          interrupted: true,
-          isSpecializedAgent: this.config.isSpecializedAgent || false,
-          instanceId: this.instanceId,
-          agentName: this.config.agentType || 'ally',
-        },
-      });
-      this.agentEndEmitted = true;
-    }
+    this.emitAgentEnd(true);
 
     // Clear interruption state
     this.interruptionManager.reset();
@@ -1279,17 +1064,8 @@ export class Agent {
     this.agentEndEmitted = false;
     this.interruptionManager.cleanup();
     this.stopActivityMonitoring();
-
-    // Stop both loop detectors
     this.loopDetector.stopTextDetectors();
-
-    // Ensure Ollama active flag is reset
-    const registry = ServiceRegistry.getInstance();
-    const coordinator = registry.get('idle_task_coordinator');
-    if (coordinator) {
-      (coordinator as any).setOllamaActive(false);
-      logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Ollama inactive (cleanup)');
-    }
+    this.lifecycleHandler.notifyOllamaInactive();
   }
 
   /**
@@ -1311,18 +1087,7 @@ export class Agent {
       // Stop activity monitoring
       this.stopActivityMonitoring();
 
-      this.emitEvent({
-        id: this.generateId(),
-        type: ActivityEventType.AGENT_END,
-        timestamp: Date.now(),
-        data: {
-          interrupted: true,
-          isSpecializedAgent: this.config.isSpecializedAgent || false,
-          instanceId: this.instanceId,
-          agentName: this.config.agentType || 'ally',
-        },
-      });
-      this.agentEndEmitted = true;
+      this.emitAgentEnd(true);
     }
   }
 
@@ -1448,7 +1213,7 @@ export class Agent {
         this.config.taskPrompt || '', // Use empty string if no task prompt (for root-level custom agents)
         this.tokenManager,
         this.toolResultManager,
-        this.config.config.reasoning_effort,
+        this.appConfig.reasoning_effort,
         this.agentName,
         executionContext.thoroughness,
         this.config.agentType
@@ -1461,7 +1226,7 @@ export class Agent {
         this.tokenManager,
         this.toolResultManager,
         false,
-        this.config.config.reasoning_effort
+        this.appConfig.reasoning_effort
       );
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Main agent prompt regenerated with current context');
     }
@@ -1518,7 +1283,7 @@ export class Agent {
       const response = await this.modelClient.send(this.conversationManager.getMessages(), {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
-        stream: !this.config.isSpecializedAgent && this.config.config.parallel_tools,
+        stream: !this.config.isSpecializedAgent && this.appConfig.parallel_tools,
         // Pass parentCallId for associating thinking events with tool calls
         parentId: executionContext.parentCallId,
         // Dynamic output token limit based on remaining context
@@ -1632,9 +1397,9 @@ export class Agent {
 
           // Ensure context room before adding continuation message
           const contextUsage = this.tokenManager.getContextUsagePercentage();
-          if (contextUsage >= this.config.config.compact_threshold) {
+          if (contextUsage >= this.appConfig.compact_threshold) {
             logger.debug('[AGENT_RETRY]', this.instanceId,
-              `Context at ${contextUsage}% (>= ${this.config.config.compact_threshold}%), triggering auto-compaction before timeout continuation`);
+              `Context at ${contextUsage}% (>= ${this.appConfig.compact_threshold}%), triggering auto-compaction before timeout continuation`);
             await this.checkAutoCompaction();
           }
 
@@ -1668,21 +1433,7 @@ export class Agent {
         logger.debug('[AGENT]', this.instanceId, 'Returning USER_FACING_INTERRUPTION (regular cancel after timeout)');
         this.interruptionManager.markRequestAsInterrupted();
 
-        // Emit AGENT_END event if not already emitted
-        if (!this.agentEndEmitted) {
-          this.emitEvent({
-            id: this.generateId(),
-            type: ActivityEventType.AGENT_END,
-            timestamp: Date.now(),
-            data: {
-              interrupted: true,
-              isSpecializedAgent: this.config.isSpecializedAgent || false,
-              instanceId: this.instanceId,
-              agentName: this.config.agentType || 'ally',
-            },
-          });
-          this.agentEndEmitted = true;
-        }
+        this.emitAgentEnd(true);
 
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
@@ -1732,21 +1483,7 @@ export class Agent {
         logger.debug('[AGENT]', this.instanceId, 'Returning USER_FACING_INTERRUPTION (interrupted after ResponseProcessor)');
         this.interruptionManager.markRequestAsInterrupted();
 
-        // Emit AGENT_END event if not already emitted
-        if (!this.agentEndEmitted) {
-          this.emitEvent({
-            id: this.generateId(),
-            type: ActivityEventType.AGENT_END,
-            timestamp: Date.now(),
-            data: {
-              interrupted: true,
-              isSpecializedAgent: this.config.isSpecializedAgent || false,
-              instanceId: this.instanceId,
-              agentName: this.config.agentType || 'ally',
-            },
-          });
-          this.agentEndEmitted = true;
-        }
+        this.emitAgentEnd(true);
 
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
@@ -1777,8 +1514,7 @@ export class Agent {
         try {
           const results = await this.toolOrchestrator.executeToolCalls(toolCalls, cycles);
 
-          // Note: Exploratory tool tracking is now done inside ToolOrchestrator
-          // before each result is formatted (see maybeInjectExploratoryReminder)
+          // Note: Exploratory tool tracking is handled inside ToolOrchestrator
 
           return results;
         } catch (error) {
@@ -1816,7 +1552,7 @@ export class Agent {
       recordToolCalls: (toolCalls, results) => {
         this.loopDetector.recordToolCalls(toolCalls, results);
         // Increment checkpoint counters after successful tool execution
-        this.incrementToolCallCounters(toolCalls.length);
+        this.checkpointTracker.incrementToolCalls(toolCalls.length);
       },
       clearCyclesIfBroken: () => this.loopDetector.clearCyclesIfBroken(),
       clearCurrentTurn: () => this.toolManager.clearCurrentTurn(),
@@ -1828,9 +1564,9 @@ export class Agent {
         // Check if context usage is at or above compact threshold before adding retry messages
         // This prevents infinite loops where retry messages fill up context
         const contextUsage = this.tokenManager.getContextUsagePercentage();
-        if (contextUsage >= this.config.config.compact_threshold) {
+        if (contextUsage >= this.appConfig.compact_threshold) {
           logger.debug('[AGENT_RETRY]', this.instanceId,
-            `Context at ${contextUsage}% (>= ${this.config.config.compact_threshold}%), triggering auto-compaction before retry`);
+            `Context at ${contextUsage}% (>= ${this.appConfig.compact_threshold}%), triggering auto-compaction before retry`);
           await this.checkAutoCompaction();
         }
       },
@@ -2044,7 +1780,7 @@ export class Agent {
     await this.agentCompactor.checkAndPerformAutoCompaction({
       instanceId: this.instanceId,
       isSpecializedAgent: this.config.isSpecializedAgent || false,
-      compactThreshold: this.config.config.compact_threshold,
+      compactThreshold: this.appConfig.compact_threshold,
       generateId: () => this.generateId(),
       parentCallId: this.config.parentCallId,
     });
@@ -2085,11 +1821,80 @@ export class Agent {
   }
 
   /**
+   * Emit AGENT_END event with interruption flag
+   * Handles the agentEndEmitted guard internally to prevent duplicate emissions
+   */
+  private emitAgentEnd(interrupted: boolean = false): void {
+    if (this.agentEndEmitted) return;
+    this.emitEvent({
+      id: this.generateId(),
+      type: ActivityEventType.AGENT_END,
+      timestamp: Date.now(),
+      data: {
+        interrupted,
+        isSpecializedAgent: this.config.isSpecializedAgent || false,
+        instanceId: this.instanceId,
+        agentName: this.config.agentType || 'ally',
+      },
+    });
+    this.agentEndEmitted = true;
+  }
+
+  /**
    * Generate a unique ID for events
    */
   private generateId(): string {
     // Generate agent ID: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     return `agent-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
+  }
+
+  /**
+   * Find the index of the last assistant message in the conversation
+   * Used for interjection detection after permission denials
+   */
+  private findLastAssistantMessageIndex(messages: readonly Message[]): number {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === 'assistant') {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Check if there's a pending user interjection after the given message index
+   */
+  private hasPendingInterjection(messages: readonly Message[], afterIndex: number): boolean {
+    return messages.slice(afterIndex + 1).some(
+      (msg) => msg?.role === 'user' && msg?.metadata?.isInterjection === true
+    );
+  }
+
+  /**
+   * Continue processing after permission denial when user provided interjection
+   * Handles multiple consecutive interjections in a loop
+   */
+  private async continueWithInterjection(executionContext: AgentExecutionContext): Promise<string> {
+    while (true) {
+      logger.debug('[AGENT]', this.instanceId, 'Permission denied but user provided instructions - continuing with interjection');
+      this.interruptionManager.reset();
+
+      try {
+        const response = await this.getLLMResponse(executionContext);
+        return await this.processLLMResponse(response, executionContext);
+      } catch (retryError) {
+        // Check if this is another permission denial with interjection
+        if (isPermissionDeniedError(retryError)) {
+          const messages = this.conversationManager.getMessages();
+          const lastAssistantIdx = this.findLastAssistantMessageIndex(messages);
+
+          if (this.hasPendingInterjection(messages, lastAssistantIdx)) {
+            continue; // Loop to handle the new interjection
+          }
+        }
+        throw retryError; // No interjection or not a permission error
+      }
+    }
   }
 
   /**
@@ -2175,85 +1980,6 @@ export class Agent {
     }
   }
 
-  /**
-   * Reset checkpoint tracking counters and initial prompt
-   * Called when conversation is cleared or agent is reset
-   */
-  private resetCheckpointTracking(): void {
-    this.toolCallsSinceStart = 0;
-    this.toolCallsSinceLastCheckpoint = 0;
-    this.initialUserPrompt = '';
-    logger.debug('[AGENT_CHECKPOINT]', this.instanceId, 'Reset checkpoint tracking');
-  }
-
-  /**
-   * Increment tool call counters for checkpoint tracking
-   * Called after successful tool execution
-   * @param toolCallCount - Number of tool calls to increment by
-   */
-  private incrementToolCallCounters(toolCallCount: number): void {
-    if (toolCallCount < 1) {
-      logger.warn('[AGENT_CHECKPOINT]', this.instanceId, 'Invalid tool call count:', toolCallCount);
-      return;
-    }
-    this.toolCallsSinceStart += toolCallCount;
-    this.toolCallsSinceLastCheckpoint += toolCallCount;
-    logger.debug('[AGENT_CHECKPOINT]', this.instanceId,
-      `Tool calls - Total: ${this.toolCallsSinceStart}, Since checkpoint: ${this.toolCallsSinceLastCheckpoint}`);
-  }
-
-  /**
-   * Check if a checkpoint reminder should be injected
-   * @returns true if checkpoint should be injected
-   */
-  private shouldInjectCheckpoint(): boolean {
-    // Skip if no initial prompt captured
-    if (!this.initialUserPrompt) {
-      return false;
-    }
-
-    // Skip if prompt too short (using ~4 chars per token heuristic)
-    const estimatedTokens = Math.floor(this.initialUserPrompt.length / TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE);
-    if (estimatedTokens < TOOL_GUIDANCE.CHECKPOINT_MIN_PROMPT_TOKENS) {
-      return false;
-    }
-
-    // Check if we've hit the interval
-    if (this.toolCallsSinceLastCheckpoint < TOOL_GUIDANCE.CHECKPOINT_INTERVAL) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Truncate text to a token limit using smart truncation
-   * Tries to break at sentence boundaries (period, newline)
-   * @param text - Text to truncate
-   * @param maxTokens - Maximum tokens allowed
-   * @returns Truncated text
-   */
-  private truncateToTokenLimit(text: string, maxTokens: number): string {
-    const maxChars = maxTokens * TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE;
-
-    if (text.length <= maxChars) {
-      return text;
-    }
-
-    // Try to break at sentence boundary (period or newline)
-    const truncated = text.substring(0, maxChars);
-    const lastPeriod = truncated.lastIndexOf('.');
-    const lastNewline = truncated.lastIndexOf('\n');
-    const bestBoundary = Math.max(lastPeriod, lastNewline);
-
-    // If we found a good boundary in the last 40% of the truncated text, use it
-    if (bestBoundary > maxChars * 0.6) {
-      return truncated.substring(0, bestBoundary + 1).trim();
-    }
-
-    // Otherwise, truncate and add ellipsis
-    return truncated.trim() + '...';
-  }
 
   /**
    * Generate a checkpoint reminder for the agent
@@ -2265,83 +1991,7 @@ export class Agent {
    * @returns Checkpoint reminder string or null if not needed
    */
   public generateCheckpointReminder(): string | null {
-    if (!this.shouldInjectCheckpoint()) {
-      return null;
-    }
-
-    // Truncate user prompt to conserve context
-    const truncatedPrompt = this.truncateToTokenLimit(
-      this.initialUserPrompt,
-      TOOL_GUIDANCE.CHECKPOINT_MAX_PROMPT_TOKENS
-    );
-
-    // PERSIST: false - Ephemeral: One-time alignment verification checkpoint
-    // Cleaned up after turn since agent should course-correct immediately and move on
-    const reminder = createCheckpointReminder(this.toolCallsSinceStart, truncatedPrompt);
-
-    // Reset checkpoint counter
-    this.toolCallsSinceLastCheckpoint = 0;
-
-    logger.debug('[AGENT_CHECKPOINT]', this.instanceId,
-      `Generated checkpoint reminder at ${this.toolCallsSinceStart} tool calls`);
-
-    return reminder;
-  }
-
-  /**
-   * Maybe inject exploratory tool reminder into a single result
-   *
-   * Called by ToolOrchestrator for each tool result BEFORE it's formatted.
-   * Tracks consecutive exploratory tools (read, grep, glob, ls, tree).
-   * When a non-exploratory tool is encountered, the streak resets to 0.
-   *
-   * When the streak threshold is reached, injects a system reminder into
-   * the result to suggest using explore().
-   *
-   * This ensures we only trigger the explore() suggestion when the model
-   * is actively exploring, not when exploratory tools are scattered
-   * throughout normal workflow.
-   *
-   * @param toolCall - Tool call that was executed
-   * @param result - Tool execution result (will be modified to add system_reminder if threshold met)
-   */
-  public maybeInjectExploratoryReminder(toolCall: ToolCall, result: any): void {
-    // Skip exploratory reminders for specialized agents (explore, plan, etc.)
-    // These agents are SUPPOSED to do exploration - that's their job!
-    if (this.config.isSpecializedAgent) {
-      return;
-    }
-
-    const toolName = toolCall.function.name;
-    const tool = this.toolManager.getTool(toolName);
-
-    if (tool?.isExploratoryTool) {
-      // Exploratory tool - increment streak
-      this.currentExploratoryStreak++;
-
-      // Check if we've hit the threshold
-      const threshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD;
-      const sternThreshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_STERN_THRESHOLD;
-
-      if (this.currentExploratoryStreak >= sternThreshold) {
-        // Stern warning - agent is wasting significant context
-        // PERSIST: false - Ephemeral, temporary coaching that becomes irrelevant after the turn
-        result.system_reminder = createExploratorySternWarning(this.currentExploratoryStreak);
-        logger.debug('[AGENT_EXPLORATORY_STERN]', this.instanceId, `Injected stern exploratory warning after ${this.currentExploratoryStreak} consecutive calls`);
-      } else if (this.currentExploratoryStreak >= threshold) {
-        // Gentle reminder - suggest explore()
-        // PERSIST: false - Ephemeral, temporary coaching that becomes irrelevant after the turn
-        result.system_reminder = createExploratoryGentleWarning(this.currentExploratoryStreak);
-        logger.debug('[AGENT_EXPLORATORY_REMINDER]', this.instanceId, `Injected exploratory tool reminder after ${this.currentExploratoryStreak} consecutive calls`);
-      }
-    } else {
-      // Non-exploratory tool - check if it breaks the streak
-      // Most tools break the streak (default behavior)
-      // Meta/housekeeping tools like cleanup-call have breaksExploratoryStreak=false
-      if (tool?.breaksExploratoryStreak !== false && this.currentExploratoryStreak > 0) {
-        this.currentExploratoryStreak = 0;
-      }
-    }
+    return this.checkpointTracker.generateReminder();
   }
 
   /**

@@ -99,33 +99,33 @@ describe('Checkpoint Reminder System', () => {
   describe('Counter tracking', () => {
     it('should start with counters at zero', () => {
       // Access private properties for testing via type assertion
-      expect((agent as any).toolCallsSinceStart).toBe(0);
-      expect((agent as any).toolCallsSinceLastCheckpoint).toBe(0);
+      expect((agent as any).checkpointTracker.toolCallsSinceStart).toBe(0);
+      expect((agent as any).checkpointTracker.toolCallsSinceLastCheckpoint).toBe(0);
     });
 
     it('should increment counters when tools are called', () => {
       // Directly call the private method for unit testing
-      (agent as any).incrementToolCallCounters(3);
+      (agent as any).checkpointTracker.incrementToolCalls(3);
 
-      expect((agent as any).toolCallsSinceStart).toBe(3);
-      expect((agent as any).toolCallsSinceLastCheckpoint).toBe(3);
+      expect((agent as any).checkpointTracker.toolCallsSinceStart).toBe(3);
+      expect((agent as any).checkpointTracker.toolCallsSinceLastCheckpoint).toBe(3);
     });
 
     it('should accumulate counters across multiple increments', () => {
-      (agent as any).incrementToolCallCounters(2);
-      (agent as any).incrementToolCallCounters(3);
-      (agent as any).incrementToolCallCounters(1);
+      (agent as any).checkpointTracker.incrementToolCalls(2);
+      (agent as any).checkpointTracker.incrementToolCalls(3);
+      (agent as any).checkpointTracker.incrementToolCalls(1);
 
-      expect((agent as any).toolCallsSinceStart).toBe(6);
-      expect((agent as any).toolCallsSinceLastCheckpoint).toBe(6);
+      expect((agent as any).checkpointTracker.toolCallsSinceStart).toBe(6);
+      expect((agent as any).checkpointTracker.toolCallsSinceLastCheckpoint).toBe(6);
     });
 
     it('should ignore invalid tool call counts', () => {
-      (agent as any).incrementToolCallCounters(0);
-      (agent as any).incrementToolCallCounters(-1);
+      (agent as any).checkpointTracker.incrementToolCalls(0);
+      (agent as any).checkpointTracker.incrementToolCalls(-1);
 
-      expect((agent as any).toolCallsSinceStart).toBe(0);
-      expect((agent as any).toolCallsSinceLastCheckpoint).toBe(0);
+      expect((agent as any).checkpointTracker.toolCallsSinceStart).toBe(0);
+      expect((agent as any).checkpointTracker.toolCallsSinceLastCheckpoint).toBe(0);
     });
   });
 
@@ -133,18 +133,18 @@ describe('Checkpoint Reminder System', () => {
     beforeEach(() => {
       // Set up a valid user prompt (meets minimum token requirement)
       const longPrompt = 'Please help me implement a comprehensive feature. '.repeat(20);
-      (agent as any).initialUserPrompt = longPrompt;
+      (agent as any).checkpointTracker.initialUserPrompt = longPrompt;
     });
 
     it('should not trigger before reaching interval', () => {
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL - 1);
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL - 1);
 
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).toBeNull();
     });
 
     it('should trigger when reaching exact interval', () => {
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).not.toBeNull();
@@ -153,35 +153,35 @@ describe('Checkpoint Reminder System', () => {
     });
 
     it('should trigger when exceeding interval', () => {
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL + 5);
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL + 5);
 
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).not.toBeNull();
     });
 
     it('should reset checkpoint counter after generating reminder', () => {
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       agent.generateCheckpointReminder();
 
       // toolCallsSinceStart should remain, but toolCallsSinceLastCheckpoint should reset
-      expect((agent as any).toolCallsSinceStart).toBe(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
-      expect((agent as any).toolCallsSinceLastCheckpoint).toBe(0);
+      expect((agent as any).checkpointTracker.toolCallsSinceStart).toBe(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      expect((agent as any).checkpointTracker.toolCallsSinceLastCheckpoint).toBe(0);
     });
 
     it('should trigger second checkpoint after another interval', () => {
       // First checkpoint
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
       const first = agent.generateCheckpointReminder();
       expect(first).not.toBeNull();
 
       // Before second interval
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL - 1);
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL - 1);
       const notYet = agent.generateCheckpointReminder();
       expect(notYet).toBeNull();
 
       // At second interval
-      (agent as any).incrementToolCallCounters(1);
+      (agent as any).checkpointTracker.incrementToolCalls(1);
       const second = agent.generateCheckpointReminder();
       expect(second).not.toBeNull();
     });
@@ -204,8 +204,8 @@ describe('Checkpoint Reminder System', () => {
       );
 
       const longPrompt = 'Please help me implement a comprehensive feature. '.repeat(20);
-      (specializedAgent as any).initialUserPrompt = longPrompt;
-      (specializedAgent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (specializedAgent as any).checkpointTracker.initialUserPrompt = longPrompt;
+      (specializedAgent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = specializedAgent.generateCheckpointReminder();
 
@@ -222,8 +222,8 @@ describe('Checkpoint Reminder System', () => {
       const minChars = TOOL_GUIDANCE.CHECKPOINT_MIN_PROMPT_TOKENS * TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE;
       const shortPrompt = 'x'.repeat(minChars - 10);
 
-      (agent as any).initialUserPrompt = shortPrompt;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = shortPrompt;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).toBeNull();
@@ -233,8 +233,8 @@ describe('Checkpoint Reminder System', () => {
       const minChars = TOOL_GUIDANCE.CHECKPOINT_MIN_PROMPT_TOKENS * TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE;
       const validPrompt = 'x'.repeat(minChars + 10);
 
-      (agent as any).initialUserPrompt = validPrompt;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = validPrompt;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).not.toBeNull();
@@ -243,8 +243,8 @@ describe('Checkpoint Reminder System', () => {
 
   describe('Skip logic - missing prompt', () => {
     it('should skip checkpoints when no prompt captured', () => {
-      (agent as any).initialUserPrompt = '';
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = '';
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).toBeNull();
@@ -257,8 +257,8 @@ describe('Checkpoint Reminder System', () => {
       // Minimum: 50 tokens * 4 chars/token = 200 chars
       // Maximum: 150 tokens * 4 chars/token = 600 chars
       const shortPrompt = 'Help me implement a new feature with proper error handling, comprehensive unit tests, integration tests, and detailed documentation for all the new functionality being added to the system and its dependencies.';
-      (agent as any).initialUserPrompt = shortPrompt;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = shortPrompt;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).not.toBeNull();
@@ -270,8 +270,8 @@ describe('Checkpoint Reminder System', () => {
       const maxChars = TOOL_GUIDANCE.CHECKPOINT_MAX_PROMPT_TOKENS * TOKEN_MANAGEMENT.CHARS_PER_TOKEN_ESTIMATE;
       const longPrompt = 'x'.repeat(maxChars * 2);
 
-      (agent as any).initialUserPrompt = longPrompt;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = longPrompt;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = agent.generateCheckpointReminder();
 
@@ -291,8 +291,8 @@ describe('Checkpoint Reminder System', () => {
       const afterPeriod = 'y'.repeat(maxChars);
       const promptWithPeriod = beforePeriod + '. ' + afterPeriod;
 
-      (agent as any).initialUserPrompt = promptWithPeriod;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = promptWithPeriod;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = agent.generateCheckpointReminder();
       const match = checkpoint?.match(/"([^"]*)"/);
@@ -309,8 +309,8 @@ describe('Checkpoint Reminder System', () => {
       const afterNewline = 'y'.repeat(maxChars);
       const promptWithNewline = beforeNewline + '\n' + afterNewline;
 
-      (agent as any).initialUserPrompt = promptWithNewline;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = promptWithNewline;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = agent.generateCheckpointReminder();
       const match = checkpoint?.match(/"([^"]*)"/);
@@ -328,8 +328,8 @@ describe('Checkpoint Reminder System', () => {
       const rest = 'y'.repeat(maxChars * 2);
       const promptWithEarlyPeriod = earlyPeriod + rest;
 
-      (agent as any).initialUserPrompt = promptWithEarlyPeriod;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = promptWithEarlyPeriod;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
 
       const checkpoint = agent.generateCheckpointReminder();
       const match = checkpoint?.match(/"([^"]*)"/);
@@ -343,8 +343,8 @@ describe('Checkpoint Reminder System', () => {
   describe('Checkpoint content', () => {
     beforeEach(() => {
       const longPrompt = 'Please help me implement a comprehensive feature. '.repeat(20);
-      (agent as any).initialUserPrompt = longPrompt;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = longPrompt;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
     });
 
     it('should include progress indicator with tool call count', () => {
@@ -385,21 +385,21 @@ describe('Checkpoint Reminder System', () => {
   describe('Per-turn reset behavior', () => {
     it('should reset counters when conversation is cleared', () => {
       const longPrompt = 'Please help me implement a comprehensive feature. '.repeat(20);
-      (agent as any).initialUserPrompt = longPrompt;
-      (agent as any).incrementToolCallCounters(5);
+      (agent as any).checkpointTracker.initialUserPrompt = longPrompt;
+      (agent as any).checkpointTracker.incrementToolCalls(5);
 
       agent.clearConversationHistory();
 
-      expect((agent as any).toolCallsSinceStart).toBe(0);
-      expect((agent as any).toolCallsSinceLastCheckpoint).toBe(0);
-      expect((agent as any).initialUserPrompt).toBe('');
+      expect((agent as any).checkpointTracker.toolCallsSinceStart).toBe(0);
+      expect((agent as any).checkpointTracker.toolCallsSinceLastCheckpoint).toBe(0);
+      expect((agent as any).checkpointTracker.initialUserPrompt).toBe('');
     });
 
     it('should allow fresh tracking after clear', () => {
       // First session
       const firstPrompt = 'First task. '.repeat(50);
-      (agent as any).initialUserPrompt = firstPrompt;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = firstPrompt;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
       const first = agent.generateCheckpointReminder();
       expect(first).toContain('First task');
 
@@ -408,8 +408,8 @@ describe('Checkpoint Reminder System', () => {
 
       // Second session
       const secondPrompt = 'Second task. '.repeat(50);
-      (agent as any).initialUserPrompt = secondPrompt;
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.initialUserPrompt = secondPrompt;
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
       const second = agent.generateCheckpointReminder();
       expect(second).toContain('Second task');
       expect(second).not.toContain('First task');
@@ -428,7 +428,7 @@ describe('Checkpoint Reminder System', () => {
       agent.setMessages(messages as any);
 
       // Should remain empty until next sendMessage() call
-      expect((agent as any).initialUserPrompt).toBe('');
+      expect((agent as any).checkpointTracker.initialUserPrompt).toBe('');
     });
 
     it('should NOT extract prompt even with multiple user messages', () => {
@@ -444,12 +444,12 @@ describe('Checkpoint Reminder System', () => {
       agent.setMessages(messages as any);
 
       // Should remain empty until next sendMessage() call
-      expect((agent as any).initialUserPrompt).toBe('');
+      expect((agent as any).checkpointTracker.initialUserPrompt).toBe('');
     });
 
     it('should not touch existing prompt when restoring messages', () => {
       // Set initial prompt (as would happen during a turn)
-      (agent as any).initialUserPrompt = 'Current turn prompt';
+      (agent as any).checkpointTracker.initialUserPrompt = 'Current turn prompt';
 
       // Restore messages (e.g., during compaction)
       const messages = [
@@ -460,14 +460,14 @@ describe('Checkpoint Reminder System', () => {
       agent.setMessages(messages as any);
 
       // setMessages() should not modify initialUserPrompt at all
-      expect((agent as any).initialUserPrompt).toBe('Current turn prompt');
+      expect((agent as any).checkpointTracker.initialUserPrompt).toBe('Current turn prompt');
     });
 
     it('should handle empty message array', () => {
       agent.setMessages([]);
 
       // Should not crash, initialUserPrompt stays empty
-      expect((agent as any).initialUserPrompt).toBe('');
+      expect((agent as any).checkpointTracker.initialUserPrompt).toBe('');
     });
 
     it('should handle messages with no user role', () => {
@@ -479,60 +479,60 @@ describe('Checkpoint Reminder System', () => {
       agent.setMessages(messages as any);
 
       // Should not crash, initialUserPrompt stays empty
-      expect((agent as any).initialUserPrompt).toBe('');
+      expect((agent as any).checkpointTracker.initialUserPrompt).toBe('');
     });
   });
 
   describe('Integration scenarios', () => {
     it('should handle typical flow: message -> tools -> checkpoint -> more tools', () => {
       const prompt = 'Implement a complete authentication system. '.repeat(30);
-      (agent as any).initialUserPrompt = prompt;
+      (agent as any).checkpointTracker.initialUserPrompt = prompt;
 
       // First batch of tools
-      (agent as any).incrementToolCallCounters(4);
+      (agent as any).checkpointTracker.incrementToolCalls(4);
       expect(agent.generateCheckpointReminder()).toBeNull();
 
       // Second batch (hits threshold)
-      (agent as any).incrementToolCallCounters(4);
+      (agent as any).checkpointTracker.incrementToolCalls(4);
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).not.toBeNull();
       expect(checkpoint).toContain('8 tool calls');
 
       // More tools after checkpoint
-      (agent as any).incrementToolCallCounters(3);
+      (agent as any).checkpointTracker.incrementToolCalls(3);
       expect(agent.generateCheckpointReminder()).toBeNull();
     });
 
     it('should handle edge case: exactly at interval threshold', () => {
       const prompt = 'Build feature. '.repeat(50);
-      (agent as any).initialUserPrompt = prompt;
+      (agent as any).checkpointTracker.initialUserPrompt = prompt;
 
       // Increment to exactly the interval
       for (let i = 0; i < TOOL_GUIDANCE.CHECKPOINT_INTERVAL; i++) {
-        (agent as any).incrementToolCallCounters(1);
+        (agent as any).checkpointTracker.incrementToolCalls(1);
       }
 
       const checkpoint = agent.generateCheckpointReminder();
       expect(checkpoint).not.toBeNull();
-      expect((agent as any).toolCallsSinceLastCheckpoint).toBe(0);
+      expect((agent as any).checkpointTracker.toolCallsSinceLastCheckpoint).toBe(0);
     });
 
     it('should handle multiple checkpoints in single turn', () => {
       const prompt = 'Complex refactoring task. '.repeat(50);
-      (agent as any).initialUserPrompt = prompt;
+      (agent as any).checkpointTracker.initialUserPrompt = prompt;
 
       // First checkpoint
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
       const first = agent.generateCheckpointReminder();
       expect(first).toContain('8 tool calls');
 
       // Second checkpoint
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
       const second = agent.generateCheckpointReminder();
       expect(second).toContain('16 tool calls');
 
       // Third checkpoint
-      (agent as any).incrementToolCallCounters(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
+      (agent as any).checkpointTracker.incrementToolCalls(TOOL_GUIDANCE.CHECKPOINT_INTERVAL);
       const third = agent.generateCheckpointReminder();
       expect(third).toContain('24 tool calls');
     });
