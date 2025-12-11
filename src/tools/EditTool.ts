@@ -15,7 +15,6 @@ import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
-import { createUnifiedDiff } from '../utils/diffUtils.js';
 import { isPathWithinCwd } from '../security/PathSecurity.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import * as fs from 'fs/promises';
@@ -408,26 +407,17 @@ export class EditTool extends BaseTool {
         );
       }
 
-      // Step 6: Write modified content to file
-      await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
-
-      // Step 7: Update read state - clear entire file
-      if (readStateManager) {
-        readStateManager.clearFile(absolutePath);
-      }
-
-      // Step 8: Capture patch for undo functionality
-      const patchNumber = await this.captureOperationPatch(
-        'edit',
+      // Step 6: Finalize the edit (write, patch, diff, track)
+      const { patchNumber, diff } = await this.finalizeEdit({
         absolutePath,
-        content,
-        modifiedContent
-      );
+        originalContent: content,
+        modifiedContent,
+        operationType: 'edit',
+        showUpdatedContext,
+        readStateManager,
+      });
 
-      // Step 9: Generate unified diff
-      const diff = createUnifiedDiff(content, modifiedContent, absolutePath);
-
-      // Step 10: Build success response
+      // Step 7: Build success response
       const successMessage =
         `Batch edit completed: ${edits.length} operation(s) applied (${totalReplacements} total replacement(s))\n\n` +
         appliedEdits.join('\n');
@@ -452,16 +442,9 @@ export class EditTool extends BaseTool {
       // Include updated file content if requested
       if (showUpdatedContext) {
         response.updated_content = modifiedContent;
-
-        // Track updated content as read (like WriteTool does)
-        // This allows immediate follow-up edits without requiring a separate Read
-        if (readStateManager) {
-          const lines = modifiedContent.split('\n');
-          readStateManager.trackRead(absolutePath, 1, lines.length);
-        }
       }
 
-      // Step 11: Check file for syntax/parse errors after modification
+      // Step 8: Check file for syntax/parse errors after modification
       const checkResult = await checkFileAfterModification(absolutePath);
       if (checkResult) {
         response.file_check = checkResult;

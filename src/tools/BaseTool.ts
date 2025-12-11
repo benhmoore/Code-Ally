@@ -13,6 +13,9 @@ import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
 import { FormManager, FormCancelledError } from '../services/FormManager.js';
+import { promises as fs } from 'fs';
+import { createUnifiedDiff } from '../utils/diffUtils.js';
+import { ReadStateManager } from '../services/ReadStateManager.js';
 
 export abstract class BaseTool {
   /**
@@ -723,6 +726,55 @@ export abstract class BaseTool {
       logger.error(`[${this.name}] Failed to capture patch:`, error);
       return null;
     }
+  }
+
+  /**
+   * Finalize an edit operation - common workflow for EditTool and LineEditTool
+   *
+   * Handles: write file, clear read state, capture patch, generate diff, track updated content
+   */
+  protected async finalizeEdit(options: {
+    absolutePath: string;
+    originalContent: string;
+    modifiedContent: string;
+    operationType: string;
+    showUpdatedContext: boolean;
+    readStateManager: ReadStateManager | null;
+  }): Promise<{
+    patchNumber: number | null;
+    diff: string;
+    updatedContentTracked: boolean;
+  }> {
+    const { absolutePath, originalContent, modifiedContent, operationType, showUpdatedContext, readStateManager } = options;
+
+    // Write modified content
+    await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
+
+    // Clear read state for the file
+    if (readStateManager) {
+      readStateManager.clearFile(absolutePath);
+    }
+
+    // Capture patch for undo
+    const patchNumber = await this.captureOperationPatch(
+      operationType,
+      absolutePath,
+      originalContent,
+      modifiedContent
+    );
+
+    // Generate diff
+    const diff = createUnifiedDiff(originalContent, modifiedContent, absolutePath);
+
+    // Track updated content as read if requested
+    let updatedContentTracked = false;
+    if (showUpdatedContext && readStateManager) {
+      const lines = modifiedContent.split('\n');
+      readStateManager.trackRead(absolutePath, 1, lines.length);
+      updatedContentTracked = true;
+    }
+
+    return { patchNumber, diff, updatedContentTracked };
   }
 }
 

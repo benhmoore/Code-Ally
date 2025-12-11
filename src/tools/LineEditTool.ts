@@ -12,7 +12,6 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
-import { createUnifiedDiff } from '../utils/diffUtils.js';
 import { isPathWithinCwd } from '../security/PathSecurity.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import * as fs from 'fs/promises';
@@ -462,13 +461,19 @@ export class LineEditTool extends BaseTool {
         }
       }
 
-      // Step 5: Check for duplicate line numbers across all edits
-      const lineNumbers = edits.map(e => e.line_number);
-      const duplicates = lineNumbers.filter((line, index) => lineNumbers.indexOf(line) !== index);
-      if (duplicates.length > 0) {
-        const uniqueDuplicates = [...new Set(duplicates)].sort((a, b) => a - b);
+      // Step 5: Check for duplicate line numbers across all edits (single-pass O(n))
+      const seen = new Set<number>();
+      const duplicates = new Set<number>();
+      for (const edit of edits) {
+        if (seen.has(edit.line_number)) {
+          duplicates.add(edit.line_number);
+        }
+        seen.add(edit.line_number);
+      }
+      if (duplicates.size > 0) {
+        const sortedDuplicates = [...duplicates].sort((a, b) => a - b);
         validationErrors.push(
-          `Duplicate line numbers detected: ${uniqueDuplicates.join(', ')}. Each line can only be edited once per batch.`
+          `Duplicate line numbers detected: ${sortedDuplicates.join(', ')}. Each line can only be edited once per batch.`
         );
       }
 
@@ -527,27 +532,18 @@ export class LineEditTool extends BaseTool {
         }
       }
 
-      // Step 8: Write modified content to file
+      // Step 8: Finalize the edit (write, patch, diff, track)
       const modifiedContent = modifiedLines.join(lineEnding);
-      await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
-
-      // Step 9: Update read state - clear entire file (simpler than calculating exact ranges)
-      if (readStateManager) {
-        readStateManager.clearFile(absolutePath);
-      }
-
-      // Step 10: Capture patch for undo functionality
-      const patchNumber = await this.captureOperationPatch(
-        'line-edit',
+      const { patchNumber, diff } = await this.finalizeEdit({
         absolutePath,
-        fileContent,
-        modifiedContent
-      );
+        originalContent: fileContent,
+        modifiedContent,
+        operationType: 'line-edit',
+        showUpdatedContext,
+        readStateManager,
+      });
 
-      // Step 11: Generate unified diff
-      const diff = createUnifiedDiff(fileContent, modifiedContent, absolutePath);
-
-      // Step 12: Build success response
+      // Step 9: Build success response
       const successMessage =
         `Batch edit completed: ${edits.length} operation(s) applied\n\n` +
         appliedEdits.reverse().join('\n'); // Reverse to show in original order (top-to-bottom)
@@ -573,16 +569,9 @@ export class LineEditTool extends BaseTool {
       // Include updated file content if requested
       if (showUpdatedContext) {
         response.updated_content = modifiedContent;
-
-        // Track updated content as read (like WriteTool does)
-        // This allows immediate follow-up edits without requiring a separate Read
-        if (readStateManager) {
-          const lines = modifiedContent.split('\n');
-          readStateManager.trackRead(absolutePath, 1, lines.length);
-        }
       }
 
-      // Step 13: Check file for syntax/parse errors after modification
+      // Step 10: Check file for syntax/parse errors after modification
       const checkResult = await checkFileAfterModification(absolutePath);
       if (checkResult) {
         response.file_check = checkResult;

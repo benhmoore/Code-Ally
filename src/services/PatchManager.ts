@@ -654,16 +654,18 @@ export class PatchManager implements IService {
 
       logger.debug(`Generating preview for ${patchesToPreview.length} patches since timestamp ${timestamp}`);
 
-      // Generate preview for each patch
-      const previews: UndoPreview[] = [];
-      for (const patchEntry of patchesToPreview) {
-        const preview = await this.previewSinglePatch(patchEntry.patch_number);
-        if (preview) {
-          previews.push(preview);
-        } else {
-          logger.warn(`Failed to generate preview for patch ${patchEntry.patch_number}`);
+      // Generate preview for each patch in parallel
+      const previewResults = await Promise.all(
+        patchesToPreview.map(entry => this.previewSinglePatch(entry.patch_number))
+      );
+      const previews = previewResults.filter((p): p is UndoPreview => p !== null);
+
+      // Log warnings for failed previews
+      previewResults.forEach((preview, index) => {
+        if (!preview) {
+          logger.warn(`Failed to generate preview for patch ${patchesToPreview[index]!.patch_number}`);
         }
-      }
+      });
 
       return previews.length > 0 ? previews : null;
     } catch (error) {
@@ -794,31 +796,36 @@ export class PatchManager implements IService {
     }
 
     const recentPatches = this.indexManager.getLastPatches(limit).reverse();
-    const fileEntries: UndoFileEntry[] = [];
 
-    for (const patchEntry of recentPatches) {
-      try {
-        const patchContent = await this.fileManager.readPatchFile(patchEntry.patch_file);
-        if (!patchContent) {
-          logger.warn(`Failed to read patch ${patchEntry.patch_number}`);
-          continue;
+    // Read all patch files in parallel
+    const fileEntryResults = await Promise.all(
+      recentPatches.map(async (patchEntry) => {
+        try {
+          const patchContent = await this.fileManager.readPatchFile(patchEntry.patch_file);
+          if (!patchContent) {
+            logger.warn(`Failed to read patch ${patchEntry.patch_number}`);
+            return null;
+          }
+
+          const diffContent = extractDiffContent(patchContent);
+          const stats = calculateDiffStats(diffContent);
+
+          return {
+            patch_number: patchEntry.patch_number,
+            file_path: patchEntry.file_path,
+            operation_type: patchEntry.operation_type,
+            timestamp: patchEntry.timestamp,
+            stats,
+          };
+        } catch (error) {
+          logger.warn(`Failed to read patch ${patchEntry.patch_number}:`, error);
+          return null;
         }
+      })
+    );
 
-        const diffContent = extractDiffContent(patchContent);
-        const stats = calculateDiffStats(diffContent);
-
-        fileEntries.push({
-          patch_number: patchEntry.patch_number,
-          file_path: patchEntry.file_path,
-          operation_type: patchEntry.operation_type,
-          timestamp: patchEntry.timestamp,
-          stats,
-        });
-      } catch (error) {
-        logger.warn(`Failed to read patch ${patchEntry.patch_number}:`, error);
-        // Continue with other patches
-      }
-    }
+    // Filter out null results
+    const fileEntries = fileEntryResults.filter((entry): entry is UndoFileEntry => entry !== null);
 
     return fileEntries;
   }

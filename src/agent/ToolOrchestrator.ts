@@ -17,6 +17,7 @@ import { ToolManager } from '../tools/ToolManager.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ToolResult } from '../types/index.js';
 import { AgentConfig } from './Agent.js';
+import { unwrapBatchToolCalls, ToolCall } from '../utils/toolCallUtils.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
 import { DirectoryTraversalError, isPermissionDeniedError } from '../security/PathSecurity.js';
@@ -26,7 +27,7 @@ import { TodoManager } from '../services/TodoManager.js';
 import { BashProcessManager } from '../services/BashProcessManager.js';
 import { formatError, createStructuredError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
-import { BUFFER_SIZES, ID_GENERATION, SYSTEM_REMINDER } from '../config/constants.js';
+import { ID_GENERATION, SYSTEM_REMINDER } from '../config/constants.js';
 import {
   createTimeReminder,
   createFocusReminder,
@@ -35,18 +36,6 @@ import {
 import { TOOL_NAMES } from '../config/toolDefaults.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
 import { FormCancelledError } from '../services/FormManager.js';
-
-/**
- * Tool call structure from LLM
- */
-interface ToolCall {
-  id: string;
-  type: 'function';
-  function: {
-    name: string;
-    arguments: Record<string, any>;
-  };
-}
 
 /**
  * Safe tools that can run concurrently
@@ -175,7 +164,7 @@ export class ToolOrchestrator {
     this.cycleDetectionResults = cycles || new Map();
 
     // Unwrap batch tool calls into individual tool calls
-    const unwrappedCalls = this.unwrapBatchCalls(toolCalls);
+    const unwrappedCalls = unwrapBatchToolCalls(toolCalls);
     logger.debug('[TOOL_ORCHESTRATOR] After unwrapping batch calls:', unwrappedCalls.length, 'tool calls');
 
     // Determine execution mode
@@ -192,62 +181,6 @@ export class ToolOrchestrator {
     } else {
       return await this.executeSequential(unwrappedCalls);
     }
-  }
-
-  /**
-   * Unwrap batch tool calls into individual tool calls
-   *
-   * Batch is a transparent wrapper - we extract its children and execute them as if
-   * the model called them directly.
-   *
-   * IMPORTANT: Invalid batches are NOT unwrapped. They execute normally so
-   * BatchTool.executeImpl() can validate and return proper errors.
-   */
-  private unwrapBatchCalls(toolCalls: ToolCall[]): ToolCall[] {
-    const unwrapped: ToolCall[] = [];
-
-    for (const toolCall of toolCalls) {
-      // Check if this is a batch call
-      if (toolCall.function.name === 'batch') {
-        const tools = toolCall.function.arguments.tools;
-
-        // Quick pre-validation: if obviously invalid, don't unwrap
-        // Let BatchTool.executeImpl() run and provide detailed validation errors
-        const shouldUnwrap =
-          Array.isArray(tools) &&
-          tools.length > 0 &&
-          tools.length <= BUFFER_SIZES.MAX_BATCH_SIZE &&
-          tools.every(spec =>
-            typeof spec === 'object' && spec !== null &&
-            typeof spec.name === 'string' &&
-            typeof spec.arguments === 'object' && spec.arguments !== null
-          );
-
-        if (!shouldUnwrap) {
-          // Invalid batch - keep as batch tool call, will validate when executed
-          unwrapped.push(toolCall);
-          continue;
-        }
-
-        // Valid batch - unwrap into individual tool calls
-        for (let index = 0; index < tools.length; index++) {
-          const spec = tools[index];
-          unwrapped.push({
-            id: `${toolCall.id}-unwrapped-${index}`,
-            type: 'function',
-            function: {
-              name: spec.name,
-              arguments: spec.arguments,
-            },
-          });
-        }
-      } else {
-        // Not a batch call, keep as-is
-        unwrapped.push(toolCall);
-      }
-    }
-
-    return unwrapped;
   }
 
   /**
@@ -287,11 +220,32 @@ export class ToolOrchestrator {
     // This ensures batch tool calls are visible in UI immediately, not when they start executing
     const effectiveParentId = this.parentCallId || groupId;
 
+    // Create tool properties cache for this batch execution
+    // Avoids redundant tool lookups during START and END event emissions
+    const toolPropsCache = new Map<string, { shouldCollapse: boolean, hideOutput: boolean, alwaysShowFullOutput: boolean }>();
+
+    /**
+     * Helper to get tool properties with caching
+     * @param toolName - Name of the tool
+     * @returns Tool properties (shouldCollapse, hideOutput, alwaysShowFullOutput)
+     */
+    const getToolProps = (toolName: string) => {
+      let props = toolPropsCache.get(toolName);
+      if (!props) {
+        const tool = this.toolManager.getTool(toolName);
+        props = {
+          shouldCollapse: (tool as any)?.shouldCollapse || false,
+          hideOutput: (tool as any)?.hideOutput || false,
+          alwaysShowFullOutput: (tool as any)?.alwaysShowFullOutput || false,
+        };
+        toolPropsCache.set(toolName, props);
+      }
+      return props;
+    };
+
     for (const toolCall of toolCalls) {
       const tool = this.toolManager.getTool(toolCall.function.name);
-      const shouldCollapse = (tool as any)?.shouldCollapse || false;
-      const hideOutput = (tool as any)?.hideOutput || false;
-      const alwaysShowFullOutput = (tool as any)?.alwaysShowFullOutput || false;
+      const { shouldCollapse, hideOutput, alwaysShowFullOutput } = getToolProps(toolCall.function.name);
 
       this.emitEvent({
         id: toolCall.id,
@@ -316,7 +270,7 @@ export class ToolOrchestrator {
       // Execute all tools in parallel
       // Use Promise.allSettled to handle permission denials gracefully
       const results = await Promise.allSettled(
-        toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId))
+        toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId, getToolProps))
       );
 
       // Check if any tool was denied permission
@@ -354,9 +308,7 @@ export class ToolOrchestrator {
 
               const toolResult = results[j];
               const tool = this.toolManager.getTool(toolCall.function.name);
-              const shouldCollapse = (tool as any)?.shouldCollapse || false;
-              const hideOutput = (tool as any)?.hideOutput || false;
-              const alwaysShowFullOutput = (tool as any)?.alwaysShowFullOutput || false;
+              const { shouldCollapse, hideOutput, alwaysShowFullOutput } = getToolProps(toolCall.function.name);
 
               let resultData: ToolResult;
               if (j === i) {
@@ -523,13 +475,36 @@ export class ToolOrchestrator {
   private async executeSequential(toolCalls: ToolCall[]): Promise<ToolResult[]> {
     const results: ToolResult[] = [];
 
+    // Create tool properties cache for this batch execution
+    // Avoids redundant tool lookups during START and END event emissions
+    const toolPropsCache = new Map<string, { shouldCollapse: boolean, hideOutput: boolean, alwaysShowFullOutput: boolean }>();
+
+    /**
+     * Helper to get tool properties with caching
+     * @param toolName - Name of the tool
+     * @returns Tool properties (shouldCollapse, hideOutput, alwaysShowFullOutput)
+     */
+    const getToolProps = (toolName: string) => {
+      let props = toolPropsCache.get(toolName);
+      if (!props) {
+        const tool = this.toolManager.getTool(toolName);
+        props = {
+          shouldCollapse: (tool as any)?.shouldCollapse || false,
+          hideOutput: (tool as any)?.hideOutput || false,
+          alwaysShowFullOutput: (tool as any)?.alwaysShowFullOutput || false,
+        };
+        toolPropsCache.set(toolName, props);
+      }
+      return props;
+    };
+
     // Generate checkpoint reminder once per batch (not per tool)
     // NOTE: Checkpoint reminders are ephemeral (cleaned up after turn)
     const checkpointReminder = this.agent.generateCheckpointReminder();
 
     let isFirstTool = true;
     for (const toolCall of toolCalls) {
-      const result = await this.executeSingleTool(toolCall);
+      const result = await this.executeSingleTool(toolCall, undefined, true, getToolProps);
 
       // Inject exploratory tool reminder before processing result
       // This ensures the system_reminder is present when formatToolResult() runs
@@ -559,13 +534,15 @@ export class ToolOrchestrator {
    *
    * @param toolCall - Tool call to execute
    * @param parentId - Optional parent ID for grouped execution
+   * @param getToolProps - Optional function to get cached tool properties
    * @returns Tool execution result
    */
   private async executeSingleToolAfterStart(
     toolCall: ToolCall,
-    parentId?: string
+    parentId?: string,
+    getToolProps?: (toolName: string) => { shouldCollapse: boolean, hideOutput: boolean, alwaysShowFullOutput: boolean }
   ): Promise<ToolResult> {
-    return this.executeSingleTool(toolCall, parentId, false);
+    return this.executeSingleTool(toolCall, parentId, false, getToolProps);
   }
 
   /**
@@ -574,12 +551,14 @@ export class ToolOrchestrator {
    * @param toolCall - Tool call to execute
    * @param parentId - Optional parent ID for grouped execution
    * @param emitStartEvent - Whether to emit START event (default: true)
+   * @param getToolProps - Optional function to get cached tool properties
    * @returns Tool execution result
    */
   private async executeSingleTool(
     toolCall: ToolCall,
     parentId?: string,
-    emitStartEvent: boolean = true
+    emitStartEvent: boolean = true,
+    getToolProps?: (toolName: string) => { shouldCollapse: boolean, hideOutput: boolean, alwaysShowFullOutput: boolean }
   ): Promise<ToolResult> {
     const { id, function: func } = toolCall;
     const { name: toolName } = func;
@@ -628,9 +607,21 @@ export class ToolOrchestrator {
     }
 
     // Prepare tool display properties (needed for both START and END events)
-    const shouldCollapse = (tool as any)?.shouldCollapse || false;
-    const hideOutput = (tool as any)?.hideOutput || false;
-    const alwaysShowFullOutput = (tool as any)?.alwaysShowFullOutput || false;
+    // Use cached properties if available, otherwise lookup and cache inline
+    let shouldCollapse: boolean;
+    let hideOutput: boolean;
+    let alwaysShowFullOutput: boolean;
+
+    if (getToolProps) {
+      const props = getToolProps(toolName);
+      shouldCollapse = props.shouldCollapse;
+      hideOutput = props.hideOutput;
+      alwaysShowFullOutput = props.alwaysShowFullOutput;
+    } else {
+      shouldCollapse = (tool as any)?.shouldCollapse || false;
+      hideOutput = (tool as any)?.hideOutput || false;
+      alwaysShowFullOutput = (tool as any)?.alwaysShowFullOutput || false;
+    }
 
     /**
      * COLLAPSED FLAG STATE MACHINE
@@ -987,6 +978,7 @@ export class ToolOrchestrator {
             collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
             shouldCollapse, // Pass through for completion-triggered collapse
             hideOutput, // Pass through for output visibility control
+            alwaysShowFullOutput, // Pass through for full output control
           },
         });
       }

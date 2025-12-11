@@ -252,6 +252,8 @@ class ToolCycleDetector {
   private consecutiveEmpty: number = 0;
   private readonly maxHistory: number;
   private readonly cycleThreshold: number;
+  // Cache file hashes with mtime to avoid recomputing unchanged files
+  private fileHashCache: Map<string, { hash: string; mtime: number }> = new Map();
 
   constructor(instanceId: string, maxHistory?: number, cycleThreshold?: number) {
     this.instanceId = instanceId;
@@ -282,8 +284,24 @@ class ToolCycleDetector {
 
   private getFileHash(filePath: string): string | null {
     try {
+      // Get file stats to check mtime
+      const stats = fs.statSync(filePath);
+      const mtime = stats.mtimeMs;
+
+      // Check cache for existing entry with matching mtime
+      const cached = this.fileHashCache.get(filePath);
+      if (cached && cached.mtime === mtime) {
+        return cached.hash;
+      }
+
+      // Cache miss or file changed - compute new hash
       const content = fs.readFileSync(filePath, 'utf8');
-      return crypto.createHash('md5').update(content).digest('hex');
+      const hash = crypto.createHash('md5').update(content).digest('hex');
+
+      // Update cache
+      this.fileHashCache.set(filePath, { hash, mtime });
+
+      return hash;
     } catch (error) {
       return null;
     }

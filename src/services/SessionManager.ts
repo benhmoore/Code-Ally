@@ -316,7 +316,7 @@ export class SessionManager implements IService {
       if (age < this.CACHE_TTL_MS) {
         logger.debug(`[SESSION] Cache hit for ${sessionName} (age: ${age}ms)`);
         // Return a deep copy to prevent external modifications from affecting cache
-        return JSON.parse(JSON.stringify(cached.session));
+        return structuredClone(cached.session);
       } else {
         // Cache expired, remove it
         this.sessionCache.delete(sessionName);
@@ -340,7 +340,7 @@ export class SessionManager implements IService {
 
       // Update cache with loaded session
       this.sessionCache.set(sessionName, {
-        session: JSON.parse(JSON.stringify(session)), // Store a copy in cache
+        session: structuredClone(session), // Store a copy in cache
         loadedAt: Date.now(),
       });
       this.evictOldestCacheEntryIfNeeded();
@@ -407,7 +407,7 @@ export class SessionManager implements IService {
 
         // Update cache after successful write
         this.sessionCache.set(sessionName, {
-          session: JSON.parse(JSON.stringify(session)), // Store a copy
+          session: structuredClone(session), // Store a copy
           loadedAt: Date.now(),
         });
         this.evictOldestCacheEntryIfNeeded();
@@ -633,10 +633,16 @@ export class SessionManager implements IService {
    */
   async getSessionsInfo(): Promise<SessionInfo[]> {
     const sessionNames = await this.listSessions();
+
+    // Load all sessions in parallel
+    const sessions = await Promise.all(
+      sessionNames.map(name => this.loadSession(name))
+    );
+
+    // Filter out null results and process sessions
     const infos: Array<SessionInfo & { timestamp: number }> = [];
 
-    for (const name of sessionNames) {
-      const session = await this.loadSession(name);
+    for (const session of sessions) {
       if (!session) continue;
 
       // Ensure backward compatibility - initialize messages array if undefined

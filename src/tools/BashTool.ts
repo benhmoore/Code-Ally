@@ -560,8 +560,8 @@ export class BashTool extends BaseTool {
     outputMode: string = 'full',
     abortSignal?: AbortSignal
   ): Promise<ToolResult> {
-    let stdout = '';
-    let stderr = '';
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
     let returnCode: number | null = null;
     let lastOutputTime = Date.now();
     let idleKilled = false;
@@ -628,7 +628,7 @@ export class BashTool extends BaseTool {
       // Set up timeout - transition to background instead of killing
       const timeoutHandle = setTimeout(() => {
         // Transition to background instead of killing
-        const transitionResult = this.transitionToBackground(child, command, stdout, stderr, timeout);
+        const transitionResult = this.transitionToBackground(child, command, stdoutChunks.join(''), stderrChunks.join(''), timeout);
 
         // Clean up listeners and intervals
         clearInterval(idleCheckInterval);
@@ -662,7 +662,7 @@ export class BashTool extends BaseTool {
       if (child.stdout) {
         child.stdout.on('data', (data: Buffer) => {
           const chunk = data.toString();
-          stdout += chunk;
+          stdoutChunks.push(chunk);
           lastOutputTime = Date.now(); // Update last output time
           this.emitOutputChunk(chunk);
         });
@@ -672,7 +672,7 @@ export class BashTool extends BaseTool {
       if (child.stderr) {
         child.stderr.on('data', (data: Buffer) => {
           const chunk = data.toString();
-          stderr += chunk;
+          stderrChunks.push(chunk);
           lastOutputTime = Date.now(); // Update last output time
           this.emitOutputChunk(chunk);
         });
@@ -706,6 +706,8 @@ export class BashTool extends BaseTool {
 
         // Check if killed due to idle (likely interactive prompt)
         if (idleKilled) {
+          const stdout = stdoutChunks.join('');
+          const stderr = stderrChunks.join('');
           const combined = stdout + stderr;
           const lastOutput = combined.trim().split('\n').slice(-3).join('\n');
           const idleSeconds = TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000;
@@ -721,6 +723,10 @@ export class BashTool extends BaseTool {
 
         // Note: Timeout handling removed - timeouts now trigger immediate transition to background
         // See timeout handler above which resolves the promise with transitionToBackground() result
+
+        // Join chunks once for final output (O(n) vs O(n²) string concatenation)
+        const stdout = stdoutChunks.join('');
+        const stderr = stderrChunks.join('');
 
         // Non-zero exit code = failure (except for special cases)
         if (returnCode !== 0 && returnCode !== null) {

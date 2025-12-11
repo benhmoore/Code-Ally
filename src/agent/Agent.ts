@@ -46,6 +46,7 @@ import {
 } from './patterns/loopPatterns.js';
 import { Message, ActivityEventType, Config, ToolCall } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
+import { unwrapBatchToolCalls } from '../utils/toolCallUtils.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOOL_GUIDANCE, TOKEN_MANAGEMENT, THINKING_LOOP_DETECTOR, RESPONSE_LOOP_DETECTOR } from '../config/constants.js';
@@ -1769,7 +1770,7 @@ export class Agent {
       generateId: () => this.generateId(),
       autoSaveSession: () => this.autoSaveSession(),
       getLLMResponse: () => this.getLLMResponse(executionContext),
-      unwrapBatchToolCalls: (toolCalls) => this.unwrapBatchToolCalls(toolCalls),
+      unwrapBatchToolCalls: (toolCalls) => unwrapBatchToolCalls(toolCalls),
       executeToolCalls: async (toolCalls, cycles) => {
         // Execute tool calls via orchestrator
         // Permission denied errors need special handling by Agent.ts
@@ -1784,7 +1785,7 @@ export class Agent {
           // Check if this is a permission denied error that triggered interruption
           if (isPermissionDeniedError(error)) {
             // Get unwrapped tool calls for adding permission denial results
-            const unwrappedToolCalls = this.unwrapBatchToolCalls(toolCalls);
+            const unwrappedToolCalls = unwrapBatchToolCalls(toolCalls);
 
             logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Permission denied during tool execution - adding tool results before interruption');
 
@@ -1856,55 +1857,6 @@ export class Agent {
     }
   }
 
-  /**
-   * Unwrap batch tool calls into individual tool calls
-   *
-   * Batch is a transparent wrapper - we extract its children so the conversation
-   * history shows the actual tools that were executed.
-   */
-  private unwrapBatchToolCalls(
-    toolCalls: Array<{
-      id: string;
-      type: 'function';
-      function: { name: string; arguments: Record<string, any> };
-    }>
-  ): Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: Record<string, any> };
-  }> {
-    const unwrapped: Array<{
-      id: string;
-      type: 'function';
-      function: { name: string; arguments: Record<string, any> };
-    }> = [];
-
-    for (const toolCall of toolCalls) {
-      // Check if this is a batch call
-      if (toolCall.function.name === 'batch') {
-        const tools = toolCall.function.arguments.tools;
-
-        if (Array.isArray(tools)) {
-          // Convert each tool spec into a proper tool call
-          tools.forEach((spec: any, index: number) => {
-            unwrapped.push({
-              id: `${toolCall.id}-unwrapped-${index}`,
-              type: 'function',
-              function: {
-                name: spec.name,
-                arguments: spec.arguments,
-              },
-            });
-          });
-        }
-      } else {
-        // Not a batch call, keep as-is
-        unwrapped.push(toolCall);
-      }
-    }
-
-    return unwrapped;
-  }
 
   /**
    * Auto-save session to disk (messages and todos)
