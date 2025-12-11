@@ -19,6 +19,8 @@ import { TEXT_LIMITS } from '../config/constants.js';
 import type { TokenManager } from '../agent/TokenManager.js';
 import type { ToolResultManager } from '../services/ToolResultManager.js';
 import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
+import { ContextFileLoader } from '../services/ContextFileLoader.js';
+import type { Message } from '../types/index.js';
 
 // --- Core Agent Identity and Directives ---
 
@@ -300,11 +302,39 @@ ${agentsSection}`;
     logger.warn('Failed to load project context for system prompt:', formatError(error));
   }
 
+  // Load context files from most recent compaction summary (if any)
+  let contextFilesSection = '';
+  if (tokenManager) {
+    try {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      if (serviceRegistry && serviceRegistry.hasService('conversation_manager')) {
+        const conversationManager = serviceRegistry.get<any>('conversation_manager');
+        if (conversationManager && typeof conversationManager.getMessages === 'function') {
+          const messages: Message[] = conversationManager.getMessages();
+          // Find the most recent summary message with context file references
+          const summaryMsg = [...messages]
+            .reverse()
+            .find(m => m.metadata?.isConversationSummary && m.metadata?.contextFileReferences?.length);
+
+          if (summaryMsg) {
+            const loader = new ContextFileLoader(tokenManager);
+            const filesContent = await loader.loadFromSummary(summaryMsg);
+            if (filesContent) {
+              contextFilesSection = `\n${filesContent}`;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to load context files from compaction summary:', formatError(error));
+    }
+  }
+
   return `
 - Current Date: ${currentDate}
 - Working Directory: ${workingDir}${gitInfo}${additionalDirsInfo}
 - Operating System: ${osInfo}
-- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${allyMdContent}${agentsInfo}`;
+- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${allyMdContent}${agentsInfo}${contextFilesSection}`;
 }
 
 /**

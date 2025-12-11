@@ -29,6 +29,30 @@ import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 const MAX_SUMMARIZATION_CONTEXT_PERCENT = 70;
 
 /**
+ * Target context percentage after emergency truncation.
+ * Set to 50% to leave ample room for the conversation to continue.
+ */
+const EMERGENCY_TRUNCATION_TARGET_PERCENT = 50;
+
+/**
+ * Maximum number of file references to preserve during compaction.
+ * Prioritizes edited > written > read files.
+ */
+const MAX_FILE_REFERENCES = 15;
+
+/**
+ * Minimum token budget required to attempt LLM summarization.
+ * If available budget is below this, fall back to emergency truncation.
+ */
+const MIN_SUMMARIZATION_BUDGET = 500;
+
+/**
+ * Estimated token overhead for summarization request structure.
+ * Accounts for message framing (system + user + response structure).
+ */
+const SUMMARIZATION_STRUCTURE_OVERHEAD = 12;
+
+/**
  * Context needed for compaction operations
  */
 export interface CompactionContext {
@@ -201,6 +225,101 @@ export class AgentCompactor {
   }
 
   /**
+   * Extract file references from messages for context preservation
+   *
+   * Scans assistant tool calls (read, edit, write) and user message mentions
+   * to build a list of files that should be available for post-compaction context.
+   *
+   * @param messages - Messages to extract file references from
+   * @returns Object with paths array and categorized sources
+   */
+  private extractFileReferences(messages: readonly Message[]): {
+    paths: string[];
+    sources: {
+      read: string[];
+      edited: string[];
+      written: string[];
+    };
+  } {
+    const readFiles = new Set<string>();
+    const editedFiles = new Set<string>();
+    const writtenFiles = new Set<string>();
+
+    for (const message of messages) {
+      // Extract from assistant tool calls
+      if (message.role === 'assistant' && message.tool_calls) {
+        for (const toolCall of message.tool_calls) {
+          const toolName = toolCall.function.name;
+          const args = toolCall.function.arguments;
+
+          if (toolName === 'read' && args.file_paths && Array.isArray(args.file_paths)) {
+            // Read tool uses file_paths array
+            for (const path of args.file_paths) {
+              if (typeof path === 'string') {
+                readFiles.add(path);
+              }
+            }
+          } else if ((toolName === 'edit' || toolName === 'line-edit') && args.file_path && typeof args.file_path === 'string') {
+            // Edit and line-edit tools use file_path string
+            editedFiles.add(args.file_path);
+          } else if (toolName === 'write' && args.file_path && typeof args.file_path === 'string') {
+            // Write tool uses file_path string
+            writtenFiles.add(args.file_path);
+          }
+        }
+      }
+
+      // Extract from user message mentions
+      if (message.role === 'user' && message.metadata?.mentions?.files) {
+        for (const path of message.metadata.mentions.files) {
+          readFiles.add(path);
+        }
+      }
+    }
+
+    // Deduplicate: edited files shouldn't appear in read list, written files shouldn't appear in edited or read
+    for (const edited of editedFiles) {
+      readFiles.delete(edited);
+    }
+    for (const written of writtenFiles) {
+      editedFiles.delete(written);
+      readFiles.delete(written);
+    }
+
+    // Convert to arrays for prioritization
+    const editedArray = Array.from(editedFiles);
+    const writtenArray = Array.from(writtenFiles);
+    const readArray = Array.from(readFiles);
+
+    // Cap file references, prioritizing edited > written > read
+    let paths: string[] = [];
+
+    if (editedArray.length >= MAX_FILE_REFERENCES) {
+      paths = editedArray.slice(0, MAX_FILE_REFERENCES);
+    } else {
+      paths = [...editedArray];
+      const remaining = MAX_FILE_REFERENCES - paths.length;
+
+      if (writtenArray.length >= remaining) {
+        paths.push(...writtenArray.slice(0, remaining));
+      } else {
+        paths.push(...writtenArray);
+        const stillRemaining = MAX_FILE_REFERENCES - paths.length;
+        paths.push(...readArray.slice(0, stillRemaining));
+      }
+    }
+
+    return {
+      paths,
+      sources: {
+        read: readArray,
+        edited: editedArray,
+        written: writtenArray,
+      },
+    };
+  }
+
+  /**
    * Emergency truncation - drop old messages without LLM summarization
    *
    * Used when context is critically full (98%+) and we can't afford an LLM call
@@ -229,9 +348,10 @@ export class AgentCompactor {
     }
 
     // Emergency truncation strategy: keep only the most recent messages
-    // that fit within target context (50% to leave room for responses)
-    const targetContextPercent = 50;
-    const targetTokens = Math.floor(this.tokenManager.getContextSize() * targetContextPercent / 100);
+    // that fit within target context to leave room for responses
+    const targetTokens = Math.floor(
+      this.tokenManager.getContextSize() * EMERGENCY_TRUNCATION_TARGET_PERCENT / 100
+    );
 
     // Start from the end and work backwards, keeping messages until we exceed target
     const keptMessages: Message[] = [];
@@ -253,9 +373,13 @@ export class AgentCompactor {
     // Reverse once at the end - O(n) instead of O(n²)
     keptMessages.reverse();
 
-    // Add emergency truncation notice
+    // Add emergency truncation notice with file references
     const droppedCount = nonEphemeralMessages.length - keptMessages.length;
     if (droppedCount > 0) {
+      // Extract file references from dropped messages
+      const droppedMessages = nonEphemeralMessages.slice(0, nonEphemeralMessages.length - keptMessages.length);
+      const fileRefs = this.extractFileReferences(droppedMessages);
+
       result.push({
         role: 'system',
         content: `CONVERSATION SUMMARY (emergency truncated at ${new Date().toLocaleTimeString()}): ` +
@@ -263,6 +387,13 @@ export class AgentCompactor {
           `Recent conversation history follows.`,
         metadata: {
           isConversationSummary: true,
+          contextFileReferences: fileRefs.paths,
+          contextFileSources: {
+            read: fileRefs.sources.read,
+            edited: fileRefs.sources.edited,
+            written: fileRefs.sources.written,
+          },
+          contextCompactionTimestamp: Date.now(),
         },
       });
     }
@@ -321,13 +452,37 @@ export class AgentCompactor {
       : [...otherMessages];
 
     // Build fixed parts of summarization request (system prompt + user request)
-    const summarizationSystemContent =
-      'You are an AI assistant summarizing a conversation to save context space. ' +
-      'Preserve specific details about: (1) unresolved problems with error messages, stack traces, and file paths, ' +
-      '(2) current investigation state, attempted solutions that failed, and next steps, (3) decisions made. ' +
-      'Be extremely detailed about ongoing problems but brief about completed work. Use bullet points.';
+    const summarizationSystemContent = `You are summarizing a coding conversation to save context space.
 
-    let finalRequest = 'Summarize this conversation, preserving technical details needed to continue work.';
+Output format (use this exact structure):
+
+GOAL: [One sentence describing user's objective]
+
+CHANGES MADE:
+- /absolute/path/to/file.ts: what changed
+- /another/file.py: what changed
+[One line per file - be specific about what changed]
+
+ACTIVE BLOCKERS:
+- Error/failing test with exact file path and error message
+- Unresolved issues that need attention
+[Detailed - include stack traces, error messages, line numbers]
+
+DECISIONS:
+- User preference or architectural constraint
+- Technology choice or approach decision
+[Brief - capture what was decided and why]
+
+NEXT STEP: [What was about to happen when compaction triggered]
+
+Requirements:
+- Use exact absolute file paths when referencing files
+- Omit reasoning chains, exploration attempts, pleasantries
+- Be detailed about blockers (include full error messages), brief about completed work
+- Omit sections that don't apply (e.g., no ACTIVE BLOCKERS if none exist)
+- Target <15% of original conversation length`;
+
+    let finalRequest = 'Summarize the conversation using the exact format specified above.';
     if (customInstructions) {
       finalRequest += ` Additional instructions: ${customInstructions}`;
     }
@@ -342,16 +497,15 @@ export class AgentCompactor {
     );
 
     // Account for fixed overhead (system prompt + final request + message structure)
-    // 3 messages (system + user request + summary response) × ~4 tokens each = ~12 tokens
     const fixedOverhead =
       this.tokenManager.estimateTokens(summarizationSystemContent) +
       this.tokenManager.estimateTokens(finalRequest) +
-      12;
+      SUMMARIZATION_STRUCTURE_OVERHEAD;
 
     const availableForMessages = maxSummarizationTokens - fixedOverhead;
 
     // Guard: if budget is too small, fall back to emergency truncation
-    if (availableForMessages < 500) {
+    if (availableForMessages < MIN_SUMMARIZATION_BUDGET) {
       logger.debug('[AGENT_COMPACT]', 'Budget too small for summarization, using emergency truncation');
       return this.performEmergencyTruncation(messages);
     }
@@ -416,6 +570,9 @@ export class AgentCompactor {
 
     const summary = response.content.trim();
 
+    // Extract file references from summarized messages
+    const fileRefs = this.extractFileReferences(messagesToSummarize);
+
     // Build compacted message list
     const compacted: Message[] = [];
     if (systemMessage) {
@@ -435,6 +592,13 @@ export class AgentCompactor {
         content: `${summaryLabel}: ${summary}`,
         metadata: {
           isConversationSummary: true,
+          contextFileReferences: fileRefs.paths,
+          contextFileSources: {
+            read: fileRefs.sources.read,
+            edited: fileRefs.sources.edited,
+            written: fileRefs.sources.written,
+          },
+          contextCompactionTimestamp: Date.now(),
         },
       });
     }

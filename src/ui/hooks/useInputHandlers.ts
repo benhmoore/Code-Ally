@@ -359,9 +359,12 @@ export const useInputHandlers = (
             });
           }
 
-          // Add any updated messages (e.g., system reminders)
+          // Add any updated messages (e.g., system reminders) to both UI and Agent
           if (result.updatedMessages) {
-            result.updatedMessages.forEach(msg => actions.addMessage(msg));
+            result.updatedMessages.forEach(msg => {
+              actions.addMessage(msg);  // UI display
+              agent.addMessage(msg);    // Agent context for LLM
+            });
           }
 
           return;

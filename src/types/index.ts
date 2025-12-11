@@ -72,7 +72,24 @@ export interface MessageMetadata {
   tool_context?: Record<string, ToolCallContext>;
   /** Agent that generated this message (for displaying agent name prefix) */
   agentName?: string;
-  // Future: Add more presentation hints as needed
+
+  // === Context File References (populated during compaction) ===
+
+  /** File paths extracted from compacted messages for post-compaction context loading */
+  contextFileReferences?: string[];
+
+  /** Categorized sources of file references by operation type */
+  contextFileSources?: {
+    /** Files that were read (via read tool) */
+    read?: string[];
+    /** Files that were modified (via edit tool) */
+    edited?: string[];
+    /** Files that were created (via write tool) */
+    written?: string[];
+  };
+
+  /** Timestamp when compaction occurred (for staleness detection) */
+  contextCompactionTimestamp?: number;
 }
 
 // ===========================

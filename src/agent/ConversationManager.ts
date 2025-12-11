@@ -446,27 +446,31 @@ export class ConversationManager {
    * @returns ToolRemovalResult with counts, ID lists, and read file paths
    */
   removeToolResults(toolCallIds: string[]): ToolRemovalResult {
-    // Categorize IDs as found vs not found
+    // Categorize IDs as found vs not found using O(1) index lookup
     const removedIds: string[] = [];
     const notFoundIds: string[] = [];
 
-    // Check which tool call IDs exist in the conversation
     for (const toolCallId of toolCallIds) {
-      const existsInConversation = this.messages.some(
-        msg => msg.role === 'tool' && msg.tool_call_id === toolCallId
-      );
-
-      if (existsInConversation) {
+      if (this.toolResultIndex.has(toolCallId)) {
         removedIds.push(toolCallId);
       } else {
         notFoundIds.push(toolCallId);
       }
     }
 
-    // Remove tool result messages for found IDs
-    const removedCount = this.removeMessages(
-      msg => msg.role === 'tool' && !!msg.tool_call_id && removedIds.includes(msg.tool_call_id)
-    );
+    // Build Set for O(1) removal check
+    const idsToRemove = new Set(removedIds);
+
+    // Remove tool result messages and update index in single pass
+    const originalLength = this.messages.length;
+    this.messages = this.messages.filter(msg => {
+      if (msg.role === 'tool' && msg.tool_call_id && idsToRemove.has(msg.tool_call_id)) {
+        this.toolResultIndex.delete(msg.tool_call_id);
+        return false;
+      }
+      return true;
+    });
+    const removedCount = originalLength - this.messages.length;
 
     // Log results
     logger.debug(
