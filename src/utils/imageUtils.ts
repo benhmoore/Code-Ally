@@ -133,20 +133,3 @@ export async function fileToBase64(filePath: string): Promise<string> {
     }
   }
 }
-
-/**
- * Get the MIME type for an image file based on its extension
- * @param filePath - Path to the image file
- * @returns MIME type string (e.g., 'image/png', 'image/jpeg')
- * @throws Error if the file extension is not a supported image format
- */
-export function getImageMimeType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  const mimeType = IMAGE_EXTENSIONS[ext];
-
-  if (!mimeType) {
-    throw new Error(`Unsupported image format: ${ext}`);
-  }
-
-  return mimeType;
-}
