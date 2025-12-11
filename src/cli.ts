@@ -821,6 +821,11 @@ async function main() {
     const readStateManager = new ReadStateManager();
     registry.registerInstance('read_state_manager', readStateManager);
 
+    // Create file interaction tracker (for /open command)
+    const { FileInteractionTracker } = await import('./services/FileInteractionTracker.js');
+    const fileInteractionTracker = new FileInteractionTracker();
+    registry.registerInstance('file_interaction_tracker', fileInteractionTracker);
+
     // Create patch manager for undo functionality (session-specific)
     const { PatchManager } = await import('./services/PatchManager.js');
     const patchManager = new PatchManager({

@@ -482,7 +482,7 @@ export class LineEditTool extends BaseTool {
         return this.formatErrorResponse(
           `Batch edit validation failed with ${validationErrors.length} error(s):\n${validationErrors.map(e => `  • ${e}`).join('\n')}`,
           'validation_error',
-          'All edits must pass validation before any are applied. Fix the errors and try again.'
+          'All edits must pass validation before any are applied. If edits fail, try fewer operations to narrow down the issue. Prefer many small tool calls over one monolithic call.'
         );
       }
 

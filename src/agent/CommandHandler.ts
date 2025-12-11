@@ -40,6 +40,7 @@ import { InitCommand } from './commands/InitCommand.js';
 import { AddDirCommand } from './commands/AddDirCommand.js';
 import { RemoveDirCommand } from './commands/RemoveDirCommand.js';
 import { ListDirsCommand } from './commands/ListDirsCommand.js';
+import { OpenCommand } from './commands/OpenCommand.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -70,6 +71,7 @@ export class CommandHandler {
     this.registerCommand(new InitCommand());
     this.registerCommand(new ListDirsCommand());
     this.registerCommand(new ModelCommand());
+    this.registerCommand(new OpenCommand());
     this.registerCommand(new PluginCommand());
     this.registerCommand(new ProjectCommand());
     this.registerCommand(new PromptCommand());

@@ -353,6 +353,11 @@ export class CompletionProvider {
       return await this.getFileCompletions(context);
     }
 
+    // Complete file paths for /open (user typed "/open ")
+    if (command === '/open' && wordCount >= 2) {
+      return await this.getFileCompletions(context);
+    }
+
     // Complete additional directories for /remove-dir (user typed "/remove-dir ")
     if (command === '/remove-dir' && wordCount === 2) {
       return await this.getAdditionalDirectoryCompletions(context.currentWord);

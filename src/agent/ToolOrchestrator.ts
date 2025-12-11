@@ -37,6 +37,7 @@ import {
 import { TOOL_NAMES } from '../config/toolDefaults.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
 import { FormCancelledError } from '../services/FormManager.js';
+import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
 
 /**
  * Safe tools that can run concurrently
@@ -1047,6 +1048,19 @@ export class ToolOrchestrator {
     const formattedResult = this.formatToolResult(toolCall.function.name, result, toolCall.id);
 
     logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool:', toolCall.function.name, 'id:', toolCall.id, 'success:', result.success, 'resultLength:', formattedResult.length);
+
+    // Track file interactions for /open command (only on success)
+    if (result.success && FileInteractionTracker.isTrackedTool(toolCall.function.name)) {
+      const tracker = ServiceRegistry.getInstance().get<FileInteractionTracker>('file_interaction_tracker');
+      if (tracker) {
+        const args = toolCall.function.arguments;
+        // Extract file path from tool arguments (file_path for write/edit, file_paths[0] for read)
+        const filePath = args.file_path || args.file_paths?.[0];
+        if (filePath) {
+          tracker.recordInteraction(toolCall.function.name, filePath);
+        }
+      }
+    }
 
     // Check if this is an ephemeral read
     const isEphemeral = (result as any)._ephemeral === true;

@@ -427,9 +427,28 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       </Box>
 
       {/* Agent subtext - displayed on indented lines below header */}
+      {/* Once child tool calls exist, collapse to first line only */}
       {isAgentDelegation && subtext && (
         <Box flexDirection="column">
           {(() => {
+            const hasChildToolCalls = (toolCall.children?.length ?? 0) > 0;
+
+            // After first tool call, show only first line (truncated to 80 chars)
+            if (hasChildToolCalls) {
+              const firstLine = subtext.split('\n')[0] ?? '';
+              const truncatedLine = firstLine.length > 77
+                ? firstLine.slice(0, 77) + '...'
+                : firstLine;
+              return (
+                <Box>
+                  <Text>{indent}    </Text>
+                  <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>
+                  <Text>{truncatedLine}</Text>
+                </Box>
+              );
+            }
+
+            // No child tools yet - show full prompt (up to 5 lines)
             // Truncate to 80 chars (77 + "...") when agent is complete
             const displaySubtext = !isRunning && subtext.length > 80
               ? subtext.slice(0, 77) + '...'
