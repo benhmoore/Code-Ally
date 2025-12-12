@@ -56,8 +56,8 @@ export class OllamaClient extends ModelClient {
   private _temperature: number; // Not readonly - allows runtime changes
   private _contextSize: number; // Not readonly - allows runtime changes
   private _maxTokens: number; // Not readonly - allows runtime changes
+  private _reasoningEffort?: string; // Not readonly - allows runtime changes
   private readonly keepAlive?: number;
-  private readonly reasoningEffort?: string;
   private readonly apiUrl: string;
   private readonly activityStream?: ActivityStream;
 
@@ -90,8 +90,8 @@ export class OllamaClient extends ModelClient {
     this._temperature = config.temperature;
     this._contextSize = config.contextSize;
     this._maxTokens = config.maxTokens;
+    this._reasoningEffort = config.reasoningEffort;
     this.keepAlive = config.keepAlive;
-    this.reasoningEffort = config.reasoningEffort;
     this.activityStream = config.activityStream;
     this.apiUrl = `${this._endpoint}/api/chat`;
   }
@@ -142,6 +142,16 @@ export class OllamaClient extends ModelClient {
   setMaxTokens(newMaxTokens: number): void {
     logger.debug(`[OLLAMA_CLIENT] Changing max tokens from ${this._maxTokens} to ${newMaxTokens}`);
     this._maxTokens = newMaxTokens;
+  }
+
+  /**
+   * Update the reasoning effort at runtime
+   *
+   * @param newReasoningEffort - New reasoning effort level (e.g., 'low', 'medium', 'high')
+   */
+  setReasoningEffort(newReasoningEffort: string | undefined): void {
+    logger.debug(`[OLLAMA_CLIENT] Changing reasoning effort from ${this._reasoningEffort} to ${newReasoningEffort}`);
+    this._reasoningEffort = newReasoningEffort;
   }
 
   /**
@@ -369,8 +379,8 @@ export class OllamaClient extends ModelClient {
     }
 
     // Add reasoning_effort if configured (for gpt-oss and reasoning models)
-    if (this.reasoningEffort) {
-      payload.reasoning_effort = this.reasoningEffort;
+    if (this._reasoningEffort) {
+      payload.reasoning_effort = this._reasoningEffort;
     }
 
     // Add function definitions if provided

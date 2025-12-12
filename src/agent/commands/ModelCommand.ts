@@ -97,6 +97,17 @@ export class ModelCommand extends Command {
           modelClient.setModelName(modelName);
         }
 
+        // Notify UI of config change
+        const activityStream = serviceRegistry.get('activity_stream');
+        if (activityStream && typeof (activityStream as any).emit === 'function') {
+          (activityStream as any).emit({
+            id: `config_updated_${Date.now()}`,
+            type: ActivityEventType.CONFIG_UPDATED,
+            timestamp: Date.now(),
+            data: { [configKey]: modelName },
+          });
+        }
+
         // Enhance response message with capability info
         const typeName = modelType === 'service' ? 'Service model' : 'Model';
         const capInfo = capabilities.fromCache ? ' (cached)' : '';

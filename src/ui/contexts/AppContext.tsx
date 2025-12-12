@@ -213,7 +213,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   const [statusMessages, setStatusMessages] = useState<StatusMessage[]>([]);
   const [staticRemountKey, setStaticRemountKey] = useState<number>(0);
   const [currentAgent, setCurrentAgentState] = useState<string>(initialConfig.default_agent || 'ally');
-  const [currentAgentModel, setCurrentAgentModel] = useState<string>(initialConfig.model || '');
+  // Only set when on a custom agent with its own model; empty = use config.model
+  const [currentAgentModel, setCurrentAgentModel] = useState<string>('');
   const [activeSubAgents, setActiveSubAgents] = useState<string[]>([]);
 
   // Batching mechanism for tool call updates
@@ -425,9 +426,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
 
   const setCurrentAgent = useCallback((agent: string, model?: string) => {
     setCurrentAgentState(agent);
-    if (model !== undefined) {
-      setCurrentAgentModel(model);
-    }
+    // Always update model: custom agents pass their model, default agent clears it
+    setCurrentAgentModel(model ?? '');
   }, []);
 
   const addSubAgent = useCallback((agentName: string) => {

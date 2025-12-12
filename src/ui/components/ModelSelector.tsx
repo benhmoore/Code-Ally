@@ -29,6 +29,8 @@ export interface ModelSelectorProps {
   typeName?: string;
   /** Whether the prompt is visible */
   visible?: boolean;
+  /** Whether capability testing is in progress */
+  loading?: boolean;
 }
 
 /**
@@ -40,12 +42,32 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   currentModel,
   typeName,
   visible = true,
+  loading = false,
 }) => {
   const terminalWidth = useContentWidth();
   const divider = createDivider(terminalWidth);
 
   if (!visible) {
     return null;
+  }
+
+  // Show loading state when testing capabilities
+  if (loading) {
+    const selectedModel = models[selectedIndex];
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Box flexDirection="column">
+          <Box>
+            <Text dimColor>{divider}</Text>
+          </Box>
+          <Box marginY={1}>
+            <Text color={UI_COLORS.PRIMARY}>
+              Testing capabilities for {selectedModel?.name || 'model'}...
+            </Text>
+          </Box>
+        </Box>
+      </Box>
+    );
   }
 
   return (

@@ -172,8 +172,10 @@ export interface ModalState {
   // Model selector
   modelSelectRequest?: ModelSelectRequest;
   modelSelectedIndex: number;
+  modelSelectLoading: boolean;
   setModelSelectRequest: (request?: ModelSelectRequest) => void;
   setModelSelectedIndex: (index: number) => void;
+  setModelSelectLoading: (loading: boolean) => void;
 
   // Setup wizard
   setupWizardOpen: boolean;
@@ -343,6 +345,7 @@ export const useModalState = (): ModalState => {
   // Model selector
   const [modelSelectRequest, setModelSelectRequest] = useState<ModelSelectRequest | undefined>(undefined);
   const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
+  const [modelSelectLoading, setModelSelectLoading] = useState(false);
 
   // Setup wizard
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
@@ -476,8 +479,10 @@ export const useModalState = (): ModalState => {
     // Model selector
     modelSelectRequest,
     modelSelectedIndex,
+    modelSelectLoading,
     setModelSelectRequest,
     setModelSelectedIndex,
+    setModelSelectLoading,
 
     // Setup wizard
     setupWizardOpen,
