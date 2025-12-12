@@ -987,61 +987,114 @@ export const useActivitySubscriptions = (
 
     const effectiveModelType = modelType || modal.modelSelectRequest?.modelType || 'ally';
 
-    modal.setModelSelectRequest(undefined);
-    modal.setModelSelectedIndex(0);
+    // If cancelled (no model selected), just clear the UI
+    if (!modelName) {
+      modal.setModelSelectRequest(undefined);
+      modal.setModelSelectedIndex(0);
+      return;
+    }
 
-    if (modelName) {
-      const registry = ServiceRegistry.getInstance();
-      const configManager = registry.get<ConfigManager>('config_manager');
+    // Show loading state while testing capabilities
+    modal.setModelSelectLoading(true);
 
-      if (configManager) {
-        try {
-          const config = configManager.getConfig();
-          const endpoint = config.endpoint || 'http://localhost:11434';
+    const clearModalState = () => {
+      modal.setModelSelectLoading(false);
+      modal.setModelSelectRequest(undefined);
+      modal.setModelSelectedIndex(0);
+    };
 
-          // Test model capabilities before switching
-          const { testModelCapabilities } = await import('@llm/ModelValidation.js');
-          const capabilities = await testModelCapabilities(endpoint, modelName);
+    const registry = ServiceRegistry.getInstance();
+    const configManager = registry.get<ConfigManager>('config_manager');
 
-          // For ally model, require tool support
-          if (effectiveModelType === 'ally' && !capabilities.supportsTools) {
-            actions.addMessage({
-              role: 'assistant',
-              content: `Model '${modelName}' does not support tools. Ally model requires tool support.`,
-            });
-            return;
-          }
+    if (!configManager) {
+      clearModalState();
+      return;
+    }
 
-          const configKey = effectiveModelType === 'service' ? 'service_model' : 'model';
-          const clientKey = effectiveModelType === 'service' ? 'service_model_client' : 'model_client';
+    try {
+      const config = configManager.getConfig();
+      const endpoint = config.endpoint || 'http://localhost:11434';
 
-          await configManager.setValue(configKey, modelName);
+      // Test model capabilities before switching
+      const { testModelCapabilities } = await import('@llm/ModelValidation.js');
+      const capabilities = await testModelCapabilities(endpoint, modelName);
 
-          const modelClient = registry.get<any>(clientKey);
-          if (modelClient && typeof modelClient.setModelName === 'function') {
-            modelClient.setModelName(modelName);
-          }
-
-          if (effectiveModelType === 'service') {
-            actions.updateConfig({ service_model: modelName });
-          } else {
-            actions.updateConfig({ model: modelName });
-          }
-
-          const typeName = effectiveModelType === 'service' ? 'Service model' : 'Model';
-          const capInfo = capabilities.fromCache ? ' (cached)' : '';
-          const imageNote = capabilities.supportsImages ? '' : ' (no image support)';
-          actions.addMessage({
-            role: 'assistant',
-            content: `${typeName} changed to: ${modelName}${capInfo}${imageNote}`,
-          });
-        } catch (error) {
-          actions.addMessage({
-            role: 'assistant',
-            content: `Error changing model: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          });
-        }
+      // For ally model, require tool support
+      if (effectiveModelType === 'ally' && !capabilities.supportsTools) {
+        clearModalState();
+        actions.addMessage({
+          role: 'assistant',
+          content: `Model '${modelName}' does not support tools. Ally model requires tool support.`,
+        });
+        return;
       }
+
+      const configKey = effectiveModelType === 'service' ? 'service_model' : 'model';
+      const clientKey = effectiveModelType === 'service' ? 'service_model_client' : 'model_client';
+
+      await configManager.setValue(configKey, modelName);
+
+      const modelClient = registry.get<any>(clientKey);
+      if (modelClient && typeof modelClient.setModelName === 'function') {
+        modelClient.setModelName(modelName);
+      }
+
+      if (effectiveModelType === 'service') {
+        actions.updateConfig({ service_model: modelName });
+      } else {
+        actions.updateConfig({ model: modelName });
+      }
+
+      clearModalState();
+
+      const typeName = effectiveModelType === 'service' ? 'Service model' : 'Model';
+      const capInfo = capabilities.fromCache ? ' (cached)' : '';
+      const imageNote = capabilities.supportsImages ? '' : ' (no image support)';
+      actions.addMessage({
+        role: 'assistant',
+        content: `${typeName} changed to: ${modelName}${capInfo}${imageNote}`,
+      });
+    } catch (error) {
+      clearModalState();
+      actions.addMessage({
+        role: 'assistant',
+        content: `Error changing model: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  });
+
+  // Config updated (from commands that directly change config)
+  useActivityEvent(ActivityEventType.CONFIG_UPDATED, (event) => {
+    const updates = event.data;
+    if (!updates || typeof updates !== 'object') return;
+
+    // Update UI state
+    actions.updateConfig(updates);
+
+    // Sync runtime model client settings
+    const registry = ServiceRegistry.getInstance();
+    const modelClient = registry.get<any>('model_client');
+    const serviceModelClient = registry.get<any>('service_model_client');
+
+    // Model changes are handled by ModelCommand directly, but other settings need syncing
+    if ('context_size' in updates && updates.context_size !== undefined) {
+      if (modelClient?.setContextSize) modelClient.setContextSize(updates.context_size);
+      if (serviceModelClient?.setContextSize) serviceModelClient.setContextSize(updates.context_size);
+    }
+    if ('temperature' in updates && updates.temperature !== undefined) {
+      if (modelClient?.setTemperature) modelClient.setTemperature(updates.temperature);
+      if (serviceModelClient?.setTemperature) serviceModelClient.setTemperature(updates.temperature);
+    }
+    if ('max_tokens' in updates && updates.max_tokens !== undefined) {
+      if (modelClient?.setMaxTokens) modelClient.setMaxTokens(updates.max_tokens);
+      if (serviceModelClient?.setMaxTokens) serviceModelClient.setMaxTokens(updates.max_tokens);
+    }
+    if ('service_model' in updates && updates.service_model !== undefined) {
+      if (serviceModelClient?.setModelName) serviceModelClient.setModelName(updates.service_model);
+    }
+    if ('reasoning_effort' in updates) {
+      if (modelClient?.setReasoningEffort) modelClient.setReasoningEffort(updates.reasoning_effort);
+      if (serviceModelClient?.setReasoningEffort) serviceModelClient.setReasoningEffort(updates.reasoning_effort);
     }
   });
 

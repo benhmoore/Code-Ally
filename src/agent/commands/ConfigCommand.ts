@@ -6,6 +6,7 @@
 
 import { Command } from './Command.js';
 import type { Message } from '@shared/index.js';
+import { ActivityEventType } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 import type { ConfigManager } from '@services/ConfigManager.js';
@@ -225,6 +226,17 @@ export class ConfigCommand extends Command {
     try {
       const { key, oldValue, newValue } = await configManager.setFromString(kvString);
 
+      // Notify UI of config change for immediate effect
+      const activityStream = serviceRegistry.get('activity_stream');
+      if (activityStream && typeof (activityStream as any).emit === 'function') {
+        (activityStream as any).emit({
+          id: `config_updated_${Date.now()}`,
+          type: ActivityEventType.CONFIG_UPDATED,
+          timestamp: Date.now(),
+          data: { [key]: newValue },
+        });
+      }
+
       return this.createResponse(
         `Configuration updated: ${key}\n  Old value: ${JSON.stringify(oldValue)}\n  New value: ${JSON.stringify(newValue)}`
       );
@@ -392,6 +404,17 @@ export class ConfigCommand extends Command {
 
       if (changedKeys.length === 0) {
         return this.createResponse('Configuration is already at default values.');
+      }
+
+      // Notify UI of all config changes for immediate effect
+      const activityStream = serviceRegistry.get('activity_stream');
+      if (activityStream && typeof (activityStream as any).emit === 'function') {
+        (activityStream as any).emit({
+          id: `config_updated_${Date.now()}`,
+          type: ActivityEventType.CONFIG_UPDATED,
+          timestamp: Date.now(),
+          data: changes,
+        });
       }
 
       return this.createResponse(

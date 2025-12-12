@@ -241,6 +241,7 @@ export enum ActivityEventType {
   TOOL_FORM_REQUEST = 'tool_form_request',
   TOOL_FORM_RESPONSE = 'tool_form_response',
   TOOL_FORM_CANCEL = 'tool_form_cancel',
+  CONFIG_UPDATED = 'config_updated',
 }
 
 export interface ActivityEvent {
