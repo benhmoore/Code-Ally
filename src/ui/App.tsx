@@ -910,6 +910,7 @@ const AppContentComponent: React.FC<{
             currentModel={modal.modelSelectRequest.currentModel}
             typeName={modal.modelSelectRequest.typeName}
             visible={true}
+            loading={modal.modelSelectLoading}
           />
           {/* Hidden InputPrompt for keyboard handling only */}
           <Box height={0} overflow="hidden">
