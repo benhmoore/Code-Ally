@@ -145,6 +145,7 @@ export class ExploreTool extends BaseDelegationTool {
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output
+  readonly rootOnly = true; // Only visible to root agent when nesting is disabled
 
   readonly usageGuidance = `**When to use explore:**
 Unknown scope/location: Don't know where to start or how much code is involved.
@@ -218,6 +219,10 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
               type: 'string',
               description: 'Level of thoroughness for exploration: "quick" (~1 min, 2-5 tool calls), "medium" (~5 min, 5-10 tool calls), "very thorough" (~10 min, 10-20 tool calls), "uncapped" (no time limit, default). Controls time budget and depth.',
             },
+            run_in_background: {
+              type: 'boolean',
+              description: 'If true, start exploration in background and return immediately. Use agent-output to check progress.',
+            },
           },
           required: ['task_prompt'],
         },
@@ -230,6 +235,7 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
 
     const taskPrompt = args.task_prompt;
     const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
+    const runInBackground = args.run_in_background === true;
 
     // Validate task_prompt parameter
     if (!taskPrompt || typeof taskPrompt !== 'string') {
@@ -258,7 +264,7 @@ Note: Explore agents can delegate to other explore agents (max 2 levels deep) fo
       );
     }
 
-    return await this.executeDelegation(taskPrompt, thoroughness, callId);
+    return await this.executeDelegation(taskPrompt, thoroughness, callId, runInBackground);
   }
 
   /**

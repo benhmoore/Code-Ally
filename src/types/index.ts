@@ -138,6 +138,7 @@ export type ErrorType =
   | 'interrupted'
   | 'interactive_command'
   | 'depth_limit_exceeded'
+  | 'delegation_not_allowed'
   | 'execution_error'
   | 'plugin_error'
   | 'user_error'
@@ -223,6 +224,14 @@ export enum ActivityEventType {
   COMPACTION_START = 'compaction_start',
   COMPACTION_COMPLETE = 'compaction_complete',
   BACKGROUND_PROCESS_EXIT = 'background_process_exit',
+
+  // Background agent lifecycle events
+  BACKGROUND_AGENT_START = 'background_agent_start',
+  BACKGROUND_AGENT_PROGRESS = 'background_agent_progress',
+  BACKGROUND_AGENT_COMPLETE = 'background_agent_complete',
+  BACKGROUND_AGENT_ERROR = 'background_agent_error',
+  BACKGROUND_AGENT_STEERING = 'background_agent_steering',
+  BACKGROUND_AGENT_KILLED = 'background_agent_killed',
   PLUGIN_CONFIG_REQUEST = 'plugin_config_request',
   PLUGIN_CONFIG_COMPLETE = 'plugin_config_complete',
   PLUGIN_CONFIG_CANCEL = 'plugin_config_cancel',

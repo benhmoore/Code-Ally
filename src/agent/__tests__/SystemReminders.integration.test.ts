@@ -54,8 +54,8 @@ describe('System Reminders Integration', () => {
   }
 
   describe('Task context detection', () => {
-    it('should persist AgentAskTool task context reminder', () => {
-      // Simulate agent-ask tool result with task context
+    it('should persist PromptAgentTool task context reminder', () => {
+      // Simulate prompt-agent tool result with task context
       let result = '{"success": true, "agent_response": "Analysis complete"}';
       result = injectSystemReminder(
         result,

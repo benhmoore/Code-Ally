@@ -49,6 +49,8 @@ import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
 import { useContentWidth } from './hooks/useContentWidth.js';
 import { useTerminalWidth } from './hooks/useTerminalWidth.js';
 import { useBackgroundProcesses } from './hooks/useBackgroundProcesses.js';
+import { useBackgroundAgents } from './hooks/useBackgroundAgents.js';
+import { useBackgroundTaskProd } from './hooks/useBackgroundTaskProd.js';
 import { useAgentSwitch } from './hooks/useAgentSwitch.js';
 import { switchAgent } from '../services/AgentSwitcher.js';
 import { getActiveProfile } from '../config/paths.js';
@@ -123,8 +125,9 @@ const AppContentComponent: React.FC<{
   // Manage all modal and selector state
   const modal = useModalState();
 
-  // Track background processes for status line
+  // Track background processes and agents for status line
   const backgroundProcessCount = useBackgroundProcesses();
+  const backgroundAgentCount = useBackgroundAgents();
 
   // Connect auto-allow mode to TrustManager after initialization
   useEffect(() => {
@@ -168,6 +171,12 @@ const AppContentComponent: React.FC<{
 
   // Get input handler functions
   const { handleInput, handleInterjection } = useInputHandlers(commandHandler, activityStream, state, actions);
+
+  // Prod Ally when background tasks complete (only if idle and not interrupted)
+  useBackgroundTaskProd({
+    isThinking: state.isThinking,
+    setIsThinking: actions.setIsThinking,
+  });
 
   // Default agent from config (determines Esc behavior and footer hint)
   const defaultAgent = state.config.default_agent || 'ally';
@@ -1388,10 +1397,10 @@ const AppContentComponent: React.FC<{
                       )
                     );
                   })()}
-                  {backgroundProcessCount > 0 && (
+                  {(backgroundProcessCount + backgroundAgentCount) > 0 && (
                     <Text>
                       {' '}
-                      · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running task{backgroundProcessCount === 1 ? '' : 's'}</Text> (/task list)
+                      · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount + backgroundAgentCount} background task{(backgroundProcessCount + backgroundAgentCount) === 1 ? '' : 's'}</Text> (/task list)
                     </Text>
                   )}
                 </Text>
@@ -1456,10 +1465,10 @@ const AppContentComponent: React.FC<{
                   )
                 );
               })()}
-              {backgroundProcessCount > 0 && (
+              {(backgroundProcessCount + backgroundAgentCount) > 0 && (
                 <Text>
                   {' '}
-                  · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running task{backgroundProcessCount === 1 ? '' : 's'}</Text> (/task list)
+                  · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount + backgroundAgentCount} background task{(backgroundProcessCount + backgroundAgentCount) === 1 ? '' : 's'}</Text> (/task list)
                 </Text>
               )}
             </Text>

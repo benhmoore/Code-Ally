@@ -25,6 +25,7 @@ import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { BashProcessManager } from '../services/BashProcessManager.js';
+import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 import { formatError, createStructuredError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
 import { ID_GENERATION, SYSTEM_REMINDER, TOOL_GUIDANCE } from '../config/constants.js';
@@ -119,7 +120,7 @@ export class ToolOrchestrator {
 
   /**
    * Update the parent call ID for nested tool calls
-   * Used by agent-ask to temporarily reparent tool calls under the current call
+   * Used by prompt-agent to temporarily reparent tool calls under the current call
    *
    * @param parentCallId - New parent call ID
    */
@@ -312,7 +313,7 @@ export class ToolOrchestrator {
         data: {
           toolName: toolCall.function.name,
           arguments: toolCall.function.arguments,
-          visibleInChat: tool?.visibleInChat ?? true,
+          visibleInChat: this.config.isBackgroundExecution ? false : (tool?.visibleInChat ?? true),
           isTransparent: tool?.isTransparentWrapper || false,
           collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
           shouldCollapse,
@@ -749,7 +750,7 @@ export class ToolOrchestrator {
         data: {
           toolName,
           arguments: args,
-          visibleInChat: tool?.visibleInChat ?? true,
+          visibleInChat: this.config.isBackgroundExecution ? false : (tool?.visibleInChat ?? true),
           isTransparent: tool?.isTransparentWrapper || false,
           collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
           shouldCollapse, // Collapse after completion (for AgentTool)
@@ -1032,9 +1033,28 @@ export class ToolOrchestrator {
           }
         }
 
+        // Inject background agent reminders into every tool result
+        // This ensures the agent is always aware of running background agents
+        const agentManager = registry.get<BackgroundAgentManager>('background_agent_manager');
+        if (agentManager) {
+          const agentReminders = agentManager.getStatusReminders();
+          if (agentReminders.length > 0) {
+            const reminderText = agentReminders.join('\n');
+            // Append to existing system_reminder if present, otherwise create new one
+            if (result.system_reminder) {
+              result.system_reminder += '\n\n' + reminderText;
+            } else {
+              result.system_reminder = reminderText;
+            }
+            // Reminders are ephemeral by default (cleaned up after each turn)
+            result.system_reminder_persist = false;
+          }
+        }
+
         // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START (except permission denial or validation failure)
         // Show silent tools in chat if they error (for debugging)
-        const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
+        // Background agents always hide their tool calls from the main UI
+        const shouldShowInChat = this.config.isBackgroundExecution ? false : (!result.success || (tool?.visibleInChat ?? true));
 
         this.emitEvent({
           id,

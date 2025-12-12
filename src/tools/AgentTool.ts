@@ -29,6 +29,7 @@ import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
 import { extractSummaryFromConversation } from '../utils/agentUtils.js';
 import { FormManager } from '../services/FormManager.js';
+import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 
 /**
  * Parameters for agent execution
@@ -42,6 +43,7 @@ interface AgentExecutionParams {
   parentAgentName?: string;
   initialMessages?: Message[];
   contextImages?: string[];
+  runInBackground?: boolean;
 }
 
 /**
@@ -59,6 +61,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output
+  readonly rootOnly = true; // Only visible to root agent when nesting is disabled
   readonly usageGuidance = `**When to use agent:**
 Complex tasks requiring specialized expertise or distinct workflows.
 CRITICAL: Agent CANNOT see current conversation - include ALL context in task_prompt (file paths, errors, requirements).
@@ -157,6 +160,10 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
                 type: 'string',
               },
             },
+            run_in_background: {
+              type: 'boolean',
+              description: 'If true, agent runs in background and returns immediately with agent_id. Use agent-output(agent_id="...") to retrieve results later. Default: false.',
+            },
           },
           required: ['task_prompt'],
         },
@@ -172,6 +179,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
     const contextFiles = args.context_files;
     const contextImages = args.context_images;
+    const runInBackground = args.run_in_background === true;
 
     // Validate task_prompt parameter
     if (!taskPrompt || typeof taskPrompt !== 'string') {
@@ -274,6 +282,18 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       return this.formatErrorResponse(
         `Cannot delegate to agent '${agentType}': maximum nesting depth (${AGENT_CONFIG.MAX_AGENT_DEPTH}) exceeded. Current depth: ${currentDepth}, attempted depth: ${newDepth}. Maximum structure: Ally → Agent1 → Agent2 → Agent3.`,
         'depth_limit_exceeded'
+      );
+    }
+
+    // Prevent sub-agents from delegating further when nesting is disabled
+    // Only the primary agent (depth 0) can delegate to sub-agents
+    // NOTE: This is defense-in-depth. ToolManager also filters rootOnly tools by depth,
+    // but we check here too for explicit error messages and to catch direct API calls.
+    if (!AGENT_CONFIG.ALLOW_AGENT_NESTING && currentDepth >= 1) {
+      return this.formatErrorResponse(
+        `Sub-agents cannot delegate to other agents. Use tools directly instead of delegating to '${agentType}'.`,
+        'delegation_not_allowed',
+        'As a sub-agent, use glob, grep, read, and other tools directly to complete the task.'
       );
     }
 
@@ -410,6 +430,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       parentAgentName: currentAgentName,
       initialMessages,
       contextImages,
+      runInBackground,
     });
   }
 
@@ -417,9 +438,14 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
    * Execute a single agent and format the result
    */
   private async executeSingleAgentWrapper(params: AgentExecutionParams): Promise<ToolResult> {
-    const { agentType, callId, thoroughness } = params;
+    const { agentType, callId, thoroughness, runInBackground } = params;
 
-    logger.debug('[AGENT_TOOL] Executing single agent:', agentType, 'callId:', callId, 'thoroughness:', thoroughness);
+    logger.debug('[AGENT_TOOL] Executing single agent:', agentType, 'callId:', callId, 'thoroughness:', thoroughness, 'background:', runInBackground);
+
+    // Check if background execution is requested
+    if (runInBackground) {
+      return await this.executeBackgroundAgent(params);
+    }
 
     try {
       const result = await this.executeSingleAgent(params);
@@ -435,7 +461,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
         // Always include agent_id when available (with explicit persistence flags)
         if (result.agent_id) {
           successResponse.agent_id = result.agent_id;
-          // PERSIST: false - Ephemeral: Coaching about agent-ask for follow-ups
+          // PERSIST: false - Ephemeral: Coaching about prompt-agent for follow-ups
           // Cleaned up after turn since agent should integrate advice, not need constant reminding
           const reminder = createAgentPersistenceReminder(result.agent_id);
           Object.assign(successResponse, reminder);
@@ -539,6 +565,9 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       const agentModel = agentData.model || config?.model || 'unknown';
 
       // Emit agent start event
+      // Note: executeSingleAgent is only called for foreground execution
+      // Background execution uses executeBackgroundAgent which doesn't emit AGENT_START here
+      // (the Agent itself will emit AGENT_START with isBackground: true via config.isBackgroundExecution)
       this.emitEvent({
         id: callId,
         type: ActivityEventType.AGENT_START,
@@ -547,6 +576,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           agentName: agentType,
           taskPrompt,
           model: agentModel,
+          isBackground: false,
         },
       });
 
@@ -935,20 +965,42 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
   }
 
   /**
-   * Execute a task using the specified agent
+   * Prepare common setup for agent execution
    *
-   * Agents always persist in the agent pool for reuse.
+   * Returns all objects needed for executing an agent (both foreground and background).
    */
-  private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string }> {
-    const { agentData, agentType, taskPrompt, thoroughness, callId, depth, initialMessages, contextImages } = params;
-
-    logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
+  private async prepareAgentExecution(params: {
+    agentData: any;
+    agentType: string;
+    taskPrompt: string;
+    thoroughness: string;
+    callId: string;
+    depth: number;
+    parentAgentName?: string;
+    initialMessages?: Message[];
+  }): Promise<{
+    services: {
+      registry: ServiceRegistry;
+      mainModelClient: ModelClient;
+      toolManager: ToolManager;
+      config: any;
+      configManager: any;
+      permissionManager: any;
+    };
+    modelClient: ModelClient;
+    targetModel: string;
+    maxTokens: number;
+    maxDuration: number;
+    baseConfig: BaseAgentConfig;
+    effectiveToolManager: ToolManager;
+    scopedRegistry: ScopedServiceRegistryProxy;
+    agentConfig: AgentConfig;
+  }> {
+    const { agentData, agentType, taskPrompt, thoroughness, callId, depth, parentAgentName, initialMessages } = params;
 
     // 1. Validate services
     const services = this.validateRequiredServices();
-    const { registry, mainModelClient, toolManager, config, configManager, permissionManager } = services;
-
-    logger.debug('[AGENT_TOOL] Agent depth:', depth);
+    const { registry, mainModelClient, toolManager, config } = services;
 
     // 2. Determine target model and create model client
     const targetModel = agentData.model || config.model;
@@ -968,7 +1020,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
     const maxDuration = getThoroughnessDuration(thoroughness as any) ?? 0;
     logger.debug('[AGENT_TOOL] Set maxDuration to', maxDuration, 'minutes for thoroughness:', thoroughness);
 
-    // 4. Build base config from agent data (computes allowed tools internally)
+    // 4. Build base config from agent data
     const agentManager = registry.get<AgentManager>('agent_manager');
     if (!agentManager) {
       throw new Error('AgentManager not found in registry');
@@ -982,9 +1034,9 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       logger.debug('[AGENT_TOOL] Agent has access to all tools (unrestricted)');
     }
 
-    // 4b. Create filtered ToolManager if tool restrictions apply
-    // This ensures the agent only sees allowed tools (enforced at both ToolManager and ToolOrchestrator levels)
+    // 5. Create filtered ToolManager if agent has restricted tool access
     let filteredToolManager: ToolManager | undefined;
+
     if (baseConfig.allowedTools !== undefined) {
       const allTools = toolManager.getAllTools();
       const allowedToolSet = new Set(baseConfig.allowedTools);
@@ -993,7 +1045,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       logger.debug('[AGENT_TOOL] Created filtered ToolManager with', filteredTools.length, 'tools');
     }
 
-    // Inject FormManager into the effective ToolManager (needed for interactive forms)
+    // Inject FormManager into the effective ToolManager
     const effectiveToolManager = filteredToolManager || toolManager;
     const formManager = registry.get<FormManager>('form_manager');
     if (formManager) {
@@ -1001,28 +1053,267 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       logger.debug('[AGENT_TOOL] FormManager injected into agent ToolManager');
     }
 
-    // 5. Create scoped registry for this agent (NO global mutation!)
-    // This will be stored in the agent and passed to all child tool executions
+    // 6. Create scoped registry for this agent
     const scopedRegistry = new ScopedServiceRegistryProxy(registry);
     logger.debug('[AGENT_TOOL] Created scoped registry for agent:', agentType);
 
-    // 6. Build full agent config with execution-specific fields and scoped registry
+    // 7. Build full agent config with execution-specific fields
     const agentConfig = this.buildAgentConfig({
       baseConfig,
       agentData,
-      taskPrompt, // User's task prompt overrides baseConfig.taskPrompt
+      taskPrompt,
       config,
       callId,
       depth,
       maxDuration,
       thoroughness,
+      parentAgentName,
+      initialMessages,
+    });
+    agentConfig._scopedRegistry = scopedRegistry;
+
+    return {
+      services,
+      modelClient,
+      targetModel,
+      maxTokens,
+      maxDuration,
+      baseConfig,
+      effectiveToolManager,
+      scopedRegistry,
+      agentConfig,
+    };
+  }
+
+  /**
+   * Execute agent in background mode
+   *
+   * Registers with BackgroundAgentManager and returns immediately with agent_id.
+   * Agent execution continues asynchronously.
+   */
+  private async executeBackgroundAgent(params: AgentExecutionParams): Promise<ToolResult> {
+    const { agentType, taskPrompt, thoroughness, callId, depth, parentAgentName, initialMessages, contextImages } = params;
+
+    logger.debug('[AGENT_TOOL] Starting background agent execution:', agentType);
+
+    try {
+      // Get BackgroundAgentManager from ServiceRegistry
+      const registry = ServiceRegistry.getInstance();
+      const backgroundAgentManager = registry.get<BackgroundAgentManager>('background_agent_manager');
+
+      if (!backgroundAgentManager) {
+        return this.formatErrorResponse(
+          'Background agent execution requires BackgroundAgentManager to be registered in ServiceRegistry',
+          'system_error'
+        );
+      }
+
+      // Get agent manager to load agent data
+      const agentManager = this.getAgentManager();
+      const callerForVisibility = parentAgentName === AGENT_TYPES.ALLY ? undefined : parentAgentName;
+      let agentData = await agentManager.loadAgent(agentType, callerForVisibility);
+
+      if (!agentData) {
+        // Fall back to task agent
+        const taskAgentData = await agentManager.loadAgent(AGENT_TYPES.TASK, parentAgentName);
+        if (!taskAgentData) {
+          return this.formatErrorResponse(
+            `Agent '${agentType}' not found and fallback to '${AGENT_TYPES.TASK}' agent also failed`,
+            'system_error',
+            undefined,
+            { agent_used: agentType }
+          );
+        }
+        agentData = { ...taskAgentData, name: agentType };
+      }
+
+      // Check delegation permissions
+      if (parentAgentName) {
+        const currentAgentData = await agentManager.loadAgent(parentAgentName);
+        if (currentAgentData && currentAgentData.can_delegate_to_agents === false) {
+          return this.formatErrorResponse(
+            `Agent '${parentAgentName}' cannot delegate to sub-agents (can_delegate_to_agents: false)`,
+            'permission_denied',
+            undefined,
+            { agent_used: agentType }
+          );
+        }
+      }
+
+      // Prepare agent execution (common setup logic)
+      const {
+        services,
+        modelClient,
+        targetModel,
+        maxDuration,
+        effectiveToolManager,
+        scopedRegistry,
+        agentConfig,
+      } = await this.prepareAgentExecution({
+        agentData,
+        agentType,
+        taskPrompt,
+        thoroughness,
+        callId,
+        depth,
+        parentAgentName,
+        initialMessages,
+      });
+
+      const { config, configManager, permissionManager } = services;
+
+      // Mark as background execution to suppress tool calls from main UI
+      agentConfig.isBackgroundExecution = true;
+
+      // Acquire/create agent
+      const { agent: subAgent, pooledAgent } = await this.acquireOrCreateAgent({
+        agentConfig,
+        toolManager: effectiveToolManager,
+        modelClient,
+        targetModel,
+        config,
+        configManager,
+        permissionManager,
+        agentType,
+      });
+
+      // Register sub-agent in scoped registry
+      scopedRegistry.registerInstance('agent', subAgent);
+
+      // Register delegation if pooled
+      if (pooledAgent) {
+        this.registerDelegation(callId, pooledAgent);
+      }
+
+      // Get parent agent ID for tracking
+      const currentAgent = registry.get<any>('agent');
+      const parentAgentId = currentAgent?.getInstanceId?.();
+
+      // Register with BackgroundAgentManager
+      const bgAgentId = backgroundAgentManager.register(
+        subAgent,
+        taskPrompt,
+        agentType,
+        parentAgentId
+      );
+
+      logger.debug(`[AGENT_TOOL] Background agent registered with ID: ${bgAgentId}`);
+
+      // Process context images if provided
+      let processedImages: string[] | undefined;
+      if (contextImages && contextImages.length > 0) {
+        const endpoint = config.endpoint || 'http://localhost:11434';
+        const capabilitiesIndex = ModelCapabilitiesIndex.getInstance();
+        await capabilitiesIndex.load();
+        const capabilities = capabilitiesIndex.getCapabilities(targetModel, endpoint);
+
+        if (capabilities && capabilities.supportsImages) {
+          try {
+            processedImages = await Promise.all(
+              contextImages.map(async (imagePath) => await fileToBase64(imagePath))
+            );
+            logger.debug(`[AGENT_TOOL] Loaded ${processedImages.length} context images for background agent`);
+          } catch (error) {
+            logger.warn(`[AGENT_TOOL] Failed to load context images: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        }
+      }
+
+      // Fire off execution asynchronously
+      (async () => {
+        try {
+          logger.debug(`[AGENT_TOOL] Starting background execution for ${bgAgentId}`);
+          const finalResponse = await this.executeAgent({
+            agent: subAgent,
+            agentType,
+            taskPrompt,
+            callId,
+            maxDuration,
+            thoroughness,
+            images: processedImages,
+          });
+
+          // Check if the agent was interrupted using its InterruptionManager
+          const interruptionManager = subAgent.getInterruptionManager();
+          if (interruptionManager.wasRequestInterrupted()) {
+            const context = interruptionManager.getInterruptionContext();
+            const errorMessage = context.reason || 'Agent was interrupted';
+            backgroundAgentManager.markError(bgAgentId, errorMessage);
+            logger.debug(`[AGENT_TOOL] Background agent ${bgAgentId} was interrupted: ${errorMessage}`);
+          } else {
+            backgroundAgentManager.markCompleted(bgAgentId, finalResponse);
+            logger.debug(`[AGENT_TOOL] Background agent ${bgAgentId} completed successfully`);
+          }
+        } catch (error) {
+          // Mark as error
+          const errorMessage = `Agent execution failed: ${formatError(error)}`;
+          backgroundAgentManager.markError(bgAgentId, errorMessage);
+          logger.debug(`[AGENT_TOOL] Background agent ${bgAgentId} failed:`, error);
+        } finally {
+          // Cleanup delegation and release agent
+          try {
+            this.activeDelegations.delete(callId);
+            await this.releaseAgent({ pooledAgent, subAgent, callId });
+          } catch (cleanupError) {
+            logger.error(`[AGENT_TOOL] Cleanup failed for background agent ${bgAgentId}:`, cleanupError);
+          }
+        }
+      })();
+
+      // Return immediately with agent_id
+      return this.formatSuccessResponse({
+        agent_id: bgAgentId,
+        status: 'running',
+        message: `Background agent started. Use agent-output(agent_id="${bgAgentId}") to check progress.`,
+        agent_used: agentType,
+      });
+    } catch (error) {
+      const errorType = (error as any)?.error_type || 'execution_error';
+      return this.formatErrorResponse(
+        `Failed to start background agent: ${formatError(error)}`,
+        errorType,
+        undefined,
+        {
+          agent_used: agentType,
+        }
+      );
+    }
+  }
+
+  /**
+   * Execute a task using the specified agent
+   *
+   * Agents always persist in the agent pool for reuse.
+   */
+  private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string }> {
+    const { agentData, agentType, taskPrompt, thoroughness, callId, depth, initialMessages, contextImages } = params;
+
+    logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
+    logger.debug('[AGENT_TOOL] Agent depth:', depth);
+
+    // Prepare agent execution (common setup logic)
+    const {
+      services,
+      modelClient,
+      targetModel,
+      maxDuration,
+      effectiveToolManager,
+      scopedRegistry,
+      agentConfig,
+    } = await this.prepareAgentExecution({
+      agentData,
+      agentType,
+      taskPrompt,
+      thoroughness,
+      callId,
+      depth,
       parentAgentName: params.parentAgentName,
       initialMessages,
     });
-    // Add scoped registry to config (will be stored on agent instance)
-    agentConfig._scopedRegistry = scopedRegistry;
 
-    // 7. Acquire/create agent
+    const { config, configManager, permissionManager } = services;
+
+    // Acquire/create agent
     logger.debug('[AGENT_TOOL] Creating sub-agent with parentCallId:', callId);
     const { agent: subAgent, pooledAgent, agentId } = await this.acquireOrCreateAgent({
       agentConfig,
@@ -1035,7 +1326,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       agentType,
     });
 
-    // 8. Register sub-agent in scoped registry (now that agent instance exists)
+    // Register sub-agent in scoped registry (now that agent instance exists)
     scopedRegistry.registerInstance('agent', subAgent);
     logger.debug('[AGENT_TOOL] Registered sub-agent in scoped registry');
 

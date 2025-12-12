@@ -182,6 +182,12 @@ export abstract class BaseTool {
   readonly visibleTo?: string[];
 
   /**
+   * If true, tool is only visible to the root agent (depth 0), not to delegated agents.
+   * Used for delegation tools (agent, explore, plan, etc.) when ALLOW_AGENT_NESTING is false.
+   */
+  readonly rootOnly: boolean = false;
+
+  /**
    * Whether this tool supports interactive forms
    */
   readonly supportsInteractiveForm: boolean = false;

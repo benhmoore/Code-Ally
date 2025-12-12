@@ -134,6 +134,7 @@ export class PlanTool extends BaseDelegationTool {
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output
+  readonly rootOnly = true; // Only visible to root agent when nesting is disabled
 
   readonly usageGuidance = `**When to use plan:**
 Implementation/refactoring with multiple steps (>3 steps), needs structured approach.
@@ -243,6 +244,10 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
               type: 'string',
               description: 'Planning thoroughness level: "quick" (~1 min, 5-10 tool calls), "medium" (~5 min, 10-15 tool calls), "very thorough" (~10 min, 15-20+ tool calls), "uncapped" (no time limit, default). Controls time budget and depth.',
             },
+            run_in_background: {
+              type: 'boolean',
+              description: 'If true, start planning in background and return immediately. Use agent-output to check progress.',
+            },
           },
           required: ['requirements'],
         },
@@ -255,6 +260,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
 
     const requirements = args.requirements;
     const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
+    const runInBackground = args.run_in_background === true;
 
     // Validate requirements parameter
     if (!requirements || typeof requirements !== 'string') {
@@ -283,7 +289,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
       );
     }
 
-    return await this.executeDelegation(requirements, thoroughness, callId);
+    return await this.executeDelegation(requirements, thoroughness, callId, runInBackground);
   }
 
   /**

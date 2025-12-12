@@ -881,6 +881,14 @@ export const AGENT_CONFIG = {
   MAX_AGENT_DEPTH: 5,
 
   /**
+   * Allow sub-agents to delegate to other agents (nesting)
+   * When false, only the primary agent (Ally) can delegate - sub-agents must use tools directly
+   * This improves visibility into background agent progress and prevents over-delegation
+   * Note: Delegation tools have rootOnly: true which is enforced by ToolManager based on this config
+   */
+  ALLOW_AGENT_NESTING: false,
+
+  /**
    * Maximum cycle depth for same-type agents (how many times same agent can appear in call chain)
    * Example: 2 allows explore → explore (2 occurrences) but blocks explore → explore → explore (3 occurrences)
    */
@@ -918,6 +926,57 @@ export const AGENT_CONFIG = {
 export const AGENT_POOL = {
   /** Default maximum pool size (5 agents, auto-evict least recently used when full) */
   DEFAULT_MAX_SIZE: 5,
+} as const;
+
+// ===========================================
+// BACKGROUND AGENT OUTPUT
+// ===========================================
+
+/**
+ * Configuration for background agent output tool
+ */
+export const BACKGROUND_AGENT_OUTPUT = {
+  /** Number of recent tool calls to show when agent is executing */
+  RECENT_TOOL_CALLS: 5,
+
+  /** Maximum length for tool argument values in output */
+  MAX_ARG_LENGTH: 100,
+
+  /** Maximum length for tool result content in output */
+  MAX_RESULT_LENGTH: 200,
+
+  /** Minimum time to wait for activity before returning (ms) */
+  POLL_MIN_WAIT_MS: 2000,
+
+  /** Max time to wait for new activity if no changes since last check (ms) */
+  POLL_MAX_WAIT_MS: 300000, // 5 minutes
+
+  /** Polling interval when waiting for new activity (ms) */
+  POLL_INTERVAL_MS: 250,
+} as const;
+
+// ===========================================
+// BACKGROUND TASK PROD
+// ===========================================
+
+/**
+ * Configuration for prodding Ally when background tasks complete
+ */
+export const BACKGROUND_TASK_PROD = {
+  /** Debounce time to batch multiple completions (ms) */
+  DEBOUNCE_MS: 500,
+
+  /** Message to send when background agent completes */
+  AGENT_COMPLETE_MESSAGE: '[A background agent has completed. Check the results with agent-output and share relevant findings with the user.]',
+
+  /** Message to send when background agent errors */
+  AGENT_ERROR_MESSAGE: '[A background agent encountered an error. Check with agent-output and inform the user.]',
+
+  /** Message to send when background process completes successfully */
+  PROCESS_COMPLETE_MESSAGE: '[A background process has exited. Check with bash-output if relevant.]',
+
+  /** Message to send when background process errors */
+  PROCESS_ERROR_MESSAGE: '[A background process exited with an error. Check with bash-output and inform the user.]',
 } as const;
 
 // ===========================================
@@ -986,7 +1045,7 @@ export const RESPONSE_LOOP_DETECTOR = {
  * Used by ToolCallDisplay and ConversationView to identify agent delegations
  * Also used to determine when nested tool outputs should be hidden
  */
-export const AGENT_DELEGATION_TOOLS = ['agent', 'manage-agents', 'explore', 'plan', 'sessions', 'agent-ask'] as const;
+export const AGENT_DELEGATION_TOOLS = ['agent', 'manage-agents', 'explore', 'plan', 'sessions', 'prompt-agent'] as const;
 
 // ===========================================
 // THOROUGHNESS LEVELS

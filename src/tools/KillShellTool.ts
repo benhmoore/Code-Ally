@@ -15,7 +15,7 @@ import { formatDuration } from '../ui/utils/timeUtils.js';
 export class KillShellTool extends BaseTool {
   readonly name = 'kill-shell';
   readonly description = 'Terminate a background bash process';
-  readonly requiresConfirmation = true; // Destructive operation
+  readonly requiresConfirmation = false;
   readonly hideOutput = false;
 
   constructor(activityStream: ActivityStream) {

@@ -24,6 +24,6 @@ export { AgentTool } from './AgentTool.js';
 export { ManageAgentsTool } from './ManageAgentsTool.js';
 export { BatchTool } from './BatchTool.js';
 export { TodoWriteTool } from './TodoWriteTool.js';
-export { AgentAskTool } from './AgentAskTool.js';
+export { PromptAgentTool } from './PromptAgentTool.js';
 export { ExploreTool } from './ExploreTool.js';
 export { PlanTool } from './PlanTool.js';

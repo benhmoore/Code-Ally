@@ -402,11 +402,12 @@ export const useActivitySubscriptions = (
   // Agent start
   useActivityEvent(ActivityEventType.AGENT_START, (event) => {
     const isSpecialized = event.data?.isSpecializedAgent || false;
+    const isBackground = event.data?.isBackground || false;
     const agentName = event.data?.agentName;
 
     if (isSpecialized) {
-      // Track sub-agent name if available
-      if (agentName) {
+      // Track sub-agent name if available (skip background agents)
+      if (agentName && !isBackground) {
         actions.addSubAgent(agentName);
       }
     } else {

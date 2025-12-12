@@ -122,7 +122,7 @@ describe('ToolCallDisplay - Child Tool Visibility', () => {
     });
 
     test('all agent delegation tool types should behave identically', () => {
-      const agentTools = ['agent', 'explore', 'plan', 'sessions', 'agent-ask'];
+      const agentTools = ['agent', 'explore', 'plan', 'sessions', 'prompt-agent'];
       const config = undefined;
 
       agentTools.forEach(toolName => {

@@ -27,6 +27,7 @@ import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
+import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
@@ -174,11 +175,13 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
    * @param taskPrompt - The task to delegate
    * @param thoroughness - Thoroughness level
    * @param callId - Unique call identifier
+   * @param runInBackground - If true, start agent in background and return immediately
    */
   protected async executeDelegation(
     taskPrompt: string,
     thoroughness: string,
-    callId: string
+    callId: string,
+    runInBackground: boolean = false
   ): Promise<ToolResult> {
     const config = this.getConfig();
     logger.debug(`[${this.name.toUpperCase()}_TOOL] Starting delegation, callId:`, callId, 'thoroughness:', thoroughness);
@@ -237,7 +240,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         context: `[${this.name.toUpperCase()}_TOOL]`,
       });
 
-      // Emit agent start event
+      // Emit agent start event (mark as background if applicable)
       this.emitEvent({
         id: callId,
         type: ActivityEventType.AGENT_START,
@@ -246,6 +249,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
           agentName: config.agentType,
           taskPrompt: taskPrompt,
           model: targetModel,
+          isBackground: runInBackground,
         },
       });
 
@@ -340,6 +344,21 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
       // This ensures nested tool calls get correct parent without global mutation
       const scopedRegistry = new ScopedServiceRegistryProxy(registry);
       scopedRegistry.registerInstance('agent', delegationAgent);
+
+      // Handle background execution
+      if (runInBackground) {
+        return await this.executeBackgroundDelegation({
+          delegationAgent,
+          pooledAgent,
+          taskPrompt,
+          callId,
+          maxDuration,
+          thoroughness,
+          config,
+          scopedRegistry,
+          registry,
+        });
+      }
 
       try {
         // Execute delegation
@@ -463,6 +482,134 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         { agent_used: config.agentType }
       );
     }
+  }
+
+  /**
+   * Execute delegation in background mode
+   * Returns immediately after starting the agent, execution continues asynchronously
+   */
+  private async executeBackgroundDelegation(params: {
+    delegationAgent: Agent;
+    pooledAgent: PooledAgent | null;
+    taskPrompt: string;
+    callId: string;
+    maxDuration: number | undefined;
+    thoroughness: string;
+    config: DelegationToolConfig;
+    scopedRegistry: ScopedServiceRegistryProxy;
+    registry: ServiceRegistry;
+  }): Promise<ToolResult> {
+    const {
+      delegationAgent,
+      pooledAgent,
+      taskPrompt,
+      callId,
+      maxDuration,
+      thoroughness,
+      config,
+      scopedRegistry,
+      registry,
+    } = params;
+
+    // Get BackgroundAgentManager
+    const backgroundAgentManager = registry.get<BackgroundAgentManager>('background_agent_manager');
+    if (!backgroundAgentManager) {
+      return this.formatErrorResponse(
+        'Background execution requires BackgroundAgentManager to be registered',
+        'system_error'
+      );
+    }
+
+    // Mark as background execution to suppress tool calls from main UI
+    const agentConfig = (delegationAgent as any).config as AgentConfig | undefined;
+    if (agentConfig) {
+      agentConfig.isBackgroundExecution = true;
+    }
+
+    // Get parent agent ID for tracking
+    const currentAgent = registry.get<any>('agent');
+    const parentAgentId = currentAgent?.getInstanceId?.();
+
+    // Register with BackgroundAgentManager
+    const bgAgentId = backgroundAgentManager.register(
+      delegationAgent,
+      taskPrompt,
+      config.agentType,
+      parentAgentId
+    );
+
+    logger.debug(`[${this.name.toUpperCase()}_TOOL] Background agent registered: ${bgAgentId}`);
+
+    // Fire off execution asynchronously
+    (async () => {
+      try {
+        logger.debug(`[${this.name.toUpperCase()}_TOOL] Starting background execution for ${bgAgentId}`);
+        const taskMessage = this.formatTaskMessage(taskPrompt);
+        const response = await delegationAgent.sendMessage(taskMessage, {
+          parentCallId: callId,
+          maxDuration,
+          thoroughness,
+        });
+
+        // Check if agent was interrupted
+        const interruptionManager = delegationAgent.getInterruptionManager();
+        if (interruptionManager.wasRequestInterrupted()) {
+          const context = interruptionManager.getInterruptionContext();
+          const errorMessage = context.reason || 'Agent was interrupted';
+          backgroundAgentManager.markError(bgAgentId, errorMessage);
+          logger.debug(`[${this.name.toUpperCase()}_TOOL] Background agent ${bgAgentId} was interrupted: ${errorMessage}`);
+        } else {
+          // Process response
+          const fallback = config.emptyResponseFallback || 'Operation completed but no summary was provided.';
+          const label = config.summaryLabel || 'Results:';
+
+          let finalResponse: string;
+          if (!response || response.trim().length === 0) {
+            finalResponse = extractSummaryFromConversation(delegationAgent, `[${this.name.toUpperCase()}_TOOL]`, label) || fallback;
+          } else if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
+            const summary = extractSummaryFromConversation(delegationAgent, `[${this.name.toUpperCase()}_TOOL]`, label);
+            finalResponse = (summary && summary.length > response.length) ? summary : response;
+          } else {
+            finalResponse = response;
+          }
+
+          // Post-process response
+          finalResponse = await this.postProcessResponse(finalResponse, config, scopedRegistry);
+
+          backgroundAgentManager.markCompleted(bgAgentId, finalResponse);
+          logger.debug(`[${this.name.toUpperCase()}_TOOL] Background agent ${bgAgentId} completed`);
+        }
+      } catch (error) {
+        const errorMessage = `Agent execution failed: ${formatError(error)}`;
+        backgroundAgentManager.markError(bgAgentId, errorMessage);
+        logger.debug(`[${this.name.toUpperCase()}_TOOL] Background agent ${bgAgentId} failed:`, error);
+      } finally {
+        // Cleanup
+        try {
+          this.activeDelegations.delete(callId);
+          if (pooledAgent) {
+            pooledAgent.release();
+            // Transition delegation to completing
+            const toolManager = registry.get<any>('tool_manager');
+            const delegationManager = toolManager?.getDelegationContextManager();
+            delegationManager?.transitionToCompleting(callId);
+          } else {
+            await delegationAgent.cleanup();
+          }
+          this._currentPooledAgent = null;
+        } catch (cleanupError) {
+          logger.error(`[${this.name.toUpperCase()}_TOOL] Cleanup failed for background agent ${bgAgentId}:`, cleanupError);
+        }
+      }
+    })();
+
+    // Return immediately with agent_id
+    return this.formatSuccessResponse({
+      agent_id: bgAgentId,
+      status: 'running',
+      message: `Background agent started. Use agent-output(agent_id="${bgAgentId}") to check progress.`,
+      agent_used: config.agentType,
+    });
   }
 
   /**

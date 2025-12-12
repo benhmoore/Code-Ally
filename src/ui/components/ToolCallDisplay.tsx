@@ -75,8 +75,8 @@ function formatArgsPreview(args: any, toolName?: string): string {
     }
 
 
-    // Special case: agent_id is shown as part of display name for agent-ask, not in subtext
-    if (toolName === 'agent-ask') {
+    // Special case: agent_id is shown as part of display name for prompt-agent, not in subtext
+    if (toolName === 'prompt-agent') {
       paramsToFilter.add('agent_id');
     }
   }
@@ -303,27 +303,31 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const isAgentDelegation = AGENT_DELEGATION_TOOLS.includes(toolCall.toolName as any);
 
   // Determine display name:
-  // 1. For agent tools: Use agent_type (foundational value) and transform to Title Case
-  // 2. For agent-ask: look up agent from pool and show "Follow Up: {AgentName}"
-  // 3. For tools with custom displayName: use that
-  // 4. Otherwise: auto-format the tool name
+  // 1. For background agent tools: Show "Background Task Started"
+  // 2. For agent tools: Use agent_type (foundational value) and transform to Title Case
+  // 3. For prompt-agent: look up agent from pool and show "Prompt: {AgentName}"
+  // 4. For tools with custom displayName: use that
+  // 5. Otherwise: auto-format the tool name
   let displayName: string;
+  const isBackgroundAgent = isAgentDelegation && toolCall.arguments?.run_in_background === true;
   if (isAgentDelegation) {
-    // Determine agent_type from tool and transform to Title Case
-    let agentType: string;
+    // Determine agent_type: use explicit agent_type arg if provided, otherwise tool name
+    const agentType = toolCall.arguments?.agent_type || toolCall.toolName;
 
-    // For 'agent' tool, check agent_type parameter (or default to 'task')
-    if (toolCall.toolName === 'agent') {
-      agentType = toolCall.arguments?.agent_type || 'task';
-    }
-    // For 'explore' and 'plan' tools, the tool name IS the agent type
-    else {
-      agentType = toolCall.toolName; // 'explore' or 'plan'
-    }
+    // // Previous logic (commented for reference):
+    // let agentType: string;
+    // if (toolCall.toolName === 'agent') {
+    //   agentType = toolCall.arguments?.agent_type || 'task';
+    // } else {
+    //   agentType = toolCall.toolName;
+    // }
 
-    displayName = formatDisplayName(agentType);
-  } else if (toolCall.toolName === 'agent-ask' && toolCall.arguments?.agent_id) {
-    // Special handling for agent-ask: look up agent name from pool
+    // For background agents, append "Started" to indicate async launch
+    displayName = isBackgroundAgent
+      ? `${formatDisplayName(agentType)} Started`
+      : formatDisplayName(agentType);
+  } else if (toolCall.toolName === 'prompt-agent' && toolCall.arguments?.agent_id) {
+    // Special handling for prompt-agent: look up agent name from pool
     try {
       const registry = ServiceRegistry.getInstance();
       const agentPoolService = registry.get<AgentPoolService>('agent_pool');
@@ -334,15 +338,15 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         if (metadata) {
           const agentType = getAgentType(metadata);
           const agentName = getAgentDisplayName(agentType);
-          displayName = `Follow Up: ${agentName}`;
+          displayName = `Prompt: ${agentName}`;
         } else {
-          displayName = 'Follow Up';
+          displayName = 'Prompt';
         }
       } else {
-        displayName = 'Follow Up';
+        displayName = 'Prompt';
       }
     } catch {
-      displayName = 'Follow Up';
+      displayName = 'Prompt';
     }
   } else {
     // Try to get custom displayName from tool instance

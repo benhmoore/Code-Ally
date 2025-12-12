@@ -315,12 +315,12 @@ Stay on task. Use todo-write to update status and mark todos as complete when fi
   // TOOL-SPECIFIC REMINDERS
   // ===========================================
   TOOLS: {
-    /** Agent persistence reminder - encourage agent-ask for follow-ups */
-    // PERSIST: false - Ephemeral: Coaching about agent-ask for follow-ups
+    /** Agent persistence reminder - encourage prompt-agent for follow-ups */
+    // PERSIST: false - Ephemeral: Coaching about prompt-agent for follow-ups
     // Cleaned up after turn since agent should integrate advice, not need constant reminding
     AGENT_PERSISTENCE: {
       text: (agentId: string) =>
-        `Agent persists as ${agentId}. For related follow-ups, USE agent-ask(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`,
+        `Agent persists as ${agentId}. For related follow-ups, USE prompt-agent(agent_id="${agentId}", message="...") - dramatically more efficient than starting fresh. Start new agents only for unrelated problems.`,
       persist: false,
     },
 

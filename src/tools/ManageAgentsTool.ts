@@ -264,6 +264,7 @@ export class ManageAgentsTool extends BaseDelegationTool {
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output
+  readonly rootOnly = true; // Only visible to root agent when nesting is disabled
 
   readonly usageGuidance = `**When to use manage-agents:**
 Create, edit, delete, or list specialized agents for recurring tasks (code review, testing, documentation, etc.).

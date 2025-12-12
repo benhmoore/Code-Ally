@@ -1003,7 +1003,7 @@ You are a complete agent for integration testing.`;
         { name: 'write', execute: async () => ({}), getFunctionDefinition: () => ({}) },
         { name: 'explore', execute: async () => ({}), getFunctionDefinition: () => ({}) },
         { name: 'plan', execute: async () => ({}), getFunctionDefinition: () => ({}) },
-        { name: 'agent-ask', execute: async () => ({}), getFunctionDefinition: () => ({}) },
+        { name: 'prompt-agent', execute: async () => ({}), getFunctionDefinition: () => ({}) },
         { name: 'bash', execute: async () => ({}), getFunctionDefinition: () => ({}) },
       ];
 
@@ -1073,7 +1073,7 @@ You are a complete agent for integration testing.`;
         expect(toolNames).not.toContain('agent');
         expect(toolNames).not.toContain('explore');
         expect(toolNames).not.toContain('plan');
-        expect(toolNames).not.toContain('agent-ask');
+        expect(toolNames).not.toContain('prompt-agent');
 
         // Should still include other tools
         expect(toolNames).toContain('read');

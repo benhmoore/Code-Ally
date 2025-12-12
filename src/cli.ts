@@ -89,6 +89,14 @@ async function cleanExit(code: number = 0): Promise<void> {
       await bashProcessManager.shutdown();
     }
 
+    // Shutdown background agents if manager exists
+    // Note: shutdown() is synchronous (signals interrupt, clears map) but we match
+    // the bash manager pattern for consistency. Both are best-effort on quick exit.
+    const backgroundAgentManager = registry.get<any>('background_agent_manager');
+    if (backgroundAgentManager && typeof backgroundAgentManager.shutdown === 'function') {
+      backgroundAgentManager.shutdown();
+    }
+
     await registry.shutdown();
   } catch (error) {
     // Ignore errors during shutdown - already exiting
@@ -908,6 +916,11 @@ async function main() {
     const bashProcessManager = new BashProcessManager(10); // Max 10 background processes
     registry.registerInstance('bash_process_manager', bashProcessManager);
 
+    // Create background agent manager for background agent execution
+    const { BackgroundAgentManager } = await import('./services/BackgroundAgentManager.js');
+    const backgroundAgentManager = new BackgroundAgentManager(activityStream, 5); // Max 5 background agents
+    registry.registerInstance('background_agent_manager', backgroundAgentManager);
+
     // Create project context detector
     const { ProjectContextDetector } = await import('./services/ProjectContextDetector.js');
     const projectContextDetector = new ProjectContextDetector(process.cwd());
@@ -935,7 +948,7 @@ async function main() {
     const { ManageAgentsTool } = await import('./tools/ManageAgentsTool.js');
     const { ExploreTool } = await import('./tools/ExploreTool.js');
     const { PlanTool } = await import('./tools/PlanTool.js');
-    const { AgentAskTool } = await import('./tools/AgentAskTool.js');
+    const { PromptAgentTool } = await import('./tools/PromptAgentTool.js');
     const { BatchTool } = await import('./tools/BatchTool.js');
     const { CleanupCallTool } = await import('./tools/CleanupCallTool.js');
     const { TodoWriteTool } = await import('./tools/TodoWriteTool.js');
@@ -943,6 +956,8 @@ async function main() {
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
     const { AskUserQuestionTool } = await import('./tools/AskUserQuestionTool.js');
+    const { AgentOutputTool } = await import('./tools/AgentOutputTool.js');
+    const { KillAgentTool } = await import('./tools/KillAgentTool.js');
 
     const tools = [
       new BashTool(activityStream, config),
@@ -965,7 +980,7 @@ async function main() {
       new ManageAgentsTool(activityStream),
       new ExploreTool(activityStream),
       new PlanTool(activityStream),
-      new AgentAskTool(activityStream),
+      new PromptAgentTool(activityStream),
       new BatchTool(activityStream),
       new CleanupCallTool(activityStream),
       new TodoWriteTool(activityStream), // Unified todo management
@@ -973,6 +988,8 @@ async function main() {
       new LintTool(activityStream),
       new FormatTool(activityStream),
       new AskUserQuestionTool(activityStream), // Interactive user questions
+      new AgentOutputTool(activityStream), // Read output from background agents
+      new KillAgentTool(activityStream), // Kill background agents
     ];
 
     // Load user plugins from profile-specific plugins directory
@@ -993,6 +1010,10 @@ async function main() {
         // Shutdown background bash processes first (before registry shutdown)
         await bashProcessManager.shutdown();
         logger.debug('[CLI] Background bash processes terminated');
+
+        // Shutdown background agents
+        backgroundAgentManager.shutdown();
+        logger.debug('[CLI] Background agents terminated');
 
         // Flush pending session saves before exit
         await registry.shutdown();

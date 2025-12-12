@@ -17,7 +17,7 @@ import { logger } from '../services/Logger.js';
 import { validateToolName } from '../utils/namingValidation.js';
 import { DelegationContextManager } from '../services/DelegationContextManager.js';
 import { isInjectableTool } from './InjectableTool.js';
-import { AGENT_DELEGATION_TOOLS } from '../config/constants.js';
+import { AGENT_DELEGATION_TOOLS, AGENT_CONFIG } from '../config/constants.js';
 import { ConversationManager } from '../agent/ConversationManager.js';
 
 /**
@@ -87,8 +87,8 @@ export class ToolManager {
    * Finds the deepest 'executing' delegation for interjection routing.
    * Only routes to actively executing agents, NOT completing/dying agents.
    *
-   * NOTE: agent-ask is intentionally excluded - interjections should route
-   * to the main agent, not the queried subagent, since agent-ask is just
+   * NOTE: prompt-agent is intentionally excluded - interjections should route
+   * to the main agent, not the queried subagent, since prompt-agent is just
    * querying for information while the main conversation continues.
    *
    * @returns {tool: BaseTool, name: string, callId: string} if found, undefined otherwise
@@ -200,9 +200,10 @@ export class ToolManager {
    * @param excludeTools - Optional list of tool names to exclude
    * @param currentAgentName - Optional current agent name for visible_to filtering
    * @param allowedTools - Optional list of tool names to ALLOW (if specified, ONLY these tools are included)
+   * @param agentDepth - Optional agent depth for rootOnly filtering (0 = root, >0 = delegated)
    * @returns List of function definitions for LLM function calling
    */
-  getFunctionDefinitions(excludeTools?: string[], currentAgentName?: string, allowedTools?: string[]): FunctionDefinition[] {
+  getFunctionDefinitions(excludeTools?: string[], currentAgentName?: string, allowedTools?: string[], agentDepth?: number): FunctionDefinition[] {
     // Get active plugins from PluginActivationManager
     let activePlugins: Set<string> | null = null;
     try {
@@ -215,9 +216,9 @@ export class ToolManager {
       activePlugins = null;
     }
 
-    // Generate cache key based on plugin activation state, agent name, and allowed tools
+    // Generate cache key based on plugin activation state, agent name, allowed tools, and depth
     // This ensures cached results match the current activation state and agent context
-    const cacheKey = this.generateCacheKey(activePlugins, excludeTools, currentAgentName, allowedTools);
+    const cacheKey = this.generateCacheKey(activePlugins, excludeTools, currentAgentName, allowedTools, agentDepth);
 
     // Check cache with activation-aware key
     if (this.functionDefinitionsCache.has(cacheKey)) {
@@ -260,6 +261,13 @@ export class ToolManager {
         }
       }
 
+      // Filter rootOnly tools from delegated agents (depth > 0) when nesting is disabled
+      // This prevents sub-agents from delegating to other agents
+      if (tool.rootOnly && !AGENT_CONFIG.ALLOW_AGENT_NESTING && agentDepth !== undefined && agentDepth > 0) {
+        filteredByAgent.push(tool.name);
+        continue;
+      }
+
       const functionDef = this.generateFunctionDefinition(tool);
       functionDefs.push(functionDef);
       visibleTools.push(tool.name);
@@ -279,19 +287,21 @@ export class ToolManager {
   }
 
   /**
-   * Generate a cache key based on active plugins, excluded tools, and agent name
+   * Generate a cache key based on active plugins, excluded tools, agent name, and depth
    *
    * The cache key includes the sorted list of active plugins to ensure that
    * cached function definitions match the current plugin activation state.
    * This prevents returning cached definitions that include deactivated plugins.
-   * Also includes agent name to ensure tools are filtered based on visible_to.
+   * Also includes agent name and depth to ensure tools are filtered correctly.
    *
    * @param activePlugins - Set of active plugin names (null if no plugin system)
    * @param excludeTools - Optional list of tool names to exclude
    * @param currentAgentName - Optional current agent name for visible_to filtering
+   * @param allowedTools - Optional list of tool names to ALLOW
+   * @param agentDepth - Optional agent depth for rootOnly filtering
    * @returns Cache key string
    */
-  private generateCacheKey(activePlugins: Set<string> | null, excludeTools?: string[], currentAgentName?: string, allowedTools?: string[]): string {
+  private generateCacheKey(activePlugins: Set<string> | null, excludeTools?: string[], currentAgentName?: string, allowedTools?: string[], agentDepth?: number): string {
     const parts: string[] = [];
 
     // Include active plugins in key (sorted for consistency)
@@ -317,6 +327,9 @@ export class ToolManager {
     if (currentAgentName) {
       parts.push(`agent:${currentAgentName}`);
     }
+
+    // Include agent depth in key for rootOnly filtering (default 0 for root agent)
+    parts.push(`depth:${agentDepth ?? 0}`);
 
     return parts.join('|');
   }

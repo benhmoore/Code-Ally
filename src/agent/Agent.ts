@@ -136,7 +136,7 @@ export interface AgentConfig {
    */
   maxDuration?: number;
   /**
-   * Dynamic thoroughness level for agent execution (for regeneration in agent-ask): 'quick', 'medium', 'very thorough', 'uncapped'
+   * Dynamic thoroughness level for agent execution (for regeneration in prompt-agent): 'quick', 'medium', 'very thorough', 'uncapped'
    * @deprecated Use execution context parameter in sendMessage() instead.
    *             This property is maintained for backward compatibility but will
    *             be removed in a future version. Pass via AgentExecutionContext.
@@ -158,6 +158,8 @@ export interface AgentConfig {
   agentCallStack?: string[];
   /** Internal: Scoped registry for this agent (shadows global for 'agent' key to prevent race conditions) */
   _scopedRegistry?: any; // ScopedServiceRegistryProxy - typed as 'any' to avoid circular dependency
+  /** Whether this agent is running in background mode (tool calls hidden from main UI) */
+  isBackgroundExecution?: boolean;
 }
 
 /**
@@ -484,7 +486,7 @@ export class Agent {
   }
 
   /**
-   * Get the tool orchestrator (used by agent-ask to update parent call ID)
+   * Get the tool orchestrator (used by prompt-agent to update parent call ID)
    */
   getToolOrchestrator(): ToolOrchestrator {
     return this.toolOrchestrator;
@@ -934,6 +936,7 @@ export class Agent {
       data: {
         message,
         isSpecializedAgent: this.config.isSpecializedAgent || false,
+        isBackground: this.config.isBackgroundExecution || false,
         instanceId: this.instanceId,
         agentName: this.config.agentType || 'ally',
       },
@@ -1151,7 +1154,7 @@ export class Agent {
 
   /**
    * Set the maximum duration for this agent in minutes
-   * Allows updating the time budget for individual turns (e.g., in agent-ask)
+   * Allows updating the time budget for individual turns (e.g., in prompt-agent)
    * @param minutes - Maximum duration in minutes
    */
   setMaxDuration(minutes: number | undefined): void {
@@ -1160,7 +1163,7 @@ export class Agent {
 
   /**
    * Set the thoroughness level for this agent
-   * Used by agent-ask to update thoroughness for follow-up interactions
+   * Used by prompt-agent to update thoroughness for follow-up interactions
    * @param thoroughness - Thoroughness level: 'quick', 'medium', 'very thorough', or 'uncapped'
    */
   setThoroughness(thoroughness: string | undefined): void {
@@ -1196,7 +1199,8 @@ export class Agent {
     const functions = this.toolManager.getFunctionDefinitions(
       excludeTools.length > 0 ? excludeTools : undefined,
       this.agentName,  // Pass agent name for visible_to filtering
-      this.config.allowedTools  // Pass allowed tools list for restriction
+      this.config.allowedTools,  // Pass allowed tools list for restriction
+      this.agentDepth  // Pass agent depth for rootOnly filtering
     );
 
     // Generate or regenerate system prompt with current context (todos, etc.) before each LLM call

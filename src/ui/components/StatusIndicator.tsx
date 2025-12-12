@@ -48,15 +48,15 @@ interface StatusIndicatorProps {
  * Returns agent name if any agent tool is currently executing, null otherwise
  *
  * Handles both:
- * - agent-ask: Background consultation (extracts agent_id, looks up in pool)
+ * - prompt-agent: Background consultation (extracts agent_id, looks up in pool)
  * - agent: Direct invocation (extracts agent_type from arguments)
  *
  * This shows "Working with [AgentName]..." for any agent execution.
  */
 const getActiveAgentName = (toolCalls: ToolCallState[]): string | null => {
-  // Check for agent-ask tool first
+  // Check for prompt-agent tool first
   const activeAskAgentTool = toolCalls.find(tc =>
-    tc.status === 'executing' && tc.toolName === 'agent-ask'
+    tc.status === 'executing' && tc.toolName === 'prompt-agent'
   );
 
   if (activeAskAgentTool) {
@@ -89,9 +89,11 @@ const getActiveAgentName = (toolCalls: ToolCallState[]): string | null => {
     }
   }
 
-  // Check for direct agent tool invocation
+  // Check for direct agent tool invocation (exclude background agents)
   const activeAgentTool = toolCalls.find(tc =>
-    tc.status === 'executing' && tc.toolName === 'agent'
+    tc.status === 'executing' &&
+    tc.toolName === 'agent' &&
+    tc.arguments?.run_in_background !== true // Skip background agents
   );
 
   if (activeAgentTool) {
@@ -103,6 +105,17 @@ const getActiveAgentName = (toolCalls: ToolCallState[]): string | null => {
 
     // Get display name for this agent type
     return getAgentDisplayName(agentType);
+  }
+
+  // Check for explore/plan tools (exclude background)
+  const activeDelegationTool = toolCalls.find(tc =>
+    tc.status === 'executing' &&
+    (tc.toolName === 'explore' || tc.toolName === 'plan') &&
+    tc.arguments?.run_in_background !== true
+  );
+
+  if (activeDelegationTool) {
+    return getAgentDisplayName(activeDelegationTool.toolName);
   }
 
   return null;
@@ -421,7 +434,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   // Use elapsed seconds from state
   const elapsed = elapsedSeconds;
 
-  // Detect if we're working with an agent (agent-ask or direct agent tool)
+  // Detect if we're working with an agent (prompt-agent or direct agent tool)
   const activeAgentName = getActiveAgentName(activeToolCalls);
 
   // Show cancelling status if cancelling (highest priority)
