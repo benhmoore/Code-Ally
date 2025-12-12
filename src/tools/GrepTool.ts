@@ -10,6 +10,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { FocusManager } from '../services/FocusManager.js';
+import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateExists } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -369,6 +370,16 @@ WARNING: Multi-step investigations (grep → read → grep → read) rapidly fil
           matchesByFile[match.file] = (matchesByFile[match.file] || 0) + 1;
         }
         responseData.matches_by_file = matchesByFile;
+
+        // Track reads for content mode - full lines were displayed
+        const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+        if (readStateManager) {
+          for (const match of matches) {
+            const startLine = match.line - (match.before?.length || 0);
+            const endLine = match.line + (match.after?.length || 0);
+            readStateManager.trackRead(match.file, startLine, endLine);
+          }
+        }
       }
 
       responseData.content = content;

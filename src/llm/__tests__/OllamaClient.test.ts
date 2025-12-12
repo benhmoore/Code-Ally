@@ -327,9 +327,9 @@ describe('OllamaClient', () => {
 
       const result = await client.send(messages, { stream: false });
 
-      // Should have repaired the missing id
+      // Should have generated a unique id (always regenerated to prevent duplicates)
       expect(result.tool_calls).toBeDefined();
-      expect(result.tool_calls![0].id).toMatch(/^repaired-/);
+      expect(result.tool_calls![0].id).toMatch(/^call-\d+-0-[a-z0-9]+$/);
     });
 
     it('should parse string arguments in tool calls', async () => {
@@ -445,6 +445,116 @@ describe('OllamaClient', () => {
       expect(result.validation_errors!.length).toBeGreaterThan(0);
       expect(result.tool_calls).toBeDefined(); // Malformed calls included
       expect(mockFetch).toHaveBeenCalledTimes(1); // No retry - Agent handles continuation
+    });
+
+    it('should generate unique IDs even when LLM provides duplicate IDs', async () => {
+      // LLMs can reuse IDs across responses (e.g., functions.glob:4 twice)
+      // We must always generate unique IDs to prevent duplicates
+
+      // First response with LLM-provided ID
+      const response1 = {
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'functions.glob:4', // LLM's ID
+              type: 'function',
+              function: {
+                name: 'glob',
+                arguments: { pattern: '**/*.ts' },
+              },
+            },
+          ],
+        },
+      };
+
+      // Second response with SAME LLM-provided ID (this was causing crashes)
+      const response2 = {
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'functions.glob:4', // Same ID - would cause duplicate error
+              type: 'function',
+              function: {
+                name: 'glob',
+                arguments: { pattern: '**/*.yaml' },
+              },
+            },
+          ],
+        },
+      };
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => response1,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => response2,
+        });
+
+      const messages: Message[] = [{ role: 'user', content: 'Test' }];
+
+      const result1 = await client.send(messages, { stream: false });
+      const result2 = await client.send(messages, { stream: false });
+
+      // Both should have generated unique IDs
+      expect(result1.tool_calls).toBeDefined();
+      expect(result2.tool_calls).toBeDefined();
+      expect(result1.tool_calls![0].id).toMatch(/^call-\d+-0-[a-z0-9]+$/);
+      expect(result2.tool_calls![0].id).toMatch(/^call-\d+-0-[a-z0-9]+$/);
+
+      // IDs must be different (the fix prevents duplicates)
+      expect(result1.tool_calls![0].id).not.toBe(result2.tool_calls![0].id);
+    });
+
+    it('should generate unique IDs for multiple tool calls in same response', async () => {
+      const response = {
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'functions.glob:1',
+              type: 'function',
+              function: { name: 'glob', arguments: { pattern: '**/*.ts' } },
+            },
+            {
+              id: 'functions.glob:2',
+              type: 'function',
+              function: { name: 'glob', arguments: { pattern: '**/*.yaml' } },
+            },
+            {
+              id: 'functions.glob:3',
+              type: 'function',
+              function: { name: 'glob', arguments: { pattern: '**/*.json' } },
+            },
+          ],
+        },
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => response,
+      });
+
+      const result = await client.send([{ role: 'user', content: 'Test' }], { stream: false });
+
+      expect(result.tool_calls).toHaveLength(3);
+
+      // Each should have a unique ID with correct index
+      const ids = result.tool_calls!.map(tc => tc.id);
+      const uniqueIds = new Set(ids);
+      expect(uniqueIds.size).toBe(3); // All unique
+
+      // IDs should include their index
+      expect(ids[0]).toMatch(/^call-\d+-0-[a-z0-9]+$/);
+      expect(ids[1]).toMatch(/^call-\d+-1-[a-z0-9]+$/);
+      expect(ids[2]).toMatch(/^call-\d+-2-[a-z0-9]+$/);
     });
 
   });

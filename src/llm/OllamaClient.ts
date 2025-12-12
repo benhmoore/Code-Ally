@@ -801,10 +801,11 @@ export class OllamaClient extends ModelClient {
     const errors: string[] = [];
     const repaired: any = { ...call };
 
-    // Repair missing/invalid ID
-    if (!repaired.id || typeof repaired.id !== 'string') {
-      repaired.id = `repaired-${Date.now()}-${index}`;
-    }
+    // ALWAYS generate a unique ID to prevent duplicates from LLM
+    // LLMs don't maintain state across responses and can reuse IDs (e.g., functions.glob:4)
+    // Using timestamp + random suffix ensures uniqueness across the entire session
+    const random = Math.random().toString(36).substring(2, 9);
+    repaired.id = `call-${Date.now()}-${index}-${random}`;
 
     // Repair missing type
     if (!repaired.type) {
