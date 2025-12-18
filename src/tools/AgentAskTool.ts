@@ -14,7 +14,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { AgentPoolService, AgentMetadata, PooledAgent } from '../services/AgentPoolService.js';
@@ -222,6 +222,17 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
       agent.setThoroughness(thoroughness);
       logger.debug('[ASK_AGENT_TOOL] Set agent maxDuration to', maxDuration, 'minutes and thoroughness to', thoroughness);
 
+      // Emit agent start event
+      this.emitEvent({
+        id: callId,
+        type: ActivityEventType.AGENT_START,
+        timestamp: Date.now(),
+        data: {
+          agentName: 'agent-ask',
+          taskPrompt: message,
+        },
+      });
+
       // Save original parent call ID and temporarily update to current call ID
       // This ensures tool calls made by the agent nest under the current agent-ask call
       const orchestrator = agent.getToolOrchestrator();
@@ -232,23 +243,11 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
         orchestrator.setParentCallId(callId);
         logger.debug('[ASK_AGENT_TOOL] Updated agent parent call ID from', originalParentCallId, 'to', callId);
 
-        // Send message to agent
+        // Send message to agent with parentCallId in execution context
+        // This ensures tool calls are nested under this agent-ask call in the UI
         logger.debug('[ASK_AGENT_TOOL] Sending message to agent:', agentId);
-        const response = await agent.sendMessage(message);
+        const response = await agent.sendMessage(message, { parentCallId: callId });
         logger.debug('[ASK_AGENT_TOOL] Agent response received, length:', response?.length || 0);
-
-        // Check if the response indicates permission denial or interruption
-        // In these cases, report failure to the parent agent so it knows the task didn't complete
-        if (
-          response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
-          response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION
-        ) {
-          logger.debug('[ASK_AGENT_TOOL] Agent was interrupted or permission denied:', response);
-          return this.formatErrorResponse(
-            response,
-            'permission_denied'
-          );
-        }
 
         let finalResponse: string;
 
@@ -266,6 +265,31 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
         }
 
         const duration = (Date.now() - startTime) / 1000;
+
+        // Emit agent end event
+        this.emitEvent({
+          id: callId,
+          type: ActivityEventType.AGENT_END,
+          timestamp: Date.now(),
+          data: {
+            agentName: 'agent-ask',
+            result: finalResponse,
+            duration,
+          },
+        });
+
+        // Check if the response indicates permission denial or interruption
+        // In these cases, report failure to the parent agent so it knows the task didn't complete
+        if (
+          response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
+          response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION
+        ) {
+          logger.debug('[ASK_AGENT_TOOL] Agent was interrupted or permission denied:', response);
+          return this.formatErrorResponse(
+            response,
+            'permission_denied'
+          );
+        }
 
         // Build context reminder with original task
         const taskContext = this.buildTaskContext(metadata);
@@ -302,6 +326,20 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
         this.currentPooledAgent = null;
       }
     } catch (error) {
+      const duration = (Date.now() - startTime) / 1000;
+
+      // Emit agent end event for error path
+      this.emitEvent({
+        id: callId,
+        type: ActivityEventType.AGENT_END,
+        timestamp: Date.now(),
+        data: {
+          agentName: 'agent-ask',
+          result: `Error: ${formatError(error)}`,
+          duration,
+        },
+      });
+
       return this.formatErrorResponse(
         `Failed to send message to agent: ${formatError(error)}`,
         'execution_error'

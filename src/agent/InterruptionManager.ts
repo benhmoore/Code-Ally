@@ -100,10 +100,13 @@ export class InterruptionManager {
     this.interrupted = true;
     this.interruptionType = type;
 
-    // Abort ongoing tool executions for full cancellation
-    if (type === 'cancel' && this.toolAbortController) {
-      this.toolAbortController.abort();
-      this.toolAbortController = undefined;
+    // Ensure abort controller exists before aborting
+    if (type === 'cancel') {
+      this.ensureAbortController();
+      if (this.toolAbortController) {
+        this.toolAbortController.abort();
+        this.toolAbortController = undefined;
+      }
     }
   }
 
@@ -153,6 +156,18 @@ export class InterruptionManager {
   }
 
   /**
+   * Ensure abort controller exists
+   *
+   * Creates the controller if it doesn't exist. This ensures an interrupt
+   * can abort even if it arrives before startToolExecution() is called.
+   */
+  private ensureAbortController(): void {
+    if (!this.toolAbortController) {
+      this.toolAbortController = new AbortController();
+    }
+  }
+
+  /**
    * Start tool execution by creating a fresh AbortController
    *
    * Call this at the beginning of each tool execution batch.
@@ -161,8 +176,8 @@ export class InterruptionManager {
    * @returns AbortSignal for the tool execution
    */
   startToolExecution(): AbortSignal {
-    this.toolAbortController = new AbortController();
-    return this.toolAbortController.signal;
+    this.ensureAbortController();
+    return this.toolAbortController!.signal;
   }
 
   /**

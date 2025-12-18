@@ -212,6 +212,13 @@ export class AgentPoolService implements IService {
             agent.resetForReuse();
             logger.debug(`[AGENT_POOL] Reset agent state for reused agent ${reserved.metadata.agentId}`);
           }
+
+          // Reset interrupt state from previous executions
+          const interruptionManager = agent.getInterruptionManager?.();
+          if (interruptionManager && typeof interruptionManager.reset === 'function') {
+            interruptionManager.reset();
+            logger.debug(`[AGENT_POOL] Reset interruption state for reused agent ${reserved.metadata.agentId}`);
+          }
         } catch (error) {
           logger.warn(
             `[AGENT_POOL] Failed to reset agent state for agent ${reserved.metadata.agentId}:`,
