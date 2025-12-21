@@ -1275,6 +1275,13 @@ export class Agent {
       data: { text: 'Thinking...', thinking: true },
     });
 
+    // Check for interruption before sending to LLM
+    // This catches interrupts that occurred during prompt regeneration or auto-compaction
+    if (this.interruptionManager.isInterrupted()) {
+      logger.debug('[AGENT]', this.instanceId, 'Interrupted before LLM send - aborting');
+      return { role: 'assistant', content: '', tool_calls: [], interrupted: true };
+    }
+
     try {
       // Calculate dynamic max output tokens based on remaining context
       const remainingTokens = this.tokenManager.getRemainingTokens();

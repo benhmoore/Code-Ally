@@ -591,10 +591,11 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
           this.activeDelegations.delete(callId);
           if (pooledAgent) {
             pooledAgent.release();
-            // Transition delegation to completing
+            // Transition delegation to completing and clear from context
             const toolManager = registry.get<any>('tool_manager');
             const delegationManager = toolManager?.getDelegationContextManager();
             delegationManager?.transitionToCompleting(callId);
+            delegationManager?.clear(callId);
           } else {
             await delegationAgent.cleanup();
           }

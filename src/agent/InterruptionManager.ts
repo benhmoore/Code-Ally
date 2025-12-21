@@ -194,15 +194,10 @@ export class InterruptionManager {
   /**
    * Clean up request state after completion or error
    *
-   * Resets all interruption state for the next request.
+   * Delegates to reset() to avoid code duplication.
+   * Kept as separate method for semantic clarity at call sites.
    */
   cleanup(): void {
-    this.interrupted = false;
-    this.interruptionType = null;
-    this.interruptionContext = {
-      reason: '',
-      isTimeout: false,
-    };
-    // Note: toolAbortController is cleared when used or when interrupted
+    this.reset();
   }
 }
