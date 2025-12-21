@@ -8,7 +8,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { AgentPoolService, AgentMetadata, PooledAgent } from '../services/AgentPoolService.js';
@@ -265,6 +265,17 @@ The tool auto-detects agent state - no need to track which tool to use.`;
       agent.setThoroughness(thoroughness);
       logger.debug('[PROMPT_AGENT_TOOL] Set agent maxDuration to', maxDuration, 'minutes and thoroughness to', thoroughness);
 
+      // Emit agent start event
+      this.emitEvent({
+        id: callId,
+        type: ActivityEventType.AGENT_START,
+        timestamp: Date.now(),
+        data: {
+          agentName: 'agent-ask',
+          taskPrompt: message,
+        },
+      });
+
       // Save original parent call ID and temporarily update to current call ID
       // This ensures tool calls made by the agent nest under the current prompt-agent call
       const orchestrator = agent.getToolOrchestrator();
@@ -275,9 +286,10 @@ The tool auto-detects agent state - no need to track which tool to use.`;
         orchestrator.setParentCallId(callId);
         logger.debug('[PROMPT_AGENT_TOOL] Updated agent parent call ID from', originalParentCallId, 'to', callId);
 
-        // Send message to agent
+        // Send message to agent with parentCallId in execution context
+        // This ensures tool calls are nested under this prompt-agent call in the UI
         logger.debug('[PROMPT_AGENT_TOOL] Sending message to agent:', agentId);
-        const response = await agent.sendMessage(message);
+        const response = await agent.sendMessage(message, { parentCallId: callId });
         logger.debug('[PROMPT_AGENT_TOOL] Agent response received, length:', response?.length || 0);
 
         // Check if the response indicates permission denial or interruption
@@ -292,6 +304,7 @@ The tool auto-detects agent state - no need to track which tool to use.`;
             'permission_denied'
           );
         }
+
 
         let finalResponse: string;
 
@@ -309,6 +322,18 @@ The tool auto-detects agent state - no need to track which tool to use.`;
         }
 
         const duration = (Date.now() - startTime) / 1000;
+
+        // Emit agent end event
+        this.emitEvent({
+          id: callId,
+          type: ActivityEventType.AGENT_END,
+          timestamp: Date.now(),
+          data: {
+            agentName: 'agent-ask',
+            result: finalResponse,
+            duration,
+          },
+        });
 
         // Build context reminder with original task
         const taskContext = this.buildTaskContext(metadata);
@@ -346,6 +371,20 @@ The tool auto-detects agent state - no need to track which tool to use.`;
         this.currentPooledAgent = null;
       }
     } catch (error) {
+      const duration = (Date.now() - startTime) / 1000;
+
+      // Emit agent end event for error path
+      this.emitEvent({
+        id: callId,
+        type: ActivityEventType.AGENT_END,
+        timestamp: Date.now(),
+        data: {
+          agentName: 'agent-ask',
+          result: `Error: ${formatError(error)}`,
+          duration,
+        },
+      });
+
       return this.formatErrorResponse(
         `Failed to send message to agent: ${formatError(error)}`,
         'execution_error'

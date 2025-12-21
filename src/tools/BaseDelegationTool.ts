@@ -448,6 +448,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
             const delegationManager = toolManager?.getDelegationContextManager();
             if (delegationManager) {
               delegationManager.transitionToCompleting(callId);
+              delegationManager.clear(callId);
               logger.debug(`[${this.name.toUpperCase()}_TOOL] Transitioned delegation to completing: callId=${callId}`);
             }
           } catch (error) {
@@ -466,6 +467,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
             const delegationManager = toolManager?.getDelegationContextManager();
             if (delegationManager) {
               delegationManager.transitionToCompleting(callId);
+              delegationManager.clear(callId);
               logger.debug(`[${this.name.toUpperCase()}_TOOL] Transitioned delegation to completing: callId=${callId}`);
             }
           } catch (error) {
