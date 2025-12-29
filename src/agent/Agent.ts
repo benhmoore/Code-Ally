@@ -737,20 +737,20 @@ export class Agent {
    * Prevents double interruption and sets appropriate context
    */
   private handleInterruptionEvent(tag: string, reason: string, isTimeout: boolean): void {
-    if (this.interruptionManager.isInterrupted()) {
-      logger.debug(tag, this.instanceId, 'Already interrupted, skipping handler');
-      return;
-    }
+    const alreadyInterrupted = this.interruptionManager.isInterrupted();
 
     logger.debug(tag, this.instanceId, reason);
 
+    // Always update context - later detection may have more specific reason
     this.interruptionManager.setInterruptionContext({
       reason,
       isTimeout,
       canContinueAfterTimeout: true,
     });
 
-    this.interrupt();
+    if (!alreadyInterrupted) {
+      this.interrupt();
+    }
   }
 
   /** Handle activity timeout - invoked by ActivityMonitor */
@@ -819,12 +819,16 @@ export class Agent {
       this.focusReady = null; // Clear after first use
     }
 
+    // Capture parent reference at turn start to ensure paired pause/resume use same reference
+    // This prevents count corruption if parentAgent changes during sendMessage execution
+    const parentAgentRef = this.parentAgent;
+
     // Pause parent agent's activity monitoring before sub-agent execution
     // This prevents false timeout triggers while the sub-agent is actively working
-    if (this.parentAgent) {
-      this.parentAgent.pauseActivityMonitoring();
+    if (parentAgentRef) {
+      parentAgentRef.pauseActivityMonitoring();
       logger.debug('[AGENT]', this.instanceId,
-        `Pausing parent agent activity monitoring (parent: ${this.parentAgent.instanceId})`);
+        `Pausing parent agent activity monitoring (parent: ${parentAgentRef.instanceId})`);
     }
 
     // Start activity monitoring for specialized agents
@@ -1021,10 +1025,11 @@ export class Agent {
       // Pass delegationSucceeded to conditionally record progress:
       // - true (default): child completed successfully, parent should record progress
       // - false: child threw error, parent should NOT record progress
-      if (this.parentAgent) {
-        this.parentAgent.resumeActivityMonitoring(delegationSucceeded);
+      // Use parentAgentRef captured at turn start to ensure paired pause/resume use same reference
+      if (parentAgentRef) {
+        parentAgentRef.resumeActivityMonitoring(delegationSucceeded);
         logger.debug('[AGENT]', this.instanceId,
-          `Resuming parent agent activity monitoring (parent: ${this.parentAgent.instanceId}, succeeded: ${delegationSucceeded})`);
+          `Resuming parent agent activity monitoring (parent: ${parentAgentRef.instanceId}, succeeded: ${delegationSucceeded})`);
       }
     }
   }
@@ -1872,11 +1877,14 @@ export class Agent {
 
   /**
    * Continue processing after permission denial when user provided interjection
-   * Handles multiple consecutive interjections in a loop
+   * Handles multiple consecutive interjections with a retry limit
    */
   private async continueWithInterjection(executionContext: AgentExecutionContext): Promise<string> {
-    while (true) {
-      logger.debug('[AGENT]', this.instanceId, 'Permission denied but user provided instructions - continuing with interjection');
+    let retryCount = 0;
+
+    while (retryCount < AGENT_CONFIG.MAX_INTERJECTION_RETRIES) {
+      retryCount++;
+      logger.debug('[AGENT]', this.instanceId, `Permission denied but user provided instructions - continuing (attempt ${retryCount}/${AGENT_CONFIG.MAX_INTERJECTION_RETRIES})`);
       this.interruptionManager.reset();
 
       try {
@@ -1895,6 +1903,12 @@ export class Agent {
         throw retryError; // No interjection or not a permission error
       }
     }
+
+    // Exceeded retry limit
+    logger.warn('[AGENT]', this.instanceId, `Exceeded maximum interjection retries (${AGENT_CONFIG.MAX_INTERJECTION_RETRIES})`);
+    this.interruptionManager.markRequestAsInterrupted();
+    this.emitAgentEnd(true);
+    return PERMISSION_MESSAGES.USER_FACING_DENIAL;
   }
 
   /**

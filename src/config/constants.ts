@@ -880,6 +880,9 @@ export const AGENT_CONFIG = {
   /** Maximum agent nesting depth (0=root Ally, 1-5=delegated agents) */
   MAX_AGENT_DEPTH: 5,
 
+  /** Maximum consecutive permission denial interjections before giving up */
+  MAX_INTERJECTION_RETRIES: 5,
+
   /**
    * Maximum cycle depth for same-type agents (how many times same agent can appear in call chain)
    * Example: 2 allows explore → explore (2 occurrences) but blocks explore → explore → explore (3 occurrences)

@@ -511,6 +511,8 @@ export const useActivitySubscriptions = (
    */
   useActivityEvent(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
     setIsCancelling(true);
+    // Flush any pending streaming content before clearing state
+    flushStreamingContent.current();
     actions.clearToolCalls();
     state.activeSubAgents.forEach(agentName => {
       actions.removeSubAgent(agentName);

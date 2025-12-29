@@ -101,11 +101,12 @@ export class InterruptionManager {
     this.interruptionType = type;
 
     // Ensure abort controller exists before aborting
+    // Note: We abort but don't clear the controller - tools may still need to check the aborted signal
+    // The controller is cleared in cleanup() at end of request
     if (type === 'cancel') {
       this.ensureAbortController();
       if (this.toolAbortController) {
         this.toolAbortController.abort();
-        this.toolAbortController = undefined;
       }
     }
   }
@@ -194,15 +195,11 @@ export class InterruptionManager {
   /**
    * Clean up request state after completion or error
    *
-   * Resets all interruption state for the next request.
+   * Full teardown at end of request: resets interruption state and clears the abort controller.
+   * Use reset() for retry/continuation within a request; use cleanup() at request end.
    */
   cleanup(): void {
-    this.interrupted = false;
-    this.interruptionType = null;
-    this.interruptionContext = {
-      reason: '',
-      isTimeout: false,
-    };
-    // Note: toolAbortController is cleared when used or when interrupted
+    this.reset();
+    this.toolAbortController = undefined;
   }
 }

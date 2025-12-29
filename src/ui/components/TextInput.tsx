@@ -14,9 +14,11 @@
  * - Visual cursor rendering with inverse colors
  */
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
+import stringWidth from 'string-width';
 import { detectFilesAndImages } from '@utils/pathUtils.js';
+import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 
 export interface TextInputProps {
   /** Current text value */
@@ -107,6 +109,16 @@ export const TextInput: React.FC<TextInputProps> = ({
     cursorRef.current = cursorPosition;
   }, [cursorPosition]);
 
+  // Get terminal width for proper visual line wrapping
+  const terminalWidth = useTerminalWidth();
+
+  // Calculate available content width based on container structure
+  // Bordered: border (2) + paddingX (2) = 4 chars overhead, plus prompt on first line
+  // Inline: marginLeft (1) = 1 char overhead
+  const promptWidth = bordered ? stringWidth(promptText) : 0;
+  const containerOverhead = bordered ? 4 : 1;
+  const contentWidth = Math.max(10, terminalWidth - containerOverhead);
+
   /**
    * Calculate cursor line and position within that line
    * Returns line number, position in line, and character offset to line start
@@ -144,6 +156,48 @@ export const TextInput: React.FC<TextInputProps> = ({
       posInLine: lastLineLength,
       charsBeforeLine: charsBeforeLastLine,
     };
+  };
+
+  /**
+   * Split a single line into visual lines based on available width
+   * Uses string-width for proper handling of wide characters (CJK, emoji)
+   *
+   * @param line - The text line to split
+   * @param maxWidth - Maximum visual width per line
+   * @returns Array of visual line segments
+   */
+  const splitLineByWidth = (line: string, maxWidth: number): string[] => {
+    if (maxWidth <= 0 || line.length === 0) {
+      return [line];
+    }
+
+    const visualLines: string[] = [];
+    let currentLine = '';
+    let currentWidth = 0;
+
+    // Use Array.from for proper Unicode grapheme handling
+    const chars = Array.from(line);
+
+    for (const char of chars) {
+      const charWidth = stringWidth(char);
+
+      if (currentWidth + charWidth > maxWidth && currentLine.length > 0) {
+        // Start a new line
+        visualLines.push(currentLine);
+        currentLine = char;
+        currentWidth = charWidth;
+      } else {
+        currentLine += char;
+        currentWidth += charWidth;
+      }
+    }
+
+    // Push the last line
+    if (currentLine.length > 0 || visualLines.length === 0) {
+      visualLines.push(currentLine);
+    }
+
+    return visualLines;
   };
 
   /**
@@ -456,69 +510,174 @@ export const TextInput: React.FC<TextInputProps> = ({
     ? Array.from(value).map(char => char === '\n' ? '\n' : mask).join('')
     : value;
 
-  // Split display value into lines for rendering
-  const lines = displayValue.split('\n');
+  // Split display value into logical lines (by \n)
+  const logicalLines = displayValue.split('\n');
   const isEmpty = value.trim().length === 0;
 
-  // Calculate cursor line info
+  // Calculate cursor position in logical lines
   const cursorInfo = getCursorLineInfo(value, cursorPosition);
-  const cursorLine = cursorInfo.line;
-  const cursorPosInLine = cursorInfo.posInLine;
+  const cursorLogicalLine = cursorInfo.line;
+  const cursorPosInLogicalLine = cursorInfo.posInLine;
 
-  // Render the text content (shared by both variants)
+  // Build visual lines with cursor tracking
+  // Each visual line entry tracks: text, whether it has cursor, cursor position within it
+  const visualLinesData = useMemo(() => {
+    const result: Array<{
+      text: string;
+      isFirstLogicalLine: boolean;
+      hasCursor: boolean;
+      cursorPos: number; // position within this visual line's text
+      isPlaceholder: boolean;
+    }> = [];
+
+    let globalVisualLineIndex = 0;
+
+    for (let logicalIndex = 0; logicalIndex < logicalLines.length; logicalIndex++) {
+      const logicalLine = logicalLines[logicalIndex] || '';
+      const isFirstLogicalLine = logicalIndex === 0;
+      const isCursorLogicalLine = logicalIndex === cursorLogicalLine;
+
+      // Calculate available width for this line (first line has prompt overhead)
+      const lineWidth = isFirstLogicalLine && bordered
+        ? contentWidth - promptWidth
+        : contentWidth;
+
+      // Handle empty logical lines
+      if (logicalLine.length === 0) {
+        const isPlaceholder = isEmpty && isFirstLogicalLine;
+        const displayText = isPlaceholder ? placeholder : ' ';
+
+        result.push({
+          text: displayText,
+          isFirstLogicalLine,
+          hasCursor: isCursorLogicalLine && isActive,
+          cursorPos: 0, // cursor at start of empty line
+          isPlaceholder,
+        });
+        globalVisualLineIndex++;
+        continue;
+      }
+
+      // Split logical line into visual lines based on width
+      const visualLines = splitLineByWidth(logicalLine, lineWidth);
+
+      // Find which visual line has the cursor (if this is the cursor's logical line)
+      let cursorVisualLineOffset = -1;
+      let cursorPosInVisualLine = 0;
+
+      if (isCursorLogicalLine) {
+        // Walk through characters to find cursor position in visual lines
+        let charIndex = 0;
+        let visualLineOffset = 0;
+
+        for (let vl = 0; vl < visualLines.length; vl++) {
+          const visualLineText = visualLines[vl] || '';
+          const visualLineChars = Array.from(visualLineText);
+
+          for (let c = 0; c < visualLineChars.length; c++) {
+            if (charIndex === cursorPosInLogicalLine) {
+              cursorVisualLineOffset = visualLineOffset;
+              cursorPosInVisualLine = c;
+              break;
+            }
+            charIndex++;
+          }
+
+          if (cursorVisualLineOffset >= 0) break;
+
+          // Check if cursor is at end of this visual line
+          if (charIndex === cursorPosInLogicalLine) {
+            cursorVisualLineOffset = visualLineOffset;
+            cursorPosInVisualLine = visualLineChars.length;
+            break;
+          }
+
+          visualLineOffset++;
+        }
+
+        // If cursor wasn't found, it's at the very end
+        if (cursorVisualLineOffset < 0) {
+          cursorVisualLineOffset = visualLines.length - 1;
+          const lastLine = visualLines[cursorVisualLineOffset] || '';
+          cursorPosInVisualLine = Array.from(lastLine).length;
+        }
+      }
+
+      // Add visual lines to result
+      for (let vl = 0; vl < visualLines.length; vl++) {
+        const visualLineText = visualLines[vl] || '';
+        const hasCursor = isCursorLogicalLine && vl === cursorVisualLineOffset && isActive;
+
+        result.push({
+          text: visualLineText,
+          isFirstLogicalLine: isFirstLogicalLine && vl === 0,
+          hasCursor,
+          cursorPos: hasCursor ? cursorPosInVisualLine : 0,
+          isPlaceholder: false,
+        });
+        globalVisualLineIndex++;
+      }
+    }
+
+    return result;
+  // Note: splitLineByWidth is a stable function (no external deps), so not included in deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayValue, cursorLogicalLine, cursorPosInLogicalLine, contentWidth, promptWidth, bordered, isEmpty, placeholder, isActive]);
+
+  // Render the text content with proper visual line handling
   const renderContent = () => (
     <>
-      {lines.map((line, index) => {
-        const isFirstLine = index === 0;
-        const prompt = bordered && isFirstLine ? promptText : '';
-        // Display placeholder on first line if empty, otherwise show space for empty lines
-        const displayText = line !== '' ? line : isEmpty && isFirstLine ? placeholder : ' ';
-        const textColor = isEmpty && isFirstLine ? 'gray' : 'white';
-        const isCursorLine = index === cursorLine;
+      {visualLinesData.map((visualLine, index) => {
+        const { text, isFirstLogicalLine, hasCursor, cursorPos, isPlaceholder } = visualLine;
+        const prompt = bordered && isFirstLogicalLine ? promptText : '';
+        const textColor = isPlaceholder ? 'gray' : 'white';
 
         return (
-          <Box key={`line-${index}`}>
-            {/* Prompt prefix - only show when bordered */}
-            {bordered && (
-              <Text wrap="wrap" color="gray">
+          <Box key={`vline-${index}`}>
+            {/* Prompt prefix - only show on first visual line when bordered */}
+            {bordered && isFirstLogicalLine && (
+              <Text color="gray">
                 {prompt}
               </Text>
             )}
 
-            {/* Non-cursor line or inactive - simple rendering */}
-            {(!isCursorLine || !isActive) && (
-              <Text wrap="wrap" color={textColor} dimColor={isEmpty && isFirstLine}>
-                {displayText}
+            {/* Non-cursor line - simple rendering */}
+            {!hasCursor && (
+              <Text color={textColor} dimColor={isPlaceholder}>
+                {text}
               </Text>
             )}
 
-            {/* Cursor line with active input - render cursor */}
-            {isCursorLine && isActive && (
+            {/* Cursor line - render with cursor highlight */}
+            {hasCursor && (
               <>
                 {(() => {
-                  // Adjust cursor position for empty lines
-                  const adjustedCursorPos = line === '' && displayText === ' ' && cursorPosInLine === 0 ? 0 : cursorPosInLine;
-
-                  const before = displayText.slice(0, adjustedCursorPos);
-                  const at = displayText[adjustedCursorPos] || ' ';
-                  const after = displayText.slice(adjustedCursorPos + 1);
+                  // Use Array.from for proper Unicode handling
+                  const chars = Array.from(text);
+                  const before = chars.slice(0, cursorPos).join('');
+                  const at = chars[cursorPos] || ' ';
+                  const after = chars.slice(cursorPos + 1).join('');
 
                   return (
                     <>
                       {/* Text before cursor */}
-                      <Text wrap="wrap" color={textColor} dimColor={isEmpty && isFirstLine}>
-                        {before}
-                      </Text>
+                      {before && (
+                        <Text color={textColor} dimColor={isPlaceholder}>
+                          {before}
+                        </Text>
+                      )}
 
                       {/* Cursor (inverse color) */}
-                      <Text wrap="wrap" color="black" backgroundColor="white">
+                      <Text color="black" backgroundColor="white">
                         {at}
                       </Text>
 
                       {/* Text after cursor */}
-                      <Text wrap="wrap" color={textColor} dimColor={isEmpty && isFirstLine}>
-                        {after}
-                      </Text>
+                      {after && (
+                        <Text color={textColor} dimColor={isPlaceholder}>
+                          {after}
+                        </Text>
+                      )}
                     </>
                   );
                 })()}

@@ -205,6 +205,18 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     cursorPositionRef.current = cursorPosition;
   }, [cursorPosition]);
 
+  // Use refs for agent and activityStream to avoid stale closures in useInput
+  // This is critical for interrupt handling - a stale agent reference can cause
+  // USER_INTERRUPT_INITIATED to fire but AGENT_END to never fire, leaving UI stuck
+  const agentRef = useRef(agent);
+  const activityStreamRef = useRef(activityStream);
+  useEffect(() => {
+    agentRef.current = agent;
+  }, [agent]);
+  useEffect(() => {
+    activityStreamRef.current = activityStream;
+  }, [activityStream]);
+
   // History navigation state
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [historyBuffer, setHistoryBuffer] = useState(''); // Store current input when navigating history
@@ -1364,12 +1376,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
 
         // Second priority: Interrupt agent if processing (single escape)
-        if (agent && agent.isProcessing()) {
+        // Use refs to get fresh values and avoid stale closure issues
+        const currentAgentRef = agentRef.current;
+        const currentActivityStream = activityStreamRef.current;
+        if (currentAgentRef && currentAgentRef.isProcessing()) {
           logger.debug('[INPUT] Escape - interrupting main agent');
 
           // Emit immediate visual feedback before interrupting
-          if (activityStream) {
-            activityStream.emit({
+          if (currentActivityStream) {
+            currentActivityStream.emit({
               id: `user-interrupt-${Date.now()}`,
               type: ActivityEventType.USER_INTERRUPT_INITIATED,
               timestamp: Date.now(),
@@ -1378,11 +1393,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           }
 
           // Interrupt the agent (will cancel LLM request immediately)
-          agent.interrupt();
+          currentAgentRef.interrupt();
 
           // Also interrupt all subagents through AgentTool
-          if (activityStream) {
-            activityStream.emit({
+          if (currentActivityStream) {
+            currentActivityStream.emit({
               id: `interrupt-${Date.now()}`,
               type: ActivityEventType.INTERRUPT_ALL,
               timestamp: Date.now(),
@@ -1401,7 +1416,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
 
         // Fourth priority: Double-escape to open rewind (only when no modal active)
-        if (!modelSelectRequest && !sessionSelectRequest && !rewindRequest && !permissionRequest && activityStream) {
+        // currentActivityStream is already fetched from ref above
+        if (!modelSelectRequest && !sessionSelectRequest && !rewindRequest && !permissionRequest && currentActivityStream) {
           const newCount = escCount + 1;
           setEscCount(newCount);
 
@@ -1413,7 +1429,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           if (newCount >= 2) {
             const requestId = `rewind_${Date.now()}`;
             try {
-              activityStream.emit({
+              currentActivityStream.emit({
                 id: requestId,
                 type: ActivityEventType.REWIND_REQUEST,
                 timestamp: Date.now(),
