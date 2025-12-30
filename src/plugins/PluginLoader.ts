@@ -78,15 +78,6 @@ export interface PluginManifest {
     install_command?: string;
   };
 
-  // Backward compatibility fields (deprecated)
-  /** @deprecated Use tools array instead */
-  command?: string;
-  /** @deprecated Use tools array instead */
-  args?: string[];
-  /** @deprecated Use tools array instead */
-  requiresConfirmation?: boolean;
-  /** @deprecated Use tools array instead */
-  schema?: any;
 }
 
 /**
@@ -964,23 +955,6 @@ export class PluginLoader {
         `[PluginLoader] Invalid manifest in ${pluginPath}: Missing required field 'name'`
       );
       return { tools: [], agents: [] };
-    }
-
-    // Backward compatibility: convert old single-tool format to toolset
-    if (!manifest.tools && manifest.command) {
-      logger.info(
-        `[PluginLoader] Converting legacy plugin '${manifest.name}' to toolset format`
-      );
-      manifest.tools = [
-        {
-          name: manifest.name,
-          description: manifest.description,
-          command: manifest.command,
-          args: manifest.args,
-          requiresConfirmation: manifest.requiresConfirmation,
-          schema: manifest.schema,
-        },
-      ];
     }
 
     // Validate manifest

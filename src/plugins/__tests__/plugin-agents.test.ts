@@ -53,7 +53,7 @@ describe('Plugin Agents System', () => {
     activityStream = new ActivityStream();
     configManager = new PluginConfigManager();
     agentManager = new AgentManager();
-    toolManager = new ToolManager([], activityStream);
+    toolManager = new ToolManager([]);
 
     pluginLoader = new PluginLoader(
       activityStream,
@@ -1007,7 +1007,7 @@ You are a complete agent for integration testing.`;
         { name: 'bash', execute: async () => ({}), getFunctionDefinition: () => ({}) },
       ];
 
-      const fullToolManager = new ToolManager(mockTools as any, activityStream);
+      const fullToolManager = new ToolManager(mockTools as any);
 
       // Get ServiceRegistry singleton
       const registry = ServiceRegistry.getInstance();
@@ -1107,7 +1107,7 @@ You are a complete agent for integration testing.`;
         { name: 'explore', execute: async () => ({}), getFunctionDefinition: () => ({}) },
       ];
 
-      const fullToolManager = new ToolManager(mockTools as any, activityStream);
+      const fullToolManager = new ToolManager(mockTools as any);
 
       const registry = ServiceRegistry.getInstance();
       registry.registerInstance('agent_manager', agentManager);

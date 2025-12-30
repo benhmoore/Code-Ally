@@ -12,6 +12,5 @@ export { MarkdownText } from './MarkdownText.js';
 export { DiffDisplay, InlineDiff } from './DiffDisplay.js';
 export { ToolCallDisplay } from './ToolCallDisplay.js';
 export { ProgressIndicator } from './ProgressIndicator.js';
-export { TodoDisplay } from './TodoDisplay.js';
 export { ModelSelector, type ModelOption } from './ModelSelector.js';
 export { PluginConfigView } from './PluginConfigView.js';

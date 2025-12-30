@@ -220,6 +220,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   // History navigation state
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [historyBuffer, setHistoryBuffer] = useState(''); // Store current input when navigating history
+  const [historyBufferCursor, setHistoryBufferCursor] = useState(0); // Store cursor position when entering history
   const isNavigatingHistory = useRef(false); // Track if buffer change is from history navigation
 
   // Completion state
@@ -380,16 +381,19 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const navigateHistoryPrevious = () => {
     if (!commandHistory) return;
 
-    // First time navigating - save current buffer
+    // First time navigating - save current buffer and cursor position
     if (historyIndex === -1) {
       setHistoryBuffer(buffer);
+      setHistoryBufferCursor(cursorPosition);
     }
 
     const result = commandHistory.getPrevious(historyIndex);
     if (result) {
       isNavigatingHistory.current = true; // Prevent completion updates
       setBuffer(result.command);
-      setCursorPosition(result.command.length);
+      // Preserve column position, clamped to command length
+      const savedColumn = historyIndex === -1 ? cursorPosition : historyBufferCursor;
+      setCursorPosition(Math.min(savedColumn, result.command.length));
       setHistoryIndex(result.index);
       setShowCompletions(false);
     }
@@ -405,13 +409,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     if (result) {
       isNavigatingHistory.current = true; // Prevent completion updates
       setBuffer(result.command);
-      setCursorPosition(result.command.length);
+      // Preserve column position, clamped to command length
+      setCursorPosition(Math.min(historyBufferCursor, result.command.length));
       setHistoryIndex(result.index);
     } else {
-      // Reached end - restore original buffer
+      // Reached end - restore original buffer and cursor position
       isNavigatingHistory.current = true; // Prevent completion updates
       setBuffer(historyBuffer);
-      setCursorPosition(historyBuffer.length);
+      setCursorPosition(historyBufferCursor);
       setHistoryIndex(-1);
     }
     setShowCompletions(false);
@@ -502,6 +507,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     setCursorPosition(0);
     setHistoryIndex(-1);
     setHistoryBuffer('');
+    setHistoryBufferCursor(0);
     setShowCompletions(false);
     setCompletions([]);
     setMentionedFiles([]);
@@ -597,6 +603,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         setCursorPosition(0);
         setHistoryIndex(-1);
         setHistoryBuffer('');
+        setHistoryBufferCursor(0);
         setShowCompletions(false);
         setCompletions([]);
         setMentionedFiles([]);

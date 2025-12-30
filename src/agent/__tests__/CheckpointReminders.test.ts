@@ -83,7 +83,7 @@ describe('Checkpoint Reminder System', () => {
     activityStream = new ActivityStream();
 
     // Create tool manager with empty tools array
-    toolManager = new ToolManager([], activityStream);
+    toolManager = new ToolManager([]);
 
     // Create agent config
     const agentConfig: AgentConfig = {

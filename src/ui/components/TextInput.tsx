@@ -159,6 +159,133 @@ export const TextInput: React.FC<TextInputProps> = ({
   };
 
   /**
+   * Build visual line mapping for cursor navigation
+   * Returns an array of visual lines with their character offsets for navigation
+   */
+  const buildVisualLineMap = (
+    text: string,
+    width: number,
+    firstLineWidth: number
+  ): Array<{ charStart: number; charEnd: number; length: number }> => {
+    const logicalLines = text.split('\n');
+    const visualLineMap: Array<{ charStart: number; charEnd: number; length: number }> = [];
+    let globalCharOffset = 0;
+
+    for (let logicalIndex = 0; logicalIndex < logicalLines.length; logicalIndex++) {
+      const logicalLine = logicalLines[logicalIndex] || '';
+      const lineWidth = logicalIndex === 0 ? firstLineWidth : width;
+
+      if (logicalLine.length === 0) {
+        // Empty logical line - still one visual line
+        visualLineMap.push({
+          charStart: globalCharOffset,
+          charEnd: globalCharOffset,
+          length: 0,
+        });
+      } else {
+        // Split into visual lines
+        const visualLines = splitLineByWidth(logicalLine, lineWidth);
+        let charOffset = 0;
+
+        for (const visualLine of visualLines) {
+          const visualLineLength = Array.from(visualLine).length;
+          visualLineMap.push({
+            charStart: globalCharOffset + charOffset,
+            charEnd: globalCharOffset + charOffset + visualLineLength,
+            length: visualLineLength,
+          });
+          charOffset += visualLineLength;
+        }
+      }
+
+      // Account for newline character between logical lines (but not after the last line)
+      globalCharOffset += logicalLine.length;
+      if (logicalIndex < logicalLines.length - 1) {
+        globalCharOffset += 1;
+      }
+    }
+
+    return visualLineMap;
+  };
+
+  /**
+   * Navigate cursor up/down within visual lines (handles wrapped text)
+   * @param direction -1 for up, 1 for down
+   * @returns new cursor position, or null if no movement possible
+   */
+  const navigateVisualLine = (
+    text: string,
+    cursor: number,
+    direction: -1 | 1,
+    width: number,
+    firstLineWidth: number
+  ): number | null => {
+    const visualLineMap = buildVisualLineMap(text, width, firstLineWidth);
+
+    if (visualLineMap.length === 0) return null;
+
+    // Find which visual line the cursor is on
+    let currentVisualLine = -1;
+    let columnInVisualLine = 0;
+
+    for (let i = 0; i < visualLineMap.length; i++) {
+      const vl = visualLineMap[i];
+      if (!vl) continue;
+
+      // Cursor is on this visual line if it's within bounds
+      // For non-last visual lines, cursor at charEnd means it's at start of next visual line
+      const isLastVisualLine = i === visualLineMap.length - 1;
+      const isOnThisLine = cursor >= vl.charStart &&
+        (isLastVisualLine ? cursor <= vl.charEnd : cursor < vl.charEnd);
+
+      // Special case: cursor exactly at charEnd of a visual line that ends a logical line
+      // (i.e., next visual line starts a new logical line with a newline between)
+      if (!isOnThisLine && cursor === vl.charEnd) {
+        const nextVl = visualLineMap[i + 1];
+        // If next visual line starts after a gap (newline), cursor belongs to current line end
+        if (nextVl && nextVl.charStart > vl.charEnd) {
+          currentVisualLine = i;
+          columnInVisualLine = vl.length;
+          break;
+        }
+      }
+
+      if (isOnThisLine) {
+        currentVisualLine = i;
+        columnInVisualLine = cursor - vl.charStart;
+        break;
+      }
+    }
+
+    if (currentVisualLine < 0) {
+      // Cursor position not found - defensive fallback
+      currentVisualLine = visualLineMap.length - 1;
+      const lastVl = visualLineMap[currentVisualLine];
+      columnInVisualLine = lastVl ? lastVl.length : 0;
+    }
+
+    // Calculate target visual line
+    const targetVisualLine = currentVisualLine + direction;
+
+    // Boundary handling
+    if (targetVisualLine < 0) {
+      // At first visual line, moving up - go to start
+      return 0;
+    }
+    if (targetVisualLine >= visualLineMap.length) {
+      // At last visual line, moving down - go to end
+      return text.length;
+    }
+
+    // Move to target visual line at same column (clamped to line length)
+    const targetVl = visualLineMap[targetVisualLine];
+    if (!targetVl) return null;
+
+    const targetColumn = Math.min(columnInVisualLine, targetVl.length);
+    return targetVl.charStart + targetColumn;
+  };
+
+  /**
    * Split a single line into visual lines based on available width
    * Uses string-width for proper handling of wide characters (CJK, emoji)
    *
@@ -404,37 +531,22 @@ export const TextInput: React.FC<TextInputProps> = ({
         return;
       }
 
-      // ===== Arrow Keys (Up/Down) for multiline navigation =====
+      // ===== Arrow Keys (Up/Down) for visual line navigation =====
+      // Navigate between visual lines (wrapped text), not just logical lines
       if (multiline && key.upArrow) {
-        const lines = currentValue.split('\n');
-        const cursorInfo = getCursorLineInfo(currentValue, currentCursor);
-
-        if (cursorInfo.line > 0) {
-          // Move to previous line at same column or end of line
-          const prevLineStart = cursorInfo.charsBeforeLine - (lines[cursorInfo.line - 1] || '').length - 1;
-          const prevLineLength = (lines[cursorInfo.line - 1] || '').length;
-          const newPos = prevLineStart + Math.min(cursorInfo.posInLine, prevLineLength);
+        const firstLineWidth = bordered ? contentWidth - promptWidth : contentWidth;
+        const newPos = navigateVisualLine(currentValue, currentCursor, -1, contentWidth, firstLineWidth);
+        if (newPos !== null) {
           onCursorChange(newPos);
-        } else {
-          // Already on first line - move to start
-          onCursorChange(0);
         }
         return;
       }
 
       if (multiline && key.downArrow) {
-        const lines = currentValue.split('\n');
-        const cursorInfo = getCursorLineInfo(currentValue, currentCursor);
-
-        if (cursorInfo.line < lines.length - 1) {
-          // Move to next line at same column or end of line
-          const nextLineStart = cursorInfo.charsBeforeLine + (lines[cursorInfo.line] || '').length + 1;
-          const nextLineLength = (lines[cursorInfo.line + 1] || '').length;
-          const newPos = nextLineStart + Math.min(cursorInfo.posInLine, nextLineLength);
+        const firstLineWidth = bordered ? contentWidth - promptWidth : contentWidth;
+        const newPos = navigateVisualLine(currentValue, currentCursor, 1, contentWidth, firstLineWidth);
+        if (newPos !== null) {
           onCursorChange(newPos);
-        } else {
-          // Already on last line - move to end
-          onCursorChange(currentValue.length);
         }
         return;
       }
@@ -445,8 +557,8 @@ export const TextInput: React.FC<TextInputProps> = ({
         const normalizedInput = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
         // Detect pasted file paths, images, and directories (multi-character input without newlines)
-        if (input.length > 1 && !normalizedInput.includes('\n')) {
-          const { directories, files, images } = detectFilesAndImages(input);
+        if (normalizedInput.length > 1 && !normalizedInput.includes('\n')) {
+          const { directories, files, images } = detectFilesAndImages(normalizedInput);
           const hasDirectories = directories.length > 0;
           const hasFiles = files.length > 0;
           const hasImages = images.length > 0;
@@ -486,11 +598,17 @@ export const TextInput: React.FC<TextInputProps> = ({
         // Multiline paste: two-phase render to help ink handle the height change
         // Phase 1 sets minimal content, Phase 2 (next tick) sets actual content
         // This prevents ink's diff algorithm from getting confused by sudden height jumps
+        // Both phases update value AND cursor to maintain consistent state
         if (normalizedInput.includes('\n')) {
           onValueChange(' ');
+          onCursorChange(1); // Consistent cursor for Phase 1 (at end of single space)
           setImmediate(() => {
-            onValueChange(newValue);
-            onCursorChange(newCursor);
+            // Verify state hasn't changed since Phase 1 before applying Phase 2
+            // If user typed between phases, valueRef/cursorRef will differ from Phase 1
+            if (valueRef.current === ' ' && cursorRef.current === 1) {
+              onValueChange(newValue);
+              onCursorChange(newCursor);
+            }
           });
           return;
         }
@@ -510,8 +628,6 @@ export const TextInput: React.FC<TextInputProps> = ({
     ? Array.from(value).map(char => char === '\n' ? '\n' : mask).join('')
     : value;
 
-  // Split display value into logical lines (by \n)
-  const logicalLines = displayValue.split('\n');
   const isEmpty = value.trim().length === 0;
 
   // Calculate cursor position in logical lines
@@ -522,6 +638,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   // Build visual lines with cursor tracking
   // Each visual line entry tracks: text, whether it has cursor, cursor position within it
   const visualLinesData = useMemo(() => {
+    const logicalLines = displayValue.split('\n');
     const result: Array<{
       text: string;
       isFirstLogicalLine: boolean;

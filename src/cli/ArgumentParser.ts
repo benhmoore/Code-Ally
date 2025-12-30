@@ -238,8 +238,3 @@ Use '/help' for complete interactive command reference.
     return this.program.helpInformation();
   }
 }
-
-/**
- * Create and export a singleton parser instance
- */
-export const argumentParser = new ArgumentParser();

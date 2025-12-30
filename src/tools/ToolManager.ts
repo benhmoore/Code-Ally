@@ -8,7 +8,6 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolValidator } from './ToolValidator.js';
 import { FunctionDefinition, ToolResult, ToolExecutionContext } from '../types/index.js';
-import { ActivityStream } from '../services/ActivityStream.js';
 import { FormManager } from '../services/FormManager.js';
 import { formatError, createStructuredError } from '../utils/errorUtils.js';
 import { DuplicateDetector } from '../services/DuplicateDetector.js';
@@ -47,7 +46,7 @@ export class ToolManager {
   private delegationContextManager: DelegationContextManager;
   private conversationManager?: ConversationManager;
 
-  constructor(tools: BaseTool[], _activityStream: ActivityStream) {
+  constructor(tools: BaseTool[]) {
     this.tools = new Map();
     this.validator = new ToolValidator();
     this.duplicateDetector = new DuplicateDetector();

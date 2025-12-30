@@ -547,15 +547,4 @@ describe('ActivityStream', () => {
       expect(stream.getListenerCount()).toBe(0);
     });
   });
-
-  describe('deprecated clear method', () => {
-    it('should clear all listeners like cleanup', () => {
-      stream.subscribe(ActivityEventType.TOOL_CALL_START, vi.fn());
-      stream.subscribe(ActivityEventType.TOOL_CALL_END, vi.fn());
-
-      stream.clear();
-
-      expect(stream.getListenerStats()).toHaveLength(0);
-    });
-  });
 });

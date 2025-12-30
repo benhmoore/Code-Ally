@@ -989,7 +989,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
       const allTools = toolManager.getAllTools();
       const allowedToolSet = new Set(baseConfig.allowedTools);
       const filteredTools = allTools.filter(tool => allowedToolSet.has(tool.name));
-      filteredToolManager = new ToolManager(filteredTools, this.activityStream);
+      filteredToolManager = new ToolManager(filteredTools);
       logger.debug('[AGENT_TOOL] Created filtered ToolManager with', filteredTools.length, 'tools');
     }
 

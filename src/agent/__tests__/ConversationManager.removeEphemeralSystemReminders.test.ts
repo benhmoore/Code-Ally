@@ -513,18 +513,6 @@ describe('ConversationManager.removeEphemeralSystemReminders', () => {
     });
   });
 
-  describe('Backward compatibility', () => {
-    it('should support deprecated removeSystemReminders() method', () => {
-      manager.addMessage(createMessage('system', '<system-reminder>Ephemeral</system-reminder>'));
-
-      // Use deprecated method
-      const removed = manager.removeSystemReminders();
-
-      expect(removed).toBe(1);
-      expect(manager.getMessageCount()).toBe(0);
-    });
-  });
-
   describe('Return value accuracy', () => {
     it('should return 0 when no reminders are present', () => {
       manager.addMessage(createMessage('user', 'Hello'));

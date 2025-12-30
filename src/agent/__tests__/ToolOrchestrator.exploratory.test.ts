@@ -57,7 +57,7 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
       createMockNonExploratoryTool('write') as any,
       createMockNonExploratoryTool('edit') as any,
       createMockNonExploratoryTool('task', false) as any, // Preserves streak
-    ], activityStream);
+    ]);
 
     // Mock agent interface
     mockAgent = {

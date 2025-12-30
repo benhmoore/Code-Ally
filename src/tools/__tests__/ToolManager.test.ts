@@ -66,7 +66,7 @@ describe('ToolManager', () => {
     tool = new TestTool(activityStream);
     readTool = new ReadTool(activityStream);
     writeTool = new WriteTool(activityStream);
-    toolManager = new ToolManager([tool, readTool, writeTool], activityStream);
+    toolManager = new ToolManager([tool, readTool, writeTool]);
   });
 
   describe('getTool', () => {

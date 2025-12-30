@@ -95,53 +95,6 @@ export class TurnManager {
   }
 
   /**
-   * Get elapsed turn duration in minutes
-   *
-   * @returns Elapsed time since turn start in minutes, or 0 if not started
-   */
-  getElapsedMinutes(): number {
-    return this.getElapsedMs() / 60000;
-  }
-
-  /**
-   * Get elapsed turn duration in seconds
-   *
-   * @returns Elapsed time since turn start in seconds, or 0 if not started
-   */
-  getElapsedSeconds(): number {
-    return this.getElapsedMs() / 1000;
-  }
-
-  /**
-   * Check if maximum duration has been exceeded
-   *
-   * @returns True if turn has exceeded max duration, false otherwise
-   */
-  isMaxDurationExceeded(): boolean {
-    if (!this.maxDuration || !this.turnStartTime) {
-      return false; // No limit or turn not started
-    }
-
-    const elapsedMinutes = this.getElapsedMinutes();
-    return elapsedMinutes > this.maxDuration;
-  }
-
-  /**
-   * Get remaining time in minutes
-   *
-   * @returns Minutes remaining before max duration, or undefined if no limit
-   */
-  getRemainingMinutes(): number | undefined {
-    if (!this.maxDuration || !this.turnStartTime) {
-      return undefined; // No limit or turn not started
-    }
-
-    const elapsedMinutes = this.getElapsedMinutes();
-    const remaining = this.maxDuration - elapsedMinutes;
-    return Math.max(0, remaining);
-  }
-
-  /**
    * Get maximum duration in minutes
    *
    * @returns Maximum duration if set, undefined otherwise
@@ -160,15 +113,6 @@ export class TurnManager {
   setMaxDuration(minutes: number | undefined): void {
     this.maxDuration = minutes;
     logger.debug('[TURN_MANAGER]', this.instanceId, 'Max duration updated to', minutes, 'minutes');
-  }
-
-  /**
-   * Check if turn has started
-   *
-   * @returns True if turn has started, false otherwise
-   */
-  hasTurnStarted(): boolean {
-    return this.turnStartTime !== undefined;
   }
 
   /**

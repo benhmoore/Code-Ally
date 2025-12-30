@@ -149,15 +149,6 @@ export class ActivityStream {
   }
 
   /**
-   * Clear all listeners (useful for cleanup)
-   *
-   * @deprecated Use cleanup() instead for better logging and monitoring
-   */
-  clear(): void {
-    this.listeners.clear();
-  }
-
-  /**
    * Clean up all event listeners and release resources
    *
    * This method should be called when:

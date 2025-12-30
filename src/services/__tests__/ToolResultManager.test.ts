@@ -35,7 +35,7 @@ describe('ToolResultManager', () => {
     ];
 
     // Create tool manager with real tools
-    toolManager = new ToolManager(tools, activityStream);
+    toolManager = new ToolManager(tools);
 
     // Create tool result manager with toolManager
     toolResultManager = new ToolResultManager(tokenManager, undefined, toolManager);

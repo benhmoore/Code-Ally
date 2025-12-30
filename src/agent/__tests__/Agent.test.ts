@@ -92,7 +92,7 @@ describe('Agent - Interruption Handling', () => {
     activityStream = new ActivityStream();
 
     // Create tool manager with empty tools array
-    toolManager = new ToolManager([], activityStream);
+    toolManager = new ToolManager([]);
 
     // Create agent (system prompt generated dynamically in sendMessage)
     agent = new Agent(mockModelClient, toolManager, activityStream, {

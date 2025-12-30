@@ -948,7 +948,7 @@ async function main() {
       new BashTool(activityStream, config),
       new BashOutputTool(activityStream),
       new KillShellTool(activityStream),
-      new ReadTool(activityStream, config),
+      new ReadTool(activityStream),
       new WriteTool(activityStream),
       new WriteAgentTool(activityStream), // Agent-specific write tool (only visible to manage-agents)
       new EditAgentTool(activityStream), // Agent-specific edit tool (only visible to manage-agents)
@@ -1021,7 +1021,7 @@ async function main() {
     const allTools = [...tools, ...pluginTools];
 
     // Create tool manager with all tools
-    const toolManager = new ToolManager(allTools, activityStream);
+    const toolManager = new ToolManager(allTools);
     registry.registerInstance('tool_manager', toolManager);
 
     // Create form manager for interactive tool forms

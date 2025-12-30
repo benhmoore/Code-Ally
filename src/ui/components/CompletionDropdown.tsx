@@ -165,18 +165,3 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
     </Box>
   );
 };
-
-/**
- * Minimal completion dropdown (for inline display)
- */
-export const CompletionInline: React.FC<{
-  completion: Completion;
-}> = ({ completion }) => {
-  return (
-    <Box marginLeft={1}>
-      <Text dimColor>
-        {getCompletionIcon(completion.type)} {completion.value}
-      </Text>
-    </Box>
-  );
-};

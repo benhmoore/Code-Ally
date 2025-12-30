@@ -87,7 +87,7 @@ describe('ToolManager - Plugin Cache Consistency', () => {
     pluginToolA = new PluginToolA(activityStream);
     pluginToolB = new PluginToolB(activityStream);
     coreTool = new CoreTool(activityStream);
-    toolManager = new ToolManager([pluginToolA, pluginToolB, coreTool], activityStream);
+    toolManager = new ToolManager([pluginToolA, pluginToolB, coreTool]);
 
     // Setup mock PluginActivationManager
     mockActivationManager = new MockPluginActivationManager();

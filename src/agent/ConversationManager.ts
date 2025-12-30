@@ -208,16 +208,6 @@ export class ConversationManager {
   }
 
   /**
-   * Filter messages by role
-   *
-   * @param role - Role to filter by ('user', 'assistant', 'system', 'tool')
-   * @returns Array of messages with matching role
-   */
-  getMessagesByRole(role: string): Message[] {
-    return this.messages.filter(msg => msg.role === role);
-  }
-
-  /**
    * Remove messages matching a predicate
    *
    * @param predicate - Function that returns true for messages to remove
@@ -344,17 +334,6 @@ export class ConversationManager {
     }
 
     return totalRemoved;
-  }
-
-  /**
-   * @deprecated Use removeEphemeralSystemReminders() instead
-   *
-   * This method is kept for backward compatibility but delegates to the new implementation.
-   * All callers should migrate to removeEphemeralSystemReminders() which handles both
-   * ephemeral and persistent reminders correctly.
-   */
-  removeSystemReminders(): number {
-    return this.removeEphemeralSystemReminders();
   }
 
   /**
