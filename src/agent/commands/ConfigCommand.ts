@@ -9,11 +9,17 @@ import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 import type { ConfigManager } from '@services/ConfigManager.js';
+import type { IntegrationStore } from '@services/IntegrationStore.js';
 import { formatError } from '@utils/errorUtils.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
-import { DEFAULT_CONFIG } from '@config/defaults.js';
+import { DEFAULT_CONFIG, validateConfigValue } from '@config/defaults.js';
 import { ANSI_COLORS } from '../../ui/constants/colors.js';
+import { SEARCH_PROVIDER_INFO } from '../../types/integration.js';
+
+// Fields stored in IntegrationStore instead of ConfigManager
+const INTEGRATION_STORE_FIELDS = ['search_provider', 'search_api_key'] as const;
+type IntegrationStoreField = typeof INTEGRATION_STORE_FIELDS[number];
 
 export class ConfigCommand extends Command {
   static readonly metadata: CommandMetadata = {
@@ -67,7 +73,7 @@ export class ConfigCommand extends Command {
     return this.createError('Invalid format. Use /config, /config set key=value, or /config reset');
   }
 
-  private handleConfigView(serviceRegistry: ServiceRegistry): CommandResult {
+  private async handleConfigView(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
     const configManager = serviceRegistry.get<ConfigManager>('config_manager');
 
     if (!configManager) {
@@ -85,7 +91,12 @@ export class ConfigCommand extends Command {
       'UI Preferences': ['theme', 'compact_threshold', 'show_context_in_prompt', 'show_thinking_in_chat', 'show_system_prompt_in_chat', 'show_full_tool_output', 'show_tool_parameters_in_chat', 'enable_idle_messages', 'enable_session_title_generation'],
       'Diff Display': ['diff_display_enabled', 'diff_display_max_file_size', 'diff_display_context_lines', 'diff_display_theme', 'diff_display_color_removed', 'diff_display_color_added', 'diff_display_color_modified'],
       'Tool Result Truncation': ['tool_result_max_context_percent', 'tool_result_min_tokens'],
+      'Search Integration': ['search_provider', 'search_api_key'],
     };
+
+    // Get search config from IntegrationStore
+    const integrationStore = serviceRegistry.get<IntegrationStore>('integration_store');
+    const searchConfig = await this.getSearchConfig(integrationStore ?? undefined);
 
 
     // Find max key length and max value length for alignment
@@ -96,8 +107,20 @@ export class ConfigCommand extends Command {
     const allValues: { key: string; currentStr: string; defaultStr: string; isModified: boolean }[] = [];
     for (const keys of Object.values(categoryDefs)) {
       for (const key of keys) {
-        const currentValue = (config as any)[key];
+        let currentValue: any;
         const defaultValue = (DEFAULT_CONFIG as any)[key];
+
+        // Handle IntegrationStore fields specially
+        if (key === 'search_provider') {
+          currentValue = searchConfig.provider;
+        } else if (key === 'search_api_key') {
+          // Mask API key - show only last 4 chars if set
+          const apiKey = searchConfig.apiKey;
+          currentValue = apiKey ? `****${apiKey.slice(-4)}` : null;
+        } else {
+          currentValue = (config as any)[key];
+        }
+
         const currentStr = JSON.stringify(currentValue);
         const defaultStr = JSON.stringify(defaultValue);
         const isModified = currentStr !== defaultStr;
@@ -162,7 +185,10 @@ export class ConfigCommand extends Command {
    * Uses ConfigManager.setFromString() to parse input, validate key,
    * parse value, and update configuration.
    *
-   * Special handling for default_agent: shows available agents if no value provided.
+   * Special handling:
+   * - default_agent: shows available agents if no value provided
+   * - search_provider: shows available providers if no value, routes to IntegrationStore
+   * - search_api_key: routes to IntegrationStore with encryption
    */
   private async handleConfigSet(
     kvString: string,
@@ -174,10 +200,26 @@ export class ConfigCommand extends Command {
       return this.createError('Configuration manager not available');
     }
 
-    // Special handling for default_agent - show available agents if no value or just the key
     const trimmed = kvString.trim();
+
+    // Special handling for default_agent - show available agents if no value or just the key
     if (trimmed === 'default_agent' || trimmed === 'default_agent=') {
       return this.showAvailableAgents(serviceRegistry);
+    }
+
+    // Special handling for search_provider - show available providers if no value
+    if (trimmed === 'search_provider' || trimmed === 'search_provider=') {
+      return this.showAvailableSearchProviders();
+    }
+
+    // Parse key=value to check if it's an IntegrationStore field
+    const parsed = configManager.parseKeyValue(kvString);
+    if (parsed && INTEGRATION_STORE_FIELDS.includes(parsed.key as IntegrationStoreField)) {
+      return this.handleIntegrationStoreSet(
+        parsed.key as IntegrationStoreField,
+        parsed.valueString,
+        serviceRegistry
+      );
     }
 
     try {
@@ -224,6 +266,116 @@ export class ConfigCommand extends Command {
       };
     } catch (error) {
       return this.createError(`Failed to list agents: ${formatError(error)}`);
+    }
+  }
+
+  /**
+   * Get search configuration from IntegrationStore
+   */
+  private async getSearchConfig(integrationStore: IntegrationStore | undefined): Promise<{ provider: string; apiKey: string | null }> {
+    if (!integrationStore) {
+      return { provider: 'none', apiKey: null };
+    }
+
+    try {
+      const settings = await integrationStore.getSettings();
+      return {
+        provider: settings.searchProvider,
+        apiKey: settings.searchAPIKey,
+      };
+    } catch {
+      return { provider: 'none', apiKey: null };
+    }
+  }
+
+  /**
+   * Show available search providers
+   */
+  private showAvailableSearchProviders(): CommandResult {
+    const lines: string[] = [];
+    lines.push('**Available search providers:**');
+    lines.push('');
+
+    for (const [type, info] of Object.entries(SEARCH_PROVIDER_INFO)) {
+      const apiNote = info.requiresAPIKey ? ' (requires API key)' : '';
+      lines.push(`\`${type}\` - ${info.displayName}: ${info.description}${apiNote}`);
+      if (info.signupURL) {
+        lines.push(`        Get API key: ${info.signupURL}`);
+      }
+    }
+
+    lines.push('');
+    lines.push('Usage: `/config set search_provider=<provider>`');
+    lines.push('Then:  `/config set search_api_key=<your-key>`');
+
+    return {
+      handled: true,
+      response: lines.join('\n'),
+    };
+  }
+
+  /**
+   * Handle setting IntegrationStore fields (search_provider, search_api_key)
+   */
+  private async handleIntegrationStoreSet(
+    key: IntegrationStoreField,
+    value: string,
+    serviceRegistry: ServiceRegistry
+  ): Promise<CommandResult> {
+    const integrationStore = serviceRegistry.get<IntegrationStore>('integration_store');
+
+    if (!integrationStore) {
+      return this.createError('Integration store not available');
+    }
+
+    try {
+      const currentSettings = await integrationStore.getSettings();
+
+      if (key === 'search_provider') {
+        // Validate provider value
+        const validation = validateConfigValue('search_provider', value);
+        if (!validation.valid) {
+          return this.createError(validation.error || 'Invalid search provider');
+        }
+
+        const oldValue = currentSettings.searchProvider;
+        await integrationStore.setSearchProvider(validation.coercedValue);
+
+        // If switching to a provider that requires API key and none set, remind user
+        const providerInfo = SEARCH_PROVIDER_INFO[validation.coercedValue as keyof typeof SEARCH_PROVIDER_INFO];
+        let note = '';
+        if (providerInfo?.requiresAPIKey && !currentSettings.searchAPIKey) {
+          note = `\n\nNote: ${providerInfo.displayName} requires an API key.`;
+          note += `\nUse: /config set search_api_key=<your-key>`;
+          if (providerInfo.signupURL) {
+            note += `\nGet one at: ${providerInfo.signupURL}`;
+          }
+        }
+
+        return this.createResponse(
+          `Configuration updated: search_provider\n  Old value: "${oldValue}"\n  New value: "${validation.coercedValue}"${note}`
+        );
+      } else if (key === 'search_api_key') {
+        // Handle API key - validate it's a string
+        const validation = validateConfigValue('search_api_key', value);
+        if (!validation.valid) {
+          return this.createError(validation.error || 'Invalid API key');
+        }
+
+        const oldValue = currentSettings.searchAPIKey;
+        const oldDisplay = oldValue ? `****${oldValue.slice(-4)}` : 'null';
+        const newDisplay = validation.coercedValue ? `****${String(validation.coercedValue).slice(-4)}` : 'null';
+
+        await integrationStore.setSearchAPIKey(validation.coercedValue);
+
+        return this.createResponse(
+          `Configuration updated: search_api_key\n  Old value: "${oldDisplay}"\n  New value: "${newDisplay}"`
+        );
+      }
+
+      return this.createError(`Unknown integration field: ${key}`);
+    } catch (error) {
+      return this.createError(`Failed to update ${key}: ${formatError(error)}`);
     }
   }
 

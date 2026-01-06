@@ -278,7 +278,7 @@ export class IdleTaskCoordinator implements IService {
    *
    * @param messages - Current conversation messages
    */
-  private runTitleRegeneration(messages: Message[]): void {
+  private async runTitleRegeneration(messages: Message[]): Promise<void> {
     if (!this.sessionTitleGenerator) {
       logger.warn('[IDLE_COORD] Title generator not initialized');
       return;
@@ -287,6 +287,13 @@ export class IdleTaskCoordinator implements IService {
     const currentSession = this.sessionManager.getCurrentSession();
     if (!currentSession) {
       logger.debug('[IDLE_COORD] No current session, skipping title regeneration');
+      return;
+    }
+
+    // Check if user manually set the title - skip auto-regeneration if so
+    const session = await this.sessionManager.loadSession(currentSession);
+    if (session?.metadata?.userSetTitle) {
+      logger.debug('[IDLE_COORD] User manually set title, skipping auto-regeneration');
       return;
     }
 

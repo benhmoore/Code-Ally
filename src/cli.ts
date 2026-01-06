@@ -914,6 +914,12 @@ async function main() {
     await projectContextDetector.initialize();
     registry.registerInstance('project_context_detector', projectContextDetector);
 
+    // Create integration store for search providers and other integrations
+    const { IntegrationStore } = await import('./services/IntegrationStore.js');
+    const integrationStore = new IntegrationStore();
+    await integrationStore.initialize();
+    registry.registerInstance('integration_store', integrationStore);
+
     // Import and create tools
     const { BashTool } = await import('./tools/BashTool.js');
     const { BashOutputTool } = await import('./tools/BashOutputTool.js');
@@ -943,6 +949,9 @@ async function main() {
     const { LintTool } = await import('./tools/LintTool.js');
     const { FormatTool } = await import('./tools/FormatTool.js');
     const { AskUserQuestionTool } = await import('./tools/AskUserQuestionTool.js');
+    const { WebFetchTool } = await import('./tools/WebFetchTool.js');
+    const { WebSearchTool } = await import('./tools/WebSearchTool.js');
+    const { ResearchTool } = await import('./tools/ResearchTool.js');
 
     const tools = [
       new BashTool(activityStream, config),
@@ -973,6 +982,9 @@ async function main() {
       new LintTool(activityStream),
       new FormatTool(activityStream),
       new AskUserQuestionTool(activityStream), // Interactive user questions
+      new WebFetchTool(activityStream), // Fetch and extract text from URLs
+      new WebSearchTool(activityStream), // Web search via configured provider (Brave/Serper)
+      new ResearchTool(activityStream), // Research agent delegation tool
     ];
 
     // Load user plugins from profile-specific plugins directory

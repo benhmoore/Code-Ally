@@ -377,6 +377,10 @@ export interface Config {
 
   // Setup
   setup_completed: boolean;
+
+  // Search Integration (stored separately in IntegrationStore with encryption)
+  search_provider: 'none' | 'brave' | 'serper';
+  search_api_key: string | null;
 }
 
 // ===========================
@@ -407,6 +411,7 @@ export interface SessionMetadata {
   tags?: string[];
   model?: string;
   lastTitleGeneratedAt?: number; // Timestamp of last title generation
+  userSetTitle?: boolean; // True if user manually set title via /rename - disables auto-regeneration
   pendingToolCleanups?: string[]; // Tool call IDs identified as irrelevant, pending cleanup
   lastCleanupAnalysisAt?: number; // Timestamp of last cleanup analysis
 }
@@ -532,3 +537,27 @@ export interface FormResponse {
   requestId: string;
   data: Record<string, any>;
 }
+
+// ===========================
+// Integration Types
+// ===========================
+
+export type {
+  SearchProviderType,
+  SearchResult,
+  IntegrationSettings,
+  SearchValidationResult,
+  SearchProviderInfo,
+  ISearchProvider,
+  SerperSearchResponse,
+  BraveSearchResponse,
+} from './integration.js';
+
+export {
+  DEFAULT_INTEGRATION_SETTINGS,
+  SEARCH_PROVIDER_INFO,
+  INTEGRATION_ENCRYPTION,
+  INTEGRATION_FILES,
+  SEARCH_TIMEOUTS,
+  SEARCH_ENDPOINTS,
+} from './integration.js';

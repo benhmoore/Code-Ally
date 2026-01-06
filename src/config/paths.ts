@@ -143,6 +143,15 @@ export function getPromptsDir(): string {
 }
 
 /**
+ * Get the profile instructions file path for the active profile
+ *
+ * @returns Path to profile-specific instructions.md
+ */
+export function getProfileInstructionsFile(): string {
+  return join(PROFILES_DIR, ACTIVE_PROFILE, 'instructions.md');
+}
+
+/**
  * Get the base configuration file path (global defaults)
  *
  * @returns Path to base config.json

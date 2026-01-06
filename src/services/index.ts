@@ -26,6 +26,7 @@ export { PatchFileManager } from './PatchFileManager.js';
 export { PatchIndexManager } from './PatchIndexManager.js';
 export { PatchCleanupManager } from './PatchCleanupManager.js';
 export { BashProcessManager, CircularBuffer } from './BashProcessManager.js';
+export { IntegrationStore } from './IntegrationStore.js';
 
 // Re-export types
 export type { CommandHistoryEntry, CommandHistoryOptions } from './CommandHistory.js';

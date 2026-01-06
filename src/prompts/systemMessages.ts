@@ -16,6 +16,7 @@ import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { logger } from '../services/Logger.js';
 import { getGitBranch } from '../utils/gitUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
+import { getProfileInstructionsFile } from '../config/paths.js';
 import type { TokenManager } from '../agent/TokenManager.js';
 import type { ToolResultManager } from '../services/ToolResultManager.js';
 import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
@@ -58,6 +59,7 @@ Tool selection:
 - explore: Questions about unfamiliar code areas, unknown scope/location, multi-file patterns, architecture questions
 - plan: Multi-step implementations (>3 steps), creates todos with dependencies
 - agent: Complex tasks requiring expertise, independent work that can be reviewed afterward
+- research: Current information from the web, fact verification, external documentation, news/updates
 - Direct tools: ONLY for known file paths or exact search terms
 
 Usage patterns:
@@ -66,6 +68,7 @@ Usage patterns:
 - Bug investigation → explore → diagnose → fix
 - Known targets → read directly
 - Independent parallel investigations → consider batching
+- External/current info needed → research (news, docs updates, version info, API specs, fact-checking)
 
 Follow-up questions (IMPORTANT):
 - Related questions → agent-ask (agent has built context, much more efficient)
@@ -74,6 +77,10 @@ Follow-up questions (IMPORTANT):
 
 Examples needing explore:
 "Where are errors handled?" / "How does auth work?" / "Find all user roles" / "What's the codebase structure?" / "Trace all X implementations" / "Show me how Y feature works" / "Where is Z used?"
+
+Examples needing research:
+"What's the latest React version?" / "How does the OpenAI API handle rate limits?" / "What are best practices for X?" / "Is library Y still maintained?" / "What changed in Node 22?" / "Find documentation for Z API"
+NOT for research: Anything in the codebase, historical conversation context, or offline data.
 
 Planning: Multi-step features/refactors. Skip quick fixes.
 Agents: Auto-persist. Reusable via agent-ask.`;
@@ -208,6 +215,24 @@ export async function getContextInfo(options: {
   const nodeVersion = process.version;
   const gitBranch = getGitBranch();
 
+  // Check for profile instructions file and include its contents
+  let profileInstructionsContent = '';
+  if (includeProjectInstructions) {
+    try {
+      const profileInstructionsPath = getProfileInstructionsFile();
+      if (fs.existsSync(profileInstructionsPath)) {
+        const profileContent = fs.readFileSync(profileInstructionsPath, 'utf-8').trim();
+        if (profileContent) {
+          profileInstructionsContent = `
+- Profile Instructions:
+${profileContent}`;
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to read profile instructions:', formatError(error));
+    }
+  }
+
   // Check for ALLY.md file and include its contents
   let allyMdContent = '';
   if (includeProjectInstructions) {
@@ -334,7 +359,7 @@ ${agentsSection}`;
 - Current Date: ${currentDate}
 - Working Directory: ${workingDir}${gitInfo}${additionalDirsInfo}
 - Operating System: ${osInfo}
-- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${allyMdContent}${agentsInfo}${contextFilesSection}`;
+- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${profileInstructionsContent}${allyMdContent}${agentsInfo}${contextFilesSection}`;
 }
 
 /**

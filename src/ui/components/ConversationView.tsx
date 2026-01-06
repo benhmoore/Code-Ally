@@ -211,9 +211,9 @@ const ActiveContent = React.memo<{
         </Box>
       ))}
 
-      {streamingContent && (
+      {streamingContent?.trimStart() && (
         <Box paddingLeft={2}>
-          <Text dimColor>{streamingContent}</Text>
+          <Text dimColor>{streamingContent.trimStart()}</Text>
         </Box>
       )}
     </Box>

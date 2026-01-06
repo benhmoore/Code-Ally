@@ -53,6 +53,8 @@ const SAFE_CONCURRENT_TOOLS = new Set([
   'git_log',
   'git_diff',
   'web_fetch',
+  'web-fetch',
+  'web-search',
   // Agent delegation tools - use scoped registries for isolation
   'agent',
   'explore',

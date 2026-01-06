@@ -27,3 +27,6 @@ export { TodoWriteTool } from './TodoWriteTool.js';
 export { AgentAskTool } from './AgentAskTool.js';
 export { ExploreTool } from './ExploreTool.js';
 export { PlanTool } from './PlanTool.js';
+export { WebFetchTool } from './WebFetchTool.js';
+export { WebSearchTool } from './WebSearchTool.js';
+export { ResearchTool } from './ResearchTool.js';

@@ -102,6 +102,14 @@ export const DEFAULT_CONFIG: Config = {
   // SETUP TRACKING
   // ==========================================
   setup_completed: false, // Whether initial setup ran
+
+  // ==========================================
+  // SEARCH INTEGRATION
+  // Note: These are stored in IntegrationStore with encryption,
+  // not in the main config file. Shown here for /config display.
+  // ==========================================
+  search_provider: 'none', // Search provider: 'none', 'brave', or 'serper'
+  search_api_key: null, // API key for search provider (encrypted at rest)
 };
 
 /**
@@ -175,6 +183,10 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
 
   // Setup
   setup_completed: 'boolean',
+
+  // Search Integration
+  search_provider: 'string',
+  search_api_key: 'string',
 };
 
 /**
@@ -225,6 +237,21 @@ export function validateConfigValue(
       return { valid: true, coercedValue: lowerValue };
     }
     return { valid: false, error: `reasoning_effort must be one of: ${REASONING_EFFORT_API_VALUES.join(', ')}` };
+  }
+
+  // Validate search_provider values
+  const VALID_SEARCH_PROVIDERS = ['none', 'brave', 'serper'] as const;
+  if (key === 'search_provider' && typeof value === 'string') {
+    const lowerValue = value.toLowerCase();
+    if (VALID_SEARCH_PROVIDERS.includes(lowerValue as any)) {
+      return { valid: true, coercedValue: lowerValue };
+    }
+    return { valid: false, error: `search_provider must be one of: ${VALID_SEARCH_PROVIDERS.join(', ')}` };
+  }
+
+  // Handle null/undefined search_api_key
+  if (key === 'search_api_key' && (value === null || value === undefined || value === '')) {
+    return { valid: true, coercedValue: null };
   }
 
   try {
