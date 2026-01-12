@@ -11,6 +11,7 @@ Code Ally gives you an AI that lives where you work—your terminal. It reads yo
 ## Feature Spotlight
 
 - **Expert delegation** — Delegate to specialized agents created by you or Ally
+- **Agent skills** — Reusable workflows that load on-demand (open standard)
 - **Todo list** — Ally can keep a todo list as it works to stay on track
 - **Plugins** — Extend with custom tools and agents in Python or Node.js
 - **Change tracking** — Full undo support for file modifications
@@ -74,6 +75,14 @@ ally --profile work         # Use profile
 | `/agent clear [id]` | Clear agent(s) from pool |
 | `/switch <agent>` | Switch to different agent |
 | `/switch ally` | Return to main agent |
+
+### Skills
+
+| Command | Description |
+|---------|-------------|
+| `/skill list` | List available skills |
+| `/skill show <name>` | View skill details |
+| `/skill reload` | Reload skills from disk |
 
 ### Project
 
@@ -170,6 +179,39 @@ Opens a wizard to define:
 Agents persist in a pool. Use `/agent active` to see running agents, `/agent clear` to free memory.
 
 See [docs/plugins.md](docs/plugins.md) for creating agents via plugins.
+
+## Skills
+
+Skills are reusable workflows that Ally loads on-demand. They follow an [open standard](https://agentskills.io) compatible with GitHub Copilot, Cursor, and other AI tools.
+
+**Skill locations** (in priority order):
+```
+.github/skills/      # Project (standard)
+.claude/skills/      # Project (legacy)
+.ally/skills/        # Project (Ally-native)
+~/.ally/skills/      # User (global)
+```
+
+**SKILL.md format:**
+```markdown
+---
+name: code-review
+description: Systematic code review workflow. Use when reviewing code or PRs.
+---
+
+# Code Review Skill
+
+Follow this process when reviewing code...
+```
+
+**Commands:**
+```
+/skill list          # List available skills
+/skill show <name>   # View skill details
+/skill reload        # Reload from disk
+```
+
+Skills are automatically discovered and loaded when relevant. See [examples/skills/code-review](examples/skills/code-review) for a complete example.
 
 ## Focus Mode
 

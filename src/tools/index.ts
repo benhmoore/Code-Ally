@@ -30,3 +30,4 @@ export { PlanTool } from './PlanTool.js';
 export { WebFetchTool } from './WebFetchTool.js';
 export { WebSearchTool } from './WebSearchTool.js';
 export { ResearchTool } from './ResearchTool.js';
+export { SkillTool } from './SkillTool.js';

@@ -9,6 +9,7 @@ import { ServiceLifecycle, IService } from '../types/index.js';
 import type { PluginActivationManager } from '../plugins/PluginActivationManager.js';
 import type { PromptLibraryManager } from './PromptLibraryManager.js';
 import type { ToolCallHistory } from './ToolCallHistory.js';
+import type { SkillManager } from './SkillManager.js';
 import { logger } from './Logger.js';
 
 export class ServiceDescriptor<T = unknown> {
@@ -311,6 +312,21 @@ export class ServiceRegistry {
    */
   getToolCallHistory(): ToolCallHistory | undefined {
     return this.get('tool_call_history') as ToolCallHistory | undefined;
+  }
+
+  /**
+   * Set the SkillManager instance
+   */
+  setSkillManager(manager: SkillManager): void {
+    this.registerInstance('skill_manager', manager);
+  }
+
+  /**
+   * Get the SkillManager instance
+   * @returns SkillManager instance or undefined if not registered
+   */
+  getSkillManager(): SkillManager | undefined {
+    return this.get('skill_manager') as SkillManager | undefined;
   }
 }
 

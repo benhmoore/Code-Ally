@@ -273,6 +273,31 @@ ${agentsSection}`;
     }
   }
 
+  // Get available skills information
+  let skillsInfo = '';
+  try {
+    const serviceRegistry = ServiceRegistry.getInstance();
+    const skillManager = serviceRegistry.getSkillManager();
+
+    if (skillManager) {
+      // Check context usage - only include skills if under 80%
+      let contextPct = 0;
+      if (tokenManager && typeof tokenManager.getContextUsagePercentage === 'function') {
+        contextPct = tokenManager.getContextUsagePercentage();
+      }
+
+      if (contextPct < 80) {
+        const skillsSection = skillManager.getSkillsForSystemPrompt();
+        if (skillsSection) {
+          skillsInfo = `
+${skillsSection}`;
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn('Failed to load skills for system prompt:', formatError(error));
+  }
+
   // Get context usage info with warnings
   const contextUsage = getContextUsageInfo(tokenManager, toolResultManager);
   const contextUsageSection = contextUsage ? `\n${contextUsage}` : '';
@@ -359,7 +384,7 @@ ${agentsSection}`;
 - Current Date: ${currentDate}
 - Working Directory: ${workingDir}${gitInfo}${additionalDirsInfo}
 - Operating System: ${osInfo}
-- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${profileInstructionsContent}${allyMdContent}${agentsInfo}${contextFilesSection}`;
+- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${profileInstructionsContent}${allyMdContent}${agentsInfo}${skillsInfo}${contextFilesSection}`;
 }
 
 /**

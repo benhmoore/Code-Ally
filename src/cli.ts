@@ -920,6 +920,12 @@ async function main() {
     await integrationStore.initialize();
     registry.registerInstance('integration_store', integrationStore);
 
+    // Create skill manager for skill discovery and loading
+    const { SkillManager } = await import('./services/SkillManager.js');
+    const skillManager = new SkillManager();
+    await skillManager.initialize();
+    registry.setSkillManager(skillManager);
+
     // Import and create tools
     const { BashTool } = await import('./tools/BashTool.js');
     const { BashOutputTool } = await import('./tools/BashOutputTool.js');
@@ -952,6 +958,7 @@ async function main() {
     const { WebFetchTool } = await import('./tools/WebFetchTool.js');
     const { WebSearchTool } = await import('./tools/WebSearchTool.js');
     const { ResearchTool } = await import('./tools/ResearchTool.js');
+    const { SkillTool } = await import('./tools/SkillTool.js');
 
     const tools = [
       new BashTool(activityStream, config),
@@ -985,6 +992,7 @@ async function main() {
       new WebFetchTool(activityStream), // Fetch and extract text from URLs
       new WebSearchTool(activityStream), // Web search via configured provider (Brave/Serper)
       new ResearchTool(activityStream), // Research agent delegation tool
+      new SkillTool(activityStream), // Load skill instructions into context
     ];
 
     // Load user plugins from profile-specific plugins directory

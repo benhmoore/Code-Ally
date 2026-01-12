@@ -15,6 +15,7 @@ export { TodoManager, TodoItem } from './TodoManager.js';
 export { FocusManager, FocusResult } from './FocusManager.js';
 export { ReadStateManager, ReadRange, FileReadState, ValidationResult } from './ReadStateManager.js';
 export { AgentManager, AgentData, AgentInfo } from './AgentManager.js';
+export { SkillManager, SkillDefinition, SkillInfo, SkillSource } from './SkillManager.js';
 export { AgentPoolService, AgentPoolConfig, AgentMetadata, PooledAgent } from './AgentPoolService.js';
 export { DelegationContextManager, DelegationContext, DelegationState, ActiveDelegation } from './DelegationContextManager.js';
 export { CommandHistory } from './CommandHistory.js';

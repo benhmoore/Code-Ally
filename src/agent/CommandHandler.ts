@@ -43,6 +43,7 @@ import { AddDirCommand } from './commands/AddDirCommand.js';
 import { RemoveDirCommand } from './commands/RemoveDirCommand.js';
 import { ListDirsCommand } from './commands/ListDirsCommand.js';
 import { OpenCommand } from './commands/OpenCommand.js';
+import { SkillCommand } from './commands/SkillCommand.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -82,6 +83,7 @@ export class CommandHandler {
     this.registerCommand(new RemoveDirCommand());
     this.registerCommand(new ResumeCommand());
     this.registerCommand(new RewindCommand());
+    this.registerCommand(new SkillCommand());
     this.registerCommand(new SwitchCommand());
     this.registerCommand(new TaskCommand());
     this.registerCommand(new TodoCommand());
