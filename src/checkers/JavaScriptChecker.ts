@@ -7,10 +7,10 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { spawn } from 'child_process';
 import { FileChecker, CheckResult, CheckIssue } from './types.js';
 import { API_TIMEOUTS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
+import { runCommand } from './utils.js';
 
 export class JavaScriptChecker implements FileChecker {
   readonly name = 'javascript';
@@ -50,7 +50,7 @@ export class JavaScriptChecker implements FileChecker {
     try {
       await fs.writeFile(tmpPath, content, 'utf-8');
 
-      const { stderr } = await this.runCommand('node', ['--check', tmpPath], {
+      const { stderr } = await runCommand('node', ['--check', tmpPath], {
         timeout: API_TIMEOUTS.NODE_SYNTAX_CHECK_TIMEOUT,
       });
 
@@ -90,7 +90,7 @@ export class JavaScriptChecker implements FileChecker {
     }
 
     try {
-      await this.runCommand('node', ['--version'], { timeout: API_TIMEOUTS.VERSION_CHECK });
+      await runCommand('node', ['--version'], { timeout: API_TIMEOUTS.VERSION_CHECK });
       this.nodeAvailable = true;
     } catch {
       this.nodeAvailable = false;
@@ -126,46 +126,4 @@ export class JavaScriptChecker implements FileChecker {
     }
   }
 
-  /**
-   * Run a command and capture output
-   */
-  private runCommand(
-    command: string,
-    args: string[],
-    options: { cwd?: string; timeout?: number } = {}
-  ): Promise<{ stdout: string; stderr: string }> {
-    return new Promise((resolve, reject) => {
-      const proc = spawn(command, args, {
-        cwd: options.cwd,
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      proc.stdout?.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      proc.stderr?.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      const timeout = options.timeout
-        ? setTimeout(() => {
-            proc.kill();
-            reject(new Error('Command timeout'));
-          }, options.timeout)
-        : null;
-
-      proc.on('close', () => {
-        if (timeout) clearTimeout(timeout);
-        resolve({ stdout, stderr });
-      });
-
-      proc.on('error', (error) => {
-        if (timeout) clearTimeout(timeout);
-        reject(error);
-      });
-    });
-  }
 }

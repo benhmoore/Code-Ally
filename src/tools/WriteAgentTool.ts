@@ -12,7 +12,8 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentsDir } from '../config/paths.js';
-import { constructAgentContent, validateAgentName } from '../utils/agentContentUtils.js';
+import { constructAgentContent } from '../utils/agentContentUtils.js';
+import { validateAgentName } from '../utils/namingValidation.js';
 import {
   validateTemperature,
   validateReasoningEffort,

@@ -8,31 +8,6 @@
 import { extractFrontmatter, parseFrontmatterYAML } from './yamlUtils.js';
 
 /**
- * Validate agent name follows kebab-case format
- *
- * @param name - Agent name to validate
- * @returns Validation result with error message if invalid
- */
-export function validateAgentName(name: string): { valid: boolean; error?: string } {
-  if (!name) {
-    return {
-      valid: false,
-      error: 'name parameter is required'
-    };
-  }
-
-  const kebabRegex = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
-  if (!kebabRegex.test(name)) {
-    return {
-      valid: false,
-      error: `Agent name must be kebab-case: ${name}. Valid examples: "code-reviewer", "python-tester". Invalid: "CodeReviewer", "code_reviewer"`
-    };
-  }
-
-  return { valid: true };
-}
-
-/**
  * Agent frontmatter metadata structure
  *
  * Represents the YAML frontmatter in an agent definition file.

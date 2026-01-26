@@ -22,6 +22,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
+import { extractSummaryFromConversation } from '../utils/agentUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, formatElapsed } from '../ui/utils/timeUtils.js';
@@ -314,11 +315,11 @@ export class SessionsTool extends BaseTool {
         // Ensure we have a substantial response
         if (!response || response.trim().length === 0) {
           logger.debug('[SESSIONS_TOOL] Empty response, extracting from conversation');
-          finalResponse = this.extractSummaryFromConversation(analysisAgent) ||
+          finalResponse = extractSummaryFromConversation(analysisAgent, '[SESSIONS_TOOL]', 'Session analysis findings:') ||
             'Session analysis completed but no summary was provided.';
         } else if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
           logger.debug('[SESSIONS_TOOL] Incomplete response, attempting to extract summary');
-          const summary = this.extractSummaryFromConversation(analysisAgent);
+          const summary = extractSummaryFromConversation(analysisAgent, '[SESSIONS_TOOL]', 'Session analysis findings:');
           finalResponse = (summary && summary.length > response.length) ? summary : response;
         } else {
           finalResponse = response;
@@ -379,45 +380,6 @@ export class SessionsTool extends BaseTool {
         `Session analysis failed: ${formatError(error)}`,
         'execution_error'
       );
-    }
-  }
-
-  /**
-   * Extract summary from analysis agent's conversation history
-   */
-  private extractSummaryFromConversation(agent: Agent): string | null {
-    try {
-      const messages = agent.getMessages();
-
-      // Find all assistant messages
-      const assistantMessages = messages
-        .filter(msg => msg.role === 'assistant' && msg.content && msg.content.trim().length > 0)
-        .map(msg => msg.content);
-
-      if (assistantMessages.length === 0) {
-        logger.debug('[SESSIONS_TOOL] No assistant messages found in conversation');
-        return null;
-      }
-
-      // Combine recent messages if multiple exist
-      if (assistantMessages.length > 1) {
-        const recentMessages = assistantMessages.slice(-3);
-        const summary = recentMessages.join('\n\n');
-        logger.debug('[SESSIONS_TOOL] Extracted summary from', recentMessages.length, 'messages, length:', summary.length);
-        return `Session analysis findings:\n\n${summary}`;
-      }
-
-      // Single assistant message
-      const summary = assistantMessages[0];
-      if (summary) {
-        logger.debug('[SESSIONS_TOOL] Using single assistant message as summary, length:', summary.length);
-        return summary;
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug('[SESSIONS_TOOL] Error extracting summary:', error);
-      return null;
     }
   }
 

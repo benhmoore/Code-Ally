@@ -21,6 +21,7 @@ import { AgentPoolService, AgentMetadata, PooledAgent } from '../services/AgentP
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentType, getAgentDisplayName } from '../utils/agentTypeUtils.js';
+import { extractSummaryFromConversation } from '../utils/agentUtils.js';
 import { TEXT_LIMITS, FORMATTING, PERMISSION_MESSAGES } from '../config/constants.js';
 import { getThoroughnessDuration, formatMinutesSeconds, formatElapsed, type ThoroughnessLevel } from '../ui/utils/timeUtils.js';
 import { createAgentTaskContextReminder } from '../utils/messageUtils.js';
@@ -254,11 +255,11 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
         // Ensure we have a substantial response
         if (!response || response.trim().length === 0) {
           logger.debug('[ASK_AGENT_TOOL] Empty response, extracting from conversation');
-          finalResponse = this.extractSummaryFromConversation(agent) ||
+          finalResponse = extractSummaryFromConversation(agent, '[ASK_AGENT_TOOL]', 'Agent response:') ||
             'Agent responded but no summary was provided.';
         } else if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
           logger.debug('[ASK_AGENT_TOOL] Incomplete response, attempting to extract summary');
-          const summary = this.extractSummaryFromConversation(agent);
+          const summary = extractSummaryFromConversation(agent, '[ASK_AGENT_TOOL]', 'Agent response:');
           finalResponse = (summary && summary.length > response.length) ? summary : response;
         } else {
           finalResponse = response;
@@ -382,45 +383,6 @@ When uncertain: Use agent-ask first. Much cheaper than restarting.`;
       return createAgentTaskContextReminder(displayName, taskPrompt, maxDurationStr, thoroughness);
     } catch (error) {
       logger.debug('[ASK_AGENT_TOOL] Error building task context:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Extract summary from agent's conversation history
-   */
-  private extractSummaryFromConversation(agent: any): string | null {
-    try {
-      const messages = agent.getMessages();
-
-      // Find all assistant messages
-      const assistantMessages = messages
-        .filter((msg: any) => msg.role === 'assistant' && msg.content && msg.content.trim().length > 0)
-        .map((msg: any) => msg.content);
-
-      if (assistantMessages.length === 0) {
-        logger.debug('[ASK_AGENT_TOOL] No assistant messages found in conversation');
-        return null;
-      }
-
-      // Combine recent messages if multiple exist
-      if (assistantMessages.length > 1) {
-        const recentMessages = assistantMessages.slice(-3);
-        const summary = recentMessages.join('\n\n');
-        logger.debug('[ASK_AGENT_TOOL] Extracted summary from', recentMessages.length, 'messages, length:', summary.length);
-        return `Agent response:\n\n${summary}`;
-      }
-
-      // Single assistant message
-      const summary = assistantMessages[0];
-      if (summary) {
-        logger.debug('[ASK_AGENT_TOOL] Using single assistant message as summary, length:', summary.length);
-        return summary;
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug('[ASK_AGENT_TOOL] Error extracting summary:', error);
       return null;
     }
   }

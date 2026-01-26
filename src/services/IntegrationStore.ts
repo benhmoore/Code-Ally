@@ -9,19 +9,18 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import { logger } from './Logger.js';
+import { CryptoService, CRYPTO_SALTS } from './CryptoService.js';
 import type { IService } from '../types/index.js';
 import type { IntegrationSettings, SearchProviderType } from '../types/integration.js';
 import {
   DEFAULT_INTEGRATION_SETTINGS,
-  INTEGRATION_ENCRYPTION,
   INTEGRATION_FILES,
 } from '../types/integration.js';
 
 export class IntegrationStore implements IService {
   private settings: IntegrationSettings = { ...DEFAULT_INTEGRATION_SETTINGS };
-  private encryptionKey: Buffer | null = null;
+  private crypto = new CryptoService({ salt: CRYPTO_SALTS.INTEGRATION });
   private initialized = false;
 
   /**
@@ -39,71 +38,6 @@ export class IntegrationStore implements IService {
   }
 
   /**
-   * Get or create the encryption key
-   * Key is derived from machine-specific identifier for local-only encryption
-   */
-  private getEncryptionKey(): Buffer {
-    if (this.encryptionKey) {
-      return this.encryptionKey;
-    }
-
-    const keyMaterial = process.env.USER || process.env.USERNAME || 'ally-default';
-    const salt = Buffer.from('ally-integration-config-salt');
-
-    this.encryptionKey = scryptSync(keyMaterial, salt, INTEGRATION_ENCRYPTION.KEY_LENGTH);
-    return this.encryptionKey;
-  }
-
-  /**
-   * Encrypt a string value using AES-256-GCM
-   */
-  private encrypt(value: string): string {
-    const key = this.getEncryptionKey();
-    const iv = randomBytes(INTEGRATION_ENCRYPTION.IV_LENGTH);
-    const cipher = createCipheriv(INTEGRATION_ENCRYPTION.ALGORITHM, key, iv);
-
-    let encrypted = cipher.update(value, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-
-    const authTag = cipher.getAuthTag();
-
-    // Format: iv:authTag:encrypted
-    const sep = INTEGRATION_ENCRYPTION.SEPARATOR;
-    return `${iv.toString('hex')}${sep}${authTag.toString('hex')}${sep}${encrypted}`;
-  }
-
-  /**
-   * Decrypt a string value
-   */
-  private decrypt(encryptedValue: string): string {
-    const key = this.getEncryptionKey();
-    const parts = encryptedValue.split(INTEGRATION_ENCRYPTION.SEPARATOR);
-
-    if (parts.length !== 3) {
-      throw new Error('Invalid encrypted value format');
-    }
-
-    const iv = Buffer.from(parts[0]!, 'hex');
-    const authTag = Buffer.from(parts[1]!, 'hex');
-    const encrypted = parts[2]!;
-
-    const decipher = createDecipheriv(INTEGRATION_ENCRYPTION.ALGORITHM, key, iv);
-    decipher.setAuthTag(authTag);
-
-    const decrypted = decipher.update(encrypted, 'hex', 'utf8') + decipher.final('utf8');
-
-    return decrypted;
-  }
-
-  /**
-   * Check if a value is encrypted (has the encryption prefix)
-   */
-  private isEncrypted(value: string): boolean {
-    const prefix = `${INTEGRATION_ENCRYPTION.PREFIX}${INTEGRATION_ENCRYPTION.SEPARATOR}`;
-    return value.startsWith(prefix);
-  }
-
-  /**
    * Encrypt the API key for storage
    */
   private encryptAPIKey(key: string | null): string | null {
@@ -111,15 +45,13 @@ export class IntegrationStore implements IService {
       return null;
     }
 
-    const prefix = `${INTEGRATION_ENCRYPTION.PREFIX}${INTEGRATION_ENCRYPTION.SEPARATOR}`;
-
     // Already encrypted
-    if (this.isEncrypted(key)) {
+    if (this.crypto.isEncrypted(key)) {
       return key;
     }
 
-    const encryptedValue = this.encrypt(key);
-    return `${prefix}${encryptedValue}`;
+    const encryptedValue = this.crypto.encrypt(key);
+    return this.crypto.wrapEncrypted(encryptedValue);
   }
 
   /**
@@ -130,16 +62,14 @@ export class IntegrationStore implements IService {
       return null;
     }
 
-    const prefix = `${INTEGRATION_ENCRYPTION.PREFIX}${INTEGRATION_ENCRYPTION.SEPARATOR}`;
-
     // Not encrypted (shouldn't happen, but handle gracefully)
-    if (!this.isEncrypted(key)) {
+    if (!this.crypto.isEncrypted(key)) {
       return key;
     }
 
     try {
-      const encryptedValue = key.substring(prefix.length);
-      return this.decrypt(encryptedValue);
+      const encryptedValue = this.crypto.unwrapEncrypted(key);
+      return this.crypto.decrypt(encryptedValue);
     } catch (error) {
       const errorMsg = `Failed to decrypt API key: ${
         error instanceof Error ? error.message : String(error)
@@ -228,7 +158,7 @@ export class IntegrationStore implements IService {
       );
     }
 
-    this.encryptionKey = null;
+    this.crypto.clearKey();
     this.initialized = false;
   }
 

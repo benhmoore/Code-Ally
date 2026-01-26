@@ -132,23 +132,6 @@ export interface ISearchProvider {
 // ===========================
 
 /**
- * Encryption configuration for integration secrets
- * Matches PLUGIN_ENCRYPTION pattern
- */
-export const INTEGRATION_ENCRYPTION = {
-  /** Encryption algorithm */
-  ALGORITHM: 'aes-256-gcm' as const,
-  /** Encryption key length in bytes (256 bits) */
-  KEY_LENGTH: 32,
-  /** Initialization vector length in bytes (128 bits) */
-  IV_LENGTH: 16,
-  /** Prefix for encrypted values */
-  PREFIX: '__ENCRYPTED__',
-  /** Separator for encrypted value components */
-  SEPARATOR: ':',
-} as const;
-
-/**
  * Integration file paths
  */
 export const INTEGRATION_FILES = {

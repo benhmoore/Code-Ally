@@ -8,91 +8,33 @@
 
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import { logger } from '../services/Logger.js';
+import { CryptoService, CRYPTO_SALTS } from '../services/CryptoService.js';
 import type { PluginConfigSchema, ConfigProperty } from './PluginLoader.js';
-import { PLUGIN_ENCRYPTION, PLUGIN_FILES } from './constants.js';
-import { ConfigUtils } from './utils.js';
+import { PLUGIN_FILES } from './constants.js';
+import { ConfigUtils, PathUtils } from './utils.js';
 
 export class PluginConfigManager {
-  private encryptionKey: Buffer | null = null;
-
-  /**
-   * Get or create the encryption key
-   * Key is derived from machine-specific identifier for local-only encryption
-   */
-  private async getEncryptionKey(): Promise<Buffer> {
-    if (this.encryptionKey) {
-      return this.encryptionKey;
-    }
-
-    const keyMaterial = process.env.USER || process.env.USERNAME || 'ally-default';
-    const salt = Buffer.from('ally-plugin-config-salt');
-
-    this.encryptionKey = scryptSync(keyMaterial, salt, PLUGIN_ENCRYPTION.KEY_LENGTH);
-    return this.encryptionKey;
-  }
-
-  /**
-   * Encrypt a string value using AES-256-GCM
-   */
-  private async encrypt(value: string): Promise<string> {
-    const key = await this.getEncryptionKey();
-    const iv = randomBytes(PLUGIN_ENCRYPTION.IV_LENGTH);
-    const cipher = createCipheriv(PLUGIN_ENCRYPTION.ALGORITHM, key, iv);
-
-    let encrypted = cipher.update(value, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-
-    const authTag = cipher.getAuthTag();
-
-    // Format: iv:authTag:encrypted
-    const sep = PLUGIN_ENCRYPTION.SEPARATOR;
-    return `${iv.toString('hex')}${sep}${authTag.toString('hex')}${sep}${encrypted}`;
-  }
-
-  /**
-   * Decrypt a string value
-   */
-  private async decrypt(encryptedValue: string): Promise<string> {
-    const key = await this.getEncryptionKey();
-    const parts = encryptedValue.split(PLUGIN_ENCRYPTION.SEPARATOR);
-
-    if (parts.length !== 3) {
-      throw new Error('Invalid encrypted value format');
-    }
-
-    const iv = Buffer.from(parts[0]!, 'hex');
-    const authTag = Buffer.from(parts[1]!, 'hex');
-    const encrypted = parts[2]!;
-
-    const decipher = createDecipheriv(PLUGIN_ENCRYPTION.ALGORITHM, key, iv);
-    decipher.setAuthTag(authTag);
-
-    const decrypted = decipher.update(encrypted, 'hex', 'utf8') + decipher.final('utf8');
-
-    return decrypted;
-  }
+  private crypto = new CryptoService({ salt: CRYPTO_SALTS.PLUGIN_CONFIG });
 
   /**
    * Encrypt secret fields in config object
    */
-  private async encryptSecrets(config: any, schema: PluginConfigSchema): Promise<any> {
+  private encryptSecrets(config: any, schema: PluginConfigSchema): any {
     if (!schema?.schema?.properties) {
       return config;
     }
 
     const encrypted = { ...config };
-    const prefix = `${PLUGIN_ENCRYPTION.PREFIX}${PLUGIN_ENCRYPTION.SEPARATOR}`;
 
     for (const [key, property] of Object.entries(schema.schema.properties)) {
       const prop = property as ConfigProperty;
       if (prop.secret && !ConfigUtils.isEmpty(encrypted[key])) {
         const value = String(encrypted[key]);
         // Only encrypt if not already encrypted
-        if (!value.startsWith(prefix)) {
-          const encryptedValue = await this.encrypt(value);
-          encrypted[key] = `${prefix}${encryptedValue}`;
+        if (!this.crypto.isEncrypted(value)) {
+          const encryptedValue = this.crypto.encrypt(value);
+          encrypted[key] = this.crypto.wrapEncrypted(encryptedValue);
         }
       }
     }
@@ -103,22 +45,21 @@ export class PluginConfigManager {
   /**
    * Decrypt secret fields in config object
    */
-  private async decryptSecrets(config: any, schema: PluginConfigSchema): Promise<any> {
+  private decryptSecrets(config: any, schema: PluginConfigSchema): any {
     if (!schema?.schema?.properties) {
       return config;
     }
 
     const decrypted = { ...config };
-    const prefix = `${PLUGIN_ENCRYPTION.PREFIX}${PLUGIN_ENCRYPTION.SEPARATOR}`;
 
     for (const [key, property] of Object.entries(schema.schema.properties)) {
       const prop = property as ConfigProperty;
       if (prop.secret && !ConfigUtils.isEmpty(decrypted[key])) {
         const value = String(decrypted[key]);
-        if (value.startsWith(prefix)) {
+        if (this.crypto.isEncrypted(value)) {
           try {
-            const encryptedValue = value.substring(prefix.length);
-            decrypted[key] = await this.decrypt(encryptedValue);
+            const encryptedValue = this.crypto.unwrapEncrypted(value);
+            decrypted[key] = this.crypto.decrypt(encryptedValue);
           } catch (error) {
             // Decryption failure is a critical error - don't silently continue
             // with encrypted value as it would cause cryptic downstream failures
@@ -162,7 +103,7 @@ export class PluginConfigManager {
   /**
    * Validate config against schema
    */
-  private validateConfig(config: any, schema: PluginConfigSchema): { valid: boolean; errors: string[] } {
+  private async validateConfig(config: any, schema: PluginConfigSchema): Promise<{ valid: boolean; errors: string[] }> {
     const errors: string[] = [];
 
     if (!schema?.schema?.properties) {
@@ -187,6 +128,22 @@ export class PluginConfigManager {
       // Type validation with coercion support
       if (!ConfigUtils.isEmpty(value) && !ConfigUtils.validateType(value, prop.type)) {
         errors.push(`Field '${key}' has invalid type. Expected ${prop.type}, got ${typeof value}`);
+        continue;
+      }
+
+      // Path existence validation for filepath and directory types
+      if (!ConfigUtils.isEmpty(value) && typeof value === 'string') {
+        if (prop.type === 'filepath') {
+          const exists = await PathUtils.fileExists(value);
+          if (!exists) {
+            errors.push(`File not found for field '${key}': ${PathUtils.resolvePath(value)}`);
+          }
+        } else if (prop.type === 'directory') {
+          const exists = await PathUtils.directoryExists(value);
+          if (!exists) {
+            errors.push(`Directory not found for field '${key}': ${PathUtils.resolvePath(value)}`);
+          }
+        }
       }
     }
 
@@ -216,7 +173,7 @@ export class PluginConfigManager {
 
       // Validate config if schema is provided
       if (schema) {
-        const validation = this.validateConfig(normalizedConfig, schema);
+        const validation = await this.validateConfig(normalizedConfig, schema);
         if (!validation.valid) {
           throw new Error(
             `Invalid configuration for plugin '${pluginName}':\n${validation.errors.join('\n')}`
@@ -225,7 +182,7 @@ export class PluginConfigManager {
       }
 
       // Encrypt secrets if schema is provided
-      const configToSave = schema ? await this.encryptSecrets(normalizedConfig, schema) : normalizedConfig;
+      const configToSave = schema ? this.encryptSecrets(normalizedConfig, schema) : normalizedConfig;
 
       // Ensure plugin directory exists
       await fs.mkdir(pluginPath, { recursive: true });
@@ -271,7 +228,7 @@ export class PluginConfigManager {
       const config = JSON.parse(content);
 
       // Decrypt secrets if schema is provided
-      const decryptedConfig = schema ? await this.decryptSecrets(config, schema) : config;
+      const decryptedConfig = schema ? this.decryptSecrets(config, schema) : config;
 
       logger.debug(`[PluginConfigManager] Loaded config for plugin '${pluginName}' from ${configPath}`);
       return decryptedConfig;
@@ -301,7 +258,7 @@ export class PluginConfigManager {
         return false;
       }
 
-      const validation = this.validateConfig(config, schema);
+      const validation = await this.validateConfig(config, schema);
       return validation.valid;
     } catch (error) {
       logger.debug(

@@ -12,6 +12,18 @@ import type { ToolCallHistory } from './ToolCallHistory.js';
 import type { SkillManager } from './SkillManager.js';
 import { logger } from './Logger.js';
 
+/**
+ * Type guard to check if an object implements IService
+ */
+function isIService(obj: unknown): obj is IService {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    typeof (obj as IService).initialize === 'function' &&
+    typeof (obj as IService).cleanup === 'function'
+  );
+}
+
 export class ServiceDescriptor<T = unknown> {
   private _instance?: T;
   private _initPromise?: Promise<void>;
@@ -58,7 +70,7 @@ export class ServiceDescriptor<T = unknown> {
 
     // Call initialize if service implements IService
     // Track initialization promise to prevent race conditions
-    if (this.isIService(instance)) {
+    if (isIService(instance)) {
       if (!this._initializing && !this._initPromise) {
         this._initializing = true;
         this._initPromise = instance.initialize()
@@ -87,15 +99,6 @@ export class ServiceDescriptor<T = unknown> {
     if (this._initPromise) {
       await this._initPromise;
     }
-  }
-
-  private isIService(obj: unknown): obj is IService {
-    return (
-      typeof obj === 'object' &&
-      obj !== null &&
-      typeof (obj as IService).initialize === 'function' &&
-      typeof (obj as IService).cleanup === 'function'
-    );
   }
 }
 
@@ -226,7 +229,7 @@ export class ServiceRegistry {
     const cleanupPromises: Promise<void>[] = [];
 
     for (const [name, instance] of this._services.entries()) {
-      if (this.isIService(instance)) {
+      if (isIService(instance)) {
         cleanupPromises.push(
           instance.cleanup().catch(error => {
             logger.error(`Error cleaning up service ${name}:`, error);
@@ -236,7 +239,7 @@ export class ServiceRegistry {
     }
 
     for (const [name, descriptor] of this._descriptors.entries()) {
-      if (descriptor['_instance'] && this.isIService(descriptor['_instance'])) {
+      if (descriptor['_instance'] && isIService(descriptor['_instance'])) {
         cleanupPromises.push(
           descriptor['_instance'].cleanup().catch(error => {
             logger.error(`Error cleaning up service ${name}:`, error);
@@ -250,15 +253,6 @@ export class ServiceRegistry {
     // Clear all registrations
     this._services.clear();
     this._descriptors.clear();
-  }
-
-  private isIService(obj: unknown): obj is IService {
-    return (
-      typeof obj === 'object' &&
-      obj !== null &&
-      typeof (obj as IService).initialize === 'function' &&
-      typeof (obj as IService).cleanup === 'function'
-    );
   }
 
   /**

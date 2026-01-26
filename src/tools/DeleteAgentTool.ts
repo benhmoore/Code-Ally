@@ -10,7 +10,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentsDir } from '../config/paths.js';
-import { validateAgentName } from '../utils/agentContentUtils.js';
+import { validateAgentName } from '../utils/namingValidation.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 

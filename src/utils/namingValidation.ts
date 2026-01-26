@@ -5,8 +5,8 @@
  * No normalization or fallbacks - validation failures are explicit and clear.
  */
 
-/** Kebab-case pattern: lowercase letters/numbers with hyphens between segments */
-export const KEBAB_CASE_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** Kebab-case pattern: must start with a letter, then lowercase letters/numbers with hyphens between segments */
+export const KEBAB_CASE_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
 export interface ValidationResult {
   valid: boolean;

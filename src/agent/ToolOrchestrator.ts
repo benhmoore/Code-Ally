@@ -101,6 +101,16 @@ export class ToolOrchestrator {
   // Exploratory tool tracking - counts consecutive streak of exploratory tool calls
   private currentExploratoryStreak: number = 0;
 
+  // Tool display properties cache - avoids redundant tool lookups
+  private toolPropsCache = new Map<string, {
+    shouldCollapse: boolean;
+    hideOutput: boolean;
+    alwaysShowFullOutput: boolean;
+    displayColor?: string;
+    displayIcon?: string;
+    hideToolName?: boolean;
+  }>();
+
   constructor(
     toolManager: ToolManager,
     activityStream: ActivityStream,
@@ -155,6 +165,36 @@ export class ToolOrchestrator {
    */
   resetExploratoryStreak(): void {
     this.currentExploratoryStreak = 0;
+  }
+
+  /**
+   * Get tool display properties with caching
+   *
+   * @param toolName - Name of the tool
+   * @returns Tool display properties (shouldCollapse, hideOutput, alwaysShowFullOutput, display props)
+   */
+  private getToolDisplayProps(toolName: string): {
+    shouldCollapse: boolean;
+    hideOutput: boolean;
+    alwaysShowFullOutput: boolean;
+    displayColor?: string;
+    displayIcon?: string;
+    hideToolName?: boolean;
+  } {
+    let props = this.toolPropsCache.get(toolName);
+    if (!props) {
+      const tool = this.toolManager.getTool(toolName);
+      props = {
+        shouldCollapse: (tool as any)?.shouldCollapse || false,
+        hideOutput: (tool as any)?.hideOutput || false,
+        alwaysShowFullOutput: (tool as any)?.alwaysShowFullOutput || false,
+        displayColor: (tool as any)?.displayColor,
+        displayIcon: (tool as any)?.displayIcon,
+        hideToolName: (tool as any)?.hideToolName || false,
+      };
+      this.toolPropsCache.set(toolName, props);
+    }
+    return props;
   }
 
   /**
@@ -269,42 +309,9 @@ export class ToolOrchestrator {
     // This ensures batch tool calls are visible in UI immediately, not when they start executing
     const effectiveParentId = this.parentCallId || groupId;
 
-    // Create tool properties cache for this batch execution
-    // Avoids redundant tool lookups during START and END event emissions
-    const toolPropsCache = new Map<string, {
-      shouldCollapse: boolean;
-      hideOutput: boolean;
-      alwaysShowFullOutput: boolean;
-      displayColor?: string;
-      displayIcon?: string;
-      hideToolName?: boolean;
-    }>();
-
-    /**
-     * Helper to get tool properties with caching
-     * @param toolName - Name of the tool
-     * @returns Tool properties (shouldCollapse, hideOutput, alwaysShowFullOutput, display props)
-     */
-    const getToolProps = (toolName: string) => {
-      let props = toolPropsCache.get(toolName);
-      if (!props) {
-        const tool = this.toolManager.getTool(toolName);
-        props = {
-          shouldCollapse: (tool as any)?.shouldCollapse || false,
-          hideOutput: (tool as any)?.hideOutput || false,
-          alwaysShowFullOutput: (tool as any)?.alwaysShowFullOutput || false,
-          displayColor: (tool as any)?.displayColor,
-          displayIcon: (tool as any)?.displayIcon,
-          hideToolName: (tool as any)?.hideToolName || false,
-        };
-        toolPropsCache.set(toolName, props);
-      }
-      return props;
-    };
-
     for (const toolCall of toolCalls) {
       const tool = this.toolManager.getTool(toolCall.function.name);
-      const { shouldCollapse, hideOutput, alwaysShowFullOutput } = getToolProps(toolCall.function.name);
+      const { shouldCollapse, hideOutput, alwaysShowFullOutput } = this.getToolDisplayProps(toolCall.function.name);
 
       this.emitEvent({
         id: toolCall.id,
@@ -321,9 +328,9 @@ export class ToolOrchestrator {
           hideOutput,
           alwaysShowFullOutput,
           isLinkedPlugin: tool?.isLinkedPlugin || false,
-          displayColor: getToolProps(toolCall.function.name).displayColor,
-          displayIcon: getToolProps(toolCall.function.name).displayIcon,
-          hideToolName: getToolProps(toolCall.function.name).hideToolName,
+          displayColor: this.getToolDisplayProps(toolCall.function.name).displayColor,
+          displayIcon: this.getToolDisplayProps(toolCall.function.name).displayIcon,
+          hideToolName: this.getToolDisplayProps(toolCall.function.name).hideToolName,
         },
       });
     }
@@ -332,7 +339,7 @@ export class ToolOrchestrator {
       // Execute all tools in parallel
       // Use Promise.allSettled to handle permission denials gracefully
       const results = await Promise.allSettled(
-        toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId, getToolProps))
+        toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId))
       );
 
       // Check if any tool was denied permission
@@ -370,7 +377,7 @@ export class ToolOrchestrator {
 
               const toolResult = results[j];
               const tool = this.toolManager.getTool(toolCall.function.name);
-              const { shouldCollapse, hideOutput, alwaysShowFullOutput } = getToolProps(toolCall.function.name);
+              const { shouldCollapse, hideOutput, alwaysShowFullOutput } = this.getToolDisplayProps(toolCall.function.name);
 
               let resultData: ToolResult;
               if (j === i) {
@@ -537,46 +544,13 @@ export class ToolOrchestrator {
   private async executeSequential(toolCalls: ToolCall[]): Promise<ToolResult[]> {
     const results: ToolResult[] = [];
 
-    // Create tool properties cache for this batch execution
-    // Avoids redundant tool lookups during START and END event emissions
-    const toolPropsCache = new Map<string, {
-      shouldCollapse: boolean;
-      hideOutput: boolean;
-      alwaysShowFullOutput: boolean;
-      displayColor?: string;
-      displayIcon?: string;
-      hideToolName?: boolean;
-    }>();
-
-    /**
-     * Helper to get tool properties with caching
-     * @param toolName - Name of the tool
-     * @returns Tool properties (shouldCollapse, hideOutput, alwaysShowFullOutput, display props)
-     */
-    const getToolProps = (toolName: string) => {
-      let props = toolPropsCache.get(toolName);
-      if (!props) {
-        const tool = this.toolManager.getTool(toolName);
-        props = {
-          shouldCollapse: (tool as any)?.shouldCollapse || false,
-          hideOutput: (tool as any)?.hideOutput || false,
-          alwaysShowFullOutput: (tool as any)?.alwaysShowFullOutput || false,
-          displayColor: (tool as any)?.displayColor,
-          displayIcon: (tool as any)?.displayIcon,
-          hideToolName: (tool as any)?.hideToolName || false,
-        };
-        toolPropsCache.set(toolName, props);
-      }
-      return props;
-    };
-
     // Generate checkpoint reminder once per batch (not per tool)
     // NOTE: Checkpoint reminders are ephemeral (cleaned up after turn)
     const checkpointReminder = this.agent.generateCheckpointReminder();
 
     let isFirstTool = true;
     for (const toolCall of toolCalls) {
-      const result = await this.executeSingleTool(toolCall, undefined, true, getToolProps);
+      const result = await this.executeSingleTool(toolCall, undefined, true);
 
       // Inject exploratory tool reminder before processing result
       // This ensures the system_reminder is present when formatToolResult() runs
@@ -606,15 +580,13 @@ export class ToolOrchestrator {
    *
    * @param toolCall - Tool call to execute
    * @param parentId - Optional parent ID for grouped execution
-   * @param getToolProps - Optional function to get cached tool properties
    * @returns Tool execution result
    */
   private async executeSingleToolAfterStart(
     toolCall: ToolCall,
-    parentId?: string,
-    getToolProps?: (toolName: string) => { shouldCollapse: boolean, hideOutput: boolean, alwaysShowFullOutput: boolean }
+    parentId?: string
   ): Promise<ToolResult> {
-    return this.executeSingleTool(toolCall, parentId, false, getToolProps);
+    return this.executeSingleTool(toolCall, parentId, false);
   }
 
   /**
@@ -623,14 +595,12 @@ export class ToolOrchestrator {
    * @param toolCall - Tool call to execute
    * @param parentId - Optional parent ID for grouped execution
    * @param emitStartEvent - Whether to emit START event (default: true)
-   * @param getToolProps - Optional function to get cached tool properties
    * @returns Tool execution result
    */
   private async executeSingleTool(
     toolCall: ToolCall,
     parentId?: string,
-    emitStartEvent: boolean = true,
-    getToolProps?: (toolName: string) => { shouldCollapse: boolean, hideOutput: boolean, alwaysShowFullOutput: boolean }
+    emitStartEvent: boolean = true
   ): Promise<ToolResult> {
     const { id, function: func } = toolCall;
     const { name: toolName } = func;
@@ -684,16 +654,10 @@ export class ToolOrchestrator {
     let hideOutput: boolean;
     let alwaysShowFullOutput: boolean;
 
-    if (getToolProps) {
-      const props = getToolProps(toolName);
-      shouldCollapse = props.shouldCollapse;
-      hideOutput = props.hideOutput;
-      alwaysShowFullOutput = props.alwaysShowFullOutput;
-    } else {
-      shouldCollapse = (tool as any)?.shouldCollapse || false;
-      hideOutput = (tool as any)?.hideOutput || false;
-      alwaysShowFullOutput = (tool as any)?.alwaysShowFullOutput || false;
-    }
+    const props = this.getToolDisplayProps(toolName);
+    shouldCollapse = props.shouldCollapse;
+    hideOutput = props.hideOutput;
+    alwaysShowFullOutput = props.alwaysShowFullOutput;
 
     /**
      * COLLAPSED FLAG STATE MACHINE

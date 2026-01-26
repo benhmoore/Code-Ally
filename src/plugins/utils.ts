@@ -6,7 +6,7 @@
 
 import { homedir } from 'os';
 import { resolve } from 'path';
-import type { ConfigProperty } from './PluginLoader.js';
+import { promises as fs } from 'fs';
 
 /**
  * Configuration validation and coercion utilities
@@ -76,6 +76,8 @@ export class ConfigUtils {
       }
 
       case 'string':
+      case 'filepath':
+      case 'directory':
         return actualType === 'string';
 
       case 'choice':
@@ -88,14 +90,6 @@ export class ConfigUtils {
     }
   }
 
-  /**
-   * Get all required field names from a config schema
-   */
-  static getRequiredFields(properties: Record<string, ConfigProperty>): string[] {
-    return Object.entries(properties)
-      .filter(([_, prop]) => prop.required)
-      .map(([key, _]) => key);
-  }
 }
 
 /**
@@ -110,5 +104,31 @@ export class PathUtils {
       return resolve(inputPath.replace('~', homedir()));
     }
     return resolve(inputPath);
+  }
+
+  /**
+   * Check if a file exists at the given path
+   */
+  static async fileExists(inputPath: string): Promise<boolean> {
+    try {
+      const resolved = this.resolvePath(inputPath);
+      const stats = await fs.stat(resolved);
+      return stats.isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check if a directory exists at the given path
+   */
+  static async directoryExists(inputPath: string): Promise<boolean> {
+    try {
+      const resolved = this.resolvePath(inputPath);
+      const stats = await fs.stat(resolved);
+      return stats.isDirectory();
+    } catch {
+      return false;
+    }
   }
 }

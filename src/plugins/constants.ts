@@ -27,22 +27,6 @@ export const PLUGIN_TIMEOUTS = {
 } as const;
 
 /**
- * Encryption configuration for plugin secrets
- */
-export const PLUGIN_ENCRYPTION = {
-  /** Encryption algorithm */
-  ALGORITHM: 'aes-256-gcm' as const,
-  /** Encryption key length in bytes (256 bits) */
-  KEY_LENGTH: 32,
-  /** Initialization vector length in bytes (128 bits) */
-  IV_LENGTH: 16,
-  /** Prefix for encrypted values */
-  PREFIX: '__ENCRYPTED__',
-  /** Separator for encrypted value components */
-  SEPARATOR: ':',
-} as const;
-
-/**
  * Configuration UI dimensions
  */
 export const PLUGIN_UI = {

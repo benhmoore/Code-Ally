@@ -143,7 +143,7 @@ export interface PluginConfigSchema {
  * Configuration property definition
  */
 export interface ConfigProperty {
-  type: 'string' | 'number' | 'boolean' | 'integer' | 'choice';
+  type: 'string' | 'number' | 'boolean' | 'integer' | 'choice' | 'filepath' | 'directory';
   description: string;
   required?: boolean;
   secret?: boolean;
