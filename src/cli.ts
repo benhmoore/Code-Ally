@@ -1360,4 +1360,13 @@ process.on('uncaughtException', (error) => {
   }
 });
 
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+  if (inkUIStarted) {
+    cleanExit(1);
+  } else {
+    process.exit(1);
+  }
+});
+
 main();

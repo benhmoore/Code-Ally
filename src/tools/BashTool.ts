@@ -454,8 +454,10 @@ export class BashTool extends BaseTool {
     }
 
     // Continue capturing future output
-    // Note: We don't remove existing listeners - they'll naturally stop when process exits
-    // We add new listeners that write to the buffer
+    // Remove foreground listeners before adding background ones to prevent duplicate handling
+    if (child.stdout) child.stdout.removeAllListeners('data');
+    if (child.stderr) child.stderr.removeAllListeners('data');
+
     if (child.stdout) {
       child.stdout.on('data', (data: Buffer) => {
         outputBuffer.append(data.toString());

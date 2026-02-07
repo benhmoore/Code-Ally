@@ -53,7 +53,12 @@ export class BraveProvider implements ISearchProvider {
         throw this.handleHttpError(response.status, 'Search request failed');
       }
 
-      const data = (await response.json()) as BraveSearchResponse;
+      let data: BraveSearchResponse;
+      try {
+        data = (await response.json()) as BraveSearchResponse;
+      } catch (parseError) {
+        throw new Error(`Brave API returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+      }
       logger.debug(`[BraveProvider] Received ${data.web?.results?.length ?? 0} results`);
 
       return this.parseResults(data);

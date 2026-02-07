@@ -452,7 +452,13 @@ export class OllamaClient extends ModelClient {
         // GAP 2: For non-streaming, the entire response arrives at once, so HTTP errors
         // happen before we get any data. However, we still wrap in try-catch to maintain
         // consistency with streaming error handling.
-        const data = await response.json();
+        let data;
+        try {
+          data = await response.json();
+        } catch (parseError) {
+          logger.debug(`[OllamaClient] Failed to parse non-streaming response JSON:`, parseError);
+          throw parseError;
+        }
         return this.parseNonStreamingResponse(data, requestId, parentId, suppressThinking);
       }
     } catch (error) {

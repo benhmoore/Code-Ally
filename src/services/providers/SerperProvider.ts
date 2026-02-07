@@ -48,7 +48,12 @@ export class SerperProvider implements ISearchProvider {
         throw this.handleHttpError(response.status, 'Search request failed');
       }
 
-      const data = (await response.json()) as SerperSearchResponse;
+      let data: SerperSearchResponse;
+      try {
+        data = (await response.json()) as SerperSearchResponse;
+      } catch (parseError) {
+        throw new Error(`Serper API returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+      }
       logger.debug(`[SerperProvider] Received ${data.organic?.length ?? 0} results`);
 
       return this.parseResults(data);

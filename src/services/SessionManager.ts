@@ -109,7 +109,7 @@ export class SessionManager implements IService {
           await fs.unlink(tempPath);
           logger.debug(`[SESSION] Cleaned up stale temp file: ${tempFile}`);
         } catch (error) {
-          // Ignore errors cleaning up temp files
+          logger.debug(`[SESSION] Failed to clean up temp file ${tempFile}:`, error);
         }
       }
 

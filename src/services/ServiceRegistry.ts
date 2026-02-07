@@ -28,6 +28,7 @@ export class ServiceDescriptor<T = unknown> {
   private _instance?: T;
   private _initPromise?: Promise<void>;
   private _initializing: boolean = false;
+  private _initError?: Error;
 
   constructor(
     public readonly serviceType: new (...args: unknown[]) => T,
@@ -75,6 +76,7 @@ export class ServiceDescriptor<T = unknown> {
         this._initializing = true;
         this._initPromise = instance.initialize()
           .catch(error => {
+            this._initError = error instanceof Error ? error : new Error(String(error));
             logger.error(`Error initializing service ${this.serviceType.name}:`, error);
           })
           .finally(() => {
@@ -98,6 +100,9 @@ export class ServiceDescriptor<T = unknown> {
   async ensureInitialized(): Promise<void> {
     if (this._initPromise) {
       await this._initPromise;
+    }
+    if (this._initError) {
+      throw this._initError;
     }
   }
 }
