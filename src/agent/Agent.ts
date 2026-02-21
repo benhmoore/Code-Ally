@@ -1018,6 +1018,11 @@ export class Agent {
       }
       throw error;
     } finally {
+      // Emit AGENT_END for this agent's lifecycle (ensures cleanup even on unhandled errors).
+      // emitAgentEnd() has an internal guard to prevent duplicate emissions - error/interruption
+      // handlers that already called emitAgentEnd(true) won't cause a second emission here.
+      this.emitAgentEnd(!delegationSucceeded);
+
       this.cleanupRequestState();
 
       // Resume parent agent's activity monitoring after sub-agent completes

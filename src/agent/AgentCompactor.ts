@@ -178,7 +178,7 @@ export class AgentCompactor {
 
       // Validate compaction result
       if (compacted.length === 0) {
-        logger.error('[AGENT_AUTO_COMPACT]', context.instanceId, 'Compaction produced empty result');
+        logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Compaction produced empty result');
         return false;
       }
 
@@ -231,7 +231,9 @@ export class AgentCompactor {
 
       // Check if this is a "context too small" error - these are unrecoverable
       if (errorMessage.includes('Context size too small') || errorMessage.includes('did not reduce context')) {
-        logger.error('[AGENT_AUTO_COMPACT]', context.instanceId, 'Context size too small:', errorMessage);
+        // Use debug instead of error: error is communicated via throw + activity events.
+        // logger.error uses console.error (stderr) which leaks into the TUI outside agent display.
+        logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Context size too small:', errorMessage);
 
         // Emit error completion to unstick UI before re-throwing
         if (compactionStarted) {
@@ -250,7 +252,8 @@ export class AgentCompactor {
         throw error; // Re-throw - this is unrecoverable, user must increase context_size
       }
 
-      logger.error('[AGENT_AUTO_COMPACT]', context.instanceId, 'Compaction failed:', error);
+      // Use debug: error is handled via fallback + throw. logger.error leaks to TUI via stderr.
+      logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Compaction failed:', error);
 
       // Fallback: if summarization fails, try emergency truncation
       logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Attempting emergency truncation fallback');
@@ -296,7 +299,8 @@ export class AgentCompactor {
         return true;
       } catch (fallbackError) {
         const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-        logger.error('[AGENT_AUTO_COMPACT]', context.instanceId, 'Emergency truncation fallback also failed:', fallbackError);
+        // Use debug: error is communicated via throw + activity events. logger.error leaks to TUI via stderr.
+        logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Emergency truncation fallback also failed:', fallbackError);
 
         // Emit error completion to unstick UI
         if (compactionStarted) {
