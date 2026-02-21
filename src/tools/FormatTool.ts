@@ -525,6 +525,31 @@ export class FormatTool extends BaseTool {
   }
 
   /**
+   * Format subtext for display in UI
+   * Shows filenames being formatted when description is not provided
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const description = args.description as string;
+    if (description) return description;
+
+    const filePaths = args.file_paths;
+    if (!filePaths || !Array.isArray(filePaths) || filePaths.length === 0) return null;
+
+    const filenames = filePaths.map((p: string) => {
+      const parts = p.split('/');
+      return parts[parts.length - 1] || p;
+    });
+    return filenames.join(', ');
+  }
+
+  /**
+   * Get parameters shown in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['description', 'file_paths'];
+  }
+
+  /**
    * Get result preview
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

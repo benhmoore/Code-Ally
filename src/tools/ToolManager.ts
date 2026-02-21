@@ -16,7 +16,6 @@ import { logger } from '../services/Logger.js';
 import { validateToolName } from '../utils/namingValidation.js';
 import { DelegationContextManager } from '../services/DelegationContextManager.js';
 import { isInjectableTool } from './InjectableTool.js';
-import { AGENT_DELEGATION_TOOLS } from '../config/constants.js';
 import { ConversationManager } from '../agent/ConversationManager.js';
 
 /**
@@ -347,19 +346,12 @@ export class ToolManager {
 
     // Dynamically inject description parameter for UI subtext
     // Only inject if tool doesn't already define it
+    // Description is always optional - tools infer subtext from their arguments when not provided
     if (functionDef.function.parameters?.properties && !functionDef.function.parameters.properties.description) {
       functionDef.function.parameters.properties.description = {
         type: 'string',
         description: 'Brief description of what this operation does (5-10 words, shown in UI)',
       };
-
-      // Add to required array if it exists
-      // Exception: agent delegation tools have description as optional
-      const isAgentDelegationTool = AGENT_DELEGATION_TOOLS.includes(tool.name as any);
-
-      if (!isAgentDelegationTool && functionDef.function.parameters.required && Array.isArray(functionDef.function.parameters.required)) {
-        functionDef.function.parameters.required.push('description');
-      }
     }
 
     return functionDef;

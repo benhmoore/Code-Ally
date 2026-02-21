@@ -281,6 +281,27 @@ export class LsTool extends BaseTool {
 
 
   /**
+   * Format subtext for display in UI
+   * Shows directory path when description is not provided
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const description = args.description as string;
+    if (description) return description;
+
+    const dirPath = args.path as string;
+    if (!dirPath) return null;
+
+    return dirPath;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['description', 'path'];
+  }
+
+  /**
    * Get truncation guidance for ls output
    */
   getTruncationGuidance(): string {

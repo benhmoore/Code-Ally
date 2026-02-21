@@ -226,6 +226,27 @@ export class GlobTool extends BaseTool {
   }
 
   /**
+   * Format subtext for display in UI
+   * Shows glob pattern when description is not provided
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const description = args.description as string;
+    if (description) return description;
+
+    const pattern = args.pattern as string;
+    if (!pattern) return null;
+
+    return pattern;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['description', 'pattern'];
+  }
+
+  /**
    * Get truncation guidance for glob output
    */
   getTruncationGuidance(): string {

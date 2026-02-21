@@ -457,6 +457,27 @@ Prefer over multiple ls calls.`;
   }
 
   /**
+   * Format subtext for display in UI
+   * Shows paths being explored when description is not provided
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const description = args.description as string;
+    if (description) return description;
+
+    const paths = args.paths as string[];
+    if (!paths || !Array.isArray(paths) || paths.length === 0) return null;
+
+    return paths.join(', ');
+  }
+
+  /**
+   * Get parameters shown in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['description', 'paths'];
+  }
+
+  /**
    * Custom result preview
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

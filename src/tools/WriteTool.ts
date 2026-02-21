@@ -285,19 +285,24 @@ export class WriteTool extends BaseTool {
 
   /**
    * Format subtext for display in UI
-   * Shows only the description (filepath is shown in diff preview)
+   * Shows description if provided, falls back to filename
    */
   formatSubtext(args: Record<string, any>): string | null {
     const description = args.description as string;
-    return description || null;
+    if (description) return description;
+
+    const filePath = args.file_path as string;
+    if (!filePath) return null;
+
+    const parts = filePath.split('/');
+    return parts[parts.length - 1] || filePath;
   }
 
   /**
    * Get parameters shown in subtext
-   * WriteTool shows only 'description' in subtext (filepath shown in diff)
    */
   getSubtextParameters(): string[] {
-    return ['description'];
+    return ['description', 'file_path'];
   }
 
   /**

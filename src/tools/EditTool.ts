@@ -148,7 +148,7 @@ export class EditTool extends BaseTool {
             },
             edits: {
               type: 'array',
-              description: 'Edit operations applied sequentially. Each: old_string, new_string, optional replace_all (default: false).',
+              description: 'Array of edit operations applied sequentially. Each requires: old_string (text to find), new_string (replacement), optional replace_all (default: false).',
               items: {
                 type: 'object',
                 properties: {
@@ -556,6 +556,35 @@ export class EditTool extends BaseTool {
     const endLine = startLine + newlinesInMatch;
 
     return { start: startLine, end: endLine };
+  }
+
+  /**
+   * Format subtext for display in UI
+   * Shows filename and edit count when description is not provided
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const description = args.description as string;
+    if (description) return description;
+
+    const filePath = args.file_path as string;
+    if (!filePath) return null;
+
+    const parts = filePath.split('/');
+    const filename = parts[parts.length - 1] || filePath;
+    const edits = args.edits;
+    const editCount = Array.isArray(edits) ? edits.length : 0;
+
+    if (editCount > 0) {
+      return `${editCount} edit(s) in ${filename}`;
+    }
+    return filename;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['description', 'file_path'];
   }
 
   /**

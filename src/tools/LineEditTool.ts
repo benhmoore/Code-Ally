@@ -189,7 +189,7 @@ export class LineEditTool extends BaseTool {
             },
             edits: {
               type: 'array',
-              description: 'Edit operations (sorted bottom-to-top automatically). Each: operation, line_number (1-indexed), content, num_lines.',
+              description: 'Array of edit operations sorted bottom-to-top automatically. Each requires: operation (insert/delete/replace), line_number (1-indexed), content (for insert/replace), num_lines (for delete/replace, default 1).',
               items: {
                 type: 'object',
                 properties: {
@@ -700,6 +700,35 @@ export class LineEditTool extends BaseTool {
     }
 
     return contextLines.join('\n');
+  }
+
+  /**
+   * Format subtext for display in UI
+   * Shows filename and edit count when description is not provided
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const description = args.description as string;
+    if (description) return description;
+
+    const filePath = args.file_path as string;
+    if (!filePath) return null;
+
+    const parts = filePath.split('/');
+    const filename = parts[parts.length - 1] || filePath;
+    const edits = args.edits;
+    const editCount = Array.isArray(edits) ? edits.length : 0;
+
+    if (editCount > 0) {
+      return `${editCount} edit(s) in ${filename}`;
+    }
+    return filename;
+  }
+
+  /**
+   * Get parameters shown in subtext
+   */
+  getSubtextParameters(): string[] {
+    return ['description', 'file_path'];
   }
 
   /**
