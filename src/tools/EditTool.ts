@@ -148,7 +148,7 @@ export class EditTool extends BaseTool {
             },
             edits: {
               type: 'array',
-              description: 'Array of edit operations to apply atomically. Edits are applied sequentially - each edit sees the cumulative result of previous edits. Each edit requires: old_string (text to find), new_string (replacement text), and optional replace_all (default: false).',
+              description: 'Edit operations applied sequentially. Each: old_string, new_string, optional replace_all (default: false).',
               items: {
                 type: 'object',
                 properties: {

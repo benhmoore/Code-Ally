@@ -164,22 +164,7 @@ Verify alignment:
     // Cleaned up after turn since agent should apply pattern, not keep re-reading
     GENTLE_WARNING: {
       text: (consecutiveCount: number) =>
-        `You've made ${consecutiveCount} consecutive exploratory tool calls (read/grep/glob/ls/tree). For complex multi-file investigations, consider using explore() instead - it delegates to a specialized agent with its own context budget, protecting your token budget and enabling more thorough investigation.
-
-Recommended workflow:
-1. First, use cleanup-call to remove recent exploratory tool results from context
-2. Then call explore() with a detailed task_prompt that summarizes:
-   - What you're looking for
-   - What you've learned so far (files found, patterns discovered)
-   - Any specific areas to investigate
-
-When to use explore():
-- Unknown scope/location - don't know where code is
-- Multi-file synthesis - understanding patterns across files
-- Complex architectural analysis
-- Any investigation requiring 5+ file operations
-
-Only use direct read/grep/glob when you know specific paths or need a quick lookup.`,
+        `You've made ${consecutiveCount} consecutive exploratory tool calls. Consider using explore() instead - it has its own context budget and is more efficient for multi-file investigations. Use cleanup-call first to free context, then delegate via explore() with a detailed task_prompt.`,
       persist: false,
     },
 
@@ -188,23 +173,7 @@ Only use direct read/grep/glob when you know specific paths or need a quick look
     // Cleaned up after turn since agent should immediately switch to explore()
     STERN_WARNING: {
       text: (consecutiveCount: number) =>
-        `⚠️ CRITICAL: You've made ${consecutiveCount} consecutive exploratory tool calls. You are wasting valuable context budget on manual exploration.
-
-STOP exploring manually. You MUST use explore() now.
-
-Required actions:
-1. IMMEDIATELY use cleanup-call to remove all recent exploratory results
-2. Use explore() with a detailed task_prompt that includes:
-   - What you're looking for
-   - What you've learned so far (files found, patterns discovered)
-   - Where else to look
-
-Example:
-explore(
-  task_prompt="Find all color and theming constants in the codebase. Already found src/ui/constants/colors.ts which has PROFILE_COLOR_PALETTE and UI_COLORS. Need to search config/, services/, and plugins/ directories for additional theme-related constants."
-)
-
-Continuing to use read/grep/glob/ls/tree is inefficient and wastes your limited context budget. The explore agent has its own context budget and is designed for exactly this type of investigation.`,
+        `⚠️ CRITICAL: ${consecutiveCount} consecutive exploratory calls - you are wasting context. STOP manual exploration. Use cleanup-call to remove recent results, then use explore() with a task_prompt summarizing what you're looking for and what you've found so far.`,
       persist: false,
     },
   },

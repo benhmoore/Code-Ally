@@ -189,7 +189,7 @@ export class LineEditTool extends BaseTool {
             },
             edits: {
               type: 'array',
-              description: 'Array of edit operations to apply atomically. Edits are sorted and applied bottom-to-top automatically to prevent line shifting issues. Each edit requires: operation (insert/delete/replace), line_number (1-indexed), content (for insert/replace), num_lines (for delete/replace, default 1).',
+              description: 'Edit operations (sorted bottom-to-top automatically). Each: operation, line_number (1-indexed), content, num_lines.',
               items: {
                 type: 'object',
                 properties: {

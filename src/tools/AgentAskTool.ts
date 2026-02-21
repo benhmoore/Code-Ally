@@ -39,19 +39,8 @@ export class AgentAskTool extends BaseTool {
   readonly visibleInChat = true; // Show in UI with "Follow Up" display name
 
   readonly usageGuidance = `**When to use agent-ask:**
-DEFAULT for ANY follow-up to explore/plan/agent. Agent already has context → dramatically more efficient than starting fresh.
-
-Use agent-ask when:
-- Asking clarifying questions ("How many X?", "What about Y?", "Where is Z?")
-- Drilling deeper into findings ("Show me that implementation", "Explain how that works")
-- Asking related questions ("What about the related feature?")
-- Continuing investigation in same area
-
-Start NEW agent only when:
-- Investigating completely unrelated area/problem
-- Switching to different system/module/concern
-
-When uncertain: Use agent-ask first. Much cheaper than restarting.`;
+DEFAULT for follow-ups to explore/plan/agent. Agent already has context - much cheaper than starting fresh.
+Only start a NEW agent for completely unrelated areas.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

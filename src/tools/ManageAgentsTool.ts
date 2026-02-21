@@ -266,11 +266,8 @@ export class ManageAgentsTool extends BaseDelegationTool {
   readonly hideOutput = false; // Agents never hide their own output
 
   readonly usageGuidance = `**When to use manage-agents:**
-Create, edit, delete, or list specialized agents for recurring tasks (code review, testing, documentation, etc.).
-Manages reusable agents with custom system prompts and tool access.
-CRITICAL: Agent CANNOT see current conversation - include ALL context in request (what to create/edit/delete, purpose, tools needed, behavior).
-Agent has NO internet access - only local agent research.
-Skip for: One-time tasks, using existing agents, simple tool calls without agent management needs.`;
+CRUD for specialized agents (code review, testing, documentation, etc.).
+Skip for: One-time tasks, using existing agents.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -386,11 +383,11 @@ Skip for: One-time tasks, using existing agents, simple tool calls without agent
           properties: {
             request: {
               type: 'string',
-              description: 'Complete description of agent management task with ALL necessary context. Agent cannot see current conversation - include operation (create/edit/delete/list), agent name (for edit/delete), purpose, required tools, behavior, and any specific requirements.',
+              description: 'Agent management task: operation (create/edit/delete/list), agent name, purpose, tools, behavior.',
             },
             thoroughness: {
               type: 'string',
-              description: 'Agent management thoroughness: "quick" (~1 min, minimal research), "medium" (~5 min, moderate research), "very thorough" (~10 min, extensive research), "uncapped" (no time limit, default). Controls research depth.',
+              description: '"quick", "medium", "very thorough", or "uncapped" (default)',
             },
           },
           required: ['request'],

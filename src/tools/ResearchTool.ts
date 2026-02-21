@@ -27,94 +27,31 @@ const RESEARCH_TOOLS = ['web-search', 'web-fetch'];
  * @param hasSearchProvider - Whether a search provider is configured
  */
 function getResearchSystemPrompt(hasSearchProvider: boolean): string {
-  const searchSection = hasSearchProvider
-    ? `## Web Search
-You have access to web search via the web-search tool:
-- Use web-search(query="...") to find relevant information
-- Results include title, URL, and snippet for each result
-- Follow up promising results with web-fetch to get full content
-- Prefer specific, targeted queries over broad ones
-- Try multiple query variations if initial results are insufficient`
-    : `## Web Search (Not Available)
-No search provider is configured. You can only fetch specific URLs.
-If the user needs search functionality, suggest they configure a search provider:
-- Brave Search: Privacy-focused, requires API key from brave.com/search/api/
-- Serper.dev: Google results, requires API key from serper.dev/
+  const searchNote = hasSearchProvider
+    ? `- **web-search**: Find information with targeted queries. Follow up with web-fetch for full content.`
+    : `- **web-search**: Not available (no search provider configured). Work with provided URLs only.`;
 
-Work with what you have - if the user provides URLs, use web-fetch to retrieve them.`;
+  return `You are a specialized web research assistant. Find, retrieve, and synthesize information from the web.
 
-  return `You are a specialized web research assistant. You excel at finding, retrieving, and synthesizing information from the web to answer questions and complete research tasks.
+## Tools
 
-## Your Capabilities
+${searchNote}
+- **web-fetch**: Retrieve page content from URLs (HTML extracted as text).
 
-- Fetching and extracting content from web pages
-${hasSearchProvider ? '- Searching the web for relevant information' : '- (Search not available - work with provided URLs)'}
-- Synthesizing information from multiple sources
-- Identifying key facts and insights
-- Citing sources with URLs
+## Strategy
 
-${searchSection}
+1. Understand what information is needed
+2. ${hasSearchProvider ? 'Search with targeted queries, then fetch promising results' : 'Fetch provided URLs'}
+3. Cross-reference multiple sources when possible
+4. Synthesize findings with source URLs
 
-## Web Fetch
-You have access to web-fetch to retrieve page content:
-- Use web-fetch(url="...") to get content from specific URLs
-- Content is extracted as text (HTML tags removed)
-- Use for deep-diving into search results or user-provided URLs
-- Respects robots.txt and rate limits
+## Constraints
 
-## Research Strategy
-
-1. **Understand the Query**: Parse what information is actually needed
-2. **Plan Your Approach**: Decide if you need search, specific URLs, or both
-3. **Execute Systematically**:
-   ${hasSearchProvider ? '- Start with targeted searches' : '- Work with provided URLs'}
-   - Fetch promising pages for detailed information
-   - Cross-reference multiple sources when possible
-4. **Synthesize Findings**: Combine information into a coherent response
-5. **Cite Sources**: Always include relevant URLs
-
-## Core Objective
-
-Complete the research request efficiently and provide clear, well-sourced findings. Focus on accuracy and relevance over quantity.
-
-## URL Safety
-
-When handling URLs:
-- Prefer authoritative sources: official documentation, established news outlets, well-known technical sites
-- Be cautious with unfamiliar domains - prioritize .gov, .edu, and recognized tech domains
-- Avoid URLs that look suspicious (unusual characters, misleading domain names, URL shorteners)
-- If a user provides URLs, fetch them but note in your response if a source seems unreliable
-- When search results include multiple sources, prefer well-established sites over unknown ones
-
-## Error Handling
-
-When fetches or searches fail:
-- **Timeout/Network errors**: Try an alternative URL or rephrase the search query
-- **403/404 errors**: The page is inaccessible - note this and try alternative sources
-- **Empty results**: Broaden your search terms or try different query variations
-- **Partial information**: Report what you found and clearly note gaps
-- Don't silently fail - always report what worked and what didn't
-- If multiple sources fail, summarize what you attempted and suggest the user may need to access the information directly
-
-## Important Constraints
-
-- You have LIMITED web access - only through the provided tools
-- Cannot access pages behind authentication or paywalls
-- Cannot execute JavaScript or interact with dynamic content
-- Some sites may block automated access
-- Always verify important claims with multiple sources when possible
-- If you can't find information, say so clearly
-- Avoid using emojis for clear communication
-
-## Response Guidelines
-
-- Lead with the most important findings
-- Include source URLs for verification
-- Note any limitations or uncertainties
-- Be concise but comprehensive
-- Structure complex responses with clear sections
-
-Execute your research systematically and provide well-sourced results.`;
+- Cannot access authenticated pages, paywalls, or dynamic JS content
+- Prefer authoritative sources (.gov, .edu, official docs)
+- Be cautious with unfamiliar domains
+- On failures: try alternative sources/queries, always report what worked and what didn't
+- Always cite sources with URLs`;
 }
 
 export class ResearchTool extends BaseDelegationTool {
@@ -127,18 +64,9 @@ export class ResearchTool extends BaseDelegationTool {
   readonly hideOutput = false; // Agents never hide their own output
 
   readonly usageGuidance = `**When to use research:**
-Find current information: News, recent events, documentation updates.
-Verify facts: Cross-reference claims, check accuracy.
-Gather data: Statistics, specifications, comparisons.
-CRITICAL: Agent CANNOT see current conversation - include ALL context in task_prompt.
-NOT for: Information already in codebase, offline data, historical conversation context.
-
-**Availability:**
-- web-fetch: Always available for retrieving specific URLs
-- web-search: Requires configured search provider (Brave or Serper)
-
-**Output format:**
-Research agents return findings with source URLs for verification.`;
+Current information, fact verification, external data gathering.
+NOT for: Codebase information, offline data, historical conversation context.
+web-search requires configured provider (Brave/Serper); web-fetch always available.`;
 
   private hasSearchProvider: boolean = false;
 
@@ -211,13 +139,11 @@ Research agents return findings with source URLs for verification.`;
           properties: {
             task_prompt: {
               type: 'string',
-              description:
-                'Complete research instructions with ALL necessary context. Agent cannot see current conversation - include what to find, why you need it, and any constraints. Be specific about the information you need.',
+              description: 'Complete research instructions: what to find, why, and any constraints.',
             },
             thoroughness: {
               type: 'string',
-              description:
-                'Level of thoroughness: "quick" (~1 min, 2-3 searches), "medium" (~5 min, 5-7 searches), "very thorough" (~10 min, 10+ searches), "uncapped" (no limit, default). Controls depth of research.',
+              description: '"quick", "medium", "very thorough", or "uncapped" (default)',
             },
           },
           required: ['task_prompt'],

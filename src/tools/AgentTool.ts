@@ -61,8 +61,7 @@ export class AgentTool extends BaseTool implements InjectableTool {
   readonly hideOutput = false; // Agents never hide their own output
   readonly usageGuidance = `**When to use agent:**
 Complex tasks requiring specialized expertise or distinct workflows.
-CRITICAL: Agent CANNOT see current conversation - include ALL context in task_prompt (file paths, errors, requirements).
-NOT for: Exploration (use explore), planning (use plan), tasks needing conversation context.`;
+NOT for: Exploration (use explore), planning (use plan).`;
 
   private agentManager: AgentManager | null = null;
   private activeDelegations: Map<string, any> = new Map();
@@ -133,7 +132,7 @@ NOT for: Exploration (use explore), planning (use plan), tasks needing conversat
           properties: {
             task_prompt: {
               type: 'string',
-              description: 'Complete task instructions with ALL necessary context. Agent cannot see current conversation - include file paths, errors, requirements, and background.',
+              description: 'Complete task instructions: file paths, errors, requirements, and background.',
             },
             agent_type: {
               type: 'string',

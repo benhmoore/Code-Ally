@@ -40,17 +40,7 @@ export class CleanupCallTool extends BaseTool {
   /**
    * Usage guidance for LLM on when/how to use this tool
    */
-  readonly usageGuidance = `
-Use cleanup-call to remove tool results from conversation when:
-- You've extracted the needed information from large tool outputs
-- Tool results are taking up context space but no longer needed
-- You want to retain conclusions but not the full output
-
-Example:
-1. Read multiple files to understand a feature
-2. Extract key insights and summarize
-3. Use cleanup-call to remove the file contents, keeping only your summary
-`.trim();
+  readonly usageGuidance = `Remove tool results from context after extracting needed information. Frees context space while preserving your conclusions.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);

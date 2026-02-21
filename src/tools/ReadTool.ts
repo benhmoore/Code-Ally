@@ -28,11 +28,8 @@ export class ReadTool extends BaseTool {
   readonly hideOutput = true; // Hide file content from user, show summary in subtext
 
   readonly usageGuidance = `**When to use read:**
-Regular reads (default) keep file content in context for future reference - prefer this for most use cases.
-ONLY use ephemeral=true when file exceeds normal token limit AND you need one-time inspection.
-WARNING: Ephemeral content is automatically removed after one turn - you'll lose access to it.
-
-For exploratory work (unknown file locations, multi-file pattern analysis), use explore() to preserve your context and tool call capacity.`;
+Default reads stay in context. Use ephemeral=true only for one-time large file inspection (content removed after one turn).
+For multi-file exploration, prefer explore() to preserve context.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
