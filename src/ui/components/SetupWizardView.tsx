@@ -26,6 +26,8 @@ import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { SEARCH_PROVIDER_INFO, SearchProviderType } from '../../types/integration.js';
+import { MCP_PRESETS, MCP_PRESET_ORDER, buildConfigFromPreset } from '@mcp/MCPPresets.js';
+import type { MCPServerManager } from '@mcp/MCPServerManager.js';
 
 enum SetupStep {
   WELCOME,
@@ -35,9 +37,14 @@ enum SetupStep {
   MODEL,
   VALIDATING_MODEL,
   CONTEXT_SIZE,
-  SEARCH_PROMPT,    // Ask if user wants to configure search
-  SEARCH_PROVIDER,  // Select provider (brave/serper)
-  SEARCH_API_KEY,   // Enter API key
+  SEARCH_PROMPT,       // Ask if user wants to configure search
+  SEARCH_PROVIDER,     // Select provider (brave/serper)
+  SEARCH_API_KEY,      // Enter API key
+  MCP_PROMPT,          // Ask if user wants to configure an MCP server
+  MCP_SERVER_SELECT,   // Select from presets (or "Custom")
+  MCP_SERVER_INPUT,    // Enter path or env var for selected preset
+  MCP_CUSTOM_NAME,     // Enter custom server name
+  MCP_CUSTOM_COMMAND,  // Enter custom server command
   APPLYING,
   COMPLETED,
 }
@@ -72,6 +79,21 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const [searchApiKeyCursor, setSearchApiKeyCursor] = useState(0);
   const [selectedSearchProvider, setSelectedSearchProvider] = useState<SearchProviderType>('none');
 
+  // MCP configuration state
+  const [mcpPromptIndex, setMcpPromptIndex] = useState(1); // 0 = Yes, 1 = Skip (default to skip)
+  const [mcpPresetIndex, setMcpPresetIndex] = useState(0);
+  const [mcpInputBuffer, setMcpInputBuffer] = useState('');
+  const [mcpInputCursor, setMcpInputCursor] = useState(0);
+  const [selectedMcpPresetKey, setSelectedMcpPresetKey] = useState<string>('');
+  const [mcpCustomNameBuffer, setMcpCustomNameBuffer] = useState('');
+  const [mcpCustomNameCursor, setMcpCustomNameCursor] = useState(0);
+  const [mcpCustomCommandBuffer, setMcpCustomCommandBuffer] = useState('');
+  const [mcpCustomCommandCursor, setMcpCustomCommandCursor] = useState(0);
+  const [mcpCustomName, setMcpCustomName] = useState('');
+
+  /** Preset list with "Custom" appended */
+  const mcpOptions = [...MCP_PRESET_ORDER.map(key => ({ key, preset: MCP_PRESETS[key]! })), { key: 'custom', preset: null }];
+
   // Available search providers (excluding 'none')
   const searchProviderOptions = Object.entries(SEARCH_PROVIDER_INFO)
     .filter(([key]) => key !== 'none')
@@ -90,8 +112,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
   };
 
-  // TextInput is active on ENDPOINT or SEARCH_API_KEY steps
-  const isTextInputStep = step === SetupStep.ENDPOINT || step === SetupStep.SEARCH_API_KEY;
+  // TextInput is active on text entry steps
+  const isTextInputStep = step === SetupStep.ENDPOINT || step === SetupStep.SEARCH_API_KEY
+    || step === SetupStep.MCP_SERVER_INPUT || step === SetupStep.MCP_CUSTOM_NAME || step === SetupStep.MCP_CUSTOM_COMMAND;
 
   // Handle exit from TextInput's onCtrlC (empty buffer)
   const handleCtrlC = () => {
@@ -161,8 +184,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
           // Yes - configure search
           setStep(SetupStep.SEARCH_PROVIDER);
         } else {
-          // Skip - apply configuration without search
-          applyConfiguration(isLaptop);
+          // Skip search - go to MCP prompt
+          setStep(SetupStep.MCP_PROMPT);
         }
       }
     } else if (step === SetupStep.SEARCH_PROVIDER) {
@@ -190,6 +213,43 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
           setSelectedContextSizeIndex(0); // 16K for laptops
         }
         setStep(SetupStep.MODEL);
+      }
+    } else if (step === SetupStep.MCP_PROMPT) {
+      if (key.upArrow) {
+        setMcpPromptIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setMcpPromptIndex((prev) => Math.min(1, prev + 1));
+      } else if (key.return) {
+        if (mcpPromptIndex === 0) {
+          setStep(SetupStep.MCP_SERVER_SELECT);
+        } else {
+          applyAllConfiguration();
+        }
+      }
+    } else if (step === SetupStep.MCP_SERVER_SELECT) {
+      if (key.upArrow) {
+        setMcpPresetIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setMcpPresetIndex((prev) => Math.min(mcpOptions.length - 1, prev + 1));
+      } else if (key.return) {
+        const option = mcpOptions[mcpPresetIndex];
+        if (option) {
+          if (option.key === 'custom') {
+            setMcpCustomNameBuffer('');
+            setMcpCustomNameCursor(0);
+            setStep(SetupStep.MCP_CUSTOM_NAME);
+          } else {
+            const preset = option.preset;
+            setSelectedMcpPresetKey(option.key);
+            if (preset && (preset.needsPath || preset.needsEnvKey)) {
+              setMcpInputBuffer('');
+              setMcpInputCursor(0);
+              setStep(SetupStep.MCP_SERVER_INPUT);
+            } else {
+              applyAllConfiguration(option.key);
+            }
+          }
+        }
       }
     } else if (step === SetupStep.COMPLETED) {
       if (key.return) {
@@ -277,20 +337,59 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     setStep(SetupStep.VALIDATING_ENDPOINT);
   };
 
+  const [searchApiKey, setSearchApiKey] = useState('');
+
   const handleSearchApiKeySubmit = (value: string) => {
     if (!value.trim()) {
       setError('API key cannot be empty. Press ESC to skip search configuration.');
       return;
     }
     setError(null);
-    // Apply configuration with search settings
-    applyConfigurationWithSearch(isLaptop, selectedSearchProvider, value);
+    setSearchApiKey(value);
+    // Continue to MCP prompt
+    setStep(SetupStep.MCP_PROMPT);
   };
 
-  const applyConfiguration = async (laptopValue: boolean) => {
+  const handleMcpInputSubmit = (value: string) => {
+    if (!value.trim()) {
+      setError('Value cannot be empty. Press ESC to skip.');
+      return;
+    }
+    setError(null);
+    applyAllConfiguration(selectedMcpPresetKey, value);
+  };
+
+  const handleMcpCustomNameSubmit = (value: string) => {
+    const name = value.trim();
+    if (!name) {
+      setError('Server name cannot be empty. Press ESC to skip.');
+      return;
+    }
+    setError(null);
+    setMcpCustomName(name);
+    setMcpCustomCommandBuffer('');
+    setMcpCustomCommandCursor(0);
+    setStep(SetupStep.MCP_CUSTOM_COMMAND);
+  };
+
+  const handleMcpCustomCommandSubmit = (value: string) => {
+    const command = value.trim();
+    if (!command) {
+      setError('Command cannot be empty. Press ESC to skip.');
+      return;
+    }
+    setError(null);
+    applyAllConfiguration(undefined, undefined, mcpCustomName, command);
+  };
+
+  /**
+   * Unified apply function — saves core config, optional search, and optional MCP.
+   * Reads search state from component state (selectedSearchProvider, searchApiKey).
+   * MCP preset is passed in when selected; custom server uses customName + customCommand.
+   */
+  const applyAllConfiguration = async (mcpPresetKey?: string, mcpInput?: string, customName?: string, customCommand?: string) => {
     setStep(SetupStep.APPLYING);
 
-    // Ensure we have a valid model
     const selectedModel = availableModels[selectedModelIndex];
     if (!selectedModel) {
       setError('No model selected. Please go back and select a model.');
@@ -298,52 +397,6 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       return;
     }
 
-    // Ensure we have a valid context size
-    const selectedContextSize = contextSizeOptions[selectedContextSizeIndex];
-    if (!selectedContextSize) {
-      setError('No context size selected.');
-      setStep(SetupStep.CONTEXT_SIZE);
-      return;
-    }
-
-    const config: SetupConfig = {
-      endpoint,
-      model: selectedModel,
-      service_model: null,
-      context_size: selectedContextSize.value,
-      temperature: 0.3, // Default temperature
-      auto_confirm: false, // Default to requiring confirmation
-      enable_idle_messages: !laptopValue, // Disable idle messages on laptops
-      enable_session_title_generation: !laptopValue, // Disable title generation on laptops
-      tool_call_activity_timeout: laptopValue ? 90 : 120, // Faster timeout on laptops
-    };
-
-    try {
-      await setupWizard.applySetupConfig(config);
-      setStep(SetupStep.COMPLETED);
-    } catch (error) {
-      logger.error('[SetupWizardView] Failed to apply configuration:', error);
-      setError('Failed to save configuration. Please try again.');
-      setStep(SetupStep.CONTEXT_SIZE);
-    }
-  };
-
-  const applyConfigurationWithSearch = async (
-    laptopValue: boolean,
-    searchProvider: SearchProviderType,
-    apiKey: string
-  ) => {
-    setStep(SetupStep.APPLYING);
-
-    // Ensure we have a valid model
-    const selectedModel = availableModels[selectedModelIndex];
-    if (!selectedModel) {
-      setError('No model selected. Please go back and select a model.');
-      setStep(SetupStep.MODEL);
-      return;
-    }
-
-    // Ensure we have a valid context size
     const selectedContextSize = contextSizeOptions[selectedContextSizeIndex];
     if (!selectedContextSize) {
       setError('No context size selected.');
@@ -358,32 +411,68 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       context_size: selectedContextSize.value,
       temperature: 0.3,
       auto_confirm: false,
-      enable_idle_messages: !laptopValue,
-      enable_session_title_generation: !laptopValue,
-      tool_call_activity_timeout: laptopValue ? 90 : 120,
+      enable_idle_messages: !isLaptop,
+      enable_session_title_generation: !isLaptop,
+      tool_call_activity_timeout: isLaptop ? 90 : 120,
     };
 
     try {
-      // Apply main configuration
       await setupWizard.applySetupConfig(config);
 
-      // Apply search configuration via IntegrationStore
-      const registry = ServiceRegistry.getInstance();
-      const integrationStore = registry.get('integration_store') as IntegrationStore | null;
+      // Apply search configuration if user provided one
+      if (selectedSearchProvider !== 'none' && searchApiKey) {
+        const registry = ServiceRegistry.getInstance();
+        const integrationStore = registry.get('integration_store') as IntegrationStore | null;
+        if (integrationStore) {
+          await integrationStore.setSearchProvider(selectedSearchProvider);
+          await integrationStore.setSearchAPIKey(searchApiKey);
+          logger.debug('[SetupWizardView] Search configuration saved:', selectedSearchProvider);
+        }
+      }
 
-      if (integrationStore) {
-        await integrationStore.setSearchProvider(searchProvider);
-        await integrationStore.setSearchAPIKey(apiKey);
-        logger.debug('[SetupWizardView] Search configuration saved:', searchProvider);
-      } else {
-        logger.warn('[SetupWizardView] IntegrationStore not available, skipping search config');
+      // Apply MCP server configuration if user selected a preset
+      if (mcpPresetKey) {
+        const preset = MCP_PRESETS[mcpPresetKey];
+        if (preset) {
+          const path = preset.needsPath ? mcpInput : undefined;
+          const envValue = preset.needsEnvKey ? mcpInput : undefined;
+          const serverConfig = buildConfigFromPreset(preset, path, envValue);
+
+          const registry = ServiceRegistry.getInstance();
+          const mcpManager = registry.get('mcp_server_manager') as MCPServerManager | null;
+          if (mcpManager) {
+            await mcpManager.addServerConfig(mcpPresetKey, serverConfig);
+            logger.debug(`[SetupWizardView] MCP server '${mcpPresetKey}' configured`);
+          }
+        }
+      }
+
+      // Apply custom MCP server configuration
+      if (customName && customCommand) {
+        const parts = customCommand.split(/\s+/);
+        const serverConfig = {
+          transport: 'stdio' as const,
+          command: parts[0]!,
+          args: parts.slice(1),
+          enabled: true,
+          requiresConfirmation: true,
+          autoStart: true,
+        };
+
+        const registry = ServiceRegistry.getInstance();
+        const mcpManager = registry.get('mcp_server_manager') as MCPServerManager | null;
+        if (mcpManager) {
+          await mcpManager.addServerConfig(customName, serverConfig);
+          setSelectedMcpPresetKey(customName);
+          logger.debug(`[SetupWizardView] Custom MCP server '${customName}' configured`);
+        }
       }
 
       setStep(SetupStep.COMPLETED);
     } catch (error) {
       logger.error('[SetupWizardView] Failed to apply configuration:', error);
       setError('Failed to save configuration. Please try again.');
-      setStep(SetupStep.SEARCH_API_KEY);
+      setStep(SetupStep.MCP_PROMPT);
     }
   };
 
@@ -740,9 +829,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 onCursorChange={setSearchApiKeyCursor}
                 onSubmit={handleSearchApiKeySubmit}
                 onEscape={() => {
-                  // Skip search configuration on ESC
+                  // Skip search API key on ESC — continue to MCP prompt
                   setError(null);
-                  applyConfiguration(isLaptop);
+                  setStep(SetupStep.MCP_PROMPT);
                 }}
                 onCtrlC={handleCtrlC}
                 isActive={true}
@@ -752,6 +841,233 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
               <Text dimColor>Press Enter to save, ESC to skip search configuration</Text>
+            </Box>
+          </>
+        )}
+
+        {/* MCP Server Prompt (Optional) */}
+        {step === SetupStep.MCP_PROMPT && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+                Optional: MCP Server
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>
+                Would you like to connect an MCP (Model Context Protocol) server?
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text dimColor>
+                MCP servers extend the assistant with external tools beyond its built-in capabilities — GitHub integration, databases, custom APIs, and more.
+              </Text>
+            </Box>
+            <Box flexDirection="column" marginBottom={1}>
+              <Box>
+                <SelectionIndicator isSelected={mcpPromptIndex === 0}>
+                  Yes, configure a server
+                </SelectionIndicator>
+              </Box>
+              <Box>
+                <SelectionIndicator isSelected={mcpPromptIndex === 1}>
+                  Skip for now
+                </SelectionIndicator>
+                <Text dimColor> - Can be configured later via /mcp add</Text>
+              </Box>
+            </Box>
+            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+              <Text dimColor>Use ↑↓ to select, Enter to confirm</Text>
+            </Box>
+          </>
+        )}
+
+        {/* MCP Server Selection */}
+        {step === SetupStep.MCP_SERVER_SELECT && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+                Select MCP Server
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>
+                Choose a server to configure:
+              </Text>
+            </Box>
+            <Box flexDirection="column" marginBottom={1}>
+              {mcpOptions.map((option, idx) => (
+                <Box key={option.key} flexDirection="column">
+                  <Box>
+                    <SelectionIndicator isSelected={idx === mcpPresetIndex}>
+                      {option.preset ? option.preset.displayName : 'Custom'}
+                    </SelectionIndicator>
+                  </Box>
+                  {idx === mcpPresetIndex && (
+                    <Box paddingLeft={4}>
+                      <Text dimColor>
+                        {option.preset ? option.preset.description : 'Connect to your own MCP server'}
+                      </Text>
+                    </Box>
+                  )}
+                </Box>
+              ))}
+            </Box>
+            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+              <Text dimColor>Use ↑↓ to select, Enter to confirm</Text>
+            </Box>
+          </>
+        )}
+
+        {/* MCP Server Input (path or env var) */}
+        {step === SetupStep.MCP_SERVER_INPUT && (() => {
+          const preset = MCP_PRESETS[selectedMcpPresetKey];
+          const label = preset?.needsPath ? 'Directory:' : 'API Key:';
+          const hint = preset?.needsPath ? (preset.pathHint || '/path/to/directory') : (preset?.envHint || 'Enter value...');
+          return (
+            <>
+              <Box marginBottom={1} flexDirection="row" gap={1}>
+                <Text bold>
+                  <ChickAnimation />
+                </Text>
+                <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+                  Configure {preset?.displayName || selectedMcpPresetKey}
+                </Text>
+              </Box>
+              <Box marginBottom={1}>
+                <Text>
+                  {preset?.needsPath
+                    ? 'Enter the directory path this server should have access to:'
+                    : `Enter your ${preset?.needsEnvKey || 'API key'}:`}
+                </Text>
+              </Box>
+              {error && (
+                <Box marginBottom={1}>
+                  <Text color={UI_COLORS.ERROR}>{error}</Text>
+                </Box>
+              )}
+              <Box marginBottom={1}>
+                <TextInput
+                  label={label}
+                  value={mcpInputBuffer}
+                  onValueChange={setMcpInputBuffer}
+                  cursorPosition={mcpInputCursor}
+                  onCursorChange={setMcpInputCursor}
+                  onSubmit={handleMcpInputSubmit}
+                  onEscape={() => {
+                    setError(null);
+                    applyAllConfiguration();
+                  }}
+                  onCtrlC={handleCtrlC}
+                  isActive={true}
+                  multiline={false}
+                  placeholder={hint}
+                />
+              </Box>
+              <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+                <Text dimColor>Press Enter to save, ESC to skip MCP configuration</Text>
+              </Box>
+            </>
+          );
+        })()}
+
+        {/* MCP Custom Server Name */}
+        {step === SetupStep.MCP_CUSTOM_NAME && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+                Custom MCP Server
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>
+                Enter a name for this server (e.g., my-tools, database):
+              </Text>
+            </Box>
+            {error && (
+              <Box marginBottom={1}>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
+              </Box>
+            )}
+            <Box marginBottom={1}>
+              <TextInput
+                label="Name:"
+                value={mcpCustomNameBuffer}
+                onValueChange={setMcpCustomNameBuffer}
+                cursorPosition={mcpCustomNameCursor}
+                onCursorChange={setMcpCustomNameCursor}
+                onSubmit={handleMcpCustomNameSubmit}
+                onEscape={() => {
+                  setError(null);
+                  applyAllConfiguration();
+                }}
+                onCtrlC={handleCtrlC}
+                isActive={true}
+                multiline={false}
+                placeholder="my-server"
+              />
+            </Box>
+            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+              <Text dimColor>Press Enter to continue, ESC to skip MCP configuration</Text>
+            </Box>
+          </>
+        )}
+
+        {/* MCP Custom Server Command */}
+        {step === SetupStep.MCP_CUSTOM_COMMAND && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold>
+                <ChickAnimation />
+              </Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
+                Custom MCP Server: {mcpCustomName}
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>
+                Enter the command to start this server:
+              </Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text dimColor>
+                Example: npx -y @modelcontextprotocol/server-everything
+              </Text>
+            </Box>
+            {error && (
+              <Box marginBottom={1}>
+                <Text color={UI_COLORS.ERROR}>{error}</Text>
+              </Box>
+            )}
+            <Box marginBottom={1}>
+              <TextInput
+                label="Command:"
+                value={mcpCustomCommandBuffer}
+                onValueChange={setMcpCustomCommandBuffer}
+                cursorPosition={mcpCustomCommandCursor}
+                onCursorChange={setMcpCustomCommandCursor}
+                onSubmit={handleMcpCustomCommandSubmit}
+                onEscape={() => {
+                  setError(null);
+                  applyAllConfiguration();
+                }}
+                onCtrlC={handleCtrlC}
+                isActive={true}
+                multiline={false}
+                placeholder="npx -y @scope/server-name"
+              />
+            </Box>
+            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
+              <Text dimColor>Press Enter to save, ESC to skip MCP configuration</Text>
             </Box>
           </>
         )}
@@ -802,6 +1118,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               )}
               {selectedSearchProvider !== 'none' && (
                 <Text dimColor>• Search: {SEARCH_PROVIDER_INFO[selectedSearchProvider]?.displayName || selectedSearchProvider}</Text>
+              )}
+              {selectedMcpPresetKey && (
+                <Text dimColor>• MCP: {MCP_PRESETS[selectedMcpPresetKey]?.displayName || selectedMcpPresetKey}</Text>
               )}
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>

@@ -84,6 +84,12 @@ export interface AppProps {
 
   /** Total number of loaded plugins */
   totalPluginCount?: number;
+
+  /** Number of connected MCP servers */
+  activeMcpCount?: number;
+
+  /** Total number of configured MCP servers */
+  totalMcpCount?: number;
 }
 
 /**
@@ -101,6 +107,8 @@ const AppContentComponent: React.FC<{
   availableModels?: any[];
   activePluginCount?: number;
   totalPluginCount?: number;
+  activeMcpCount?: number;
+  totalMcpCount?: number;
 }> = ({
   agent,
   resumeSession,
@@ -109,6 +117,8 @@ const AppContentComponent: React.FC<{
   availableModels,
   activePluginCount,
   totalPluginCount,
+  activeMcpCount,
+  totalMcpCount,
 }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
@@ -440,6 +450,8 @@ const AppContentComponent: React.FC<{
         config={effectiveConfig}
         activePluginCount={activePluginCount}
         totalPluginCount={totalPluginCount}
+        activeMcpCount={activeMcpCount}
+        totalMcpCount={totalMcpCount}
         currentAgent={state.currentAgent}
         />
       </Box>
@@ -1522,6 +1534,8 @@ export const App: React.FC<AppProps> = ({
   availableModels,
   activePluginCount,
   totalPluginCount,
+  activeMcpCount,
+  totalMcpCount,
 }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
@@ -1541,6 +1555,8 @@ export const App: React.FC<AppProps> = ({
             availableModels={availableModels}
             activePluginCount={activePluginCount}
             totalPluginCount={totalPluginCount}
+            activeMcpCount={activeMcpCount}
+            totalMcpCount={totalMcpCount}
           />
         </AppProvider>
       </ActivityProvider>

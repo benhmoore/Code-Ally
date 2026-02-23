@@ -28,6 +28,7 @@ import { ProjectCommand } from './commands/ProjectCommand.js';
 import { TodoCommand } from './commands/TodoCommand.js';
 import { AgentCommand } from './commands/AgentCommand.js';
 import { PluginCommand } from './commands/PluginCommand.js';
+import { MCPCommand } from './commands/MCPCommand.js';
 import { InstructionsCommand } from './commands/InstructionsCommand.js';
 import { RenameCommand } from './commands/RenameCommand.js';
 import { ResumeCommand } from './commands/ResumeCommand.js';
@@ -73,6 +74,7 @@ export class CommandHandler {
     this.registerCommand(new HelpCommand());
     this.registerCommand(new InitCommand());
     this.registerCommand(new ListDirsCommand());
+    this.registerCommand(new MCPCommand());
     this.registerCommand(new ModelCommand());
     this.registerCommand(new OpenCommand());
     this.registerCommand(new PluginCommand());

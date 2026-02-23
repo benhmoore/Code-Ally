@@ -160,6 +160,15 @@ export function getBaseConfigFile(): string {
   return join(ALLY_HOME, 'config.json');
 }
 
+/**
+ * Get the MCP configuration file path for the active profile
+ *
+ * @returns Path to profile-specific mcp-config.json
+ */
+export function getMCPConfigFile(): string {
+  return join(PROFILES_DIR, ACTIVE_PROFILE, 'mcp-config.json');
+}
+
 // ============================================================================
 // Directory Initialization
 // ============================================================================

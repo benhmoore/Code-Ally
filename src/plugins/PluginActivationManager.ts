@@ -253,6 +253,23 @@ export class PluginActivationManager {
   }
 
   /**
+   * Register an external tool source (e.g., MCP server) as always-active.
+   * This allows non-plugin tool providers to participate in the activation system.
+   */
+  registerExternalSource(name: string): void {
+    this.activePlugins.add(name);
+    logger.debug(`[PluginActivationManager] Registered external source: ${name}`);
+  }
+
+  /**
+   * Unregister an external tool source.
+   */
+  unregisterExternalSource(name: string): void {
+    this.activePlugins.delete(name);
+    logger.debug(`[PluginActivationManager] Unregistered external source: ${name}`);
+  }
+
+  /**
    * Refresh plugin manifests (call this after installing/uninstalling plugins)
    *
    * This reloads the plugin manifests from the PluginLoader and updates

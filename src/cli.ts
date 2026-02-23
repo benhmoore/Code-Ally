@@ -1037,8 +1037,24 @@ async function main() {
     // Get active plugin count for UI display
     const activePluginCount = pluginActivationManager.getActivePlugins().length;
 
-    // Merge built-in tools with plugin tools
-    const allTools = [...tools, ...pluginTools];
+    // Load MCP servers and discover their tools
+    const { MCPServerManager } = await import('./mcp/MCPServerManager.js');
+    const mcpServerManager = new MCPServerManager(activityStream);
+    registry.registerInstance('mcp_server_manager', mcpServerManager);
+    await mcpServerManager.loadConfig(process.cwd());
+    const mcpTools = await mcpServerManager.startAutoStartServers();
+    if (mcpTools.length > 0) {
+      // Register connected MCP servers with PluginActivationManager
+      for (const name of mcpServerManager.getConnectedServers()) {
+        pluginActivationManager.registerExternalSource(`mcp:${name}`);
+      }
+      logger.debug(`[CLI] MCP: ${mcpTools.length} tool(s) from ${mcpServerManager.getConnectedServers().length} server(s)`);
+    }
+    const activeMcpCount = mcpServerManager.getConnectedServers().length;
+    const totalMcpCount = mcpServerManager.getConfiguredServers().length;
+
+    // Merge built-in tools with plugin tools and MCP tools
+    const allTools = [...tools, ...pluginTools, ...mcpTools];
 
     // Create tool manager with all tools
     const toolManager = new ToolManager(allTools);
@@ -1298,6 +1314,8 @@ async function main() {
         availableModels, // Pass available models from validation
         activePluginCount,
         totalPluginCount: pluginCount,
+        activeMcpCount,
+        totalMcpCount,
       }),
       {
         exitOnCtrlC: false,

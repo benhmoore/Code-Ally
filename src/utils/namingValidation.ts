@@ -67,6 +67,31 @@ export const SKILL_DESCRIPTION_MAX_LENGTH = 1024;
  * @param name - Skill name to validate
  * @returns Validation result with error message if invalid
  */
+/**
+ * Convert an arbitrary string to kebab-case
+ *
+ * Handles camelCase, PascalCase, snake_case, spaces, and mixed formats.
+ * Used by MCP tool name generation to produce valid kebab-case tool names.
+ *
+ * @param name - Input string to convert
+ * @returns kebab-case string
+ */
+export function toKebabCase(name: string): string {
+  return name
+    // Insert hyphen before uppercase letters in camelCase/PascalCase
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    // Replace underscores, spaces, dots with hyphens
+    .replace(/[_\s.]+/g, '-')
+    // Collapse multiple hyphens
+    .replace(/-+/g, '-')
+    // Remove non-alphanumeric characters (except hyphens)
+    .replace(/[^a-z0-9-]/gi, '')
+    // Lowercase everything
+    .toLowerCase()
+    // Remove leading/trailing hyphens
+    .replace(/^-+|-+$/g, '');
+}
+
 export function validateSkillName(name: string): ValidationResult {
   if (!name || typeof name !== 'string') {
     return { valid: false, error: 'Skill name is required and must be a string' };

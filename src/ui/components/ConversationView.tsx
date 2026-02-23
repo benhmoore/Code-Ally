@@ -61,6 +61,10 @@ interface ConversationViewProps {
   activePluginCount?: number;
   /** Total number of loaded plugins */
   totalPluginCount?: number;
+  /** Number of connected MCP servers */
+  activeMcpCount?: number;
+  /** Total number of configured MCP servers */
+  totalMcpCount?: number;
   /** Current agent name (to prefix non-ally responses) */
   currentAgent?: string;
 }
@@ -237,6 +241,8 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   config,
   activePluginCount,
   totalPluginCount,
+  activeMcpCount,
+  totalMcpCount,
   currentAgent,
 }) => {
   const terminalWidth = useContentWidth();
@@ -504,6 +510,11 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
               {totalPluginCount !== undefined && totalPluginCount > 0 && (
                 <Text dimColor>
                   {activePluginCount}/{totalPluginCount} plugin{totalPluginCount === 1 ? '' : 's'} active · tag with +/-
+                </Text>
+              )}
+              {totalMcpCount !== undefined && totalMcpCount > 0 && (
+                <Text dimColor>
+                  {activeMcpCount}/{totalMcpCount} mcp server{totalMcpCount === 1 ? '' : 's'} active
                 </Text>
               )}
               {gitBranch && (

@@ -99,6 +99,7 @@ class CommandRegistryClass {
       'Todos',
       'Tasks',
       'Plugins',
+      'MCP',
     ];
 
     for (const category of categoryOrder) {

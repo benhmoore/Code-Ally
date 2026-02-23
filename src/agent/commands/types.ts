@@ -12,6 +12,7 @@ export type HelpCategory =
   | 'Core'
   | 'Agents'
   | 'Plugins'
+  | 'MCP'
   | 'Project'
   | 'Todos'
   | 'Tasks'

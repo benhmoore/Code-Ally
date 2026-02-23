@@ -38,6 +38,7 @@
       "@security/*": ["src/security/*"],
       "@checkers/*": ["src/checkers/*"],
       "@plugins/*": ["src/plugins/*"],
+      "@mcp/*": ["src/mcp/*"],
       "@ui/*": ["src/ui/*"],
       "@shared/*": ["src/types/*"],
       "@cli/*": ["src/cli/*"]
