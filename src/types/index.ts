@@ -242,6 +242,9 @@ export enum ActivityEventType {
   TOOL_FORM_RESPONSE = 'tool_form_response',
   TOOL_FORM_CANCEL = 'tool_form_cancel',
   CONFIG_UPDATED = 'config_updated',
+  PLAN_MODE_ENTERED = 'plan_mode_entered',
+  PLAN_APPROVAL_REQUEST = 'plan_approval_request',
+  PLAN_APPROVAL_RESPONSE = 'plan_approval_response',
 }
 
 export interface ActivityEvent {

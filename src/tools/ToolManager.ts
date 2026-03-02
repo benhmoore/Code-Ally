@@ -17,6 +17,7 @@ import { validateToolName } from '../utils/namingValidation.js';
 import { DelegationContextManager } from '../services/DelegationContextManager.js';
 import { isInjectableTool } from './InjectableTool.js';
 import { ConversationManager } from '../agent/ConversationManager.js';
+import { PlanModeManager } from '../services/PlanModeManager.js';
 
 /**
  * Tool with custom function definition
@@ -178,6 +179,17 @@ export class ToolManager {
   }
 
   /**
+   * Clear the function definitions cache
+   *
+   * Called when plan mode state changes to ensure the next LLM call
+   * gets the correct set of available tools.
+   */
+  clearDefinitionsCache(): void {
+    this.functionDefinitionsCache.clear();
+    logger.debug('[TOOL_MANAGER] Function definitions cache cleared');
+  }
+
+  /**
    * Inject FormManager into all registered tools
    *
    * This enables tools to request interactive forms during execution.
@@ -258,6 +270,17 @@ export class ToolManager {
         }
       }
 
+      // Filter by plan mode (only allow read-only + plan-specific tools)
+      try {
+        const registry = ServiceRegistry.getInstance();
+        const planModeManager = registry.get<PlanModeManager>('plan_mode_manager');
+        if (planModeManager?.isActive() && !planModeManager.isToolAllowed(tool.name)) {
+          continue;
+        }
+      } catch {
+        // PlanModeManager not registered yet - skip filtering
+      }
+
       const functionDef = this.generateFunctionDefinition(tool);
       functionDefs.push(functionDef);
       visibleTools.push(tool.name);
@@ -314,6 +337,17 @@ export class ToolManager {
     // Include agent name in key if present
     if (currentAgentName) {
       parts.push(`agent:${currentAgentName}`);
+    }
+
+    // Include plan mode state in key
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const planModeManager = registry.get<PlanModeManager>('plan_mode_manager');
+      if (planModeManager?.isActive()) {
+        parts.push('plan-mode:active');
+      }
+    } catch {
+      // PlanModeManager not registered yet - skip
     }
 
     return parts.join('|');

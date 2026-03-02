@@ -32,6 +32,7 @@ import { UndoPrompt } from './components/UndoPrompt.js';
 import { UndoFileList } from './components/UndoFileList.js';
 import { LibraryClearConfirmation } from './components/LibraryClearConfirmation.js';
 import { ToolFormWizard } from './components/ToolFormWizard.js';
+import { PlanApprovalPrompt } from './components/PlanApprovalPrompt.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { Agent } from '../agent/Agent.js';
 import { PatchManager, PatchMetadata } from '../services/PatchManager.js';
@@ -1258,6 +1259,49 @@ const AppContentComponent: React.FC<{
             </Box>
           );
         })()
+      ) : modal.planApprovalRequest ? (
+        /* Plan Approval Prompt (replaces input when active) */
+        <Box marginTop={1} flexDirection="column">
+          <StatusIndicator
+            isProcessing={state.isThinking}
+            isCompacting={state.isCompacting}
+            isCancelling={isCancelling}
+            recentMessages={state.messages.slice(-3)}
+            sessionLoaded={sessionLoaded}
+            isResuming={!!resumeSession}
+            activeToolCalls={state.activeToolCalls}
+            activeSubAgents={state.activeSubAgents}
+          />
+          <PlanApprovalPrompt
+            request={modal.planApprovalRequest}
+            selectedIndex={modal.planApprovalSelectedIndex}
+            feedbackText={modal.planApprovalFeedbackText}
+            onFeedbackTextChange={modal.setPlanApprovalFeedbackText}
+            cursorPosition={modal.planApprovalCursorPosition}
+            onCursorChange={modal.setPlanApprovalCursorPosition}
+          />
+          {/* Hidden InputPrompt for keyboard handling only */}
+          <Box height={0} overflow="hidden">
+            <InputPrompt
+              onSubmit={handleInput}
+              onInterjection={handleInterjection}
+              isActive={true}
+              commandHistory={commandHistory || undefined}
+              completionProvider={completionProvider || undefined}
+              planApprovalRequest={modal.planApprovalRequest}
+              planApprovalSelectedIndex={modal.planApprovalSelectedIndex}
+              onPlanApprovalNavigate={modal.setPlanApprovalSelectedIndex}
+              planApprovalFeedbackText={modal.planApprovalFeedbackText}
+              onPlanApprovalFeedbackSubmit={handleInterjection}
+              activityStream={activityStream}
+              agent={agent}
+              prefillText={modal.inputPrefillText}
+              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
+              bufferValue={modal.inputBuffer}
+              onBufferChange={modal.setInputBuffer}
+            />
+          </Box>
+        </Box>
       ) : modal.permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">

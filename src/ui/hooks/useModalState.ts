@@ -18,6 +18,7 @@
 import { useState, useCallback } from 'react';
 import { ModelOption } from '../components/ModelSelector.js';
 import { PermissionRequest } from '../components/PermissionPrompt.js';
+import type { PlanApprovalRequest } from '../components/PlanApprovalPrompt.js';
 import type { SessionInfo, Message, PromptInfo, FormRequest } from '@shared/index.js';
 import type { FileChangeStats } from '../components/RewindOptionsSelector.js';
 import type { UndoPreview } from '@services/PatchManager.js';
@@ -241,6 +242,16 @@ export interface ModalState {
   libraryClearConfirmRequest?: LibraryClearConfirmRequest;
   setLibraryClearConfirmRequest: (request?: LibraryClearConfirmRequest) => void;
 
+  // Plan approval
+  planApprovalRequest?: PlanApprovalRequest;
+  planApprovalSelectedIndex: number;
+  planApprovalFeedbackText: string;
+  planApprovalCursorPosition: number;
+  setPlanApprovalRequest: (request?: PlanApprovalRequest) => void;
+  setPlanApprovalSelectedIndex: (index: number) => void;
+  setPlanApprovalFeedbackText: (text: string) => void;
+  setPlanApprovalCursorPosition: (position: number) => void;
+
   // Tool form wizard (queue-based like permission requests)
   toolFormRequest?: FormRequest;
   toolFormQueue: FormRequest[];
@@ -387,6 +398,12 @@ export const useModalState = (): ModalState => {
 
   // Library clear confirmation
   const [libraryClearConfirmRequest, setLibraryClearConfirmRequest] = useState<LibraryClearConfirmRequest | undefined>(undefined);
+
+  // Plan approval
+  const [planApprovalRequest, setPlanApprovalRequest] = useState<PlanApprovalRequest | undefined>(undefined);
+  const [planApprovalSelectedIndex, setPlanApprovalSelectedIndex] = useState(0);
+  const [planApprovalFeedbackText, setPlanApprovalFeedbackText] = useState('');
+  const [planApprovalCursorPosition, setPlanApprovalCursorPosition] = useState(0);
 
   // Tool form wizard - queue-based implementation like permission requests
   const [toolFormQueue, setToolFormQueue] = useState<FormRequest[]>([]);
@@ -545,6 +562,16 @@ export const useModalState = (): ModalState => {
     // Library clear confirmation
     libraryClearConfirmRequest,
     setLibraryClearConfirmRequest,
+
+    // Plan approval
+    planApprovalRequest,
+    planApprovalSelectedIndex,
+    planApprovalFeedbackText,
+    planApprovalCursorPosition,
+    setPlanApprovalRequest,
+    setPlanApprovalSelectedIndex,
+    setPlanApprovalFeedbackText,
+    setPlanApprovalCursorPosition,
 
     // Tool form wizard
     toolFormRequest,

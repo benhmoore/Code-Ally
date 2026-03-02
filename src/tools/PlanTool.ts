@@ -24,14 +24,23 @@ import type { Config } from '../types/index.js';
 const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-write', 'ask-user-question'];
 
 // Base prompt for planning (without thoroughness-specific guidelines)
-const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistant. READ-ONLY access plus todo-write - no code modifications.
+const PLANNING_BASE_PROMPT = `You are a software architect and planning specialist for Ally.
+
+=== CRITICAL: READ-ONLY MODE ===
+You have READ-ONLY access to the codebase. You CANNOT:
+- Write, edit, or delete any project files
+- Execute commands that modify state
+- Create or modify code
+You CAN use: read, glob, grep, ls, tree, batch, explore, ask-user-question, todo-write
 
 ## Process
 
-1. **Clarify** - Use ask-user-question for ambiguous requirements or multiple valid approaches. Don't assume.
-2. **Research** - Assess codebase state (empty vs existing), find similar implementations, identify patterns
-3. **Plan** - Create actionable steps with absolute file paths and line numbers
-4. **Create Todos** - MUST call todo-write() before completing
+1. **Understand Requirements** - Analyze the request thoroughly. Use ask-user-question for ambiguous requirements, multiple valid approaches, or when you need clarification on scope, constraints, or preferences.
+2. **Explore Thoroughly** - Assess the codebase: Is it empty/new or existing? Find similar implementations, identify established patterns and conventions. Use explore() for complex multi-file pattern analysis.
+3. **Design Solution** - Create a detailed, actionable implementation plan with absolute file paths and line number references. Consider architectural trade-offs.
+4. **Detail the Plan** - Structure the plan with clear steps, file modifications, and considerations.
+
+You will be provided with requirements and optionally a perspective to guide your planning approach.
 
 ## Output Format
 
@@ -46,17 +55,18 @@ const PLANNING_BASE_PROMPT = `You are an expert implementation planning assistan
 ...
 
 #### Considerations
-- Testing, error handling, edge cases, integration points
+- Testing, error handling, edge cases, integration points, architectural trade-offs
 
 #### Files to Modify/Create
 - \`/absolute/path/to/file.ts\` - [what changes]
 
-#### Task Breakdown
-Call todo-write() with tasks in logical order. Each needs: content (imperative), status (pending/in_progress), activeForm (present continuous).
+### Critical Files for Implementation
+List 3-5 files that are most critical to this implementation, with absolute paths and brief reasons why each is important. These are the files the implementer should read first.
 
 ## Constraints
 
 - All file paths MUST be absolute
+- Never use emoji
 - Use ask-user-question when you encounter ambiguity or trade-offs
 - Use explore() for complex multi-file pattern analysis
 - Recognize empty projects quickly - don't search for nonexistent patterns`;
@@ -64,15 +74,16 @@ Call todo-write() with tasks in logical order. Each needs: content (imperative),
 export class PlanTool extends BaseDelegationTool {
   readonly name = 'plan';
   readonly description =
-    'Create implementation plan by researching codebase patterns. Delegates to planning agent with read-only + explore access. Returns detailed, actionable plan grounded in existing architecture.';
+    'Software architect agent for designing implementation plans. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.';
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output
 
-  readonly usageGuidance = `**When to use plan:**
-Multi-step implementation/refactoring (>3 steps). Creates ordered task list.
-Skip for: Quick fixes, continuing existing plans, simple changes.`;
+  readonly usageGuidance = `**When to use plan (delegated agent):**
+Delegates planning to a sub-agent in isolated context. Use ONLY when you want to preserve your own context budget and don't need hands-on exploration. The sub-agent explores independently and returns a plan.
+Do NOT use when the user explicitly asks you to plan — use enter-plan-mode instead, which lets you plan directly and present the plan for user approval.
+Skip for: Quick fixes, simple changes, or when the user asked you to plan (use enter-plan-mode).`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -86,7 +97,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
       agentType: AGENT_TYPES.PLAN,
       allowedTools: PLANNING_TOOLS,
       modelConfigKey: 'plan_model',
-      requiredToolCalls: ['todo-write'],
+      requiredToolCalls: [],
       reasoningEffort: REASONING_EFFORT.HIGH,
       allowTodoManagement: true,
       emptyResponseFallback: 'Planning completed but no plan was provided.',
@@ -112,7 +123,7 @@ Skip for: Quick fixes, continuing existing plans, simple changes.`;
    * Format task message for planning
    */
   protected formatTaskMessage(taskPrompt: string): string {
-    return `Create an implementation plan for: ${taskPrompt}`;
+    return `Design an implementation strategy for: ${taskPrompt}`;
   }
 
   /**

@@ -791,6 +791,11 @@ async function main() {
     const todoManager = new TodoManager(activityStream);
     registry.registerInstance('todo_manager', todoManager);
 
+    // Create plan mode manager
+    const { PlanModeManager } = await import('./services/PlanModeManager.js');
+    const planModeManager = new PlanModeManager(activityStream);
+    registry.registerInstance('plan_mode_manager', planModeManager);
+
     // Create prompt library manager
     const { PromptLibraryManager } = await import('./services/PromptLibraryManager.js');
     const promptLibraryManager = new PromptLibraryManager();
@@ -959,6 +964,9 @@ async function main() {
     const { WebSearchTool } = await import('./tools/WebSearchTool.js');
     const { ResearchTool } = await import('./tools/ResearchTool.js');
     const { SkillTool } = await import('./tools/SkillTool.js');
+    const { EnterPlanModeTool } = await import('./tools/EnterPlanModeTool.js');
+    const { ExitPlanModeTool } = await import('./tools/ExitPlanModeTool.js');
+    const { WritePlanTool } = await import('./tools/WritePlanTool.js');
 
     const tools = [
       new BashTool(activityStream, config),
@@ -993,6 +1001,9 @@ async function main() {
       new WebSearchTool(activityStream), // Web search via configured provider (Brave/Serper)
       new ResearchTool(activityStream), // Research agent delegation tool
       new SkillTool(activityStream), // Load skill instructions into context
+      new EnterPlanModeTool(activityStream), // Enter plan mode for structured exploration
+      new ExitPlanModeTool(activityStream), // Exit plan mode and present plan for approval
+      new WritePlanTool(activityStream), // Write plan file during plan mode
     ];
 
     // Load user plugins from profile-specific plugins directory

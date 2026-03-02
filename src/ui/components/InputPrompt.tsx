@@ -127,6 +127,16 @@ interface InputPromptProps {
   permissionInstructText?: string;
   /** Callback when instruction is submitted (Enter pressed on INSTRUCT option) */
   onPermissionInstructSubmit?: (text: string) => void;
+  /** Plan approval request data (if active) */
+  planApprovalRequest?: import('./PlanApprovalPrompt.js').PlanApprovalRequest;
+  /** Selected plan approval option index */
+  planApprovalSelectedIndex?: number;
+  /** Callback when plan approval selection changes */
+  onPlanApprovalNavigate?: (newIndex: number) => void;
+  /** Current plan approval feedback text */
+  planApprovalFeedbackText?: string;
+  /** Callback when plan approval feedback is submitted */
+  onPlanApprovalFeedbackSubmit?: (text: string) => void;
 }
 
 /**
@@ -177,6 +187,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onPromptPrefilledClear,
   permissionInstructText,
   onPermissionInstructSubmit,
+  planApprovalRequest,
+  planApprovalSelectedIndex = 0,
+  onPlanApprovalNavigate,
+  planApprovalFeedbackText,
+  onPlanApprovalFeedbackSubmit,
 }) => {
   const { exit } = useApp();
   const [buffer, setBuffer] = useState(bufferValue || '');
@@ -519,6 +534,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const textInputActive =
     isActive &&
     !permissionRequest &&
+    !planApprovalRequest &&
     !modelSelectRequest &&
     !sessionSelectRequest &&
     !librarySelectRequest &&
@@ -1208,6 +1224,72 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
 
         // Block all other input when undo prompt is active
+        return;
+      }
+
+      // ===== Plan Approval Navigation =====
+      if (planApprovalRequest && onPlanApprovalNavigate && activityStream) {
+        const optionsCount = 3; // Approve, Approve + clear context, Provide feedback
+
+        // Up arrow
+        if (key.upArrow) {
+          const newIndex = Math.max(0, planApprovalSelectedIndex - 1);
+          onPlanApprovalNavigate(newIndex);
+          return;
+        }
+
+        // Down arrow
+        if (key.downArrow) {
+          const newIndex = Math.min(optionsCount - 1, planApprovalSelectedIndex + 1);
+          onPlanApprovalNavigate(newIndex);
+          return;
+        }
+
+        // Enter - submit selection
+        if (key.return) {
+          if (planApprovalSelectedIndex === 0) {
+            // Approve
+            activityStream.emit({
+              id: `plan_response_${Date.now()}`,
+              type: ActivityEventType.PLAN_APPROVAL_RESPONSE,
+              timestamp: Date.now(),
+              data: { choice: 'approve' },
+            });
+          } else if (planApprovalSelectedIndex === 1) {
+            // Approve + clear context
+            activityStream.emit({
+              id: `plan_response_${Date.now()}`,
+              type: ActivityEventType.PLAN_APPROVAL_RESPONSE,
+              timestamp: Date.now(),
+              data: { choice: 'approve_clear_context' },
+            });
+          } else if (planApprovalSelectedIndex === 2) {
+            // Provide feedback
+            if (planApprovalFeedbackText?.trim() && onPlanApprovalFeedbackSubmit) {
+              activityStream.emit({
+                id: `plan_response_${Date.now()}`,
+                type: ActivityEventType.PLAN_APPROVAL_RESPONSE,
+                timestamp: Date.now(),
+                data: { choice: 'feedback', feedback: planApprovalFeedbackText },
+              });
+            }
+            // If empty, do nothing
+          }
+          return;
+        }
+
+        // Escape or Ctrl+C - treat as feedback with empty text (cancel)
+        if (key.escape || (key.ctrl && input === 'c')) {
+          activityStream.emit({
+            id: `plan_response_${Date.now()}`,
+            type: ActivityEventType.PLAN_APPROVAL_RESPONSE,
+            timestamp: Date.now(),
+            data: { choice: 'feedback', feedback: 'Plan rejected by user.' },
+          });
+          return;
+        }
+
+        // Block all other input when plan approval is active
         return;
       }
 

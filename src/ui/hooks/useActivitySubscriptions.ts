@@ -605,6 +605,30 @@ export const useActivitySubscriptions = (
     }
   });
 
+  // Plan approval request - show plan approval modal
+  useActivityEvent(ActivityEventType.PLAN_APPROVAL_REQUEST, (event) => {
+    const { planFilePath, planContent } = event.data || {};
+
+    if (!planFilePath || !planContent) {
+      logger.warn('[useActivitySubscriptions] Invalid PLAN_APPROVAL_REQUEST: missing required fields');
+      return;
+    }
+
+    modal.setPlanApprovalRequest({ planFilePath, planContent });
+    modal.setPlanApprovalSelectedIndex(0);
+    modal.setPlanApprovalFeedbackText('');
+    modal.setPlanApprovalCursorPosition(0);
+    sendTerminalNotification();
+  });
+
+  // Plan approval response - close modal
+  useActivityEvent(ActivityEventType.PLAN_APPROVAL_RESPONSE, () => {
+    modal.setPlanApprovalRequest(undefined);
+    modal.setPlanApprovalSelectedIndex(0);
+    modal.setPlanApprovalFeedbackText('');
+    modal.setPlanApprovalCursorPosition(0);
+  });
+
   // Tool form request - add to queue and track start time for duration exclusion
   useActivityEvent(ActivityEventType.TOOL_FORM_REQUEST, (event) => {
     const { requestId, toolName, schema, initialValues, callId } = event.data || {};

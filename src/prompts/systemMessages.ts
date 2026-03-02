@@ -22,6 +22,7 @@ import type { ToolResultManager } from '../services/ToolResultManager.js';
 import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
 import { ContextFileLoader } from '../services/ContextFileLoader.js';
 import type { Message } from '../types/index.js';
+import { PlanModeManager } from '../services/PlanModeManager.js';
 
 // --- Core Agent Identity and Directives ---
 
@@ -56,15 +57,18 @@ CRITICAL - Agent Context Isolation:
 Agents (explore, plan, agent) CANNOT see the current conversation. They ONLY receive the task_prompt parameter. You MUST include ALL necessary context in task_prompt - file paths, error messages, requirements, background information. Don't reference "the bug we discussed" or "the file mentioned earlier" - agents can't see that.
 
 Tool selection:
+- enter-plan-mode: DEFAULT for planning. Use when the user asks to plan, or when a non-trivial task needs structured planning before implementation. You explore the codebase yourself, write the plan, and present it for user approval.
+- plan (agent): Delegated planning — sends a sub-agent to plan in isolated context. Use ONLY when you want to preserve your own context budget and don't need to be hands-on with exploration. Do NOT use when the user explicitly asks you to plan.
 - explore: Questions about unfamiliar code areas, unknown scope/location, multi-file patterns, architecture questions
-- plan: Multi-step implementations (>3 steps), creates todos with dependencies
 - agent: Complex tasks requiring expertise, independent work that can be reviewed afterward
 - research: Current information from the web, fact verification, external documentation, news/updates
 - Direct tools: ONLY for known file paths or exact search terms
 
 Usage patterns:
+- User asks to plan → enter-plan-mode (you plan directly, user approves)
+- Non-trivial implementations → enter-plan-mode → user approves → implement
+- Need a plan but preserving context → plan agent (delegated)
 - Codebase questions → explore first
-- Implementations → explore → plan → implement, OR agent → validator for independent work
 - Bug investigation → explore → diagnose → fix
 - Known targets → read directly
 - Independent parallel investigations → consider batching
@@ -82,7 +86,7 @@ Examples needing research:
 "What's the latest React version?" / "How does the OpenAI API handle rate limits?" / "What are best practices for X?" / "Is library Y still maintained?" / "What changed in Node 22?" / "Find documentation for Z API"
 NOT for research: Anything in the codebase, historical conversation context, or offline data.
 
-Planning: Multi-step features/refactors. Skip quick fixes.
+Planning: When the user asks you to plan or a task clearly needs planning, enter plan mode (enter-plan-mode). Only delegate to the plan agent when you need to preserve your context budget.
 Agents: Auto-persist. Reusable via agent-ask.`;
 
 // Additional guidelines that apply to all agents
@@ -138,11 +142,11 @@ function getContextUsageInfo(tokenManager?: TokenManager, toolResultManager?: To
 
     // Add graduated warnings based on usage level
     if (contextPct >= CONTEXT_THRESHOLDS.CRITICAL) {
-      contextLine += `\n  🚨 CRITICAL: ${CONTEXT_THRESHOLDS.WARNINGS[95]}`;
+      contextLine += `\n  CRITICAL: ${CONTEXT_THRESHOLDS.WARNINGS[95]}`;
     } else if (contextPct >= CONTEXT_THRESHOLDS.WARNING) {
-      contextLine += `\n  ⚠️ ${CONTEXT_THRESHOLDS.WARNINGS[85]}`;
+      contextLine += `\n  WARNING: ${CONTEXT_THRESHOLDS.WARNINGS[85]}`;
     } else if (contextPct >= CONTEXT_THRESHOLDS.NORMAL) {
-      contextLine += `\n  💡 ${CONTEXT_THRESHOLDS.WARNINGS[70]}`;
+      contextLine += `\n  NOTE: ${CONTEXT_THRESHOLDS.WARNINGS[70]}`;
     }
 
     return contextLine;
@@ -475,8 +479,30 @@ This is a non-interactive, single-turn conversation. Your response will be final
   // Get context budget reminder (only shown at 75%+)
   const contextBudgetReminder = getContextBudgetReminder(tokenManager);
 
+  // Get plan mode augmentation
+  let planModeSection = '';
+  try {
+    const serviceRegistry = ServiceRegistry.getInstance();
+    if (serviceRegistry && serviceRegistry.hasService('plan_mode_manager')) {
+      const planModeManager = serviceRegistry.get<PlanModeManager>('plan_mode_manager');
+      if (planModeManager?.isActive()) {
+        planModeSection = `
+
+**PLAN MODE ACTIVE**
+You are in read-only plan mode. Only exploratory tools and write-plan are available.
+- Explore the codebase to understand patterns and architecture
+- Ask clarifying questions with ask-user-question
+- Write your plan with write-plan when ready
+- Call exit-plan-mode to present the plan for user approval
+You CANNOT write, edit, or delete project files in this mode.`;
+      }
+    }
+  } catch (error) {
+    logger.warn('Failed to check plan mode state:', formatError(error));
+  }
+
   // Combine core directives with context
-  return `${CORE_DIRECTIVES}${onceModeInstructions}${toolGuidanceContext}${agentGuidanceContext}${contextBudgetReminder}
+  return `${CORE_DIRECTIVES}${onceModeInstructions}${planModeSection}${toolGuidanceContext}${agentGuidanceContext}${contextBudgetReminder}
 
 **Context:**
 ${context}${todoContext}`;

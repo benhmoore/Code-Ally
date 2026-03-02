@@ -38,6 +38,7 @@ import { TOOL_NAMES } from '../config/toolDefaults.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
 import { FormCancelledError } from '../services/FormManager.js';
 import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
+import { PlanModeManager } from '../services/PlanModeManager.js';
 
 /**
  * Safe tools that can run concurrently
@@ -620,6 +621,23 @@ export class ToolOrchestrator {
         toolName,
         args
       );
+    }
+
+    // Plan mode enforcement: only allow read-only + plan-specific tools
+    if (!this.config.isSpecializedAgent) {
+      try {
+        const planModeManager = ServiceRegistry.getInstance().get<PlanModeManager>('plan_mode_manager');
+        if (planModeManager?.isActive() && !planModeManager.isToolAllowed(toolName)) {
+          return createStructuredError(
+            `Tool '${toolName}' is not available in plan mode. Only read-only and plan tools are allowed. Use exit-plan-mode to leave plan mode first.`,
+            'permission_error',
+            toolName,
+            args
+          );
+        }
+      } catch {
+        // PlanModeManager not registered - skip enforcement
+      }
     }
 
     // If we have a parent context from a nested agent, use it; otherwise use the group parentId

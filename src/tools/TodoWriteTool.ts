@@ -33,7 +33,7 @@ export class TodoWriteTool extends BaseTool {
   readonly description =
     'Manage todo list. Each todo must have: content (imperative task), status (pending/in_progress/completed), activeForm (present continuous). Example: [{content: "Fix bug", status: "pending", activeForm: "Fixing bug"}]. Empty array clears list.';
   readonly requiresConfirmation = false;
-  readonly visibleInChat = true;
+  readonly visibleInChat = false; // Todos shown in status bar, not as tool call entries
   readonly hideOutput = true; // Todo updates shown in status bar, not chat
   readonly breaksExploratoryStreak = false; // Task management, not productive work
 
