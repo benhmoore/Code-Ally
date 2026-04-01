@@ -144,14 +144,17 @@ export class AgentManager {
   private isPluginAgentActive(pluginName?: string): boolean {
     if (!pluginName) return true; // Non-plugin agents are always active
 
+    // With the marketplace system, installed + enabled plugins are always active
     try {
       const registry = ServiceRegistry.getInstance();
-      const activationManager = registry.getPluginActivationManager();
-      return activationManager.isActive(pluginName);
-    } catch (error) {
-      // If PluginActivationManager unavailable, allow all agents
-      return true;
+      const pm = registry.get<any>('plugin_manager');
+      if (pm) {
+        return pm.isPluginEnabled(pluginName);
+      }
+    } catch {
+      // If plugin manager unavailable, allow all agents
     }
+    return true;
   }
 
   /**

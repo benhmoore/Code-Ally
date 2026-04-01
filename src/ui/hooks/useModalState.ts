@@ -49,21 +49,6 @@ export interface AgentWizardData {
 }
 
 /**
- * Plugin config request
- */
-export interface PluginConfigRequest {
-  pluginName: string;
-  pluginPath: string;
-  schema: any;
-  existingConfig?: any;
-  author?: string;
-  description?: string;
-  version?: string;
-  tools?: any[];
-  agents?: any[];
-}
-
-/**
  * Rewind request
  */
 export interface RewindRequest {
@@ -191,10 +176,6 @@ export interface ModalState {
   agentWizardData: AgentWizardData;
   setAgentWizardOpen: (open: boolean) => void;
   setAgentWizardData: (data: AgentWizardData) => void;
-
-  // Plugin config
-  pluginConfigRequest?: PluginConfigRequest;
-  setPluginConfigRequest: (request?: PluginConfigRequest) => void;
 
   // Rewind selector
   rewindRequest?: RewindRequest;
@@ -368,9 +349,6 @@ export const useModalState = (): ModalState => {
   const [agentWizardOpen, setAgentWizardOpen] = useState(false);
   const [agentWizardData, setAgentWizardData] = useState<AgentWizardData>({});
 
-  // Plugin config
-  const [pluginConfigRequest, setPluginConfigRequest] = useState<PluginConfigRequest | undefined>(undefined);
-
   // Rewind selector
   const [rewindRequest, setRewindRequest] = useState<RewindRequest | undefined>(undefined);
   const [rewindOptionsRequest, setRewindOptionsRequest] = useState<RewindOptionsRequest | undefined>(undefined);
@@ -514,10 +492,6 @@ export const useModalState = (): ModalState => {
     agentWizardData,
     setAgentWizardOpen,
     setAgentWizardData,
-
-    // Plugin config
-    pluginConfigRequest,
-    setPluginConfigRequest,
 
     // Rewind selector
     rewindRequest,

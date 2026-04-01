@@ -11,7 +11,7 @@ export type HelpCategory =
   | 'Input Modes'
   | 'Core'
   | 'Agents'
-  | 'Plugins'
+  | 'Marketplace'
   | 'MCP'
   | 'Project'
   | 'Todos'

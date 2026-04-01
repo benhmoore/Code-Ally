@@ -34,6 +34,7 @@ export default defineConfig({
       '@security': resolve(__dirname, './src/security'),
       '@checkers': resolve(__dirname, './src/checkers'),
       '@plugins': resolve(__dirname, './src/plugins'),
+      '@marketplace': resolve(__dirname, './src/marketplace'),
       '@mcp': resolve(__dirname, './src/mcp'),
       '@ui': resolve(__dirname, './src/ui'),
       '@shared': resolve(__dirname, './src/types'),

@@ -37,6 +37,9 @@ export class MCPServerManager implements IService {
   private serverConfigs: Map<string, MCPServerConfig> = new Map();
   private activityStream: ActivityStream;
 
+  /** Tracks which servers belong to which marketplace plugin (serverKey -> pluginName) */
+  private pluginServerOwnership: Map<string, string> = new Map();
+
   constructor(activityStream: ActivityStream) {
     this.activityStream = activityStream;
   }
@@ -159,12 +162,14 @@ export class MCPServerManager implements IService {
       logger.debug(`[MCP] Server '${name}' connected with ${definitions.length} tool(s)`);
 
       // Create BaseTool wrappers
+      const ownerPlugin = this.pluginServerOwnership.get(name);
       return MCPToolFactory.createTools(
         name,
         definitions,
         config.requiresConfirmation,
         this,
-        this.activityStream
+        this.activityStream,
+        ownerPlugin
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -278,6 +283,69 @@ export class MCPServerManager implements IService {
     this.statuses.delete(name);
     this.discoveredTools.delete(name);
     await this.saveProfileConfig();
+  }
+
+  // ===========================
+  // Plugin Server Management
+  // ===========================
+
+  /**
+   * Add MCP server configs from a marketplace plugin.
+   * Plugin servers always auto-start and are tracked by plugin ownership.
+   */
+  addPluginServers(pluginName: string, configs: Record<string, MCPServerConfig>): void {
+    for (const [serverKey, config] of Object.entries(configs)) {
+      // Plugin servers are always enabled and auto-start
+      const pluginConfig: MCPServerConfig = {
+        ...config,
+        enabled: true,
+        autoStart: true,
+      };
+      this.serverConfigs.set(serverKey, pluginConfig);
+      this.pluginServerOwnership.set(serverKey, pluginName);
+      logger.debug(`[MCP] Added plugin server '${serverKey}' from plugin '${pluginName}'`);
+    }
+  }
+
+  /**
+   * Stop and remove all MCP servers belonging to a plugin.
+   * Returns the server keys and their discovered tool definitions (captured before deletion).
+   */
+  async removePluginServers(pluginName: string): Promise<Array<{serverKey: string, tools: MCPToolDefinition[]}>> {
+    const removed: Array<{serverKey: string, tools: MCPToolDefinition[]}> = [];
+    for (const [serverKey, owner] of this.pluginServerOwnership.entries()) {
+      if (owner === pluginName) {
+        // Capture tools before they are deleted
+        const tools = this.discoveredTools.get(serverKey) ?? [];
+        if (this.clients.has(serverKey)) {
+          await this.stopServer(serverKey).catch(err =>
+            logger.warn(`[MCP] Error stopping plugin server '${serverKey}': ${err}`)
+          );
+        }
+        this.serverConfigs.delete(serverKey);
+        this.statuses.delete(serverKey);
+        this.discoveredTools.delete(serverKey);
+        removed.push({ serverKey, tools });
+      }
+    }
+    for (const entry of removed) {
+      this.pluginServerOwnership.delete(entry.serverKey);
+    }
+    return removed;
+  }
+
+  /**
+   * Get the plugin name that owns a server, or undefined for standalone servers.
+   */
+  getServerPluginOwner(serverName: string): string | undefined {
+    return this.pluginServerOwnership.get(serverName);
+  }
+
+  /**
+   * Check if a server is owned by a plugin.
+   */
+  isPluginServer(serverName: string): boolean {
+    return this.pluginServerOwnership.has(serverName);
   }
 
   // ===========================

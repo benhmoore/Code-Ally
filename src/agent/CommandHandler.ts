@@ -27,7 +27,7 @@ import { ModelCommand } from './commands/ModelCommand.js';
 import { ProjectCommand } from './commands/ProjectCommand.js';
 import { TodoCommand } from './commands/TodoCommand.js';
 import { AgentCommand } from './commands/AgentCommand.js';
-import { PluginCommand } from './commands/PluginCommand.js';
+import { MarketplaceCommand } from './commands/MarketplaceCommand.js';
 import { MCPCommand } from './commands/MCPCommand.js';
 import { InstructionsCommand } from './commands/InstructionsCommand.js';
 import { RenameCommand } from './commands/RenameCommand.js';
@@ -77,7 +77,7 @@ export class CommandHandler {
     this.registerCommand(new MCPCommand());
     this.registerCommand(new ModelCommand());
     this.registerCommand(new OpenCommand());
-    this.registerCommand(new PluginCommand());
+    this.registerCommand(new MarketplaceCommand());
     this.registerCommand(new InstructionsCommand());
     this.registerCommand(new ProjectCommand());
     this.registerCommand(new PromptCommand());
@@ -90,6 +90,14 @@ export class CommandHandler {
     this.registerCommand(new TaskCommand());
     this.registerCommand(new TodoCommand());
     this.registerCommand(new UndoCommand());
+
+    // Auto-register dynamic plugin commands stored during CLI init
+    const pluginCommands = this.serviceRegistry.get<Command[]>('plugin_commands');
+    if (pluginCommands) {
+      for (const cmd of pluginCommands) {
+        this.registerDynamicCommand(cmd);
+      }
+    }
   }
 
   /**
@@ -99,6 +107,19 @@ export class CommandHandler {
     // Strip the leading "/" from the command name
     const commandName = command.name.startsWith('/') ? command.name.slice(1) : command.name;
     this.commands.set(commandName, command);
+  }
+
+  /**
+   * Register a dynamic command (e.g., from a plugin's commands/*.md).
+   * Does not overwrite existing built-in commands.
+   */
+  registerDynamicCommand(command: Command): boolean {
+    const commandName = command.name.startsWith('/') ? command.name.slice(1) : command.name;
+    if (this.commands.has(commandName)) {
+      return false; // Already registered
+    }
+    this.commands.set(commandName, command);
+    return true;
   }
 
   /**
@@ -158,6 +179,17 @@ export class CommandHandler {
 
     // Split args on whitespace to get individual arguments
     return { command, args: argsString ? argsString.split(/\s+/) : [] };
+  }
+
+  /**
+   * Unregister a dynamic command (e.g., when a plugin is uninstalled).
+   * Does not allow removing built-in commands that were registered in the constructor.
+   */
+  unregisterDynamicCommand(commandName: string): boolean {
+    const name = commandName.startsWith('/') ? commandName.slice(1) : commandName;
+    if (!this.commands.has(name)) return false;
+    this.commands.delete(name);
+    return true;
   }
 
   // ===========================

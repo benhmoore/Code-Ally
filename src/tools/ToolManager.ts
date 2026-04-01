@@ -213,21 +213,22 @@ export class ToolManager {
    * @returns List of function definitions for LLM function calling
    */
   getFunctionDefinitions(excludeTools?: string[], currentAgentName?: string, allowedTools?: string[]): FunctionDefinition[] {
-    // Get active plugins from PluginActivationManager
-    let activePlugins: Set<string> | null = null;
+    // Get enabled plugin state from PluginManager
+    let enabledPluginNames: Set<string> | null = null;
     try {
       const registry = ServiceRegistry.getInstance();
-      const activationManager = registry.getPluginActivationManager();
-      activePlugins = new Set(activationManager.getActivePlugins());
-    } catch (error) {
-      // If PluginActivationManager is not registered, include all tools
-      // This ensures backward compatibility
-      activePlugins = null;
+      const pluginManager = registry.get<any>('plugin_manager');
+      if (pluginManager && typeof pluginManager.getEnabledPlugins === 'function') {
+        const enabled = pluginManager.getEnabledPlugins() as Array<{ pluginName: string }>;
+        enabledPluginNames = new Set(enabled.map((p: { pluginName: string }) => p.pluginName));
+      }
+    } catch {
+      // If PluginManager is not registered, include all tools
+      enabledPluginNames = null;
     }
 
-    // Generate cache key based on plugin activation state, agent name, and allowed tools
-    // This ensures cached results match the current activation state and agent context
-    const cacheKey = this.generateCacheKey(activePlugins, excludeTools, currentAgentName, allowedTools);
+    // Generate cache key based on plugin state, agent name, and allowed tools
+    const cacheKey = this.generateCacheKey(enabledPluginNames, excludeTools, currentAgentName, allowedTools);
 
     // Check cache with activation-aware key
     if (this.functionDefinitionsCache.has(cacheKey)) {
@@ -251,14 +252,17 @@ export class ToolManager {
         continue;
       }
 
-      // Filter by plugin activation state
-      if (activePlugins !== null && tool.pluginName) {
-        // Plugin tool: only include if plugin is active
-        if (!activePlugins.has(tool.pluginName)) {
-          continue;
+      // Filter by plugin enabled state
+      if (enabledPluginNames !== null && tool.pluginName) {
+        if (tool.pluginName.startsWith('plugin:')) {
+          // Marketplace plugin tool: only include if plugin is enabled
+          const pluginName = tool.pluginName.slice(7); // strip "plugin:" prefix
+          if (!enabledPluginNames.has(pluginName)) {
+            continue;
+          }
         }
+        // Standalone MCP tools (mcp:xxx) are always included
       }
-      // Core tools (no pluginName) are always included
 
       // Filter tools by visible_to array (if specified)
       // Empty or missing array = visible to all agents
@@ -302,26 +306,25 @@ export class ToolManager {
   /**
    * Generate a cache key based on active plugins, excluded tools, and agent name
    *
-   * The cache key includes the sorted list of active plugins to ensure that
-   * cached function definitions match the current plugin activation state.
-   * This prevents returning cached definitions that include deactivated plugins.
+   * The cache key includes the sorted list of enabled plugins to ensure that
+   * cached function definitions match the current plugin state.
    * Also includes agent name to ensure tools are filtered based on visible_to.
    *
-   * @param activePlugins - Set of active plugin names (null if no plugin system)
+   * @param enabledPlugins - Set of enabled plugin names (null if no plugin system)
    * @param excludeTools - Optional list of tool names to exclude
    * @param currentAgentName - Optional current agent name for visible_to filtering
    * @returns Cache key string
    */
-  private generateCacheKey(activePlugins: Set<string> | null, excludeTools?: string[], currentAgentName?: string, allowedTools?: string[]): string {
+  private generateCacheKey(enabledPlugins: Set<string> | null, excludeTools?: string[], currentAgentName?: string, allowedTools?: string[]): string {
     const parts: string[] = [];
 
-    // Include active plugins in key (sorted for consistency)
-    if (activePlugins === null) {
+    // Include enabled plugins in key (sorted for consistency)
+    if (enabledPlugins === null) {
       parts.push('no-plugin-manager');
-    } else if (activePlugins.size === 0) {
+    } else if (enabledPlugins.size === 0) {
       parts.push('no-active-plugins');
     } else {
-      parts.push(`plugins:${Array.from(activePlugins).sort().join(',')}`);
+      parts.push(`plugins:${Array.from(enabledPlugins).sort().join(',')}`);
     }
 
     // Include exclusions in key if present

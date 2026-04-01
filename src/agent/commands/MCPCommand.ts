@@ -16,7 +16,7 @@ import { MCPServerStatus } from '@mcp/types.js';
 import type { MCPServerConfig } from '@mcp/MCPConfig.js';
 import { applyConfigDefaults } from '@mcp/MCPConfig.js';
 import { MCP_PRESETS, MCP_PRESET_ORDER, buildConfigFromPreset } from '@mcp/MCPPresets.js';
-import type { ToolManagerService } from '@plugins/interfaces.js';
+import type { ToolManagerService } from '@marketplace/types.js';
 import { toKebabCase } from '@utils/namingValidation.js';
 
 export class MCPCommand extends Command {
@@ -172,8 +172,6 @@ export class MCPCommand extends Command {
         }
       }
 
-      // Register with PluginActivationManager so tools pass activation filtering
-      this.registerMcpSource(name, serviceRegistry);
 
       return this.createResponse(
         `Connected to '${name}' — ${tools.length} tool(s) discovered and registered`
@@ -196,7 +194,7 @@ export class MCPCommand extends Command {
 
     try {
       this.unregisterServerTools(manager, name, serviceRegistry);
-      this.unregisterMcpSource(name, serviceRegistry);
+
       await manager.stopServer(name);
       return this.createResponse(`Disconnected from '${name}'`);
     } catch (error) {
@@ -220,7 +218,7 @@ export class MCPCommand extends Command {
       const status = manager.getServerStatus(name);
       if (status.status === MCPServerStatus.CONNECTED || status.status === MCPServerStatus.ERROR) {
         this.unregisterServerTools(manager, name, serviceRegistry);
-        this.unregisterMcpSource(name, serviceRegistry);
+  
         await manager.stopServer(name);
       }
 
@@ -234,8 +232,6 @@ export class MCPCommand extends Command {
           toolManager.registerTool(tool);
         }
       }
-
-      this.registerMcpSource(name, serviceRegistry);
 
       return this.createResponse(
         `Restarted '${name}' — ${tools.length} tool(s) discovered`
@@ -382,7 +378,7 @@ export class MCPCommand extends Command {
 
     try {
       this.unregisterServerTools(manager, name, serviceRegistry);
-      this.unregisterMcpSource(name, serviceRegistry);
+
       await manager.removeServerConfig(name);
       return this.createResponse(`Removed MCP server '${name}'`);
     } catch (error) {
@@ -448,20 +444,6 @@ export class MCPCommand extends Command {
         toolManager.unregisterTool(toolName);
       }
     }
-  }
-
-  private registerMcpSource(serverName: string, serviceRegistry: ServiceRegistry): void {
-    try {
-      const activation = serviceRegistry.getPluginActivationManager();
-      activation.registerExternalSource(`mcp:${serverName}`);
-    } catch { /* PluginActivationManager not registered — non-critical */ }
-  }
-
-  private unregisterMcpSource(serverName: string, serviceRegistry: ServiceRegistry): void {
-    try {
-      const activation = serviceRegistry.getPluginActivationManager();
-      activation.unregisterExternalSource(`mcp:${serverName}`);
-    } catch { /* PluginActivationManager not registered — non-critical */ }
   }
 
   private statusIcon(status: MCPServerStatus): string {

@@ -20,7 +20,6 @@ import { ModelSelector } from './components/ModelSelector.js';
 import { SetupWizardView } from './components/SetupWizardView.js';
 import { ProjectWizardView } from './components/ProjectWizardView.js';
 import { AgentWizardView } from './components/AgentWizardView.js';
-import { PluginConfigView } from './components/PluginConfigView.js';
 import { RewindSelector } from './components/RewindSelector.js';
 import { RewindOptionsSelector } from './components/RewindOptionsSelector.js';
 import { SessionSelector } from './components/SessionSelector.js';
@@ -37,10 +36,7 @@ import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { Agent } from '../agent/Agent.js';
 import { PatchManager, PatchMetadata } from '../services/PatchManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { ToolManager } from '../tools/ToolManager.js';
 import { FocusManager } from '../services/FocusManager.js';
-import { PluginConfigManager } from '../plugins/PluginConfigManager.js';
-import type { PluginLoaderService } from '../plugins/interfaces.js';
 import { logger, LogLevel } from '../services/Logger.js';
 import { useServiceInitialization } from './hooks/useServiceInitialization.js';
 import { useModalState } from './hooks/useModalState.js';
@@ -356,56 +352,6 @@ const AppContentComponent: React.FC<{
     }
   }, [modal.rewindRequest]);
 
-  // Check for pending plugin config requests on mount
-  useEffect(() => {
-    const checkPendingPluginConfig = async () => {
-      // Get the plugin loader service from registry
-      const serviceRegistry = ServiceRegistry.getInstance();
-      const pluginLoader = serviceRegistry.get<PluginLoaderService>('plugin_loader');
-
-      if (!pluginLoader) {
-        return;
-      }
-
-      // Check if there's a pending config request
-      const pendingRequest = pluginLoader.getPendingConfigRequest();
-      if (pendingRequest) {
-        logger.debug('[App] Found pending plugin config request on mount:', pendingRequest.pluginName);
-
-        // Load existing config if available
-        const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
-        let existingConfig: any = undefined;
-
-        if (pluginConfigManager) {
-          try {
-            existingConfig = await pluginConfigManager.loadConfig(
-              pendingRequest.pluginName,
-              pendingRequest.pluginPath,
-              pendingRequest.schema
-            );
-            logger.debug(`[App] Loaded existing config for pending request: ${JSON.stringify(existingConfig)}`);
-          } catch (error) {
-            logger.debug(`[App] No existing config found for pending request: ${error}`);
-          }
-        }
-
-        // Set the plugin config request state
-        modal.setPluginConfigRequest({
-          pluginName: pendingRequest.pluginName,
-          pluginPath: pendingRequest.pluginPath,
-          schema: pendingRequest.schema,
-          existingConfig: existingConfig || {},
-          author: pendingRequest.author,
-          description: pendingRequest.description,
-          version: pendingRequest.version,
-          tools: pendingRequest.tools,
-        });
-      }
-    };
-
-    checkPendingPluginConfig();
-  }, []);
-
   // Get current focus display (if any)
   const currentFocus = useMemo(() => {
     const serviceRegistry = ServiceRegistry.getInstance();
@@ -534,173 +480,6 @@ const AppContentComponent: React.FC<{
                   data: {},
                 });
               }
-            }}
-          />
-        </Box>
-      ) : /* Plugin Config View (modal - replaces input when active) */
-      modal.pluginConfigRequest ? (
-        <Box marginTop={1}>
-          <PluginConfigView
-            pluginName={modal.pluginConfigRequest.pluginName}
-            configSchema={modal.pluginConfigRequest.schema}
-            existingConfig={modal.pluginConfigRequest.existingConfig}
-            author={modal.pluginConfigRequest.author}
-            description={modal.pluginConfigRequest.description}
-            version={modal.pluginConfigRequest.version}
-            tools={modal.pluginConfigRequest.tools}
-            agents={modal.pluginConfigRequest.agents}
-            onComplete={async config => {
-              // Capture the request early to avoid null safety issues
-              const request = modal.pluginConfigRequest;
-              if (!request) return;
-
-              const serviceRegistry = ServiceRegistry.getInstance();
-              const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
-
-              if (!pluginConfigManager) {
-                actions.addMessage({
-                  role: 'assistant',
-                  content: 'Error: Plugin configuration manager not available',
-                });
-                modal.setPluginConfigRequest(undefined);
-                return;
-              }
-
-              try {
-                // Extract activation mode from config (if present)
-                const { activationMode, ...pluginConfig } = config;
-
-                // Save the plugin configuration (without activation mode)
-                await pluginConfigManager.saveConfig(
-                  request.pluginName,
-                  request.pluginPath,
-                  pluginConfig,
-                  request.schema
-                );
-
-                // If activation mode was set, update the plugin manifest
-                if (activationMode !== undefined) {
-                  try {
-                    const fs = await import('fs/promises');
-                    const { join } = await import('path');
-                    const manifestPath = join(request.pluginPath, 'plugin.json');
-                    const manifestContent = await fs.readFile(manifestPath, 'utf-8');
-                    const manifest = JSON.parse(manifestContent);
-
-                    // Update activation mode in manifest
-                    manifest.activationMode = activationMode;
-
-                    // Write updated manifest
-                    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
-                    logger.debug(`[App] Updated activation mode for '${request.pluginName}' to '${activationMode}'`);
-
-                    // Refresh PluginActivationManager to pick up the new mode
-                    const pluginActivationManager = serviceRegistry.getPluginActivationManager();
-                    if (pluginActivationManager) {
-                      await pluginActivationManager.refresh();
-                    }
-                  } catch (manifestError) {
-                    logger.error(`[App] Failed to update manifest for '${request.pluginName}':`, manifestError);
-                    // Don't fail the whole config save if manifest update fails
-                  }
-                }
-
-                // Reload the plugin immediately
-                const { PluginLoader } = await import('../plugins/PluginLoader.js');
-                const pluginLoader = serviceRegistry.get<InstanceType<typeof PluginLoader>>('plugin_loader');
-                const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
-                const agentManagerModule = await import('../services/AgentManager.js');
-                const agentManager = serviceRegistry.get<InstanceType<typeof agentManagerModule.AgentManager>>('agent_manager');
-
-                if (pluginLoader && toolManager) {
-                  try {
-                    // Reload plugin to get tools and agents
-                    const { tools, agents } = await pluginLoader.reloadPlugin(request.pluginName, request.pluginPath);
-
-                    // Register the new tools
-                    toolManager.registerTools(tools);
-
-                    // Register the new agents if any
-                    if (agentManager && agents.length > 0) {
-                      agentManager.registerPluginAgents(agents);
-                      logger.debug(`Plugin '${request.pluginName}' registered ${agents.length} agent(s)`);
-                    }
-
-                    logger.debug(`Plugin '${request.pluginName}' reloaded successfully with ${tools.length} tool(s) and ${agents.length} agent(s)`);
-
-                    // Refresh PluginActivationManager after tools are registered to make them available
-                    try {
-                      const pluginActivationManager = serviceRegistry.getPluginActivationManager();
-                      if (pluginActivationManager) {
-                        await pluginActivationManager.refresh();
-                        logger.debug(`[App] Refreshed PluginActivationManager after reloading '${request.pluginName}'`);
-                      }
-                    } catch (refreshError) {
-                      logger.error(
-                        `[App] Failed to refresh PluginActivationManager after reloading '${request.pluginName}':`,
-                        refreshError
-                      );
-                      // Continue - not a fatal error
-                    }
-                  } catch (reloadError) {
-                    logger.error(`Error reloading plugin '${request.pluginName}':`, reloadError);
-                    // Continue - config was saved, just the reload failed
-                  }
-                }
-
-                // Emit completion event
-                if (activityStream) {
-                  activityStream.emit({
-                    id: `plugin_config_complete_${Date.now()}`,
-                    type: ActivityEventType.PLUGIN_CONFIG_COMPLETE,
-                    timestamp: Date.now(),
-                    data: {
-                      pluginName: request.pluginName,
-                      pluginPath: request.pluginPath,
-                    },
-                  });
-                }
-
-                // Clear request
-                modal.setPluginConfigRequest(undefined);
-
-                // Add success message
-                actions.addMessage({
-                  role: 'assistant',
-                  content: `✓ Plugin '${request.pluginName}' configured and activated!`,
-                });
-              } catch (error) {
-                actions.addMessage({
-                  role: 'assistant',
-                  content: `Error saving plugin configuration: ${error instanceof Error ? error.message : 'Unknown error'}`,
-                });
-                modal.setPluginConfigRequest(undefined);
-              }
-            }}
-            onCancel={() => {
-              // Capture the request early to avoid null safety issues
-              const request = modal.pluginConfigRequest;
-              if (!request) return;
-
-              // Emit cancel event
-              if (activityStream) {
-                activityStream.emit({
-                  id: `plugin_config_cancel_${Date.now()}`,
-                  type: ActivityEventType.PLUGIN_CONFIG_CANCEL,
-                  timestamp: Date.now(),
-                  data: {
-                    pluginName: request.pluginName,
-                  },
-                });
-              }
-
-              // Clear request
-              modal.setPluginConfigRequest(undefined);
-
-              actions.addMessage({
-                role: 'assistant',
-                content: `Plugin configuration cancelled. Plugin '${request.pluginName}' remains inactive.`,
-              });
             }}
           />
         </Box>

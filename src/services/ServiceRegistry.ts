@@ -6,7 +6,8 @@
  */
 
 import { ServiceLifecycle, IService } from '../types/index.js';
-import type { PluginActivationManager } from '../plugins/PluginActivationManager.js';
+import type { MarketplaceManager } from '../marketplace/MarketplaceManager.js';
+import type { PluginManager } from '../marketplace/PluginManager.js';
 import type { PromptLibraryManager } from './PromptLibraryManager.js';
 import type { ToolCallHistory } from './ToolCallHistory.js';
 import type { SkillManager } from './SkillManager.js';
@@ -261,22 +262,31 @@ export class ServiceRegistry {
   }
 
   /**
-   * Set the PluginActivationManager instance
+   * Set the MarketplaceManager instance
    */
-  setPluginActivationManager(manager: PluginActivationManager): void {
-    this.registerInstance('plugin_activation_manager', manager);
+  setMarketplaceManager(manager: MarketplaceManager): void {
+    this.registerInstance('marketplace_manager', manager);
   }
 
   /**
-   * Get the PluginActivationManager instance
-   * @throws Error if not registered
+   * Get the MarketplaceManager instance
    */
-  getPluginActivationManager(): PluginActivationManager {
-    const manager = this.get('plugin_activation_manager');
-    if (!manager) {
-      throw new Error('PluginActivationManager not registered in ServiceRegistry');
-    }
-    return manager as PluginActivationManager;
+  getMarketplaceManager(): MarketplaceManager | undefined {
+    return this.get('marketplace_manager') as MarketplaceManager | undefined;
+  }
+
+  /**
+   * Set the PluginManager instance
+   */
+  setPluginManager(manager: PluginManager): void {
+    this.registerInstance('plugin_manager', manager);
+  }
+
+  /**
+   * Get the PluginManager instance
+   */
+  getPluginManager(): PluginManager | undefined {
+    return this.get('plugin_manager') as PluginManager | undefined;
   }
 
   /**

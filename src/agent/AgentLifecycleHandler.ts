@@ -23,31 +23,9 @@ export class AgentLifecycleHandler {
   }
 
   /**
-   * Parse and activate plugins from user message
-   * Returns system message to add if plugins were activated/deactivated
+   * Parse and activate plugins from user message (deprecated - marketplace system handles this now)
    */
-  parsePluginActivations(message: string): PluginActivationResult {
-    try {
-      const registry = ServiceRegistry.getInstance();
-      const activationManager = registry.getPluginActivationManager();
-      const { activated, deactivated } = activationManager.parseAndActivateTags(message);
-
-      const parts: string[] = [];
-      if (activated.length > 0) parts.push(`Activated plugins: ${activated.join(', ')}`);
-      if (deactivated.length > 0) parts.push(`Deactivated plugins: ${deactivated.join(', ')}`);
-
-      if (parts.length > 0) {
-        return {
-          systemMessage: {
-            role: 'system',
-            content: `[System: ${parts.join('. ')}. Tools from active plugins are now available.]`,
-            timestamp: Date.now(),
-          }
-        };
-      }
-    } catch (error) {
-      logger.debug(`[AGENT_PLUGIN_ACTIVATION] Could not parse plugin tags: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  parsePluginActivations(_message: string): PluginActivationResult {
     return {};
   }
 

@@ -98,7 +98,7 @@ class CommandRegistryClass {
       'Project',
       'Todos',
       'Tasks',
-      'Plugins',
+      'Marketplace',
       'MCP',
     ];
 

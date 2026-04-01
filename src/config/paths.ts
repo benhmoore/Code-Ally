@@ -89,21 +89,21 @@ export function getAgentsDir(): string {
 }
 
 /**
- * Get the plugins directory for the active profile
+ * Get the marketplace/plugins directory (global, not profile-specific)
  *
- * @returns Path to profile-specific plugins directory
+ * @returns Path to marketplace plugins directory
  */
-export function getPluginsDir(): string {
-  return join(PROFILES_DIR, ACTIVE_PROFILE, 'plugins');
+export function getMarketplaceDir(): string {
+  return join(ALLY_HOME, 'plugins');
 }
 
 /**
- * Get the plugin environments directory for the active profile
+ * Get the plugin cache directory (where installed plugins are stored)
  *
- * @returns Path to profile-specific plugin-envs directory
+ * @returns Path to plugin cache directory
  */
-export function getPluginEnvsDir(): string {
-  return join(PROFILES_DIR, ACTIVE_PROFILE, 'plugin-envs');
+export function getPluginCacheDir(): string {
+  return join(ALLY_HOME, 'plugins', 'cache');
 }
 
 /**

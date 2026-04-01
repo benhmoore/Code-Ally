@@ -1006,16 +1006,20 @@ async function main() {
       new WritePlanTool(activityStream), // Write plan file during plan mode
     ];
 
-    // Load user plugins from profile-specific plugins directory
-    const { PluginLoader } = await import('./plugins/PluginLoader.js');
-    const { PluginConfigManager } = await import('./plugins/PluginConfigManager.js');
-    const { getPluginsDir } = await import('./config/paths.js');
-    const pluginConfigManager = new PluginConfigManager();
-    registry.registerInstance('plugin_config_manager', pluginConfigManager);
-    const pluginLoader = new PluginLoader(activityStream, pluginConfigManager);
-    registry.registerInstance('plugin_loader', pluginLoader);
-    const { tools: pluginTools, agents: pluginAgents, pluginCount } = await pluginLoader.loadPlugins(getPluginsDir());
-    logger.debug('[CLI] Plugins loaded successfully');
+    // Initialize marketplace plugin system
+    const { MarketplaceManager } = await import('./marketplace/MarketplaceManager.js');
+    const { PluginManager } = await import('./marketplace/PluginManager.js');
+    const { MarkdownCommandLoader } = await import('./marketplace/MarkdownCommandLoader.js');
+    const marketplaceManager = new MarketplaceManager();
+    await marketplaceManager.initialize();
+    registry.registerInstance('marketplace_manager', marketplaceManager);
+    registry.setMarketplaceManager(marketplaceManager);
+
+    const pluginManager = new PluginManager(marketplaceManager);
+    await pluginManager.initialize();
+    registry.registerInstance('plugin_manager', pluginManager);
+    registry.setPluginManager(pluginManager);
+    logger.debug('[CLI] Marketplace plugin system initialized');
 
     // Add graceful shutdown handler
     const shutdownHandler = async (signal: string) => {
@@ -1034,38 +1038,47 @@ async function main() {
       process.exit(0);
     };
 
-    // Create and initialize PluginActivationManager
-    // This must be done AFTER plugins are loaded and BEFORE ToolManager is created
-    const { PluginActivationManager } = await import('./plugins/PluginActivationManager.js');
-    const pluginActivationManager = new PluginActivationManager(
-      pluginLoader,
-      sessionManager
-    );
-    await pluginActivationManager.initialize();
-    registry.setPluginActivationManager(pluginActivationManager);
-    logger.debug('[CLI] PluginActivationManager initialized');
-
-    // Get active plugin count for UI display
-    const activePluginCount = pluginActivationManager.getActivePlugins().length;
-
-    // Load MCP servers and discover their tools
+    // Load standalone MCP servers (user's mcp-config.json)
     const { MCPServerManager } = await import('./mcp/MCPServerManager.js');
     const mcpServerManager = new MCPServerManager(activityStream);
     registry.registerInstance('mcp_server_manager', mcpServerManager);
     await mcpServerManager.loadConfig(process.cwd());
-    const mcpTools = await mcpServerManager.startAutoStartServers();
-    if (mcpTools.length > 0) {
-      // Register connected MCP servers with PluginActivationManager
-      for (const name of mcpServerManager.getConnectedServers()) {
-        pluginActivationManager.registerExternalSource(`mcp:${name}`);
+
+    // Add MCP servers from enabled marketplace plugins
+    const enabledPlugins = pluginManager.getEnabledPlugins();
+    for (const plugin of enabledPlugins) {
+      const mcpConfig = await pluginManager.getPluginMCPConfig(plugin.installPath);
+      if (mcpConfig) {
+        const serverConfigs: Record<string, any> = {};
+        for (const [key, entry] of Object.entries(mcpConfig)) {
+          serverConfigs[key] = {
+            transport: 'stdio',
+            command: entry.command,
+            args: entry.args,
+            env: entry.env,
+            enabled: true,
+            autoStart: true,
+            requiresConfirmation: true,
+          };
+        }
+        mcpServerManager.addPluginServers(plugin.pluginName, serverConfigs);
       }
-      logger.debug(`[CLI] MCP: ${mcpTools.length} tool(s) from ${mcpServerManager.getConnectedServers().length} server(s)`);
     }
+
+    // Start all auto-start servers (both standalone and plugin)
+    const mcpTools = await mcpServerManager.startAutoStartServers();
     const activeMcpCount = mcpServerManager.getConnectedServers().length;
     const totalMcpCount = mcpServerManager.getConfiguredServers().length;
+    if (mcpTools.length > 0) {
+      logger.debug(`[CLI] MCP: ${mcpTools.length} tool(s) from ${activeMcpCount} server(s)`);
+    }
 
-    // Merge built-in tools with plugin tools and MCP tools
-    const allTools = [...tools, ...pluginTools, ...mcpTools];
+    // Get plugin counts for UI display
+    const activePluginCount = enabledPlugins.length;
+    const pluginCount = pluginManager.getInstalledPlugins().length;
+
+    // Merge built-in tools with MCP tools (all plugin tools come through MCP now)
+    const allTools = [...tools, ...mcpTools];
 
     // Create tool manager with all tools
     const toolManager = new ToolManager(allTools);
@@ -1116,12 +1129,6 @@ async function main() {
     const agentManager = new AgentManager();
     registry.registerInstance('agent_manager', agentManager);
 
-    // Register plugin agents with AgentManager
-    if (pluginAgents.length > 0) {
-      agentManager.registerPluginAgents(pluginAgents);
-      logger.debug(`[CLI] Registered ${pluginAgents.length} plugin agent(s)`);
-    }
-
     // Register built-in tool-based agents
     logger.debug('[CLI] Registering built-in tool-agents');
     const exploreTool = toolManager.getTool('explore');
@@ -1140,7 +1147,7 @@ async function main() {
     logger.debug('[CLI] Built-in tool-agents registered');
 
     // Create agent pool service for managing concurrent agent instances
-    // This must be created before LinkedPluginWatcher to support pool eviction on reload
+    // Manages concurrent agent instances with auto-eviction
     const { AgentPoolService } = await import('./services/AgentPoolService.js');
     const agentPoolService = new AgentPoolService(
       modelClient,
@@ -1156,19 +1163,17 @@ async function main() {
     await agentPoolService.initialize();
     registry.registerInstance('agent_pool', agentPoolService);
 
-    // Create LinkedPluginWatcher for auto-reloading linked plugins
-    // This must be done AFTER toolManager, agentManager, and agentPoolService are created
-    const { LinkedPluginWatcher } = await import('./plugins/LinkedPluginWatcher.js');
-    const linkedPluginWatcher = new LinkedPluginWatcher(
-      pluginLoader,
-      pluginActivationManager,
-      toolManager,
-      agentManager,
-      agentPoolService
-    );
-    registry.registerInstance('linked_plugin_watcher', linkedPluginWatcher);
-    await linkedPluginWatcher.initialize();
-    logger.debug('[CLI] LinkedPluginWatcher initialized');
+    // Load plugin skills and commands
+    const markdownCommandLoader = new MarkdownCommandLoader();
+    const pluginCommands = await markdownCommandLoader.loadAllPluginCommands(pluginManager);
+    registry.registerInstance('markdown_command_loader', markdownCommandLoader);
+    registry.registerInstance('plugin_commands', pluginCommands);
+
+    // Register plugin skills with SkillManager
+    for (const plugin of enabledPlugins) {
+      await skillManager.loadPluginSkills(plugin.installPath, plugin.pluginName);
+    }
+    logger.debug(`[CLI] Plugin skills and ${pluginCommands.length} command(s) loaded`);
 
     // Create agent generation service for LLM-assisted agent creation
     const { AgentGenerationService } = await import('./services/AgentGenerationService.js');

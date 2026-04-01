@@ -98,6 +98,9 @@ export class SkillManager implements IService {
   /** Plugin-registered skills */
   private pluginSkills: Map<string, SkillDefinition> = new Map();
 
+  /** Tracks which plugin owns which skill (skill name -> plugin name) */
+  private pluginSkillOwnership: Map<string, string> = new Map();
+
   /** Whether skills have been loaded */
   private initialized: boolean = false;
 
@@ -123,6 +126,7 @@ export class SkillManager implements IService {
   async cleanup(): Promise<void> {
     this.skills.clear();
     this.pluginSkills.clear();
+    this.pluginSkillOwnership.clear();
     this.initialized = false;
   }
 
@@ -439,6 +443,42 @@ export class SkillManager implements IService {
     }
 
     return existed;
+  }
+
+  /**
+   * Load all skills from a plugin's skills/ directory.
+   * Scans skills/{name}/SKILL.md and registers each as a plugin skill.
+   *
+   * @param installPath - Absolute path to the plugin's install directory
+   * @param pluginName - Plugin name for tracking
+   */
+  async loadPluginSkills(installPath: string, pluginName: string): Promise<void> {
+    const skillsDir = join(installPath, 'skills');
+    const skills = await this.loadSkillsFromDirectory(skillsDir, 'plugin');
+
+    for (const skill of skills) {
+      this.registerPluginSkill(skill);
+      this.pluginSkillOwnership.set(skill.name, pluginName);
+      logger.debug(`[SkillManager] Loaded plugin skill '${skill.name}' from '${pluginName}'`);
+    }
+  }
+
+  /**
+   * Remove all skills that were loaded from a specific plugin.
+   *
+   * @param pluginName - Plugin name whose skills should be removed
+   */
+  removePluginSkills(pluginName: string): void {
+    const toRemove: string[] = [];
+    for (const [skillName, owner] of this.pluginSkillOwnership) {
+      if (owner === pluginName) {
+        toRemove.push(skillName);
+      }
+    }
+    for (const name of toRemove) {
+      this.unregisterPluginSkill(name);
+      this.pluginSkillOwnership.delete(name);
+    }
   }
 
   /**

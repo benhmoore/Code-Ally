@@ -20,7 +20,7 @@ import '../../agent/commands/DebugCommand.js';
 import '../../agent/commands/DefocusCommand.js';
 import '../../agent/commands/FocusCommand.js';
 import '../../agent/commands/ModelCommand.js';
-import '../../agent/commands/PluginCommand.js';
+import '../../agent/commands/MarketplaceCommand.js';
 import '../../agent/commands/ProjectCommand.js';
 import '../../agent/commands/PromptCommand.js';
 import '../../agent/commands/ResumeCommand.js';

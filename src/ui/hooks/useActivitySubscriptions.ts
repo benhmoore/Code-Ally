@@ -20,7 +20,6 @@ import { SessionManager } from '@services/SessionManager.js';
 import { PatchManager } from '@services/PatchManager.js';
 import { ToolManager } from '@tools/ToolManager.js';
 import { AgentManager } from '@services/AgentManager.js';
-import { PluginConfigManager } from '@plugins/PluginConfigManager.js';
 import { logger } from '@services/Logger.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
@@ -875,48 +874,6 @@ export const useActivitySubscriptions = (
         content: `Error executing agent: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-  });
-
-  // Plugin config request events
-  useActivityEvent(ActivityEventType.PLUGIN_CONFIG_REQUEST, async (event) => {
-    logger.debug('[App] Received PLUGIN_CONFIG_REQUEST event:', JSON.stringify(event.data, null, 2));
-    const { pluginName, pluginPath, schema, author, description, version, tools, agents } = event.data;
-
-    if (!pluginName || !pluginPath || !schema) {
-      logger.error('[App] PLUGIN_CONFIG_REQUEST event missing required fields');
-      return;
-    }
-
-    logger.debug(`[App] Setting up config request for plugin: ${pluginName}`);
-
-    const serviceRegistry = ServiceRegistry.getInstance();
-    const pluginConfigManager = serviceRegistry.get<PluginConfigManager>('plugin_config_manager');
-    let existingConfig: any = undefined;
-
-    logger.debug(`[App] PluginConfigManager available: ${!!pluginConfigManager}`);
-
-    if (pluginConfigManager) {
-      try {
-        existingConfig = await pluginConfigManager.loadConfig(pluginName, pluginPath, schema);
-        logger.debug(`[App] Loaded existing config: ${JSON.stringify(existingConfig)}`);
-      } catch (error) {
-        logger.debug(`[App] No existing config found or error loading: ${error}`);
-      }
-    }
-
-    logger.debug(`[App] Calling setPluginConfigRequest`);
-    modal.setPluginConfigRequest({
-      pluginName,
-      pluginPath,
-      schema,
-      existingConfig: existingConfig || {},
-      author,
-      description,
-      version,
-      tools,
-      agents,
-    });
-    logger.debug(`[App] pluginConfigRequest state should now be set`);
   });
 
   // Context usage updates

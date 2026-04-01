@@ -49,7 +49,7 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
       continue;
     }
 
-    const match = line.match(/^(\w+):\s*(.*)$/);
+    const match = line.match(/^([\w-]+):\s*(.*)$/);
 
     if (match) {
       const key = match[1];
@@ -91,6 +91,32 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
         }
         // Handle nested objects (requirements: or other future nested fields)
         else if (value.trim() === '' || value.trim() === ':') {
+          // Check if the next indented lines are YAML array items (  - "value")
+          // or nested key-value pairs (  key: value)
+          const peekIdx = i + 1;
+          const peekLine = peekIdx < lines.length ? lines[peekIdx] : '';
+          const isArray = peekLine && /^\s+-\s+/.test(peekLine);
+
+          if (isArray) {
+            // YAML array syntax: collect "  - value" lines
+            const arrayItems: any[] = [];
+            i++;
+            while (i < lines.length) {
+              const nextLine = lines[i];
+              if (!nextLine || (!nextLine.startsWith('  ') && nextLine.trim() !== '')) {
+                break;
+              }
+              const itemMatch = nextLine.match(/^\s+-\s+(.+)$/);
+              if (itemMatch && itemMatch[1]) {
+                // Remove surrounding quotes
+                arrayItems.push(itemMatch[1].replace(/^["']|["']$/g, ''));
+              }
+              i++;
+            }
+            metadata[key] = arrayItems;
+            continue;
+          }
+
           // This is a nested object - collect indented key-value pairs
           const nestedObj: Record<string, any> = {};
           i++;
@@ -100,7 +126,7 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
               break;
             }
             // Parse nested key-value pair
-            const nestedMatch = nextLine.match(/^  (\w+):\s*(.*)$/);
+            const nestedMatch = nextLine.match(/^  ([\w-]+):\s*(.*)$/);
             if (nestedMatch && nestedMatch[1] && nestedMatch[2] !== undefined) {
               const nestedKey = nestedMatch[1];
               const nestedValue = nestedMatch[2];

@@ -37,7 +37,6 @@ import { AgentCompactor } from './AgentCompactor.js';
 import { AgentLifecycleHandler } from './AgentLifecycleHandler.js';
 import { LoopDetector } from './LoopDetector.js';
 import { LoopInfo } from './types/loopDetection.js';
-import type { LinkedPluginWatcher } from '../plugins/LinkedPluginWatcher.js';
 import {
   ReconstructionCyclePattern,
   RepeatedQuestionPattern,
@@ -791,11 +790,6 @@ export class Agent {
     executionContext?: AgentExecutionContext,
     images?: string[]
   ): Promise<string> {
-    // Check for linked plugin changes on root agent prompts only
-    if (this.agentDepth === 0) {
-      await this.checkLinkedPluginsForChanges();
-    }
-
     // Extract execution context (prefer parameter, fallback to config for backward compatibility)
     const parentCallId = executionContext?.parentCallId ?? this.config.parentCallId;
     const maxDuration = executionContext?.maxDuration ?? this.config.maxDuration;
@@ -2011,31 +2005,6 @@ export class Agent {
    */
   public generateCheckpointReminder(): string | null {
     return this.checkpointTracker.generateReminder();
-  }
-
-  /**
-   * Check if any linked plugins have changed and reload them if needed.
-   * Only called for root agent (agentDepth === 0) to avoid redundant checks.
-   */
-  private async checkLinkedPluginsForChanges(): Promise<void> {
-    try {
-      const registry = ServiceRegistry.getInstance();
-      const watcher = registry.get('linked_plugin_watcher') as LinkedPluginWatcher | undefined;
-      if (watcher) {
-        const reloadedPlugins = await watcher.checkAndReloadChangedPlugins();
-        if (reloadedPlugins.length > 0) {
-          // Log for developer visibility - they'll see this before their prompt is processed
-          logger.info(
-            `[Agent] Auto-reloaded ${reloadedPlugins.length} linked plugin(s): ${reloadedPlugins.join(', ')}`
-          );
-        }
-      }
-    } catch (error) {
-      // Don't let plugin reload failures block message processing
-      logger.warn(
-        `[Agent] Failed to check linked plugins: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
   }
 
   /**

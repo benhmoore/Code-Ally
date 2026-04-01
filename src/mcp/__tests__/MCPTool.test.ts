@@ -34,9 +34,14 @@ describe('MCPTool', () => {
       expect(tool.name).toBe('mcp-my-server-list-files');
     });
 
-    it('sets pluginName with mcp: prefix', () => {
+    it('sets pluginName with mcp: prefix for standalone servers', () => {
       const tool = createTool('github', { name: 'search', description: 'Search', inputSchema: {} });
       expect(tool.pluginName).toBe('mcp:github');
+    });
+
+    it('sets pluginName with plugin: prefix when ownerPluginName is provided', () => {
+      const tool = new MCPTool('rt', { name: 'search', description: 'Search', inputSchema: {} }, true, mockManager, activityStream, 'rt-mcp');
+      expect(tool.pluginName).toBe('plugin:rt-mcp');
     });
 
     it('generates human-readable displayName', () => {

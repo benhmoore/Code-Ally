@@ -13,4 +13,3 @@ export { DiffDisplay, InlineDiff } from './DiffDisplay.js';
 export { ToolCallDisplay } from './ToolCallDisplay.js';
 export { ProgressIndicator } from './ProgressIndicator.js';
 export { ModelSelector, type ModelOption } from './ModelSelector.js';
-export { PluginConfigView } from './PluginConfigView.js';

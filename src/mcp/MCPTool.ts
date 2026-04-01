@@ -31,7 +31,9 @@ export class MCPTool extends BaseTool {
     definition: MCPToolDefinition,
     requiresConfirmation: boolean,
     serverManager: MCPServerManager,
-    activityStream: ActivityStream
+    activityStream: ActivityStream,
+    /** If this tool comes from a marketplace plugin, the plugin name */
+    ownerPluginName?: string
   ) {
     super(activityStream);
 
@@ -47,7 +49,7 @@ export class MCPTool extends BaseTool {
 
     this.description = definition.description || `MCP tool ${definition.name} from ${serverName}`;
     this.requiresConfirmation = requiresConfirmation;
-    this.pluginName = `mcp:${serverName}`;
+    this.pluginName = ownerPluginName ? `plugin:${ownerPluginName}` : `mcp:${serverName}`;
 
     // Human-readable display: "ServerName / Tool Name"
     const displayServer = serverName.charAt(0).toUpperCase() + serverName.slice(1);

@@ -14,8 +14,8 @@ export {
 
   // Profile-aware path functions
   getAgentsDir,
-  getPluginsDir,
-  getPluginEnvsDir,
+  getMarketplaceDir,
+  getPluginCacheDir,
   getCacheDir,
   getCompletionCacheDir,
   getConfigFile,

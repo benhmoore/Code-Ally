@@ -122,10 +122,6 @@ export class CompletionProvider {
       return await this.getBashCompletions(context);
     } else if (context.currentWord.startsWith('@')) {
       return await this.getFuzzyFilePathCompletions(context);
-    } else if (context.currentWord.startsWith('+')) {
-      return await this.getPluginActivationCompletions(context);
-    } else if (context.currentWord.startsWith('-')) {
-      return await this.getPluginDeactivationCompletions(context);
     }
 
     // No completions
@@ -771,30 +767,21 @@ export class CompletionProvider {
    */
   private async getPluginNameCompletions(prefix: string): Promise<Completion[]> {
     try {
-      const { getPluginsDir } = await import('../config/paths.js');
-      const pluginsDir = getPluginsDir();
-      const entries = await fs.readdir(pluginsDir);
+      const { ServiceRegistry } = await import('./ServiceRegistry.js');
+      const registry = ServiceRegistry.getInstance();
+      const pm = registry.get<any>('plugin_manager');
+      if (!pm) return [];
 
-      // Filter directories that start with prefix
-      const pluginNames: string[] = [];
-      for (const entry of entries) {
-        try {
-          const stat = await fs.stat(`${pluginsDir}/${entry}`);
-          if (stat.isDirectory() && entry.startsWith(prefix)) {
-            pluginNames.push(entry);
-          }
-        } catch {
-          // Skip entries we can't stat
-        }
-      }
-
-      return pluginNames.map(name => ({
-        value: name,
-        description: 'Plugin',
-        type: 'plugin' as const,
-      }));
+      const installed = pm.getInstalledPlugins() as Array<{ pluginName: string; pluginKey: string; enabled: boolean }>;
+      return installed
+        .filter((p: { pluginName: string }) => p.pluginName.startsWith(prefix))
+        .map((p: { pluginName: string; enabled: boolean }) => ({
+          value: p.pluginName,
+          description: p.enabled ? 'Plugin (enabled)' : 'Plugin (disabled)',
+          type: 'plugin' as const,
+        }));
     } catch (error) {
-      logger.debug(`Unable to read plugins directory: ${formatError(error)}`);
+      logger.debug(`Unable to get plugin completions: ${formatError(error)}`);
       return [];
     }
   }
@@ -1349,145 +1336,6 @@ export class CompletionProvider {
     this.commandsCacheTime = 0;
   }
 
-  /**
-   * Get plugin activation completions (for +plugin-name syntax)
-   *
-   * Provides autocomplete suggestions when user types + followed by partial plugin name.
-   * Shows all installed plugins, prioritizing inactive ones.
-   *
-   * @param context - Completion context containing the current word and cursor position
-   * @returns Array of plugin completions sorted by relevance
-   */
-  private async getPluginActivationCompletions(context: CompletionContext): Promise<Completion[]> {
-    try {
-      // Get the partial plugin name after the + symbol
-      const partial = context.currentWord.slice(1); // Remove + prefix
-
-      // Get the service registry to access PluginActivationManager
-      const { ServiceRegistry } = await import('./ServiceRegistry.js');
-      const registry = ServiceRegistry.getInstance();
-
-      // Get PluginActivationManager
-      let activationManager;
-      try {
-        activationManager = registry.getPluginActivationManager();
-      } catch {
-        // If activation manager not available, return empty completions
-        return [];
-      }
-
-      const installedPlugins = activationManager.getInstalledPlugins();
-
-      // Filter plugins by partial match
-      const matches = installedPlugins.filter(name =>
-        name.toLowerCase().includes(partial.toLowerCase())
-      );
-
-      // Sort: inactive tagged plugins first (most likely to want to activate), then others
-      const sorted = matches.sort((a, b) => {
-        const aMode = activationManager.getActivationMode(a);
-        const bMode = activationManager.getActivationMode(b);
-        const aActive = activationManager.isActive(a);
-        const bActive = activationManager.isActive(b);
-
-        // Prioritize inactive tagged plugins (most likely to want to activate)
-        if (!aActive && aMode === 'tagged' && (bActive || bMode === 'always')) return -1;
-        if (!bActive && bMode === 'tagged' && (aActive || aMode === 'always')) return 1;
-
-        return a.localeCompare(b);
-      });
-
-      // Map to Completion format with status indicators
-      return sorted.map(name => {
-        const mode = activationManager.getActivationMode(name);
-        const active = activationManager.isActive(name);
-
-        // Status indicators:
-        // ✓ - Currently active
-        // ● - Always mode (always active)
-        // ○ - Tagged mode, inactive (needs activation)
-        let status: string;
-        let description: string;
-
-        if (active && mode === 'always') {
-          status = '● ';
-          description = 'always active';
-        } else if (active && mode === 'tagged') {
-          status = '✓ ';
-          description = 'tagged mode (active)';
-        } else {
-          status = '○ ';
-          description = 'tagged mode (inactive)';
-        }
-
-        return {
-          value: name,
-          description: `${status}${description}`,
-          type: 'plugin' as const,
-          insertText: `+${name} `, // Insert with + prefix and trailing space
-        };
-      });
-    } catch (error) {
-      logger.debug(`Plugin activation completion failed: ${formatError(error)}`);
-      return [];
-    }
-  }
-
-  /**
-   * Get plugin deactivation completions (for -plugin-name syntax)
-   *
-   * Provides autocomplete suggestions when user types - followed by partial plugin name.
-   * Shows all currently active plugins (can deactivate temporarily in this conversation).
-   *
-   * @param context - Completion context containing the current word and cursor position
-   * @returns Array of plugin completions sorted by relevance
-   */
-  private async getPluginDeactivationCompletions(context: CompletionContext): Promise<Completion[]> {
-    try {
-      // Get the partial plugin name after the - symbol
-      const partial = context.currentWord.slice(1); // Remove - prefix
-
-      // Get the service registry to access PluginActivationManager
-      const { ServiceRegistry } = await import('./ServiceRegistry.js');
-      const registry = ServiceRegistry.getInstance();
-
-      // Get PluginActivationManager
-      let activationManager;
-      try {
-        activationManager = registry.getPluginActivationManager();
-      } catch {
-        // If activation manager not available, return empty completions
-        return [];
-      }
-
-      const activePlugins = activationManager.getActivePlugins();
-
-      // Show all active plugins (user can deactivate any active plugin for this conversation)
-
-      // Filter by partial match
-      const matches = activePlugins.filter(name =>
-        name.toLowerCase().includes(partial.toLowerCase())
-      );
-
-      // Sort alphabetically
-      const sorted = matches.sort((a, b) => a.localeCompare(b));
-
-      // Map to Completion format with mode indicator
-      return sorted.map(name => {
-        const mode = activationManager.getActivationMode(name);
-        const modeLabel = mode === 'always' ? ' (always)' : '';
-        return {
-          value: name,
-          description: `✓ active${modeLabel} (will deactivate)`,
-          type: 'plugin' as const,
-          insertText: `-${name} `, // Insert with - prefix and trailing space
-        };
-      });
-    } catch (error) {
-      logger.debug(`Plugin deactivation completion failed: ${formatError(error)}`);
-      return [];
-    }
-  }
 
   /**
    * Get available slash commands

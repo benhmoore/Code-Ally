@@ -17,10 +17,12 @@ export class MCPToolFactory {
     definitions: MCPToolDefinition[],
     requiresConfirmation: boolean,
     serverManager: MCPServerManager,
-    activityStream: ActivityStream
+    activityStream: ActivityStream,
+    /** If these tools come from a marketplace plugin, the plugin name */
+    ownerPluginName?: string
   ): BaseTool[] {
     return definitions.map(def =>
-      new MCPTool(serverName, def, requiresConfirmation, serverManager, activityStream)
+      new MCPTool(serverName, def, requiresConfirmation, serverManager, activityStream, ownerPluginName)
     );
   }
 }
