@@ -195,14 +195,14 @@ describe('ToolValidator', () => {
       },
     };
 
-    it('should reject invalid regex pattern', () => {
+    it('should accept regex patterns (validation deferred to ripgrep)', () => {
+      // GrepTool defers regex validation to ripgrep since JS RegExp and
+      // Rust regex have different syntax rules (see GrepTool.validateArgs)
       const result = validator.validateArguments(grepTool, grepFunctionDef, {
         pattern: '[invalid(',
       });
 
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Invalid regex pattern');
-      expect(result.suggestion).toContain('escape special characters');
+      expect(result.valid).toBe(true);
     });
 
     it('should reject negative context lines', () => {
