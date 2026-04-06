@@ -47,7 +47,10 @@ import { useContentWidth } from './hooks/useContentWidth.js';
 import { useTerminalWidth } from './hooks/useTerminalWidth.js';
 import { useBackgroundProcesses } from './hooks/useBackgroundProcesses.js';
 import { useAgentSwitch } from './hooks/useAgentSwitch.js';
+import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { switchAgent } from '../services/AgentSwitcher.js';
+import { SyntaxHighlighter } from '../services/SyntaxHighlighter.js';
+import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
 
@@ -141,6 +144,17 @@ const AppContentComponent: React.FC<{
       trustManager.setAutoAllowModeGetter(() => modal.autoAllowMode);
     }
   }, [modal.autoAllowMode]);
+
+  // Periodic cache maintenance — clear syntax highlighting and markdown parse caches
+  // every 5 minutes to prevent unbounded memory growth in long sessions
+  useEffect(() => {
+    const CACHE_RESET_INTERVAL_MS = 5 * 60 * 1000;
+    const interval = setInterval(() => {
+      clearMarkdownCache();
+      SyntaxHighlighter.getInstance().clearCache();
+    }, CACHE_RESET_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, []);
 
   // Handle session resumption on mount
   const { sessionLoaded } = useSessionResume(
@@ -384,23 +398,25 @@ const AppContentComponent: React.FC<{
       {/* Conversation View - contains header + all conversation history */}
       {/* Constrained to max content width for readability */}
       <Box width={contentWidth}>
-        <ConversationView
-        messages={state.messages}
-        isThinking={state.isThinking}
-        streamingContent={state.streamingContent}
-        activeToolCalls={state.activeToolCalls}
-        contextUsage={state.contextUsage}
-        compactionNotices={state.compactionNotices}
-        rewindNotices={state.rewindNotices}
-        statusMessages={state.statusMessages}
-        staticRemountKey={state.staticRemountKey}
-        config={effectiveConfig}
-        activePluginCount={activePluginCount}
-        totalPluginCount={totalPluginCount}
-        activeMcpCount={activeMcpCount}
-        totalMcpCount={totalMcpCount}
-        currentAgent={state.currentAgent}
-        />
+        <ErrorBoundary label="ConversationView" resetKey={state.staticRemountKey}>
+          <ConversationView
+          messages={state.messages}
+          isThinking={state.isThinking}
+          streamingContent={state.streamingContent}
+          activeToolCalls={state.activeToolCalls}
+          contextUsage={state.contextUsage}
+          compactionNotices={state.compactionNotices}
+          rewindNotices={state.rewindNotices}
+          statusMessages={state.statusMessages}
+          staticRemountKey={state.staticRemountKey}
+          config={effectiveConfig}
+          activePluginCount={activePluginCount}
+          totalPluginCount={totalPluginCount}
+          activeMcpCount={activeMcpCount}
+          totalMcpCount={totalMcpCount}
+          currentAgent={state.currentAgent}
+          />
+        </ErrorBoundary>
       </Box>
 
 

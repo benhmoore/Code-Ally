@@ -8,16 +8,20 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { ReadCache } from '../services/ReadCache.js';
 import { FocusManager } from '../services/FocusManager.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
 import { tokenCounter } from '../services/TokenCounter.js';
 import { resolvePath } from '../utils/pathUtils.js';
-import { validateIsFile } from '../utils/pathValidator.js';
+import { validateIsFile, isBlockedDevicePath } from '../utils/pathValidator.js';
 import { isBinaryContent } from '../utils/fileUtils.js';
 import { formatError } from '../utils/errorUtils.js';
-import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
-import { TOKEN_MANAGEMENT, CONTEXT_SIZES, FORMATTING } from '../config/constants.js';
+import { TOOL_OUTPUT_ESTIMATES, TOOL_LIMITS } from '../config/toolDefaults.js';
+import { TOKEN_MANAGEMENT, CONTEXT_SIZES, FORMATTING, BYTE_CONVERSIONS } from '../config/constants.js';
 import * as fs from 'fs/promises';
+import { createReadStream } from 'fs';
+import * as path from 'path';
+import * as readline from 'readline';
 
 export class ReadTool extends BaseTool {
   readonly name = 'read';
@@ -319,11 +323,17 @@ For multi-file exploration, prefer explore() to preserve context.`;
     for (const filePath of filePaths) {
       try {
         if (limit > 0) {
-          const { content } = await this.readFile(filePath, limit, offset);
-          totalEstimate += tokenCounter.count(content);
+          // Read raw content directly to bypass read cache (cache stubs have wrong token counts)
+          const absolutePath = resolvePath(filePath);
+          const raw = await fs.readFile(absolutePath, 'utf-8');
+          const lines = raw.split('\n');
+          const startLine = offset > 0 ? offset - 1 : offset < 0 ? Math.max(0, lines.length + offset) : 0;
+          const endLine = startLine + limit;
+          const selected = lines.slice(startLine, endLine).join('\n');
+          totalEstimate += tokenCounter.count(selected);
         } else {
           const stats = await fs.stat(filePath);
-          const tokenEstimate = Math.ceil(stats.size / 3.5);
+          const tokenEstimate = Math.ceil(stats.size / this.getBytesPerToken(filePath));
           totalEstimate += tokenEstimate;
         }
       } catch {
@@ -332,6 +342,147 @@ For multi-file exploration, prefer explore() to preserve context.`;
     }
 
     return totalEstimate;
+  }
+
+  /**
+   * Get bytes-per-token estimate based on file type.
+   * JSON is token-dense (~2 bytes/token due to short keys, braces, colons).
+   * Other files average ~4 bytes/token.
+   */
+  private getBytesPerToken(filePath: string): number {
+    const ext = path.extname(filePath).toLowerCase();
+    return (ext === '.json' || ext === '.jsonl' || ext === '.jsonc') ? 2 : 4;
+  }
+
+  /**
+   * Format a byte count as a human-readable size string
+   */
+  private formatFileSize(bytes: number): string {
+    if (bytes >= BYTE_CONVERSIONS.BYTES_PER_MB) {
+      return `${(bytes / BYTE_CONVERSIONS.BYTES_PER_MB).toFixed(1)} MB`;
+    }
+    if (bytes >= BYTE_CONVERSIONS.BYTES_PER_KB) {
+      return `${(bytes / BYTE_CONVERSIONS.BYTES_PER_KB).toFixed(1)} KB`;
+    }
+    return `${bytes} bytes`;
+  }
+
+  /**
+   * Format selected lines with line numbers (shared by both read paths)
+   */
+  private formatLinesWithNumbers(
+    selectedLines: string[],
+    startLine: number,
+    totalLines: number,
+    absolutePath: string,
+    offset: number,
+    limit: number
+  ): string {
+    const endLine = startLine + selectedLines.length;
+
+    let header = `=== ${absolutePath} ===`;
+    if (offset !== 0 || (limit > 0 && endLine < totalLines)) {
+      header += `\n[Showing lines ${startLine + 1}-${Math.min(endLine, totalLines)} of ${totalLines} total lines]`;
+    } else {
+      header += `\n[${totalLines} line${totalLines !== 1 ? 's' : ''}]`;
+    }
+
+    const formattedLines = selectedLines.map((line, index) => {
+      const lineNum = startLine + index + 1;
+      return `${String(lineNum).padStart(FORMATTING.LINE_NUMBER_WIDTH)}\t${line}`;
+    });
+
+    return `${header}\n${formattedLines.join('\n')}`;
+  }
+
+  /**
+   * Read a file using streaming for large files (>10MB) with offset/limit.
+   * Only accumulates lines in the requested range, avoiding loading the full file into memory.
+   */
+  private async readFileStreaming(
+    absolutePath: string,
+    offset: number,
+    limit: number
+  ): Promise<{ lines: string[]; totalLines: number; startLine: number }> {
+    // For negative offset, we need total line count first (two-pass)
+    if (offset < 0) {
+      const totalLines = await this.countLinesStreaming(absolutePath);
+      const startLine = Math.max(0, totalLines + offset);
+      const endLine = limit > 0 ? startLine + limit : totalLines;
+      const lines = await this.readLinesInRange(absolutePath, startLine, endLine);
+      return { lines, totalLines, startLine };
+    }
+
+    // Single-pass for positive/zero offset
+    const startLine = offset > 0 ? offset - 1 : 0;
+    const endLine = limit > 0 ? startLine + limit : Infinity;
+    const selectedLines: string[] = [];
+    let lineIndex = 0;
+    let totalLines = 0;
+
+    const rl = readline.createInterface({
+      input: createReadStream(absolutePath, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      if (lineIndex >= startLine && lineIndex < endLine) {
+        // Check binary content on first line
+        if (selectedLines.length === 0 && lineIndex === 0) {
+          if (isBinaryContent(line.slice(0, 1024))) {
+            rl.close();
+            return { lines: [], totalLines: 0, startLine: 0 };
+          }
+        }
+        selectedLines.push(line);
+      }
+      lineIndex++;
+
+      // If we've collected all needed lines and don't need total count,
+      // we can stop early (but we need totalLines for the header)
+      // Continue counting for accurate total
+    }
+    totalLines = lineIndex;
+
+    return { lines: selectedLines, totalLines, startLine };
+  }
+
+  /**
+   * Count total lines in a file via streaming (for negative offset on large files)
+   */
+  private async countLinesStreaming(absolutePath: string): Promise<number> {
+    let count = 0;
+    const rl = readline.createInterface({
+      input: createReadStream(absolutePath, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
+    for await (const _ of rl) {
+      count++;
+    }
+    return count;
+  }
+
+  /**
+   * Read specific line range from file via streaming
+   */
+  private async readLinesInRange(absolutePath: string, startLine: number, endLine: number): Promise<string[]> {
+    const lines: string[] = [];
+    let lineIndex = 0;
+    const rl = readline.createInterface({
+      input: createReadStream(absolutePath, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of rl) {
+      if (lineIndex >= startLine && lineIndex < endLine) {
+        lines.push(line);
+      }
+      if (lineIndex >= endLine) {
+        rl.close();
+        break;
+      }
+      lineIndex++;
+    }
+    return lines;
   }
 
   /**
@@ -356,13 +507,92 @@ For multi-file exploration, prefer explore() to preserve context.`;
       }
     }
 
+    // Block device files that could hang or produce infinite output
+    if (isBlockedDevicePath(absolutePath)) {
+      throw new Error(
+        `Cannot read device file: ${absolutePath}. Device files like /dev/zero or /dev/random ` +
+        `produce infinite output or block indefinitely.`
+      );
+    }
+
     // Validate file exists and is a file
     const validation = await validateIsFile(absolutePath);
     if (!validation.valid) {
       throw new Error(validation.error);
     }
 
-    // Read file content
+    // Pre-read size gate — reject files over absolute max before reading into memory
+    const stat = await fs.stat(absolutePath);
+    if (stat.size > TOOL_LIMITS.ABSOLUTE_MAX_FILE_SIZE) {
+      throw new Error(
+        `File too large: ${absolutePath} is ${this.formatFileSize(stat.size)} ` +
+        `(exceeds ${this.formatFileSize(TOOL_LIMITS.ABSOLUTE_MAX_FILE_SIZE)} limit). ` +
+        `Use offset and limit to read specific portions, e.g., ` +
+        `read(file_paths=["${filePath}"], offset=1, limit=200) for the first 200 lines.`
+      );
+    }
+
+    // Check read deduplication cache — return stub if file unchanged since last read
+    const readCache = registry.get<ReadCache>('read_cache');
+    if (readCache) {
+      const cached = readCache.check(absolutePath, stat.mtimeMs, offset, limit);
+      if (cached) {
+        // Still track read state so edit validation works
+        const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+        if (readStateManager) {
+          const cachedStartLine = offset <= 0 ? 1 : offset;
+          const cachedEndLine = limit > 0
+            ? Math.min(cachedStartLine + limit - 1, cached.totalLines)
+            : cached.totalLines;
+          readStateManager.trackRead(absolutePath, cachedStartLine, cachedEndLine);
+        }
+        return {
+          content: `=== ${absolutePath} ===\n[File unchanged since last read (${cached.lineCount} lines). Content already in conversation context.]`,
+          lineCount: 0, // Signal to UI that this is a cache hit
+        };
+      }
+    }
+
+    // Use streaming path for large files with offset/limit to avoid loading into memory
+    if (stat.size >= TOOL_LIMITS.STREAMING_THRESHOLD && (limit > 0 || offset !== 0)) {
+      const { lines: streamedLines, totalLines: streamedTotal, startLine: streamedStart } =
+        await this.readFileStreaming(absolutePath, offset, limit);
+
+      // Binary file detected during streaming
+      if (streamedLines.length === 0 && streamedTotal === 0) {
+        return {
+          content: `=== ${absolutePath} ===\n[Binary file - content not displayed]`,
+          lineCount: 0,
+        };
+      }
+
+      const formattedContent = this.formatLinesWithNumbers(
+        streamedLines, streamedStart, streamedTotal, absolutePath, offset, limit
+      );
+
+      // Track read state
+      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      if (readStateManager) {
+        readStateManager.trackRead(absolutePath, streamedStart + 1, streamedStart + streamedLines.length);
+      }
+
+      // Record in read cache
+      if (readCache) {
+        readCache.record({
+          filePath: absolutePath,
+          mtimeMs: stat.mtimeMs,
+          offset,
+          limit,
+          lineCount: streamedLines.length,
+          totalLines: streamedTotal,
+          lastAccessTime: Date.now(),
+        });
+      }
+
+      return { content: formattedContent, lineCount: streamedLines.length };
+    }
+
+    // Read file content (standard path for files < 10MB)
     const content = await fs.readFile(absolutePath, 'utf-8');
 
     // Check for binary content
@@ -411,21 +641,10 @@ For multi-file exploration, prefer explore() to preserve context.`;
     const endLine = limit > 0 ? startLine + limit : lines.length;
     const selectedLines = lines.slice(startLine, endLine);
 
-    // Add informational header with line count
-    let header = `=== ${absolutePath} ===`;
-    if (offset !== 0 || (limit > 0 && endLine < totalLines)) {
-      // Showing a slice of the file
-      header += `\n[Showing lines ${startLine + 1}-${Math.min(endLine, totalLines)} of ${totalLines} total lines]`;
-    } else {
-      // Showing the full file
-      header += `\n[${totalLines} line${totalLines !== 1 ? 's' : ''}]`;
-    }
-
-    // Format with line numbers
-    const formattedLines = selectedLines.map((line, index) => {
-      const lineNum = startLine + index + 1;
-      return `${String(lineNum).padStart(FORMATTING.LINE_NUMBER_WIDTH)}\t${line}`;
-    });
+    // Use shared formatting helper
+    const formattedContent = this.formatLinesWithNumbers(
+      selectedLines, startLine, totalLines, absolutePath, offset, limit
+    );
 
     // Track read state for validation by edit tools
     const readStateManager = registry.get<ReadStateManager>('read_state_manager');
@@ -436,8 +655,21 @@ For multi-file exploration, prefer explore() to preserve context.`;
       readStateManager.trackRead(absolutePath, startLineNumber, endLineNumber);
     }
 
+    // Record in read cache for future deduplication
+    if (readCache) {
+      readCache.record({
+        filePath: absolutePath,
+        mtimeMs: stat.mtimeMs,
+        offset,
+        limit,
+        lineCount: selectedLines.length,
+        totalLines,
+        lastAccessTime: Date.now(),
+      });
+    }
+
     return {
-      content: `${header}\n${formattedLines.join('\n')}`,
+      content: formattedContent,
       lineCount: selectedLines.length,
     };
   }

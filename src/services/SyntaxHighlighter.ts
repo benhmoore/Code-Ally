@@ -129,6 +129,14 @@ export class SyntaxHighlighter {
   }
 
   /**
+   * Clear the highlighting cache.
+   * Called periodically to prevent unbounded memory growth in long sessions.
+   */
+  clearCache(): void {
+    this.cache.clear();
+  }
+
+  /**
    * Highlight code with syntax highlighting
    * Results are cached for improved performance (40-60% faster on cache hits)
    *

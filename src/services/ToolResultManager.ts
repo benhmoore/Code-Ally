@@ -14,7 +14,8 @@
 import { TokenManager } from '../agent/TokenManager.js';
 import { ConfigManager } from './ConfigManager.js';
 import { ToolManager } from '../tools/ToolManager.js';
-import { CONTEXT_THRESHOLDS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
+import { ToolResultPersistence } from './ToolResultPersistence.js';
+import { CONTEXT_THRESHOLDS, TOOL_OUTPUT_ESTIMATES, TOOL_RESULT_PERSISTENCE } from '../config/toolDefaults.js';
 import { BUFFER_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 
@@ -52,6 +53,7 @@ export class ToolResultManager {
 
   private tokenManager: TokenManager;
   private toolManager?: ToolManager;
+  private persistence?: ToolResultPersistence;
   private maxContextPercent: number; // Maximum percentage of remaining context per tool result
   private minTokens: number; // Minimum tokens even when context is very full
   private toolUsageStats: Map<string, ToolStats> = new Map();
@@ -82,13 +84,21 @@ export class ToolResultManager {
   }
 
   /**
+   * Set the persistence service for saving large tool outputs to disk
+   */
+  setPersistence(persistence: ToolResultPersistence): void {
+    this.persistence = persistence;
+  }
+
+  /**
    * Process tool result with context-aware truncation
    *
    * @param toolName Name of the tool that generated the result
    * @param rawResult The raw tool result string or ToolResult object
+   * @param toolCallId Optional tool call ID for persisting large outputs
    * @returns Processed (potentially truncated) tool result
    */
-  processToolResult(toolName: string, rawResult: string | any): string {
+  processToolResult(toolName: string, rawResult: string | any, toolCallId?: string): string {
     if (!rawResult) {
       return '';
     }
@@ -126,34 +136,52 @@ export class ToolResultManager {
       return resultString;
     }
 
+    // Persist full output to disk if persistence is available
+    let persistedPath: string | null = null;
+    if (this.persistence && toolCallId) {
+      // Fire-and-forget persistence — don't block the result pipeline
+      this.persistence.persistResult(toolCallId, resultString).then(path => {
+        if (path) {
+          // Path is already embedded in the preview below
+        }
+      }).catch(() => { /* silently ignore persistence failures */ });
+
+      // Get the expected path for the preview message
+      persistedPath = this.persistence.getResultPath(toolCallId);
+    }
+
     // Calculate percentage kept for the warning
     const percentageKept = Math.round((maxTokens / actualTokens) * 100);
 
     // Generate tool-specific truncation notice with percentage
     const notice = this.getTruncationNotice(toolName, truncationLevel, percentageKept);
-    const noticeTokens = this.tokenManager.estimateTokens(notice);
+    const persistenceNote = persistedPath
+      ? `\n[Full output saved to: ${persistedPath}]\n[Use read(file_paths=["${persistedPath}"]) to access the complete output]`
+      : '';
+    const fullNotice = notice + persistenceNote;
+    const noticeTokens = this.tokenManager.estimateTokens(fullNotice);
     let contentTokens = maxTokens - noticeTokens;
 
     // Ensure we don't go negative
     if (contentTokens < BUFFER_SIZES.MIN_CONTENT_TOKENS) {
       contentTokens = Math.floor(maxTokens / 2);
       const percentKept = Math.round((contentTokens / actualTokens) * 100);
-      const minimalNotice = `\n\n⚠️ WARNING: Output truncated to ${percentKept}% - CONTENT BELOW IS INCOMPLETE due to context limits`;
+      const minimalNotice = `\n\n⚠️ WARNING: Output truncated to ${percentKept}% - CONTENT BELOW IS INCOMPLETE due to context limits` + persistenceNote;
       const minimalTokens = this.tokenManager.estimateTokens(minimalNotice);
       contentTokens = maxTokens - minimalTokens;
 
-      const truncatedResult = this.tokenManager.truncateContentToTokens(
-        resultString,
-        contentTokens
-      );
+      // When persisting, show a preview (first N chars) instead of token-truncated content
+      const truncatedResult = persistedPath
+        ? resultString.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
+        : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
       return minimalNotice + '\n' + truncatedResult;
     }
 
-    const truncatedResult = this.tokenManager.truncateContentToTokens(
-      resultString,
-      contentTokens
-    );
-    return notice + '\n' + truncatedResult;
+    // When persisting, show a preview instead of token-truncated content
+    const truncatedResult = persistedPath
+      ? resultString.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
+      : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
+    return fullNotice + '\n' + truncatedResult;
   }
 
   /**

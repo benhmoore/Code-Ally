@@ -3,6 +3,40 @@
  */
 
 import { promises as fs } from 'fs';
+import * as path from 'path';
+
+/**
+ * Device paths that should never be read (infinite output, blocking input, or security risk)
+ */
+const BLOCKED_DEVICE_PATHS = [
+  '/dev/zero',
+  '/dev/random',
+  '/dev/urandom',
+  '/dev/stdin',
+  '/dev/stdout',
+  '/dev/stderr',
+  '/dev/tty',
+  '/dev/null',
+  '/dev/ptmx',
+] as const;
+
+const BLOCKED_DEVICE_PREFIXES = [
+  '/dev/fd/',
+  '/dev/pts/',
+] as const;
+
+/**
+ * Check if a path is a blocked device file that should never be read.
+ * Path-based check with no I/O overhead — prevents hangs from infinite output
+ * or blocking input devices.
+ */
+export function isBlockedDevicePath(filePath: string): boolean {
+  const resolved = path.resolve(filePath);
+  if ((BLOCKED_DEVICE_PATHS as readonly string[]).includes(resolved)) {
+    return true;
+  }
+  return BLOCKED_DEVICE_PREFIXES.some(prefix => resolved.startsWith(prefix));
+}
 
 export interface ValidationResult {
   valid: boolean;

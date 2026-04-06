@@ -776,6 +776,13 @@ export abstract class BaseTool {
       readStateManager.clearFile(absolutePath);
     }
 
+    // Invalidate read cache for the modified file
+    const cacheRegistry = ServiceRegistry.getInstance();
+    const readCache = cacheRegistry.get<{ invalidate(path: string): void }>('read_cache');
+    if (readCache) {
+      readCache.invalidate(absolutePath);
+    }
+
     // Capture patch for undo
     const patchNumber = await this.captureOperationPatch(
       operationType,

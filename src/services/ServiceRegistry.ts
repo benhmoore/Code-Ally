@@ -108,11 +108,23 @@ export class ServiceDescriptor<T = unknown> {
   }
 }
 
+/**
+ * Maximum time to wait for a single cleanup function during shutdown.
+ * Prevents a hung resource from blocking the entire shutdown.
+ */
+const CLEANUP_TIMEOUT_MS = 5000;
+
 export class ServiceRegistry {
   private static _instance?: ServiceRegistry;
 
   private _services: Map<string, unknown>;
   private _descriptors: Map<string, ServiceDescriptor<unknown>>;
+
+  /**
+   * Ad-hoc cleanup functions registered by services or subsystems.
+   * Called during shutdown with a per-function timeout.
+   */
+  private _cleanupFns: Map<string, () => Promise<void>> = new Map();
 
   private constructor() {
     this._services = new Map();
@@ -228,30 +240,49 @@ export class ServiceRegistry {
   }
 
   /**
-   * Shutdown all services and cleanup resources
+   * Register an ad-hoc cleanup function that will be called during shutdown.
+   * Returns an unregister function. Use this for resources that aren't full
+   * IService implementations (e.g., MCP connections, file watchers, timers).
+   */
+  registerCleanup(label: string, fn: () => Promise<void>): () => void {
+    this._cleanupFns.set(label, fn);
+    return () => { this._cleanupFns.delete(label); };
+  }
+
+  /**
+   * Shutdown all services and cleanup resources.
+   * Each cleanup function is timeout-bounded to prevent hung resources
+   * from blocking the entire shutdown.
    */
   async shutdown(): Promise<void> {
-    // Cleanup IService implementations
+    const withTimeout = (label: string, fn: () => Promise<void>): Promise<void> =>
+      Promise.race([
+        fn().catch(error => { logger.error(`Error cleaning up ${label}:`, error); }),
+        new Promise<void>(resolve => setTimeout(() => {
+          logger.warn(`Cleanup timed out for ${label} (${CLEANUP_TIMEOUT_MS}ms)`);
+          resolve();
+        }, CLEANUP_TIMEOUT_MS)),
+      ]);
+
     const cleanupPromises: Promise<void>[] = [];
 
+    // Cleanup IService implementations
     for (const [name, instance] of this._services.entries()) {
       if (isIService(instance)) {
-        cleanupPromises.push(
-          instance.cleanup().catch(error => {
-            logger.error(`Error cleaning up service ${name}:`, error);
-          })
-        );
+        cleanupPromises.push(withTimeout(`service:${name}`, () => instance.cleanup()));
       }
     }
 
     for (const [name, descriptor] of this._descriptors.entries()) {
-      if (descriptor['_instance'] && isIService(descriptor['_instance'])) {
-        cleanupPromises.push(
-          descriptor['_instance'].cleanup().catch(error => {
-            logger.error(`Error cleaning up service ${name}:`, error);
-          })
-        );
+      const inst = descriptor['_instance'];
+      if (inst && isIService(inst)) {
+        cleanupPromises.push(withTimeout(`descriptor:${name}`, () => inst.cleanup()));
       }
+    }
+
+    // Cleanup ad-hoc registered functions
+    for (const [label, fn] of this._cleanupFns.entries()) {
+      cleanupPromises.push(withTimeout(`cleanup:${label}`, fn));
     }
 
     await Promise.all(cleanupPromises);
@@ -259,6 +290,7 @@ export class ServiceRegistry {
     // Clear all registrations
     this._services.clear();
     this._descriptors.clear();
+    this._cleanupFns.clear();
   }
 
   /**

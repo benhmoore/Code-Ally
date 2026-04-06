@@ -409,6 +409,12 @@ export class Agent {
       toolManager
     );
 
+    // Wire tool result persistence for saving large outputs to disk
+    const toolResultPersistence = ServiceRegistry.getInstance().get<any>('tool_result_persistence');
+    if (toolResultPersistence) {
+      this.toolResultManager.setPersistence(toolResultPersistence);
+    }
+
     // Create agent compactor for conversation compaction
     this.agentCompactor = new AgentCompactor(
       modelClient,

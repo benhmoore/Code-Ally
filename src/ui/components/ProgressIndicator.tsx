@@ -48,21 +48,19 @@ export const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({
   color = UI_COLORS.PRIMARY,
   dimText = false,
 }) => {
-  const [, forceUpdate] = useState({});
   const spinner = SPINNERS[type];
   const ticker = AnimationTicker.getInstance();
+  const [frameIndex, setFrameIndex] = useState(0);
 
   useEffect(() => {
-    // Subscribe to global animation ticker
     const unsubscribe = ticker.subscribe(() => {
-      forceUpdate({});
+      const newFrame = ticker.getFrame() % spinner.length;
+      setFrameIndex(prev => prev === newFrame ? prev : newFrame);
     });
-
     return unsubscribe;
-  }, [ticker]);
+  }, [ticker, spinner.length]);
 
-  // Calculate frame based on global ticker
-  const frame = ticker.getFrame() % spinner.length;
+  const frame = frameIndex;
 
   return (
     <Box>

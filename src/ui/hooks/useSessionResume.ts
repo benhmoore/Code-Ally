@@ -16,6 +16,7 @@ import { AppActions } from '../contexts/AppContext.js';
 import { Message, ToolCallState } from '@shared/index.js';
 import { SessionSelectRequest } from './useModalState.js';
 import { setTerminalTitle } from '../../utils/terminal.js';
+import { recoverConversation } from '../../utils/conversationRecovery.js';
 
 /**
  * Reconstruct USER_INTERJECTION events from message history
@@ -210,8 +211,11 @@ export async function loadSessionData(
 ): Promise<void> {
   const serviceRegistry = ServiceRegistry.getInstance();
 
-  // Filter out system messages for UI
-  const userMessages = sessionData.messages.filter((m: Message) => m.role !== 'system');
+  // Filter out system messages, then run conversation recovery pipeline
+  // to clean up artifacts from interrupted sessions (orphaned tool_use blocks,
+  // thinking-only messages, whitespace-only messages)
+  const nonSystemMessages = sessionData.messages.filter((m: Message) => m.role !== 'system');
+  const { messages: userMessages, interruption } = recoverConversation(nonSystemMessages);
 
   // Load todos if present
   const todoManager = serviceRegistry.get('todo_manager');
@@ -256,6 +260,16 @@ export async function loadSessionData(
 
   // Bulk load messages into agent (doesn't trigger auto-save)
   agent.setMessages(userMessages);
+
+  // If the session was interrupted mid-turn, inject a continuation prompt
+  // so the model picks up where it left off on the next user message
+  if (interruption === 'interrupted_turn') {
+    agent.addMessage({
+      role: 'user',
+      content: 'Continue from where you left off. The previous turn was interrupted.',
+      metadata: { ephemeral: true },
+    });
+  }
 
   // Clean up ephemeral reminders from loaded session
   agent.removeEphemeralSystemReminders();

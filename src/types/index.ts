@@ -14,6 +14,7 @@ export interface Message {
   content: string;
   name?: string;
   tool_call_id?: string;
+  is_error?: boolean; // Marks tool result as an error (for internal use + future API compat)
   tool_calls?: ToolCall[];
   thinking?: string; // Native reasoning/thinking content from model
   thinkingStartTime?: number; // When thinking started (for duration calculation)

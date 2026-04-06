@@ -25,7 +25,7 @@ import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { BashProcessManager } from '../services/BashProcessManager.js';
-import { formatError, createStructuredError } from '../utils/errorUtils.js';
+import { formatError, createStructuredError, classifyToolError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
 import { ID_GENERATION, SYSTEM_REMINDER, TOOL_GUIDANCE } from '../config/constants.js';
 import { createExploratoryGentleWarning, createExploratorySternWarning } from '../utils/messageUtils.js';
@@ -39,6 +39,14 @@ import { createToolResultMessage } from '../llm/FunctionCalling.js';
 import { FormCancelledError } from '../services/FormManager.js';
 import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
 import { PlanModeManager } from '../services/PlanModeManager.js';
+
+/**
+ * Maximum time (ms) for a concurrent tool batch to complete.
+ * If any tool in the batch hasn't finished by this time, the batch is
+ * aborted and partial results are returned. Prevents a single hanging
+ * tool from blocking the entire conversation indefinitely.
+ */
+const CONCURRENT_BATCH_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Safe tools that can run concurrently
@@ -337,11 +345,26 @@ export class ToolOrchestrator {
     }
 
     try {
-      // Execute all tools in parallel
-      // Use Promise.allSettled to handle permission denials gracefully
+      // Execute all tools in parallel with a batch-level timeout.
+      // Each tool gets a child AbortController so we can cancel stragglers
+      // without affecting the parent signal.
+      const batchAbortController = new AbortController();
+      const parentSignal = this.agent.getToolAbortSignal();
+      if (parentSignal?.aborted) batchAbortController.abort();
+      const onParentAbort = () => batchAbortController.abort();
+      parentSignal?.addEventListener('abort', onParentAbort, { once: true });
+
+      const batchTimeout = setTimeout(() => {
+        logger.warn(`[TOOL_ORCHESTRATOR] Concurrent batch timeout (${CONCURRENT_BATCH_TIMEOUT_MS}ms) - aborting remaining tools`);
+        batchAbortController.abort();
+      }, CONCURRENT_BATCH_TIMEOUT_MS);
+
       const results = await Promise.allSettled(
         toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId))
       );
+
+      clearTimeout(batchTimeout);
+      parentSignal?.removeEventListener('abort', onParentAbort);
 
       // Check if any tool was denied permission
       const successfulResults: (ToolResult | null)[] = [];
@@ -973,6 +996,10 @@ export class ToolOrchestrator {
           args
         );
       } else {
+        // Classify error for telemetry-safe logging (no file paths or user content)
+        const safeInfo = classifyToolError(error, toolName);
+        logger.debug('[TOOL_ERROR]', JSON.stringify(safeInfo));
+
         result = createStructuredError(
           formatError(error),
           'system_error',
@@ -1096,10 +1123,13 @@ export class ToolOrchestrator {
     }
 
     // Create tool result message using centralized function
+    const isError = !result.success;
     const toolResultMessage = createToolResultMessage(
       toolCall.id,
       toolCall.function.name,
-      finalContent
+      finalContent,
+      isError,
+      isError ? result.error_type : undefined
     );
 
     // Add ephemeral metadata and tool status
@@ -1176,7 +1206,7 @@ export class ToolOrchestrator {
     // Apply context-aware truncation if ToolResultManager is available
     // Pass the full result object so it can check for _non_truncatable flag
     if (this.toolResultManager) {
-      resultStr = this.toolResultManager.processToolResult(toolName, resultWithoutExtras);
+      resultStr = this.toolResultManager.processToolResult(toolName, resultWithoutExtras, toolCallId);
     }
 
     // Append warning after truncation to ensure it's always visible

@@ -21,7 +21,7 @@ import {
 import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
-import { API_TIMEOUTS, TIME_UNITS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
+import { API_TIMEOUTS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 
 /**
  * Ollama API payload structure
@@ -265,64 +265,30 @@ export class OllamaClient extends ModelClient {
             };
           }
 
-          // Retry on network errors with capped exponential backoff
-          if (this.isNetworkError(error)) {
+          // Classify error and retry with jittered exponential backoff
+          const errorClass = this.classifyError(error);
+
+          if (errorClass !== 'non_retryable') {
             const circuitError = this.incrementCircuitBreakerFailure();
             if (circuitError) {
               return this.handleRequestError(circuitError);
             }
 
-            const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
-            logger.debug(`[OLLAMA_CLIENT] Network error on request ${requestId}, retrying in ${backoffSeconds}s...`);
-            this.emitStatusMessage(`Connection failed, retrying in ${backoffSeconds}s...`);
-            await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
-            attempt++;
-            continue;
-          }
+            const delayMs = this.getRetryDelayMs(attempt);
+            const delaySec = (delayMs / 1000).toFixed(1);
 
-          // Retry on HTTP 500/503 errors with capped exponential backoff
-          // These are often transient errors (malformed tool calls, internal server errors)
-          if (this.isRetryableHttpError(error)) {
-            const circuitError = this.incrementCircuitBreakerFailure();
-            if (circuitError) {
-              return this.handleRequestError(circuitError);
-            }
+            const labels: Record<string, string> = {
+              network: 'Connection failed',
+              server: `Server error (HTTP ${error.httpStatus})`,
+              json: 'Response parse error',
+              stream_timeout: 'Stream timeout',
+              rate_limit: 'Rate limited',
+            };
+            const label = labels[errorClass] || 'Error';
 
-            const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
-            logger.debug(`[OLLAMA_CLIENT] HTTP ${error.httpStatus} error on request ${requestId}, retrying in ${backoffSeconds}s...`);
-            this.emitStatusMessage(`Server error (HTTP ${error.httpStatus}), retrying in ${backoffSeconds}s...`);
-            await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
-            attempt++;
-            continue;
-          }
-
-          // Retry on JSON errors with capped linear backoff
-          if (error instanceof SyntaxError) {
-            const circuitError = this.incrementCircuitBreakerFailure();
-            if (circuitError) {
-              return this.handleRequestError(circuitError);
-            }
-
-            const backoffSeconds = Math.min(1 + attempt, RETRY_CONFIG.MAX_BACKOFF_SECONDS);
-            logger.debug(`[OLLAMA_CLIENT] JSON parse error on request ${requestId}, retrying in ${backoffSeconds}s...`);
-            this.emitStatusMessage(`Response parse error, retrying in ${backoffSeconds}s...`);
-            await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
-            attempt++;
-            continue;
-          }
-
-          // PHASE 3: Retry on stream timeout with capped exponential backoff
-          // Stream timeouts occur when streaming starts but hangs without closing
-          if (error.message?.includes('Stream read timeout')) {
-            const circuitError = this.incrementCircuitBreakerFailure();
-            if (circuitError) {
-              return this.handleRequestError(circuitError);
-            }
-
-            const backoffSeconds = Math.min(Math.pow(2, attempt), RETRY_CONFIG.MAX_BACKOFF_SECONDS);
-            logger.debug(`[OLLAMA_CLIENT] Stream timeout on request ${requestId}, retrying in ${backoffSeconds}s (attempt ${attempt + 1})...`);
-            this.emitStatusMessage(`Stream timeout, retrying in ${backoffSeconds}s...`);
-            await this.sleep(backoffSeconds * TIME_UNITS.MS_PER_SECOND);
+            logger.debug(`[OLLAMA_CLIENT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attempt + 1})...`);
+            this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
+            await this.sleep(delayMs);
             attempt++;
             continue;
           }
@@ -940,28 +906,46 @@ export class OllamaClient extends ModelClient {
   }
 
   /**
-   * Check if error is a network error
+   * Classify an error for retry decisions.
+   * Returns a category that determines retry strategy.
    */
-  private isNetworkError(error: any): boolean {
-    return (
+  private classifyError(error: any): 'network' | 'server' | 'json' | 'stream_timeout' | 'rate_limit' | 'non_retryable' {
+    if (error.name === 'AbortError') return 'non_retryable';
+
+    if (error.httpStatus === 429) return 'rate_limit';
+
+    if (
       error.name === 'TypeError' ||
       error.message?.includes('fetch') ||
       error.message?.includes('network') ||
       error.message?.includes('ECONNREFUSED') ||
+      error.message?.includes('ECONNRESET') ||
+      error.message?.includes('EPIPE') ||
       error.message?.includes('ETIMEDOUT')
-    );
+    ) return 'network';
+
+    if (error.httpStatus === 500 || error.httpStatus === 503) return 'server';
+
+    if (error instanceof SyntaxError) return 'json';
+
+    if (error.message?.includes('Stream read timeout')) return 'stream_timeout';
+
+    return 'non_retryable';
   }
 
   /**
-   * Check if error is a retryable HTTP error (500/503)
+   * Compute retry delay with exponential backoff and jitter.
    *
-   * HTTP 500 (Internal Server Error): Often caused by malformed tool calls or model errors
-   * HTTP 503 (Service Unavailable): Temporary server overload or maintenance
-   *
-   * Both are typically transient and may succeed on retry
+   * Formula: base * 2^attempt + random(0, 0.25 * base * 2^attempt)
+   * This spreads retries across time to avoid thundering herds.
    */
-  private isRetryableHttpError(error: any): boolean {
-    return error.httpStatus === 500 || error.httpStatus === 503;
+  private getRetryDelayMs(attempt: number, maxDelaySeconds: number = RETRY_CONFIG.MAX_BACKOFF_SECONDS): number {
+    const baseDelayMs = Math.min(
+      1000 * Math.pow(2, attempt),
+      maxDelaySeconds * 1000
+    );
+    const jitter = Math.random() * 0.25 * baseDelayMs;
+    return baseDelayMs + jitter;
   }
 
   /**

@@ -65,16 +65,27 @@ export function extractToolCallData(toolCall: any): {
 export function createToolResultMessage(
   toolCallId: string,
   toolName: string,
-  result: any
+  result: any,
+  isError?: boolean,
+  errorType?: string
 ): {
   role: 'tool';
   tool_call_id: string;
   name: string;
   content: string;
+  is_error?: boolean;
 } {
   let content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
 
+  // Wrap error content in XML tags so the model can distinguish errors from successful output.
+  // This is the primary error signal for Ollama-hosted models (which don't support is_error at protocol level).
+  if (isError) {
+    const typeAttr = errorType ? ` type="${errorType}"` : '';
+    content = `<error${typeAttr}>\n${content}\n</error>`;
+  }
+
   // Prepend tool call ID to content so model can reference it with cleanup-call
+  // (outside error tags — it's metadata, not error content)
   content = `[Tool Call ID: ${toolCallId}]\n${content}`;
 
   return {
@@ -82,6 +93,7 @@ export function createToolResultMessage(
     tool_call_id: toolCallId,
     name: toolName,
     content,
+    ...(isError ? { is_error: true } : {}),
   };
 }
 

@@ -386,11 +386,20 @@ export class MCPServerManager implements IService {
     throw new MCPError('TRANSPORT_ERROR', `Unknown transport type for server '${name}'`, name);
   }
 
+  /** Maximum time to wait for a single MCP server to close during shutdown. */
+  private static readonly SERVER_CLOSE_TIMEOUT_MS = 5000;
+
   private async cleanupServer(name: string): Promise<void> {
     const transport = this.transports.get(name);
     if (transport) {
       try {
-        await transport.close();
+        // Timeout-bound the close to prevent a hung server from blocking shutdown
+        await Promise.race([
+          transport.close(),
+          new Promise<void>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout closing MCP server '${name}'`)), MCPServerManager.SERVER_CLOSE_TIMEOUT_MS)
+          ),
+        ]);
       } catch (error) {
         logger.warn(`[MCP] Error closing transport for '${name}':`, error);
       }

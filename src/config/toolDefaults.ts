@@ -28,6 +28,12 @@ export const TOOL_LIMITS = {
 
   /** Maximum output size for plugin execution (10MB) */
   MAX_PLUGIN_OUTPUT_SIZE: 10 * 1024 * 1024,
+
+  /** Absolute max file size before pre-read rejection (50MB) */
+  ABSOLUTE_MAX_FILE_SIZE: 50 * 1024 * 1024,
+
+  /** Threshold above which streaming read is used instead of readFile (10MB) */
+  STREAMING_THRESHOLD: 10 * 1024 * 1024,
 } as const;
 
 /**
@@ -124,6 +130,29 @@ export const CONTEXT_THRESHOLDS = {
     75: 'Context budget is filling up. Be more selective with tool use - prioritize essential operations and avoid exploratory tasks.',
     90: 'WARNING: Context budget nearly exhausted. Minimize tool use. Focus on completing your current task efficiently, then wrap up your response.',
   },
+} as const;
+
+/**
+ * Error message truncation limits.
+ * Long stack traces or command output waste context — cap them with a head/tail format.
+ */
+export const ERROR_TRUNCATION = {
+  /** Maximum error message length before truncation */
+  MAX_CHARS: 10000,
+  /** Characters to keep from the beginning */
+  HEAD_CHARS: 5000,
+  /** Characters to keep from the end */
+  TAIL_CHARS: 5000,
+} as const;
+
+/**
+ * Tool result persistence settings.
+ * When output exceeds context limits, full content is saved to disk
+ * and the model sees a preview with a file path reference.
+ */
+export const TOOL_RESULT_PERSISTENCE = {
+  /** Characters to show in preview when full output is persisted */
+  PREVIEW_CHARS: 2000,
 } as const;
 
 /**

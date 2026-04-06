@@ -484,8 +484,14 @@ export class BashTool extends BaseTool {
     try {
       processManager.addProcess(processInfo);
     } catch (error) {
-      // Failed to add (probably hit limit) - return timeout error
-      logger.warn('[BashTool] Failed to transition to background:', formatError(error));
+      // Failed to add (probably hit limit) — kill the process to prevent orphaning
+      logger.warn('[BashTool] Failed to transition to background, killing process:', formatError(error));
+      try {
+        this.killProcessGroup(child, 'SIGTERM');
+        setTimeout(() => {
+          try { this.killProcessGroup(child, 'SIGKILL'); } catch { /* already dead */ }
+        }, 500);
+      } catch { /* process may already be dead */ }
       return this.formatErrorResponse(
         `Command timed out after ${timeout / 1000} seconds`,
         'timeout_error',

@@ -15,6 +15,7 @@ import { UI_COLORS } from '../constants/colors.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { SessionManager } from '@services/SessionManager.js';
+import { ErrorBoundary } from './ErrorBoundary.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -195,6 +196,19 @@ type TimelineItem =
 /**
  * Memoized active content - only re-renders when active tools change
  */
+/**
+ * Maximum number of root-level running tool calls to render.
+ * Keeps dynamic output height bounded, preventing Ink's catastrophic
+ * clearTerminal+fullStaticOutput rewrite path when output exceeds terminal rows.
+ */
+const MAX_VISIBLE_RUNNING_TOOLS = 8;
+
+/**
+ * Maximum lines of streaming content to display.
+ * Prevents unbounded dynamic output growth during long streaming responses.
+ */
+const MAX_STREAMING_LINES = 60;
+
 const ActiveContent = React.memo<{
   runningToolCalls: (ToolCallState & { children?: ToolCallState[] })[];
   streamingContent?: string;
@@ -207,17 +221,40 @@ const ActiveContent = React.memo<{
     return null;
   }
 
+  // Cap visible running tools to keep dynamic output height bounded
+  const visibleTools = runningToolCalls.length > MAX_VISIBLE_RUNNING_TOOLS
+    ? runningToolCalls.slice(-MAX_VISIBLE_RUNNING_TOOLS)
+    : runningToolCalls;
+  const hiddenToolCount = runningToolCalls.length - visibleTools.length;
+
+  // Truncate streaming content to last N lines
+  let displayStreaming = streamingContent?.trimStart();
+  if (displayStreaming) {
+    const lines = displayStreaming.split('\n');
+    if (lines.length > MAX_STREAMING_LINES) {
+      displayStreaming = '...\n' + lines.slice(-MAX_STREAMING_LINES).join('\n');
+    }
+  }
+
   return (
     <Box flexDirection="column">
-      {runningToolCalls.map((toolCall) => (
+      {hiddenToolCount > 0 && (
+        <Box paddingLeft={2}>
+          <Text dimColor>({hiddenToolCount} more tool{hiddenToolCount !== 1 ? 's' : ''} running...)</Text>
+        </Box>
+      )}
+
+      {visibleTools.map((toolCall) => (
         <Box key={`running-tool-${toolCall.id}`} paddingLeft={2}>
-          {renderToolCallTree(toolCall, 0, config, compactionNotices)}
+          <ErrorBoundary label={`running-tool-${toolCall.id}`}>
+            {renderToolCallTree(toolCall, 0, config, compactionNotices)}
+          </ErrorBoundary>
         </Box>
       ))}
 
-      {streamingContent?.trimStart() && (
+      {displayStreaming && (
         <Box paddingLeft={2}>
-          <Text dimColor>{streamingContent.trimStart()}</Text>
+          <Text dimColor>{displayStreaming}</Text>
         </Box>
       )}
     </Box>
@@ -404,34 +441,47 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     return timeline;
   }, [messages, completedToolCalls, compactionNotices, rewindNotices, statusMessages]);
 
-  // Pre-render timeline items as JSX for Static component
-  const completedJSXItems = React.useMemo(() => {
-    const divider = createDivider(terminalWidth);
-    const items: React.ReactNode[] = [];
+  // Append-only JSX accumulator for Static component.
+  // Only renders JSX for NEW timeline items, avoiding O(n) re-creation of the full array.
+  // Resets when staticRemountKey changes (compaction/rewind).
+  const jsxItemsRef = useRef<React.ReactNode[]>([]);
+  const renderedCountRef = useRef(0);
+  const lastRemountKeyRef = useRef(staticRemountKey);
 
-    completedTimeline.forEach((item) => {
-      // Apply consistent spacing: marginTop={1} for all items
+  const completedJSXItems = React.useMemo(() => {
+    // Reset accumulator on remount (compaction/rewind)
+    if (lastRemountKeyRef.current !== staticRemountKey) {
+      jsxItemsRef.current = [];
+      renderedCountRef.current = 0;
+      lastRemountKeyRef.current = staticRemountKey;
+    }
+
+    const divider = createDivider(terminalWidth);
+
+    // Only process new items since last render
+    const newItems = completedTimeline.slice(renderedCountRef.current);
+    newItems.forEach((item) => {
       const spacing = { marginTop: 1 };
 
       if (item.type === 'message') {
-        // User messages have no left padding, assistant messages have padding
         const messagePadding = item.message.role === 'user' ? {} : { paddingLeft: 2 };
-        items.push(
+        jsxItemsRef.current.push(
           <Box key={`msg-${item.message.id || item.index}`} {...spacing} {...messagePadding}>
-            <MessageDisplay message={item.message} config={config} currentAgent={currentAgent} />
+            <ErrorBoundary label={`message-${item.message.id || item.index}`}>
+              <MessageDisplay message={item.message} config={config} currentAgent={currentAgent} />
+            </ErrorBoundary>
           </Box>
         );
       } else if (item.type === 'toolCall') {
-        // Use ref to access compactionNotices without adding it as a useMemo dependency
-        // This prevents Static component layout recalculation on every compaction notice change
-        items.push(
+        jsxItemsRef.current.push(
           <Box key={`tool-${item.toolCall.id}`} {...spacing} paddingLeft={2}>
-            {renderToolCallTree(item.toolCall, 0, config, compactionNoticesRef.current)}
+            <ErrorBoundary label={`tool-${item.toolCall.id}`}>
+              {renderToolCallTree(item.toolCall, 0, config, compactionNoticesRef.current)}
+            </ErrorBoundary>
           </Box>
         );
       } else if (item.type === 'compactionNotice') {
-        // Compaction notice
-        items.push(
+        jsxItemsRef.current.push(
           <Box key={`compaction-${item.notice.id}`} flexDirection="column" {...spacing} paddingLeft={2}>
             <Box><Text dimColor>{divider}</Text></Box>
             <Box>
@@ -442,11 +492,10 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           </Box>
         );
       } else if (item.type === 'rewindNotice') {
-        // Rewind notice
         const hasRestoredFiles = item.notice.restoredFiles && item.notice.restoredFiles.length > 0;
         const hasFailedRestorations = item.notice.failedRestorations && item.notice.failedRestorations.length > 0;
 
-        items.push(
+        jsxItemsRef.current.push(
           <Box key={`rewind-${item.notice.id}`} flexDirection="column" {...spacing} paddingLeft={2}>
             <Box><Text dimColor>{divider}</Text></Box>
             <Box>
@@ -477,8 +526,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           </Box>
         );
       } else if (item.type === 'statusMessage') {
-        // Status message (connection retries, etc.) - displayed in red
-        items.push(
+        jsxItemsRef.current.push(
           <Box key={`status-${item.statusMessage.id}`} {...spacing} paddingLeft={2}>
             <Text color={UI_COLORS.ERROR}>{item.statusMessage.message}</Text>
           </Box>
@@ -486,7 +534,10 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       }
     });
 
-    return items;
+    renderedCountRef.current = completedTimeline.length;
+
+    // Return a new array reference so Static detects the change, but only when new items were added
+    return newItems.length > 0 ? [...jsxItemsRef.current] : jsxItemsRef.current;
     // Note: compactionNotices is accessed via ref to avoid unnecessary recalculation
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [completedTimeline, terminalWidth, config, currentAgent]);

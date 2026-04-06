@@ -71,6 +71,22 @@ function resetTerminalState(): void {
 }
 
 /**
+ * Lightweight terminal state re-assertion after process resume (SIGCONT).
+ * Unlike resetTerminalState(), this does NOT clear the screen — the user's
+ * conversation history should remain visible after Ctrl+Z / fg.
+ */
+function reassertTerminalState(): void {
+  if (!process.stdout.isTTY) return;
+  process.stdout.write(
+    '\x1b[0m'           // Reset all text formatting
+    + '\x1b[?25h'       // Show cursor
+    + '\x1b[39m\x1b[49m' // Reset fg/bg colors
+    + '\x1b]8;;\x1b\\'  // Close any open hyperlinks
+    + '\x1b[?2004l'     // Reset bracketed paste mode
+  );
+}
+
+/**
  * Clean exit with proper terminal cleanup and stdout flushing
  *
  * Ensures all escape sequences are processed before the application exits.
@@ -826,10 +842,22 @@ async function main() {
     const readStateManager = new ReadStateManager();
     registry.registerInstance('read_state_manager', readStateManager);
 
+    // Create read cache for file read deduplication (mtime-based)
+    const { ReadCache } = await import('./services/ReadCache.js');
+    const readCache = new ReadCache();
+    registry.registerInstance('read_cache', readCache);
+
     // Create file interaction tracker (for /open command)
     const { FileInteractionTracker } = await import('./services/FileInteractionTracker.js');
     const fileInteractionTracker = new FileInteractionTracker();
     registry.registerInstance('file_interaction_tracker', fileInteractionTracker);
+
+    // Create tool result persistence for saving large outputs to disk
+    const { ToolResultPersistence } = await import('./services/ToolResultPersistence.js');
+    const toolResultPersistence = new ToolResultPersistence(
+      () => sessionManager.getCurrentSession()
+    );
+    registry.registerInstance('tool_result_persistence', toolResultPersistence);
 
     // Create patch manager for undo functionality (session-specific)
     const { PatchManager } = await import('./services/PatchManager.js');
@@ -1382,6 +1410,13 @@ process.on('SIGTERM', () => {
     cleanExit(143).catch(() => process.exit(143)); // Standard exit code for SIGTERM
   } else {
     process.exit(143);
+  }
+});
+
+// Re-assert terminal state after process resume (Ctrl+Z then fg)
+process.on('SIGCONT', () => {
+  if (inkUIStarted) {
+    reassertTerminalState();
   }
 });
 
