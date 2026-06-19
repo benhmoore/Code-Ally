@@ -8,11 +8,10 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { AgentManager } from '../services/AgentManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { getAgentsDir } from '../config/paths.js';
 import { validateAgentName } from '../utils/namingValidation.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
 
 export class DeleteAgentTool extends BaseTool {
   readonly name = 'delete-agent';
@@ -70,17 +69,19 @@ export class DeleteAgentTool extends BaseTool {
         );
       }
 
-      // Construct filename and path
-      const filename = `${name}.md`;
-      const agentsDir = getAgentsDir();
-      const absolutePath = path.join(agentsDir, filename);
+      const agentManager = ServiceRegistry.getInstance().get<AgentManager>('agent_manager');
+      if (!agentManager) {
+        return this.formatErrorResponse(
+          'Internal error: AgentManager not available. Please restart the application.',
+          'system_error'
+        );
+      }
 
-      // Check if file exists and read content
-      let originalContent = '';
-      try {
-        originalContent = await fs.readFile(absolutePath, 'utf-8');
-      } catch (error) {
-        // File doesn't exist
+      const absolutePath = agentManager.getAgentFilePath(name);
+
+      // Check if file exists and read content (for undo patch)
+      const originalContent = await agentManager.readUserAgentFile(name);
+      if (originalContent === null) {
         return this.formatErrorResponse(
           `Agent does not exist: ${name}`,
           'file_error',
@@ -89,7 +90,7 @@ export class DeleteAgentTool extends BaseTool {
       }
 
       // Delete the file
-      await fs.unlink(absolutePath);
+      await agentManager.deleteAgent(name);
 
       // Capture operation patch for potential undo
       const patchNumber = await this.captureOperationPatch(

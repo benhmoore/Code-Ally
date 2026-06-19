@@ -10,12 +10,9 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { parseAgentFile } from '../utils/agentContentUtils.js';
-import { getAgentsDir } from '../config/paths.js';
+import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { AgentManager } from '../services/AgentManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { logger } from '../services/Logger.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
 
 /**
  * Agent summary information returned by list-agents
@@ -99,66 +96,21 @@ export class ListAgentsTool extends BaseTool {
     return lines.join('\n');
   }
 
-  /**
-   * Read and parse a single agent file
-   *
-   * @param filePath - Absolute path to the agent file
-   * @returns Agent summary or null if parsing fails
-   */
-  private async readAgentFile(filePath: string): Promise<AgentSummary | null> {
-    try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const { frontmatter } = parseAgentFile(content);
-
-      return {
-        name: frontmatter.name,
-        description: frontmatter.description,
-        tools: frontmatter.tools,
-        visible_from_agents: frontmatter.visible_from_agents,
-        can_delegate_to_agents: frontmatter.can_delegate_to_agents,
-        can_see_agents: frontmatter.can_see_agents,
-        file_path: filePath,
-      };
-    } catch (error) {
-      // Log parse error but don't fail entire operation
-      logger.warn(`[${this.name}] Failed to parse agent file ${filePath}: ${formatError(error)}`);
-      return null;
-    }
-  }
-
   protected async executeImpl(_args: any): Promise<ToolResult> {
     try {
       this.captureParams(_args);
 
-      const agentsDir = getAgentsDir();
-
-      // Check if agents directory exists
-      try {
-        await fs.access(agentsDir);
-      } catch {
-        return this.formatSuccessResponse({
-          content: 'No agents found. The agents directory does not exist yet.',
-          agents: [],
-          count: 0,
-        });
-      }
-
-      // Read all files in agents directory
-      let files: string[];
-      try {
-        files = await fs.readdir(agentsDir);
-      } catch (error) {
+      const agentManager = ServiceRegistry.getInstance().get<AgentManager>('agent_manager');
+      if (!agentManager) {
         return this.formatErrorResponse(
-          `Failed to read agents directory: ${formatError(error)}`,
-          'file_error',
-          'Ensure the agents directory is accessible and has proper permissions.'
+          'Internal error: AgentManager not available. Please restart the application.',
+          'system_error'
         );
       }
 
-      // Filter to only .md files
-      const agentFiles = files.filter(file => file.endsWith('.md'));
+      const userAgents = await agentManager.listUserAgents();
 
-      if (agentFiles.length === 0) {
+      if (userAgents.length === 0) {
         return this.formatSuccessResponse({
           content: 'No agents found. The agents directory is empty.',
           agents: [],
@@ -166,18 +118,16 @@ export class ListAgentsTool extends BaseTool {
         });
       }
 
-      // Read and parse all agent files
-      const agentSummaries: AgentSummary[] = [];
-      for (const file of agentFiles) {
-        const filePath = path.join(agentsDir, file);
-        const summary = await this.readAgentFile(filePath);
-        if (summary) {
-          agentSummaries.push(summary);
-        }
-      }
-
-      // Sort alphabetically by name
-      agentSummaries.sort((a, b) => a.name.localeCompare(b.name));
+      // Map to display summaries (listUserAgents already returns them sorted by name)
+      const agentSummaries: AgentSummary[] = userAgents.map(agent => ({
+        name: agent.name,
+        description: agent.description,
+        tools: agent.tools,
+        visible_from_agents: agent.visible_from_agents,
+        can_delegate_to_agents: agent.can_delegate_to_agents,
+        can_see_agents: agent.can_see_agents,
+        file_path: agentManager.getAgentFilePath(agent.name),
+      }));
 
       // Format output
       const formattedAgents = agentSummaries.map(agent => this.formatAgentSummary(agent));

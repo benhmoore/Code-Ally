@@ -14,7 +14,8 @@ import { InjectableTool } from './InjectableTool.js';
 import { ToolResult, FunctionDefinition, ActivityEventType, Message } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry, ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
-import { AgentManager, BaseAgentConfig } from '../services/AgentManager.js';
+import { AgentManager } from '../services/AgentManager.js';
+import type { BaseAgentConfig } from '../types/agents.js';
 import { Agent, AgentConfig } from '../agent/Agent.js';
 import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
@@ -28,6 +29,11 @@ import { getThoroughnessDuration, getThoroughnessMaxTokens, formatElapsed } from
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
 import { extractSummaryFromConversation } from '../utils/agentUtils.js';
+import {
+  appendAgentResponseSuffix,
+  registerDelegation,
+  completeDelegation,
+} from '../utils/delegationUtils.js';
 import { FormManager } from '../services/FormManager.js';
 
 /**
@@ -766,24 +772,6 @@ NOT for: Exploration (use explore), planning (use plan).`;
   }
 
   /**
-   * Register delegation with context manager
-   */
-  private registerDelegation(callId: string, pooledAgent: PooledAgent): void {
-    try {
-      const serviceRegistry = ServiceRegistry.getInstance();
-      const toolManager = serviceRegistry.get<any>('tool_manager');
-      const delegationManager = toolManager?.getDelegationContextManager();
-      if (delegationManager) {
-        delegationManager.register(callId, 'agent', pooledAgent);
-        logger.debug(`[AGENT_TOOL] Registered delegation: callId=${callId}`);
-      }
-    } catch (error) {
-      // ServiceRegistry not available in tests - skip delegation registration
-      logger.debug(`[AGENT_TOOL] Delegation registration skipped: ${error}`);
-    }
-  }
-
-  /**
    * Execute agent and capture result
    */
   private async executeAgent(params: {
@@ -876,9 +864,7 @@ NOT for: Exploration (use explore), planning (use plan).`;
     const { finalResponse, agentId } = params;
 
     // Append note to all agent responses
-    const result =
-      finalResponse +
-      '\n\nIMPORTANT: The user CANNOT see this summary. You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
+    const result = appendAgentResponseSuffix(finalResponse);
 
     // Return result with agent_id (always returned since agents always persist)
     const returnValue: { result: string; agent_id?: string } = { result };
@@ -901,36 +887,13 @@ NOT for: Exploration (use explore), planning (use plan).`;
     if (pooledAgent) {
       logger.debug('[AGENT_TOOL] Releasing agent back to pool');
       pooledAgent.release();
-
-      // Transition delegation to completing state
-      try {
-        const serviceRegistry = ServiceRegistry.getInstance();
-        const toolManager = serviceRegistry.get<any>('tool_manager');
-        const delegationManager = toolManager?.getDelegationContextManager();
-        if (delegationManager) {
-          delegationManager.transitionToCompleting(callId);
-          logger.debug(`[AGENT_TOOL] Transitioned delegation to completing: callId=${callId}`);
-        }
-      } catch (error) {
-        logger.debug(`[AGENT_TOOL] Delegation transition skipped: ${error}`);
-      }
     } else {
       // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
       await subAgent.cleanup();
-
-      // Transition delegation to completing state
-      try {
-        const serviceRegistry = ServiceRegistry.getInstance();
-        const toolManager = serviceRegistry.get<any>('tool_manager');
-        const delegationManager = toolManager?.getDelegationContextManager();
-        if (delegationManager) {
-          delegationManager.transitionToCompleting(callId);
-          logger.debug(`[AGENT_TOOL] Transitioned delegation to completing: callId=${callId}`);
-        }
-      } catch (error) {
-        logger.debug(`[AGENT_TOOL] Delegation transition skipped: ${error}`);
-      }
     }
+
+    // Finalize the delegation context (transition to completing, then clear).
+    completeDelegation(callId);
   }
 
   /**
@@ -1040,7 +1003,7 @@ NOT for: Exploration (use explore), planning (use plan).`;
 
     // 9. Register delegation
     if (pooledAgent) {
-      this.registerDelegation(callId, pooledAgent);
+      registerDelegation(callId, 'agent', pooledAgent);
     }
 
     // 10. Track active delegation

@@ -73,6 +73,17 @@ export const useActivitySubscriptions = (
   // Track cancellation state for immediate visual feedback
   const [isCancelling, setIsCancelling] = useState(false);
 
+  // Clear the "Cancelling" indicator once the agent has actually stopped working.
+  // isCancelling is set on USER_INTERRUPT_INITIATED; isThinking is reset in the
+  // turn handler's finally block on every completion *and* interrupt, so tying
+  // the clear to it guarantees the indicator can't get stuck if no AGENT_END
+  // event follows the interrupt (e.g. interrupting between turns).
+  useEffect(() => {
+    if (!state.isThinking && isCancelling) {
+      setIsCancelling(false);
+    }
+  }, [state.isThinking, isCancelling]);
+
   // Chunk batching: Accumulate tool output chunks to reduce render frequency
   // Maps tool call ID -> array of pending chunks
   const pendingChunks = useRef<Map<string, string[]>>(new Map());
@@ -492,8 +503,9 @@ export const useActivitySubscriptions = (
         contextUsage,
       });
     }
-
-    setIsCancelling(false);
+    // Note: isCancelling is cleared via an effect tied to isThinking (see above),
+    // not here — AGENT_END also fires for sub-agents, which must not clear the
+    // main "Cancelling" indicator while the main turn is still unwinding.
   });
 
   /**

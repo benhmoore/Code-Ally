@@ -8,6 +8,17 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ActivityMonitor } from '../ActivityMonitor.js';
 
+/**
+ * Sleep for at least `ms` of measurable elapsed time.
+ *
+ * Node timers may fire ~1ms early, so a bare `setTimeout(ms)` can leave
+ * `getElapsedTime()` reading `ms - 1` and flake `>= ms` assertions. The margin
+ * guarantees the slept duration comfortably exceeds the asserted lower bound.
+ */
+const TIMER_MARGIN_MS = 25;
+const sleepAtLeast = (ms: number): Promise<void> =>
+  new Promise(resolve => setTimeout(resolve, ms + TIMER_MARGIN_MS));
+
 describe('ActivityMonitor - Deep Agent Nesting', () => {
   let monitor: ActivityMonitor;
   let timeoutCallback: ReturnType<typeof vi.fn>;
@@ -90,7 +101,7 @@ describe('ActivityMonitor - Deep Agent Nesting', () => {
       monitor.pause();
 
       // Simulate more time passing (100ms)
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await sleepAtLeast(100);
 
       // Resume with failure - should NOT record progress (preserve timer)
       monitor.resume(false);
@@ -106,7 +117,7 @@ describe('ActivityMonitor - Deep Agent Nesting', () => {
       monitor.start();
 
       // Wait a bit to establish baseline
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await sleepAtLeast(50);
       const baselineElapsed = monitor.getElapsedTime();
       expect(baselineElapsed).toBeGreaterThanOrEqual(50);
 
@@ -114,7 +125,7 @@ describe('ActivityMonitor - Deep Agent Nesting', () => {
       monitor.pause();
 
       // Simulate delegation taking 100ms
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await sleepAtLeast(100);
 
       // Resume with failure - should NOT reset timer
       monitor.resume(false);
@@ -131,7 +142,7 @@ describe('ActivityMonitor - Deep Agent Nesting', () => {
       monitor.start();
 
       // Wait to establish baseline
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await sleepAtLeast(100);
       const baselineElapsed = monitor.getElapsedTime();
       expect(baselineElapsed).toBeGreaterThanOrEqual(100);
 

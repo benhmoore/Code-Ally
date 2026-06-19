@@ -8,24 +8,16 @@
 
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
+import type { AgentData } from '../types/agents.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
+import { AgentManager } from '../services/AgentManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { getAgentsDir } from '../config/paths.js';
-import { parseAgentFile, constructAgentContent, AgentContentParams } from '../utils/agentContentUtils.js';
+import { parseAgentContent } from '../utils/agentContentUtils.js';
 import { validateAgentName } from '../utils/namingValidation.js';
-import {
-  validateTemperature,
-  validateReasoningEffort,
-  validateTools,
-  validateModel,
-  validateVisibilitySettings,
-  validateModelToolCapability,
-  VisibilitySettings
-} from '../utils/agentValidationUtils.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import { validateAgentConfig } from '../utils/agentValidationUtils.js';
+import { stat } from 'fs/promises';
 
 export class EditAgentTool extends BaseTool {
   readonly name = 'edit-agent';
@@ -126,30 +118,28 @@ export class EditAgentTool extends BaseTool {
         );
       }
 
-      // Construct filename and path
-      const filename = `${name}.md`;
-      const agentsDir = getAgentsDir();
-      const absolutePath = path.join(agentsDir, filename);
+      const agentManager = ServiceRegistry.getInstance().get<AgentManager>('agent_manager');
+      if (!agentManager) {
+        return this.formatErrorResponse(
+          'Internal error: AgentManager not available. Please restart the application.',
+          'system_error'
+        );
+      }
 
       // Read current agent file
-      let currentContent: string;
-      try {
-        currentContent = await fs.readFile(absolutePath, 'utf-8');
-      } catch {
+      const currentContent = await agentManager.readUserAgentFile(name);
+      if (currentContent === null) {
         return this.formatErrorResponse(
           `Agent does not exist: ${name}`,
           'file_error',
-          `Agent '${name}' not found at ${absolutePath}. Use write-agent to create new agents.`
+          `Agent '${name}' not found at ${agentManager.getAgentFilePath(name)}. Use write-agent to create new agents.`
         );
       }
 
       // Parse current agent file
-      let currentFrontmatter;
-      let currentSystemPrompt;
+      let current: AgentData;
       try {
-        const parsed = parseAgentFile(currentContent);
-        currentFrontmatter = parsed.frontmatter;
-        currentSystemPrompt = parsed.systemPrompt;
+        current = parseAgentContent(currentContent, name);
       } catch (error) {
         return this.formatErrorResponse(
           `Failed to parse agent file: ${formatError(error)}`,
@@ -170,79 +160,42 @@ export class EditAgentTool extends BaseTool {
       const can_delegate_to_agents = args.can_delegate_to_agents as boolean | undefined;
       const can_see_agents = args.can_see_agents as boolean | undefined;
 
-      // Validate updated fields (non-visibility fields)
-      if (temperature !== undefined) {
-        const result = validateTemperature(temperature);
-        if (!result.valid) {
-          return this.formatErrorResponse(result.error!, 'validation_error');
-        }
-      }
-
-      if (reasoning_effort !== undefined) {
-        const result = validateReasoningEffort(reasoning_effort);
-        if (!result.valid) {
-          return this.formatErrorResponse(result.error!, 'validation_error');
-        }
-      }
-
-      if (tools !== undefined) {
-        const result = await validateTools(tools);
-        if (!result.valid) {
-          return this.formatErrorResponse(result.error!, 'validation_error');
-        }
-      }
-
-      if (model !== undefined) {
-        const result = await validateModel(model);
-        if (!result.valid) {
-          return this.formatErrorResponse(result.error!, 'validation_error');
-        }
-      }
-
-      // Merge updates with current values (only update provided fields)
-      const mergedParams: AgentContentParams = {
-        name: currentFrontmatter.name, // Name cannot be changed
-        description: description !== undefined ? description : currentFrontmatter.description,
-        system_prompt: system_prompt !== undefined ? system_prompt : currentSystemPrompt,
-        model: model !== undefined ? model : currentFrontmatter.model,
-        temperature: temperature !== undefined ? temperature : currentFrontmatter.temperature,
-        reasoning_effort: reasoning_effort !== undefined ? reasoning_effort : currentFrontmatter.reasoning_effort,
-        tools: tools !== undefined ? tools : currentFrontmatter.tools,
-        usage_guidelines: usage_guidelines !== undefined ? usage_guidelines : currentFrontmatter.usage_guidelines,
-        visible_from_agents: visible_from_agents !== undefined ? visible_from_agents : currentFrontmatter.visible_from_agents,
-        can_delegate_to_agents: can_delegate_to_agents !== undefined ? can_delegate_to_agents : currentFrontmatter.can_delegate_to_agents,
-        can_see_agents: can_see_agents !== undefined ? can_see_agents : currentFrontmatter.can_see_agents,
-        preserveCreatedAt: currentFrontmatter.created_at, // Preserve original created_at timestamp
+      // Merge updates with current values (only update provided fields).
+      // Name cannot be changed; created_at is preserved by serializeAgent.
+      const merged: AgentData = {
+        ...current,
+        description: description !== undefined ? description : current.description,
+        system_prompt: system_prompt !== undefined ? system_prompt : current.system_prompt,
+        model: model !== undefined ? model : current.model,
+        temperature: temperature !== undefined ? temperature : current.temperature,
+        reasoning_effort: reasoning_effort !== undefined ? reasoning_effort : current.reasoning_effort,
+        tools: tools !== undefined ? tools : current.tools,
+        usage_guidelines: usage_guidelines !== undefined ? usage_guidelines : current.usage_guidelines,
+        visible_from_agents: visible_from_agents !== undefined ? visible_from_agents : current.visible_from_agents,
+        can_delegate_to_agents: can_delegate_to_agents !== undefined ? can_delegate_to_agents : current.can_delegate_to_agents,
+        can_see_agents: can_see_agents !== undefined ? can_see_agents : current.can_see_agents,
       };
 
-      // Validate visibility settings on MERGED values (not just new values)
-      // This ensures the final configuration is logically consistent
-      const visibilitySettings: VisibilitySettings = {
-        visibleFromAgents: mergedParams.visible_from_agents,
-        canDelegateToAgents: mergedParams.can_delegate_to_agents,
-        canSeeAgents: mergedParams.can_see_agents,
-      };
-      const visResult = await validateVisibilitySettings(visibilitySettings);
-      if (!visResult.valid) {
-        return this.formatErrorResponse(visResult.error!, 'validation_error');
+      // Validate the MERGED configuration as a whole so a model change is
+      // checked against existing tools, and visibility stays consistent.
+      const configValidation = await validateAgentConfig({
+        model: merged.model,
+        temperature: merged.temperature,
+        reasoning_effort: merged.reasoning_effort,
+        tools: merged.tools,
+        visible_from_agents: merged.visible_from_agents,
+        can_delegate_to_agents: merged.can_delegate_to_agents,
+        can_see_agents: merged.can_see_agents,
+      });
+      if (!configValidation.valid) {
+        return this.formatErrorResponse(configValidation.error!, 'validation_error');
       }
 
-      // Validate model supports tools on MERGED values
-      // This catches cases where model is changed to one that doesn't support existing tools
-      const toolCapResult = await validateModelToolCapability(mergedParams.model, mergedParams.tools);
-      if (!toolCapResult.valid) {
-        return this.formatErrorResponse(toolCapResult.error!, 'validation_error');
-      }
-
-      // Construct updated content with preserved created_at and updated updated_at
-      const updatedContent = constructAgentContent(mergedParams);
-
-      // Write updated file
-      await fs.writeFile(absolutePath, updatedContent, 'utf-8');
+      // Serialize and write through the single agent writer
+      const { filePath: absolutePath, content: updatedContent } = await agentManager.writeAgentFile(merged);
 
       // Track read state
-      const registry = ServiceRegistry.getInstance();
-      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      const readStateManager = ServiceRegistry.getInstance().get<ReadStateManager>('read_state_manager');
       if (readStateManager && updatedContent.length > 0) {
         const lines = updatedContent.split('\n');
         readStateManager.trackRead(absolutePath, 1, lines.length);
@@ -256,7 +209,7 @@ export class EditAgentTool extends BaseTool {
         updatedContent
       );
 
-      const stats = await fs.stat(absolutePath);
+      const stats = await stat(absolutePath);
 
       // Build list of updated fields for success message
       const updatedFields: string[] = [];

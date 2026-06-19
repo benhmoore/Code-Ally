@@ -22,14 +22,13 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { extractSummaryFromConversation } from '../utils/agentUtils.js';
+import { appendAgentResponseSuffix, resolveSubstantiveResponse } from '../utils/delegationUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import type { AgentData } from '../services/AgentManager.js';
 
 // Read-only tools for session analysis
 const SESSION_ANALYSIS_TOOLS = ['read', 'glob', 'grep'];
@@ -96,21 +95,6 @@ export class SessionsTool extends BaseTool {
     this.activityStream.subscribe(ActivityEventType.INTERRUPT_ALL, () => {
       this.interruptAll();
     });
-  }
-
-  /**
-   * Get agent metadata for registration with AgentManager
-   */
-  getAgentMetadata(): AgentData {
-    return {
-      name: 'sessions',
-      description: 'Session analysis agent - sandboxed to .ally-sessions/ directory',
-      system_prompt: SESSION_ANALYSIS_PROMPT, // Use the existing constant
-      tools: ['read', 'glob', 'grep'], // Read-only tools, no agent delegation
-      visible_from_agents: [], // Only main assistant can use (hidden from agents)
-      can_delegate_to_agents: false, // Cannot delegate (sandboxed)
-      can_see_agents: false, // Cannot see other agents (focused on sessions only)
-    };
   }
 
   /**
@@ -310,20 +294,12 @@ export class SessionsTool extends BaseTool {
         });
         logger.debug('[SESSIONS_TOOL] Analysis agent response received, length:', response?.length || 0);
 
-        let finalResponse: string;
-
         // Ensure we have a substantial response
-        if (!response || response.trim().length === 0) {
-          logger.debug('[SESSIONS_TOOL] Empty response, extracting from conversation');
-          finalResponse = extractSummaryFromConversation(analysisAgent, '[SESSIONS_TOOL]', 'Session analysis findings:') ||
-            'Session analysis completed but no summary was provided.';
-        } else if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
-          logger.debug('[SESSIONS_TOOL] Incomplete response, attempting to extract summary');
-          const summary = extractSummaryFromConversation(analysisAgent, '[SESSIONS_TOOL]', 'Session analysis findings:');
-          finalResponse = (summary && summary.length > response.length) ? summary : response;
-        } else {
-          finalResponse = response;
-        }
+        const finalResponse = resolveSubstantiveResponse(analysisAgent, response, {
+          context: '[SESSIONS_TOOL]',
+          label: 'Session analysis findings:',
+          fallback: 'Session analysis completed but no summary was provided.',
+        });
 
         const duration = (Date.now() - startTime) / 1000;
 
@@ -340,7 +316,7 @@ export class SessionsTool extends BaseTool {
         });
 
         // Append note that user cannot see this
-        const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this analysis. You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
+        const result = appendAgentResponseSuffix(finalResponse);
 
         // Build response with agent_id (always returned since agents always persist)
         const successResponse: Record<string, any> = {

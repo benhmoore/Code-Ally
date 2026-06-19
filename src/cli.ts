@@ -1157,23 +1157,6 @@ async function main() {
     const agentManager = new AgentManager();
     registry.registerInstance('agent_manager', agentManager);
 
-    // Register built-in tool-based agents
-    logger.debug('[CLI] Registering built-in tool-agents');
-    const exploreTool = toolManager.getTool('explore');
-    const planTool = toolManager.getTool('plan');
-    const sessionsTool = toolManager.getTool('sessions');
-
-    if (exploreTool && 'getAgentMetadata' in exploreTool) {
-      agentManager.registerBuiltInAgent((exploreTool as any).getAgentMetadata());
-    }
-    if (planTool && 'getAgentMetadata' in planTool) {
-      agentManager.registerBuiltInAgent((planTool as any).getAgentMetadata());
-    }
-    if (sessionsTool && 'getAgentMetadata' in sessionsTool) {
-      agentManager.registerBuiltInAgent((sessionsTool as any).getAgentMetadata());
-    }
-    logger.debug('[CLI] Built-in tool-agents registered');
-
     // Create agent pool service for managing concurrent agent instances
     // Manages concurrent agent instances with auto-eviction
     const { AgentPoolService } = await import('./services/AgentPoolService.js');
@@ -1197,11 +1180,12 @@ async function main() {
     registry.registerInstance('markdown_command_loader', markdownCommandLoader);
     registry.registerInstance('plugin_commands', pluginCommands);
 
-    // Register plugin skills with SkillManager
+    // Register plugin skills and agents with their managers
     for (const plugin of enabledPlugins) {
       await skillManager.loadPluginSkills(plugin.installPath, plugin.pluginName);
+      await agentManager.loadPluginAgents(plugin.installPath, plugin.pluginName);
     }
-    logger.debug(`[CLI] Plugin skills and ${pluginCommands.length} command(s) loaded`);
+    logger.debug(`[CLI] Plugin skills, agents, and ${pluginCommands.length} command(s) loaded`);
 
     // Create agent generation service for LLM-assisted agent creation
     const { AgentGenerationService } = await import('./services/AgentGenerationService.js');

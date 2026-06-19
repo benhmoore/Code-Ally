@@ -354,6 +354,71 @@ export async function validateModelToolCapability(
 }
 
 /**
+ * Full set of configurable agent fields subject to validation.
+ *
+ * Mirrors the optional configuration accepted by write-agent / edit-agent. For
+ * edits this should hold the *merged* values (new over existing) so the final
+ * configuration is validated as a whole.
+ */
+export interface AgentConfigInput {
+  model?: string;
+  temperature?: number;
+  reasoning_effort?: string;
+  tools?: string[];
+  visible_from_agents?: string[];
+  can_delegate_to_agents?: boolean;
+  can_see_agents?: boolean;
+}
+
+/**
+ * Run the full agent configuration validation chain.
+ *
+ * Validates each provided field in turn and returns the first failure. Model and
+ * visibility checks are always run against the supplied values (including
+ * undefined, where they are no-ops) so the same call works for both creation
+ * (raw values) and editing (merged values). Shared by WriteAgentTool and
+ * EditAgentTool to keep the validation logic in one place.
+ *
+ * @param input - Agent configuration values to validate
+ * @returns First validation failure, or `{ valid: true }` if all pass
+ */
+export async function validateAgentConfig(input: AgentConfigInput): Promise<ValidationResult> {
+  if (input.temperature !== undefined) {
+    const result = validateTemperature(input.temperature);
+    if (!result.valid) return result;
+  }
+
+  if (input.reasoning_effort !== undefined) {
+    const result = validateReasoningEffort(input.reasoning_effort);
+    if (!result.valid) return result;
+  }
+
+  if (input.tools !== undefined) {
+    const result = await validateTools(input.tools);
+    if (!result.valid) return result;
+  }
+
+  if (input.model !== undefined) {
+    const result = await validateModel(input.model);
+    if (!result.valid) return result;
+  }
+
+  // Validated against the final (merged, for edits) values so a model change
+  // is checked against existing tools and vice versa.
+  const toolCapability = await validateModelToolCapability(input.model, input.tools);
+  if (!toolCapability.valid) return toolCapability;
+
+  const visibility = await validateVisibilitySettings({
+    visibleFromAgents: input.visible_from_agents,
+    canDelegateToAgents: input.can_delegate_to_agents,
+    canSeeAgents: input.can_see_agents,
+  });
+  if (!visibility.valid) return visibility;
+
+  return { valid: true };
+}
+
+/**
  * Validate visibility settings
  *
  * Checks logical consistency of visibility parameters and validates that

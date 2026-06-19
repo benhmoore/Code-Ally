@@ -2,6 +2,9 @@
  * Core type definitions for Code Ally
  */
 
+// Agent definition types (data shapes for stored/loaded agents)
+export type { AgentData, AgentInfo, BaseAgentConfig } from './agents.js';
+
 // ===========================
 // Message Types
 // ===========================

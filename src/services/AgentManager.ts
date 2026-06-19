@@ -8,114 +8,24 @@
  * Profile-aware: Uses profile-specific agents directory via getAgentsDir()
  */
 
-import { readFile, writeFile, readdir, unlink, access } from 'fs/promises';
+import { readFile, writeFile, readdir, unlink, access, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { constants } from 'fs';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentsDir, BUILTIN_AGENTS_DIR } from '../config/paths.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
-import { AgentRequirements } from '../agent/RequirementTracker.js';
-import { parseFrontmatterYAML, extractFrontmatter } from '../utils/yamlUtils.js';
+import { serializeAgent, parseAgentContent } from '../utils/agentContentUtils.js';
 import { validateAgentName } from '../utils/namingValidation.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { BaseTool } from '../tools/BaseTool.js';
 import { AGENT_DELEGATION_TOOLS } from '../config/constants.js';
-import type { AgentRequirements as AgentRequirementsType } from '../agent/RequirementTracker.js';
-
-/**
- * Base configuration derived from AgentData
- *
- * These fields are common to all agent instantiation contexts (CLI startup,
- * agent switching, sub-agent delegation). Callers extend this with context-specific
- * fields like parentCallId, maxDuration, etc.
- */
-export interface BaseAgentConfig {
-  /** Base agent prompt (from agent's system_prompt) */
-  baseAgentPrompt: string;
-  /** Task description (from agent's description) */
-  taskPrompt: string;
-  /** Restricted tool list, or undefined for all tools */
-  allowedTools: string[] | undefined;
-  /** Agent type identifier */
-  agentType: string;
-  /** Agent requirements specification */
-  requirements?: AgentRequirementsType;
-}
-
-export interface AgentData {
-  name: string;
-  description: string;
-  system_prompt: string;
-  model?: string;
-  temperature?: number;
-  reasoning_effort?: string; // Reasoning effort: "inherit", "low", "medium", "high". Defaults to "inherit"
-  tools?: string[]; // Tool names this agent can use. Empty array = no tools, undefined = all tools
-  usage_guidelines?: string; // Optional guidance on when/how to use this agent
-  requirements?: AgentRequirements; // Tool call requirements for this agent
-  created_at?: string;
-  updated_at?: string;
-  _pluginName?: string; // Plugin source identifier (only for plugin-provided agents)
-  _isLinked?: boolean; // Whether this agent is from a linked plugin (dev mode)
-
-  /**
-   * List of agent names that can call this agent.
-   * - If undefined: agent is visible to all agents (default)
-   * - If empty array []: agent is visible to none (only main assistant can use it)
-   * - If ["agent1", "agent2"]: only these agents can call this agent
-   *
-   * @example
-   * visible_from_agents: ["explore", "plan"] // Only explore and plan agents can use this
-   * visible_from_agents: [] // Only main assistant can use this
-   * visible_from_agents: undefined // All agents can use this (default)
-   */
-  visible_from_agents?: string[];
-
-  /**
-   * Whether this agent can delegate to sub-agents.
-   * - If undefined: defaults to true (can delegate)
-   * - If false: agent cannot spawn sub-agents
-   * - If true: agent can spawn sub-agents
-   *
-   * Useful for restricting delegation chains to prevent infinite recursion
-   * or to enforce that certain agents work in isolation.
-   *
-   * @example
-   * can_delegate_to_agents: false // Agent works alone, no delegation
-   * can_delegate_to_agents: true // Agent can spawn sub-agents (default)
-   */
-  can_delegate_to_agents?: boolean;
-
-  /**
-   * Whether this agent can see other agents in its tool list.
-   * - If undefined: defaults to true (can see agents)
-   * - If false: agent cannot see agent/explore/plan tools
-   * - If true: agent can see and use agent tools
-   *
-   * Controls visibility of agent-related tools in the agent's context.
-   * When false, the agent operates in isolation without awareness of other agents.
-   *
-   * @example
-   * can_see_agents: false // Agent doesn't see agent/explore/plan tools
-   * can_see_agents: true // Agent can see and use agent tools (default)
-   */
-  can_see_agents?: boolean;
-}
-
-export interface AgentInfo {
-  name: string;
-  description: string;
-  file_path: string;
-  source?: 'user' | 'plugin' | 'builtin';
-  pluginName?: string; // Plugin name for plugin-provided agents
-  isInactive?: boolean; // True if agent is from an inactive plugin
-}
+import type { AgentData, AgentInfo, BaseAgentConfig } from '../types/agents.js';
 
 export class AgentManager {
   private readonly userAgentsDir: string;
   private readonly builtinAgentsDir: string;
   private pluginAgents: Map<string, AgentData>;
-  private builtInAgents: Map<string, AgentData> = new Map();
 
   constructor() {
     // Profile-aware: getAgentsDir() returns profile-specific agents directory
@@ -322,37 +232,6 @@ export class AgentManager {
   }
 
   /**
-   * Register a built-in tool-based agent (explore, plan, sessions)
-   * These agents are created by tools but should be discoverable like file-based agents
-   *
-   * @param agentData - Complete agent metadata
-   */
-  registerBuiltInAgent(agentData: AgentData): void {
-    // Validate required fields
-    if (!agentData.name || typeof agentData.name !== 'string') {
-      throw new Error('Built-in agent must have a valid name');
-    }
-    if (!agentData.description || typeof agentData.description !== 'string') {
-      throw new Error(`Built-in agent '${agentData.name}' must have a valid description`);
-    }
-    if (!agentData.system_prompt || typeof agentData.system_prompt !== 'string') {
-      throw new Error(`Built-in agent '${agentData.name}' must have a valid system_prompt`);
-    }
-
-    // Validate visibility fields using existing method
-    this.validateAgentData(agentData);
-
-    // Warn if agent name already registered
-    if (this.builtInAgents.has(agentData.name)) {
-      logger.warn(`Built-in agent '${agentData.name}' is already registered, overwriting`);
-    }
-
-    // Store in builtInAgents Map
-    this.builtInAgents.set(agentData.name, agentData);
-    logger.debug(`Registered built-in tool-agent '${agentData.name}'`);
-  }
-
-  /**
    * Check if an agent exists (in user, plugin, or built-in sources)
    *
    * @param agentName - Agent name
@@ -373,11 +252,6 @@ export class AgentManager {
           return true;
         }
         // Plugin is deactivated, continue to check built-in
-      }
-
-      // Check built-in tool-agents
-      if (this.builtInAgents.has(agentName)) {
-        return true;
       }
 
       // Fall back to built-in files
@@ -436,18 +310,7 @@ export class AgentManager {
       }
     }
 
-    // 3. Try built-in tool-agents (third priority)
-    const builtInAgent = this.builtInAgents.get(agentName);
-    if (builtInAgent) {
-      // Check visibility before returning
-      if (!this.isAgentVisibleTo(builtInAgent, callingAgentName)) {
-        return null;
-      }
-      logger.debug(`Loaded built-in tool-agent '${agentName}'`);
-      return builtInAgent;
-    }
-
-    // 4. Try built-in agent files (lowest priority)
+    // 3. Try built-in agent files (lowest priority)
     const builtinPath = join(this.builtinAgentsDir, `${agentName}.md`);
     try {
       const content = await readFile(builtinPath, 'utf-8');
@@ -467,31 +330,69 @@ export class AgentManager {
   }
 
   /**
-   * Save an agent to user storage
+   * Resolve the on-disk path of a user agent file.
+   *
+   * @param agentName - Agent name (without extension)
+   * @returns Absolute path to the user agent markdown file
+   */
+  getAgentFilePath(agentName: string): string {
+    return join(this.userAgentsDir, `${agentName}.md`);
+  }
+
+  /**
+   * Read the raw markdown content of a user agent file.
+   *
+   * Returns the unparsed file contents so callers (e.g. the agent CRUD tools)
+   * can capture undo patches and read state. Only the user directory is
+   * consulted — built-in and plugin agents are not editable.
+   *
+   * @param agentName - Agent name
+   * @returns Raw file content, or null if the user agent does not exist
+   */
+  async readUserAgentFile(agentName: string): Promise<string | null> {
+    try {
+      return await readFile(this.getAgentFilePath(agentName), 'utf-8');
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Serialize and write an agent definition to user storage.
+   *
+   * This is the single writer for agent files; {@link saveAgent} and the agent
+   * CRUD tools all funnel through it. Returns the path and serialized content so
+   * callers can record undo patches and read state.
+   *
+   * @param agent - Agent data to persist
+   * @returns The file path written and the serialized content
+   * @throws Error if the agent name or data is invalid
+   */
+  async writeAgentFile(agent: AgentData): Promise<{ filePath: string; content: string }> {
+    const nameValidation = validateAgentName(agent.name);
+    if (!nameValidation.valid) {
+      throw new Error(`Failed to save agent: ${nameValidation.error}`);
+    }
+    this.validateAgentData(agent);
+
+    await mkdir(this.userAgentsDir, { recursive: true });
+
+    const filePath = this.getAgentFilePath(agent.name);
+    const content = serializeAgent(agent);
+    await writeFile(filePath, content, 'utf-8');
+
+    return { filePath, content };
+  }
+
+  /**
+   * Save an agent to user storage.
    *
    * @param agent - Agent data
    * @returns True if saved successfully
-   * @throws Error if agent name is invalid
    */
   async saveAgent(agent: AgentData): Promise<boolean> {
     try {
-      // Validate agent name format (kebab-case)
-      const nameValidation = validateAgentName(agent.name);
-      if (!nameValidation.valid) {
-        throw new Error(`Failed to save agent: ${nameValidation.error}`);
-      }
-
-      // Validate agent data before saving
-      this.validateAgentData(agent);
-
-      // Ensure directory exists
-      const { mkdir } = await import('fs/promises');
-      await mkdir(this.userAgentsDir, { recursive: true });
-
-      const filePath = join(this.userAgentsDir, `${agent.name}.md`);
-      const content = this.formatAgentFile(agent);
-
-      await writeFile(filePath, content, 'utf-8');
+      await this.writeAgentFile(agent);
       return true;
     } catch (error) {
       logger.error(`Error saving agent ${agent.name}:`, error);
@@ -507,14 +408,46 @@ export class AgentManager {
    */
   async deleteAgent(agentName: string): Promise<boolean> {
     // Only delete from user directory (built-ins cannot be deleted)
-    const filePath = join(this.userAgentsDir, `${agentName}.md`);
-
     try {
-      await unlink(filePath);
+      await unlink(this.getAgentFilePath(agentName));
       return true;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * List all user agents with their full parsed definitions.
+   *
+   * Unlike {@link listAgents} (which returns lightweight summaries across all
+   * sources), this returns the complete {@link AgentData} for every editable
+   * user agent — the set the manage-agents tooling operates on. Files that fail
+   * to parse are skipped with a warning.
+   *
+   * @returns Array of user agent definitions, sorted by name
+   */
+  async listUserAgents(): Promise<AgentData[]> {
+    let files: string[];
+    try {
+      files = await readdir(this.userAgentsDir);
+    } catch {
+      return [];
+    }
+
+    const agents: AgentData[] = [];
+    for (const file of files.filter(f => f.endsWith('.md'))) {
+      const agentName = file.replace(/\.md$/, '');
+      const content = await this.readUserAgentFile(agentName);
+      if (content === null) continue;
+      try {
+        agents.push(parseAgentContent(content, agentName));
+      } catch (error) {
+        logger.warn(`Failed to parse user agent '${agentName}': ${formatError(error)}`);
+      }
+    }
+
+    agents.sort((a, b) => a.name.localeCompare(b.name));
+    return agents;
   }
 
   /**
@@ -584,21 +517,6 @@ export class AgentManager {
       });
     }
 
-    // 2.5. Load built-in tool-agents (override file-based built-ins, third priority)
-    for (const [name, agentData] of this.builtInAgents.entries()) {
-      if (!agentMap.has(name)) {
-        // Check visibility before adding
-        if (this.isAgentVisibleTo(agentData, callingAgentName)) {
-          agentMap.set(name, {
-            name: agentData.name,
-            description: agentData.description,
-            file_path: '<built-in-tool>', // Virtual path for tool-based agents
-            source: 'builtin',
-          });
-        }
-      }
-    }
-
     // 3. Load user agents (override all, highest priority)
     try {
       const userFiles = await readdir(this.userAgentsDir);
@@ -632,123 +550,23 @@ export class AgentManager {
 
 
   /**
-   * Parse agent markdown file
+   * Parse agent markdown file.
+   *
+   * Thin lenient wrapper over the shared {@link parseAgentContent} serializer:
+   * returns null instead of throwing so a single malformed agent file never
+   * breaks discovery/loading of the rest.
    *
    * @param content - File content
-   * @param agentName - Agent name
-   * @returns Parsed agent data
+   * @param agentName - Fallback name when frontmatter omits `name`
+   * @returns Parsed agent data, or null if the file is malformed
    */
   private parseAgentFile(content: string, agentName: string): AgentData | null {
     try {
-      const extracted = extractFrontmatter(content);
-      if (!extracted) {
-        return null;
-      }
-
-      const { frontmatter, body } = extracted;
-      const metadata = parseFrontmatterYAML(frontmatter);
-
-      return {
-        name: metadata.name || agentName,
-        description: metadata.description || '',
-        system_prompt: body.trim(),
-        model: metadata.model,
-        temperature: metadata.temperature ? parseFloat(metadata.temperature) : undefined,
-        reasoning_effort: metadata.reasoning_effort,
-        tools: metadata.tools, // Array of tool names or undefined
-        usage_guidelines: metadata.usage_guidelines,
-        requirements: metadata.requirements, // Agent requirements object
-        created_at: metadata.created_at,
-        updated_at: metadata.updated_at,
-        visible_from_agents: metadata.visible_from_agents, // Array of agent names or undefined
-        can_delegate_to_agents: metadata.can_delegate_to_agents, // Boolean or undefined
-        can_see_agents: metadata.can_see_agents, // Boolean or undefined
-      };
-    } catch {
+      return parseAgentContent(content, agentName);
+    } catch (error) {
+      logger.debug(`Failed to parse agent '${agentName}':`, formatError(error));
       return null;
     }
-  }
-
-  /**
-   * Format agent data as markdown file
-   *
-   * @param agent - Agent data
-   * @returns Formatted markdown content
-   */
-  private formatAgentFile(agent: AgentData): string {
-    const lines: string[] = ['---'];
-
-    lines.push(`name: "${agent.name}"`);
-    lines.push(`description: "${agent.description}"`);
-
-    if (agent.model) {
-      lines.push(`model: "${agent.model}"`);
-    }
-
-    if (agent.temperature !== undefined) {
-      lines.push(`temperature: ${agent.temperature}`);
-    }
-
-    if (agent.reasoning_effort) {
-      lines.push(`reasoning_effort: "${agent.reasoning_effort}"`);
-    }
-
-    if (agent.tools !== undefined) {
-      // Write tools as JSON array
-      lines.push(`tools: ${JSON.stringify(agent.tools)}`);
-    }
-
-    if (agent.usage_guidelines) {
-      // Write usage_guidelines as multiline string
-      lines.push(`usage_guidelines: |`);
-      const guidelineLines = agent.usage_guidelines.split('\n');
-      guidelineLines.forEach(line => {
-        lines.push(`  ${line}`);
-      });
-    }
-
-    if (agent.requirements) {
-      // Write requirements as nested object
-      lines.push(`requirements:`);
-      const reqs = agent.requirements;
-      if (reqs.required_tools_one_of) {
-        lines.push(`  required_tools_one_of: ${JSON.stringify(reqs.required_tools_one_of)}`);
-      }
-      if (reqs.required_tools_all) {
-        lines.push(`  required_tools_all: ${JSON.stringify(reqs.required_tools_all)}`);
-      }
-      if (reqs.minimum_tool_calls !== undefined) {
-        lines.push(`  minimum_tool_calls: ${reqs.minimum_tool_calls}`);
-      }
-      if (reqs.require_tool_use !== undefined) {
-        lines.push(`  require_tool_use: ${reqs.require_tool_use}`);
-      }
-      if (reqs.reminder_message) {
-        lines.push(`  reminder_message: "${reqs.reminder_message}"`);
-      }
-    }
-
-    if (agent.visible_from_agents !== undefined) {
-      // Write visible_from_agents as JSON array
-      lines.push(`visible_from_agents: ${JSON.stringify(agent.visible_from_agents)}`);
-    }
-
-    if (agent.can_delegate_to_agents !== undefined) {
-      lines.push(`can_delegate_to_agents: ${agent.can_delegate_to_agents}`);
-    }
-
-    if (agent.can_see_agents !== undefined) {
-      lines.push(`can_see_agents: ${agent.can_see_agents}`);
-    }
-
-    lines.push(`created_at: "${agent.created_at || new Date().toISOString()}"`);
-    lines.push(`updated_at: "${new Date().toISOString()}"`);
-
-    lines.push('---');
-    lines.push('');
-    lines.push(agent.system_prompt);
-
-    return lines.join('\n');
   }
 
   /**
@@ -829,6 +647,42 @@ Use the 'agent' tool to delegate tasks to specialized agents when their expertis
     }
 
     return guidances;
+  }
+
+  /**
+   * Discover and register all agents shipped by a plugin.
+   *
+   * Mirrors {@link SkillManager.loadPluginSkills}: scans `<installPath>/agents/`
+   * for `*.md` definitions, parses each, tags it with the plugin name, and
+   * registers it. Plugins without an `agents/` directory are silently ignored;
+   * individual files that fail to parse are skipped with a warning so one bad
+   * file never blocks the rest.
+   *
+   * @param installPath - Plugin installation directory
+   * @param pluginName - Owning plugin name (used for provenance and activation)
+   */
+  public async loadPluginAgents(installPath: string, pluginName: string): Promise<void> {
+    const agentsDir = join(installPath, 'agents');
+
+    let files: string[];
+    try {
+      files = await readdir(agentsDir);
+    } catch {
+      return; // Plugin ships no agents
+    }
+
+    for (const file of files.filter(f => f.endsWith('.md'))) {
+      const agentName = file.replace(/\.md$/, '');
+      try {
+        const content = await readFile(join(agentsDir, file), 'utf-8');
+        const agent = parseAgentContent(content, agentName);
+        agent._pluginName = pluginName;
+        this.registerPluginAgent(agent);
+        logger.debug(`[AgentManager] Loaded plugin agent '${agent.name}' from '${pluginName}'`);
+      } catch (error) {
+        logger.warn(`[AgentManager] Failed to load plugin agent '${agentName}' from '${pluginName}': ${formatError(error)}`);
+      }
+    }
   }
 
   /**

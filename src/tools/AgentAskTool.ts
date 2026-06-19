@@ -21,7 +21,12 @@ import { AgentPoolService, AgentMetadata, PooledAgent } from '../services/AgentP
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentType, getAgentDisplayName } from '../utils/agentTypeUtils.js';
-import { extractSummaryFromConversation } from '../utils/agentUtils.js';
+import {
+  appendAgentResponseSuffix,
+  resolveSubstantiveResponse,
+  registerDelegation,
+  completeDelegation,
+} from '../utils/delegationUtils.js';
 import { TEXT_LIMITS, FORMATTING, PERMISSION_MESSAGES } from '../config/constants.js';
 import { getThoroughnessDuration, formatMinutesSeconds, formatElapsed, type ThoroughnessLevel } from '../ui/utils/timeUtils.js';
 import { createAgentTaskContextReminder } from '../utils/messageUtils.js';
@@ -194,17 +199,7 @@ Only start a NEW agent for completely unrelated areas.`;
 
       // Register delegation context for INSTRUCT option in permission prompts
       // This enables "Tell Ally what to do differently" instead of plain "Deny"
-      let delegationManager: any = null;
-      try {
-        const toolManager = registry.get<any>('tool_manager');
-        delegationManager = toolManager?.getDelegationContextManager();
-        if (delegationManager) {
-          delegationManager.register(callId, 'agent-ask', this.currentPooledAgent);
-          logger.debug(`[ASK_AGENT_TOOL] Registered delegation: callId=${callId}`);
-        }
-      } catch (error) {
-        logger.debug(`[ASK_AGENT_TOOL] Delegation registration skipped: ${error}`);
-      }
+      registerDelegation(callId, 'agent-ask', this.currentPooledAgent);
 
       // Map thoroughness to max duration for this turn
       const maxDuration = getThoroughnessDuration(thoroughness as any);
@@ -239,20 +234,12 @@ Only start a NEW agent for completely unrelated areas.`;
         const response = await agent.sendMessage(message, { parentCallId: callId });
         logger.debug('[ASK_AGENT_TOOL] Agent response received, length:', response?.length || 0);
 
-        let finalResponse: string;
-
         // Ensure we have a substantial response
-        if (!response || response.trim().length === 0) {
-          logger.debug('[ASK_AGENT_TOOL] Empty response, extracting from conversation');
-          finalResponse = extractSummaryFromConversation(agent, '[ASK_AGENT_TOOL]', 'Agent response:') ||
-            'Agent responded but no summary was provided.';
-        } else if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
-          logger.debug('[ASK_AGENT_TOOL] Incomplete response, attempting to extract summary');
-          const summary = extractSummaryFromConversation(agent, '[ASK_AGENT_TOOL]', 'Agent response:');
-          finalResponse = (summary && summary.length > response.length) ? summary : response;
-        } else {
-          finalResponse = response;
-        }
+        const finalResponse = resolveSubstantiveResponse(agent, response, {
+          context: '[ASK_AGENT_TOOL]',
+          label: 'Agent response:',
+          fallback: 'Agent responded but no summary was provided.',
+        });
 
         const duration = (Date.now() - startTime) / 1000;
 
@@ -285,7 +272,7 @@ Only start a NEW agent for completely unrelated areas.`;
         const taskContext = this.buildTaskContext(metadata);
 
         // Append note that user cannot see this
-        const result = finalResponse + '\n\nIMPORTANT: The user CANNOT see this response. You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
+        const result = appendAgentResponseSuffix(finalResponse);
 
         // Build response
         const successResponse: Record<string, any> = {
@@ -306,11 +293,7 @@ Only start a NEW agent for completely unrelated areas.`;
         logger.debug('[ASK_AGENT_TOOL] Restored agent parent call ID to', originalParentCallId);
 
         // Clear delegation context
-        if (delegationManager) {
-          delegationManager.transitionToCompleting(callId);
-          delegationManager.clear(callId);
-          logger.debug(`[ASK_AGENT_TOOL] Cleared delegation: callId=${callId}`);
-        }
+        completeDelegation(callId);
 
         // Clear tracked pooled agent
         this.currentPooledAgent = null;

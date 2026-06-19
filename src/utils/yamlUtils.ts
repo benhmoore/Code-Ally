@@ -36,6 +36,26 @@
  * //   requirements: { require_tool_use: true, max_retries: 2 } }
  * ```
  */
+/**
+ * Strip surrounding quotes from a scalar value, unescaping standard sequences
+ * (`\\`, `\"`, `\n`, `\r`, `\t`) inside double-quoted strings.
+ *
+ * Double-quoted values are parsed with JSON semantics (our serializer emits
+ * JSON-compatible escapes) so they round-trip exactly; single-quoted and
+ * unquoted values keep the original lenient quote-stripping behavior.
+ */
+function unquoteScalar(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed) as string;
+    } catch {
+      // Not valid JSON (e.g. an unterminated escape) — fall back to lenient strip
+    }
+  }
+  return raw.replace(/^["']|["']$/g, '');
+}
+
 export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
   const metadata: Record<string, any> = {};
 
@@ -108,8 +128,7 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
               }
               const itemMatch = nextLine.match(/^\s+-\s+(.+)$/);
               if (itemMatch && itemMatch[1]) {
-                // Remove surrounding quotes
-                arrayItems.push(itemMatch[1].replace(/^["']|["']$/g, ''));
+                arrayItems.push(unquoteScalar(itemMatch[1]));
               }
               i++;
             }
@@ -144,7 +163,7 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
               } else if (nestedValue.trim() !== '' && !isNaN(Number(nestedValue))) {
                 nestedObj[nestedKey] = Number(nestedValue);
               } else {
-                nestedObj[nestedKey] = nestedValue.replace(/^["']|["']$/g, '');
+                nestedObj[nestedKey] = unquoteScalar(nestedValue);
               }
             }
             i++;
@@ -152,8 +171,8 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
           metadata[key] = nestedObj;
           continue;
         } else {
-          // Remove quotes from simple values
-          const stripped = value.replace(/^["']|["']$/g, '');
+          // Remove quotes (unescaping double-quoted strings) from simple values
+          const stripped = unquoteScalar(value);
           // Try to parse as number if it looks numeric (check for non-empty FIRST)
           if (stripped.trim() !== '' && !isNaN(Number(stripped))) {
             metadata[key] = Number(stripped);

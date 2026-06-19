@@ -7,24 +7,15 @@
 
 import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
+import type { AgentData } from '../types/agents.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
+import { AgentManager } from '../services/AgentManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { getAgentsDir } from '../config/paths.js';
-import { constructAgentContent } from '../utils/agentContentUtils.js';
 import { validateAgentName } from '../utils/namingValidation.js';
-import {
-  validateTemperature,
-  validateReasoningEffort,
-  validateTools,
-  validateModel,
-  validateVisibilitySettings,
-  validateModelToolCapability,
-  VisibilitySettings
-} from '../utils/agentValidationUtils.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import { validateAgentConfig } from '../utils/agentValidationUtils.js';
+import { stat } from 'fs/promises';
 
 export class WriteAgentTool extends BaseTool {
   readonly name = 'write-agent';
@@ -35,6 +26,13 @@ export class WriteAgentTool extends BaseTool {
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
+  }
+
+  /**
+   * Resolve the AgentManager from the service registry.
+   */
+  private getAgentManager(): AgentManager | null {
+    return ServiceRegistry.getInstance().get<AgentManager>('agent_manager') ?? null;
   }
 
   /**
@@ -54,24 +52,17 @@ export class WriteAgentTool extends BaseTool {
       );
     }
 
-    // Construct filename
-    const filename = `${name}.md`;
-    const agentsDir = getAgentsDir();
-    const absolutePath = path.join(agentsDir, filename);
-
-    try {
-      // Check if file exists
-      await fs.access(absolutePath);
+    const agentManager = this.getAgentManager();
+    if (agentManager && (await agentManager.readUserAgentFile(name)) !== null) {
       // File exists - fail without requesting permission
       return this.formatErrorResponse(
-        `Agent already exists: ${absolutePath}`,
+        `Agent already exists: ${agentManager.getAgentFilePath(name)}`,
         'file_error',
         `An agent named '${name}' already exists. Choose a different name or manually delete the existing agent first.`
       );
-    } catch {
-      // File doesn't exist - validation passed
-      return null;
     }
+
+    return null;
   }
 
   /**
@@ -187,70 +178,38 @@ export class WriteAgentTool extends BaseTool {
       const can_delegate_to_agents = args.can_delegate_to_agents as boolean | undefined;
       const can_see_agents = args.can_see_agents as boolean | undefined;
 
-      // Run validations on optional parameters
-      if (temperature !== undefined) {
-        const result = validateTemperature(temperature);
-        if (!result.valid) {
-          return this.formatErrorResponse(result.error!, 'validation_error');
-        }
+      // Validate all optional configuration in one pass
+      const configValidation = await validateAgentConfig({
+        model,
+        temperature,
+        reasoning_effort,
+        tools,
+        visible_from_agents,
+        can_delegate_to_agents,
+        can_see_agents,
+      });
+      if (!configValidation.valid) {
+        return this.formatErrorResponse(configValidation.error!, 'validation_error');
       }
 
-      if (reasoning_effort !== undefined) {
-        const result = validateReasoningEffort(reasoning_effort);
-        if (!result.valid) {
-          return this.formatErrorResponse(result.error!, 'validation_error');
-        }
-      }
-
-      if (tools !== undefined) {
-        const result = await validateTools(tools);
-        if (!result.valid) {
-          return this.formatErrorResponse(result.error!, 'validation_error');
-        }
-      }
-
-      if (model !== undefined) {
-        const result = await validateModel(model);
-        if (!result.valid) {
-          return this.formatErrorResponse(result.error!, 'validation_error');
-        }
-      }
-
-      // Validate model supports tools if tools are configured
-      const toolCapabilityResult = await validateModelToolCapability(model, tools);
-      if (!toolCapabilityResult.valid) {
-        return this.formatErrorResponse(toolCapabilityResult.error!, 'validation_error');
-      }
-
-      const visibilitySettings: VisibilitySettings = {
-        visibleFromAgents: visible_from_agents,
-        canDelegateToAgents: can_delegate_to_agents,
-        canSeeAgents: can_see_agents,
-      };
-      const visibilityValidation = await validateVisibilitySettings(visibilitySettings);
-      if (!visibilityValidation.valid) {
-        return this.formatErrorResponse(visibilityValidation.error!, 'validation_error');
-      }
-
-      // Construct filename
-      const filename = `${name}.md`;
-      const agentsDir = getAgentsDir();
-      const absolutePath = path.join(agentsDir, filename);
-
-      // Check if file exists
-      try {
-        await fs.access(absolutePath);
+      const agentManager = this.getAgentManager();
+      if (!agentManager) {
         return this.formatErrorResponse(
-          `Agent already exists: ${absolutePath}`,
+          'Internal error: AgentManager not available. Please restart the application.',
+          'system_error'
+        );
+      }
+
+      // Refuse to overwrite an existing user agent
+      if ((await agentManager.readUserAgentFile(name)) !== null) {
+        return this.formatErrorResponse(
+          `Agent already exists: ${agentManager.getAgentFilePath(name)}`,
           'file_error',
           'Choose a different name or manually delete the existing agent first.'
         );
-      } catch {
-        // File doesn't exist - proceed
       }
 
-      // Construct agent content
-      const content = constructAgentContent({
+      const agentData: AgentData = {
         name,
         description,
         system_prompt,
@@ -262,17 +221,13 @@ export class WriteAgentTool extends BaseTool {
         visible_from_agents,
         can_delegate_to_agents,
         can_see_agents,
-      });
+      };
 
-      // Create agents directory if it doesn't exist
-      await fs.mkdir(agentsDir, { recursive: true });
-
-      // Write the agent file
-      await fs.writeFile(absolutePath, content, 'utf-8');
+      // Serialize and write through the single agent writer
+      const { filePath: absolutePath, content } = await agentManager.writeAgentFile(agentData);
 
       // Track read state
-      const registry = ServiceRegistry.getInstance();
-      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      const readStateManager = ServiceRegistry.getInstance().get<ReadStateManager>('read_state_manager');
       if (readStateManager && content.length > 0) {
         const lines = content.split('\n');
         readStateManager.trackRead(absolutePath, 1, lines.length);
@@ -286,7 +241,7 @@ export class WriteAgentTool extends BaseTool {
         content
       );
 
-      const stats = await fs.stat(absolutePath);
+      const stats = await stat(absolutePath);
 
       const successMessage = `Created agent '${name}' at ${absolutePath} (${stats.size} bytes)`;
 

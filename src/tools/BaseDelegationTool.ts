@@ -30,7 +30,12 @@ import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
-import { extractSummaryFromConversation } from '../utils/agentUtils.js';
+import {
+  appendAgentResponseSuffix,
+  resolveSubstantiveResponse,
+  registerDelegation,
+  completeDelegation,
+} from '../utils/delegationUtils.js';
 import type { Config } from '../types/index.js';
 
 /**
@@ -314,18 +319,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         this._currentPooledAgent = pooledAgent; // Track for interjection routing
 
         // Register delegation with DelegationContextManager
-        try {
-          const serviceRegistry = ServiceRegistry.getInstance();
-          const toolManager = serviceRegistry.get<any>('tool_manager');
-          const delegationManager = toolManager?.getDelegationContextManager();
-          if (delegationManager) {
-            delegationManager.register(callId, config.agentType, pooledAgent);
-            logger.debug(`[${this.name.toUpperCase()}_TOOL] Registered delegation: callId=${callId}`);
-          }
-        } catch (error) {
-          // ServiceRegistry not available in tests - skip delegation registration
-          logger.debug(`[${this.name.toUpperCase()}_TOOL] Delegation registration skipped: ${error}`);
-        }
+        registerDelegation(callId, config.agentType, pooledAgent);
 
         logger.debug(`[${this.name.toUpperCase()}_TOOL] Acquired pooled agent:`, agentId);
       }
@@ -352,22 +346,12 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         });
         logger.debug(`[${this.name.toUpperCase()}_TOOL] Agent response received, length:`, response?.length || 0);
 
-        let finalResponse: string;
-
         // Ensure we have a substantial response
-        const fallback = config.emptyResponseFallback || 'Operation completed but no summary was provided.';
-        const label = config.summaryLabel || 'Results:';
-
-        if (!response || response.trim().length === 0) {
-          logger.debug(`[${this.name.toUpperCase()}_TOOL] Empty response, extracting from conversation`);
-          finalResponse = extractSummaryFromConversation(delegationAgent, `[${this.name.toUpperCase()}_TOOL]`, label) || fallback;
-        } else if (response.includes('[Request interrupted') || response.length < TEXT_LIMITS.AGENT_RESPONSE_MIN) {
-          logger.debug(`[${this.name.toUpperCase()}_TOOL] Incomplete response, attempting to extract summary`);
-          const summary = extractSummaryFromConversation(delegationAgent, `[${this.name.toUpperCase()}_TOOL]`, label);
-          finalResponse = (summary && summary.length > response.length) ? summary : response;
-        } else {
-          finalResponse = response;
-        }
+        let finalResponse = resolveSubstantiveResponse(delegationAgent, response, {
+          context: `[${this.name.toUpperCase()}_TOOL]`,
+          label: config.summaryLabel || 'Results:',
+          fallback: config.emptyResponseFallback || 'Operation completed but no summary was provided.',
+        });
 
         // Allow subclass to post-process response (pass scoped registry)
         finalResponse = await this.postProcessResponse(finalResponse, config, scopedRegistry);
@@ -391,7 +375,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         });
 
         // Append note that user cannot see this
-        const content = finalResponse + '\n\nIMPORTANT: The user CANNOT see this output! You must share relevant information, summarized or verbatim with the user in your own response, if appropriate.';
+        const content = appendAgentResponseSuffix(finalResponse);
 
         // Build response with agent_used
         const successResponse: Record<string, any> = {
@@ -416,45 +400,18 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         logger.debug(`[${this.name.toUpperCase()}_TOOL] Cleaning up agent...`);
         this.activeDelegations.delete(callId);
 
-        // Release agent back to pool or cleanup ephemeral agent
+        // Release agent back to pool, or cleanup the ephemeral fallback agent
         if (pooledAgent) {
-          // Release agent back to pool
           logger.debug(`[${this.name.toUpperCase()}_TOOL] Releasing agent back to pool`);
           pooledAgent.release();
-
-          // Transition delegation to completing state
-          try {
-            const serviceRegistry = ServiceRegistry.getInstance();
-            const toolManager = serviceRegistry.get<any>('tool_manager');
-            const delegationManager = toolManager?.getDelegationContextManager();
-            if (delegationManager) {
-              delegationManager.transitionToCompleting(callId);
-              delegationManager.clear(callId);
-              logger.debug(`[${this.name.toUpperCase()}_TOOL] Transitioned delegation to completing: callId=${callId}`);
-            }
-          } catch (error) {
-            logger.debug(`[${this.name.toUpperCase()}_TOOL] Delegation transition skipped: ${error}`);
-          }
-
           this._currentPooledAgent = null; // Clear tracked pooled agent
         } else {
           // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
           await delegationAgent.cleanup();
-
-          // Transition delegation to completing state
-          try {
-            const serviceRegistry = ServiceRegistry.getInstance();
-            const toolManager = serviceRegistry.get<any>('tool_manager');
-            const delegationManager = toolManager?.getDelegationContextManager();
-            if (delegationManager) {
-              delegationManager.transitionToCompleting(callId);
-              delegationManager.clear(callId);
-              logger.debug(`[${this.name.toUpperCase()}_TOOL] Transitioned delegation to completing: callId=${callId}`);
-            }
-          } catch (error) {
-            logger.debug(`[${this.name.toUpperCase()}_TOOL] Delegation transition skipped: ${error}`);
-          }
         }
+
+        // Finalize delegation context regardless of agent lifecycle
+        completeDelegation(callId);
       }
     } catch (error) {
       const errorType = (error as any)?.error_type || 'execution_error';

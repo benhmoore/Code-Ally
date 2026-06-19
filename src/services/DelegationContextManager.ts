@@ -180,6 +180,19 @@ export class DelegationContextManager {
   }
 
   /**
+   * Get all delegation contexts currently in the 'executing' state.
+   *
+   * Exposed so a parent manager can inspect a nested manager's active
+   * delegations during depth-first routing without recursing through
+   * {@link getActiveDelegation}.
+   *
+   * @returns Array of executing delegation contexts
+   */
+  getExecutingContexts(): DelegationContext[] {
+    return Array.from(this.contexts.values()).filter(ctx => ctx.state === 'executing');
+  }
+
+  /**
    * Get the deepest active delegation for interjection routing
    *
    * Performs recursive depth-first search through nested agent hierarchies
@@ -205,9 +218,7 @@ export class DelegationContextManager {
   getActiveDelegation(): ActiveDelegation | undefined {
     // Collect only executing contexts (NOT completing)
     // Completing agents are dying/dead and cannot receive interjections
-    const activeContexts = Array.from(this.contexts.values()).filter(
-      ctx => ctx.state === 'executing'
-    );
+    const activeContexts = this.getExecutingContexts();
 
     if (activeContexts.length === 0) {
       return undefined;
@@ -312,12 +323,10 @@ export class DelegationContextManager {
       return { delegation: context, depth: currentDepth };
     }
 
-    // Check if nested manager has any active delegations
-    // IMPORTANT: Access contexts directly to avoid infinite recursion
-    // DO NOT call nestedManager.getActiveDelegation() - it would recurse back here!
-    const nestedContexts = (Array.from((nestedManager as any).contexts?.values() || []) as DelegationContext[]).filter(
-      (ctx: DelegationContext) => ctx.state === 'executing'
-    );
+    // Check if nested manager has any active delegations.
+    // IMPORTANT: read the executing contexts directly rather than calling
+    // nestedManager.getActiveDelegation() - that would recurse back here.
+    const nestedContexts = nestedManager.getExecutingContexts();
 
     // Filter out the current context to avoid infinite recursion
     // This happens when all agents share the same ToolManager/DelegationContextManager
