@@ -521,6 +521,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
             contextLines={config?.diff_display_context_lines}
             diffTheme={config?.diff_display_theme}
             maxHighlightBytes={config?.diff_display_max_file_size}
+            reservedColumns={indent.length + 6}
             addedColor={config?.diff_display_color_added}
             removedColor={config?.diff_display_color_removed}
             modifiedColor={config?.diff_display_color_modified}

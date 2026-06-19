@@ -12,7 +12,7 @@ import { FORMATTING } from '@config/constants.js';
 import { SyntaxHighlighter } from '@services/SyntaxHighlighter.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { getDisplayPath } from '@utils/pathUtils.js';
-import { padAnsiToWidth, stripAnsi, truncateAnsiToWidth } from '@utils/terminalText.js';
+import { stripAnsi, truncateAnsiToWidth } from '@utils/terminalText.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
 
 export interface DiffLine {
@@ -44,6 +44,8 @@ export interface DiffDisplayProps {
   syntaxTheme?: string;
   /** Maximum combined old/new content size to syntax-highlight */
   maxHighlightBytes?: number;
+  /** Columns consumed by parent indentation/padding outside this component */
+  reservedColumns?: number;
   /** Configured style for added lines, e.g. "green" or "on rgb(20,50,20)" */
   addedColor?: string;
   /** Configured style for removed lines, e.g. "red" or "on rgb(50,20,20)" */
@@ -80,6 +82,7 @@ const DEFAULT_MAX_HIGHLIGHT_BYTES = 200_000;
 const DEFAULT_ADDED_COLOR = 'on rgb(20,50,20)';
 const DEFAULT_REMOVED_COLOR = 'on rgb(50,20,20)';
 const DEFAULT_MODIFIED_COLOR = 'on rgb(50,50,20)';
+const RENDER_SAFETY_COLUMNS = 1;
 
 /**
  * DiffDisplay Component
@@ -102,11 +105,13 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
   diffTheme = 'auto',
   syntaxTheme,
   maxHighlightBytes = DEFAULT_MAX_HIGHLIGHT_BYTES,
+  reservedColumns = 0,
   addedColor = DEFAULT_ADDED_COLOR,
   removedColor = DEFAULT_REMOVED_COLOR,
   modifiedColor = DEFAULT_MODIFIED_COLOR,
 }) => {
   const contentWidth = useContentWidth();
+  const renderWidth = Math.max(20, contentWidth - reservedColumns - RENDER_SAFETY_COLUMNS);
   const resolvedSyntaxTheme = syntaxTheme ?? resolveDiffSyntaxTheme(diffTheme);
   const syntaxHighlightEnabled = syntaxHighlight && diffTheme !== 'minimal';
 
@@ -163,7 +168,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
             hunk={hunk}
             maxLines={maxLinesPerHunk}
             isLast={hunkIdx === hunks.length - 1}
-            contentWidth={contentWidth}
+            contentWidth={renderWidth}
             styles={styles}
           />
         ))}
@@ -248,7 +253,7 @@ const DiffLineComponent: React.FC<{
       ? Math.max(20, contentWidth)
       : Math.max(20, contentWidth - LINE_NUMBER_COLUMN_WIDTH - PREFIX_WIDTH);
   const rawContent = line.highlightedContent ?? line.content;
-  const displayContent = padAnsiToWidth(truncateAnsiToWidth(rawContent, availableWidth), availableWidth);
+  const displayContent = truncateAnsiToWidth(rawContent, availableWidth);
   const hasSyntaxAnsi = rawContent !== stripAnsi(rawContent);
   const contentColor = hasSyntaxAnsi ? undefined : style.contentColor;
 
