@@ -91,6 +91,18 @@ export class ToolResultManager {
   }
 
   /**
+   * Update truncation limits at runtime.
+   */
+  setLimits(config: { maxContextPercent?: number; minTokens?: number }): void {
+    if (typeof config.maxContextPercent === 'number') {
+      this.maxContextPercent = config.maxContextPercent;
+    }
+    if (typeof config.minTokens === 'number') {
+      this.minTokens = config.minTokens;
+    }
+  }
+
+  /**
    * Process tool result with context-aware truncation
    *
    * @param toolName Name of the tool that generated the result

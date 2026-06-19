@@ -393,6 +393,49 @@ const AppContentComponent: React.FC<{
     };
   }, [isDebugMode, state.config]);
 
+  // Shared status indicator — rendered above every modal and the input prompt
+  // so the todo list and activity status stay visible in ALL UI states. This
+  // was previously hand-copied into most branches but omitted from the setup/
+  // project/agent wizard branches, which made the todo list vanish whenever a
+  // wizard opened. Defining it once guarantees consistency. Only one branch
+  // renders per pass, so reusing a single element instance is safe.
+  const statusIndicator = (
+    <StatusIndicator
+      isProcessing={state.isThinking}
+      isCompacting={state.isCompacting}
+      isCancelling={isCancelling}
+      recentMessages={state.messages.slice(-3)}
+      sessionLoaded={sessionLoaded}
+      isResuming={!!resumeSession}
+      activeToolCalls={state.activeToolCalls}
+      activeSubAgents={state.activeSubAgents}
+    />
+  );
+
+  // Hidden InputPrompt used purely for keyboard handling behind modal selectors.
+  // Every modal branch shares the same base wiring and passes only its own
+  // request + navigation props via `extra`. Implemented as a function (not a
+  // component) so it renders inline without remounting InputPrompt each render
+  // (which would drop the input buffer / cursor state).
+  const renderKeyboardInput = (extra: Partial<React.ComponentProps<typeof InputPrompt>>) => (
+    <Box height={0} overflow="hidden">
+      <InputPrompt
+        onSubmit={handleInput}
+        onInterjection={handleInterjection}
+        isActive={true}
+        commandHistory={commandHistory || undefined}
+        completionProvider={completionProvider || undefined}
+        activityStream={activityStream}
+        agent={agent}
+        prefillText={modal.inputPrefillText}
+        onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
+        bufferValue={modal.inputBuffer}
+        onBufferChange={modal.setInputBuffer}
+        {...extra}
+      />
+    </Box>
+  );
+
   return (
     <Box flexDirection="column" padding={1} width={terminalWidth}>
       {/* Conversation View - contains header + all conversation history */}
@@ -422,7 +465,8 @@ const AppContentComponent: React.FC<{
 
       {/* Setup Wizard (modal - replaces input when active) */}
       {modal.setupWizardOpen ? (
-        <Box marginTop={1}>
+        <Box marginTop={1} flexDirection="column">
+          {statusIndicator}
           <SetupWizardView
             onComplete={() => {
               if (activityStream) {
@@ -448,7 +492,8 @@ const AppContentComponent: React.FC<{
         </Box>
       ) : /* Project Wizard (modal - replaces input when active) */
       modal.projectWizardOpen ? (
-        <Box marginTop={1}>
+        <Box marginTop={1} flexDirection="column">
+          {statusIndicator}
           <ProjectWizardView
             onComplete={() => {
               if (activityStream) {
@@ -474,7 +519,8 @@ const AppContentComponent: React.FC<{
         </Box>
       ) : /* Agent Wizard (modal - replaces input when active) */
       modal.agentWizardOpen ? (
-        <Box marginTop={1}>
+        <Box marginTop={1} flexDirection="column">
+          {statusIndicator}
           <AgentWizardView
             initialDescription={modal.agentWizardData.initialDescription}
             onComplete={agentData => {
@@ -502,103 +548,45 @@ const AppContentComponent: React.FC<{
       ) : /* Session Selector (replaces input when active) */
       modal.sessionSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <SessionSelector
             sessions={modal.sessionSelectRequest.sessions}
             selectedIndex={modal.sessionSelectRequest.selectedIndex}
             visible={true}
           />
-          {/* Hidden InputPrompt for keyboard handling only */}
-          <Box height={0} overflow="hidden">
-            <InputPrompt
-              onSubmit={handleInput}
-              onInterjection={handleInterjection}
-              isActive={true}
-              commandHistory={commandHistory || undefined}
-              completionProvider={completionProvider || undefined}
-              sessionSelectRequest={modal.sessionSelectRequest}
-              onSessionNavigate={newIndex => {
-                if (modal.sessionSelectRequest) {
-                  modal.setSessionSelectRequest({ ...modal.sessionSelectRequest, selectedIndex: newIndex });
-                }
-              }}
-              activityStream={activityStream}
-              agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
-            />
-          </Box>
+          {renderKeyboardInput({
+            sessionSelectRequest: modal.sessionSelectRequest,
+            onSessionNavigate: newIndex => {
+              if (modal.sessionSelectRequest) {
+                modal.setSessionSelectRequest({ ...modal.sessionSelectRequest, selectedIndex: newIndex });
+              }
+            },
+          })}
         </Box>
       ) : /* Library Selector (replaces input when active) */
       modal.librarySelectRequest ? (
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <PromptLibrarySelector
             prompts={modal.librarySelectRequest.prompts}
             selectedIndex={modal.librarySelectRequest.selectedIndex}
             visible={true}
           />
-          {/* Hidden InputPrompt for keyboard handling only */}
-          <Box height={0} overflow="hidden">
-            <InputPrompt
-              onSubmit={handleInput}
-              onInterjection={handleInterjection}
-              isActive={true}
-              commandHistory={commandHistory || undefined}
-              completionProvider={completionProvider || undefined}
-              librarySelectRequest={modal.librarySelectRequest}
-              onLibraryNavigate={newIndex => {
-                if (modal.librarySelectRequest) {
-                  modal.setLibrarySelectRequest({ ...modal.librarySelectRequest, selectedIndex: newIndex });
-                }
-              }}
-              activityStream={activityStream}
-              agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
-            />
-          </Box>
+          {renderKeyboardInput({
+            librarySelectRequest: modal.librarySelectRequest,
+            onLibraryNavigate: newIndex => {
+              if (modal.librarySelectRequest) {
+                modal.setLibrarySelectRequest({ ...modal.librarySelectRequest, selectedIndex: newIndex });
+              }
+            },
+          })}
         </Box>
       ) : /* Message Selector (for prompt creation) */
       modal.messageSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <MessageSelector
             messages={modal.messageSelectRequest.messages}
@@ -631,17 +619,7 @@ const AppContentComponent: React.FC<{
       ) : /* Prompt Add Wizard (replaces input when active) */
       modal.promptAddRequest ? (
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <PromptAddWizard
             title={modal.promptAddRequest.title}
@@ -700,17 +678,7 @@ const AppContentComponent: React.FC<{
       ) : /* Model Selector (replaces input when active) */
       modal.modelSelectRequest ? (
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <ModelSelector
             models={modal.modelSelectRequest.models}
@@ -743,17 +711,7 @@ const AppContentComponent: React.FC<{
       ) : modal.rewindOptionsRequest ? (
         /* Rewind Options Selector (shown after selecting message in rewind) */
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <RewindOptionsSelector
             targetMessage={modal.rewindOptionsRequest.targetMessage}
@@ -800,17 +758,7 @@ const AppContentComponent: React.FC<{
           const userMessages = state.messages.filter(m => m.role === 'user');
           return (
             <Box marginTop={1} flexDirection="column">
-              {/* Status Indicator - always visible to show todos */}
-              <StatusIndicator
-                isProcessing={state.isThinking}
-                isCompacting={state.isCompacting}
-                isCancelling={isCancelling}
-                recentMessages={state.messages.slice(-3)}
-                sessionLoaded={sessionLoaded}
-                isResuming={!!resumeSession}
-                activeToolCalls={state.activeToolCalls}
-                activeSubAgents={state.activeSubAgents}
-              />
+              {statusIndicator}
 
               <RewindSelector
                 messages={userMessages}
@@ -885,17 +833,7 @@ const AppContentComponent: React.FC<{
       ) : modal.undoFileListRequest && !modal.undoRequest ? (
         /* Undo File List (two-stage flow - stage 1) */
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <UndoFileList request={modal.undoFileListRequest} visible={true} />
           {/* Hidden InputPrompt for keyboard handling only */}
@@ -924,17 +862,7 @@ const AppContentComponent: React.FC<{
       ) : modal.libraryClearConfirmRequest ? (
         /* Library Clear Confirmation */
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <LibraryClearConfirmation
             promptCount={modal.libraryClearConfirmRequest.promptCount}
@@ -968,17 +896,7 @@ const AppContentComponent: React.FC<{
       ) : modal.undoRequest ? (
         /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <UndoPrompt request={modal.undoRequest} selectedIndex={modal.undoSelectedIndex} visible={true} />
           {/* Hidden InputPrompt for keyboard handling only */}
@@ -1007,16 +925,7 @@ const AppContentComponent: React.FC<{
           const formRequest = modal.toolFormRequest;
           return (
             <Box marginTop={1} flexDirection="column">
-              <StatusIndicator
-                isProcessing={state.isThinking}
-                isCompacting={state.isCompacting}
-                isCancelling={isCancelling}
-                recentMessages={state.messages.slice(-3)}
-                sessionLoaded={sessionLoaded}
-                isResuming={!!resumeSession}
-                activeToolCalls={state.activeToolCalls}
-                activeSubAgents={state.activeSubAgents}
-              />
+              {statusIndicator}
               <ToolFormWizard
                 request={formRequest}
                 fieldIndex={modal.toolFormFieldIndex}
@@ -1057,16 +966,7 @@ const AppContentComponent: React.FC<{
       ) : modal.planApprovalRequest ? (
         /* Plan Approval Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
           <PlanApprovalPrompt
             request={modal.planApprovalRequest}
             selectedIndex={modal.planApprovalSelectedIndex}
@@ -1100,17 +1000,7 @@ const AppContentComponent: React.FC<{
       ) : modal.permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           <PermissionPrompt
             request={modal.permissionRequest}
@@ -1152,17 +1042,7 @@ const AppContentComponent: React.FC<{
       ) : (
         /* Input Group - Status Indicator + Input Prompt */
         <Box marginTop={1} flexDirection="column">
-          {/* Status Indicator - always visible to show todos */}
-          <StatusIndicator
-            isProcessing={state.isThinking}
-            isCompacting={state.isCompacting}
-            isCancelling={isCancelling}
-            recentMessages={state.messages.slice(-3)}
-            sessionLoaded={sessionLoaded}
-            isResuming={!!resumeSession}
-            activeToolCalls={state.activeToolCalls}
-            activeSubAgents={state.activeSubAgents}
-          />
+          {statusIndicator}
 
           {/* Input Prompt */}
           <InputPrompt
@@ -1337,16 +1217,14 @@ const AppContentComponent: React.FC<{
 };
 
 /**
- * Memoized AppContent - prevents re-renders unless props actually change
+ * Memoized AppContent - prevents re-renders unless props actually change.
+ *
+ * Uses React's default shallow prop comparison. A previous hand-written
+ * comparator omitted the plugin/MCP count props, which silently froze those
+ * header values when they changed at runtime; since every prop here is a
+ * primitive or stable ref, the default comparison is both correct and safe.
  */
-const AppContent = React.memo(AppContentComponent, (prevProps, nextProps) => {
-  const agentSame = prevProps.agent === nextProps.agent;
-  const resumeSame = prevProps.resumeSession === nextProps.resumeSession;
-  const setupSame = prevProps.showSetupWizard === nextProps.showSetupWizard;
-  const modelSelectorSame = prevProps.showModelSelector === nextProps.showModelSelector;
-  const modelsSame = prevProps.availableModels === nextProps.availableModels;
-  return agentSame && resumeSame && setupSame && modelSelectorSame && modelsSame;
-});
+const AppContent = React.memo(AppContentComponent);
 
 /**
  * Root App Component

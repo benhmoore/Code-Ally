@@ -489,6 +489,47 @@ export class Agent {
   }
 
   /**
+   * Apply runtime configuration updates to this agent.
+   *
+   * Agents receive a copied config at construction, so config changes must be
+   * pushed into live agents explicitly for context accounting and thresholds to
+   * reflect /config updates without restarting.
+   */
+  applyConfigUpdates(updates: Partial<Config>): void {
+    Object.assign(this.appConfig, updates);
+
+    const modelClient = this.modelClient as any;
+
+    if (typeof updates.endpoint === 'string' && typeof modelClient.setEndpoint === 'function') {
+      modelClient.setEndpoint(updates.endpoint);
+    }
+    if (typeof updates.temperature === 'number' && typeof modelClient.setTemperature === 'function') {
+      modelClient.setTemperature(updates.temperature);
+    }
+    if (typeof updates.context_size === 'number') {
+      this.tokenManager.setContextSize(updates.context_size);
+      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
+
+      if (typeof modelClient.setContextSize === 'function') {
+        modelClient.setContextSize(updates.context_size);
+      }
+    }
+    if (typeof updates.tool_result_max_context_percent === 'number' || typeof updates.tool_result_min_tokens === 'number') {
+      this.toolResultManager.setLimits({
+        maxContextPercent: updates.tool_result_max_context_percent,
+        minTokens: updates.tool_result_min_tokens,
+      });
+    }
+    if (typeof updates.tool_call_activity_timeout === 'number') {
+      const timeoutMs = updates.tool_call_activity_timeout * 1000;
+      this.activityMonitor.updateConfig({
+        timeoutMs,
+        enabled: this.config.isSpecializedAgent === true && timeoutMs > 0,
+      });
+    }
+  }
+
+  /**
    * Get the tool orchestrator (used by agent-ask to update parent call ID)
    */
   getToolOrchestrator(): ToolOrchestrator {

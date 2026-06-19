@@ -73,6 +73,14 @@ export class FormManager {
       ActivityEventType.TOOL_FORM_CANCEL,
       this.handleFormCancel.bind(this)
     );
+
+    // Reject any pending forms when the user interrupts the agent, so the
+    // awaiting tool unwinds instead of blocking forever (forms have no timeout).
+    // The UI clears the form modal separately on the same event.
+    this.activityStream.subscribe(
+      ActivityEventType.USER_INTERRUPT_INITIATED,
+      () => this.cancelAllPending()
+    );
   }
 
   /**

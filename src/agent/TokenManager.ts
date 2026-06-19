@@ -320,6 +320,20 @@ export class TokenManager {
   }
 
   /**
+   * Update the maximum context size used for usage and remaining-token calculations.
+   *
+   * Existing token counts remain valid; changing the denominator immediately updates
+   * percentages and tool budgets without needing to rebuild the manager.
+   */
+  setContextSize(contextSize: number): void {
+    if (!Number.isFinite(contextSize) || contextSize <= 0) {
+      throw new Error(`Invalid context size: ${contextSize}`);
+    }
+
+    this.contextSize = contextSize;
+  }
+
+  /**
    * Calculate remaining tokens in context window
    *
    * @returns Remaining token count

@@ -161,6 +161,26 @@ export class ActivityMonitor {
   }
 
   /**
+   * Update monitor configuration at runtime.
+   */
+  updateConfig(config: Partial<Pick<ActivityMonitorConfig, 'timeoutMs' | 'enabled'>>): void {
+    const shouldRestart = this.isRunning && (config.enabled ?? this.config.enabled);
+
+    if (this.isRunning) {
+      this.stop();
+    }
+
+    this.config = {
+      ...this.config,
+      ...config,
+    };
+
+    if (shouldRestart) {
+      this.start();
+    }
+  }
+
+  /**
    * Pause monitoring agent activity
    *
    * Temporarily stops the watchdog timer while preserving the lastActivityTime.

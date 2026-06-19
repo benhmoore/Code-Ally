@@ -51,14 +51,14 @@ interface ValidationResult {
 }
 
 export class OllamaClient extends ModelClient {
-  private readonly _endpoint: string;
+  private _endpoint: string;
   private _modelName: string; // Not readonly - allows runtime model changes
   private _temperature: number; // Not readonly - allows runtime changes
   private _contextSize: number; // Not readonly - allows runtime changes
   private _maxTokens: number; // Not readonly - allows runtime changes
   private _reasoningEffort?: string; // Not readonly - allows runtime changes
   private readonly keepAlive?: number;
-  private readonly apiUrl: string;
+  private apiUrl: string;
   private readonly activityStream?: ActivityStream;
 
   // Track active requests for cancellation (keyed by request ID)
@@ -102,6 +102,19 @@ export class OllamaClient extends ModelClient {
 
   get endpoint(): string {
     return this._endpoint;
+  }
+
+  /**
+   * Update the API endpoint URL at runtime
+   *
+   * @param newEndpoint - New Ollama API endpoint
+   */
+  setEndpoint(newEndpoint: string): void {
+    logger.debug(`[OLLAMA_CLIENT] Changing endpoint from ${this._endpoint} to ${newEndpoint}`);
+    this._endpoint = newEndpoint;
+    this.apiUrl = `${this._endpoint}/api/chat`;
+    this.circuitBreakerFailures = 0;
+    this.circuitBreakerOpenUntil = 0;
   }
 
   /**

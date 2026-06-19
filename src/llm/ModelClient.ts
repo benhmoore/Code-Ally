@@ -161,6 +161,11 @@ export abstract class ModelClient {
   abstract setModelName?(newModelName: string): void;
 
   /**
+   * Update the API endpoint URL at runtime (optional)
+   */
+  abstract setEndpoint?(newEndpoint: string): void;
+
+  /**
    * Cancel any ongoing requests (optional)
    */
   abstract cancel?(): void;

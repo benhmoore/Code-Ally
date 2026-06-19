@@ -781,7 +781,7 @@ export class CompletionProvider {
     }
 
     // Model field - fetch from Ollama
-    if (key === 'model' || key === 'service_model' || key === 'explore_model' || key === 'plan_model') {
+    if (key === 'model' || key === 'service_model' || key === 'explore_model' || key === 'plan_model' || key === 'agent_creation_model') {
       const models = await this.getOllamaModels();
       return models
         .filter(model => model.toLowerCase().includes(prefix.toLowerCase()))
@@ -949,6 +949,7 @@ export class CompletionProvider {
       'service_model': 'Model for background services (titles, idle messages)',
       'explore_model': 'Model for Explore agent',
       'plan_model': 'Model for Plan agent',
+      'agent_creation_model': 'Model for ManageAgents agent',
       'endpoint': 'Ollama API endpoint',
       'context_size': 'Context window size (tokens)',
       'temperature': 'Generation temperature (0.0-1.0)',
@@ -962,6 +963,7 @@ export class CompletionProvider {
       'bash_timeout': 'Bash command timeout (seconds)',
       'auto_confirm': 'Skip permission prompts',
       'parallel_tools': 'Enable parallel tool execution',
+      'tool_call_activity_timeout': 'Sub-agent activity timeout (seconds)',
 
       // UI Preferences
       'theme': 'UI theme name',
@@ -970,6 +972,23 @@ export class CompletionProvider {
       'show_thinking_in_chat': 'Show model thinking in chat',
       'show_system_prompt_in_chat': 'Show system prompts in chat',
       'show_full_tool_output': 'Show full tool output without truncation',
+      'show_tool_parameters_in_chat': 'Show tool parameters in chat',
+      'enable_idle_messages': 'Enable generated idle status messages',
+      'enable_session_title_generation': 'Enable generated session titles',
+
+      // Tool Call Retry
+      'tool_call_retry_enabled': 'Enable automatic tool-call retry',
+      'tool_call_max_retries': 'Maximum tool-call retries',
+      'tool_call_repair_attempts': 'Ask model to repair invalid tool calls',
+      'tool_call_verbose_errors': 'Show verbose tool-call errors',
+
+      // File System Settings
+      'temp_directory': 'Temporary file directory',
+
+      // Directory Tree
+      'dir_tree_enable': 'Enable directory tree generation',
+      'dir_tree_max_depth': 'Directory tree max depth',
+      'dir_tree_max_files': 'Directory tree max files',
 
       // Diff Display
       'diff_display_enabled': 'Show file diffs',
@@ -983,6 +1002,8 @@ export class CompletionProvider {
       // Tool Result Truncation
       'tool_result_max_context_percent': 'Max context % per tool result',
       'tool_result_min_tokens': 'Minimum tokens per result',
+      'read_max_tokens': 'Maximum tokens for read operations',
+      'setup_completed': 'Whether setup wizard has completed',
     };
 
     return configKeys

@@ -53,6 +53,13 @@ export class BashTool extends BaseTool {
   }
 
   /**
+   * Update runtime config used for command defaults such as bash_timeout.
+   */
+  setConfig(config: Config): void {
+    this.config = config;
+  }
+
+  /**
    * Validate BashTool arguments
    */
   validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {

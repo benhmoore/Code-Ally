@@ -17,7 +17,7 @@ import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { formatDisplayName } from '../utils/uiHelpers.js';
-import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS, UI_DELAYS, BUFFER_SIZES } from '@config/constants.js';
+import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS, UI_DELAYS, BUFFER_SIZES, ANIMATION_TIMING } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -25,6 +25,7 @@ import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { ToolManager } from '@tools/ToolManager.js';
 import { AgentPoolService } from '@services/AgentPoolService.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
+import { AnimationTicker } from '@services/AnimationTicker.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -188,6 +189,7 @@ function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: 
 
 // Agent tools are imported from constants
 const AGENT_TYPE_TOOLS = new Set<string>(AGENT_DELEGATION_TOOLS);
+const ARROW_BLINK_INTERVAL_MS = 500;
 
 /**
  * Determine if a child tool should be shown based on parent state and config
@@ -231,7 +233,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // Track acknowledgments for this tool call
   const [acknowledgments, setAcknowledgments] = useState<Array<{ message: string; timestamp: number }>>([]);
 
-  // Flashing arrow for in-progress tool calls
+  // Flashing arrow for in-progress tool calls. This uses the shared UI ticker
+  // so running tool rows animate in the same render wave as spinners.
   const [arrowVisible, setArrowVisible] = useState(true);
 
   useEffect(() => {
@@ -240,12 +243,14 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       return;
     }
 
-    // Flash the arrow every 500ms
-    const interval = setInterval(() => {
-      setArrowVisible(prev => !prev);
-    }, 500);
+    const ticker = AnimationTicker.getInstance();
+    const framesPerBlink = Math.max(1, Math.round(ARROW_BLINK_INTERVAL_MS / ANIMATION_TIMING.FRAME_RATE));
+    const unsubscribe = ticker.subscribe(() => {
+      const visible = Math.floor(ticker.getFrame() / framesPerBlink) % 2 === 0;
+      setArrowVisible(prev => prev === visible ? prev : visible);
+    });
 
-    return () => clearInterval(interval);
+    return unsubscribe;
   }, [isRunning]);
 
   // Subscribe to USER_INTERJECTION events to capture interjections for this tool call

@@ -8,6 +8,7 @@
 
 import { useRef, useEffect, useState } from 'react';
 import { ActivityEventType, Message, ToolCallState, FormRequest } from '@shared/index.js';
+import type { Config } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
@@ -20,6 +21,7 @@ import { SessionManager } from '@services/SessionManager.js';
 import { PatchManager } from '@services/PatchManager.js';
 import { ToolManager } from '@tools/ToolManager.js';
 import { AgentManager } from '@services/AgentManager.js';
+import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
 import { logger } from '@services/Logger.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
@@ -66,6 +68,10 @@ export const useActivitySubscriptions = (
 ): ActivitySubscriptionsState => {
   // Streaming content accumulator (use ref to avoid stale closure in event handlers)
   const streamingContentRef = useRef<string>('');
+
+  // Tracks whether the hook is still mounted, so deferred callbacks
+  // (e.g. setImmediate) can bail out instead of updating unmounted state.
+  const isMountedRef = useRef(true);
 
   // Track thinking start times (keyed by parentId or 'root' for main agent)
   const thinkingStartTimes = useRef<Map<string, number>>(new Map());
@@ -491,10 +497,30 @@ export const useActivitySubscriptions = (
       pendingStreamingChunks.current = '';
       actions.setStreamingContent(undefined);
 
-      // Clear active tool calls when main agent ends (especially if interrupted)
+      // Reconcile tool calls when the main agent ends. On interrupt we drop
+      // them outright; on a normal end we mark any call that never reported
+      // completion as errored, so a dropped TOOL_CALL_END event can never
+      // leave a tool spinning in the UI forever.
       if (wasInterrupted) {
         actions.clearToolCalls();
+      } else {
+        const NON_TERMINAL = ['pending', 'validating', 'scheduled', 'executing'];
+        state.activeToolCalls.forEach((tc: ToolCallState) => {
+          if (NON_TERMINAL.includes(tc.status)) {
+            // Flush any buffered output before forcing the call closed.
+            flushChunks.current(tc.id);
+            actions.updateToolCall(tc.id, {
+              status: 'error',
+              endTime: Date.now(),
+              error: tc.error || 'Tool did not report completion',
+            });
+          }
+        });
       }
+
+      // Clear per-turn tracking maps to prevent unbounded growth across turns.
+      thinkingStartTimes.current.clear();
+      pendingChunks.current.clear();
     }
 
     // Capture context usage for the tool call (event.id is the tool call ID)
@@ -528,6 +554,17 @@ export const useActivitySubscriptions = (
     state.activeSubAgents.forEach(agentName => {
       actions.removeSubAgent(agentName);
     });
+
+    // Dismiss any agent-driven request modals. Their backend promises are
+    // rejected on the same event by TrustManager/FormManager/PlanModeManager,
+    // but those rejections emit no UI event, so the prompts must be cleared
+    // here or they would linger after the work they belong to is abandoned.
+    modal.clearTransientModals();
+
+    // Clear per-turn tracking maps; interrupted tools/sub-agents never emit
+    // their completion events, so their entries would otherwise leak.
+    thinkingStartTimes.current.clear();
+    pendingChunks.current.clear();
   });
 
   // Diff preview
@@ -705,38 +742,7 @@ export const useActivitySubscriptions = (
         await configManager.initialize();
         const newConfig = configManager.getConfig();
 
-        const modelClient = registry.get<any>('model_client');
-        if (modelClient) {
-          if (typeof modelClient.setModelName === 'function' && newConfig.model) {
-            modelClient.setModelName(newConfig.model);
-          }
-          if (typeof modelClient.setTemperature === 'function') {
-            modelClient.setTemperature(newConfig.temperature);
-          }
-          if (typeof modelClient.setContextSize === 'function') {
-            modelClient.setContextSize(newConfig.context_size);
-          }
-          if (typeof modelClient.setMaxTokens === 'function') {
-            modelClient.setMaxTokens(newConfig.max_tokens);
-          }
-        }
-
-        const serviceModelClient = registry.get<any>('service_model_client');
-        if (serviceModelClient) {
-          const serviceModel = newConfig.service_model ?? newConfig.model;
-          if (typeof serviceModelClient.setModelName === 'function' && serviceModel) {
-            serviceModelClient.setModelName(serviceModel);
-          }
-          if (typeof serviceModelClient.setTemperature === 'function') {
-            serviceModelClient.setTemperature(newConfig.temperature);
-          }
-          if (typeof serviceModelClient.setContextSize === 'function') {
-            serviceModelClient.setContextSize(newConfig.context_size);
-          }
-          if (typeof serviceModelClient.setMaxTokens === 'function') {
-            serviceModelClient.setMaxTokens(newConfig.max_tokens);
-          }
-        }
+        applyRuntimeConfigUpdates(registry, newConfig);
 
         actions.updateConfig(newConfig);
 
@@ -1023,14 +1029,11 @@ export const useActivitySubscriptions = (
       }
 
       const configKey = effectiveModelType === 'service' ? 'service_model' : 'model';
-      const clientKey = effectiveModelType === 'service' ? 'service_model_client' : 'model_client';
 
       await configManager.setValue(configKey, modelName);
 
-      const modelClient = registry.get<any>(clientKey);
-      if (modelClient && typeof modelClient.setModelName === 'function') {
-        modelClient.setModelName(modelName);
-      }
+      const updates = { [configKey]: modelName } as Partial<Config>;
+      applyRuntimeConfigUpdates(registry, updates);
 
       if (effectiveModelType === 'service') {
         actions.updateConfig({ service_model: modelName });
@@ -1064,31 +1067,8 @@ export const useActivitySubscriptions = (
     // Update UI state
     actions.updateConfig(updates);
 
-    // Sync runtime model client settings
     const registry = ServiceRegistry.getInstance();
-    const modelClient = registry.get<any>('model_client');
-    const serviceModelClient = registry.get<any>('service_model_client');
-
-    // Model changes are handled by ModelCommand directly, but other settings need syncing
-    if ('context_size' in updates && updates.context_size !== undefined) {
-      if (modelClient?.setContextSize) modelClient.setContextSize(updates.context_size);
-      if (serviceModelClient?.setContextSize) serviceModelClient.setContextSize(updates.context_size);
-    }
-    if ('temperature' in updates && updates.temperature !== undefined) {
-      if (modelClient?.setTemperature) modelClient.setTemperature(updates.temperature);
-      if (serviceModelClient?.setTemperature) serviceModelClient.setTemperature(updates.temperature);
-    }
-    if ('max_tokens' in updates && updates.max_tokens !== undefined) {
-      if (modelClient?.setMaxTokens) modelClient.setMaxTokens(updates.max_tokens);
-      if (serviceModelClient?.setMaxTokens) serviceModelClient.setMaxTokens(updates.max_tokens);
-    }
-    if ('service_model' in updates && updates.service_model !== undefined) {
-      if (serviceModelClient?.setModelName) serviceModelClient.setModelName(updates.service_model);
-    }
-    if ('reasoning_effort' in updates) {
-      if (modelClient?.setReasoningEffort) modelClient.setReasoningEffort(updates.reasoning_effort);
-      if (serviceModelClient?.setReasoningEffort) serviceModelClient.setReasoningEffort(updates.reasoning_effort);
-    }
+    applyRuntimeConfigUpdates(registry, updates as Partial<Config>);
   });
 
   // Rewind request
@@ -1142,6 +1122,8 @@ export const useActivitySubscriptions = (
   // Cleanup on unmount: flush pending chunks and cancel timers
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
+
       // Flush any remaining chunks
       flushChunks.current();
 
@@ -1341,7 +1323,14 @@ export const useActivitySubscriptions = (
         // Use shared session loading logic
         await loadSessionData(sessionData, agent, actions, activityStream);
       } catch (error) {
-        // Error handled silently - session loading is optional
+        // Surface the failure instead of leaving the UI in an indeterminate
+        // state with no feedback about why the session didn't load.
+        logger.error('[ACTIVITY] Failed to load selected session:', error);
+        actions.addMessage({
+          role: 'assistant',
+          content: `Failed to load session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          timestamp: Date.now(),
+        });
       }
     }
   });
@@ -1630,8 +1619,9 @@ export const useActivitySubscriptions = (
             actions.addToolCall(toolCall);
           } catch (error) {
             // Log but don't fail rewind if a tool call can't be added
-            // This could happen if there are duplicate IDs in the session data
-            console.warn(`Failed to add reconstructed tool call ${toolCall.id}:`, error);
+            // This could happen if there are duplicate IDs in the session data.
+            // Use logger (not console) — raw stdout writes corrupt the Ink frame.
+            logger.warn(`Failed to add reconstructed tool call ${toolCall.id}:`, error);
           }
         });
 
@@ -1649,6 +1639,9 @@ export const useActivitySubscriptions = (
         // resetConversationView uses setImmediate, so we need to wait for it to finish
         // Otherwise the notice gets added while terminal is clearing, causing rendering issues
         setImmediate(() => {
+          // Bail if the component unmounted while the conversation view was clearing.
+          if (!isMountedRef.current) return;
+
           // Add rewind notice at the target message timestamp (or slightly after if no timestamp)
           // This ensures the notice appears at the rewind point in the timeline, not at the end
           const noticeTimestamp = targetTimestamp ? targetTimestamp + 1 : Date.now();

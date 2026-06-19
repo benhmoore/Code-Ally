@@ -5,7 +5,7 @@
  */
 
 import { Command } from './Command.js';
-import type { Message } from '@shared/index.js';
+import type { Config, Message } from '@shared/index.js';
 import { ActivityEventType } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
@@ -17,6 +17,7 @@ import type { CommandMetadata } from './types.js';
 import { DEFAULT_CONFIG, validateConfigValue } from '@config/defaults.js';
 import { ANSI_COLORS } from '../../ui/constants/colors.js';
 import { SEARCH_PROVIDER_INFO } from '../../types/integration.js';
+import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
 
 // Fields stored in IntegrationStore instead of ConfigManager
 const INTEGRATION_STORE_FIELDS = ['search_provider', 'search_api_key'] as const;
@@ -85,13 +86,17 @@ export class ConfigCommand extends Command {
 
     // Category definitions matching ConfigViewer
     const categoryDefs = {
-      'LLM Model Settings': ['model', 'service_model', 'explore_model', 'plan_model', 'endpoint', 'context_size', 'temperature', 'max_tokens', 'reasoning_effort'],
+      'LLM Model Settings': ['model', 'service_model', 'explore_model', 'plan_model', 'agent_creation_model', 'endpoint', 'context_size', 'temperature', 'max_tokens', 'reasoning_effort'],
       'Agent Settings': ['default_agent'],
-      'Execution Settings': ['bash_timeout', 'auto_confirm', 'parallel_tools'],
+      'Execution Settings': ['bash_timeout', 'auto_confirm', 'parallel_tools', 'tool_call_activity_timeout'],
       'File System Settings': ['temp_directory'],
       'UI Preferences': ['theme', 'compact_threshold', 'show_context_in_prompt', 'show_thinking_in_chat', 'show_system_prompt_in_chat', 'show_full_tool_output', 'show_tool_parameters_in_chat', 'enable_idle_messages', 'enable_session_title_generation'],
+      'Tool Call Retry': ['tool_call_retry_enabled', 'tool_call_max_retries', 'tool_call_repair_attempts', 'tool_call_verbose_errors'],
+      'Directory Tree': ['dir_tree_enable', 'dir_tree_max_depth', 'dir_tree_max_files'],
       'Diff Display': ['diff_display_enabled', 'diff_display_max_file_size', 'diff_display_context_lines', 'diff_display_theme', 'diff_display_color_removed', 'diff_display_color_added', 'diff_display_color_modified'],
       'Tool Result Truncation': ['tool_result_max_context_percent', 'tool_result_min_tokens'],
+      'Read Tool': ['read_max_tokens'],
+      'Setup': ['setup_completed'],
       'Search Integration': ['search_provider', 'search_api_key'],
     };
 
@@ -225,6 +230,9 @@ export class ConfigCommand extends Command {
 
     try {
       const { key, oldValue, newValue } = await configManager.setFromString(kvString);
+      const updates = { [key]: newValue } as Partial<Config>;
+
+      applyRuntimeConfigUpdates(serviceRegistry, updates);
 
       // Notify UI of config change for immediate effect
       const activityStream = serviceRegistry.get('activity_stream');
@@ -233,7 +241,7 @@ export class ConfigCommand extends Command {
           id: `config_updated_${Date.now()}`,
           type: ActivityEventType.CONFIG_UPDATED,
           timestamp: Date.now(),
-          data: { [key]: newValue },
+          data: updates,
         });
       }
 
@@ -406,6 +414,13 @@ export class ConfigCommand extends Command {
         return this.createResponse('Configuration is already at default values.');
       }
 
+      const currentConfig = configManager.getConfig();
+      const updates = Object.fromEntries(
+        changedKeys.map(key => [key, (currentConfig as any)[key]])
+      ) as Partial<Config>;
+
+      applyRuntimeConfigUpdates(serviceRegistry, updates);
+
       // Notify UI of all config changes for immediate effect
       const activityStream = serviceRegistry.get('activity_stream');
       if (activityStream && typeof (activityStream as any).emit === 'function') {
@@ -413,7 +428,7 @@ export class ConfigCommand extends Command {
           id: `config_updated_${Date.now()}`,
           type: ActivityEventType.CONFIG_UPDATED,
           timestamp: Date.now(),
-          data: changes,
+          data: updates,
         });
       }
 

@@ -151,11 +151,17 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   const wasProcessingRef = useRef<boolean>(isProcessing);
   const hasStartedRef = useRef<boolean>(false);
   const recentMessagesRef = useRef(recentMessages);
+  const activeToolCallsRef = useRef(activeToolCalls);
+  const terminalProgressVisibleRef = useRef(false);
 
   // Keep recentMessages ref up to date
   useEffect(() => {
     recentMessagesRef.current = recentMessages;
   }, [recentMessages]);
+
+  useEffect(() => {
+    activeToolCallsRef.current = activeToolCalls;
+  }, [activeToolCalls]);
 
   // Reset timer when processing or compacting starts
   useEffect(() => {
@@ -252,41 +258,59 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
     }
   }, [isProcessing]);
 
-  // Manage terminal tab progress bar (OSC 9;4)
-  // Shows indeterminate progress only during long-running tool calls
+  // Manage terminal tab progress bar (OSC 9;4).
+  // Keep the effect keyed to processing state only; active tool calls are read
+  // through a ref so every tool update does not clear/rewrite the Ink frame.
   useEffect(() => {
-    // Check if any tool call has been executing beyond the display threshold
+    const setProgressVisible = (visible: boolean) => {
+      if (terminalProgressVisibleRef.current === visible) return;
+
+      if (visible) {
+        setTerminalProgress(0, 'indeterminate');
+      } else {
+        clearTerminalProgress();
+      }
+
+      terminalProgressVisibleRef.current = visible;
+    };
+
     const checkLongRunningToolCalls = () => {
       const now = Date.now();
-      const hasLongRunningTool = activeToolCalls.some(tc => {
+      const hasLongRunningTool = activeToolCallsRef.current.some(tc => {
         if (tc.status !== 'executing') return false;
         const startTime = tc.executionStartTime || tc.startTime;
         return (now - startTime) >= UI_DELAYS.TOOL_DURATION_DISPLAY_THRESHOLD;
       });
 
-      if (hasLongRunningTool) {
-        setTerminalProgress(0, 'indeterminate');
-      } else {
-        clearTerminalProgress();
-      }
+      setProgressVisible(hasLongRunningTool);
     };
 
-    // Initial check
+    if (!(isProcessing || isCompacting)) {
+      setProgressVisible(false);
+      return undefined;
+    }
+
     checkLongRunningToolCalls();
 
-    // Check every second while processing
-    const interval = (isProcessing || isCompacting)
-      ? setInterval(checkLongRunningToolCalls, 1000)
-      : undefined;
+    const interval = setInterval(checkLongRunningToolCalls, 1000);
 
-    // Cleanup on unmount or when deps change
     return () => {
-      if (interval) clearInterval(interval);
-      clearTerminalProgress();
+      clearInterval(interval);
     };
-  }, [isProcessing, isCompacting, activeToolCalls]);
+  }, [isProcessing, isCompacting]);
 
-  // Subscribe to TODO_UPDATE events for immediate todo display updates
+  useEffect(() => {
+    return () => {
+      clearTerminalProgress();
+      terminalProgressVisibleRef.current = false;
+    };
+  }, []);
+
+  // Subscribe to TODO_UPDATE events for immediate todo display updates.
+  // Established once on mount (empty deps) so events are never dropped during
+  // processing-state flips. The handler reads isProcessing through
+  // wasProcessingRef (kept current by the effect below) instead of closing
+  // over the prop directly.
   useEffect(() => {
     try {
       const registry = ServiceRegistry.getInstance();
@@ -305,8 +329,10 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
             const { getActiveForm } = await import('../../services/TodoManager.js');
             const newTask = inProgress ? getActiveForm(inProgress.task) : null;
 
-            // Reset timer when task changes (only when processing)
-            if (isProcessing && newTask && previousTaskRef.current !== newTask) {
+            // Reset timer when task changes (only when processing).
+            // Read current value via ref so this subscription never needs to
+            // re-mount when isProcessing changes.
+            if (wasProcessingRef.current && newTask && previousTaskRef.current !== newTask) {
               setStartTime(Date.now());
               setElapsedSeconds(0);
               previousTaskRef.current = newTask;
@@ -327,7 +353,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       // Silently handle errors
     }
     return undefined;
-  }, [isProcessing]);
+  }, []);
 
   // Subscribe to USER_INTERJECTION events to show acknowledgment indicator
   useEffect(() => {
@@ -395,7 +421,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
           setCurrentTask(newTask);
 
           // Get all todos for display (reversed order)
-          // Include proposed todos (they'll be displayed greyed out)
           const todos = todoManager.getTodos();
           setAllTodos([...todos].reverse());
         }
@@ -451,7 +476,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
   const getCheckbox = (status: string): string => {
     if (status === 'completed') return UI_SYMBOLS.TODO.CHECKED;
     if (status === 'in_progress') return UI_SYMBOLS.TODO.UNCHECKED;
-    if (status === 'proposed') return UI_SYMBOLS.TODO.PROPOSED;
     return UI_SYMBOLS.TODO.UNCHECKED;
   };
 

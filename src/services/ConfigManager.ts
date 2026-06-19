@@ -541,7 +541,7 @@ export class ConfigManager implements IService {
     // Set the value (this validates and saves)
     await this.setValue(key as keyof Config, value);
 
-    return { key, oldValue, newValue: value };
+    return { key, oldValue, newValue: this.getValue(key as keyof Config) };
   }
 
   /**

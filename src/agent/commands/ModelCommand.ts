@@ -8,7 +8,7 @@
  */
 
 import { Command } from './Command.js';
-import type { Message } from '@shared/index.js';
+import type { Config, Message } from '@shared/index.js';
 import { ActivityEventType } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
@@ -18,6 +18,7 @@ import { BYTE_CONVERSIONS, FORMATTING } from '@config/constants.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 import { testModelCapabilities } from '@llm/ModelValidation.js';
+import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
 
 export class ModelCommand extends Command {
   static readonly metadata: CommandMetadata = {
@@ -90,12 +91,8 @@ export class ModelCommand extends Command {
         const configKey = modelType === 'service' ? 'service_model' : 'model';
         await configManager.setValue(configKey, modelName);
 
-        // Update the active ModelClient to use the new model immediately
-        const clientKey = modelType === 'service' ? 'service_model_client' : 'model_client';
-        const modelClient = serviceRegistry.get<any>(clientKey);
-        if (modelClient && typeof modelClient.setModelName === 'function') {
-          modelClient.setModelName(modelName);
-        }
+        const updates = { [configKey]: modelName } as Partial<Config>;
+        applyRuntimeConfigUpdates(serviceRegistry, updates);
 
         // Notify UI of config change
         const activityStream = serviceRegistry.get('activity_stream');
@@ -104,7 +101,7 @@ export class ModelCommand extends Command {
             id: `config_updated_${Date.now()}`,
             type: ActivityEventType.CONFIG_UPDATED,
             timestamp: Date.now(),
-            data: { [configKey]: modelName },
+            data: updates,
           });
         }
 

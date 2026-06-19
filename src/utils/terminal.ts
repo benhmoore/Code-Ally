@@ -54,6 +54,8 @@ export function sendTerminalNotification(): void {
  */
 export type ProgressState = 'normal' | 'error' | 'indeterminate' | 'warning';
 
+let lastProgressPayload: string | null | undefined = undefined;
+
 /**
  * Set terminal tab progress bar
  *
@@ -84,10 +86,19 @@ export function setTerminalProgress(
   };
 
   const code = stateCode[state];
+  const payload = `${code}:${clampedPercent}`;
+  if (lastProgressPayload === payload) {
+    return;
+  }
+
+  if (!process.stdout.isTTY) {
+    return;
+  }
 
   // OSC 9;4;<state>;<percentage> ST
   // Using BEL (\x07) as string terminator for broader compatibility
   process.stdout.write(`\x1b]9;4;${code};${clampedPercent}\x07`);
+  lastProgressPayload = payload;
 }
 
 /**
@@ -96,6 +107,15 @@ export function setTerminalProgress(
  * Removes the progress indicator from the terminal tab.
  */
 export function clearTerminalProgress(): void {
+  if (lastProgressPayload === null) {
+    return;
+  }
+
+  if (!process.stdout.isTTY) {
+    return;
+  }
+
   // OSC 9;4;0; ST - state 0 removes the progress indicator
   process.stdout.write('\x1b]9;4;0;\x07');
+  lastProgressPayload = null;
 }

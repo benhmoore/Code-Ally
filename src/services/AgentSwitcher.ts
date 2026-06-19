@@ -203,6 +203,7 @@ export async function switchAgent(
 
   // Register new agent in ServiceRegistry
   registry.registerInstance('agent', newAgent);
+  registry.registerInstance('token_manager', newAgent.getTokenManager());
   logger.debug('[AGENT_SWITCHER]', 'Registered new agent in ServiceRegistry');
   logger.debug('[AGENT_SWITCHER]', 'Agent switch complete');
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text, Static } from 'ink';
+import { Box, Text, Static, useStdout } from 'ink';
 import { Message, ToolCallState, SessionInfo } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
@@ -208,6 +208,9 @@ const MAX_VISIBLE_RUNNING_TOOLS = 8;
  * Prevents unbounded dynamic output growth during long streaming responses.
  */
 const MAX_STREAMING_LINES = 60;
+const ACTIVE_CONTENT_MIN_HEIGHT = 6;
+const ACTIVE_CONTENT_MAX_HEIGHT = 14;
+const ACTIVE_CONTENT_TERMINAL_RATIO = 0.4;
 
 const ActiveContent = React.memo<{
   runningToolCalls: (ToolCallState & { children?: ToolCallState[] })[];
@@ -216,6 +219,13 @@ const ActiveContent = React.memo<{
   config?: any;
   compactionNotices?: CompactionNotice[];
 }>(({ runningToolCalls, streamingContent, config, compactionNotices }) => {
+  const { stdout } = useStdout();
+  const terminalRows = stdout?.rows || process.stdout.rows || 24;
+  const maxActiveHeight = Math.max(
+    ACTIVE_CONTENT_MIN_HEIGHT,
+    Math.min(ACTIVE_CONTENT_MAX_HEIGHT, Math.floor(terminalRows * ACTIVE_CONTENT_TERMINAL_RATIO))
+  );
+
   // Early return null if nothing to render - prevents empty Box from taking space
   if (runningToolCalls.length === 0 && !streamingContent) {
     return null;
@@ -237,7 +247,7 @@ const ActiveContent = React.memo<{
   }
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={maxActiveHeight} overflowY="hidden">
       {hiddenToolCount > 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>({hiddenToolCount} more tool{hiddenToolCount !== 1 ? 's' : ''} running...)</Text>

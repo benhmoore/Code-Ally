@@ -34,7 +34,7 @@ import { createStructuredError } from '@utils/errorUtils.js';
  */
 export interface InputHandlers {
   /** Handle regular user input (messages, commands, bash shortcuts) */
-  handleInput: (input: string) => Promise<void>;
+  handleInput: (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => Promise<void>;
   /** Handle user interjection (submitting message mid-response) */
   handleInterjection: (message: string) => Promise<void>;
 }

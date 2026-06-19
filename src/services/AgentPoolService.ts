@@ -12,7 +12,7 @@
  * the pool when the pool reaches capacity using LRU policy.
  */
 
-import { IService } from '../types/index.js';
+import { Config, IService } from '../types/index.js';
 import { logger } from './Logger.js';
 import { Agent, AgentConfig } from '../agent/Agent.js';
 import { ModelClient } from '../llm/ModelClient.js';
@@ -544,6 +544,16 @@ export class AgentPoolService implements IService {
    */
   hasAgent(agentId: string): boolean {
     return this.pool.has(agentId);
+  }
+
+  /**
+   * Apply runtime config updates to all pooled agents and their stored metadata.
+   */
+  applyConfigUpdates(updates: Partial<Config>): void {
+    for (const metadata of this.pool.values()) {
+      Object.assign(metadata.config.config, updates);
+      metadata.agent.applyConfigUpdates(updates);
+    }
   }
 
   /**

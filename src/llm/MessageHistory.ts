@@ -26,7 +26,7 @@ export interface MessageHistoryOptions {
 export class MessageHistory {
   private messages: Message[] = [];
   private readonly maxMessages: number;
-  private readonly maxTokens: number;
+  private maxTokens: number;
   private cachedTokenCount = 0;
 
   /**
@@ -45,6 +45,14 @@ export class MessageHistory {
   constructor(options: MessageHistoryOptions = {}) {
     this.maxMessages = options.maxMessages || 1000;
     this.maxTokens = options.maxTokens || 16000;
+  }
+
+  /**
+   * Update the token budget used for context summaries and retention.
+   */
+  setMaxTokens(maxTokens: number): void {
+    this.maxTokens = maxTokens;
+    this.enforceConstraints();
   }
 
   /**

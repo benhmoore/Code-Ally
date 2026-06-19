@@ -132,6 +132,14 @@ export class TrustManager {
       this.activityStream.subscribe(ActivityEventType.PERMISSION_RESPONSE, (event: ActivityEvent) => {
         this.handlePermissionResponse(event);
       });
+
+      // Reject any pending permission prompts when the user interrupts the
+      // agent, so the awaiting tool unwinds immediately instead of hanging
+      // until the 2-minute timeout. The UI clears the prompt separately on
+      // the same event (see useActivitySubscriptions).
+      this.activityStream.subscribe(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
+        this.cancelAllPending();
+      });
     }
   }
 
@@ -394,6 +402,16 @@ export class TrustManager {
   }
 
   /**
+   * Update auto-confirm mode at runtime.
+   *
+   * Used by /config changes so permission behavior matches the active config
+   * without requiring a restart.
+   */
+  setAutoConfirm(autoConfirm: boolean): void {
+    this.autoConfirm = autoConfirm;
+  }
+
+  /**
    * Set the delegation name getter function
    * This should be called after ToolManager initialization to connect delegation state
    *
@@ -546,6 +564,24 @@ export class TrustManager {
         },
       });
     });
+  }
+
+  /**
+   * Reject all pending permission requests (e.g., on user interrupt).
+   * Clears each request's timeout so it cannot fire after rejection.
+   */
+  cancelAllPending(): void {
+    if (this.pendingPermissions.size === 0) {
+      return;
+    }
+    logger.debug(`[TrustManager] Cancelling ${this.pendingPermissions.size} pending permission request(s)`);
+    // Snapshot before iterating: reject() may settle awaiting code synchronously.
+    const pendings = Array.from(this.pendingPermissions.values());
+    this.pendingPermissions.clear();
+    for (const pending of pendings) {
+      clearTimeout(pending.timeoutId);
+      pending.reject(new PermissionDeniedError('Permission request interrupted'));
+    }
   }
 
   /**

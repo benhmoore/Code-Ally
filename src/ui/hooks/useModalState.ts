@@ -15,7 +15,7 @@
  * - Library selector
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ModelOption } from '../components/ModelSelector.js';
 import { PermissionRequest } from '../components/PermissionPrompt.js';
 import type { PlanApprovalRequest } from '../components/PlanApprovalPrompt.js';
@@ -253,6 +253,10 @@ export interface ModalState {
   // Exit confirmation (Ctrl+C on empty buffer)
   isWaitingForExitConfirmation: boolean;
   setIsWaitingForExitConfirmation: (waiting: boolean) => void;
+
+  // Dismiss all agent-driven request modals (permission, tool form, plan
+  // approval, model-select loading) — used when the user interrupts the agent.
+  clearTransientModals: () => void;
 }
 
 /**
@@ -284,6 +288,18 @@ export const useModalState = (): ModalState => {
 
   // Computed current permission request (first in queue)
   const permissionRequest = permissionRequestQueue[0];
+
+  // When the head request changes, reset per-request UI state so the
+  // selection index, instruction text, and cursor never bleed from the
+  // previously-answered prompt into the next queued one. This complements
+  // the resets inside add/remove and guarantees correctness regardless of
+  // how the head changed (answered, cancelled, or replaced).
+  const headPermissionId = permissionRequest?.requestId;
+  useEffect(() => {
+    setPermissionSelectedIndex(0);
+    setPermissionInstructText('');
+    setPermissionCursorPosition(0);
+  }, [headPermissionId]);
 
   // Add permission request to queue
   const addPermissionRequest = (request: PermissionRequestWithId) => {
@@ -453,6 +469,27 @@ export const useModalState = (): ModalState => {
   // Exit confirmation
   const [isWaitingForExitConfirmation, setIsWaitingForExitConfirmation] = useState(false);
 
+  // Dismiss every modal whose lifecycle is tied to active agent work. Used on
+  // user interrupt so prompts can't linger after the work they belong to has
+  // been abandoned. User-driven selectors (session/library/rewind/etc.) are
+  // intentionally left untouched — they are opened and closed by explicit
+  // user action, not by agent activity.
+  const clearTransientModals = useCallback(() => {
+    setPermissionRequestQueue([]);
+    setPermissionSelectedIndex(0);
+    setPermissionInstructText('');
+    setPermissionCursorPosition(0);
+    setToolFormQueue([]);
+    setToolFormValues({});
+    setToolFormFieldIndex(0);
+    setToolFormErrors({});
+    setPlanApprovalRequest(undefined);
+    setPlanApprovalSelectedIndex(0);
+    setPlanApprovalFeedbackText('');
+    setPlanApprovalCursorPosition(0);
+    setModelSelectLoading(false);
+  }, []);
+
   return {
     // Permission prompt
     permissionRequest,
@@ -567,5 +604,8 @@ export const useModalState = (): ModalState => {
     // Exit confirmation
     isWaitingForExitConfirmation,
     setIsWaitingForExitConfirmation,
+
+    // Bulk cleanup
+    clearTransientModals,
   };
 };

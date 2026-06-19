@@ -75,6 +75,21 @@ export class TodoManager {
   }
 
   /**
+   * Emit a TODO_UPDATE activity event so the UI updates immediately.
+   * All mutators that change this.todos must call this after the mutation.
+   */
+  private emitUpdate(): void {
+    if (this.activityStream) {
+      this.activityStream.emit({
+        id: `todo-update-${Date.now()}`,
+        type: ActivityEventType.TODO_UPDATE,
+        timestamp: Date.now(),
+        data: { todos: this.todos },
+      });
+    }
+  }
+
+  /**
    * Create a new todo item
    *
    * @param task - Task description
@@ -110,14 +125,7 @@ export class TodoManager {
     this.todos = todos;
 
     // Emit event for immediate UI update
-    if (this.activityStream) {
-      this.activityStream.emit({
-        id: `todo-update-${Date.now()}`,
-        type: ActivityEventType.TODO_UPDATE,
-        timestamp: Date.now(),
-        data: { todos: this.todos },
-      });
-    }
+    this.emitUpdate();
 
     // Log todos when they are updated
     this.logTodosIfChanged();
@@ -134,14 +142,7 @@ export class TodoManager {
     this.todos.push(...newTodos);
 
     // Emit event for immediate UI update
-    if (this.activityStream) {
-      this.activityStream.emit({
-        id: `todo-update-${Date.now()}`,
-        type: ActivityEventType.TODO_UPDATE,
-        timestamp: Date.now(),
-        data: { todos: this.todos },
-      });
-    }
+    this.emitUpdate();
 
     // Log todos when they are updated
     this.logTodosIfChanged();
@@ -184,7 +185,8 @@ export class TodoManager {
     const todoToComplete = this.todos[originalIndex];
     if (todoToComplete) {
       todoToComplete.status = 'completed';
-      // Log todos when they are modified
+      // Emit event for immediate UI update, then log
+      this.emitUpdate();
       this.logTodosIfChanged();
     }
 
@@ -204,7 +206,8 @@ export class TodoManager {
     }
 
     todo.status = 'completed';
-    // Log todos when they are modified
+    // Emit event for immediate UI update, then log
+    this.emitUpdate();
     this.logTodosIfChanged();
     return todo;
   }
@@ -224,7 +227,8 @@ export class TodoManager {
       this.todos = this.todos.filter(todo => todo.status !== 'completed');
     }
 
-    // Log todos when they are cleared
+    // Emit event for immediate UI update, then log
+    this.emitUpdate();
     this.logTodosIfChanged();
 
     return originalCount - this.todos.length;

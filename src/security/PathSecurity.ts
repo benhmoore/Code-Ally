@@ -104,7 +104,7 @@ export function isPathWithinCwd(checkPath: string): boolean {
       }
 
       // Also allow access to configured temp directory
-      const configManager = registry.get<ConfigManager>('config');
+      const configManager = registry.get<ConfigManager>('config_manager');
       if (configManager) {
         const config = configManager.getConfig();
         const tempDir = path.resolve(config.temp_directory);

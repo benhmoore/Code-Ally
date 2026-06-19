@@ -51,6 +51,13 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
   }
 
   /**
+   * Enable or disable LLM-backed title generation at runtime.
+   */
+  setEnabled(enabled: boolean): void {
+    this.enableGeneration = enabled;
+  }
+
+  /**
    * Create fallback title from last user message
    * Uses last user message truncated to SESSION_TITLE_MAX
    */

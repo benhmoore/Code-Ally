@@ -104,8 +104,8 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
         <Text bold color={UI_COLORS.TEXT_DEFAULT}>
           {toolName}
         </Text>
-        {queueLength && queueLength > 1 && (
-          <Text dimColor> (1 of {queueLength})</Text>
+        {queueLength != null && queueLength > 1 && (
+          <Text dimColor> ({queueLength} pending)</Text>
         )}
       </Box>
 
@@ -118,7 +118,10 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
 
       {/* Options */}
       {options.map((option, idx) => {
-        const isSelected = idx === selectedIndex;
+        const safeSelectedIndex = options.length > 0
+          ? Math.min(Math.max(selectedIndex, 0), options.length - 1)
+          : 0;
+        const isSelected = idx === safeSelectedIndex;
         // INSTRUCT options are dynamic strings like "Tell Assistant what to do instead..."
         const isInstructOption = typeof option === 'string' && option.startsWith('Tell ') && option.endsWith('...');
 

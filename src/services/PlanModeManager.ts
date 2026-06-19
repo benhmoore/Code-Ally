@@ -76,6 +76,13 @@ export class PlanModeManager {
         this.pendingApproval = null;
       }
     });
+
+    // Reject a pending approval when the user interrupts the agent, so the
+    // awaiting tool unwinds instead of blocking forever. The UI clears the
+    // approval modal separately on the same event.
+    this.activityStream.subscribe(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
+      this.cancelPendingApproval();
+    });
   }
 
   /**
@@ -174,6 +181,17 @@ export class PlanModeManager {
     return new Promise<PlanApprovalResponse>((resolve, reject) => {
       this.pendingApproval = { resolve, reject };
     });
+  }
+
+  /**
+   * Reject a pending plan-approval request without exiting plan mode
+   * (e.g., when the user interrupts the agent while approval is open).
+   */
+  cancelPendingApproval(): void {
+    if (this.pendingApproval) {
+      this.pendingApproval.reject(new Error('Plan approval interrupted'));
+      this.pendingApproval = null;
+    }
   }
 
   /**
