@@ -510,7 +510,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       )}
 
       {/* Diff preview (hidden only if collapsed; always shown regardless of hideOutput) */}
-      {!toolCall.collapsed && toolCall.diffPreview && (
+      {!toolCall.collapsed && toolCall.diffPreview && config?.diff_display_enabled !== false && (
         <Box flexDirection="column" paddingLeft={indent.length + 4}>
           <DiffDisplay
             oldContent={toolCall.diffPreview.oldContent}
@@ -518,6 +518,12 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
             filePath={toolCall.diffPreview.filePath}
             maxLinesPerHunk={10}
             editsCount={toolCall.diffPreview.editsCount}
+            contextLines={config?.diff_display_context_lines}
+            diffTheme={config?.diff_display_theme}
+            maxHighlightBytes={config?.diff_display_max_file_size}
+            addedColor={config?.diff_display_color_added}
+            removedColor={config?.diff_display_color_removed}
+            modifiedColor={config?.diff_display_color_modified}
           />
         </Box>
       )}

@@ -18,9 +18,25 @@ describe('SyntaxHighlighter', () => {
     expect(highlighter.detectLanguage(code)).toBe('typescript');
   });
 
+  it('should prefer TypeScript React filename detection over content fallback', () => {
+    expect(highlighter.detectLanguage('export default function App() {}', 'src/App.tsx')).toBe('tsx');
+  });
+
   it('should detect Python code', () => {
     const code = 'def test():\n    pass';
     expect(highlighter.detectLanguage(code)).toBe('python');
+  });
+
+  it('should detect Python from filename', () => {
+    expect(highlighter.detectLanguage('print("hello")', 'scripts/task.py')).toBe('python');
+  });
+
+  it('should detect PowerShell from filename', () => {
+    expect(highlighter.detectLanguage('Write-Host "hello"', 'scripts/install.ps1')).toBe('powershell');
+  });
+
+  it('should detect HTML from filename', () => {
+    expect(highlighter.detectLanguage('<button>Save</button>', 'src/app.component.html')).toBe('html');
   });
 
   it('should detect JSON code', () => {
@@ -28,9 +44,18 @@ describe('SyntaxHighlighter', () => {
     expect(highlighter.detectLanguage(code)).toBe('json');
   });
 
+  it('should map JSON-with-comments filenames to JSON highlighting', () => {
+    expect(highlighter.detectLanguage('{/* comment */}', 'config/settings.jsonc')).toBe('json');
+  });
+
   it('should detect Bash code', () => {
     const code = '#!/bin/bash\necho "test"';
     expect(highlighter.detectLanguage(code)).toBe('bash');
+  });
+
+  it('should detect common extensionless filenames', () => {
+    expect(highlighter.detectLanguage('FROM node:20', 'Dockerfile')).toBe('dockerfile');
+    expect(highlighter.detectLanguage('build:\n\tgo build ./...', 'Makefile')).toBe('makefile');
   });
 
   it('should detect Go code', () => {

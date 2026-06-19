@@ -16,8 +16,126 @@ import { logger } from './Logger.js';
 
 export interface HighlightOptions {
   language?: string;
+  filePath?: string;
   theme?: string;
 }
+
+const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
+  '.astro': 'html',
+  '.bat': 'bat',
+  '.bash': 'bash',
+  '.c': 'c',
+  '.cc': 'cpp',
+  '.cjs': 'javascript',
+  '.clj': 'clojure',
+  '.cljs': 'clojure',
+  '.cmake': 'cmake',
+  '.cmd': 'bat',
+  '.cpp': 'cpp',
+  '.cs': 'csharp',
+  '.css': 'css',
+  '.cts': 'typescript',
+  '.dart': 'dart',
+  '.dockerfile': 'dockerfile',
+  '.eex': 'elixir',
+  '.erl': 'erlang',
+  '.ex': 'elixir',
+  '.exs': 'elixir',
+  '.fs': 'fsharp',
+  '.fsi': 'fsharp',
+  '.fsx': 'fsharp',
+  '.go': 'go',
+  '.gradle': 'gradle',
+  '.groovy': 'groovy',
+  '.h': 'cpp',
+  '.hpp': 'cpp',
+  '.htm': 'html',
+  '.html': 'html',
+  '.ini': 'ini',
+  '.java': 'java',
+  '.js': 'javascript',
+  '.json': 'json',
+  '.json5': 'json',
+  '.jsonc': 'json',
+  '.jsx': 'jsx',
+  '.kt': 'kotlin',
+  '.kts': 'kotlin',
+  '.less': 'less',
+  '.lua': 'lua',
+  '.m': 'objectivec',
+  '.make': 'makefile',
+  '.md': 'markdown',
+  '.mdx': 'markdown',
+  '.mjs': 'javascript',
+  '.mm': 'objectivec',
+  '.mts': 'typescript',
+  '.nginx': 'nginx',
+  '.php': 'php',
+  '.pl': 'perl',
+  '.pm': 'perl',
+  '.properties': 'properties',
+  '.ps1': 'powershell',
+  '.psd1': 'powershell',
+  '.psm1': 'powershell',
+  '.py': 'python',
+  '.pyi': 'python',
+  '.pyw': 'python',
+  '.r': 'r',
+  '.rb': 'ruby',
+  '.rs': 'rust',
+  '.sass': 'scss',
+  '.scala': 'scala',
+  '.scss': 'scss',
+  '.sh': 'bash',
+  '.sql': 'sql',
+  '.swift': 'swift',
+  '.toml': 'toml',
+  '.ts': 'typescript',
+  '.tsx': 'tsx',
+  '.vb': 'vbnet',
+  '.vue': 'html',
+  '.xhtml': 'html',
+  '.xml': 'xml',
+  '.yaml': 'yaml',
+  '.yml': 'yaml',
+  '.zsh': 'bash',
+};
+
+const COMPOUND_EXTENSION_LANGUAGE_MAP: Record<string, string> = {
+  '.d.ts': 'typescript',
+  '.d.mts': 'typescript',
+  '.d.cts': 'typescript',
+  '.module.css': 'css',
+  '.module.scss': 'scss',
+  '.module.less': 'less',
+  '.component.html': 'html',
+  '.template.html': 'html',
+};
+
+const FILENAME_LANGUAGE_MAP: Record<string, string> = {
+  '.bashrc': 'bash',
+  '.env': 'properties',
+  '.gitattributes': 'properties',
+  '.gitconfig': 'ini',
+  '.gitignore': 'properties',
+  '.npmrc': 'ini',
+  '.prettierrc': 'json',
+  '.stylelintrc': 'json',
+  'cmakelists.txt': 'cmake',
+  dockerfile: 'dockerfile',
+  'dockerfile.dev': 'dockerfile',
+  'dockerfile.prod': 'dockerfile',
+  gemfile: 'ruby',
+  jenkinsfile: 'groovy',
+  makefile: 'makefile',
+  'nginx.conf': 'nginx',
+  'package-lock.json': 'json',
+  podfile: 'ruby',
+  'tsconfig.json': 'json',
+  'vite.config.ts': 'typescript',
+  'webpack.config.js': 'javascript',
+  'yarn.lock': 'yaml',
+};
 
 /**
  * Cache entry for highlighted code results
@@ -145,7 +263,7 @@ export class SyntaxHighlighter {
    * @returns Highlighted code string
    */
   highlight(code: string, options: HighlightOptions = {}): string {
-    const language = options.language || this.detectLanguage(code);
+    const language = options.language || this.detectLanguage(code, options.filePath);
     const theme = options.theme || this.defaultTheme;
 
     // Check cache first
@@ -175,7 +293,12 @@ export class SyntaxHighlighter {
    * @param code - The code to analyze
    * @returns Detected language name or 'text'
    */
-  detectLanguage(code: string): string {
+  detectLanguage(code: string, filePath?: string): string {
+    const filenameLanguage = filePath ? this.detectLanguageFromFilename(filePath) : undefined;
+    if (filenameLanguage) {
+      return filenameLanguage;
+    }
+
     // TypeScript patterns (check before JavaScript)
     if (
       code.includes('interface ') ||
@@ -204,7 +327,7 @@ export class SyntaxHighlighter {
       code.includes('def ') ||
       code.includes('import ') ||
       code.includes('from ') ||
-      code.includes('class ') && code.includes('self')
+      (code.includes('class ') && code.includes('self'))
     ) {
       return 'python';
     }
@@ -253,7 +376,7 @@ export class SyntaxHighlighter {
     }
 
     // Java patterns
-    if (code.includes('public class ') || code.includes('private ') && code.includes('void ')) {
+    if (code.includes('public class ') || (code.includes('private ') && code.includes('void '))) {
       return 'java';
     }
 
@@ -263,7 +386,7 @@ export class SyntaxHighlighter {
     }
 
     // Ruby patterns
-    if (code.includes('require ') || code.includes('def ') && code.includes('end')) {
+    if (code.includes('require ') || (code.includes('def ') && code.includes('end'))) {
       return 'ruby';
     }
 
@@ -274,6 +397,46 @@ export class SyntaxHighlighter {
 
     // Default to text if no language detected
     return 'text';
+  }
+
+  /**
+   * Detect language from a file path using common filenames and extensions.
+   *
+   * Filename detection is preferred for diff previews because hunks are often
+   * too small for reliable content-based detection.
+   */
+  detectLanguageFromFilename(filePath: string): string | undefined {
+    const normalizedPath = filePath.replace(/\\/g, '/');
+    const filename = normalizedPath.split('/').pop();
+    if (!filename) {
+      return undefined;
+    }
+
+    const lowerFilename = filename.toLowerCase();
+    const exactMatch = FILENAME_LANGUAGE_MAP[lowerFilename];
+    if (exactMatch && supportsLanguage(exactMatch)) {
+      return exactMatch;
+    }
+
+    for (const [suffix, language] of Object.entries(COMPOUND_EXTENSION_LANGUAGE_MAP)) {
+      if (lowerFilename.endsWith(suffix) && supportsLanguage(language)) {
+        return language;
+      }
+    }
+
+    const extensionStart = lowerFilename.lastIndexOf('.');
+    if (extensionStart === -1) {
+      return undefined;
+    }
+
+    const extension = lowerFilename.slice(extensionStart);
+    const language = EXTENSION_LANGUAGE_MAP[extension];
+
+    if (language && supportsLanguage(language)) {
+      return language;
+    }
+
+    return undefined;
   }
 
   /**
