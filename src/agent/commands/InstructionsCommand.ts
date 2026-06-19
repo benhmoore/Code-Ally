@@ -21,6 +21,7 @@ export class InstructionsCommand extends Command {
     name: '/instructions',
     description: 'Manage profile-level custom instructions',
     helpCategory: 'Core',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: 'view', description: 'View custom instructions' },
       { name: 'edit', description: 'Edit custom instructions' },

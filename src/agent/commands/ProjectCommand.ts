@@ -19,6 +19,7 @@ export class ProjectCommand extends Command {
     name: '/project',
     description: 'Manage project configuration',
     helpCategory: 'Project',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: 'init', description: 'Initialize ALLY.md' },
       { name: 'edit', description: 'Edit ALLY.md' },

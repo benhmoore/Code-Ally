@@ -31,6 +31,8 @@ export interface TextInputProps {
   onCursorChange: (position: number) => void;
   /** Callback when user submits (Enter key) */
   onSubmit: (value: string) => void;
+  /** Called before onSubmit; return true to mark Enter as handled */
+  onSubmitCapture?: (value: string) => boolean;
   /** Callback when user presses Escape key */
   onEscape?: () => void;
   /** Callback when file paths are pasted */
@@ -82,6 +84,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   cursorPosition,
   onCursorChange,
   onSubmit,
+  onSubmitCapture,
   onEscape,
   onFilesPasted,
   onImagesPasted,
@@ -433,6 +436,10 @@ export const TextInput: React.FC<TextInputProps> = ({
           onValueChange(before + '\n' + after);
           onCursorChange(currentCursor + 1);
         } else if (!multiline || !key.ctrl) {
+          if (onSubmitCapture?.(currentValue)) {
+            return;
+          }
+
           // Plain Enter - submit
           onSubmit(currentValue);
         }

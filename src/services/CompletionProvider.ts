@@ -22,6 +22,11 @@ import { FuzzyFilePathMatcher, FuzzyMatchResult } from './FuzzyFilePathMatcher.j
 import { formatRelativeTime } from '../ui/utils/timeUtils.js';
 import type { Config, SessionInfo } from '../types/index.js';
 import { CommandRegistry } from '../agent/commands/CommandRegistry.js';
+import type {
+  CommandCompletionEnterBehavior,
+  CommandMetadata,
+  SubcommandEntry,
+} from '../agent/commands/types.js';
 
 /**
  * Interface for ConfigManager methods used by CompletionProvider
@@ -33,6 +38,7 @@ export interface IConfigManagerForCompletions {
 }
 
 export type CompletionType = 'command' | 'file' | 'directory' | 'option' | 'plugin';
+export type CompletionEnterBehavior = CommandCompletionEnterBehavior;
 
 export interface Completion {
   value: string;
@@ -40,6 +46,7 @@ export interface Completion {
   type: CompletionType;
   insertText?: string; // Text to insert (if different from value)
   currentValue?: string; // Current value for config options (displayed dimly)
+  enterBehavior?: CompletionEnterBehavior; // Slash-command behavior when accepted with Enter
 }
 
 export interface CompletionContext {
@@ -64,6 +71,16 @@ const HELP_TOPICS = [
   { name: 'tasks', description: 'Background task commands' },
   { name: 'plugins', description: 'Plugin commands' },
 ];
+
+const METADATA_SUBCOMMAND_COMMANDS = new Set([
+  '/agent',
+  '/debug',
+  '/todo',
+  '/task',
+  '/config',
+  '/project',
+  '/plugin',
+]);
 
 /**
  * CompletionProvider service
@@ -217,20 +234,13 @@ export class CompletionProvider {
           description: meta.description,
           type: 'command' as const,
           insertText: meta.name, // But insert the full command with /
+          enterBehavior: this.getCommandEnterBehavior(meta),
         }));
     }
 
-    // Complete subcommands for /agent (user typed "/agent ")
-    if (command === '/agent' && wordCount === 2) {
-      const subcommands = CommandRegistry.getSubcommands('/agent');
-      const prefix = subcommand || '';
-      return subcommands
-        .filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
+    // Complete metadata-backed subcommands (user typed "/command ")
+    if (command && wordCount === 2 && METADATA_SUBCOMMAND_COMMANDS.has(command)) {
+      return this.getSubcommandCompletions(command, subcommand || '');
     }
 
     // Complete agent names for /agent use (user typed "/agent use ")
@@ -248,61 +258,9 @@ export class CompletionProvider {
       return await this.getAgentNameCompletions(context.currentWord);
     }
 
-    // Complete subcommands for /debug (user typed "/debug ")
-    if (command === '/debug' && wordCount === 2) {
-      const subcommands = CommandRegistry.getSubcommands('/debug');
-      const prefix = subcommand || '';
-      return subcommands
-        .filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
-    }
-
-    // Complete subcommands for /todo (user typed "/todo ")
-    if (command === '/todo' && wordCount === 2) {
-      const subcommands = CommandRegistry.getSubcommands('/todo');
-      const prefix = subcommand || '';
-      return subcommands
-        .filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
-    }
-
-    // Complete subcommands for /task (user typed "/task ")
-    if (command === '/task' && wordCount === 2) {
-      const subcommands = CommandRegistry.getSubcommands('/task');
-      const prefix = subcommand || '';
-      return subcommands
-        .filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
-    }
-
     // Complete shell IDs for /task kill (user typed "/task kill ")
     if (command === '/task' && subcommand === 'kill' && wordCount === 3) {
       return await this.getRunningProcessCompletions(context.currentWord);
-    }
-
-    // Complete subcommands for /config (user typed "/config ")
-    if (command === '/config' && wordCount === 2) {
-      const subcommands = CommandRegistry.getSubcommands('/config');
-      const prefix = subcommand || '';
-      return subcommands
-        .filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
     }
 
     // Complete config keys and values for /config set
@@ -327,19 +285,6 @@ export class CompletionProvider {
           insertText: `${configKey}=${c.value}`,
         }));
       }
-    }
-
-    // Complete subcommands for /project (user typed "/project ")
-    if (command === '/project' && wordCount === 2) {
-      const subcommands = CommandRegistry.getSubcommands('/project');
-      const prefix = subcommand || '';
-      return subcommands
-        .filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
     }
 
     // Complete file paths for /focus (user typed "/focus ")
@@ -380,11 +325,7 @@ export class CompletionProvider {
       const subcommands = CommandRegistry.getSubcommands('/prompt');
       const subcommandCompletions = subcommands
         .filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
+        .map(sub => this.toSubcommandCompletion(sub));
 
       // Get prompt completions
       const promptCompletions = await this.getPromptLibraryCompletions(prefix);
@@ -406,19 +347,6 @@ export class CompletionProvider {
     // Complete agent names for /switch (user typed "/switch ")
     if (command === '/switch' && wordCount === 2) {
       return await this.getSwitchAgentCompletions(context.currentWord);
-    }
-
-    // Complete subcommands for /plugin (user typed "/plugin ")
-    if (command === '/plugin' && wordCount === 2) {
-      const subcommands = CommandRegistry.getSubcommands('/plugin');
-      const prefix = subcommand || '';
-      return subcommands
-        .filter(sub => sub.name.startsWith(prefix))
-        .map(sub => ({
-          value: sub.name,
-          description: sub.description,
-          type: 'command' as const,
-        }));
     }
 
     // Complete plugin names for /plugin config (user typed "/plugin config ")
@@ -463,6 +391,45 @@ export class CompletionProvider {
     }
 
     return [];
+  }
+
+  /**
+   * Get Enter behavior for a top-level slash command completion.
+   * Commands default to submit so simple commands execute directly on Enter.
+   */
+  private getCommandEnterBehavior(meta: CommandMetadata): CompletionEnterBehavior {
+    return meta.completion?.enterBehavior ?? 'submit';
+  }
+
+  /**
+   * Get Enter behavior for a subcommand completion.
+   * Subcommands with required argument hints keep the command in the input.
+   */
+  private getSubcommandEnterBehavior(subcommand: SubcommandEntry): CompletionEnterBehavior {
+    if (subcommand.completion?.enterBehavior) {
+      return subcommand.completion.enterBehavior;
+    }
+
+    return this.hasRequiredArgs(subcommand.args) ? 'insert' : 'submit';
+  }
+
+  private hasRequiredArgs(args?: string): boolean {
+    return Boolean(args && /<[^>]+>/.test(args));
+  }
+
+  private toSubcommandCompletion(subcommand: SubcommandEntry): Completion {
+    return {
+      value: subcommand.name,
+      description: subcommand.description,
+      type: 'command',
+      enterBehavior: this.getSubcommandEnterBehavior(subcommand),
+    };
+  }
+
+  private getSubcommandCompletions(commandName: string, prefix: string): Completion[] {
+    return CommandRegistry.getSubcommands(commandName)
+      .filter(sub => sub.name.startsWith(prefix))
+      .map(sub => this.toSubcommandCompletion(sub));
   }
 
   /**

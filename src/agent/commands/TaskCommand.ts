@@ -19,6 +19,7 @@ export class TaskCommand extends Command {
     name: '/task',
     description: 'Manage background tasks',
     helpCategory: 'Tasks',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: 'list', description: 'List background tasks' },
       { name: 'kill', description: 'Kill a task', args: '<id>' },

@@ -18,6 +18,7 @@ export class RemoveDirCommand extends Command {
     name: '/remove-dir',
     description: 'Remove an additional working directory',
     helpCategory: 'Project',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: '<path>', description: 'Path to directory to remove' },
     ],

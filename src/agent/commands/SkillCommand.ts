@@ -19,6 +19,7 @@ export class SkillCommand extends Command {
     name: '/skill',
     description: 'Manage skills',
     helpCategory: 'Core',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: 'list', description: 'List available skills' },
       { name: 'show', description: 'Show skill details', args: '<name>' },

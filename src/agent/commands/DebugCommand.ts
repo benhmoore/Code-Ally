@@ -32,6 +32,7 @@ export class DebugCommand extends Command {
     name: '/debug',
     description: 'Show debug information',
     helpCategory: 'Core',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: 'enable', description: 'Enable debug logging' },
       { name: 'disable', description: 'Disable debug logging' },

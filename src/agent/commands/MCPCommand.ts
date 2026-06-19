@@ -24,6 +24,7 @@ export class MCPCommand extends Command {
     name: '/mcp',
     description: 'Manage MCP servers',
     helpCategory: 'MCP',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: 'list', description: 'List configured servers with status' },
       { name: 'status', description: 'Detailed connection status' },

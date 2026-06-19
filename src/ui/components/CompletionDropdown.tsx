@@ -75,6 +75,8 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
     return null;
   }
 
+  const selectedCompletion = completions[selectedIndex];
+
   // Calculate visible range (windowing for long lists)
   const startIndex = Math.max(
     0,
@@ -155,10 +157,12 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
           </Box>
         )}
 
-        {/* Footer hint - Note: CompletionDropdown uses Tab instead of Enter */}
+        {/* Footer hint */}
         <Box marginTop={0} borderTop borderColor="gray">
           <Text dimColor>
-            Tab: select • ↑↓: navigate • Esc: dismiss
+            {selectedCompletion?.type === 'command'
+              ? 'Enter: accept command • Tab: insert • ↑↓: navigate • Esc: dismiss'
+              : 'Tab: insert • ↑↓: navigate • Esc: dismiss'}
           </Text>
         </Box>
       </ModalContainer>

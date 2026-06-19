@@ -17,6 +17,7 @@ export class FocusCommand extends Command {
     name: '/focus',
     description: 'Set focus to a specific path',
     helpCategory: 'Project',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: '<path>', description: 'Set focus to directory' },
     ],

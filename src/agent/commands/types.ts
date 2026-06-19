@@ -25,6 +25,19 @@ export interface SubcommandEntry {
   description: string;
   /** Optional argument hint (e.g., "<name>", "<id>", "[path]") */
   args?: string;
+  /** Completion behavior for Enter when this subcommand is highlighted */
+  completion?: CommandCompletionOptions;
+}
+
+export type CommandCompletionEnterBehavior = 'insert' | 'submit';
+
+export interface CommandCompletionOptions {
+  /**
+   * What Enter should do when this command completion is highlighted.
+   * - "insert": complete the current component and keep editing.
+   * - "submit": complete the current component and submit the command.
+   */
+  enterBehavior?: CommandCompletionEnterBehavior;
 }
 
 export interface CommandMetadata {
@@ -36,6 +49,8 @@ export interface CommandMetadata {
   helpCategory: HelpCategory;
   /** Subcommands for commands with multiple actions */
   subcommands?: SubcommandEntry[];
+  /** Completion behavior for Enter when this command is highlighted */
+  completion?: CommandCompletionOptions;
   /** Whether responses should use yellow styling (default: false) */
   useYellowOutput?: boolean;
 }

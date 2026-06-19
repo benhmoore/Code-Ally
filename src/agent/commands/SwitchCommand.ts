@@ -21,6 +21,7 @@ export class SwitchCommand extends Command {
     name: '/switch',
     description: 'Switch to a different agent',
     helpCategory: 'Agents',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: '<agent>', description: 'Switch to named agent' },
       { name: 'ally', description: 'Switch to main Ally agent' },

@@ -24,6 +24,7 @@ export class MarketplaceCommand extends Command {
     name: '/marketplace',
     description: 'Manage plugin marketplaces',
     helpCategory: 'Marketplace',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: 'list', description: 'List known marketplaces and their plugins' },
       { name: 'add', description: 'Register a marketplace source', args: '<path-or-repo>' },

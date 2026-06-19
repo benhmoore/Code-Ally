@@ -21,6 +21,7 @@ export class AgentCommand extends Command {
     name: '/agent',
     description: 'Manage specialized agents',
     helpCategory: 'Agents',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: 'list', description: 'List available agents' },
       { name: 'show', description: 'Show agent details', args: '<name>' },

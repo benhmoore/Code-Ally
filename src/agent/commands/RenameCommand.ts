@@ -20,6 +20,7 @@ export class RenameCommand extends Command {
     name: '/rename',
     description: 'Rename the current conversation',
     helpCategory: 'Core',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: '<title>', description: 'New title for this conversation' },
     ],

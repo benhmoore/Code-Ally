@@ -18,6 +18,7 @@ export class AddDirCommand extends Command {
     name: '/add-dir',
     description: 'Add an additional working directory',
     helpCategory: 'Project',
+    completion: { enterBehavior: 'insert' },
     subcommands: [
       { name: '<path>', description: 'Path to directory to add' },
     ],

@@ -3,7 +3,7 @@
  *
  * Features:
  * - Command history (up/down arrows)
- * - Tab completion
+ * - Tab completion and Enter acceptance for slash commands
  * - Advanced editing shortcuts (delegated to TextInput)
  * - Multiline support (delegated to TextInput)
  * - Context-aware completions
@@ -27,6 +27,7 @@ import { Agent } from '@agent/Agent.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { classifyPaths } from '@utils/pathUtils.js';
+import { applyCompletionToInput, type CompletionApplicationOptions } from '../utils/completionUtils.js';
 
 interface InputPromptProps {
   /** Callback when user submits input */
@@ -328,66 +329,41 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   /**
    * Apply selected completion
    */
-  const applyCompletion = () => {
+  const getSelectedCompletion = (): Completion | null => {
     if (!showCompletions || completions.length === 0 || !completions[completionIndex]) {
-      return;
+      return null;
     }
+
+    return completions[completionIndex];
+  };
+
+  const applyCompletion = (options: CompletionApplicationOptions = {}) => {
+    const completion = getSelectedCompletion();
+    if (!completion) return null;
 
     // Clear prompt prefill highlight if user modifies buffer
     if (promptPrefilled) {
       onPromptPrefilledClear?.();
     }
 
-    const completion = completions[completionIndex];
-    const insertText = completion.insertText || completion.value;
+    const application = applyCompletionToInput(buffer, cursorPosition, completion, options);
 
-    // Find word boundaries
-    let wordStart = cursorPosition;
-
-    // For file completions, preserve directory prefix by breaking at path separators
-    if (completion.type === 'file') {
-      while (wordStart > 0) {
-        const char = buffer[wordStart - 1];
-        // Break at whitespace OR path separator
-        if (!char || /[\s/]/.test(char)) break;
-        wordStart--;
-      }
-    } else {
-      // For non-file completions, use standard word boundaries (whitespace only)
-      while (wordStart > 0) {
-        const char = buffer[wordStart - 1];
-        if (!char || /\s/.test(char)) break;
-        wordStart--;
-      }
-    }
-
-    let wordEnd = cursorPosition;
-    while (wordEnd < buffer.length) {
-      const char = buffer[wordEnd];
-      if (!char || /\s/.test(char)) break;
-      wordEnd++;
-    }
-
-    // Replace current word with completion
-    const before = buffer.slice(0, wordStart);
-    const after = buffer.slice(wordEnd);
-    const newBuffer = before + insertText + after;
-    const newCursor = wordStart + insertText.length;
-
-    setBuffer(newBuffer);
-    setCursorPosition(newCursor);
+    setBuffer(application.nextValue);
+    setCursorPosition(application.nextCursorPosition);
     setShowCompletions(false);
     setCompletions([]);
 
     // Track file mentions (avoid duplicates)
-    if (completion.type === 'file' && !mentionedFiles.includes(insertText)) {
-      setMentionedFiles([...mentionedFiles, insertText]);
+    if (completion.type === 'file' && !mentionedFiles.includes(application.insertText)) {
+      setMentionedFiles([...mentionedFiles, application.insertText]);
     }
 
     // Track plugin mentions (avoid duplicates) - plugin names include the +/- prefix in insertText
-    if (completion.type === 'plugin' && !mentionedPlugins.includes(insertText)) {
-      setMentionedPlugins([...mentionedPlugins, insertText]);
+    if (completion.type === 'plugin' && !mentionedPlugins.includes(application.insertText)) {
+      setMentionedPlugins([...mentionedPlugins, application.insertText]);
     }
+
+    return application;
   };
 
   /**
@@ -474,8 +450,22 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   /**
    * Submit input
    */
-  const handleSubmit = async () => {
-    const trimmed = buffer.trim();
+  const resetInputState = () => {
+    setBuffer('');
+    setCursorPosition(0);
+    setHistoryIndex(-1);
+    setHistoryBuffer('');
+    setHistoryBufferCursor(0);
+    setShowCompletions(false);
+    setCompletions([]);
+    setMentionedFiles([]);
+    setMentionedImages([]);
+    setMentionedDirectories([]);
+    setMentionedPlugins([]);
+  };
+
+  const handleSubmit = async (inputValue = buffer) => {
+    const trimmed = inputValue.trim();
     if (!trimmed) return;
 
     // Add to history and save
@@ -518,16 +508,27 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     onSubmit(trimmed, Object.keys(mentions).length > 0 ? mentions : undefined);
 
     // Reset state
-    setBuffer('');
-    setCursorPosition(0);
-    setHistoryIndex(-1);
-    setHistoryBuffer('');
-    setHistoryBufferCursor(0);
-    setShowCompletions(false);
-    setCompletions([]);
-    setMentionedFiles([]);
-    setMentionedImages([]);
-    setMentionedDirectories([]);
+    resetInputState();
+  };
+
+  /**
+   * Accept slash-command completions before TextInput submits.
+   */
+  const handleSubmitCapture = (): boolean => {
+    const completion = getSelectedCompletion();
+    if (!completion || completion.type !== 'command' || !buffer.trimStart().startsWith('/')) {
+      return false;
+    }
+
+    const shouldSubmit = completion.enterBehavior !== 'insert';
+    const application = applyCompletion({ appendSpace: !shouldSubmit });
+    if (!application) return false;
+
+    if (shouldSubmit) {
+      void handleSubmit(application.nextValue);
+    }
+
+    return true;
   };
 
   // Track whether TextInput is active (inactive when modals are open)
@@ -605,7 +606,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
     // Slash commands always execute immediately, even during agent processing
     if (message.startsWith('/')) {
-      handleSubmit();
+      void handleSubmit(value);
       return;
     }
 
@@ -615,19 +616,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       if (onInterjection) {
         onInterjection(message);
         // Clear buffer after interjection
-        setBuffer('');
-        setCursorPosition(0);
-        setHistoryIndex(-1);
-        setHistoryBuffer('');
-        setHistoryBufferCursor(0);
-        setShowCompletions(false);
-        setCompletions([]);
-        setMentionedFiles([]);
-        setMentionedImages([]);
+        resetInputState();
       }
     } else {
       // Normal submission
-      handleSubmit();
+      void handleSubmit(value);
     }
   };
 
@@ -1576,6 +1569,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         onValueChange={handleValueChange}
         cursorPosition={cursorPosition}
         onCursorChange={handleCursorChange}
+        onSubmitCapture={handleSubmitCapture}
         onSubmit={handleTextInputSubmit}
         onFilesPasted={handleFilesPasted}
         onImagesPasted={handleImagesPasted}

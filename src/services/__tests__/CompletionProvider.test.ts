@@ -89,6 +89,20 @@ describe('CompletionProvider', () => {
       expect(values).not.toContain('agent'); // Doesn't match
     });
 
+    it('should mark multi-component slash commands for Enter insertion', async () => {
+      const completions = await provider.getCompletions('/ta', 3);
+
+      const taskCommand = completions.find(c => c.value === 'task');
+      expect(taskCommand?.enterBehavior).toBe('insert');
+    });
+
+    it('should mark leaf slash commands for Enter submission', async () => {
+      const completions = await provider.getCompletions('/cl', 3);
+
+      const clearCommand = completions.find(c => c.value === 'clear');
+      expect(clearCommand?.enterBehavior).toBe('submit');
+    });
+
     it('should include descriptions', async () => {
       const completions = await provider.getCompletions('/config', 7);
 
@@ -123,6 +137,20 @@ describe('CompletionProvider', () => {
       const values = completions.map(c => c.value);
       expect(values).toContain('list');
       expect(values).not.toContain('create');
+    });
+
+    it('should mark subcommands with required args for Enter insertion', async () => {
+      const completions = await provider.getCompletions('/agent sh', 9);
+
+      const showSubcommand = completions.find(c => c.value === 'show');
+      expect(showSubcommand?.enterBehavior).toBe('insert');
+    });
+
+    it('should mark leaf subcommands for Enter submission', async () => {
+      const completions = await provider.getCompletions('/agent l', 8);
+
+      const listSubcommand = completions.find(c => c.value === 'list');
+      expect(listSubcommand?.enterBehavior).toBe('submit');
     });
 
     it('should complete agent names for "use" subcommand', async () => {
