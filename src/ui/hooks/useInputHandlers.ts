@@ -27,6 +27,7 @@ import { fileToBase64, isImageFile } from '@utils/imageUtils.js';
 import { resolvePath } from '@utils/pathUtils.js';
 import { ModelCapabilitiesIndex } from '@services/ModelCapabilitiesIndex.js';
 import { ConfigManager } from '@services/ConfigManager.js';
+import { resolveProjectInstructionsFile } from '@config/paths.js';
 import { createStructuredError } from '@utils/errorUtils.js';
 
 /**
@@ -289,18 +290,22 @@ export const useInputHandlers = (
       }
     }
 
-    // Check for memory shortcuts (# prefix) - saves to ALLY.md
+    // Check for memory shortcuts (# prefix) - saves to the project instructions file
     if (trimmed.startsWith('#')) {
       const memoryContent = trimmed.slice(1).trim();
 
       if (memoryContent) {
         try {
-          const allyMdPath = path.join(process.cwd(), 'ALLY.md');
+          // Append to whichever instructions file is actually ingested
+          // (ALLY.md > CLAUDE.md > AGENTS.md), defaulting to ALLY.md if none exist.
+          const instructionsPath =
+            resolveProjectInstructionsFile(process.cwd()) ?? path.join(process.cwd(), 'ALLY.md');
+          const fileName = path.basename(instructionsPath);
 
           // Read existing content or start fresh
           let existingContent = '';
-          if (fs.existsSync(allyMdPath)) {
-            existingContent = fs.readFileSync(allyMdPath, 'utf-8');
+          if (fs.existsSync(instructionsPath)) {
+            existingContent = fs.readFileSync(instructionsPath, 'utf-8');
           }
 
           // Append the new memory as a bullet point
@@ -309,10 +314,9 @@ export const useInputHandlers = (
             ? existingContent.trimEnd() + '\n' + newLine
             : newLine;
 
-          // Write to ALLY.md
-          fs.writeFileSync(allyMdPath, newContent, 'utf-8');
+          fs.writeFileSync(instructionsPath, newContent, 'utf-8');
 
-          logger.debug('[INPUT_HANDLER] Memory saved to ALLY.md:', memoryContent);
+          logger.debug(`[INPUT_HANDLER] Memory saved to ${fileName}:`, memoryContent);
 
           // Add user message showing what was saved
           actions.addMessage({
@@ -323,7 +327,7 @@ export const useInputHandlers = (
           // Add confirmation response
           actions.addMessage({
             role: 'assistant',
-            content: `Memory saved to ALLY.md`,
+            content: `Memory saved to ${fileName}`,
           });
 
           return;

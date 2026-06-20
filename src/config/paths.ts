@@ -10,6 +10,7 @@
  */
 
 import { homedir } from 'os';
+import { existsSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
@@ -226,6 +227,31 @@ export function getPromptsDir(): string {
  */
 export function getProfileInstructionsFile(): string {
   return join(PROFILES_DIR, ACTIVE_PROFILE, 'instructions.md');
+}
+
+/**
+ * Project instruction filenames, in order of precedence (highest first).
+ *
+ * Code-Ally ingests the first one that exists in a directory and ignores the
+ * rest. ALLY.md is the native, preferred name; CLAUDE.md and AGENTS.md are
+ * supported as fallbacks for cross-tool compatibility.
+ */
+export const PROJECT_INSTRUCTION_FILES = ['ALLY.md', 'CLAUDE.md', 'AGENTS.md'] as const;
+
+/**
+ * Resolve the active project instructions file for a directory by precedence.
+ *
+ * @param dir Directory to search (defaults to the current working directory)
+ * @returns Absolute path to the highest-precedence existing file, or null if none exist
+ */
+export function resolveProjectInstructionsFile(dir: string = process.cwd()): string | null {
+  for (const name of PROJECT_INSTRUCTION_FILES) {
+    const candidate = join(dir, name);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 /**

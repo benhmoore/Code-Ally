@@ -16,7 +16,7 @@ import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { logger } from '../services/Logger.js';
 import { getGitBranch } from '../utils/gitUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
-import { getProfileInstructionsFile } from '../config/paths.js';
+import { getProfileInstructionsFile, resolveProjectInstructionsFile } from '../config/paths.js';
 import type { TokenManager } from '../agent/TokenManager.js';
 import type { ToolResultManager } from '../services/ToolResultManager.js';
 import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
@@ -249,21 +249,24 @@ ${profileContent}`;
     }
   }
 
-  // Check for ALLY.md file and include its contents
+  // Check for a project instructions file and include its contents. We honor a
+  // precedence hierarchy (ALLY.md > CLAUDE.md > AGENTS.md) and ingest only the
+  // first one present, so a project can supply guidance under whichever name it
+  // already uses without instructions being duplicated across files.
   let allyMdContent = '';
   if (includeProjectInstructions) {
     try {
-      const allyMdPath = path.join(workingDir, 'ALLY.md');
-      if (fs.existsSync(allyMdPath)) {
-        const allyContent = fs.readFileSync(allyMdPath, 'utf-8').trim();
-        if (allyContent) {
+      const projectInstructionsPath = resolveProjectInstructionsFile(workingDir);
+      if (projectInstructionsPath) {
+        const projectContent = fs.readFileSync(projectInstructionsPath, 'utf-8').trim();
+        if (projectContent) {
           allyMdContent = `
-- Project Instructions (ALLY.md):
-${allyContent}`;
+- Project Instructions (${path.basename(projectInstructionsPath)}):
+${projectContent}`;
         }
       }
     } catch (error) {
-      logger.warn('Failed to read ALLY.md:', formatError(error));
+      logger.warn('Failed to read project instructions:', formatError(error));
     }
   }
 
