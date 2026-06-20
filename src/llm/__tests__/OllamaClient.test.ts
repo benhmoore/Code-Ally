@@ -62,7 +62,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Hello' }];
 
-      const result = await client.send(messages, { stream: false });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.role).toBe('assistant');
       expect(result.content).toBe('Hello! How can I help you?');
@@ -85,7 +85,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Help me' }];
 
-      const result = await client.send(messages, { stream: false });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.thinking).toBe('First I need to understand the request...');
     });
@@ -115,7 +115,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'List files' }];
 
-      const result = await client.send(messages, { stream: false });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.tool_calls).toHaveLength(1);
       expect(result.tool_calls![0].function.name).toBe('bash');
@@ -141,7 +141,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'List files' }];
 
-      const result = await client.send(messages, { stream: false });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.tool_calls).toBeDefined();
       expect(result.tool_calls).toHaveLength(1);
@@ -178,7 +178,7 @@ describe('OllamaClient', () => {
         },
       ];
 
-      await client.send(messages, { functions, stream: false });
+      await client.send(messages, { functions, stream: false, signal: new AbortController().signal });
 
       const callArgs = mockFetch.mock.calls[0];
       const payload = JSON.parse(callArgs[1].body);
@@ -201,7 +201,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false, maxRetries: 1 });
+      const result = await client.send(messages, { stream: false, maxRetries: 1, signal: new AbortController().signal });
 
       expect(result.content).toBe('Success');
       expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -216,7 +216,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false, maxRetries: 0 });
+      const result = await client.send(messages, { stream: false, maxRetries: 0, signal: new AbortController().signal });
 
       expect(result.error).toBe(true);
       expect(result.content).toContain('HTTP 404');
@@ -239,7 +239,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false, maxRetries: 1 });
+      const result = await client.send(messages, { stream: false, maxRetries: 1, signal: new AbortController().signal });
 
       expect(result.content).toBe('Success');
     });
@@ -253,7 +253,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false, maxRetries: 0 });
+      const result = await client.send(messages, { stream: false, maxRetries: 0, signal: new AbortController().signal });
 
       expect(result.suggestions?.some(s => s.includes('ollama list'))).toBe(true);
     });
@@ -286,16 +286,64 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const promise = client.send(messages, { stream: false });
+      const ac = new AbortController();
+      const promise = client.send(messages, { stream: false, signal: ac.signal });
 
-      // Cancel after a short delay
-      setTimeout(() => client.cancel(), 50);
+      // Cancel after a short delay by aborting the owner's signal
+      setTimeout(() => ac.abort(), 50);
 
       const result = await promise;
 
       expect(result.interrupted).toBe(true);
       // Content is empty when cancelled to not pollute conversation history
       expect(result.content).toBe('');
+    });
+
+    it('should isolate cancellation to the owner that aborts its own signal', async () => {
+      // Each request resolves slowly, but rejects immediately if its own signal aborts.
+      mockFetch.mockImplementation(
+        (_url: string, options: any) =>
+          new Promise((resolve, reject) => {
+            const signal = options?.signal;
+
+            if (signal) {
+              signal.addEventListener('abort', () => {
+                reject(new DOMException('The operation was aborted.', 'AbortError'));
+              });
+            }
+
+            setTimeout(() => {
+              resolve({
+                ok: true,
+                json: async () => ({
+                  message: { role: 'assistant', content: 'Done' },
+                }),
+              });
+            }, 1000);
+          })
+      );
+
+      const messages: Message[] = [{ role: 'user', content: 'Test' }];
+
+      // Two concurrent requests, each owning its own AbortController.
+      const ac1 = new AbortController();
+      const ac2 = new AbortController();
+
+      const promise1 = client.send(messages, { stream: false, signal: ac1.signal });
+      const promise2 = client.send(messages, { stream: false, signal: ac2.signal });
+
+      // Abort only the first owner's signal.
+      setTimeout(() => ac1.abort(), 50);
+
+      const [result1, result2] = await Promise.all([promise1, promise2]);
+
+      // First was cancelled...
+      expect(result1.interrupted).toBe(true);
+      expect(result1.content).toBe('');
+
+      // ...while the second completed normally, unaffected.
+      expect(result2.interrupted).toBeFalsy();
+      expect(result2.content).toBe('Done');
     });
   });
 
@@ -325,7 +373,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       // Should have generated a unique id (always regenerated to prevent duplicates)
       expect(result.tool_calls).toBeDefined();
@@ -357,7 +405,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.tool_calls![0].function.arguments).toEqual({ command: 'ls' });
     });
@@ -388,7 +436,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       // Should return error response with validation failure flag (for Agent-level continuation)
       expect(result.error).toBe(true);
@@ -436,7 +484,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: true });
+      const result = await client.send(messages, { stream: true, signal: new AbortController().signal });
 
       // Should return error response with validation failure flag (for Agent-level continuation)
       expect(result.error).toBe(true);
@@ -499,8 +547,8 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result1 = await client.send(messages, { stream: false });
-      const result2 = await client.send(messages, { stream: false });
+      const result1 = await client.send(messages, { stream: false, signal: new AbortController().signal });
+      const result2 = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       // Both should have generated unique IDs
       expect(result1.tool_calls).toBeDefined();
@@ -542,7 +590,7 @@ describe('OllamaClient', () => {
         json: async () => response,
       });
 
-      const result = await client.send([{ role: 'user', content: 'Test' }], { stream: false });
+      const result = await client.send([{ role: 'user', content: 'Test' }], { stream: false, signal: new AbortController().signal });
 
       expect(result.tool_calls).toHaveLength(3);
 
@@ -615,7 +663,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: true });
+      const result = await client.send(messages, { stream: true, signal: new AbortController().signal });
 
       // Should successfully parse the complete JSON despite being split
       expect(result.error).toBeUndefined();
@@ -653,7 +701,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: true });
+      const result = await client.send(messages, { stream: true, signal: new AbortController().signal });
 
       // Should accumulate content from both JSON objects
       expect(result.content).toBe('Hello World!');
@@ -688,7 +736,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: true });
+      const result = await client.send(messages, { stream: true, signal: new AbortController().signal });
 
       // Should parse the final buffer after stream ends
       expect(result.content).toBe('Final response');
@@ -706,7 +754,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Hello' }];
 
-      await client.send(messages, { stream: false });
+      await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       const callArgs = mockFetch.mock.calls[0];
       const payload = JSON.parse(callArgs[1].body);
@@ -740,7 +788,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Hello' }];
 
-      await clientWithKeepAlive.send(messages, { stream: false });
+      await clientWithKeepAlive.send(messages, { stream: false, signal: new AbortController().signal });
 
       const callArgs = mockFetch.mock.calls[0];
       const payload = JSON.parse(callArgs[1].body);

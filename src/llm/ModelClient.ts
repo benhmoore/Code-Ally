@@ -35,6 +35,14 @@ export interface SendOptions {
    * Calculated as: floor((contextSize - inputTokens) * 0.9)
    */
   dynamicMaxTokens?: number;
+  /**
+   * Abort signal owned by the caller (the agent or service issuing the request).
+   *
+   * Cancellation is owner-scoped: aborting this signal cancels ONLY this request,
+   * never other in-flight requests that happen to share the same client instance.
+   * Every caller must supply one — there is no global "cancel everything" path.
+   */
+  signal: AbortSignal;
 }
 
 /**
@@ -140,7 +148,7 @@ export abstract class ModelClient {
    * );
    * ```
    */
-  abstract send(messages: readonly Message[], options?: SendOptions): Promise<LLMResponse>;
+  abstract send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse>;
 
   /**
    * Get the current model name
@@ -166,12 +174,11 @@ export abstract class ModelClient {
   abstract setEndpoint?(newEndpoint: string): void;
 
   /**
-   * Cancel any ongoing requests (optional)
-   */
-  abstract cancel?(): void;
-
-  /**
    * Close the client and cleanup resources (optional)
+   *
+   * Aborts any still-in-flight requests as part of process/session teardown.
+   * This is shutdown only — per-request cancellation is done by aborting the
+   * `signal` passed to `send()`, not here.
    */
   abstract close?(): Promise<void>;
 }

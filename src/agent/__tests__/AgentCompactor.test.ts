@@ -96,7 +96,7 @@ describe('AgentCompactor', () => {
 
     const compacted = await compactor.compactConversation(messages, {
       preserveLastUserMessage: true,
-    });
+    }, new AbortController().signal);
 
     const request = modelClient.requests[0]!;
     expect(request).toHaveLength(2);
@@ -126,7 +126,7 @@ describe('AgentCompactor', () => {
     ];
     const { compactor, modelClient } = createCompactor(messages);
 
-    await compactor.compactConversation(messages, { preserveLastUserMessage: true });
+    await compactor.compactConversation(messages, { preserveLastUserMessage: true }, new AbortController().signal);
 
     const request = modelClient.requests[0]!;
     expect(request.map(msg => msg.role)).toEqual(['system', 'user']);
@@ -171,7 +171,7 @@ describe('AgentCompactor', () => {
 
     const compacted = await compactor.compactConversation(messages, {
       preserveLastUserMessage: true,
-    });
+    }, new AbortController().signal);
     const summary = compacted.find(msg => msg.metadata?.isConversationSummary);
 
     expect(summary?.metadata?.contextFileReferences).toEqual([editedPath, readPath]);
@@ -197,6 +197,7 @@ describe('AgentCompactor', () => {
       isSpecializedAgent: false,
       compactThreshold: 95,
       generateId: () => `evt-${events.length}`,
+      signal: new AbortController().signal,
     }, {
       preserveLastUserMessage: false,
       verification: 'reduced',
@@ -229,6 +230,7 @@ describe('AgentCompactor', () => {
       isSpecializedAgent: false,
       compactThreshold: 95,
       generateId: () => `evt-${events.length}`,
+      signal: new AbortController().signal,
     }, {
       preserveLastUserMessage: false,
       verification: 'reduced',

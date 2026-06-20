@@ -1143,11 +1143,11 @@ export class Agent {
    */
   interrupt(type: 'cancel' | 'interjection' = 'cancel'): void {
     if (this.requestInProgress) {
-      // Set interruption state via InterruptionManager (handles abort controller)
+      // Set interruption state and abort this agent's request signal. Because the
+      // signal handed to ModelClient.send() is owned by this agent's
+      // InterruptionManager, this cancels the in-flight LLM request immediately
+      // and scoped to this agent alone — no global client cancellation.
       this.interruptionManager.interrupt(type);
-
-      // Cancel ongoing LLM request immediately
-      this.cancel();
 
       // Stop activity monitoring
       this.stopActivityMonitoring();
@@ -1351,7 +1351,10 @@ export class Agent {
         Math.floor(remainingTokens * TOKEN_MANAGEMENT.DYNAMIC_OUTPUT_PERCENT)
       );
 
-      // Send to model (includes system-reminder if present)
+      // Send to model (includes system-reminder if present).
+      // Hand the model client this agent's request signal so an interrupt cancels
+      // ONLY this agent's request — never sibling/background agents that share the
+      // same underlying client.
       const response = await this.modelClient.send(this.conversationManager.getMessages(), {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
@@ -1360,6 +1363,7 @@ export class Agent {
         parentId: executionContext.parentCallId,
         // Dynamic output token limit based on remaining context
         dynamicMaxTokens,
+        signal: this.interruptionManager.beginRequest(),
       });
 
       // Remove ephemeral system-reminder messages after receiving response
@@ -1839,6 +1843,7 @@ export class Agent {
       compactThreshold: this.appConfig.compact_threshold,
       generateId: () => this.generateId(),
       parentCallId: this.config.parentCallId,
+      signal: this.interruptionManager.beginRequest(),
     }, {
       ...options,
       verification: 'reduced',
@@ -1914,6 +1919,7 @@ export class Agent {
       compactThreshold: this.appConfig.compact_threshold,
       generateId: () => this.generateId(),
       parentCallId: this.config.parentCallId,
+      signal: this.interruptionManager.beginRequest(),
     });
 
     if (compacted) {
@@ -1945,7 +1951,7 @@ export class Agent {
       timestampLabel?: string;
     } = {}
   ): Promise<Message[]> {
-    return this.agentCompactor.compactConversation(messages, options);
+    return this.agentCompactor.compactConversation(messages, options, this.interruptionManager.beginRequest());
   }
 
   /**
@@ -2040,16 +2046,6 @@ export class Agent {
     this.emitAgentEnd(true);
     return PERMISSION_MESSAGES.USER_FACING_DENIAL;
   }
-
-  /**
-   * Cancel any ongoing request
-   */
-  cancel(): void {
-    if (this.modelClient.cancel) {
-      this.modelClient.cancel();
-    }
-  }
-
 
   /**
    * Setup focus for this agent

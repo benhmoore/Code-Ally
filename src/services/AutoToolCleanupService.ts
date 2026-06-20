@@ -52,6 +52,7 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
   private modelClient: ModelClient;
   private sessionManager: SessionManager;
   private pendingAnalyses = new Set<string>();
+  private aborts = new Set<AbortController>();
   private isAnalyzing: boolean = false;
 
   private enableCleanup: boolean;
@@ -84,10 +85,9 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
   cancel(): void {
     if (this.isAnalyzing) {
 
-      // Cancel all active requests on the model client
-      if (typeof this.modelClient.cancel === 'function') {
-        this.modelClient.cancel();
-      }
+      // Cancel all active requests by aborting their signals
+      for (const a of this.aborts) a.abort();
+      this.aborts.clear();
 
       // Reset flag and clear pending
       this.isAnalyzing = false;
@@ -150,12 +150,15 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
 
     const analysisPrompt = this.buildAnalysisPrompt(toolCallInfos);
 
+    const abort = new AbortController();
+    this.aborts.add(abort);
     try {
       const response = await this.modelClient.send(
         [{ role: 'user', content: analysisPrompt }],
         {
           stream: false,
           suppressThinking: true, // Don't show thinking for background analysis
+          signal: abort.signal,
         }
       );
 
@@ -170,6 +173,8 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
       return analysis;
     } catch (error) {
       return { irrelevantToolCallIds: [] };
+    } finally {
+      this.aborts.delete(abort);
     }
   }
 

@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AutoToolCleanupService } from '../AutoToolCleanupService.js';
-import { ModelClient, LLMResponse } from '../../llm/ModelClient.js';
+import { ModelClient, LLMResponse, SendOptions } from '../../llm/ModelClient.js';
 import { Message } from '../../types/index.js';
 import { AUTO_TOOL_CLEANUP } from '../../config/constants.js';
 
@@ -18,7 +18,9 @@ class MockModelClient extends ModelClient {
 
   private shouldThrow: boolean = false;
   private shouldInterrupt: boolean = false;
-  public cancelCalled: boolean = false;
+  private hang: boolean = false;
+  /** Signal received by the most recent send() — used to assert owner-scoped cancellation. */
+  public lastSignal?: AbortSignal;
 
   setMockAnalysis(analysis: any) {
     this.mockAnalysis = analysis;
@@ -32,9 +34,26 @@ class MockModelClient extends ModelClient {
     this.shouldInterrupt = value;
   }
 
-  async send(): Promise<LLMResponse> {
+  /** When true, send() stays in-flight until its signal is aborted. */
+  setHang(value: boolean) {
+    this.hang = value;
+  }
+
+  async send(_messages: readonly Message[], options: SendOptions): Promise<LLMResponse> {
+    this.lastSignal = options.signal;
+
     if (this.shouldThrow) {
       throw new Error('API error');
+    }
+
+    if (this.hang) {
+      await new Promise<void>((_resolve, reject) => {
+        options.signal.addEventListener(
+          'abort',
+          () => reject(new Error('Request interrupted')),
+          { once: true }
+        );
+      });
     }
 
     const response: any = {
@@ -47,10 +66,6 @@ class MockModelClient extends ModelClient {
     }
 
     return response;
-  }
-
-  cancel(): void {
-    this.cancelCalled = true;
   }
 
   get modelName(): string {
@@ -769,32 +784,34 @@ describe('AutoToolCleanupService', () => {
 
   describe('cancel', () => {
     it('should cancel ongoing analysis', async () => {
-      const messages: Message[] = [
-        {
+      // Paired tool calls + results from a COMPLETED turn (a trailing user message
+      // closes the turn so the earlier calls are eligible for analysis), enough to
+      // clear the ratio threshold so analysis reaches send().
+      const messages: Message[] = [{ role: 'user', content: 'start' }];
+      const pairs = Math.max(AUTO_TOOL_CLEANUP.MIN_TOOL_RESULTS, 6);
+      for (let i = 0; i < pairs; i++) {
+        messages.push({
           role: 'assistant',
-          content: 'Tool call',
+          content: '',
           tool_calls: [
-            {
-              id: 'call_1',
-              type: 'function',
-              function: { name: 'read', arguments: {} },
-            },
+            { id: `call_${i}`, type: 'function', function: { name: 'read', arguments: {} } },
           ],
-        },
-        {
-          role: 'tool',
-          content: 'Result',
-          tool_call_id: 'call_1',
-        },
-      ];
+        });
+        messages.push({ role: 'tool', content: `result ${i}`, tool_call_id: `call_${i}` });
+      }
+      messages.push({ role: 'user', content: 'next' });
 
-      // Start analysis
+      // Start an analysis that stays in-flight until its signal is aborted.
+      mockClient.setHang(true);
       service.cleanupBackground('test_session', messages);
 
-      // Cancel it
+      // Let the background send() start and capture its signal.
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // Cancel it — must abort the owner signal handed to this request only.
       service.cancel();
 
-      expect(mockClient.cancelCalled).toBe(true);
+      expect(mockClient.lastSignal?.aborted).toBe(true);
     });
 
     it('should reset isAnalyzing flag', () => {

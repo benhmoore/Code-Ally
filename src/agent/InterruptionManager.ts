@@ -53,6 +53,16 @@ export class InterruptionManager {
   private toolAbortController?: AbortController;
 
   /**
+   * Abort controller for the in-flight LLM request.
+   *
+   * Owned by this agent and handed to ModelClient.send() as its `signal`, so an
+   * interrupt cancels only THIS agent's request — never sibling agents that share
+   * the same underlying client. Distinct from the tool controller because an
+   * interjection cancels the in-flight generation but must NOT abort running tools.
+   */
+  private requestAbortController?: AbortController;
+
+  /**
    * Check if currently interrupted
    *
    * @returns true if an interruption is active
@@ -100,6 +110,13 @@ export class InterruptionManager {
     this.interrupted = true;
     this.interruptionType = type;
 
+    // Both a hard cancel and an interjection stop the in-flight generation, so the
+    // request signal is aborted for either type. Abort the EXISTING controller (the
+    // one send() is listening to) rather than replacing it.
+    this.ensureRequestAbortController();
+    this.requestAbortController!.abort();
+
+    // Only a hard cancel tears down running tools; an interjection lets them finish.
     if (type === 'cancel') {
       this.ensureAbortController();
       if (this.toolAbortController) {
@@ -136,9 +153,12 @@ export class InterruptionManager {
 
     // A reset means the current interrupt has been handled and future work can
     // proceed. Do not keep an already-aborted controller around, or the next
-    // tool batch will fail immediately with a false "interrupted by user".
+    // tool batch / LLM request will fail immediately with a false interruption.
     if (this.toolAbortController?.signal.aborted) {
       this.toolAbortController = undefined;
+    }
+    if (this.requestAbortController?.signal.aborted) {
+      this.requestAbortController = undefined;
     }
   }
 
@@ -170,6 +190,41 @@ export class InterruptionManager {
     if (!this.toolAbortController || this.toolAbortController.signal.aborted) {
       this.toolAbortController = new AbortController();
     }
+  }
+
+  /**
+   * Ensure the LLM request abort controller exists.
+   *
+   * Unlike the tool controller, this does NOT replace an already-aborted
+   * controller: when interrupt() runs, the in-flight send() is listening to the
+   * current controller's signal, so we must abort that exact instance rather
+   * than swap in a fresh one (which would never fire). reset()/beginRequest()
+   * handle retiring a spent controller.
+   */
+  private ensureRequestAbortController(): void {
+    if (!this.requestAbortController) {
+      this.requestAbortController = new AbortController();
+    }
+  }
+
+  /**
+   * Begin an LLM request and get the abort signal to hand to ModelClient.send().
+   *
+   * Each request gets a fresh controller so a prior request's cancellation never
+   * leaks into the next one. If an interrupt is already pending when the request
+   * starts, the signal is born aborted so send() returns immediately instead of
+   * issuing a doomed network call.
+   *
+   * @returns AbortSignal that this agent owns for the request
+   */
+  beginRequest(): AbortSignal {
+    this.requestAbortController = new AbortController();
+
+    if (this.interrupted) {
+      this.requestAbortController.abort();
+    }
+
+    return this.requestAbortController.signal;
   }
 
   /**
@@ -210,5 +265,6 @@ export class InterruptionManager {
   cleanup(): void {
     this.reset();
     this.toolAbortController = undefined;
+    this.requestAbortController = undefined;
   }
 }

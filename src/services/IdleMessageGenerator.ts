@@ -73,6 +73,7 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
   private readonly batchSize: number = BUFFER_SIZES.IDLE_MESSAGE_BATCH_SIZE;
   private readonly refillThreshold: number = BUFFER_SIZES.IDLE_MESSAGE_REFILL_THRESHOLD;
   private onQueueUpdated?: () => void;
+  private currentAbort?: AbortController;
 
   get isActive(): boolean {
     return this.isGenerating;
@@ -107,9 +108,7 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
 
       // Cancel all active requests on the model client
       // This is safe because we call this BEFORE the agent starts its request
-      if (typeof this.modelClient.cancel === 'function') {
-        this.modelClient.cancel();
-      }
+      this.currentAbort?.abort();
 
       // Reset flag - the background promise will handle cleanup in finally block
       this.isGenerating = false;
@@ -177,6 +176,8 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
   async generateMessageBatch(recentMessages: Message[] = [], context?: IdleContext): Promise<string[]> {
     const messagePrompt = this.buildBatchMessagePrompt(recentMessages, context);
 
+    const abort = new AbortController();
+    this.currentAbort = abort;
     try {
       logger.debug('[IDLE_MSG] Sending request to model...');
       const response = await this.modelClient.send(
@@ -185,6 +186,7 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
           stream: false,
           temperature: 1.2, // Higher temperature for more creative/surprising messages
           suppressThinking: true, // Don't show thinking for background idle message generation
+          signal: abort.signal,
         }
       );
 
@@ -222,6 +224,8 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
       }
       logger.error('[IDLE_MSG] Failed to generate idle message batch:', error);
       return ['Idle'];
+    } finally {
+      if (this.currentAbort === abort) this.currentAbort = undefined;
     }
   }
 

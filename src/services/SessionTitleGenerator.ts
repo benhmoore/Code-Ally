@@ -29,6 +29,7 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
   private modelClient: ModelClient;
   private sessionManager: SessionManager;
   private pendingGenerations = new Set<string>();
+  private aborts = new Set<AbortController>();
   private isGenerating: boolean = false;
 
   private enableGeneration: boolean;
@@ -88,10 +89,9 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
     if (this.isGenerating) {
       logger.debug('[TITLE_GEN] 🛑 Cancelling ongoing generation (user interaction started)');
 
-      // Cancel all active requests on the model client
-      if (typeof this.modelClient.cancel === 'function') {
-        this.modelClient.cancel();
-      }
+      // Cancel all active requests by aborting their signals
+      for (const a of this.aborts) a.abort();
+      this.aborts.clear();
 
       // Reset flag and clear pending
       this.isGenerating = false;
@@ -123,12 +123,15 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
 
     const titlePrompt = this.buildTitlePrompt(firstUserMessage.content);
 
+    const abort = new AbortController();
+    this.aborts.add(abort);
     try {
       const response = await this.modelClient.send(
         [{ role: 'user', content: titlePrompt }],
         {
           stream: false,
           suppressThinking: true, // Don't show thinking for background title generation
+          signal: abort.signal,
         }
       );
 
@@ -150,6 +153,8 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
     } catch (error) {
       logger.debug('[TITLE_GEN] ❌ Failed to generate session title:', error);
       return this.createFallbackTitle(messages);
+    } finally {
+      this.aborts.delete(abort);
     }
   }
 
@@ -318,12 +323,15 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
 
     const titlePrompt = this.buildRegenerationPrompt(relevantMessages);
 
+    const abort = new AbortController();
+    this.aborts.add(abort);
     try {
       const response = await this.modelClient.send(
         [{ role: 'user', content: titlePrompt }],
         {
           stream: false,
           suppressThinking: true, // Don't show thinking for background title generation
+          signal: abort.signal,
         }
       );
 
@@ -345,6 +353,8 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
     } catch (error) {
       logger.debug('[TITLE_GEN] ❌ Failed to regenerate session title:', error);
       return this.createFallbackTitle(messages);
+    } finally {
+      this.aborts.delete(abort);
     }
   }
 

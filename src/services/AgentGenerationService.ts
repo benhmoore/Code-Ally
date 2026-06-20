@@ -18,6 +18,7 @@ export interface AgentGenerationResult {
 export class AgentGenerationService implements CancellableService {
   private modelClient: ModelClient;
   private isGenerating = false;
+  private currentAbort?: AbortController;
 
   constructor(modelClient: ModelClient) {
     this.modelClient = modelClient;
@@ -29,6 +30,9 @@ export class AgentGenerationService implements CancellableService {
   async generateAgent(detailedDescription: string): Promise<AgentGenerationResult> {
     this.isGenerating = true;
 
+    const abort = new AbortController();
+    this.currentAbort = abort;
+
     try {
       // Build the generation prompt
       const prompt = this.buildGenerationPrompt(detailedDescription);
@@ -39,6 +43,7 @@ export class AgentGenerationService implements CancellableService {
         {
           stream: false,
           suppressThinking: true, // Don't show thinking for background agent generation
+          signal: abort.signal,
         }
       );
 
@@ -49,6 +54,8 @@ export class AgentGenerationService implements CancellableService {
     } catch (error) {
       this.isGenerating = false;
       throw error;
+    } finally {
+      if (this.currentAbort === abort) this.currentAbort = undefined;
     }
   }
 
@@ -124,9 +131,7 @@ Do not include any text before or after the JSON. The name must be lowercase wit
    */
   cancel(): void {
     if (this.isGenerating) {
-      if (typeof this.modelClient.cancel === 'function') {
-        this.modelClient.cancel();
-      }
+      this.currentAbort?.abort();
       this.isGenerating = false;
     }
   }

@@ -168,24 +168,19 @@ export class OllamaClient extends ModelClient {
   }
 
   /**
-   * Cancel all ongoing requests
+   * Close the client and cleanup resources.
+   *
+   * Shutdown only: aborts whatever is still in flight as the client is torn down.
+   * This is NOT per-request cancellation — callers cancel their own request by
+   * aborting the `signal` they passed to send().
    */
-  cancel(): void {
-    logger.debug('[OLLAMA_CLIENT] Cancelling', this.activeRequests.size, 'active requests');
+  async close(): Promise<void> {
+    logger.debug('[OLLAMA_CLIENT] Closing, aborting', this.activeRequests.size, 'in-flight requests');
     for (const [requestId, controller] of this.activeRequests.entries()) {
       logger.debug('[OLLAMA_CLIENT] Aborting request:', requestId);
       controller.abort();
     }
     this.activeRequests.clear();
-  }
-
-  /**
-   * Close the client and cleanup resources
-   */
-  async close(): Promise<void> {
-    // Cancel any ongoing requests
-    this.cancel();
-    // No additional cleanup needed for Ollama client
   }
 
   /**
@@ -199,8 +194,8 @@ export class OllamaClient extends ModelClient {
    * @param options - Send options
    * @returns Promise resolving to the LLM's response
    */
-  async send(messages: readonly Message[], options: SendOptions = {}): Promise<LLMResponse> {
-    const { functions, stream = false, maxRetries: _maxRetries = 3, temperature, parentId, suppressThinking = false, dynamicMaxTokens } = options;
+  async send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse> {
+    const { functions, stream = false, maxRetries: _maxRetries = 3, temperature, parentId, suppressThinking = false, dynamicMaxTokens, signal } = options;
 
     // Generate unique request ID for this request
     // Generate request ID: req-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
@@ -236,7 +231,7 @@ export class OllamaClient extends ModelClient {
 
         try {
           // Execute request with cancellation support
-          const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, parentId, suppressThinking);
+          const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, signal, parentId, suppressThinking);
 
           // Validate and repair tool calls (ALL responses, not just non-streaming)
           if (result.tool_calls && result.tool_calls.length > 0) {
@@ -379,28 +374,44 @@ export class OllamaClient extends ModelClient {
     payload: OllamaPayload,
     stream: boolean,
     attempt: number,
+    callerSignal: AbortSignal,
     parentId?: string,
     suppressThinking?: boolean
   ): Promise<LLMResponse> {
-    // Create abort controller for this request
+    // Per-request abort controller. The caller's signal is the OWNER of this
+    // request: when the owning agent interrupts, only its requests abort. We keep
+    // an internal controller so we can also abort for the time-to-response timeout
+    // (a retryable condition) and distinguish the two reasons downstream.
     const abortController = new AbortController();
     this.activeRequests.set(requestId, abortController);
 
+    if (callerSignal.aborted) {
+      abortController.abort();
+    }
+    const onCallerAbort = () => abortController.abort();
+    callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+
+    // Calculate adaptive timeout with cap at 10 minutes
+    const timeout = Math.min(
+      API_TIMEOUTS.LLM_REQUEST_BASE + attempt * API_TIMEOUTS.LLM_REQUEST_RETRY_INCREMENT,
+      RETRY_CONFIG.MAX_LLM_TIMEOUT
+    );
+
+    // This timer bounds TIME-TO-RESPONSE-HEADERS only. It MUST be cleared once the
+    // fetch resolves; otherwise it later fires mid-stream and aborts a perfectly
+    // healthy in-progress response. Stream stalls after headers are handled
+    // separately by the per-read timeout inside processStreamingResponse.
+    let responseTimedOut = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        responseTimedOut = true;
+        abortController.abort();
+        reject(new Error('Request timeout'));
+      }, timeout);
+    });
+
     try {
-      // Calculate adaptive timeout with cap at 10 minutes
-      const timeout = Math.min(
-        API_TIMEOUTS.LLM_REQUEST_BASE + attempt * API_TIMEOUTS.LLM_REQUEST_RETRY_INCREMENT,
-        RETRY_CONFIG.MAX_LLM_TIMEOUT
-      );
-
-      // Create timeout promise
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          abortController.abort();
-          reject(new Error('Request timeout'));
-        }, timeout);
-      });
-
       // Create fetch promise
       const fetchPromise = fetch(this.apiUrl, {
         method: 'POST',
@@ -414,6 +425,10 @@ export class OllamaClient extends ModelClient {
       // Race timeout and fetch
       const response = await Promise.race([fetchPromise, timeoutPromise]);
 
+      // Headers received within budget — stop the time-to-response timer so it can
+      // never abort the stream that follows.
+      clearTimeout(timeoutHandle);
+
       // Check response status
       if (!response.ok) {
         const errorText = await response.text();
@@ -425,7 +440,7 @@ export class OllamaClient extends ModelClient {
 
       // Process response
       if (stream) {
-        return await this.processStreamingResponse(requestId, response, abortController, parentId, suppressThinking);
+        return await this.processStreamingResponse(requestId, response, abortController, callerSignal, parentId, suppressThinking);
       } else {
         // Non-streaming mode - parse response
         // GAP 2: For non-streaming, the entire response arrives at once, so HTTP errors
@@ -440,9 +455,18 @@ export class OllamaClient extends ModelClient {
         }
         return this.parseNonStreamingResponse(data, requestId, parentId, suppressThinking);
       }
-    } catch (error) {
-      // Re-throw to be handled by send()
+    } catch (error: any) {
+      // A timeout aborts the internal controller and surfaces here as an AbortError
+      // (the fetch reacting to abort) rather than the explicit 'Request timeout'.
+      // Normalize it to the retryable timeout error so it is not misread as an
+      // owner-initiated interruption.
+      if (responseTimedOut && error?.name === 'AbortError') {
+        throw new Error('Request timeout');
+      }
       throw error;
+    } finally {
+      clearTimeout(timeoutHandle);
+      callerSignal.removeEventListener('abort', onCallerAbort);
     }
   }
 
@@ -453,6 +477,7 @@ export class OllamaClient extends ModelClient {
     requestId: string,
     response: Response,
     abortController: AbortController,
+    callerSignal: AbortSignal,
     parentId?: string,
     suppressThinking?: boolean
   ): Promise<LLMResponse> {
@@ -478,22 +503,36 @@ export class OllamaClient extends ModelClient {
 
     try {
       while (true) {
-        // Check for interruption via abort signal
+        // Check for interruption via abort signal. Distinguish WHY we aborted:
+        // an owner-initiated abort (the agent interrupting) is a real interruption;
+        // any other internal abort is treated as a retryable stream timeout rather
+        // than being mislabeled as a user interruption.
         if (abortController.signal.aborted) {
-          throw new Error('Streaming interrupted by user');
+          if (callerSignal.aborted) {
+            throw new Error('Streaming interrupted by user');
+          }
+          throw new Error('Stream read timeout - no data received');
         }
 
         // Add timeout protection for stream reads
         // Ollama can start streaming but then hang without closing the stream
         const readTimeout = API_TIMEOUTS.LLM_REQUEST_BASE;
+        let readTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => {
+          readTimeoutHandle = setTimeout(() => {
             reject(new Error('Stream read timeout - no data received'));
           }, readTimeout);
         });
 
         const readPromise = reader.read();
-        const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+        let done: boolean, value: Uint8Array | undefined;
+        try {
+          ({ done, value } = await Promise.race([readPromise, timeoutPromise]));
+        } finally {
+          // Clear the per-read timer so a settled read never leaves a dangling
+          // timer that rejects (and aborts) a later, healthy iteration.
+          clearTimeout(readTimeoutHandle);
+        }
         if (done) break;
 
         // Decode the chunk and prepend any buffered incomplete line from previous iteration

@@ -75,6 +75,12 @@ export interface CompactionContext {
   generateId: () => string;
   /** Parent tool call ID for nesting compaction events under delegated agent tool calls */
   parentCallId?: string;
+  /**
+   * Abort signal for the summarization LLM call, owned by the agent.
+   * Scopes cancellation to this agent so an interrupt during compaction cancels
+   * only the summarization request.
+   */
+  signal: AbortSignal;
 }
 
 /**
@@ -225,7 +231,8 @@ export class AgentCompactor {
         try {
           compacted = await this.compactConversation(
             this.conversationManager.getMessages(),
-            options
+            options,
+            context.signal
           );
         } catch (error) {
           logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Compaction failed:', error);
@@ -721,7 +728,8 @@ export class AgentCompactor {
    */
   async compactConversation(
     messages: readonly Message[],
-    options: CompactionOptions = {}
+    options: CompactionOptions,
+    signal: AbortSignal
   ): Promise<Message[]> {
     const {
       customInstructions,
@@ -850,6 +858,7 @@ Requirements:
     // Generate summary
     const response = await this.modelClient.send(summarizationRequest, {
       stream: false,
+      signal,
     });
 
     // Validate LLM response - handle error responses and empty content
