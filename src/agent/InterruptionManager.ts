@@ -100,9 +100,6 @@ export class InterruptionManager {
     this.interrupted = true;
     this.interruptionType = type;
 
-    // Ensure abort controller exists before aborting
-    // Note: We abort but don't clear the controller - tools may still need to check the aborted signal
-    // The controller is cleared in cleanup() at end of request
     if (type === 'cancel') {
       this.ensureAbortController();
       if (this.toolAbortController) {
@@ -136,6 +133,13 @@ export class InterruptionManager {
       reason: '',
       isTimeout: false,
     };
+
+    // A reset means the current interrupt has been handled and future work can
+    // proceed. Do not keep an already-aborted controller around, or the next
+    // tool batch will fail immediately with a false "interrupted by user".
+    if (this.toolAbortController?.signal.aborted) {
+      this.toolAbortController = undefined;
+    }
   }
 
   /**
@@ -159,11 +163,11 @@ export class InterruptionManager {
   /**
    * Ensure abort controller exists
    *
-   * Creates the controller if it doesn't exist. This ensures an interrupt
-   * can abort even if it arrives before startToolExecution() is called.
+   * Creates the controller if it doesn't exist. This ensures an interrupt can
+   * abort even if it arrives before startToolExecution() is called.
    */
   private ensureAbortController(): void {
-    if (!this.toolAbortController) {
+    if (!this.toolAbortController || this.toolAbortController.signal.aborted) {
       this.toolAbortController = new AbortController();
     }
   }
@@ -177,7 +181,12 @@ export class InterruptionManager {
    * @returns AbortSignal for the tool execution
    */
   startToolExecution(): AbortSignal {
-    this.ensureAbortController();
+    this.toolAbortController = new AbortController();
+
+    if (this.interrupted && this.interruptionType === 'cancel') {
+      this.toolAbortController.abort();
+    }
+
     return this.toolAbortController!.signal;
   }
 
