@@ -663,6 +663,33 @@ export abstract class BaseTool {
   }
 
   /**
+   * Format the full tool output for persistence to disk when the LLM-facing
+   * result must be truncated. This should return the artifact a model can
+   * inspect directly with read, grep, tail, sed, or other text tools.
+   *
+   * Tools with richer execution streams should override this method.
+   */
+  getPersistableOutput(result: ToolResult | string, fallback?: string): string {
+    if (typeof result === 'string') {
+      return result;
+    }
+
+    if (typeof result.content === 'string') {
+      return result.content;
+    }
+
+    if (fallback !== undefined) {
+      return fallback;
+    }
+
+    try {
+      return JSON.stringify(result);
+    } catch {
+      return String(result);
+    }
+  }
+
+  /**
    * Format subtext for display in the UI
    *
    * This method can be overridden by individual tools to provide

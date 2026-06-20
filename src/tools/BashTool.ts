@@ -866,6 +866,29 @@ export class BashTool extends BaseTool {
   }
 
   /**
+   * Persist the command output as plain terminal text rather than the structured
+   * ToolResult envelope. Bash stores stdout in content and stderr separately,
+   * so preserve both streams for later grep/tail/sed inspection.
+   */
+  getPersistableOutput(result: ToolResult | string, fallback?: string): string {
+    if (typeof result === 'string') {
+      return result;
+    }
+
+    const stdout = typeof result.content === 'string' ? result.content : '';
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+
+    if (stdout && stderr) {
+      return `${stdout}${stdout.endsWith('\n') ? '' : '\n'}${stderr}`;
+    }
+    if (stdout || stderr) {
+      return stdout || stderr;
+    }
+
+    return super.getPersistableOutput(result, fallback);
+  }
+
+  /**
    * Custom result preview for bash tool
    */
   getResultPreview(result: ToolResult, maxLines: number = 3): string[] {

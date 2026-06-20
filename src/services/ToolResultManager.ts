@@ -148,11 +148,13 @@ export class ToolResultManager {
       return resultString;
     }
 
+    const persistedContent = this.getPersistableOutput(toolName, rawResult, resultString);
+
     // Persist full output to disk if persistence is available
     let persistedPath: string | null = null;
     if (this.persistence && toolCallId) {
       // Fire-and-forget persistence — don't block the result pipeline
-      this.persistence.persistResult(toolCallId, resultString).then(path => {
+      this.persistence.persistResult(toolCallId, persistedContent).then(path => {
         if (path) {
           // Path is already embedded in the preview below
         }
@@ -184,16 +186,21 @@ export class ToolResultManager {
 
       // When persisting, show a preview (first N chars) instead of token-truncated content
       const truncatedResult = persistedPath
-        ? resultString.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
+        ? persistedContent.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
         : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
       return minimalNotice + '\n' + truncatedResult;
     }
 
     // When persisting, show a preview instead of token-truncated content
     const truncatedResult = persistedPath
-      ? resultString.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
+      ? persistedContent.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
       : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
     return fullNotice + '\n' + truncatedResult;
+  }
+
+  private getPersistableOutput(toolName: string, rawResult: string | any, fallback: string): string {
+    const tool = this.toolManager?.getTool(toolName);
+    return tool?.getPersistableOutput(rawResult, fallback) ?? (typeof rawResult === 'string' ? rawResult : fallback);
   }
 
   /**

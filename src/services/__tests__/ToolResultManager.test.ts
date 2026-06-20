@@ -12,6 +12,7 @@ import { ReadTool } from '@tools/ReadTool.js';
 import { GrepTool } from '@tools/GrepTool.js';
 import { GlobTool } from '@tools/GlobTool.js';
 import { LsTool } from '@tools/LsTool.js';
+import { ToolResultPersistence } from '../ToolResultPersistence.js';
 
 describe('ToolResultManager', () => {
   let toolResultManager: ToolResultManager;
@@ -204,6 +205,38 @@ describe('ToolResultManager', () => {
       // Should NOT be truncated
       expect(result).toBe(shortOutput);
       expect(result).not.toContain('truncated');
+    });
+
+    it('should persist plain bash output instead of the serialized tool result wrapper', () => {
+      const stdout = 'build line\n'.repeat(1000);
+      const stderr = 'warning from stderr\n';
+      const persistence = {
+        persistResult: vi.fn().mockResolvedValue('/tmp/call-bash.txt'),
+        getResultPath: vi.fn().mockReturnValue('/tmp/call-bash.txt'),
+      } as unknown as ToolResultPersistence;
+
+      toolResultManager.setPersistence(persistence);
+      toolResultManager.setLimits({ maxContextPercent: 0.01, minTokens: 10 });
+
+      const result = toolResultManager.processToolResult(
+        'bash',
+        {
+          success: true,
+          error: '',
+          content: stdout,
+          stderr,
+          return_code: 0,
+        },
+        'call-bash'
+      );
+
+      expect(persistence.persistResult).toHaveBeenCalledWith(
+        'call-bash',
+        `${stdout}${stderr}`
+      );
+      expect(result).toContain('[Full output saved to: /tmp/call-bash.txt]');
+      expect(result).toContain('build line');
+      expect(result).not.toContain('{"success":true');
     });
   });
 });
