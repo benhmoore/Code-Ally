@@ -129,6 +129,18 @@ export function getProjectMemoryDir(projectDir: string = process.cwd()): string 
 }
 
 /**
+ * Get the plans directory for a project (implementation plans written during
+ * plan mode). Stored globally and keyed by project path, so plan files never
+ * pollute the working tree or leak into version control.
+ *
+ * @param projectDir - Absolute path to the project root (defaults to cwd)
+ * @returns Path to the project's plans directory
+ */
+export function getProjectPlansDir(projectDir: string = process.cwd()): string {
+  return join(getProjectDataDir(projectDir), 'plans');
+}
+
+/**
  * Built-in agent definitions shipped with the application
  * Located in dist/agents/ after build
  */

@@ -13,7 +13,7 @@ import os from 'os';
 import { logger } from '../services/Logger.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { getProjectSessionsDir } from '../config/paths.js';
+import { getProjectSessionsDir, getProjectPlansDir } from '../config/paths.js';
 import type { ConfigManager } from '../services/ConfigManager.js';
 import type { AdditionalDirectoriesManager } from '../services/AdditionalDirectoriesManager.js';
 
@@ -99,6 +99,17 @@ export function isPathWithinCwd(checkPath: string): boolean {
     // that features like session analysis must be able to read.
     try {
       if (isPathWithinDirectory(absPath, path.resolve(getProjectSessionsDir()))) {
+        return true;
+      }
+    } catch {
+      // Ignore - fall through to remaining checks
+    }
+
+    // Allow access to this project's own plans directory. Like sessions, plans
+    // live outside the working tree (under ~/.ally) but are Ally-managed data
+    // that must be readable (e.g. to re-open a plan written during plan mode).
+    try {
+      if (isPathWithinDirectory(absPath, path.resolve(getProjectPlansDir()))) {
         return true;
       }
     } catch {

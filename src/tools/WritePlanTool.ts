@@ -1,8 +1,9 @@
 /**
  * WritePlanTool - Write a plan file during plan mode
  *
- * Only available during plan mode. Writes markdown content to
- * .ally-plans/{name}.md and updates PlanModeManager with the plan content.
+ * Only available during plan mode. Writes markdown content to the project's
+ * plans directory ({plansDir}/{name}.md) and updates PlanModeManager with the
+ * plan content.
  */
 
 import * as fs from 'fs';
@@ -12,12 +13,13 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { PlanModeManager } from '../services/PlanModeManager.js';
+import { getProjectPlansDir } from '../config/paths.js';
 import { logger } from '../services/Logger.js';
 
 export class WritePlanTool extends BaseTool {
   readonly name = 'write-plan';
   readonly description =
-    'Write an implementation plan to a file during plan mode. Creates a markdown file in .ally-plans/ directory.';
+    'Write an implementation plan to a file during plan mode. Creates a markdown file in the project plans directory.';
   readonly requiresConfirmation = false;
   readonly hideOutput = true;
 
@@ -89,11 +91,11 @@ export class WritePlanTool extends BaseTool {
 
     // Sanitize name to create safe filename
     const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
-    const plansDir = path.join(process.cwd(), '.ally-plans');
+    const plansDir = getProjectPlansDir();
     const filePath = path.join(plansDir, `${safeName}.md`);
 
     try {
-      // Create .ally-plans directory if it doesn't exist
+      // Create the plans directory if it doesn't exist
       if (!fs.existsSync(plansDir)) {
         fs.mkdirSync(plansDir, { recursive: true });
       }
