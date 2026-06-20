@@ -45,6 +45,7 @@ import { useInputHandlers } from './hooks/useInputHandlers.js';
 import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
 import { useContentWidth } from './hooks/useContentWidth.js';
 import { useTerminalWidth } from './hooks/useTerminalWidth.js';
+import { useReflowOnResize } from './hooks/useReflowOnResize.js';
 import { useBackgroundProcesses } from './hooks/useBackgroundProcesses.js';
 import { useAgentSwitch } from './hooks/useAgentSwitch.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
@@ -377,6 +378,9 @@ const AppContentComponent: React.FC<{
   const contentWidth = useContentWidth();
   // Get full terminal width for elements that should expand (input, footer, modals)
   const terminalWidth = useTerminalWidth();
+
+  // Reflow the committed transcript when the terminal narrows.
+  useReflowOnResize();
 
   // Create debug-enhanced config when debug mode is active
   const effectiveConfig = useMemo(() => {
