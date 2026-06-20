@@ -1,9 +1,10 @@
 /**
- * Custom hook to get the readable content width.
+ * Custom hook to get the full-bleed printable width.
  *
- * Returns the printable width inside the root padding, capped at
- * MAX_CONTENT_WIDTH for readability on wide screens. This is the width to use
- * for conversation content and modals that live inside the root App box.
+ * Returns the printable width inside the root padding, uncapped. This is the
+ * width to use for elements that should span the full content area (e.g. the
+ * input prompt and footer) and need an accurate character budget for their own
+ * wrapping math.
  *
  * Consumes TerminalContext for efficient cached width. Falls back to direct
  * measurement (using the same derivation) if the context is unavailable.
@@ -14,17 +15,17 @@ import { TEXT_LIMITS } from '@config/constants.js';
 import { deriveWidths, useTerminalContext } from '../contexts/TerminalContext.js';
 
 /**
- * Get the effective content width for rendering.
+ * Get the printable width inside the root padding (uncapped).
  *
- * @returns Readable content width in columns (capped at MAX_CONTENT_WIDTH).
+ * @returns Printable width in columns.
  */
-export function useContentWidth(): number {
+export function useInnerWidth(): number {
   try {
-    return useTerminalContext().contentWidth;
+    return useTerminalContext().innerWidth;
   } catch {
     // Fallback to direct measurement if used outside the provider.
     const { stdout } = useStdout();
     const rawWidth = stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
-    return deriveWidths(rawWidth).contentWidth;
+    return deriveWidths(rawWidth).innerWidth;
   }
 }

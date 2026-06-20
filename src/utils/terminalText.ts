@@ -127,6 +127,145 @@ export function truncateAnsiToWidth(text: string, width: number, ellipsis: strin
   return result + ellipsis + (sawAnsi ? ANSI_RESET : '');
 }
 
+export interface WrapOptions {
+  /**
+   * Keep every character, including the whitespace at break points. Required
+   * for editable buffers where each character must map to a screen cell and the
+   * concatenation of the returned lines must equal the input line. When false
+   * (the default) the wrapper behaves like normal display word-wrap: the space
+   * at a soft break is dropped and leading whitespace on continuation lines is
+   * trimmed.
+   */
+  preserveWhitespace?: boolean;
+  /** Expand tabs to spaces before wrapping. Default true. */
+  expandTabs?: boolean;
+  /** Tab stop width used when expandTabs is true. Default 4. */
+  tabWidth?: number;
+}
+
+/**
+ * Wrap styled terminal text to a visible width.
+ *
+ * The single wrapping engine for the UI. It is ANSI-aware (escape sequences do
+ * not count toward width and never force a break), wide-character aware (CJK and
+ * emoji count as two columns), and word-aware (it breaks at spaces and only
+ * hard-breaks words longer than the full width).
+ *
+ * Every source line (split on "\n") yields at least one visual line, so blank
+ * lines are preserved. In preserve mode the concatenation of the returned lines
+ * for a given source line equals that source line exactly.
+ */
+export function wrapAnsiText(text: string, width: number, options: WrapOptions = {}): string[] {
+  const { preserveWhitespace = false, expandTabs = true, tabWidth = 4 } = options;
+
+  if (width <= 0) {
+    return text.split('\n');
+  }
+
+  const result: string[] = [];
+  for (const sourceLine of text.split('\n')) {
+    const line = expandTabs ? expandTabsAnsiAware(sourceLine, tabWidth) : sourceLine;
+    wrapVisualLine(line, width, preserveWhitespace, result);
+  }
+  return result;
+}
+
+/**
+ * Wrap a single hard line (no newlines) into one or more visual lines, pushing
+ * them onto `out`. Always pushes at least one line for the source line.
+ */
+function wrapVisualLine(line: string, width: number, preserveWhitespace: boolean, out: string[]): void {
+  const startLength = out.length;
+
+  let current = '';
+  let currentWidth = 0;
+  // Most recent space run inside `current`, used as a soft-break opportunity.
+  let breakStart = -1; // index where the space run begins
+  let breakEnd = -1; // index just past the space run
+  let trimLeadingSpace = false; // continuation line started by a soft break (display mode)
+
+  let index = 0;
+  while (index < line.length) {
+    const remaining = line.slice(index);
+    const ansiMatch = remaining.match(ANSI_SEQUENCE_AT_START_PATTERN);
+    if (ansiMatch?.[0]) {
+      current += ansiMatch[0]; // zero width: attach without affecting wrapping
+      index += ansiMatch[0].length;
+      continue;
+    }
+
+    const char = readCodePoint(line, index);
+    if (!char) {
+      break;
+    }
+    index += char.length;
+
+    const isSpace = char === ' ';
+    const charWidth = getCharacterWidth(char);
+
+    if (isSpace && trimLeadingSpace && current.length === 0) {
+      continue; // drop leading whitespace on a soft-wrapped continuation line
+    }
+
+    if (currentWidth + charWidth <= width) {
+      if (isSpace) {
+        // Record (or extend) the space run as the latest break opportunity.
+        if (breakEnd !== current.length) {
+          breakStart = current.length;
+        }
+        current += char;
+        currentWidth += charWidth;
+        breakEnd = current.length;
+      } else {
+        current += char;
+        currentWidth += charWidth;
+        trimLeadingSpace = false;
+      }
+      continue;
+    }
+
+    // --- The character does not fit: wrap. ---
+    if (isSpace) {
+      if (preserveWhitespace) {
+        // Keep the space; start a fresh line carrying it.
+        out.push(current);
+        current = char;
+        currentWidth = charWidth;
+        breakStart = 0;
+        breakEnd = current.length;
+      } else {
+        // Drop the breaking space and trim any further leading spaces.
+        out.push(current);
+        current = '';
+        currentWidth = 0;
+        breakStart = breakEnd = -1;
+        trimLeadingSpace = true;
+      }
+      continue;
+    }
+
+    if (breakStart > 0) {
+      // Break at the last space run. In display mode the spaces are dropped.
+      const head = preserveWhitespace ? current.slice(0, breakEnd) : current.slice(0, breakStart);
+      const tail = current.slice(breakEnd);
+      out.push(head);
+      current = tail + char;
+      currentWidth = visibleLength(current);
+    } else {
+      // No break opportunity: hard-break the over-long word.
+      out.push(current);
+      current = char;
+      currentWidth = charWidth;
+    }
+    breakStart = breakEnd = -1;
+    trimLeadingSpace = false;
+  }
+
+  if (current.length > 0 || out.length === startLength) {
+    out.push(current);
+  }
+}
+
 function getCharacterWidth(char: string): number {
   if (char === '\n' || char === '\r') {
     return 0;

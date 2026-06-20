@@ -18,7 +18,8 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import stringWidth from 'string-width';
 import { detectFilesAndImages } from '@utils/pathUtils.js';
-import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
+import { useInnerWidth } from '../hooks/useInnerWidth.js';
+import { wrapAnsiText } from '@utils/terminalText.js';
 
 export interface TextInputProps {
   /** Current text value */
@@ -112,8 +113,9 @@ export const TextInput: React.FC<TextInputProps> = ({
     cursorRef.current = cursorPosition;
   }, [cursorPosition]);
 
-  // Get terminal width for proper visual line wrapping
-  const terminalWidth = useTerminalWidth();
+  // Printable width inside the root padding; the input spans the full content
+  // area, so this is the correct character budget for its own wrapping math.
+  const terminalWidth = useInnerWidth();
 
   // Calculate available content width based on container structure
   // Bordered: border (2) + paddingX (2) = 4 chars overhead, plus prompt on first line
@@ -289,8 +291,13 @@ export const TextInput: React.FC<TextInputProps> = ({
   };
 
   /**
-   * Split a single line into visual lines based on available width
-   * Uses string-width for proper handling of wide characters (CJK, emoji)
+   * Split a single logical line into visual lines based on available width.
+   *
+   * Uses the shared wrapping engine in preserve mode: it wraps at word
+   * boundaries (with wide-character awareness) but keeps every character, so the
+   * concatenation of the returned visual lines equals the input line. That
+   * invariant is what keeps cursor offset mapping exact. Tabs are not expanded
+   * for the same reason — a literal tab must remain a single addressable cell.
    *
    * @param line - The text line to split
    * @param maxWidth - Maximum visual width per line
@@ -300,34 +307,7 @@ export const TextInput: React.FC<TextInputProps> = ({
     if (maxWidth <= 0 || line.length === 0) {
       return [line];
     }
-
-    const visualLines: string[] = [];
-    let currentLine = '';
-    let currentWidth = 0;
-
-    // Use Array.from for proper Unicode grapheme handling
-    const chars = Array.from(line);
-
-    for (const char of chars) {
-      const charWidth = stringWidth(char);
-
-      if (currentWidth + charWidth > maxWidth && currentLine.length > 0) {
-        // Start a new line
-        visualLines.push(currentLine);
-        currentLine = char;
-        currentWidth = charWidth;
-      } else {
-        currentLine += char;
-        currentWidth += charWidth;
-      }
-    }
-
-    // Push the last line
-    if (currentLine.length > 0 || visualLines.length === 0) {
-      visualLines.push(currentLine);
-    }
-
-    return visualLines;
+    return wrapAnsiText(line, maxWidth, { preserveWhitespace: true, expandTabs: false });
   };
 
   /**

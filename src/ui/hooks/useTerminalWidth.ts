@@ -1,12 +1,12 @@
 /**
- * Custom hook to get raw terminal width without max content width constraint
+ * Custom hook to get the raw terminal width in columns.
  *
- * Unlike useContentWidth which caps at MAX_CONTENT_WIDTH for readability,
- * this hook returns the actual terminal width for components that should
- * expand to fill available space (e.g., input prompt, footer).
+ * This is the full physical terminal width, used only by the root App box which
+ * fills the screen. Components that render *inside* the root padding should use
+ * useInnerWidth (full-bleed) or useContentWidth (readable, capped) instead.
  *
- * Consumes TerminalContext for efficient width access. Falls back to
- * direct measurement if context unavailable (for backwards compatibility).
+ * Consumes TerminalContext for efficient cached width. Falls back to direct
+ * measurement if the context is unavailable.
  */
 
 import { useStdout } from 'ink';
@@ -14,21 +14,15 @@ import { TEXT_LIMITS } from '@config/constants.js';
 import { useTerminalContext } from '../contexts/TerminalContext.js';
 
 /**
- * Get the raw terminal width without max content constraint
+ * Get the raw terminal width without any padding adjustment.
  *
- * Returns the actual terminal width in columns.
- * Falls back to TERMINAL_WIDTH_FALLBACK if terminal width unavailable.
- *
- * @returns Terminal width in columns
+ * @returns Raw terminal width in columns.
  */
 export function useTerminalWidth(): number {
-  // Try to use TerminalContext for efficient cached width
   try {
-    const { width } = useTerminalContext();
-    return width;
+    return useTerminalContext().width;
   } catch {
-    // Fallback to direct measurement if context unavailable
-    // This maintains backwards compatibility for components outside provider
+    // Fallback to direct measurement if used outside the provider.
     const { stdout } = useStdout();
     return stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
   }

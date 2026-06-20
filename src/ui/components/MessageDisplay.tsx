@@ -14,6 +14,11 @@ interface MessageDisplayProps {
   config?: any;
   /** Current agent name (to prefix non-ally responses) */
   currentAgent?: string;
+  /**
+   * Available content width in columns, accounting for the message indent
+   * applied by the parent. Falls back to the conversation content width.
+   */
+  width?: number;
 }
 
 /**
@@ -42,10 +47,11 @@ const formatAgentName = (agentName: string): string => {
     .join(' ');
 };
 
-const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, config, currentAgent }) => {
+const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, config, currentAgent, width }) => {
   const { role, content, name } = message;
   const showThinking = config?.show_thinking_in_chat ?? false;
-  const contentWidth = useContentWidth();
+  const fallbackWidth = useContentWidth();
+  const contentWidth = width ?? fallbackWidth;
 
   // User messages - bold with prompt prefix
   if (role === 'user') {
@@ -110,7 +116,7 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
               {showAgentPrefix && (
                 <Text dimColor italic>{agentPrefix}</Text>
               )}
-              <MarkdownText content={safeContent} />
+              <MarkdownText content={safeContent} width={contentWidth} />
             </>
           )
         )}
@@ -173,7 +179,8 @@ export const MessageDisplay = React.memo(
     // Also check if currentAgent changed (affects prefix display)
     return (
       prevProps.message === nextProps.message &&
-      prevProps.currentAgent === nextProps.currentAgent
+      prevProps.currentAgent === nextProps.currentAgent &&
+      prevProps.width === nextProps.width
     );
   }
 );

@@ -16,25 +16,22 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { marked } from 'marked';
 import { SyntaxHighlighter } from '@services/SyntaxHighlighter.js';
-import { TEXT_LIMITS, FORMATTING } from '@config/constants.js';
+import { FORMATTING } from '@config/constants.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
+import { expandTabsAnsiAware, padAnsiToWidth, truncateAnsiToWidth, visibleLength, wrapAnsiText } from '@utils/terminalText.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { logger } from '@services/Logger.js';
 import { LRUCache } from '@utils/LRUCache.js';
 import { contentHash } from '@utils/contentHash.js';
 
-// Table rendering constants (specific to markdown table formatting)
-const TABLE_FORMATTING = {
-  /** Table outer border width (2 chars for '| |') */
-  BORDER_WIDTH: 2,
-  /** Table column separator width (3 chars for ' | ') */
-  SEPARATOR_WIDTH: 3,
-  /** Table padding per column (2 chars for left/right padding) */
-  PADDING_PER_COL: 2,
-  /** Table safety margin for rendering */
-  SAFETY_MARGIN: 4,
-};
+// Non-cell horizontal chrome for a rendered table row, derived so that a data
+// row is exactly as wide as the border lines:
+//   row = "│ " + Σ(cell) + per-column " │ " (last column closes with " │")
+//       = Σ(cell) + 3 * numCols + 1
+// => per-column chrome = 3, fixed chrome = 1.
+const TABLE_CHROME_PER_COL = 3;
+const TABLE_CHROME_FIXED = 1;
 
 /**
  * Global markdown parse cache
@@ -91,6 +88,12 @@ export interface MarkdownTextProps {
   content: string;
   /** Optional syntax highlighting theme */
   theme?: string;
+  /**
+   * Available content width in columns. Provided by the layout owner (which
+   * knows its own padding) so wrapping math matches what is actually drawn.
+   * Falls back to the conversation content width when omitted.
+   */
+  width?: number;
 }
 
 interface ParsedNode {
@@ -112,11 +115,12 @@ interface ParsedNode {
  * Parses markdown and renders it with appropriate terminal styling.
  * Uses marked for parsing and cli-highlight for syntax highlighting.
  */
-export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme }) => {
+export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme, width }) => {
   // Use singleton instance for better performance (avoids creating new instances)
   const highlighter = useMemo(() => SyntaxHighlighter.getInstance(theme), [theme]);
-  // Get content width for proper text wrapping in Static components
-  const contentWidth = useContentWidth();
+  // Width flows from the layout owner; fall back to the conversation content width.
+  const fallbackWidth = useContentWidth();
+  const contentWidth = width ?? fallbackWidth;
 
   const parsed = useMemo(() => {
     // Generate cache key from content hash
@@ -148,7 +152,7 @@ export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme }) =>
   return (
     <Box flexDirection="column" width={contentWidth}>
       {parsed.map((node, idx) => (
-        <RenderNode key={idx} node={node} highlighter={highlighter} />
+        <RenderNode key={idx} node={node} highlighter={highlighter} width={contentWidth} />
       ))}
     </Box>
   );
@@ -293,12 +297,13 @@ function parseTokens(tokens: any[]): ParsedNode[] {
 /**
  * Render a single parsed node
  */
-const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }> = ({
+const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; width: number }> = ({
   node,
   highlighter,
+  width,
 }) => {
   if (node.type === 'code') {
-    return <CodeBlockRenderer content={node.content || ''} language={node.language} highlighter={highlighter} />;
+    return <CodeBlockRenderer content={node.content || ''} language={node.language} highlighter={highlighter} width={width} />;
   }
 
   if (node.type === 'heading') {
@@ -344,11 +349,11 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
     // This ensures consistent formatting across all nested content
     const textContent = nodeToPlainText(node.children || []);
 
-    return <BlockquoteRenderer content={textContent} />;
+    return <BlockquoteRenderer content={textContent} width={width} />;
   }
 
   if (node.type === 'table') {
-    return <TableRenderer header={node.header || []} rows={node.rows || []} />;
+    return <TableRenderer header={node.header || []} rows={node.rows || []} width={width} />;
   }
 
   if (node.type === 'paragraph') {
@@ -458,55 +463,15 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter }>
  * Renders blockquote content with consistent left border prefix (│) on every line,
  * including lines that wrap due to terminal width constraints.
  */
-const BlockquoteRenderer: React.FC<{ content: string }> = ({ content }) => {
-  const terminalWidth = useContentWidth();
-
+const BlockquoteRenderer: React.FC<{ content: string; width: number }> = ({ content, width }) => {
   // Account for the prefix width: "│ " = 2 characters
   const PREFIX_WIDTH = 2;
-  const availableWidth = terminalWidth - PREFIX_WIDTH;
+  const availableWidth = Math.max(1, width - PREFIX_WIDTH);
 
-  // Wrap text to terminal width
-  const wrappedLines = useMemo(() => {
-    const lines: string[] = [];
-    const contentLines = content.split('\n');
-
-    for (const line of contentLines) {
-      if (line.length === 0) {
-        // Preserve empty lines
-        lines.push('');
-        continue;
-      }
-
-      if (line.length <= availableWidth) {
-        // Line fits - add as-is
-        lines.push(line);
-        continue;
-      }
-
-      // Line is too long - wrap it
-      let remaining = line;
-      while (remaining.length > 0) {
-        if (remaining.length <= availableWidth) {
-          lines.push(remaining);
-          break;
-        }
-
-        // Find a good break point (prefer breaking at spaces)
-        let breakPoint = availableWidth;
-        const lastSpace = remaining.lastIndexOf(' ', availableWidth);
-
-        // Break at space if it's not too far back (within 70% of available width)
-        if (lastSpace > availableWidth * TEXT_LIMITS.WORD_BOUNDARY_THRESHOLD) {
-          breakPoint = lastSpace;
-        }
-
-        lines.push(remaining.substring(0, breakPoint));
-        remaining = remaining.substring(breakPoint).trimStart();
-      }
-    }
-
-    return lines;
-  }, [content, availableWidth]);
+  const wrappedLines = useMemo(
+    () => wrapAnsiText(content, availableWidth),
+    [content, availableWidth]
+  );
 
   return (
     <Box flexDirection="column">
@@ -526,70 +491,19 @@ const BlockquoteRenderer: React.FC<{ content: string }> = ({ content }) => {
  * Renders code blocks with fixed-width borders that don't shift based on content.
  * Uses terminal width to ensure consistent border alignment regardless of content indentation.
  */
-const CodeBlockRenderer: React.FC<{ content: string; language?: string; highlighter: SyntaxHighlighter }> = ({
+const CodeBlockRenderer: React.FC<{ content: string; language?: string; highlighter: SyntaxHighlighter; width: number }> = ({
   content,
   language,
   highlighter,
+  width,
 }) => {
-  const terminalWidth = useContentWidth();
-
-  // Account for: left padding (2) + border chars (2) + internal padding (2) + safety margin (4)
-  const CODE_BLOCK_OVERHEAD = 10;
-  const availableWidth = Math.max(40, terminalWidth - CODE_BLOCK_OVERHEAD);
+  // Chrome around code content: left padding (2) + border + space (2) + space + border (2).
+  const CODE_BLOCK_OVERHEAD = 6;
+  const availableWidth = Math.max(20, width - CODE_BLOCK_OVERHEAD);
 
   // Highlight the code
   const highlighted = highlighter.highlight(content, { language });
   const lines = highlighted.split('\n');
-
-  // Helper to expand tabs to spaces (assuming 4-space tab stops)
-  const expandTabs = (text: string, tabWidth: number = 4): string => {
-    let result = '';
-    let column = 0;
-
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-
-      // Check if we're in an ANSI escape sequence
-      if (char === '\x1b' && text[i + 1] === '[') {
-        // Find the end of the ANSI sequence
-        const endIdx = text.indexOf('m', i);
-        if (endIdx !== -1) {
-          // Copy the entire ANSI sequence without affecting column count
-          result += text.substring(i, endIdx + 1);
-          i = endIdx;
-          continue;
-        }
-      }
-
-      if (char === '\t') {
-        // Expand tab to reach next tab stop
-        const spacesToAdd = tabWidth - (column % tabWidth);
-        result += ' '.repeat(spacesToAdd);
-        column += spacesToAdd;
-      } else {
-        result += char;
-        column++;
-      }
-    }
-
-    return result;
-  };
-
-  // Helper to get visual length (strip ANSI codes and count expanded tabs)
-  const getVisualLength = (text: string): number => {
-    // First expand tabs, then strip ANSI codes
-    const expanded = expandTabs(text);
-    return expanded.replace(/\x1b\[[0-9;]*m/g, '').length;
-  };
-
-  // Helper to pad a line to the target width (ANSI-aware, tab-aware)
-  const padLine = (line: string, width: number): string => {
-    const visualLen = getVisualLength(line);
-    const paddingNeeded = Math.max(0, width - visualLen);
-    // Expand tabs in the display line as well
-    const expanded = expandTabs(line);
-    return expanded + ' '.repeat(paddingNeeded);
-  };
 
   // Create border lines
   const topBorder = UI_SYMBOLS.BORDER.TOP_LEFT + UI_SYMBOLS.BORDER.HORIZONTAL.repeat(availableWidth + 2) + UI_SYMBOLS.BORDER.TOP_RIGHT;
@@ -606,11 +520,12 @@ const CodeBlockRenderer: React.FC<{ content: string; language?: string; highligh
 
         {/* Content lines */}
         {lines.map((line, idx) => {
-          // Truncate if line is too long, otherwise pad to width
-          const visualLen = getVisualLength(line);
-          const displayLine = visualLen > availableWidth
-            ? line.substring(0, availableWidth - 3) + '...'
-            : padLine(line, availableWidth);
+          // Truncate over-long lines, otherwise pad to a fixed width so the
+          // right border stays aligned regardless of content.
+          const expanded = expandTabsAnsiAware(line);
+          const displayLine = visibleLength(expanded) > availableWidth
+            ? truncateAnsiToWidth(expanded, availableWidth)
+            : padAnsiToWidth(expanded, availableWidth);
 
           return (
             <Box key={idx}>
@@ -634,9 +549,7 @@ const CodeBlockRenderer: React.FC<{ content: string; language?: string; highligh
  * Renders markdown tables with borders and proper column width calculation
  * Automatically adjusts column widths to fit terminal width
  */
-const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ header, rows }) => {
-  const terminalWidth = useContentWidth();
-
+const TableRenderer: React.FC<{ header: string[]; rows: string[][]; width: number }> = ({ header, rows, width }) => {
   // Validate table structure
   if (!header || header.length === 0) {
     return <Text dimColor>Empty table</Text>;
@@ -657,13 +570,9 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
   // Calculate optimal column widths with terminal width constraints
   const columnWidths = useMemo(() => {
 
-    // Helper to get max line length for cells with line breaks (visual length, no ANSI codes)
-    const getMaxLineLength = (text: string): number => {
-      // Strip ANSI codes for accurate length calculation
-      const stripped = text.replace(/\x1b\[[0-9;]*m/g, '');
-      const lines = stripped.split('\n');
-      return Math.max(...lines.map(line => line.length));
-    };
+    // Helper to get max visual line length for cells with line breaks.
+    const getMaxLineLength = (text: string): number =>
+      Math.max(...text.split('\n').map((line) => visibleLength(line)));
 
     // Calculate natural widths (what content actually needs)
     const naturalWidths = header.map((h) => getMaxLineLength(h));
@@ -673,15 +582,12 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
       });
     });
 
-    // Calculate table overhead: borders and padding
-    // Format: │ col1 │ col2 │ col3 │
-    // Overhead = 2 (outer borders) + (numCols - 1) * 3 (separators) + numCols * 2 (padding)
+    // Non-cell chrome consumed by a rendered row, which must equal the border
+    // width exactly. Layout: "│ " (2) + per-column " │ " separators with the
+    // last column closing with " │" (2) instead of " │ " (3):
+    //   chrome = 2 + (numCols - 1) * 3 + 2 = 3 * numCols + 1
     const numCols = header.length;
-    const borderOverhead =
-      TABLE_FORMATTING.BORDER_WIDTH +
-      (numCols - 1) * TABLE_FORMATTING.SEPARATOR_WIDTH +
-      numCols * TABLE_FORMATTING.PADDING_PER_COL;
-    const availableWidth = terminalWidth - borderOverhead - TABLE_FORMATTING.SAFETY_MARGIN;
+    const availableWidth = width - TABLE_CHROME_PER_COL * numCols - TABLE_CHROME_FIXED;
 
     // Sum of natural widths
     const totalNaturalWidth = naturalWidths.reduce((sum, w) => sum + w, 0);
@@ -713,7 +619,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
       const proportionalBonus = Math.floor((excess / totalExcess) * remainingSpace);
       return minWidth + proportionalBonus;
     });
-  }, [header, validRows, terminalWidth]);
+  }, [header, validRows, width]);
 
   // Process cell text with inline markdown and convert to ANSI
   const processCellMarkdown = (text: string): string => {
@@ -723,81 +629,9 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
     return segmentsToAnsiString(segments);
   };
 
-  // Get visual length of text (excluding ANSI escape codes)
-  const getVisualLength = (text: string): number => {
-    // Remove ANSI escape codes to get actual displayed length
-    // ANSI codes follow pattern: \x1b[...m
-    return text.replace(/\x1b\[[0-9;]*m/g, '').length;
-  };
-
-  // Wrap text to fit within specified width (ANSI-aware)
-  const wrapText = (text: string, width: number): string[] => {
-    // First, split on explicit line breaks (\n)
-    const explicitLines = text.split('\n');
-    const wrappedLines: string[] = [];
-
-    // Then wrap each line individually if needed
-    for (const line of explicitLines) {
-      const visualLen = getVisualLength(line);
-      if (visualLen <= width) {
-        wrappedLines.push(line);
-        continue;
-      }
-
-      let remaining = line;
-      while (remaining.length > 0) {
-        const remainingVisualLen = getVisualLength(remaining);
-        if (remainingVisualLen <= width) {
-          wrappedLines.push(remaining);
-          break;
-        }
-
-        // Find break point based on visual length
-        // We need to iterate through the string accounting for ANSI codes
-        let visualPos = 0;
-        let actualPos = 0;
-        let lastSpaceVisual = -1;
-        let lastSpaceActual = -1;
-
-        while (actualPos < remaining.length && visualPos <= width) {
-          // Check for ANSI escape sequence
-          if (remaining.substring(actualPos).startsWith('\x1b[')) {
-            // Skip entire ANSI sequence
-            const endPos = remaining.indexOf('m', actualPos);
-            if (endPos !== -1) {
-              actualPos = endPos + 1;
-              continue;
-            }
-          }
-
-          if (remaining[actualPos] === ' ') {
-            lastSpaceVisual = visualPos;
-            lastSpaceActual = actualPos;
-          }
-
-          visualPos++;
-          actualPos++;
-        }
-
-        let breakPoint = actualPos;
-        if (lastSpaceVisual > width * TEXT_LIMITS.WORD_BOUNDARY_THRESHOLD) {
-          breakPoint = lastSpaceActual;
-        }
-
-        wrappedLines.push(remaining.substring(0, breakPoint));
-        remaining = remaining.substring(breakPoint).trimStart();
-      }
-    }
-
-    return wrappedLines;
-  };
-
-  // Pad a cell to the specified width (ANSI-aware)
-  const padCell = (text: string, width: number): string => {
-    const visualLen = getVisualLength(text);
-    const paddingNeeded = Math.max(0, width - visualLen);
-    return text + ' '.repeat(paddingNeeded);
-  };
+  // Wrap and pad cell content using the shared, ANSI/wide-char-aware engine.
+  const wrapCell = (text: string, cellWidth: number): string[] => wrapAnsiText(text, cellWidth);
+  const padCell = (text: string, cellWidth: number): string => padAnsiToWidth(text, cellWidth);
 
   // Create horizontal separator lines with proper connectors
   const createTopBorder = (): string => {
@@ -821,7 +655,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
       {(() => {
         const headerLines = header.map((h, idx) => {
           const formatted = processCellMarkdown(h);
-          return wrapText(formatted, columnWidths[idx] || 0);
+          return wrapCell(formatted, columnWidths[idx] || 0);
         });
         const maxHeaderLines = Math.max(...headerLines.map(lines => lines.length));
 
@@ -833,7 +667,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
                 {headerLines.map((lines, colIdx) => (
                   <React.Fragment key={colIdx}>
                     <Text>{padCell(lines[lineIdx] || '', columnWidths[colIdx] || 0)}</Text>
-                    <Text dimColor> │ </Text>
+                    <Text dimColor>{colIdx === headerLines.length - 1 ? ' │' : ' │ '}</Text>
                   </React.Fragment>
                 ))}
               </Box>
@@ -850,7 +684,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
         // Process and wrap each cell in the row
         const wrappedCells = row.map((cell, colIdx) => {
           const formatted = processCellMarkdown(cell);
-          return wrapText(formatted, columnWidths[colIdx] || 0);
+          return wrapCell(formatted, columnWidths[colIdx] || 0);
         });
         const maxLines = Math.max(...wrappedCells.map(lines => lines.length));
         const isLastRow = rowIdx === validRows.length - 1;
@@ -863,7 +697,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][] }> = ({ heade
                 {wrappedCells.map((lines, colIdx) => (
                   <React.Fragment key={colIdx}>
                     <Text>{padCell(lines[lineIdx] || '', columnWidths[colIdx] || 0)}</Text>
-                    <Text dimColor> │ </Text>
+                    <Text dimColor>{colIdx === wrappedCells.length - 1 ? ' │' : ' │ '}</Text>
                   </React.Fragment>
                 ))}
               </Box>

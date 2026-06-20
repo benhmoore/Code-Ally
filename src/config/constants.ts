@@ -697,6 +697,32 @@ export const VALID_CONTEXT_SIZES = [
 ] as const;
 
 // ===========================================
+// LAYOUT
+// ===========================================
+
+/**
+ * Layout chrome that consumes horizontal space.
+ *
+ * Single source of truth for how many columns the UI shell reserves around
+ * content. Width hooks and renderers derive their available width from these
+ * values so that wrapping math never drifts from what is actually drawn.
+ */
+export const LAYOUT = {
+  /**
+   * Horizontal padding applied once on each side of the root App box
+   * (`<Box padding={1}>`). Two columns total are unavailable for content.
+   */
+  ROOT_PADDING_X: 1,
+
+  /**
+   * Left indent applied to assistant/tool messages in the conversation view
+   * (`<Box paddingLeft={2}>`). Content rendered inside an indented message has
+   * this many fewer columns available than the conversation content width.
+   */
+  MESSAGE_INDENT: 2,
+} as const;
+
+// ===========================================
 // TEXT LENGTH LIMITS
 // ===========================================
 

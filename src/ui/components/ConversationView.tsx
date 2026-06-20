@@ -8,7 +8,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
-import { BUFFER_SIZES, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
+import { BUFFER_SIZES, AGENT_DELEGATION_TOOLS, LAYOUT } from '@config/constants.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
 import { createDivider } from '../utils/uiHelpers.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -474,11 +474,18 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       const spacing = { marginTop: 1 };
 
       if (item.type === 'message') {
-        const messagePadding = item.message.role === 'user' ? {} : { paddingLeft: 2 };
+        const isUser = item.message.role === 'user';
+        const indent = isUser ? 0 : LAYOUT.MESSAGE_INDENT;
+        const messagePadding = isUser ? {} : { paddingLeft: indent };
         jsxItemsRef.current.push(
           <Box key={`msg-${item.message.id || item.index}`} {...spacing} {...messagePadding}>
             <ErrorBoundary label={`message-${item.message.id || item.index}`}>
-              <MessageDisplay message={item.message} config={config} currentAgent={currentAgent} />
+              <MessageDisplay
+                message={item.message}
+                config={config}
+                currentAgent={currentAgent}
+                width={Math.max(1, terminalWidth - indent)}
+              />
             </ErrorBoundary>
           </Box>
         );
