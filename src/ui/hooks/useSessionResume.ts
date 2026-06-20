@@ -67,12 +67,16 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
   // Get ToolManager to look up tool visibility
   const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
 
-  // First pass: collect all tool results
+  // First pass: collect all tool results.
+  // Output is read from the persisted DISPLAY payload (metadata.tool_result),
+  // never from msg.content — that field holds the LLM wire format
+  // ([Tool Call ID]\n<JSON> / <error> wrappers) and must not reach the UI.
   messages.forEach(msg => {
     if (msg.role === 'tool' && msg.tool_call_id) {
+      const display = msg.metadata?.tool_result?.[msg.tool_call_id];
       toolResultsMap.set(msg.tool_call_id, {
-        output: msg.content,
-        error: msg.content.startsWith('Error:') ? msg.content : undefined,
+        output: display?.content ?? '',
+        error: display?.error,
         timestamp: msg.timestamp || Date.now(),
         metadata: msg.metadata,
       });

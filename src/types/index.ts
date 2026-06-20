@@ -74,6 +74,13 @@ export interface MessageMetadata {
   tool_status?: Record<string, 'success' | 'error'>;
   /** Per-tool-call context data for session resume/rewind (keyed by tool call ID) */
   tool_context?: Record<string, ToolCallContext>;
+  /**
+   * Per-tool-call DISPLAY payload (keyed by tool call ID). The clean
+   * ToolResult.content used to render the tool call in the UI on reconstruction
+   * (entered fleet agents, session resume) — kept separate from the message's
+   * `content`, which holds the LLM wire format and must not be shown to the user.
+   */
+  tool_result?: Record<string, { content?: string; error?: string; error_type?: ErrorType }>;
   /** Agent that generated this message (for displaying agent name prefix) */
   agentName?: string;
 

@@ -1182,6 +1182,18 @@ export class ToolOrchestrator {
     // Store tool status for session persistence
     metadata.tool_status = { [toolCall.id]: result.success ? 'success' : 'error' };
 
+    // Store the DISPLAY payload (clean ToolResult.content), separate from the LLM
+    // wire format that lives in the message's `content`. Reconstruction (entered
+    // fleet agents, session resume) renders from this — never from the wire string —
+    // so the UI shows the same clean output the live path renders, not raw JSON.
+    metadata.tool_result = {
+      [toolCall.id]: {
+        content: result.content,
+        ...(result.error && { error: result.error }),
+        ...(result.error_type !== undefined && { error_type: result.error_type }),
+      },
+    };
+
     // Store tool_context data for session persistence (execution timing, agent model, etc.)
     const executionStartTime = (result as any)._executionStartTime;
     const agentModel = (result as any)._agentModel;
