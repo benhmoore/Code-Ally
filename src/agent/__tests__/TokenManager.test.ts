@@ -127,6 +127,24 @@ describe('TokenManager', () => {
       const count = tokenManager.estimateMessagesTokens([spread]);
       expect(count).toBeGreaterThan(0);
     });
+
+    it('should recalculate when content changes for the same message ID', () => {
+      const original: Message = {
+        id: 'msg-1',
+        role: 'system',
+        content: 'Short prompt',
+        timestamp: Date.now(),
+      };
+      const expanded: Message = {
+        ...original,
+        content: 'Short prompt\n' + 'Additional context '.repeat(100),
+      };
+
+      const originalCount = tokenManager.estimateMessagesTokens([original]);
+      const expandedCount = tokenManager.estimateMessagesTokens([expanded]);
+
+      expect(expandedCount).toBeGreaterThan(originalCount);
+    });
   });
 
   describe('Incremental Token Counting', () => {

@@ -13,6 +13,11 @@ import { Message } from '../types/index.js';
 import { createHash } from 'crypto';
 import { tokenCounter } from '../services/TokenCounter.js';
 
+interface MessageTokenCacheEntry {
+  fingerprint: string;
+  tokens: number;
+}
+
 /**
  * TokenManager manages token counting and context tracking
  */
@@ -27,7 +32,7 @@ export class TokenManager {
   private currentTokenCount: number = 0;
   private seenFiles: Map<string, string> = new Map(); // path -> content hash
   private toolResultHashes: Map<string, string> = new Map(); // content hash -> tool_call_id (first occurrence)
-  private messageTokenCache: Map<string, number> = new Map(); // message id -> token count
+  private messageTokenCache: Map<string, MessageTokenCacheEntry> = new Map(); // message id -> token count + content fingerprint
 
   /**
    * Create a new TokenManager
@@ -93,6 +98,16 @@ export class TokenManager {
     return tokens;
   }
 
+  private getMessageTokenFingerprint(message: Message): string {
+    return JSON.stringify({
+      role: message.role,
+      content: message.content ?? '',
+      name: message.name ?? '',
+      tool_call_id: message.tool_call_id ?? '',
+      tool_calls: message.tool_calls ?? null,
+    });
+  }
+
   /**
    * Estimate total token count for an array of messages
    *
@@ -106,12 +121,18 @@ export class TokenManager {
     let total = 0;
     for (const message of messages) {
       // Check cache first (skip caching if message has no id)
-      let tokens = message.id ? this.messageTokenCache.get(message.id) : undefined;
+      let tokens: number | undefined;
+      const fingerprint = message.id ? this.getMessageTokenFingerprint(message) : undefined;
+      const cached = message.id ? this.messageTokenCache.get(message.id) : undefined;
+      if (cached && cached.fingerprint === fingerprint) {
+        tokens = cached.tokens;
+      }
+
       if (tokens === undefined) {
         // Not cached - calculate and store
         tokens = this.estimateMessageTokens(message);
-        if (message.id) {
-          this.messageTokenCache.set(message.id, tokens);
+        if (message.id && fingerprint) {
+          this.messageTokenCache.set(message.id, { fingerprint, tokens });
         }
       }
       total += tokens;
@@ -189,7 +210,10 @@ export class TokenManager {
     this.currentTokenCount += tokens;
     // Cache the result if message has ID
     if (message.id) {
-      this.messageTokenCache.set(message.id, tokens);
+      this.messageTokenCache.set(message.id, {
+        fingerprint: this.getMessageTokenFingerprint(message),
+        tokens,
+      });
     }
   }
 

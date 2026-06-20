@@ -33,7 +33,7 @@ import { PermissionManager } from '../security/PermissionManager.js';
 import { isPermissionDeniedError } from '../security/PathSecurity.js';
 import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
 import { SessionPersistence } from './SessionPersistence.js';
-import { AgentCompactor } from './AgentCompactor.js';
+import { AgentCompactor, type AppliedCompactionResult, type CompactionOptions } from './AgentCompactor.js';
 import { AgentLifecycleHandler } from './AgentLifecycleHandler.js';
 import { LoopDetector } from './LoopDetector.js';
 import { LoopInfo } from './types/loopDetection.js';
@@ -1267,7 +1267,8 @@ export class Agent {
         this.appConfig.reasoning_effort,
         this.agentName,
         executionContext.thoroughness,
-        this.config.agentType
+        this.config.agentType,
+        this.conversationManager.getMessages()
       );
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Custom agent prompt regenerated with current context');
     } else {
@@ -1277,7 +1278,8 @@ export class Agent {
         this.tokenManager,
         this.toolResultManager,
         false,
-        this.appConfig.reasoning_effort
+        this.appConfig.reasoning_effort,
+        this.conversationManager.getMessages()
       );
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Main agent prompt regenerated with current context');
     }
@@ -1298,6 +1300,11 @@ export class Agent {
       this.conversationManager.setMessages([systemMessage, ...currentMessages]);
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created new system prompt (missing after session resume)');
     }
+
+    // Dynamic prompt generation can materially change the system message
+    // (for example by injecting context files from a compaction summary), so
+    // refresh accounting before deciding whether auto-compaction is needed.
+    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
 
     // Auto-compaction: check if context usage exceeds threshold
     await this.checkAutoCompaction();
@@ -1769,6 +1776,26 @@ export class Agent {
   }
 
   /**
+   * Compact, apply, verify, emit UI events, and persist the active conversation.
+   * Used by manual /compact so it shares the same mutation path as auto-compaction.
+   */
+  async compactCurrentConversation(options: CompactionOptions = {}): Promise<AppliedCompactionResult> {
+    const result = await this.agentCompactor.compactAndApply({
+      instanceId: this.instanceId,
+      isSpecializedAgent: this.config.isSpecializedAgent || false,
+      compactThreshold: this.appConfig.compact_threshold,
+      generateId: () => this.generateId(),
+      parentCallId: this.config.parentCallId,
+    }, {
+      ...options,
+      verification: 'reduced',
+    });
+
+    await this.autoSaveSession();
+    return result;
+  }
+
+  /**
    * Rewind conversation to a specific user message
    *
    * Truncates the conversation history to just before the selected user message.
@@ -1828,13 +1855,17 @@ export class Agent {
    * Delegates to AgentCompactor
    */
   private async checkAutoCompaction(): Promise<void> {
-    await this.agentCompactor.checkAndPerformAutoCompaction({
+    const compacted = await this.agentCompactor.checkAndPerformAutoCompaction({
       instanceId: this.instanceId,
       isSpecializedAgent: this.config.isSpecializedAgent || false,
       compactThreshold: this.appConfig.compact_threshold,
       generateId: () => this.generateId(),
       parentCallId: this.config.parentCallId,
     });
+
+    if (compacted) {
+      await this.autoSaveSession();
+    }
   }
 
   /**

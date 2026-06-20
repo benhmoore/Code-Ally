@@ -20,6 +20,8 @@ import { Message, ActivityEventType } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { BUFFER_SIZES } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
+import { parseToolCallArguments } from '../llm/FunctionCalling.js';
+import path from 'path';
 
 /**
  * Maximum percentage of context to use for the summarization request itself.
@@ -41,16 +43,23 @@ const EMERGENCY_TRUNCATION_TARGET_PERCENT = 50;
 const MAX_FILE_REFERENCES = 15;
 
 /**
- * Minimum token budget required to attempt LLM summarization.
- * If available budget is below this, fall back to emergency truncation.
- */
-const MIN_SUMMARIZATION_BUDGET = 500;
-
-/**
  * Estimated token overhead for summarization request structure.
  * Accounts for message framing (system + user + response structure).
  */
 const SUMMARIZATION_STRUCTURE_OVERHEAD = 12;
+
+/**
+ * Minimum transcript budget worth attempting after fixed summarization prompt
+ * overhead is accounted for.
+ */
+const MIN_TRANSCRIPT_BUDGET = 500;
+
+/**
+ * Minimum budget for an excerpt of a single oversized message.
+ */
+const MIN_MESSAGE_EXCERPT_BUDGET = 80;
+
+type CompactionVerification = 'below-threshold' | 'reduced';
 
 /**
  * Context needed for compaction operations
@@ -80,6 +89,26 @@ export interface CompactionOptions {
   timestampLabel?: string;
 }
 
+export interface ApplyCompactionOptions extends CompactionOptions {
+  /** Emit COMPACTION_START / COMPACTION_COMPLETE events (default: true) */
+  emitEvents?: boolean;
+  /** Force emergency truncation instead of LLM summarization */
+  forceEmergency?: boolean;
+  /** How to verify the resulting compacted history */
+  verification?: CompactionVerification;
+}
+
+export interface AppliedCompactionResult {
+  compactedMessages: Message[];
+  oldContextUsage: number;
+  newContextUsage: number;
+  oldTokenCount: number;
+  newTokenCount: number;
+  threshold: number;
+  noticeTimestamp: number;
+  wasEmergencyFallback?: boolean;
+}
+
 /**
  * Coordinates conversation compaction with context usage monitoring
  */
@@ -106,22 +135,18 @@ export class AgentCompactor {
    * @returns true if compaction was performed, false otherwise
    */
   async checkAndPerformAutoCompaction(context: CompactionContext): Promise<boolean> {
-    // Guard: prevent concurrent compaction operations
     if (this.isCompacting) {
       logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Skipping - compaction already in progress');
       return false;
     }
 
-    // Get TokenManager (instance variable)
     if (typeof this.tokenManager.getContextUsagePercentage !== 'function') {
       return false;
     }
 
-    // Check current context usage
     const contextUsage = this.tokenManager.getContextUsagePercentage();
     const threshold = context.compactThreshold || CONTEXT_THRESHOLDS.CRITICAL;
 
-    // Check if context usage exceeds threshold (primary concern - do we need to compact?)
     if (contextUsage < threshold) {
       return false; // Context not full, no need to compact
     }
@@ -138,68 +163,111 @@ export class AgentCompactor {
     logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId,
       `Context at ${contextUsage}%, threshold ${threshold}% - triggering compaction`);
 
-    // Set guard flag
+    await this.compactAndApply(context, {
+      preserveLastUserMessage: true,
+      timestampLabel: 'auto-compacted',
+      forceEmergency: contextUsage >= CONTEXT_THRESHOLDS.EMERGENCY,
+      verification: 'below-threshold',
+    });
+
+    return true;
+  }
+
+  /**
+   * Compact the current conversation, apply it to the ConversationManager,
+   * update token accounting, verify the result, and emit UI events.
+   *
+   * This is the shared mutation path for both auto-compaction and manual
+   * /compact so their behavior cannot drift.
+   */
+  async compactAndApply(
+    context: CompactionContext,
+    options: ApplyCompactionOptions = {}
+  ): Promise<AppliedCompactionResult> {
+    if (this.isCompacting) {
+      throw new Error('Compaction already in progress');
+    }
+
+    const threshold = context.compactThreshold || CONTEXT_THRESHOLDS.CRITICAL;
+    const emitEvents = options.emitEvents !== false;
+    const verification = options.verification ?? 'below-threshold';
+
+    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
+    const oldContextUsage = this.tokenManager.getContextUsagePercentage();
+    const oldTokenCount = this.tokenManager.getCurrentTokenCount();
+
     this.isCompacting = true;
     let compactionStarted = false;
 
     try {
-      // Emit compaction start event
-      this.emitEvent({
-        id: context.generateId(),
-        type: ActivityEventType.COMPACTION_START,
-        timestamp: Date.now(),
-        data: {
-          parentId: context.parentCallId,
-        },
-      });
-      compactionStarted = true;
+      if (emitEvents) {
+        this.emitEvent({
+          id: context.generateId(),
+          type: ActivityEventType.COMPACTION_START,
+          timestamp: Date.now(),
+          data: {
+            parentId: context.parentCallId,
+          },
+        });
+        compactionStarted = true;
+      }
 
       let compacted: Message[];
+      let wasEmergencyFallback = false;
 
-      // Emergency truncation: at very high context (98%+), skip summarization entirely
-      // LLM summarization would likely fail because the summarization request itself
-      // would exceed context limits
-      if (contextUsage >= CONTEXT_THRESHOLDS.EMERGENCY) {
+      if (options.forceEmergency) {
         logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId,
-          `Emergency truncation at ${contextUsage}% - skipping LLM summarization`);
+          `Emergency truncation at ${oldContextUsage}% - skipping LLM summarization`);
         compacted = this.performEmergencyTruncation(
           this.conversationManager.getMessages()
         );
       } else {
-        // Normal compaction with summarization
-        compacted = await this.compactConversation(
-          this.conversationManager.getMessages(),
-          {
-            preserveLastUserMessage: true,
-            timestampLabel: 'auto-compacted',
-          }
-        );
+        try {
+          compacted = await this.compactConversation(
+            this.conversationManager.getMessages(),
+            options
+          );
+        } catch (error) {
+          logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Compaction failed:', error);
+          logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Attempting emergency truncation fallback');
+          compacted = this.performEmergencyTruncation(
+            this.conversationManager.getMessages()
+          );
+          wasEmergencyFallback = true;
+        }
       }
 
       // Validate compaction result
       if (compacted.length === 0) {
         logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Compaction produced empty result');
-        return false;
+        throw new Error('Compaction produced empty result');
       }
 
-      // Update messages
-      this.conversationManager.setMessages(compacted);
+      let newTokenCount = this.estimateMessagesTokenCount(compacted);
+      let newContextUsage = this.contextUsagePercentageFor(newTokenCount);
 
-      // Update token count
-      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
-
-      const newContextUsage = this.tokenManager.getContextUsagePercentage();
-
-      // Verify compaction actually reduced context meaningfully
-      // If we're still at or above threshold, compaction failed to help
-      if (newContextUsage >= threshold) {
+      if (verification === 'below-threshold' && newContextUsage >= threshold) {
         const contextSize = this.tokenManager.getContextSize();
         throw new Error(
-          `Compaction did not reduce context usage meaningfully (${contextUsage}% -> ${newContextUsage}%). ` +
+          `Compaction did not reduce context usage meaningfully (${oldContextUsage}% -> ${newContextUsage}%). ` +
           `Context size (${contextSize} tokens) is too small for the current system prompt. ` +
           `Increase context_size in your configuration.`
         );
       }
+
+      if (verification === 'reduced' && newTokenCount >= oldTokenCount) {
+        throw new Error(
+          `Compaction did not reduce token usage (${oldTokenCount} -> ${newTokenCount} tokens).`
+        );
+      }
+
+      // Apply only after verification succeeds, so a failed compaction leaves
+      // the active conversation untouched.
+      this.conversationManager.setMessages(compacted);
+      this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
+
+      newContextUsage = this.tokenManager.getContextUsagePercentage();
+      newTokenCount = this.tokenManager.getCurrentTokenCount();
 
       // Get the last message's timestamp to place notice before it
       // Find the last non-system message timestamp
@@ -210,22 +278,33 @@ export class AgentCompactor {
       // Place compaction notice right before the last message (timestamp - 1)
       const noticeTimestamp = lastMessageTimestamp > 0 ? lastMessageTimestamp - 1 : Date.now();
 
-      // Emit compaction complete event with notice data and compacted messages
-      this.emitEvent({
-        id: context.generateId(),
-        type: ActivityEventType.COMPACTION_COMPLETE,
-        timestamp: noticeTimestamp,
-        data: {
-          parentId: context.parentCallId,
-          oldContextUsage: contextUsage,
-          newContextUsage,
-          threshold,
-          compactedMessages: this.conversationManager.getMessages(),
-        },
-      });
+      if (emitEvents) {
+        this.emitEvent({
+          id: context.generateId(),
+          type: ActivityEventType.COMPACTION_COMPLETE,
+          timestamp: noticeTimestamp,
+          data: {
+            parentId: context.parentCallId,
+            oldContextUsage,
+            newContextUsage,
+            threshold,
+            compactedMessages: this.conversationManager.getMessages(),
+            ...(wasEmergencyFallback ? { wasEmergencyFallback: true } : {}),
+          },
+        });
+      }
 
       logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, `Compaction complete - Context now at ${newContextUsage}%`);
-      return true;
+      return {
+        compactedMessages: this.conversationManager.getMessagesCopy(),
+        oldContextUsage,
+        newContextUsage,
+        oldTokenCount,
+        newTokenCount,
+        threshold,
+        noticeTimestamp,
+        ...(wasEmergencyFallback ? { wasEmergencyFallback: true } : {}),
+      };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -236,7 +315,7 @@ export class AgentCompactor {
         logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Context size too small:', errorMessage);
 
         // Emit error completion to unstick UI before re-throwing
-        if (compactionStarted) {
+        if (emitEvents && compactionStarted) {
           this.emitEvent({
             id: context.generateId(),
             type: ActivityEventType.COMPACTION_COMPLETE,
@@ -252,76 +331,52 @@ export class AgentCompactor {
         throw error; // Re-throw - this is unrecoverable, user must increase context_size
       }
 
-      // Use debug: error is handled via fallback + throw. logger.error leaks to TUI via stderr.
       logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Compaction failed:', error);
 
-      // Fallback: if summarization fails, try emergency truncation
-      logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Attempting emergency truncation fallback');
-      try {
-        const compacted = this.performEmergencyTruncation(
-          this.conversationManager.getMessages()
-        );
-        this.conversationManager.setMessages(compacted);
-        this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
-        const newContextUsage = this.tokenManager.getContextUsagePercentage();
-
-        // Verify fallback actually helped
-        if (newContextUsage >= threshold) {
-          const contextSize = this.tokenManager.getContextSize();
-          throw new Error(
-            `Emergency truncation fallback did not reduce context (${contextUsage}% -> ${newContextUsage}%). ` +
-            `Context size (${contextSize} tokens) is too small. Increase context_size in your configuration.`
-          );
-        }
-
-        // Emit success event for fallback path
-        const lastMessageTimestamp = this.conversationManager.getMessages()
-          .filter(m => m.role !== 'system')
-          .reduce((latest, msg) => Math.max(latest, msg.timestamp || 0), 0);
-        const noticeTimestamp = lastMessageTimestamp > 0 ? lastMessageTimestamp - 1 : Date.now();
-
+      if (emitEvents && compactionStarted) {
         this.emitEvent({
           id: context.generateId(),
           type: ActivityEventType.COMPACTION_COMPLETE,
-          timestamp: noticeTimestamp,
+          timestamp: Date.now(),
           data: {
             parentId: context.parentCallId,
-            oldContextUsage: contextUsage,
-            newContextUsage,
-            threshold,
-            compactedMessages: this.conversationManager.getMessages(),
-            wasEmergencyFallback: true,
+            error: true,
+            errorMessage,
           },
         });
-
-        logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId,
-          `Emergency truncation fallback succeeded - Context now at ${newContextUsage}%`);
-        return true;
-      } catch (fallbackError) {
-        const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-        // Use debug: error is communicated via throw + activity events. logger.error leaks to TUI via stderr.
-        logger.debug('[AGENT_AUTO_COMPACT]', context.instanceId, 'Emergency truncation fallback also failed:', fallbackError);
-
-        // Emit error completion to unstick UI
-        if (compactionStarted) {
-          this.emitEvent({
-            id: context.generateId(),
-            type: ActivityEventType.COMPACTION_COMPLETE,
-            timestamp: Date.now(),
-            data: {
-              parentId: context.parentCallId,
-              error: true,
-              errorMessage: fallbackErrorMessage,
-            },
-          });
-        }
-
-        throw fallbackError; // Re-throw - context_size errors are unrecoverable
       }
+
+      throw error;
     } finally {
       // Always reset guard flag
       this.isCompacting = false;
     }
+  }
+
+  private normalizeFileReference(filePath: unknown): string | null {
+    if (typeof filePath !== 'string') {
+      return null;
+    }
+
+    const trimmed = filePath.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    return path.normalize(path.isAbsolute(trimmed) ? trimmed : path.resolve(process.cwd(), trimmed));
+  }
+
+  private estimateMessagesTokenCount(messages: readonly Message[]): number {
+    return messages.reduce((total, message) => total + this.tokenManager.estimateMessageTokens(message), 0);
+  }
+
+  private contextUsagePercentageFor(tokenCount: number): number {
+    const contextSize = this.tokenManager.getContextSize();
+    if (contextSize === 0) {
+      return 0;
+    }
+
+    return Math.min(100, Math.floor((tokenCount / contextSize) * 100));
   }
 
   /**
@@ -345,44 +400,52 @@ export class AgentCompactor {
     const editedFiles = new Set<string>();
     const writtenFiles = new Set<string>();
 
+    const addPath = (target: Set<string>, filePath: unknown) => {
+      const normalized = this.normalizeFileReference(filePath);
+      if (normalized) {
+        target.add(normalized);
+      }
+    };
+
     for (const message of messages) {
       // Extract from assistant tool calls
       if (message.role === 'assistant' && message.tool_calls) {
         for (const toolCall of message.tool_calls) {
           const toolName = toolCall.function.name;
-          const args = toolCall.function.arguments;
+          const args = parseToolCallArguments(toolCall.function.arguments as any);
 
           if (toolName === 'read' && args.file_paths && Array.isArray(args.file_paths)) {
             // Read tool uses file_paths array
-            for (const path of args.file_paths) {
-              if (typeof path === 'string') {
-                readFiles.add(path);
-              }
+            for (const filePath of args.file_paths) {
+              addPath(readFiles, filePath);
             }
+          } else if (toolName === 'read') {
+            // Be tolerant of older sessions/tests that used a singular path key.
+            addPath(readFiles, args.file_path ?? args.path);
           } else if ((toolName === 'edit' || toolName === 'line-edit') && args.file_path && typeof args.file_path === 'string') {
             // Edit and line-edit tools use file_path string
-            editedFiles.add(args.file_path);
+            addPath(editedFiles, args.file_path);
           } else if (toolName === 'write' && args.file_path && typeof args.file_path === 'string') {
             // Write tool uses file_path string
-            writtenFiles.add(args.file_path);
+            addPath(writtenFiles, args.file_path);
           }
         }
       }
 
       // Extract from user message mentions
       if (message.role === 'user' && message.metadata?.mentions?.files) {
-        for (const path of message.metadata.mentions.files) {
-          readFiles.add(path);
+        for (const filePath of message.metadata.mentions.files) {
+          addPath(readFiles, filePath);
         }
       }
     }
 
-    // Deduplicate: edited files shouldn't appear in read list, written files shouldn't appear in edited or read
+    // Deduplicate by priority: edited > written > read.
     for (const edited of editedFiles) {
+      writtenFiles.delete(edited);
       readFiles.delete(edited);
     }
     for (const written of writtenFiles) {
-      editedFiles.delete(written);
       readFiles.delete(written);
     }
 
@@ -521,6 +584,127 @@ export class AgentCompactor {
     return result;
   }
 
+  private formatMessageForSummary(message: Message, index: number): string {
+    const labels = [`Message ${index + 1}`, message.role.toUpperCase()];
+    if (message.name) {
+      labels.push(message.name);
+    }
+    if (message.tool_call_id) {
+      labels.push(`tool_call_id=${message.tool_call_id}`);
+    }
+    if (message.metadata?.isConversationSummary) {
+      labels.push('conversation-summary');
+    }
+
+    const lines = [`### ${labels.join(' | ')}`];
+    const content = message.content?.trim();
+    lines.push(content ? content : '(empty content)');
+
+    if (message.images?.length) {
+      lines.push(`[${message.images.length} image(s) attached]`);
+    }
+
+    if (message.tool_calls?.length) {
+      lines.push('Tool calls:');
+      for (const toolCall of message.tool_calls) {
+        const args = parseToolCallArguments(toolCall.function.arguments as any);
+        lines.push(`- ${toolCall.id}: ${toolCall.function.name} ${JSON.stringify(args)}`);
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  private truncateTextToTokenBudget(text: string, maxTokens: number): string {
+    if (maxTokens <= 0 || !text) {
+      return '';
+    }
+
+    if (this.tokenManager.estimateTokens(text) <= maxTokens) {
+      return text;
+    }
+
+    const marker = '\n\n[... omitted middle content to fit compaction budget ...]\n\n';
+    if (this.tokenManager.estimateTokens(marker) >= maxTokens) {
+      return '[... omitted content ...]';
+    }
+
+    let low = 0;
+    let high = text.length;
+    let best = marker.trim();
+
+    while (low <= high) {
+      const keepChars = Math.floor((low + high) / 2);
+      const headChars = Math.ceil(keepChars * 0.6);
+      const tailChars = keepChars - headChars;
+      const candidate = `${text.slice(0, headChars)}${marker}${tailChars > 0 ? text.slice(text.length - tailChars) : ''}`;
+      const candidateTokens = this.tokenManager.estimateTokens(candidate);
+
+      if (candidateTokens <= maxTokens) {
+        best = candidate;
+        low = keepChars + 1;
+      } else {
+        high = keepChars - 1;
+      }
+    }
+
+    return best;
+  }
+
+  private buildTranscriptWithinBudget(
+    messages: readonly Message[],
+    tokenBudget: number
+  ): { transcript: string; selectedCount: number; omittedCount: number } {
+    const selectedSections: string[] = [];
+    let usedTokens = 0;
+    let omittedCount = 0;
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]!;
+      const section = this.formatMessageForSummary(msg, i);
+      const sectionTokens = this.tokenManager.estimateTokens(section);
+      const remainingBudget = tokenBudget - usedTokens;
+
+      if (remainingBudget <= 0) {
+        omittedCount = i + 1;
+        break;
+      }
+
+      if (sectionTokens <= remainingBudget) {
+        selectedSections.unshift(section);
+        usedTokens += sectionTokens;
+        continue;
+      }
+
+      if (selectedSections.length === 0 || remainingBudget >= MIN_MESSAGE_EXCERPT_BUDGET) {
+        const excerpt = this.truncateTextToTokenBudget(section, remainingBudget);
+        if (excerpt.trim()) {
+          selectedSections.unshift(excerpt);
+          usedTokens += this.tokenManager.estimateTokens(excerpt);
+          omittedCount = i;
+        } else {
+          omittedCount = i + 1;
+        }
+      } else {
+        omittedCount = i + 1;
+      }
+      break;
+    }
+
+    let transcript = selectedSections.join('\n\n');
+    if (omittedCount > 0) {
+      const omissionPrefix = `[${omittedCount} older message(s) omitted because the compaction input budget was limited.]\n\n`;
+      const remainingBudget = tokenBudget - this.tokenManager.estimateTokens(omissionPrefix);
+      transcript = `${omissionPrefix}${remainingBudget > 0 ? this.truncateTextToTokenBudget(transcript, remainingBudget) : ''}`;
+    }
+
+    return {
+      transcript,
+      selectedCount: selectedSections.length,
+      omittedCount,
+    };
+  }
+
   /**
    * Compact conversation messages with summarization
    *
@@ -566,7 +750,7 @@ export class AgentCompactor {
       : undefined;
 
     // Messages to summarize: everything except the last user message (if preserving it)
-    let messagesToSummarize = lastUserMessage
+    const messagesToSummarize = lastUserMessage
       ? otherMessages.slice(0, otherMessages.lastIndexOf(lastUserMessage))
       : [...otherMessages];
 
@@ -608,12 +792,16 @@ Requirements:
 - Omit sections that don't apply (e.g., no ACTIVE BLOCKERS if none exist)
 - Target <15% of original conversation length`;
 
-    let finalRequest = 'Summarize the conversation using the exact format specified above.';
+    let finalRequest = 'Summarize the conversation transcript using the exact format specified above.';
     if (customInstructions) {
       finalRequest += ` Additional instructions: ${customInstructions}`;
     }
     if (lastUserMessage) {
-      finalRequest += `\n\nThe user's current request is: "${lastUserMessage.content}"`;
+      const currentRequest = this.truncateTextToTokenBudget(
+        lastUserMessage.content,
+        Math.max(200, Math.floor(this.tokenManager.getContextSize() * 0.05))
+      );
+      finalRequest += `\n\nThe user's current request is: "${currentRequest}"`;
     }
 
     // Calculate available budget for messages to summarize
@@ -631,63 +819,33 @@ Requirements:
     const availableForMessages = maxSummarizationTokens - fixedOverhead;
 
     // Guard: if budget is too small, fall back to emergency truncation
-    if (availableForMessages < MIN_SUMMARIZATION_BUDGET) {
+    if (availableForMessages < MIN_TRANSCRIPT_BUDGET) {
       logger.debug('[AGENT_COMPACT]', 'Budget too small for summarization, using emergency truncation');
       return this.performEmergencyTruncation(messages);
     }
 
-    // Size-aware trimming: if messages to summarize exceed budget, trim oldest ones
-    let totalMessageTokens = 0;
-    for (const msg of messagesToSummarize) {
-      totalMessageTokens += this.tokenManager.estimateMessageTokens(msg);
+    const transcriptResult = this.buildTranscriptWithinBudget(messagesToSummarize, availableForMessages);
+    if (!transcriptResult.transcript.trim() || transcriptResult.selectedCount === 0) {
+      logger.debug('[AGENT_COMPACT]', 'Transcript budget produced no summarizable content, using emergency truncation');
+      return this.performEmergencyTruncation(messages);
     }
 
-    if (totalMessageTokens > availableForMessages && messagesToSummarize.length > BUFFER_SIZES.MIN_MESSAGES_TO_SUMMARIZE) {
-      logger.debug('[AGENT_COMPACT]', 'Summarization request exceeds budget',
-        `(${totalMessageTokens} > ${availableForMessages} tokens), trimming older messages`);
-
-      // Trim from the beginning (oldest messages) until we fit
-      const trimmedMessages: Message[] = [];
-      let trimmedTokens = 0;
-
-      // Work backwards from newest to oldest
-      for (let i = messagesToSummarize.length - 1; i >= 0; i--) {
-        const msg = messagesToSummarize[i]!;
-        const msgTokens = this.tokenManager.estimateMessageTokens(msg);
-
-        if (trimmedTokens + msgTokens <= availableForMessages) {
-          trimmedMessages.push(msg);
-          trimmedTokens += msgTokens;
-        } else if (trimmedMessages.length >= BUFFER_SIZES.MIN_MESSAGES_TO_SUMMARIZE) {
-          // We have enough messages and hit the limit
-          break;
-        }
-        // Continue even if we exceed - we need minimum messages
-      }
-
-      // Reverse once at the end - O(n) instead of O(n²)
-      trimmedMessages.reverse();
-
-      messagesToSummarize = trimmedMessages;
-      logger.debug('[AGENT_COMPACT]', `Trimmed to ${messagesToSummarize.length} messages (${trimmedTokens} tokens)`);
+    if (transcriptResult.omittedCount > 0) {
+      logger.debug('[AGENT_COMPACT]',
+        `Summarization transcript omitted ${transcriptResult.omittedCount} older message(s) to fit budget`);
     }
 
-    // Create summarization request
-    const summarizationRequest: Message[] = [];
-
-    // Add system message for summarization
-    summarizationRequest.push({
-      role: 'system',
-      content: summarizationSystemContent,
-    });
-
-    // Add messages to be summarized
-    summarizationRequest.push(...messagesToSummarize);
-
-    summarizationRequest.push({
-      role: 'user',
-      content: finalRequest,
-    });
+    const summarizationRequest: Message[] = [
+      {
+        role: 'system',
+        content: summarizationSystemContent,
+      },
+      {
+        role: 'user',
+        content:
+          `Conversation transcript to summarize:\n\n${transcriptResult.transcript}\n\n${finalRequest}`,
+      },
+    ];
 
     // Generate summary
     const response = await this.modelClient.send(summarizationRequest, {
@@ -704,7 +862,8 @@ Requirements:
 
     const summary = response.content.trim();
 
-    // Extract file references from summarized messages
+    // Extract file references from all messages being compacted away, including
+    // older messages omitted from the bounded summarization transcript.
     const fileRefs = this.extractFileReferences(messagesToSummarize);
 
     // Build compacted message list

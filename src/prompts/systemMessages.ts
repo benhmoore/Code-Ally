@@ -87,7 +87,9 @@ Examples needing research:
 NOT for research: Anything in the codebase, historical conversation context, or offline data.
 
 Planning: When the user asks you to plan or a task clearly needs planning, enter plan mode (enter-plan-mode). Only delegate to the plan agent when you need to preserve your context budget.
-Agents: Auto-persist. Reusable via agent-ask.`;
+Agents: Auto-persist. Reusable via agent-ask.
+Background by default: the agent tool runs in the background (non-blocking) by default — spawn agents and keep working; their results are delivered to you automatically. Set run_in_background=false ONLY when your very next step depends on the result. To be auto-notified the moment a background agent finishes (even while idle), pass notify_when_done=true.
+Synchronizing: when your next step depends on background work, use wait (wait(all=true) or wait(task_ids=[...])) to block until it finishes and get the results inline. To monitor something that has no completion signal of its own — a file appearing, a server coming up, a shell predicate — use watch(condition, target, wake=true).`;
 
 // Additional guidelines that apply to all agents
 const GENERAL_GUIDELINES = `Code: Check existing patterns before creating new code. Write clean, artful code that integrates naturally—never tacked on, never over-engineered.
@@ -210,8 +212,9 @@ export async function getContextInfo(options: {
   toolResultManager?: ToolResultManager;
   reasoningEffort?: string;
   callingAgentName?: string;
+  conversationMessages?: readonly Message[];
 } = {}): Promise<string> {
-  const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager, reasoningEffort, callingAgentName } = options;
+  const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager, reasoningEffort, callingAgentName, conversationMessages } = options;
 
   const currentDate = new Date().toISOString().replace('T', ' ').slice(0, TEXT_LIMITS.ISO_DATETIME_LENGTH);
   const workingDir = process.cwd();
@@ -360,22 +363,28 @@ ${skillsSection}`;
   let contextFilesSection = '';
   if (tokenManager) {
     try {
-      const serviceRegistry = ServiceRegistry.getInstance();
-      if (serviceRegistry && serviceRegistry.hasService('conversation_manager')) {
-        const conversationManager = serviceRegistry.get<any>('conversation_manager');
-        if (conversationManager && typeof conversationManager.getMessages === 'function') {
-          const messages: Message[] = conversationManager.getMessages();
-          // Find the most recent summary message with context file references
-          const summaryMsg = [...messages]
-            .reverse()
-            .find(m => m.metadata?.isConversationSummary && m.metadata?.contextFileReferences?.length);
+      let messages = conversationMessages;
 
-          if (summaryMsg) {
-            const loader = new ContextFileLoader(tokenManager);
-            const filesContent = await loader.loadFromSummary(summaryMsg);
-            if (filesContent) {
-              contextFilesSection = `\n${filesContent}`;
-            }
+      if (!messages) {
+        const serviceRegistry = ServiceRegistry.getInstance();
+        const activeAgent = serviceRegistry.get<any>('agent');
+        const conversationManager = activeAgent?.getConversationManager?.();
+        if (conversationManager && typeof conversationManager.getMessages === 'function') {
+          messages = conversationManager.getMessages();
+        }
+      }
+
+      if (messages) {
+        // Find the most recent summary message with context file references
+        const summaryMsg = [...messages]
+          .reverse()
+          .find(m => m.metadata?.isConversationSummary && m.metadata?.contextFileReferences?.length);
+
+        if (summaryMsg) {
+          const loader = new ContextFileLoader(tokenManager);
+          const filesContent = await loader.loadFromSummary(summaryMsg);
+          if (filesContent) {
+            contextFilesSection = `\n${filesContent}`;
           }
         }
       }
@@ -394,9 +403,9 @@ ${skillsSection}`;
 /**
  * Generate the main system prompt dynamically
  */
-export async function getMainSystemPrompt(tokenManager?: TokenManager, toolResultManager?: ToolResultManager, isOnceMode: boolean = false, reasoningEffort?: string): Promise<string> {
+export async function getMainSystemPrompt(tokenManager?: TokenManager, toolResultManager?: ToolResultManager, isOnceMode: boolean = false, reasoningEffort?: string, conversationMessages?: readonly Message[]): Promise<string> {
   // Tool definitions are provided separately by the LLM client as function definitions
-  const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager, reasoningEffort });
+  const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager, reasoningEffort, conversationMessages });
 
   // Get todo context
   let todoContext = '';
@@ -519,7 +528,7 @@ ${context}${todoContext}`;
  * @param thoroughness - Optional thoroughness level for dynamic regeneration: 'quick', 'medium', 'very thorough', 'uncapped'
  * @param agentType - Optional agent type identifier (e.g., 'explore', 'plan') for thoroughness adjustments
  */
-export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string, callingAgentName?: string, thoroughness?: string, agentType?: string): Promise<string> {
+export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string, callingAgentName?: string, thoroughness?: string, agentType?: string, conversationMessages?: readonly Message[]): Promise<string> {
   // Get context with agent information filtered by calling agent name
   const context = await getContextInfo({
     includeAgents: true,
@@ -528,6 +537,7 @@ export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt
     toolResultManager,
     reasoningEffort,
     callingAgentName,
+    conversationMessages,
   });
 
   // Get context budget reminder (only shown at 75%+)
