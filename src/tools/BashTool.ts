@@ -797,58 +797,31 @@ export class BashTool extends BaseTool {
   formatSubtext(args: Record<string, any>): string | null {
     const command = args.command as string;
     const description = args.description as string;
-    const timeoutParam = args.timeout;
     const runInBackground = args.run_in_background === true;
 
     if (!command) {
       return null;
     }
 
-    // Show first 40 chars of command, truncate with ... if longer
-    let commandSnippet = command;
-    if (commandSnippet.length > 40) {
-      commandSnippet = commandSnippet.substring(0, 40) + '...';
+    // Lead with the human-readable intent when the model supplied one; fall back
+    // to the command itself (first 40 chars) when it didn't. The exact timeout is
+    // mechanism, not intent — it lives in the verbose args preview, not here.
+    let label = description;
+    if (!label) {
+      label = command.length > 40 ? command.substring(0, 40) + '...' : command;
     }
 
-    // Background mode ignores timeout
-    if (runInBackground) {
-      const mode = 'background';
-      return description ? `${commandSnippet} - ${mode} - ${description}` : `${commandSnippet} - ${mode}`;
-    }
-
-    // Calculate timeout (same logic as validateTimeout)
-    let timeoutDisplay: string;
-    if (timeoutParam === -1) {
-      timeoutDisplay = '∞'; // Infinite timeout
-    } else if (timeoutParam === undefined || timeoutParam === null) {
-      const timeoutSeconds = this.config?.bash_timeout ?? 60;
-      timeoutDisplay = `${timeoutSeconds}s`;
-    } else {
-      const timeoutNum = Number(timeoutParam);
-      if (isNaN(timeoutNum) || timeoutNum <= 0) {
-        const timeoutSeconds = this.config?.bash_timeout ?? 60;
-        timeoutDisplay = `${timeoutSeconds}s`;
-      } else {
-        // Cap at max timeout (convert from ms to seconds)
-        const timeoutSeconds = Math.min(timeoutNum, TIMEOUT_LIMITS.MAX / 1000);
-        timeoutDisplay = `${timeoutSeconds}s`;
-      }
-    }
-
-    // Build subtext: command - timeout [- description]
-    if (description) {
-      return `${commandSnippet} - ${timeoutDisplay} - ${description}`;
-    }
-
-    return `${commandSnippet} - ${timeoutDisplay}`;
+    // Background is a mode the user should see; the timeout it would override isn't.
+    return runInBackground ? `${label} - background` : label;
   }
 
   /**
    * Get parameters shown in subtext
-   * BashTool shows 'command', 'timeout', 'run_in_background', and 'description' in subtext
+   * BashTool surfaces the description (or command) and background mode in subtext;
+   * timeout is intentionally left out so it still appears in the verbose args preview.
    */
   getSubtextParameters(): string[] {
-    return ['command', 'timeout', 'run_in_background', 'description'];
+    return ['command', 'run_in_background', 'description'];
   }
 
   /**

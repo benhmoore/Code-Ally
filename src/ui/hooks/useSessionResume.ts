@@ -14,6 +14,7 @@ import { PatchManager } from '@services/PatchManager.js';
 import { ToolManager } from '@tools/ToolManager.js';
 import { AppActions } from '../contexts/AppContext.js';
 import { Message, ToolCallState } from '@shared/index.js';
+import { resolveDisplayContent } from '@utils/toolResultContent.js';
 import { SessionSelectRequest } from './useModalState.js';
 import { setTerminalTitle } from '../../utils/terminal.js';
 import { recoverConversation } from '../../utils/conversationRecovery.js';
@@ -75,7 +76,7 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
     if (msg.role === 'tool' && msg.tool_call_id) {
       const display = msg.metadata?.tool_result?.[msg.tool_call_id];
       toolResultsMap.set(msg.tool_call_id, {
-        output: display?.content ?? '',
+        output: resolveDisplayContent(display),
         error: display?.error,
         timestamp: msg.timestamp || Date.now(),
         metadata: msg.metadata,

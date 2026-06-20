@@ -109,23 +109,36 @@ Returns results inline once they finish (or partial state on timeout).`;
       signal: this.currentAbortSignal,
     });
 
+    const aborted = this.currentAbortSignal?.aborted ?? false;
     return this.formatSuccessResponse({
-      content: this.renderResults(results, this.currentAbortSignal?.aborted ?? false),
+      content: this.renderResults(results, aborted, false),
+      display_content: this.renderResults(results, aborted, true),
       waited_count: results.length,
       all_settled: results.every((t) => t.status !== 'running'),
     });
   }
 
-  private renderResults(tasks: BackgroundTask[], aborted: boolean): string {
+  /**
+   * Render the wait outcome. The model view (forDisplay=false) keeps the task
+   * kind and id so the model can make follow-up bash-output/kill-shell calls;
+   * the user view (forDisplay=true) drops that plumbing and omits empty bodies.
+   */
+  private renderResults(tasks: BackgroundTask[], aborted: boolean, forDisplay: boolean): string {
     if (tasks.length === 0) {
       return 'No matching background tasks were running.';
     }
 
     const lines = tasks.map((t) => {
       const elapsed = formatDuration((t.endTime ?? Date.now()) - t.startTime);
-      const header = `${t.kind} ${t.id} [${t.status}] (${t.label}, ${elapsed})`;
+      const header = forDisplay
+        ? `[${t.status}] ${t.label} (${elapsed})`
+        : `${t.kind} ${t.id} [${t.status}] (${t.label}, ${elapsed})`;
       if (t.status === 'running') return `${header}: still running`;
-      const body = t.result ?? t.error ?? '(no output)';
+      const body = t.result ?? t.error;
+      if (!body) {
+        // The model is told explicitly there was no output; the user just sees the header.
+        return forDisplay ? header : `${header}:\n(no output)`;
+      }
       return `${header}:\n${body}`;
     });
 

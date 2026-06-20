@@ -15,6 +15,7 @@ import { logger } from '../services/Logger.js';
 import { FormManager, FormCancelledError } from '../services/FormManager.js';
 import { promises as fs } from 'fs';
 import { createUnifiedDiff } from '../utils/diffUtils.js';
+import { stripDisplayOnlyFields } from '../utils/toolResultContent.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
 
 export abstract class BaseTool {
@@ -683,7 +684,8 @@ export abstract class BaseTool {
     }
 
     try {
-      return JSON.stringify(result);
+      // Persisted for the model to read back — strip display-only fields.
+      return JSON.stringify(stripDisplayOnlyFields(result));
     } catch {
       return String(result);
     }
@@ -748,8 +750,9 @@ export abstract class BaseTool {
       return lines;
     }
 
-    // Try common content fields
-    const contentFields = ['content', 'output', 'result', 'data'];
+    // Try common content fields. display_content (the user-facing rendering) wins
+    // over content so previews stay consistent with the rest of the display path.
+    const contentFields = ['display_content', 'content', 'output', 'result', 'data'];
     for (const field of contentFields) {
       if (result[field]) {
         const content = String(result[field]);

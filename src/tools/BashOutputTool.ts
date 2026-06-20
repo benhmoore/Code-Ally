@@ -139,16 +139,19 @@ export class BashOutputTool extends BaseTool {
 
     if (!shellId) return null;
 
-    // Shorten shell ID for display (show first 8 chars after "shell-")
-    const shortId = shellId.startsWith('shell-')
-      ? shellId.substring(6, 14)
-      : shellId;
-
-    if (filter) {
-      return `${shortId} - filter: ${filter}`;
+    // The raw shell id ("shell-1781972859903-…") is internal plumbing and means
+    // nothing to a reader. Show the command that shell is running instead; only
+    // fall back to a shortened id if the process can't be resolved.
+    let label: string | undefined;
+    const processManager = ServiceRegistry.getInstance().get<BashProcessManager>('bash_process_manager');
+    const command = processManager?.getProcess(shellId)?.command;
+    if (command) {
+      label = command.length > 40 ? command.substring(0, 40) + '...' : command;
+    } else {
+      label = shellId.startsWith('shell-') ? shellId.substring(6, 14) : shellId;
     }
 
-    return shortId;
+    return filter ? `${label} - filter: ${filter}` : label;
   }
 
   /**

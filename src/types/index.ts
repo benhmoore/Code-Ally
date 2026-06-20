@@ -175,6 +175,14 @@ export interface ToolResult {
   system_reminder_persist?: boolean;
   _non_truncatable?: boolean; // If true, this result should never be truncated - operation must fail if insufficient context
 
+  /**
+   * Optional user-facing rendering of this result. When set, the terminal shows
+   * this instead of `content`; the model always receives `content`. Use it to omit
+   * plumbing the model needs but a reader does not (e.g. internal shell ids). This
+   * is a display-only field — see DISPLAY_ONLY_RESULT_FIELDS in utils/toolResultContent.
+   */
+  display_content?: string;
+
   /** stderr output from plugin tools, captured for debugging (e.g., plugin print statements) */
   logs?: string;
 

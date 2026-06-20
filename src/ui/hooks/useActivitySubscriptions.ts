@@ -25,6 +25,7 @@ import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
 import { logger } from '@services/Logger.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
+import { resolveDisplayContent } from '../../utils/toolResultContent.js';
 
 /**
  * Activity subscriptions state
@@ -267,7 +268,7 @@ export const useActivitySubscriptions = (
       const completedCall: ToolCallState = {
         ...toolCall,
         ...updates,
-        output: event.data.result?.content || event.data.output,
+        output: resolveDisplayContent(event.data.result) || event.data.output,
       };
 
       const serviceRegistry = ServiceRegistry.getInstance();

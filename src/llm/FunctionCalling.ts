@@ -11,6 +11,7 @@
 
 import { TEXT_LIMITS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
+import { stripDisplayOnlyFields } from '../utils/toolResultContent.js';
 
 /**
  * Parse tool call arguments from string or object
@@ -75,7 +76,12 @@ export function createToolResultMessage(
   content: string;
   is_error?: boolean;
 } {
-  let content = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+  // When given a result object, strip display-only fields so the user-facing
+  // rendering never reaches the model. Pre-serialized strings pass through
+  // untouched (the orchestrator already strips before serializing).
+  let content = typeof result === 'string'
+    ? result
+    : JSON.stringify(stripDisplayOnlyFields(result), null, 2);
 
   // Wrap error content in XML tags so the model can distinguish errors from successful output.
   // This is the primary error signal for Ollama-hosted models (which don't support is_error at protocol level).

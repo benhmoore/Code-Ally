@@ -115,8 +115,14 @@ export class KillShellTool extends BaseTool {
       );
     }
 
+    // The model keeps the shell id (to correlate with its earlier launch); the
+    // user sees the command that was running instead of the internal id.
+    const commandLabel = processInfo.command.length > 40
+      ? processInfo.command.substring(0, 40) + '...'
+      : processInfo.command;
     return this.formatSuccessResponse({
       content: `Killed background shell ${shellId} (${signal})`,
+      display_content: `Killed background shell: ${commandLabel} (${signal})`,
       shell_id: shellId,
       pid: processInfo.pid,
       command: processInfo.command,

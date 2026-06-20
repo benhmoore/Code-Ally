@@ -37,6 +37,7 @@ import {
 } from '../utils/messageUtils.js';
 import { TOOL_NAMES } from '../config/toolDefaults.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
+import { resolveDisplayContent, stripDisplayOnlyFields } from '../utils/toolResultContent.js';
 import { FormCancelledError } from '../services/FormManager.js';
 import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
 import { PlanModeManager } from '../services/PlanModeManager.js';
@@ -953,18 +954,22 @@ export class ToolOrchestrator {
 
       // Tool call recording removed in simplified todo system
 
-      // Emit output chunk for tools that don't stream their own output
-      if (result.success && (result as any).content && !tool?.streamsOutput) {
-        this.emitEvent({
-          id,
-          type: ActivityEventType.TOOL_OUTPUT_CHUNK,
-          timestamp: Date.now(),
-          parentId: effectiveParentId,
-          data: {
-            toolName,
-            chunk: (result as any).content,
-          },
-        });
+      // Emit output chunk for tools that don't stream their own output.
+      // Display seam: the chunk carries the user-facing rendering, not the model content.
+      if (result.success && !tool?.streamsOutput) {
+        const displayContent = resolveDisplayContent(result);
+        if (displayContent) {
+          this.emitEvent({
+            id,
+            type: ActivityEventType.TOOL_OUTPUT_CHUNK,
+            timestamp: Date.now(),
+            parentId: effectiveParentId,
+            data: {
+              toolName,
+              chunk: displayContent,
+            },
+          });
+        }
       }
     } catch (error) {
       // Permission denied errors should propagate to Agent for handling
@@ -1194,13 +1199,15 @@ export class ToolOrchestrator {
     // Store tool status for session persistence
     metadata.tool_status = { [toolCall.id]: result.success ? 'success' : 'error' };
 
-    // Store the DISPLAY payload (clean ToolResult.content), separate from the LLM
-    // wire format that lives in the message's `content`. Reconstruction (entered
-    // fleet agents, session resume) renders from this — never from the wire string —
-    // so the UI shows the same clean output the live path renders, not raw JSON.
+    // Store the DISPLAY payload, separate from the LLM wire format that lives in
+    // the message's `content`. Reconstruction (entered fleet agents, session
+    // resume) renders from this — never from the wire string — so the UI shows the
+    // same clean output the live path renders, not raw JSON. Both content channels
+    // are persisted so resume resolves display the same way the live path does.
     metadata.tool_result = {
       [toolCall.id]: {
         content: result.content,
+        ...(result.display_content !== undefined && { display_content: result.display_content }),
         ...(result.error && { error: result.error }),
         ...(result.error_type !== undefined && { error_type: result.error_type }),
       },
@@ -1254,7 +1261,9 @@ export class ToolOrchestrator {
     const warning = result.warning;
     const systemReminder = (result as any).system_reminder;
     const totalTurnDuration = (result as any).total_turn_duration;
-    const resultWithoutExtras = { ...result };
+    // Strip display-only fields (e.g. display_content) so the model never sees the
+    // user-facing rendering — the single gateway for the model side of the split.
+    const resultWithoutExtras = stripDisplayOnlyFields({ ...result });
     delete resultWithoutExtras.warning;
     delete (resultWithoutExtras as any).system_reminder;
     delete (resultWithoutExtras as any).total_turn_duration;

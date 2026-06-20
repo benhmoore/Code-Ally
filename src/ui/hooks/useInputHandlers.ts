@@ -29,6 +29,7 @@ import { ModelCapabilitiesIndex } from '@services/ModelCapabilitiesIndex.js';
 import { ConfigManager } from '@services/ConfigManager.js';
 import { resolveProjectInstructionsFile } from '@config/paths.js';
 import { createStructuredError } from '@utils/errorUtils.js';
+import { createToolResultMessage } from '@llm/FunctionCalling.js';
 
 /**
  * Input handler functions
@@ -267,13 +268,15 @@ export const useInputHandlers = (
             },
           });
 
-          // Format tool result message for Agent
-          const toolResultMessage = {
-            role: 'tool' as const,
-            content: JSON.stringify(result),
-            tool_call_id: toolCallId,
-            name: 'bash',
-          };
+          // Format tool result message for Agent via the canonical wire builder,
+          // which strips display-only fields so the model never sees them.
+          const toolResultMessage = createToolResultMessage(
+            toolCallId,
+            'bash',
+            result,
+            !result.success,
+            result.success ? undefined : result.error_type
+          );
 
           // Add tool result to Agent's conversation history
           agent.addMessage(toolResultMessage);
@@ -586,13 +589,15 @@ export const useInputHandlers = (
             },
           });
 
-          // Format tool result message for Agent
-          const toolResultMessage = {
-            role: 'tool' as const,
-            content: JSON.stringify(result),
-            tool_call_id: toolCallId,
-            name: 'read',
-          };
+          // Format tool result message for Agent via the canonical wire builder,
+          // which strips display-only fields so the model never sees them.
+          const toolResultMessage = createToolResultMessage(
+            toolCallId,
+            'read',
+            result,
+            !result.success,
+            result.success ? undefined : result.error_type
+          );
 
           // Add tool result to Agent's conversation history
           agent.addMessage(toolResultMessage);
@@ -748,13 +753,15 @@ export const useInputHandlers = (
             },
           });
 
-          // Format tool result message for Agent
-          const toolResultMessage = {
-            role: 'tool' as const,
-            content: JSON.stringify(result),
-            tool_call_id: toolCallId,
-            name: 'tree',
-          };
+          // Format tool result message for Agent via the canonical wire builder,
+          // which strips display-only fields so the model never sees them.
+          const toolResultMessage = createToolResultMessage(
+            toolCallId,
+            'tree',
+            result,
+            !result.success,
+            result.success ? undefined : result.error_type
+          );
 
           // Add tool result to Agent's conversation history
           agent.addMessage(toolResultMessage);

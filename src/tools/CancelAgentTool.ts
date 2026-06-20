@@ -86,8 +86,11 @@ export class CancelAgentTool extends BaseTool {
     const elapsed = formatDuration(Date.now() - task.startTime);
     manager.cancelTask(agentId);
 
+    // The model keeps the agent id (to correlate with its earlier delegation);
+    // the user sees the agent type instead of the internal id.
     return this.formatSuccessResponse({
       content: `Cancelled background agent ${agentId} (${task.agentType})`,
+      display_content: `Cancelled background agent (${task.agentType})`,
       agent_id: agentId,
       agent_type: task.agentType,
       elapsed,
