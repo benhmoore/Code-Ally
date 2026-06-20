@@ -85,7 +85,7 @@ export interface AppState {
   /** Current active agent type (e.g., 'ally', 'task', 'explore', 'plan', custom agent name) */
   currentAgent: string;
 
-  /** Current active agent's model (or config model if ally) */
+  /** Active agent model override. Empty means the agent uses config.model. */
   currentAgentModel: string;
 
   /** Active sub-agents (specialized agents currently running) */
@@ -184,6 +184,27 @@ export interface AppProviderProps {
   children: React.ReactNode;
 }
 
+function hasConfigUpdate<K extends keyof Config>(updates: Partial<Config>, key: K): boolean {
+  return Object.prototype.hasOwnProperty.call(updates, key);
+}
+
+export function resolveCurrentAgentModelOverride(
+  agentModel: string | undefined,
+  configModel: string | null | undefined
+): string {
+  return agentModel && agentModel !== configModel ? agentModel : '';
+}
+
+export function reconcileCurrentAgentModelAfterConfigUpdate(
+  currentAgentModel: string,
+  previousConfig: Config,
+  updates: Partial<Config>
+): string {
+  return hasConfigUpdate(updates, 'model') && currentAgentModel === previousConfig.model
+    ? ''
+    : currentAgentModel;
+}
+
 /**
  * Provider component for global app state
  *
@@ -262,8 +283,11 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   }, []);
 
   const updateConfig = useCallback((updates: Partial<Config>) => {
+    setCurrentAgentModel((current) =>
+      reconcileCurrentAgentModelAfterConfigUpdate(current, config, updates)
+    );
     setConfig((prev) => ({ ...prev, ...updates }));
-  }, []);
+  }, [config]);
 
   const addToolCall = useCallback((toolCall: ToolCallState) => {
     // Enforce structure: tool calls MUST have IDs
@@ -426,9 +450,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
 
   const setCurrentAgent = useCallback((agent: string, model?: string) => {
     setCurrentAgentState(agent);
-    // Always update model: custom agents pass their model, default agent clears it
-    setCurrentAgentModel(model ?? '');
-  }, []);
+    setCurrentAgentModel(resolveCurrentAgentModelOverride(model, config.model));
+  }, [config.model]);
 
   const addSubAgent = useCallback((agentName: string) => {
     setActiveSubAgents((prev) => {
