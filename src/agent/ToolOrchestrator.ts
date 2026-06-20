@@ -25,6 +25,7 @@ import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { TodoManager } from '../services/TodoManager.js';
 import { BashProcessManager } from '../services/BashProcessManager.js';
+import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 import { formatError, createStructuredError, classifyToolError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
 import { ID_GENERATION, SYSTEM_REMINDER, TOOL_GUIDANCE } from '../config/constants.js';
@@ -1045,6 +1046,39 @@ export class ToolOrchestrator {
             }
             // Reminders are ephemeral by default (cleaned up after each turn)
             result.system_reminder_persist = false;
+          }
+        }
+
+        // Drain completed background-agent results + running-agent reminders.
+        // Only the main agent consumes these (background agents are spawned by
+        // and report back to the main conversation, not to sub-agents).
+        if (!this.config.isSpecializedAgent) {
+          const bgManager = registry.get<BackgroundAgentManager>('background_agent_manager');
+          if (bgManager) {
+            const reminderParts: string[] = [];
+
+            // Full results of completed runs, delivered exactly once.
+            for (const task of bgManager.drainCompletedResults()) {
+              const body = task.status === 'done'
+                ? (task.result ?? '(no output)')
+                : `[${task.status}] ${task.error ?? task.result ?? 'no output'}`;
+              reminderParts.push(
+                `Background agent ${task.id} (${task.agentType}) ${task.status}. Result:\n${body}`
+              );
+            }
+
+            // Status of still-running / recently-finished agents.
+            reminderParts.push(...bgManager.getStatusReminders());
+
+            if (reminderParts.length > 0) {
+              const reminderText = reminderParts.join('\n\n');
+              if (result.system_reminder) {
+                result.system_reminder += '\n\n' + reminderText;
+              } else {
+                result.system_reminder = reminderText;
+              }
+              result.system_reminder_persist = false;
+            }
           }
         }
 

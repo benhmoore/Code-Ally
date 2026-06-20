@@ -27,6 +27,8 @@ import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
+import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
+import { runFleetDelegation, backgroundedMessage } from './fleetDelegation.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
@@ -335,8 +337,23 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
       const scopedRegistry = new ScopedServiceRegistryProxy(registry);
       scopedRegistry.registerInstance('agent', delegationAgent);
 
-      try {
-        // Execute delegation
+      // Cleanup: release the agent + finalize delegation. Called exactly once.
+      const cleanup = async () => {
+        logger.debug(`[${this.name.toUpperCase()}_TOOL] Cleaning up agent...`);
+        this.activeDelegations.delete(callId);
+        if (pooledAgent) {
+          pooledAgent.release();
+          this._currentPooledAgent = null;
+        } else {
+          await delegationAgent.cleanup();
+        }
+        completeDelegation(callId);
+      };
+
+      // The run: send the task, resolve + post-process the response. Context
+      // usage is captured here (while the agent is still active, before release).
+      let capturedContextUsage = 0;
+      const run = async (): Promise<string> => {
         logger.debug(`[${this.name.toUpperCase()}_TOOL] Sending task to agent...`);
         const taskMessage = this.formatTaskMessage(taskPrompt);
         const response = await delegationAgent.sendMessage(taskMessage, {
@@ -345,74 +362,89 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
           thoroughness,
         });
         logger.debug(`[${this.name.toUpperCase()}_TOOL] Agent response received, length:`, response?.length || 0);
-
-        // Ensure we have a substantial response
         let finalResponse = resolveSubstantiveResponse(delegationAgent, response, {
           context: `[${this.name.toUpperCase()}_TOOL]`,
           label: config.summaryLabel || 'Results:',
           fallback: config.emptyResponseFallback || 'Operation completed but no summary was provided.',
         });
-
-        // Allow subclass to post-process response (pass scoped registry)
         finalResponse = await this.postProcessResponse(finalResponse, config, scopedRegistry);
+        capturedContextUsage = delegationAgent.getContextUsagePercentage();
+        return finalResponse;
+      };
 
-        const duration = (Date.now() - startTime) / 1000;
+      const buildSuccess = (content: string, durationSec: number): Record<string, any> => {
+        const successResponse: Record<string, any> = {
+          content,
+          duration_seconds: Math.round(durationSec * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
+          agent_used: config.agentType,
+        };
+        if (agentId) {
+          successResponse.agent_id = agentId;
+          Object.assign(successResponse, createAgentPersistenceReminder(agentId));
+        }
+        this.augmentSuccessResponse(successResponse, config, agentId);
+        return successResponse;
+      };
 
-        // Get context usage from delegated agent for UI display
-        const contextUsage = delegationAgent.getContextUsagePercentage();
-
-        // Emit agent end event
+      const emitForegroundEnd = (finalResponse: string, durationSec: number) => {
         this.emitEvent({
           id: callId,
           type: ActivityEventType.AGENT_END,
           timestamp: Date.now(),
-          data: {
-            agentName: config.agentType,
-            result: finalResponse,
-            duration,
-            contextUsage,
-          },
+          data: { agentName: config.agentType, result: finalResponse, duration: durationSec, contextUsage: capturedContextUsage },
         });
+      };
 
-        // Append note that user cannot see this
-        const content = appendAgentResponseSuffix(finalResponse);
+      const manager = registry.get<BackgroundAgentManager>('background_agent_manager');
 
-        // Build response with agent_used
-        const successResponse: Record<string, any> = {
-          content,
-          duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
-          agent_used: config.agentType,
-        };
-
-        // Always include agent_id when available
-        if (agentId) {
-          successResponse.agent_id = agentId;
-          const reminder = createAgentPersistenceReminder(agentId);
-          Object.assign(successResponse, reminder);
+      // Defensive legacy path if the manager is unavailable.
+      if (!manager) {
+        try {
+          const finalResponse = await run();
+          const duration = (Date.now() - startTime) / 1000;
+          emitForegroundEnd(finalResponse, duration);
+          return this.formatSuccessResponse(buildSuccess(appendAgentResponseSuffix(finalResponse), duration));
+        } finally {
+          await cleanup();
         }
-
-        // Allow subclass to augment response
-        this.augmentSuccessResponse(successResponse, config, agentId);
-
-        return this.formatSuccessResponse(successResponse);
-      } finally {
-        // Clean up delegation tracking
-        logger.debug(`[${this.name.toUpperCase()}_TOOL] Cleaning up agent...`);
-        this.activeDelegations.delete(callId);
-
-        // Release agent back to pool, or cleanup the ephemeral fallback agent
-        if (pooledAgent) {
-          logger.debug(`[${this.name.toUpperCase()}_TOOL] Releasing agent back to pool`);
-          pooledAgent.release();
-          this._currentPooledAgent = null; // Clear tracked pooled agent
-        } else {
-          // Cleanup ephemeral agent (only if AgentPoolService was unavailable)
-          await delegationAgent.cleanup();
-        }
-
-        // Finalize delegation context regardless of agent lifecycle
-        completeDelegation(callId);
       }
+
+      // Register in the fleet (foreground): visible, enterable, Ctrl+B-able.
+      let outcome;
+      try {
+        outcome = await runFleetDelegation({
+          manager,
+          activityStream: this.activityStream,
+          agentType: config.agentType,
+          taskPrompt,
+          callId,
+          subAgent: delegationAgent,
+          pooledAgent,
+          runInBackground: false,
+          run,
+          cleanup,
+          buildEndData: () => ({ contextUsage: capturedContextUsage }),
+        });
+      } catch (error) {
+        await cleanup();
+        throw error;
+      }
+
+      if (outcome.backgrounded) {
+        return this.formatSuccessResponse(buildSuccess(
+          backgroundedMessage(outcome.taskId, config.agentType, 'moved to background'),
+          (Date.now() - startTime) / 1000,
+        ));
+      }
+
+      if (outcome.status === 'error' && outcome.error) {
+        throw new Error(outcome.error);
+      }
+
+      const finalResponse = outcome.result;
+      const duration = (Date.now() - startTime) / 1000;
+      emitForegroundEnd(finalResponse, duration);
+      return this.formatSuccessResponse(buildSuccess(appendAgentResponseSuffix(finalResponse), duration));
     } catch (error) {
       const errorType = (error as any)?.error_type || 'execution_error';
       return this.formatErrorResponse(

@@ -812,8 +812,8 @@ describe('AgentPoolService', () => {
       );
       await defaultPool.initialize();
 
-      // Default is 5 (from AGENT_POOL.DEFAULT_MAX_SIZE)
-      expect(defaultPool.getPoolStats().maxPoolSize).toBe(5);
+      // Default is from AGENT_POOL.DEFAULT_MAX_SIZE (raised for concurrent background agents)
+      expect(defaultPool.getPoolStats().maxPoolSize).toBe(12);
 
       await defaultPool.cleanup();
     });

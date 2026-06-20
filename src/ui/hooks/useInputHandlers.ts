@@ -440,15 +440,20 @@ export const useInputHandlers = (
       }
 
       // Add user message to UI (separate from Agent's internal message history)
-      // This displays the message to the user immediately
-      actions.addMessage({
-        role: 'user',
-        content: trimmed,
-        metadata: filteredMentions && (filteredMentions.files?.length || filteredMentions.images?.length || filteredMentions.directories?.length)
-          ? { mentions: filteredMentions }
-          : undefined,
-        images: base64Images,
-      });
+      // This displays the message to the user immediately.
+      // While viewing an entered background agent, skip the main conversation:
+      // the message goes to that agent (registry 'agent' is swapped) and shows
+      // in its transcript via the snapshot refresh, keeping main untouched.
+      if (state.activeAgentId === 'main') {
+        actions.addMessage({
+          role: 'user',
+          content: trimmed,
+          metadata: filteredMentions && (filteredMentions.files?.length || filteredMentions.images?.length || filteredMentions.directories?.length)
+            ? { mentions: filteredMentions }
+            : undefined,
+          images: base64Images,
+        });
+      }
 
       // Handle file mentions - execute read tool before sending user message
       // Filter out image files only if model supports images (they're processed separately above)

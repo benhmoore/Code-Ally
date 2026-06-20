@@ -462,6 +462,14 @@ export interface ModalState {
   inputBuffer: string;
   setInputBuffer: (buffer: string) => void;
 
+  // Background-agent fleet navigation (a focus region, NOT a modal — it
+  // coexists with the live prompt). fleetSelectedIndex is 0-based over the
+  // selectable list [main, ...backgroundAgents] (0 === the 'main' row).
+  fleetFocused: boolean;
+  setFleetFocused: (focused: boolean) => void;
+  fleetSelectedIndex: number;
+  setFleetSelectedIndex: (index: number) => void;
+
   // Exit confirmation (Ctrl+C on empty buffer)
   isWaitingForExitConfirmation: boolean;
   setIsWaitingForExitConfirmation: (waiting: boolean) => void;
@@ -502,6 +510,8 @@ export const useModalState = (): ModalState => {
   const [promptPrefilled, setPromptPrefilled] = useState(false);
   const [inputBuffer, setInputBuffer] = useState<string>('');
   const [isWaitingForExitConfirmation, setIsWaitingForExitConfirmation] = useState(false);
+  const [fleetFocused, setFleetFocused] = useState(false);
+  const [fleetSelectedIndex, setFleetSelectedIndex] = useState(0);
 
   // --- Derived entries -----------------------------------------------------
   const permission = findEntry(stack, 'permission');
@@ -789,6 +799,10 @@ export const useModalState = (): ModalState => {
     // Input buffer
     inputBuffer,
     setInputBuffer,
+    fleetFocused,
+    setFleetFocused,
+    fleetSelectedIndex,
+    setFleetSelectedIndex,
 
     // Exit confirmation
     isWaitingForExitConfirmation,

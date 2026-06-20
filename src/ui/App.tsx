@@ -12,8 +12,9 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityProvider, useActivityStreamContext } from './contexts/ActivityContext.js';
 import { AppProvider, useAppContext } from './contexts/AppContext.js';
 import { TerminalProvider } from './contexts/TerminalContext.js';
-import { ActivityEventType, Config, Message } from '../types/index.js';
+import { ActivityEventType, Config, Message, ToolCallState } from '../types/index.js';
 import { InputPrompt } from './components/InputPrompt.js';
+import { AgentFleetView } from './components/AgentFleetView.js';
 import { ConversationView } from './components/ConversationView.js';
 import { PermissionPrompt } from './components/PermissionPrompt.js';
 import { ModelSelector } from './components/ModelSelector.js';
@@ -40,16 +41,20 @@ import { FocusManager } from '../services/FocusManager.js';
 import { logger, LogLevel } from '../services/Logger.js';
 import { useServiceInitialization } from './hooks/useServiceInitialization.js';
 import { useModalState } from './hooks/useModalState.js';
-import { useSessionResume } from './hooks/useSessionResume.js';
+import { useSessionResume, reconstructToolCallsFromMessages, reconstructInterjectionsFromMessages } from './hooks/useSessionResume.js';
 import { useInputHandlers } from './hooks/useInputHandlers.js';
 import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
 import { useContentWidth } from './hooks/useContentWidth.js';
 import { useTerminalWidth } from './hooks/useTerminalWidth.js';
 import { useReflowOnResize } from './hooks/useReflowOnResize.js';
 import { useBackgroundProcesses } from './hooks/useBackgroundProcesses.js';
+import { useBackgroundAgents } from './hooks/useBackgroundAgents.js';
+import { useTaskWake } from './hooks/useTaskWake.js';
 import { useAgentSwitch } from './hooks/useAgentSwitch.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { switchAgent } from '../services/AgentSwitcher.js';
+import { enterForegroundAgent, exitForegroundAgent } from '../services/ForegroundSwitcher.js';
+import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 import { SyntaxHighlighter } from '../services/SyntaxHighlighter.js';
 import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
@@ -190,6 +195,140 @@ const AppContentComponent: React.FC<{
 
   // Get input handler functions
   const { handleInput, handleInterjection } = useInputHandlers(commandHandler, activityStream, state, actions);
+
+  // Auto-wake the idle main agent when a watched task completes.
+  useTaskWake({ isThinking: state.isThinking, activeAgentId: state.activeAgentId, submit: handleInput });
+
+  // ===== Background-agent fleet (live list + enter/exit) =====
+  const backgroundAgents = useBackgroundAgents();
+
+  // Saved main-conversation view (messages + tool calls) captured when entering
+  // an agent, so returning to main restores it EXACTLY (invariant preservation).
+  const savedMainViewRef = useRef<{ messages: Message[]; toolCalls: ToolCallState[] } | null>(null);
+  // The entered agent's rendered message count, to refresh only when it grows.
+  const enteredCountRef = useRef(0);
+
+  // Render an agent's FULL transcript — messages + reconstructed tool calls +
+  // interjections — via the exact machinery session-resume uses. This is what
+  // guarantees the complete conversation context appears (not just text turns).
+  const applyAgentView = React.useCallback((targetAgent: Agent) => {
+    const registry = ServiceRegistry.getInstance();
+    const msgs = targetAgent.getMessages().filter((m) => m.role !== 'system');
+    const tools = reconstructToolCallsFromMessages(msgs, registry);
+    // Messages + tool calls in one atomic reset so the leading messages
+    // (e.g. the agent's initial prompt) aren't skipped by the Static accumulator.
+    actions.resetConversationViewWithTools(msgs, tools);
+    reconstructInterjectionsFromMessages(msgs, activityStream);
+    enteredCountRef.current = msgs.length;
+  }, [actions, activityStream]);
+
+  const returnToMain = React.useCallback(() => {
+    const registry = ServiceRegistry.getInstance();
+    exitForegroundAgent({ registry, activityStream, mainAgent: agent });
+    const saved = savedMainViewRef.current;
+    savedMainViewRef.current = null;
+    actions.setActiveAgentId('main');
+    actions.setCurrentAgent(agent.getAgentName() || 'ally');
+    // Restore the exact main view (messages + tool calls) that was showing
+    // before entering an agent — in one atomic reset.
+    if (saved) {
+      actions.resetConversationViewWithTools(saved.messages, saved.toolCalls);
+    } else {
+      const registry = ServiceRegistry.getInstance();
+      const msgs = agent.getMessages().filter((m) => m.role !== 'system');
+      actions.resetConversationViewWithTools(msgs, reconstructToolCallsFromMessages(msgs, registry));
+    }
+  }, [activityStream, agent, actions]);
+
+  const handleEnterFleet = React.useCallback(() => {
+    modal.setFleetSelectedIndex(0);
+    modal.setFleetFocused(true);
+  }, [modal]);
+
+  const handleFleetNavigate = React.useCallback((index: number) => {
+    modal.setFleetSelectedIndex(index);
+  }, [modal]);
+
+  const handleExitFleet = React.useCallback(() => {
+    modal.setFleetFocused(false);
+  }, [modal]);
+
+  const handleEnterAgent = React.useCallback((selectedIndex: number) => {
+    // Keep focus in the fleet on the selected agent after Enter (the view
+    // switches to it, but the selection stays — the user can keep navigating;
+    // Esc returns focus to the prompt to type to the viewed agent).
+    // Index 0 is the 'main' row → return to the primary conversation.
+    if (selectedIndex === 0) {
+      if (state.activeAgentId !== 'main') returnToMain();
+      return;
+    }
+    const target = backgroundAgents[selectedIndex - 1];
+    if (!target) return;
+    const registry = ServiceRegistry.getInstance();
+    const manager = registry.get<BackgroundAgentManager>('background_agent_manager');
+    const task = manager?.getTask(target.id);
+    if (!task) return;
+    // Save the main view once, when leaving main (not on agent→agent switches).
+    if (state.activeAgentId === 'main') {
+      savedMainViewRef.current = { messages: state.messages, toolCalls: state.activeToolCalls };
+    }
+    // Swap foreground input routing to the entered agent, then show its transcript.
+    enterForegroundAgent({ registry, activityStream, targetAgent: task.subAgent, targetAgentId: target.id });
+    actions.setActiveAgentId(target.id);
+    actions.setCurrentAgent(target.agentType);
+    applyAgentView(task.subAgent);
+  }, [modal, backgroundAgents, state.activeAgentId, state.messages, state.activeToolCalls, activityStream, actions, returnToMain, applyAgentView]);
+
+  // Ctrl+B: background all running foreground agents (they keep running; the
+  // main loop returns and they appear in the fleet).
+  const handleBackgroundAgents = React.useCallback(() => {
+    const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+    manager?.requestDetachAll();
+  }, []);
+
+  // 'x' on a focused fleet row: kill that agent (never 'main' at index 0).
+  const handleKillAgent = React.useCallback((selectedIndex: number) => {
+    if (selectedIndex === 0) return;
+    const target = backgroundAgents[selectedIndex - 1];
+    if (!target) return;
+    const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+    manager?.cancelTask(target.id);
+    // If we were viewing the agent we just killed, return to the main view.
+    if (state.activeAgentId === target.id) returnToMain();
+  }, [backgroundAgents, state.activeAgentId, returnToMain]);
+
+  // Keep fleet selection valid as the list changes; drop focus if it empties.
+  React.useEffect(() => {
+    const listSize = backgroundAgents.length + 1; // + 'main' row
+    if (modal.fleetSelectedIndex > listSize - 1) {
+      modal.setFleetSelectedIndex(Math.max(0, listSize - 1));
+    }
+    if (modal.fleetFocused && backgroundAgents.length === 0) {
+      modal.setFleetFocused(false);
+    }
+  }, [backgroundAgents.length, modal]);
+
+  // Event-driven refresh of the entered agent's transcript (no polling). Only
+  // re-applies the full view when the agent's message count grows, so an active
+  // agent's new turns (and their tool calls) appear without constant repaints.
+  React.useEffect(() => {
+    if (state.activeAgentId === 'main') return;
+    const refresh = () => {
+      const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+      const task = manager?.getTask(state.activeAgentId);
+      if (!task) return;
+      const count = task.subAgent.getMessages().filter((m) => m.role !== 'system').length;
+      if (count !== enteredCountRef.current) {
+        applyAgentView(task.subAgent);
+      }
+    };
+    const unsubs = [
+      ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
+      ActivityEventType.TOOL_CALL_END,
+      ActivityEventType.AGENT_BACKGROUND_COMPLETE,
+    ].map((type) => activityStream.subscribe(type, () => setTimeout(refresh, 0)));
+    return () => unsubs.forEach((u) => u());
+  }, [state.activeAgentId, activityStream, applyAgentView]);
 
   // Default agent from config (determines Esc behavior and footer hint)
   const defaultAgent = state.config.default_agent || 'ally';
@@ -403,12 +542,16 @@ const AppContentComponent: React.FC<{
   // project/agent wizard branches, which made the todo list vanish whenever a
   // wizard opened. Defining it once guarantees consistency. Only one branch
   // renders per pass, so reusing a single element instance is safe.
+  // The conversation view always renders state.messages; entering/exiting an
+  // agent swaps that (and the tool calls) via the resetConversationView path.
+  const displayedMessages = state.messages;
+
   const statusIndicator = (
     <StatusIndicator
       isProcessing={state.isThinking}
       isCompacting={state.isCompacting}
       isCancelling={isCancelling}
-      recentMessages={state.messages.slice(-3)}
+      recentMessages={displayedMessages.slice(-3)}
       sessionLoaded={sessionLoaded}
       isResuming={!!resumeSession}
       activeToolCalls={state.activeToolCalls}
@@ -447,7 +590,7 @@ const AppContentComponent: React.FC<{
       <Box width={contentWidth}>
         <ErrorBoundary label="ConversationView" resetKey={state.staticRemountKey}>
           <ConversationView
-          messages={state.messages}
+          messages={displayedMessages}
           isThinking={state.isThinking}
           streamingContent={state.streamingContent}
           activeToolCalls={state.activeToolCalls}
@@ -966,6 +1109,25 @@ const AppContentComponent: React.FC<{
             onExitConfirmationChange={modal.setIsWaitingForExitConfirmation}
             bufferValue={modal.inputBuffer}
             onBufferChange={modal.setInputBuffer}
+            fleetFocused={modal.fleetFocused}
+            fleetCount={backgroundAgents.length}
+            fleetSelectedIndex={modal.fleetSelectedIndex}
+            isViewingAgent={state.activeAgentId !== 'main'}
+            onEnterFleet={handleEnterFleet}
+            onFleetNavigate={handleFleetNavigate}
+            onEnterAgent={handleEnterAgent}
+            onExitFleet={handleExitFleet}
+            onExitAgent={returnToMain}
+            onBackgroundAgents={handleBackgroundAgents}
+            onKillAgent={handleKillAgent}
+          />
+
+          {/* Background agent fleet — reachable with ↓ from an empty prompt */}
+          <AgentFleetView
+            agents={backgroundAgents}
+            selectedIndex={modal.fleetSelectedIndex}
+            focused={modal.fleetFocused}
+            activeAgentId={state.activeAgentId}
           />
         </Box>
       )}

@@ -36,6 +36,30 @@ interface InputPromptProps {
   onInterjection?: (message: string) => void;
   /** Whether input is currently active/enabled */
   isActive?: boolean;
+
+  // ===== Background-agent fleet navigation =====
+  /** Whether the fleet list below the prompt currently has keyboard focus */
+  fleetFocused?: boolean;
+  /** Number of background agents (selectable list size is this + 1 for 'main') */
+  fleetCount?: number;
+  /** Selected index over [main, ...agents] (0 === 'main') */
+  fleetSelectedIndex?: number;
+  /** Whether the user is currently viewing an entered background agent */
+  isViewingAgent?: boolean;
+  /** Move focus from the prompt into the fleet list (↓ on empty prompt) */
+  onEnterFleet?: () => void;
+  /** Change the selected fleet row */
+  onFleetNavigate?: (index: number) => void;
+  /** Enter the selected agent's conversation (index over [main, ...agents]) */
+  onEnterAgent?: (selectedIndex: number) => void;
+  /** Return focus from the fleet list back to the prompt */
+  onExitFleet?: () => void;
+  /** Exit an entered background agent back to the main conversation */
+  onExitAgent?: () => void;
+  /** Background all running foreground agents (Ctrl+B) */
+  onBackgroundAgents?: () => void;
+  /** Kill the selected fleet agent (index over [main, ...agents]; excludes main) */
+  onKillAgent?: (selectedIndex: number) => void;
   /** Placeholder text to show when empty */
   placeholder?: string;
   /** Command history instance */
@@ -147,6 +171,17 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onSubmit,
   onInterjection,
   isActive = true,
+  fleetFocused = false,
+  fleetCount = 0,
+  fleetSelectedIndex = 0,
+  isViewingAgent = false,
+  onEnterFleet,
+  onFleetNavigate,
+  onEnterAgent,
+  onExitFleet,
+  onExitAgent,
+  onBackgroundAgents,
+  onKillAgent,
   placeholder = 'Type a message...',
   commandHistory,
   completionProvider,
@@ -1375,6 +1410,74 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
 
         // Block all other input when permission prompt is active
+        return;
+      }
+
+      // ===== Background Agent Fleet Navigation =====
+      // A focus region (NOT a modal) that coexists with the live prompt.
+      // Placed after all modal branches but before normal text/history handling.
+      if (fleetFocused && onFleetNavigate) {
+        const listSize = fleetCount + 1; // [main, ...agents]
+        if (key.upArrow) {
+          if (fleetSelectedIndex <= 0) {
+            onExitFleet?.(); // up past 'main' returns focus to the prompt
+          } else {
+            onFleetNavigate(Math.max(0, fleetSelectedIndex - 1));
+          }
+          return;
+        }
+        if (key.downArrow) {
+          onFleetNavigate(Math.min(listSize - 1, fleetSelectedIndex + 1));
+          return;
+        }
+        if (key.return) {
+          onEnterAgent?.(fleetSelectedIndex);
+          return;
+        }
+        // 'x' kills the selected agent (never the 'main' row at index 0).
+        if (input === 'x' && fleetSelectedIndex > 0) {
+          onKillAgent?.(fleetSelectedIndex);
+          return;
+        }
+        if (key.escape) {
+          onExitFleet?.();
+          return;
+        }
+        return; // block other keys while the fleet has focus
+      }
+
+      // ===== Ctrl+B: background all running foreground agents =====
+      if (key.ctrl && input === 'b' && onBackgroundAgents) {
+        onBackgroundAgents();
+        return;
+      }
+
+      // Enter the fleet: ↓ from an empty prompt when background agents exist.
+      if (
+        key.downArrow &&
+        !fleetFocused &&
+        textInputActive &&
+        !showCompletions &&
+        fleetCount > 0 &&
+        buffer.length === 0 &&
+        onEnterFleet
+      ) {
+        onEnterFleet();
+        return;
+      }
+
+      // Exit an entered background agent back to main: Esc on an empty prompt
+      // while the agent is idle. If it's processing, fall through to the normal
+      // interrupt path (so entering behaves like the main loop).
+      if (
+        key.escape &&
+        !fleetFocused &&
+        isViewingAgent &&
+        buffer.length === 0 &&
+        onExitAgent &&
+        !agent?.isProcessing?.()
+      ) {
+        onExitAgent();
         return;
       }
 

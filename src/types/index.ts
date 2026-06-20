@@ -229,6 +229,7 @@ export enum ActivityEventType {
   BACKGROUND_PROCESS_EXIT = 'background_process_exit',
   AGENT_BACKGROUND_COMPLETE = 'agent_background_complete',
   FOREGROUND_AGENT_CHANGED = 'foreground_agent_changed',
+  BACKGROUND_TASK_COMPLETE = 'background_task_complete',
   USER_INTERJECTION = 'user_interjection',
   INTERJECTION_ACKNOWLEDGMENT = 'interjection_acknowledgment',
   LIBRARY_SELECT_REQUEST = 'library_select_request',

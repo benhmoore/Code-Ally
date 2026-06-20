@@ -28,6 +28,8 @@ export { PatchFileManager } from './PatchFileManager.js';
 export { PatchIndexManager } from './PatchIndexManager.js';
 export { PatchCleanupManager } from './PatchCleanupManager.js';
 export { BashProcessManager, CircularBuffer } from './BashProcessManager.js';
+export { BackgroundAgentManager } from './BackgroundAgentManager.js';
+export { BackgroundTaskRegistry } from './BackgroundTaskRegistry.js';
 export { IntegrationStore } from './IntegrationStore.js';
 
 // Re-export types
@@ -38,6 +40,8 @@ export type { PatchManagerConfig, PatchMetadata, UndoResult, UndoPreview, UndoFi
 export type { DiffStats } from '../utils/diffUtils.js';
 export type { PatchIndex } from './PatchValidator.js';
 export type { ProcessInfo } from './BashProcessManager.js';
+export type { BackgroundAgentTask, BackgroundAgentStatus } from './BackgroundAgentManager.js';
+export type { BackgroundTask, BackgroundTaskKind, BackgroundTaskStatus, WatcherSpec } from './BackgroundTaskRegistry.js';
 
 // UI Polish services
 export { SyntaxHighlighter } from './SyntaxHighlighter.js';

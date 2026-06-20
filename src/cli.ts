@@ -105,6 +105,12 @@ async function cleanExit(code: number = 0): Promise<void> {
       await bashProcessManager.shutdown();
     }
 
+    // Shutdown background agents if manager exists
+    const backgroundAgentManager = registry.get<any>('background_agent_manager');
+    if (backgroundAgentManager && typeof backgroundAgentManager.shutdown === 'function') {
+      await backgroundAgentManager.shutdown();
+    }
+
     await registry.shutdown();
   } catch (error) {
     // Ignore errors during shutdown - already exiting
@@ -308,7 +314,7 @@ function handleSessionsCheatsheet(): void {
   console.log('    ally --once "message"   # No session created\n');
 
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('\n  Sessions are stored in: ./.ally-sessions/\n');
+  console.log('\n  Sessions are stored in: ~/.ally/projects/<project>/sessions/\n');
 }
 
 /**
@@ -941,6 +947,19 @@ async function main() {
     const bashProcessManager = new BashProcessManager(10); // Max 10 background processes
     registry.registerInstance('bash_process_manager', bashProcessManager);
 
+    // Create background agent manager for non-blocking agent runs.
+    // Registered on the root registry so the main agent and scoped sub-agents
+    // all resolve the same instance.
+    const { BackgroundAgentManager } = await import('./services/BackgroundAgentManager.js');
+    const backgroundAgentManager = new BackgroundAgentManager();
+    registry.registerInstance('background_agent_manager', backgroundAgentManager);
+
+    // Unified registry over agents + shell processes + condition watchers, for
+    // the wait/watch tools. Composes the two managers above (read adapters).
+    const { BackgroundTaskRegistry } = await import('./services/BackgroundTaskRegistry.js');
+    const backgroundTaskRegistry = new BackgroundTaskRegistry(backgroundAgentManager, bashProcessManager, activityStream);
+    registry.registerInstance('background_task_registry', backgroundTaskRegistry);
+
     // Create project context detector
     const { ProjectContextDetector } = await import('./services/ProjectContextDetector.js');
     const projectContextDetector = new ProjectContextDetector(process.cwd());
@@ -995,11 +1014,17 @@ async function main() {
     const { EnterPlanModeTool } = await import('./tools/EnterPlanModeTool.js');
     const { ExitPlanModeTool } = await import('./tools/ExitPlanModeTool.js');
     const { WritePlanTool } = await import('./tools/WritePlanTool.js');
+    const { CancelAgentTool } = await import('./tools/CancelAgentTool.js');
+    const { WaitTool } = await import('./tools/WaitTool.js');
+    const { WatchTool } = await import('./tools/WatchTool.js');
 
     const tools = [
       new BashTool(activityStream, config),
       new BashOutputTool(activityStream),
       new KillShellTool(activityStream),
+      new CancelAgentTool(activityStream),
+      new WaitTool(activityStream),
+      new WatchTool(activityStream),
       new ReadTool(activityStream),
       new WriteTool(activityStream),
       new WriteAgentTool(activityStream), // Agent-specific write tool (only visible to manage-agents)
@@ -1056,6 +1081,10 @@ async function main() {
         // Shutdown background bash processes first (before registry shutdown)
         await bashProcessManager.shutdown();
         logger.debug('[CLI] Background bash processes terminated');
+
+        // Shutdown background agents (before registry shutdown)
+        await backgroundAgentManager.shutdown();
+        logger.debug('[CLI] Background agents terminated');
 
         // Flush pending session saves before exit
         await registry.shutdown();

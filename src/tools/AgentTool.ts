@@ -25,6 +25,9 @@ import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, ID_GENERATION, AGENT_CONFIG, PER
 import { ModelCapabilitiesIndex } from '../services/ModelCapabilitiesIndex.js';
 import { fileToBase64 } from '../utils/imageUtils.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
+import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
+import { BackgroundTaskRegistry } from '../services/BackgroundTaskRegistry.js';
+import { runFleetDelegation, backgroundedMessage } from './fleetDelegation.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
@@ -48,6 +51,10 @@ interface AgentExecutionParams {
   parentAgentName?: string;
   initialMessages?: Message[];
   contextImages?: string[];
+  /** Run the agent detached/non-blocking (default true). false = blocking. */
+  runInBackground?: boolean;
+  /** Auto-wake the idle main agent when this background run completes (default false). */
+  notifyWhenDone?: boolean;
 }
 
 /**
@@ -67,7 +74,11 @@ export class AgentTool extends BaseTool implements InjectableTool {
   readonly hideOutput = false; // Agents never hide their own output
   readonly usageGuidance = `**When to use agent:**
 Complex tasks requiring specialized expertise or distinct workflows.
-NOT for: Exploration (use explore), planning (use plan).`;
+NOT for: Exploration (use explore), planning (use plan).
+
+**Foreground vs background:** Agents run in the background by default (non-blocking).
+Spawn them and keep working — results are delivered to you automatically when ready.
+Only set run_in_background=false when your very next step depends on the result.`;
 
   private agentManager: AgentManager | null = null;
   private activeDelegations: Map<string, any> = new Map();
@@ -162,6 +173,21 @@ NOT for: Exploration (use explore), planning (use plan).`;
                 type: 'string',
               },
             },
+            run_in_background: {
+              type: 'boolean',
+              description:
+                'Runs in the background (non-blocking, concurrent) by default. ' +
+                'Set to false (blocking) ONLY when your very next step depends on this agent\'s result. ' +
+                'Prefer background: spawn agents and keep working — their results are delivered to you ' +
+                'automatically when ready. Background returns a task id immediately.',
+            },
+            notify_when_done: {
+              type: 'boolean',
+              description:
+                'For background runs: auto-notify (wake) you the moment this agent finishes, even if you are ' +
+                'idle. Default false (its result is delivered passively on your next turn, or when you wait). ' +
+                'Set true for a long task whose completion should interrupt and resume you.',
+            },
           },
           required: ['task_prompt'],
         },
@@ -177,6 +203,10 @@ NOT for: Exploration (use explore), planning (use plan).`;
     const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
     const contextFiles = args.context_files;
     const contextImages = args.context_images;
+    // Background by default; the model opts into blocking with run_in_background=false.
+    const runInBackground = args.run_in_background !== false;
+    // Auto-wake on completion is opt-in for model-chosen background runs.
+    const notifyWhenDone = args.notify_when_done === true;
 
     // Validate task_prompt parameter
     if (!taskPrompt || typeof taskPrompt !== 'string') {
@@ -419,6 +449,8 @@ NOT for: Exploration (use explore), planning (use plan).`;
       parentAgentName: currentAgentName,
       initialMessages,
       contextImages,
+      runInBackground,
+      notifyWhenDone,
     });
   }
 
@@ -485,9 +517,9 @@ NOT for: Exploration (use explore), planning (use plan).`;
    * Agents always persist in the agent pool for reuse.
    */
   private async executeSingleAgent(params: AgentExecutionParams): Promise<any> {
-    const { agentType, taskPrompt, thoroughness, callId, depth, parentAgentName, initialMessages, contextImages } = params;
+    const { agentType, taskPrompt, thoroughness, callId, depth, parentAgentName, initialMessages, contextImages, runInBackground, notifyWhenDone } = params;
 
-    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentType, 'callId:', callId, 'thoroughness:', thoroughness);
+    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentType, 'callId:', callId, 'thoroughness:', thoroughness, 'background:', runInBackground);
     const startTime = Date.now();
 
     try {
@@ -571,8 +603,29 @@ NOT for: Exploration (use explore), planning (use plan).`;
         parentAgentName,
         initialMessages,
         contextImages,
+        runInBackground,
+        notifyWhenDone,
       });
       logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
+
+      // Background OR detached-mid-run (Ctrl+B): the detached run owns AGENT_END
+      // / AGENT_BACKGROUND_COMPLETE when the agent truly finishes, so do NOT
+      // emit AGENT_END or run the interruption/permission check here. Return the
+      // spawn/handoff confirmation now.
+      if (runInBackground || (taskResult as any).backgrounded) {
+        const bgResponse: any = {
+          success: true,
+          result: taskResult.result,
+          agent_used: agentType,
+          duration_seconds: 0,
+          _agentModel: agentModel,
+          _backgrounded: true,
+        };
+        if (taskResult.agent_id) {
+          bgResponse.agent_id = taskResult.agent_id;
+        }
+        return bgResponse;
+      }
 
       const duration = (Date.now() - startTime) / 1000;
 
@@ -905,8 +958,8 @@ NOT for: Exploration (use explore), planning (use plan).`;
    *
    * Agents always persist in the agent pool for reuse.
    */
-  private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string }> {
-    const { agentData, agentType, taskPrompt, thoroughness, callId, depth, initialMessages, contextImages } = params;
+  private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string; backgrounded?: boolean }> {
+    const { agentData, agentType, taskPrompt, thoroughness, callId, depth, initialMessages, contextImages, runInBackground, notifyWhenDone } = params;
 
     logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
 
@@ -1045,29 +1098,65 @@ NOT for: Exploration (use explore), planning (use plan).`;
       }
     }
 
+    // 11. Register this run with the BackgroundAgentManager so it appears in the
+    // fleet (foreground AND background), can be entered, and — for foreground —
+    // can be promoted to background via Ctrl+B. If the manager is unavailable,
+    // fall back to the legacy blocking path.
+    const manager = registry.get<BackgroundAgentManager>('background_agent_manager');
+    if (!manager) {
+      try {
+        const finalResponse = await this.executeAgent({ agent: subAgent, agentType, taskPrompt, callId, maxDuration, thoroughness, images: processedImages });
+        return this.formatExecutionResponse({ finalResponse, agentId });
+      } finally {
+        this.activeDelegations.delete(callId);
+        await this.releaseAgent({ pooledAgent, subAgent, callId });
+      }
+    }
+
+    const cleanup = async () => {
+      this.activeDelegations.delete(callId);
+      await this.releaseAgent({ pooledAgent, subAgent, callId });
+    };
+
+    let outcome;
     try {
-      // 11. Execute agent (scoped registry already set in agent config)
-      const finalResponse = await this.executeAgent({
-        agent: subAgent,
+      outcome = await runFleetDelegation({
+        manager,
+        activityStream: this.activityStream,
         agentType,
         taskPrompt,
         callId,
-        maxDuration,
-        thoroughness,
-        images: processedImages,
+        subAgent,
+        pooledAgent: pooledAgent ?? null,
+        runInBackground: runInBackground ?? false,
+        run: () => this.executeAgent({ agent: subAgent, agentType, taskPrompt, callId, maxDuration, thoroughness, images: processedImages }),
+        cleanup,
       });
-
-      // 12. Format response
-      return this.formatExecutionResponse({ finalResponse, agentId });
     } catch (error) {
-      logger.debug('[AGENT_TOOL] ERROR during sub-agent execution:', error);
+      // addTask cap overflow (background): release and surface the error.
+      await cleanup();
       throw error;
-    } finally {
-      // 13. Cleanup delegation and release agent
-      logger.debug('[AGENT_TOOL] Cleaning up sub-agent...');
-      this.activeDelegations.delete(callId);
-      await this.releaseAgent({ pooledAgent, subAgent, callId });
     }
+
+    if (outcome.backgrounded) {
+      // Auto-wake on completion when the user backgrounded it via Ctrl+B (they
+      // clearly want to be told), or when the model opted in with notify_when_done.
+      const detachedByUser = !runInBackground; // foreground run promoted via Ctrl+B
+      if (detachedByUser || notifyWhenDone) {
+        registry.get<BackgroundTaskRegistry>('background_task_registry')?.markWatched(outcome.taskId);
+      }
+      const verb = runInBackground ? 'started in background' : 'moved to background';
+      return {
+        result: backgroundedMessage(outcome.taskId, agentType, verb),
+        agent_id: agentId ?? undefined,
+        backgrounded: true,
+      };
+    }
+
+    if (outcome.status === 'error' && outcome.error) {
+      throw new Error(outcome.error);
+    }
+    return this.formatExecutionResponse({ finalResponse: outcome.result, agentId });
   }
 
   /**
@@ -1103,6 +1192,17 @@ NOT for: Exploration (use explore), planning (use plan).`;
       if (subAgent && typeof subAgent.interrupt === 'function') {
         logger.debug('[AGENT_TOOL] Interrupting sub-agent:', callId);
         subAgent.interrupt();
+      }
+    }
+
+    // Also cancel any running background agents (their runs are detached from
+    // activeDelegations' foreground lifecycle, so cover them explicitly).
+    const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+    if (manager) {
+      for (const task of manager.listTasks()) {
+        if (task.status === 'running') {
+          manager.cancelTask(task.id);
+        }
       }
     }
   }

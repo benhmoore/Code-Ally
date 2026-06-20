@@ -90,6 +90,16 @@ export interface AppState {
 
   /** Active sub-agents (specialized agents currently running) */
   activeSubAgents: string[];
+
+  /**
+   * Which agent's transcript is currently shown in the conversation view.
+   * 'main' = the primary conversation. Any other value = a background agent
+   * the user has "entered" to view. The view itself is driven through the
+   * standard resetConversationView machinery (messages + reconstructed tool
+   * calls), so an entered agent shows its FULL transcript and returning to main
+   * restores its saved view exactly.
+   */
+  activeAgentId: string;
 }
 
 /**
@@ -153,6 +163,9 @@ export interface AppActions {
   /** Atomically reset conversation view with new messages (for resume/compact/rewind) */
   resetConversationView: (messages: Message[]) => void;
 
+  /** Atomically reset the view with messages AND reconstructed tool calls together (agent enter/exit). */
+  resetConversationViewWithTools: (messages: Message[], toolCalls: ToolCallState[]) => void;
+
   /** Set the current active agent and its model */
   setCurrentAgent: (agent: string, model?: string) => void;
 
@@ -161,6 +174,9 @@ export interface AppActions {
 
   /** Remove an active sub-agent */
   removeSubAgent: (agentName: string) => void;
+
+  /** Set which agent's transcript is currently shown ('main' or an agent id). */
+  setActiveAgentId: (agentId: string) => void;
 }
 
 /**
@@ -237,6 +253,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   // Only set when on a custom agent with its own model; empty = use config.model
   const [currentAgentModel, setCurrentAgentModel] = useState<string>('');
   const [activeSubAgents, setActiveSubAgents] = useState<string[]>([]);
+  const [activeAgentId, setActiveAgentId] = useState<string>('main');
 
   // Batching mechanism for tool call updates
   const pendingUpdatesRef = useRef<Map<string, Partial<ToolCallState>>>(new Map());
@@ -448,6 +465,40 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     });
   }, []);
 
+  /**
+   * Atomically reset the conversation view to a full transcript — messages AND
+   * their (already-reconstructed) completed tool calls — together. Used when
+   * entering/exiting an agent so the chronologically-sorted timeline rebuilds in
+   * a SINGLE post-clear commit. Setting tool calls separately from messages
+   * would let the append-only <Static> accumulator advance past them and skip
+   * the leading messages (e.g. an agent's initial prompt).
+   */
+  const resetConversationViewWithTools = useCallback((newMessages: Message[], toolCalls: ToolCallState[]) => {
+    const messagesWithMetadata = newMessages.map((msg, idx) => ({
+      ...msg,
+      id: msg.id || generateMessageId(),
+      timestamp: msg.timestamp || Date.now() + idx,
+    }));
+    const seen = new Set<string>();
+    const deduplicated = messagesWithMetadata.filter(msg => {
+      if (!msg.id || seen.has(msg.id)) return false;
+      seen.add(msg.id);
+      return true;
+    });
+
+    // Clear + remount FIRST, then (after the old Static unmounts) clear the
+    // terminal and set messages + tool calls in ONE commit so the rebuilt
+    // timeline is complete and correctly ordered.
+    setMessages([]);
+    setActiveToolCalls([]);
+    setStaticRemountKey((prev) => prev + 1);
+    setImmediate(() => {
+      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+      setMessages(deduplicated);
+      setActiveToolCalls(toolCalls);
+    });
+  }, []);
+
   const setCurrentAgent = useCallback((agent: string, model?: string) => {
     setCurrentAgentState(agent);
     setCurrentAgentModel(resolveCurrentAgentModelOverride(model, config.model));
@@ -484,7 +535,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     currentAgent,
     currentAgentModel,
     activeSubAgents,
-  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, statusMessages, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents]);
+    activeAgentId,
+  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, statusMessages, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents, activeAgentId]);
 
   // Memoize actions object to prevent unnecessary context updates
   const actions = React.useMemo(() => ({
@@ -507,10 +559,12 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     clearStatusMessages,
     forceStaticRemount,
     resetConversationView,
+    resetConversationViewWithTools,
     setCurrentAgent,
     addSubAgent,
     removeSubAgent,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, addStatusMessage, clearStatusMessages, forceStaticRemount, resetConversationView, setCurrentAgent, addSubAgent, removeSubAgent]);
+    setActiveAgentId,
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, addStatusMessage, clearStatusMessages, forceStaticRemount, resetConversationView, resetConversationViewWithTools, setCurrentAgent, addSubAgent, removeSubAgent, setActiveAgentId]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

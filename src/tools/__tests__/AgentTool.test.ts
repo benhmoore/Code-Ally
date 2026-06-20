@@ -214,6 +214,7 @@ describe('AgentTool', () => {
       const result = await tool.execute({
         agent_type: 'task',
         task_prompt: 'Test task at depth 1',
+        run_in_background: false,
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
@@ -230,6 +231,7 @@ describe('AgentTool', () => {
       const result = await tool.execute({
         agent_type: 'task',
         task_prompt: 'Test task at maximum allowed depth',
+        run_in_background: false,
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
@@ -249,6 +251,7 @@ describe('AgentTool', () => {
       const result = await tool.execute({
         agent_type: 'task',
         task_prompt: 'Test self-delegation',
+        run_in_background: false,
       }, 'test-call-id');
 
       // First-level self-delegation is allowed (occurrenceCount = 0 < 2)
@@ -270,6 +273,7 @@ describe('AgentTool', () => {
       const result = await tool.execute({
         agent_type: 'task',
         task_prompt: 'Test circular delegation',
+        run_in_background: false,
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
@@ -313,6 +317,7 @@ describe('AgentTool', () => {
       const result = await tool.execute({
         agent_type: 'task',
         task_prompt: 'Test valid delegation',
+        run_in_background: false,
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
@@ -324,6 +329,7 @@ describe('AgentTool', () => {
       const result = await tool.execute({
         agent_type: 'task',
         task_prompt: 'Test task for agent',
+        run_in_background: false,
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
@@ -334,6 +340,7 @@ describe('AgentTool', () => {
     it('should use default agent when agent not specified', async () => {
       const result = await tool.execute({
         task_prompt: 'Test task without agent name',
+        run_in_background: false,
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
@@ -344,6 +351,7 @@ describe('AgentTool', () => {
       const result = await tool.execute({
         agent_type: 'nonexistent',
         task_prompt: 'Test task',
+        run_in_background: false,
       }, 'test-call-id');
 
       // Should succeed by falling back to task agent
@@ -356,6 +364,7 @@ describe('AgentTool', () => {
       const result = await tool.execute({
         agent_type: 'task',
         task_prompt: 'Test task',
+        run_in_background: false,
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
@@ -374,6 +383,7 @@ describe('AgentTool', () => {
       await tool.execute({
         agent_type: 'task',
         task_prompt: 'Test task',
+        run_in_background: false,
       }, 'test-call-id');
 
       const startEvents = events.filter((e) => e.type === 'agent_start');

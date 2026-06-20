@@ -946,8 +946,32 @@ export const AGENT_CONFIG = {
  * Pool uses LRU (Least Recently Used) eviction policy when at capacity
  */
 export const AGENT_POOL = {
-  /** Default maximum pool size (5 agents, auto-evict least recently used when full) */
-  DEFAULT_MAX_SIZE: 5,
+  /**
+   * Default maximum pool size. Raised to give headroom for concurrent
+   * background agents (which hold their pooled agent for their whole lifetime)
+   * plus the foreground path. The pool will temporarily exceed this rather than
+   * evict a live (in-use) agent, so this primarily avoids churn.
+   */
+  DEFAULT_MAX_SIZE: 12,
+} as const;
+
+// ===========================================
+// BACKGROUND AGENT MANAGEMENT
+// ===========================================
+
+/**
+ * Configuration for backgrounded (non-blocking) agent runs.
+ * Mirrors the BashProcessManager model for backgrounded shell processes.
+ */
+export const BACKGROUND_AGENT = {
+  /** Maximum number of concurrently running background agents */
+  MAX_CONCURRENT: 10,
+
+  /** Completed background agents are surfaced in status reminders for this long (5 min) */
+  COMPLETED_RETENTION_MS: 5 * 60 * 1000,
+
+  /** Completed agents remain visible in the fleet list this long before auto-dismissing (10s) */
+  FLEET_DISMISS_MS: 10 * 1000,
 } as const;
 
 // ===========================================
