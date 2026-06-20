@@ -11,17 +11,17 @@ export interface MCPConfig {
 }
 
 export interface MCPServerConfig {
-  /** Transport type: stdio for local processes, sse for remote servers */
-  transport: 'stdio' | 'sse';
+  /** Transport type: stdio (local process), sse, or http (Streamable HTTP) for remote servers */
+  transport: 'stdio' | 'sse' | 'http';
   /** Command to execute (stdio only) */
   command?: string;
   /** Command arguments (stdio only) */
   args?: string[];
   /** Environment variables for the process (stdio only) */
   env?: Record<string, string>;
-  /** Server URL (sse only) */
+  /** Server URL (sse/http only) */
   url?: string;
-  /** HTTP headers (sse only) */
+  /** HTTP headers (sse/http only) */
   headers?: Record<string, string>;
   /** Whether this server is enabled (default: true) */
   enabled?: boolean;

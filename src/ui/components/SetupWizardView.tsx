@@ -27,6 +27,7 @@ import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { SEARCH_PROVIDER_INFO, SearchProviderType } from '../../types/integration.js';
 import { MCP_PRESETS, MCP_PRESET_ORDER, buildConfigFromPreset } from '@mcp/MCPPresets.js';
+import { tokenizeCommand } from '@mcp/MCPServerSpec.js';
 import type { MCPServerManager } from '@mcp/MCPServerManager.js';
 
 enum SetupStep {
@@ -449,7 +450,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
 
       // Apply custom MCP server configuration
       if (customName && customCommand) {
-        const parts = customCommand.split(/\s+/);
+        const parts = tokenizeCommand(customCommand);
         const serverConfig = {
           transport: 'stdio' as const,
           command: parts[0]!,
@@ -462,6 +463,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         const registry = ServiceRegistry.getInstance();
         const mcpManager = registry.get('mcp_server_manager') as MCPServerManager | null;
         if (mcpManager) {
+          // addServerConfig validates and throws on a broken config (e.g. a
+          // launcher command with no args) — surface that instead of saving junk.
           await mcpManager.addServerConfig(customName, serverConfig);
           setSelectedMcpPresetKey(customName);
           logger.debug(`[SetupWizardView] Custom MCP server '${customName}' configured`);

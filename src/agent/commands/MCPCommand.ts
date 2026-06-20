@@ -13,9 +13,10 @@ import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 import type { MCPServerManager } from '@mcp/MCPServerManager.js';
 import { MCPServerStatus } from '@mcp/types.js';
-import type { MCPServerConfig } from '@mcp/MCPConfig.js';
 import { applyConfigDefaults } from '@mcp/MCPConfig.js';
 import { MCP_PRESETS, MCP_PRESET_ORDER, buildConfigFromPreset } from '@mcp/MCPPresets.js';
+import { parseKeyValuePairs, parseImportPayload } from '@mcp/MCPServerSpec.js';
+import type { ImportResult } from '@mcp/MCPServerSpec.js';
 import type { ToolManagerService } from '@marketplace/types.js';
 import { toKebabCase } from '@utils/namingValidation.js';
 
@@ -31,7 +32,8 @@ export class MCPCommand extends Command {
       { name: 'start', description: 'Connect and discover tools', args: '<name>' },
       { name: 'stop', description: 'Disconnect server', args: '<name>' },
       { name: 'restart', description: 'Restart server', args: '<name>' },
-      { name: 'add', description: 'Add a server (presets: filesystem, github, memory, fetch)', args: '[name]' },
+      { name: 'add', description: 'Add a server (preset, key=value, or pasted JSON)', args: '[name]' },
+      { name: 'import', description: 'Import server(s) from pasted MCP JSON', args: '<json>' },
       { name: 'remove', description: 'Remove server and config', args: '<name>' },
       { name: 'tools', description: 'List discovered tools', args: '[name]' },
     ],
@@ -72,6 +74,8 @@ export class MCPCommand extends Command {
         return this.restartServer(parts.slice(1).join(' ').trim(), serviceRegistry);
       case 'add':
         return this.addServer(parts.slice(1), serviceRegistry);
+      case 'import':
+        return this.importServers(parts.slice(1).join(' ').trim(), serviceRegistry);
       case 'remove':
         return this.removeServer(parts.slice(1).join(' ').trim(), serviceRegistry);
       case 'tools':
@@ -246,15 +250,28 @@ export class MCPCommand extends Command {
     args: string[],
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
-    const name = args[0];
-
     // No args: show available presets
-    if (!name) {
+    if (args.length === 0) {
       return this.showPresets();
     }
 
     const manager = this.getManager(serviceRegistry);
     if (!manager) return this.createError('MCP server management not available');
+
+    // Pasted JSON as the first token (e.g. `/mcp add {"mcpServers": ...}`):
+    // treat the whole thing as an import payload.
+    const full = args.join(' ').trim();
+    if (full.startsWith('{')) {
+      return this.importServers(full, serviceRegistry);
+    }
+
+    const name = args[0]!;
+
+    // `/mcp add <name> {json}` — a single server object pasted from a README.
+    const rest = args.slice(1).join(' ').trim();
+    if (rest.startsWith('{')) {
+      return this.importServers(rest, serviceRegistry, name);
+    }
 
     // Check if name matches a preset
     const preset = MCP_PRESETS[name];
@@ -295,53 +312,109 @@ export class MCPCommand extends Command {
     }
 
     // Not a preset — parse key=value pairs for custom config
-    const config: MCPServerConfig = { transport: 'stdio' };
-    for (const arg of args.slice(1)) {
-      const eqIdx = arg.indexOf('=');
-      if (eqIdx === -1) continue;
-      const key = arg.slice(0, eqIdx);
-      const value = arg.slice(eqIdx + 1);
-
-      switch (key) {
-        case 'transport':
-          if (value === 'stdio' || value === 'sse') config.transport = value;
-          break;
-        case 'command':
-          config.command = value;
-          break;
-        case 'url':
-          config.url = value;
-          break;
-        case 'autoStart':
-          config.autoStart = value === 'true';
-          break;
-        case 'requiresConfirmation':
-          config.requiresConfirmation = value === 'true';
-          break;
-        case 'enabled':
-          config.enabled = value === 'true';
-          break;
-      }
+    if (args.length < 2) {
+      return this.createError(
+        `Custom server '${name}' needs a command or url.\n` +
+        `Usage: \`/mcp add ${name} command=npx args=-y,@scope/server\`\n` +
+        `Or paste JSON: \`/mcp add ${name} {"command": "npx", "args": ["-y", "@scope/server"]}\``
+      );
     }
 
-    // Require at minimum a command or url
-    if (!config.command && !config.url) {
+    const parsed = parseKeyValuePairs(args.slice(1));
+    if (!parsed.ok) {
       return this.createError(
-        `Custom server '${name}' needs at least a command or url.\n` +
-        `Usage: \`/mcp add ${name} command=npx args=-y,@scope/server\``
+        `Could not add '${name}':\n` +
+        parsed.errors.map(e => `  • ${e}`).join('\n')
       );
     }
 
     try {
-      await manager.addServerConfig(name, config);
-      let response = `Added MCP server '${name}' (${config.transport})`;
-      if (config.command) response += ` — command: ${config.command}`;
-      if (config.url) response += ` — url: ${config.url}`;
+      await manager.addServerConfig(name, parsed.config);
+      let response = `Added MCP server '${name}' (${parsed.config.transport})`;
+      if (parsed.config.command) {
+        const cmdLine = [parsed.config.command, ...(parsed.config.args ?? [])].join(' ').trim();
+        response += ` — \`${cmdLine}\``;
+      }
+      if (parsed.config.url) response += ` — url: ${parsed.config.url}`;
+      for (const w of parsed.warnings) response += `\n⚠ ${w}`;
       response += `\nUse \`/mcp start ${name}\` to connect.`;
       return this.createResponse(response);
     } catch (error) {
       return this.createError(`Failed to add server: ${formatError(error)}`);
     }
+  }
+
+  /**
+   * Import one or more servers from a pasted JSON payload — the standard
+   * `{ "mcpServers": { ... } }` block from any server's docs, our native
+   * `{ "servers": { ... } }`, or a single bare server object (named via
+   * `fallbackName`). Valid servers are added; per-server errors are reported.
+   */
+  private async importServers(
+    jsonText: string,
+    serviceRegistry: ServiceRegistry,
+    fallbackName?: string
+  ): Promise<CommandResult> {
+    if (!jsonText) {
+      return this.createError(
+        'Paste an MCP JSON config. Example:\n' +
+        '`/mcp import {"mcpServers": {"chrome": {"command": "npx", "args": ["-y", "chrome-devtools-mcp@latest"]}}}`'
+      );
+    }
+
+    const manager = this.getManager(serviceRegistry);
+    if (!manager) return this.createError('MCP server management not available');
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(jsonText);
+    } catch (error) {
+      return this.createError(`That is not valid JSON: ${formatError(error)}`);
+    }
+
+    const result: ImportResult = parseImportPayload(payload, fallbackName);
+
+    const serverNames = Object.keys(result.servers);
+    if (serverNames.length === 0 && Object.keys(result.errors).length === 0) {
+      return this.createError('No servers found in that payload.');
+    }
+
+    // Persist each valid server (addServerConfig re-validates at the boundary).
+    const added: string[] = [];
+    for (const serverName of serverNames) {
+      try {
+        await manager.addServerConfig(serverName, result.servers[serverName]!);
+        added.push(serverName);
+      } catch (error) {
+        (result.errors[serverName] ??= []).push(formatError(error));
+      }
+    }
+
+    let output = '';
+    if (added.length > 0) {
+      output += `Added ${added.length} MCP server(s): ${added.map(n => `**${n}**`).join(', ')}\n`;
+      for (const serverName of added) {
+        const warnings = result.warnings[serverName];
+        if (warnings) for (const w of warnings) output += `  ⚠ ${serverName}: ${w}\n`;
+      }
+      output += `Use \`/mcp start <name>\` to connect.\n`;
+    }
+
+    const failed = Object.keys(result.errors).filter(n => !added.includes(n));
+    if (failed.length > 0) {
+      output += output ? '\n' : '';
+      output += `Could not add ${failed.length} server(s):\n`;
+      for (const serverName of failed) {
+        const label = serverName === '_' ? '' : `${serverName}: `;
+        for (const e of result.errors[serverName]!) {
+          output += `  • ${label}${e}\n`;
+        }
+      }
+    }
+
+    return added.length > 0
+      ? this.createResponse(output.trimEnd())
+      : this.createError(output.trimEnd());
   }
 
   private showPresets(): CommandResult {
@@ -360,8 +433,11 @@ export class MCPCommand extends Command {
       output += `  ${preset.description}\n\n`;
     }
 
-    output += '**Custom server:**\n';
-    output += '`/mcp add <name> command=<cmd> args=<a1>,<a2>`\n';
+    output += '**Custom server (key=value):**\n';
+    output += '`/mcp add <name> command=<cmd> args=<a1>,<a2>`\n\n';
+
+    output += '**Paste JSON from any server\'s docs:**\n';
+    output += '`/mcp import {"mcpServers": {"chrome": {"command": "npx", "args": ["-y", "chrome-devtools-mcp@latest"]}}}`\n';
 
     return { handled: true, response: output };
   }

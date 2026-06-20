@@ -9,6 +9,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
   ListToolsResultSchema,
   CallToolResultSchema,
@@ -21,6 +22,7 @@ import type { IService } from '@shared/index.js';
 import type { ActivityStream } from '@services/ActivityStream.js';
 import type { MCPConfig, MCPServerConfig } from './MCPConfig.js';
 import { applyConfigDefaults } from './MCPConfig.js';
+import { validateConfig } from './MCPServerSpec.js';
 import { MCPError } from './MCPError.js';
 import { MCPServerStatus } from './types.js';
 import type { MCPToolDefinition, MCPToolResult, MCPServerStatusInfo } from './types.js';
@@ -31,7 +33,7 @@ const CONNECTION_TIMEOUT_MS = 30_000;
 
 export class MCPServerManager implements IService {
   private clients: Map<string, Client> = new Map();
-  private transports: Map<string, StdioClientTransport | SSEClientTransport> = new Map();
+  private transports: Map<string, StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport> = new Map();
   private statuses: Map<string, MCPServerStatusInfo> = new Map();
   private discoveredTools: Map<string, MCPToolDefinition[]> = new Map();
   private serverConfigs: Map<string, MCPServerConfig> = new Map();
@@ -265,9 +267,17 @@ export class MCPServerManager implements IService {
   }
 
   /**
-   * Add or update a server configuration and save to profile config
+   * Add or update a server configuration and save to profile config.
+   *
+   * Validation is enforced here so that no authoring path — the `/mcp` command,
+   * the setup wizard, JSON import, or any future caller — can persist a config
+   * that cannot connect (e.g. a launcher command with no arguments).
    */
   async addServerConfig(name: string, config: MCPServerConfig): Promise<void> {
+    const { errors } = validateConfig(config);
+    if (errors.length > 0) {
+      throw new MCPError('TRANSPORT_ERROR', `Invalid configuration for '${name}': ${errors.join('; ')}`, name);
+    }
     this.serverConfigs.set(name, config);
     await this.saveProfileConfig();
   }
@@ -352,7 +362,7 @@ export class MCPServerManager implements IService {
   // Private helpers
   // ===========================
 
-  private createTransport(name: string, config: MCPServerConfig): StdioClientTransport | SSEClientTransport {
+  private createTransport(name: string, config: MCPServerConfig): StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport {
     if (config.transport === 'stdio') {
       if (!config.command) {
         throw new MCPError('TRANSPORT_ERROR', `Server '${name}' has transport 'stdio' but no command specified`, name);
@@ -380,7 +390,18 @@ export class MCPServerManager implements IService {
       if (!config.url) {
         throw new MCPError('TRANSPORT_ERROR', `Server '${name}' has transport 'sse' but no url specified`, name);
       }
-      return new SSEClientTransport(new URL(config.url));
+      return new SSEClientTransport(new URL(config.url), {
+        requestInit: config.headers ? { headers: config.headers } : undefined,
+      });
+    }
+
+    if (config.transport === 'http') {
+      if (!config.url) {
+        throw new MCPError('TRANSPORT_ERROR', `Server '${name}' has transport 'http' but no url specified`, name);
+      }
+      return new StreamableHTTPClientTransport(new URL(config.url), {
+        requestInit: config.headers ? { headers: config.headers } : undefined,
+      });
     }
 
     throw new MCPError('TRANSPORT_ERROR', `Unknown transport type for server '${name}'`, name);

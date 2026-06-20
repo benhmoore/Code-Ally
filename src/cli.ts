@@ -11,6 +11,7 @@ import { render } from 'ink';
 import readline from 'readline';
 import chalk from 'chalk';
 import { ServiceRegistry } from './services/ServiceRegistry.js';
+import type { MCPServerConfig as MCPServerConfigType } from './mcp/MCPConfig.js';
 import { ConfigManager } from './services/ConfigManager.js';
 import { SessionManager } from './services/SessionManager.js';
 import { MemoryService } from './services/MemoryService.js';
@@ -1109,24 +1110,32 @@ async function main() {
     registry.registerInstance('mcp_server_manager', mcpServerManager);
     await mcpServerManager.loadConfig(process.cwd());
 
-    // Add MCP servers from enabled marketplace plugins
+    // Add MCP servers from enabled marketplace plugins. Each entry is
+    // normalized and validated through the shared spec so a malformed plugin
+    // server is reported and skipped rather than failing at connect time.
+    const { parseServerObject } = await import('./mcp/MCPServerSpec.js');
     const enabledPlugins = pluginManager.getEnabledPlugins();
     for (const plugin of enabledPlugins) {
       const mcpConfig = await pluginManager.getPluginMCPConfig(plugin.installPath);
       if (mcpConfig) {
-        const serverConfigs: Record<string, any> = {};
+        const serverConfigs: Record<string, MCPServerConfigType> = {};
         for (const [key, entry] of Object.entries(mcpConfig)) {
-          serverConfigs[key] = {
+          const parsed = parseServerObject({
             transport: 'stdio',
             command: entry.command,
             args: entry.args,
             env: entry.env,
-            enabled: true,
-            autoStart: true,
             requiresConfirmation: true,
-          };
+          });
+          if (parsed.ok) {
+            serverConfigs[key] = parsed.config;
+          } else {
+            logger.warn(`[MCP] Skipping invalid plugin server '${key}' from '${plugin.pluginName}': ${parsed.errors.join('; ')}`);
+          }
         }
-        mcpServerManager.addPluginServers(plugin.pluginName, serverConfigs);
+        if (Object.keys(serverConfigs).length > 0) {
+          mcpServerManager.addPluginServers(plugin.pluginName, serverConfigs);
+        }
       }
     }
 

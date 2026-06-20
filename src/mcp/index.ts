@@ -16,3 +16,11 @@ export type { MCPToolDefinition, MCPToolResult, MCPServerStatusInfo } from './ty
 export { MCPServerStatus } from './types.js';
 export { MCP_PRESETS, MCP_PRESET_ORDER, buildConfigFromPreset } from './MCPPresets.js';
 export type { MCPPreset } from './MCPPresets.js';
+export {
+  parseServerObject,
+  parseImportPayload,
+  parseKeyValuePairs,
+  tokenizeCommand,
+  validateConfig,
+} from './MCPServerSpec.js';
+export type { ParseResult, ParseSuccess, ParseFailure, ImportResult } from './MCPServerSpec.js';
