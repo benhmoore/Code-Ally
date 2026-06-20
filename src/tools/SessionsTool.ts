@@ -1,14 +1,14 @@
 /**
  * SessionsTool - Analyze past conversation sessions
  *
- * Provides an agent-based tool for analyzing session history stored in .ally-sessions/.
+ * Provides an agent-based tool for analyzing session history under ~/.ally/projects/<key>/sessions/.
  * The agent has read-only access to session files and can search, analyze, and synthesize
  * findings about past conversations.
  *
  * Key features:
  * - Agent-based exploration of session history
  * - Read-only access (Read, Grep, Glob tools)
- * - Operates in .ally-sessions/ directory
+ * - Operates in the project's sessions directory (under ~/.ally)
  * - Excludes current active session
  * - Returns synthesized findings about session history
  */
@@ -38,7 +38,7 @@ const SESSION_ANALYSIS_TOOLS = ['read', 'glob', 'grep'];
 const SESSION_ANALYSIS_PROMPT = `You are a specialized session analysis assistant. Your role is to analyze past conversation sessions to answer questions about conversation history, find relevant discussions, and provide insights.
 
 **Your Environment:**
-- You are operating in the .ally-sessions/ directory
+- You are operating in the project's sessions directory (your focus directory)
 - Each session is stored as a JSON file with structure:
   {
     "session_id": "session_...",
@@ -78,7 +78,7 @@ Analyze session history systematically and provide comprehensive results.`;
 export class SessionsTool extends BaseTool {
   readonly name = 'sessions';
   readonly description =
-    'Analyze past conversation sessions. Searches and analyzes session history stored in .ally-sessions/. Use when you need to find previous discussions, review past work, or understand conversation history.';
+    'Analyze past conversation sessions. Searches and analyzes this project\'s session history. Use when you need to find previous discussions, review past work, or understand conversation history.';
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
@@ -171,7 +171,7 @@ export class SessionsTool extends BaseTool {
         return this.formatErrorResponse(
           'No sessions directory found. Session history is not available.',
           'validation_error',
-          'Sessions are stored in .ally-sessions/ within the project directory'
+          'Sessions are stored per project under ~/.ally/projects/<project>/sessions/'
         );
       }
 

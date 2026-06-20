@@ -265,4 +265,46 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
       }
     });
   });
+
+  describe('main-agent-only execution guard', () => {
+    const createMainOnlyTool = () => ({
+      name: 'memory',
+      description: 'Main agent only',
+      mainAgentOnly: true,
+      requiresConfirmation: false,
+      execute: vi.fn().mockResolvedValue({ success: true, output: 'should not run' }),
+    });
+
+    it('rejects a main-agent-only tool for a delegated (specialized) agent without executing it', async () => {
+      const mainOnlyTool = createMainOnlyTool();
+      const tm = new ToolManager([mainOnlyTool as any]);
+      const delegated = new ToolOrchestrator(tm, activityStream, mockAgent, {
+        ...agentConfig,
+        isSpecializedAgent: true,
+        agentType: 'explore',
+      });
+
+      const result = await (delegated as any).executeSingleTool(createToolCall('memory'));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('only available to the main assistant');
+      expect(mainOnlyTool.execute).not.toHaveBeenCalled();
+    });
+
+    it('does not block a main-agent-only tool for the main (non-specialized) agent', async () => {
+      const mainOnlyTool = createMainOnlyTool();
+      const tm = new ToolManager([mainOnlyTool as any]);
+      const main = new ToolOrchestrator(tm, activityStream, mockAgent, {
+        ...agentConfig,
+        isSpecializedAgent: false,
+        agentType: 'main',
+      });
+
+      // The guard is a no-op for the main agent: the call is not short-circuited with
+      // the main-only rejection (downstream pipeline behavior is out of scope here).
+      const result = await (main as any).executeSingleTool(createToolCall('memory'));
+
+      expect(result.error || '').not.toContain('only available to the main assistant');
+    });
+  });
 });

@@ -39,26 +39,23 @@ function hasCustomFunctionDefinition(tool: BaseTool): tool is ToolWithCustomDefi
 }
 
 /** Why a tool is not available to a given agent, or null if it is. */
-type AgentVisibilityBlock =
-  | { kind: 'visible_to'; visibleTo: string[] }
-  | { kind: 'main_only' };
+type AgentVisibilityBlock = { kind: 'visible_to'; visibleTo: string[] };
 
 /**
- * Single authority for agent-based tool visibility, shared by the function-definition
+ * Single authority for the visible_to allow-list, shared by the function-definition
  * filter (which hides the tool) and the call validator (which rejects it), so the two
- * never disagree. The main loop has no agent name; every delegated agent does.
+ * never disagree.
  *
- * - visible_to: tool is restricted to a named allow-list of agents.
- * - main_only:  tool is restricted to the nameless main assistant.
+ * Note: main-agent-only restriction is NOT handled here. The main agent IS named
+ * (typically 'ally'), so it cannot be distinguished from a delegated agent by name.
+ * That restriction keys off isSpecializedAgent and is applied at the Agent boundary
+ * via excludeTools (see Agent + getMainAgentOnlyToolNames), mirroring todo tools.
  */
 function getAgentVisibilityBlock(tool: BaseTool, currentAgentName?: string): AgentVisibilityBlock | null {
   if (tool.visibleTo && tool.visibleTo.length > 0) {
     if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
       return { kind: 'visible_to', visibleTo: tool.visibleTo };
     }
-  }
-  if (tool.mainAgentOnly && currentAgentName) {
-    return { kind: 'main_only' };
   }
   return null;
 }
@@ -103,6 +100,16 @@ export class ToolManager {
    */
   getAllTools(): BaseTool[] {
     return Array.from(this.tools.values());
+  }
+
+  /**
+   * Names of tools restricted to the main assistant. Delegated agents
+   * (isSpecializedAgent) exclude these from their function definitions.
+   */
+  getMainAgentOnlyToolNames(): string[] {
+    return Array.from(this.tools.values())
+      .filter(tool => tool.mainAgentOnly)
+      .map(tool => tool.name);
   }
 
   /**
@@ -502,17 +509,18 @@ export class ToolManager {
       return { valid: false, error: result };
     }
 
-    // Check agent visibility constraints (visible_to allow-list and main-agent-only).
-    // Shares one authority with getFunctionDefinitions so filtering and enforcement never diverge.
+    // Check the visible_to allow-list (shared with getFunctionDefinitions so filtering
+    // and enforcement never diverge). Main-agent-only tools are excluded upstream by
+    // the Agent (keyed on isSpecializedAgent), so they never reach here for a sub-agent.
     const visibilityBlock = getAgentVisibilityBlock(tool, currentAgentName);
     if (visibilityBlock) {
-      const message = visibilityBlock.kind === 'visible_to'
-        ? `Tool '${toolName}' is only visible to agents: [${visibilityBlock.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`
-        : `Tool '${toolName}' is only available to the main assistant, not delegated agents (current agent: '${currentAgentName || 'unknown'}').`;
-      const details = visibilityBlock.kind === 'visible_to'
-        ? { visible_to: visibilityBlock.visibleTo, current_agent: currentAgentName || 'unknown' }
-        : { main_agent_only: true, current_agent: currentAgentName || 'unknown' };
-      return { valid: false, error: createStructuredError(message, 'agent_mismatch', toolName, details) };
+      const result = createStructuredError(
+        `Tool '${toolName}' is only visible to agents: [${visibilityBlock.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
+        'agent_mismatch',
+        toolName,
+        { visible_to: visibilityBlock.visibleTo, current_agent: currentAgentName || 'unknown' }
+      );
+      return { valid: false, error: result };
     }
 
     // Check for duplicate calls

@@ -279,7 +279,7 @@ ${allyContent}`;
         const contextPct = tokenManager && typeof tokenManager.getContextUsagePercentage === 'function'
           ? tokenManager.getContextUsagePercentage()
           : 0;
-        if (contextPct < 80) {
+        if (contextPct < CONTEXT_THRESHOLDS.INJECTION_CEILING) {
           const memoryContext = await memoryService.getPromptContext();
           if (memoryContext) {
             memoryIndexContent = `
@@ -322,13 +322,13 @@ ${agentsSection}`;
     const skillManager = serviceRegistry.getSkillManager();
 
     if (skillManager) {
-      // Check context usage - only include skills if under 80%
+      // Check context usage - only include skills under the injection ceiling
       let contextPct = 0;
       if (tokenManager && typeof tokenManager.getContextUsagePercentage === 'function') {
         contextPct = tokenManager.getContextUsagePercentage();
       }
 
-      if (contextPct < 80) {
+      if (contextPct < CONTEXT_THRESHOLDS.INJECTION_CEILING) {
         const skillsSection = skillManager.getSkillsForSystemPrompt();
         if (skillsSection) {
           skillsInfo = `

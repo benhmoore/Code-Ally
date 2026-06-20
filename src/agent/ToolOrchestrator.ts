@@ -648,6 +648,18 @@ export class ToolOrchestrator {
       );
     }
 
+    // Main-agent-only tools (e.g. memory) are hidden from delegated agents in their
+    // function definitions; this is the execution-layer backstop for unrestricted
+    // agents that share the global ToolManager, so a hallucinated call cannot run.
+    if (this.config.isSpecializedAgent && tool?.mainAgentOnly) {
+      return createStructuredError(
+        `Tool '${toolName}' is only available to the main assistant, not delegated agents.`,
+        'permission_error',
+        toolName,
+        args
+      );
+    }
+
     // Plan mode enforcement: only allow read-only + plan-specific tools
     if (!this.config.isSpecializedAgent) {
       try {

@@ -65,9 +65,9 @@ export const COMMAND_HISTORY_FILE = join(ALLY_HOME, 'command_history');
 export const PROFILES_DIR = join(ALLY_HOME, 'profiles');
 
 /**
- * Base directory for project-scoped data stored globally under ~/.ally
- * (keyed by absolute project path). Unlike .ally-sessions/, this never lives
- * inside the project tree, so it stays private and out of version control.
+ * Base directory for project-scoped data, stored globally under ~/.ally and
+ * keyed by absolute project path. Living outside the project tree keeps this
+ * data private and out of version control.
  */
 export const PROJECTS_DIR = join(ALLY_HOME, 'projects');
 
@@ -104,8 +104,8 @@ export function getProjectDataDir(projectDir: string = process.cwd()): string {
 
 /**
  * Get the sessions directory for a project (conversations, patches, and
- * persisted tool results). Relocated out of the project tree into ~/.ally so
- * session history is not mixed into the user's repository.
+ * persisted tool results). Lives under ~/.ally, outside the project tree, so
+ * session history is kept out of the user's repository.
  *
  * @param projectDir - Absolute path to the project root (defaults to cwd)
  * @returns Path to the project's sessions directory

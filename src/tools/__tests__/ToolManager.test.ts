@@ -193,7 +193,7 @@ describe('ToolManager', () => {
     });
   });
 
-  describe('mainAgentOnly visibility', () => {
+  describe('mainAgentOnly tools', () => {
     class MainOnlyTool extends BaseTool {
       readonly name = 'main-only';
       readonly description = 'Main agent only';
@@ -210,28 +210,21 @@ describe('ToolManager', () => {
       mainOnlyManager = new ToolManager([new MainOnlyTool(activityStream), readTool]);
     });
 
-    it('is visible to the main agent (no agent name)', () => {
-      const names = mainOnlyManager.getFunctionDefinitions().map(d => d.function.name);
-      expect(names).toContain('main-only');
+    it('reports main-agent-only tool names for the Agent to exclude', () => {
+      expect(mainOnlyManager.getMainAgentOnlyToolNames()).toEqual(['main-only']);
     });
 
-    it('is hidden from any named (delegated) agent', () => {
-      const names = mainOnlyManager.getFunctionDefinitions(undefined, 'explore').map(d => d.function.name);
+    it('is NOT filtered by agent name (the main agent is itself named, e.g. "ally")', () => {
+      // Restriction is enforced at the Agent boundary via excludeTools, not by name here.
+      const asAlly = mainOnlyManager.getFunctionDefinitions(undefined, 'ally').map(d => d.function.name);
+      expect(asAlly).toContain('main-only');
+    });
+
+    it('is hidden once excluded (the delegated-agent path)', () => {
+      const excluded = mainOnlyManager.getMainAgentOnlyToolNames();
+      const names = mainOnlyManager.getFunctionDefinitions(excluded, 'explore').map(d => d.function.name);
       expect(names).not.toContain('main-only');
       expect(names).toContain('read'); // unrelated tools still visible
-    });
-
-    it('rejects execution when invoked by a named agent', async () => {
-      const result = await mainOnlyManager.executeTool(
-        'main-only', { description: 'x' }, undefined, false, undefined, false, false, 'explore',
-      );
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('only available to the main assistant');
-    });
-
-    it('allows execution for the main agent', async () => {
-      const result = await mainOnlyManager.executeTool('main-only', { description: 'x' });
-      expect(result.success).toBe(true);
     });
   });
 

@@ -5,7 +5,7 @@
  * is saved to disk so it can be retrieved later. The model sees a preview with
  * a file path reference instead of losing the data entirely.
  *
- * Follows the PatchManager pattern: .ally-sessions/{sessionId}/tool-results/
+ * Follows the PatchManager pattern: <sessions-dir>/{sessionId}/tool-results/
  */
 
 import * as path from 'path';

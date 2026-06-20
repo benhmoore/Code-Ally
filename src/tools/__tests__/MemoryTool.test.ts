@@ -132,11 +132,14 @@ describe('MemoryTool', () => {
   });
 
   describe('formatSubtext', () => {
-    it('shows a Remembered line for saves', () => {
-      expect(tool.formatSubtext({ action: 'save', name: 'use-npm' })).toBe('Remembered: use-npm');
+    it('renders a terse fixed phrase for saves', () => {
+      expect(tool.formatSubtext({ action: 'save', name: 'use-npm' })).toBe('wrote use-npm');
     });
-    it('shows a Recall line for recall', () => {
-      expect(tool.formatSubtext({ action: 'recall', query: 'npm' })).toBe('Recall: npm');
+    it('renders a terse fixed phrase for recall', () => {
+      expect(tool.formatSubtext({ action: 'recall', query: 'npm' })).toBe('recalled npm');
+    });
+    it('ignores the model-supplied description', () => {
+      expect(tool.formatSubtext({ action: 'list', description: 'some verbose prose from the model' })).toBe('listed');
     });
   });
 });

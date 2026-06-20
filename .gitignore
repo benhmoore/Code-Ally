@@ -37,10 +37,6 @@ logs/
 *.temp
 .cache/
 
-# User data (Ally config and sessions)
-# Sessions are now stored in .ally-sessions/ within each project
-.ally-sessions/
-
 # TypeScript
 *.tsbuildinfo
 

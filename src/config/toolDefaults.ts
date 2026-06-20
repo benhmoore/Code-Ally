@@ -112,6 +112,8 @@ export const CONTEXT_THRESHOLDS = {
   VISIBILITY: 50,
   NORMAL: 70,
   MODERATE_REMINDER: 75,
+  /** Ceiling above which optional injected context (skills, memory index, auto-recall) is dropped to protect budget */
+  INJECTION_CEILING: 80,
   WARNING: 85,
   STRONG_REMINDER: 90,
   CRITICAL: 95,

@@ -161,13 +161,6 @@ export interface AgentConfig {
 }
 
 /**
- * Context-usage ceiling (percent) above which automatic memory recall is skipped.
- * Mirrors the index/skills injection gate so auto-recall never outlives the
- * lighter index it elaborates on.
- */
-const MEMORY_AUTO_RECALL_CONTEXT_LIMIT = 80;
-
-/**
  * Agent orchestrates the entire conversation flow
  */
 export class Agent {
@@ -1282,6 +1275,13 @@ export class Agent {
       excludeTools.push(...TOOL_NAMES.TODO_MANAGEMENT_TOOLS);
     }
 
+    // Main-agent-only tools (e.g. memory) are hidden from every delegated agent.
+    // "Delegated" is isSpecializedAgent — NOT the agent name (the main agent is
+    // named, typically 'ally'), which is why this keys off the same signal as todo tools.
+    if (this.config.isSpecializedAgent) {
+      excludeTools.push(...this.toolManager.getMainAgentOnlyToolNames());
+    }
+
     const functions = this.toolManager.getFunctionDefinitions(
       excludeTools.length > 0 ? excludeTools : undefined,
       this.agentName,  // Pass agent name for visible_to filtering
@@ -1794,12 +1794,12 @@ export class Agent {
    */
   private async injectRelevantMemory(message: string): Promise<void> {
     try {
-      // Match the index-injection gate (skills/index disappear at 80%); auto-recall
-      // is heavier, so it should never outlive the index it elaborates on.
+      // Match the index-injection gate (skills/index disappear at the same ceiling);
+      // auto-recall is heavier, so it should never outlive the index it elaborates on.
       if (
         this.tokenManager &&
         typeof this.tokenManager.getContextUsagePercentage === 'function' &&
-        this.tokenManager.getContextUsagePercentage() >= MEMORY_AUTO_RECALL_CONTEXT_LIMIT
+        this.tokenManager.getContextUsagePercentage() >= CONTEXT_THRESHOLDS.INJECTION_CEILING
       ) {
         return;
       }

@@ -129,7 +129,7 @@ export class SessionManager implements IService {
   /**
    * Clean up orphaned patch directories from deleted sessions
    *
-   * Scans .ally-sessions/ for patch directories that don't have a corresponding
+   * Scans the sessions directory for patch directories that don't have a corresponding
    * session JSON file. This handles cases where:
    * - Session JSON was deleted but patches directory remained
    * - Session creation failed after creating patches directory
@@ -140,7 +140,7 @@ export class SessionManager implements IService {
       const entries = await fs.readdir(this.sessionsDir, { withFileTypes: true });
       const orphanedDirs: string[] = [];
 
-      // Iterate through all entries in .ally-sessions/
+      // Iterate through all entries in the sessions directory
       for (const entry of entries) {
         // Skip files, .quarantine, and other non-session directories
         if (!entry.isDirectory() || entry.name.startsWith('.')) {

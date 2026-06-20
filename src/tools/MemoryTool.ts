@@ -32,6 +32,9 @@ export class MemoryTool extends BaseTool {
     'Actions: save/update (upsert a fact), delete (remove one), recall (fetch by name or relevance), list (all).';
   readonly requiresConfirmation = false;
   readonly displayColor = 'cyan';
+  // Hide the raw result preview; the one-line subtext carries the display.
+  // The model still receives the full result content.
+  readonly hideOutput = true;
   // Only the main assistant curates long-term memory; sub-agents never see this tool.
   readonly mainAgentOnly = true;
   // Behavioral policy (when to save, restraint, taxonomy) lives in one place:
@@ -230,20 +233,24 @@ export class MemoryTool extends BaseTool {
     return this.formatSuccessResponse({ action: 'list', count: records.length, content });
   }
 
-  formatSubtext(args: Record<string, any>, _result?: any): string | null {
-    if (args.description && args.action !== 'save' && args.action !== 'update') {
-      return args.description;
-    }
+  /**
+   * A single clean line for the UI (rendered as "Memory · <subtext>"). Fixed,
+   * deterministic phrasing — deliberately ignores the model-supplied description
+   * so the display stays terse instead of echoing prose.
+   */
+  formatSubtext(args: Record<string, any>): string | null {
+    const target = args.name || args.query;
     switch (args.action) {
       case 'save':
+        return target ? `wrote ${target}` : 'wrote';
       case 'update':
-        return args.name ? `Remembered: ${args.name}` : 'Remembering';
+        return target ? `updated ${target}` : 'updated';
       case 'delete':
-        return args.name ? `Forgot: ${args.name}` : 'Forgetting';
+        return target ? `forgot ${target}` : 'forgot';
       case 'recall':
-        return args.name ? `Recall: ${args.name}` : args.query ? `Recall: ${args.query}` : 'Recall';
+        return target ? `recalled ${target}` : 'recalled';
       case 'list':
-        return 'List memories';
+        return 'listed';
       default:
         return null;
     }
