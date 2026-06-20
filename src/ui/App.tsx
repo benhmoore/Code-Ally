@@ -463,6 +463,15 @@ const AppContentComponent: React.FC<{
       </Box>
 
 
+      {/*
+        Modal render chain. Exactly one exclusive modal can be open at a time
+        (enforced by the modal stack in useModalState), so this fixed-priority
+        ternary surfaces it. IMPORTANT: the two layered pairs depend on this
+        ORDER, not on stack order — `rewindOptions` must be checked before
+        `rewind`, and the `undoFileList && !undoRequest` guard must come before
+        `undoRequest`. Do not reorder those arms or render purely off the stack
+        top without preserving this precedence, or the layered flows will break.
+      */}
       {/* Setup Wizard (modal - replaces input when active) */}
       {modal.setupWizardOpen ? (
         <Box marginTop={1} flexDirection="column">
