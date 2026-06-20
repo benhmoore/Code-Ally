@@ -97,6 +97,13 @@ Files: Read before editing. Use batch edits (edits array) for edit and line-edit
 Background processes: ALWAYS use bash(run_in_background=true) for dev servers, file watchers, or any long-running process. Examples: npm run dev, python -m http.server, npm start, vite, webpack serve. Monitor with bash-output, kill with kill-shell.
 Prohibited: No commits without request. No unsolicited explanations.`;
 
+// Memory directives for the main assistant (autonomous long-term memory)
+const MEMORY_GUIDELINES = `Memory: You have a persistent, project-scoped memory via the memory tool. The current index appears under Project Memory in Context; recall a full entry with memory(action="recall").
+- Save sparingly, not reflexively: only a durable fact you'd want recalled in a *future* session. Most turns save nothing; when in doubt, don't. A good save is one type of: \`user\` (who the user is — role, preferences), \`feedback\` (how you should work — include the why), \`project\` (goals or constraints not derivable from the code; convert relative dates to absolute), \`reference\` (pointers to external resources).
+- Curate, don't accumulate: update the existing entry instead of creating a near-duplicate, and delete entries that turn out to be wrong.
+- Do NOT save what the repo already records (code structure, past fixes, git history, ALLY.md) or anything that only matters to the current conversation. If asked to remember such a thing, save what was non-obvious about it instead.
+- Recalled memory reflects what was true when written: before relying on a named file, function, or flag, verify it still exists.`;
+
 // Complete directives for main Ally assistant
 const CORE_DIRECTIVES = `${ALLY_IDENTITY}
 
@@ -104,7 +111,9 @@ ${BEHAVIORAL_DIRECTIVES}
 
 ${AGENT_DELEGATION_GUIDELINES}
 
-${GENERAL_GUIDELINES}`;
+${GENERAL_GUIDELINES}
+
+${MEMORY_GUIDELINES}`;
 
 /**
  * Get context usage information with warnings
@@ -258,6 +267,32 @@ ${allyContent}`;
     }
   }
 
+  // Include the project memory index (agent-managed counterpart to ALLY.md).
+  // Only the compact index is injected; full entries are pulled on demand via
+  // the memory tool. Gated under 80% context, like skills, to protect budget.
+  let memoryIndexContent = '';
+  if (includeProjectInstructions) {
+    try {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      const memoryService = serviceRegistry.get<any>('memory_service');
+      if (memoryService && typeof memoryService.getPromptContext === 'function') {
+        const contextPct = tokenManager && typeof tokenManager.getContextUsagePercentage === 'function'
+          ? tokenManager.getContextUsagePercentage()
+          : 0;
+        if (contextPct < 80) {
+          const memoryContext = await memoryService.getPromptContext();
+          if (memoryContext) {
+            memoryIndexContent = `
+- Project Memory (index — recall full entries with the memory tool):
+${memoryContext.text}`;
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to load project memory for system prompt:', formatError(error));
+    }
+  }
+
   // Get available agents information
   let agentsInfo = '';
   if (includeAgents) {
@@ -397,7 +432,7 @@ ${skillsSection}`;
 - Current Date: ${currentDate}
 - Working Directory: ${workingDir}${gitInfo}${additionalDirsInfo}
 - Operating System: ${osInfo}
-- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${profileInstructionsContent}${allyMdContent}${agentsInfo}${skillsInfo}${contextFilesSection}`;
+- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${profileInstructionsContent}${allyMdContent}${memoryIndexContent}${agentsInfo}${skillsInfo}${contextFilesSection}`;
 }
 
 /**

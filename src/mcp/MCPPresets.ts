@@ -38,22 +38,10 @@ export const MCP_PRESETS: Record<string, MCPPreset> = {
     needsEnvKey: 'GITHUB_PERSONAL_ACCESS_TOKEN',
     envHint: 'ghp_...',
   },
-  memory: {
-    displayName: 'Memory',
-    description: 'Persistent key-value store that survives across conversations',
-    config: {
-      transport: 'stdio',
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-memory'],
-      enabled: true,
-      requiresConfirmation: false,
-      autoStart: true,
-    },
-  },
 };
 
 /** Ordered list of preset keys for display */
-export const MCP_PRESET_ORDER = ['github', 'memory'] as const;
+export const MCP_PRESET_ORDER = ['github'] as const;
 
 /**
  * Build a finalized MCPServerConfig from a preset, optionally

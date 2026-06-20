@@ -2,7 +2,7 @@
  * CommandHistory - Manages command history with persistence
  *
  * Features:
- * - Persistent storage to .ally-sessions/history.json in CWD
+ * - Persistent storage to ~/.ally/projects/<key>/sessions/history.json
  * - Deduplication of consecutive commands
  * - Maximum history size management
  * - Search functionality
@@ -12,6 +12,7 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { BUFFER_SIZES, UI_DELAYS } from '../config/constants.js';
+import { getProjectSessionsDir } from '../config/paths.js';
 import { logger } from './Logger.js';
 
 export interface CommandHistoryEntry {
@@ -36,7 +37,7 @@ export class CommandHistory {
 
   constructor(options: CommandHistoryOptions = {}) {
     this.maxSize = options.maxSize || BUFFER_SIZES.COMMAND_HISTORY_MAX;
-    this.storagePath = options.storagePath || join(process.cwd(), '.ally-sessions', 'history.json');
+    this.storagePath = options.storagePath || join(getProjectSessionsDir(), 'history.json');
   }
 
   /**

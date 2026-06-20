@@ -193,6 +193,48 @@ describe('ToolManager', () => {
     });
   });
 
+  describe('mainAgentOnly visibility', () => {
+    class MainOnlyTool extends BaseTool {
+      readonly name = 'main-only';
+      readonly description = 'Main agent only';
+      readonly requiresConfirmation = false;
+      readonly mainAgentOnly = true;
+      protected async executeImpl(): Promise<ToolResult> {
+        return this.formatSuccessResponse({ ok: true });
+      }
+    }
+
+    let mainOnlyManager: ToolManager;
+
+    beforeEach(() => {
+      mainOnlyManager = new ToolManager([new MainOnlyTool(activityStream), readTool]);
+    });
+
+    it('is visible to the main agent (no agent name)', () => {
+      const names = mainOnlyManager.getFunctionDefinitions().map(d => d.function.name);
+      expect(names).toContain('main-only');
+    });
+
+    it('is hidden from any named (delegated) agent', () => {
+      const names = mainOnlyManager.getFunctionDefinitions(undefined, 'explore').map(d => d.function.name);
+      expect(names).not.toContain('main-only');
+      expect(names).toContain('read'); // unrelated tools still visible
+    });
+
+    it('rejects execution when invoked by a named agent', async () => {
+      const result = await mainOnlyManager.executeTool(
+        'main-only', { description: 'x' }, undefined, false, undefined, false, false, 'explore',
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('only available to the main assistant');
+    });
+
+    it('allows execution for the main agent', async () => {
+      const result = await mainOnlyManager.executeTool('main-only', { description: 'x' });
+      expect(result.success).toBe(true);
+    });
+  });
+
   describe('clearState', () => {
     it('should clear all tracked state', async () => {
       // Execute some tool calls

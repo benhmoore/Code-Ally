@@ -13,6 +13,7 @@ import chalk from 'chalk';
 import { ServiceRegistry } from './services/ServiceRegistry.js';
 import { ConfigManager } from './services/ConfigManager.js';
 import { SessionManager } from './services/SessionManager.js';
+import { MemoryService } from './services/MemoryService.js';
 import { ActivityStream } from './services/ActivityStream.js';
 import { FormManager } from './services/FormManager.js';
 import { PathResolver } from './services/PathResolver.js';
@@ -805,6 +806,11 @@ async function main() {
     registry.registerInstance('config_manager', configManager);
     registry.registerInstance('session_manager', sessionManager);
 
+    // Initialize autonomous project memory (stored alongside sessions under ~/.ally)
+    const memoryService = new MemoryService();
+    await memoryService.initialize();
+    registry.registerInstance('memory_service', memoryService);
+
     // Create activity stream
     const activityStream = new ActivityStream();
     registry.registerInstance('activity_stream', activityStream);
@@ -1011,6 +1017,7 @@ async function main() {
     const { WebSearchTool } = await import('./tools/WebSearchTool.js');
     const { ResearchTool } = await import('./tools/ResearchTool.js');
     const { SkillTool } = await import('./tools/SkillTool.js');
+    const { MemoryTool } = await import('./tools/MemoryTool.js');
     const { EnterPlanModeTool } = await import('./tools/EnterPlanModeTool.js');
     const { ExitPlanModeTool } = await import('./tools/ExitPlanModeTool.js');
     const { WritePlanTool } = await import('./tools/WritePlanTool.js');
@@ -1054,6 +1061,7 @@ async function main() {
       new WebSearchTool(activityStream), // Web search via configured provider (Brave/Serper)
       new ResearchTool(activityStream), // Research agent delegation tool
       new SkillTool(activityStream), // Load skill instructions into context
+      new MemoryTool(activityStream), // Autonomous project memory (save/recall facts)
       new EnterPlanModeTool(activityStream), // Enter plan mode for structured exploration
       new ExitPlanModeTool(activityStream), // Exit plan mode and present plan for approval
       new WritePlanTool(activityStream), // Write plan file during plan mode

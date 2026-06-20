@@ -12,9 +12,10 @@ describe('PatchManager', () => {
   let patchManager: PatchManager;
   let testSessionId: string;
   let testFilesDir: string;
+  let testSessionsDir: string;
 
   // Helper to get the actual patches directory
-  const getPatchesDir = () => path.join(process.cwd(), '.ally-sessions', testSessionId, 'patches');
+  const getPatchesDir = () => path.join(testSessionsDir, testSessionId, 'patches');
 
   beforeEach(async () => {
     // Create unique session ID for this test
@@ -26,11 +27,15 @@ describe('PatchManager', () => {
     testFilesDir = path.join(os.tmpdir(), `code-ally-test-files-${timestamp}-${random}`);
     await fs.mkdir(testFilesDir, { recursive: true });
 
+    // Isolated sessions directory so tests never touch the real ~/.ally store
+    testSessionsDir = path.join(os.tmpdir(), `code-ally-sessions-${timestamp}-${random}`);
+
     // Create PatchManager with test config
     patchManager = new PatchManager({
       getSessionId: () => testSessionId,
       maxPatchesPerSession: 100,
-      maxPatchesSizeBytes: 10 * 1024 * 1024
+      maxPatchesSizeBytes: 10 * 1024 * 1024,
+        sessionsDir: testSessionsDir
     });
     await patchManager.initialize();
   });
@@ -39,7 +44,7 @@ describe('PatchManager', () => {
     // Cleanup
     await patchManager.cleanup();
     try {
-      await fs.rm(path.join(process.cwd(), '.ally-sessions', testSessionId), { recursive: true, force: true });
+      await fs.rm(path.join(testSessionsDir, testSessionId), { recursive: true, force: true });
       await fs.rm(testFilesDir, { recursive: true, force: true });
     } catch (error) {
       // Ignore cleanup errors
@@ -56,11 +61,12 @@ describe('PatchManager', () => {
       const newManager = new PatchManager({
         getSessionId: () => newSessionId,
         maxPatchesPerSession: 100,
-        maxPatchesSizeBytes: 10 * 1024 * 1024
+        maxPatchesSizeBytes: 10 * 1024 * 1024,
+        sessionsDir: testSessionsDir
       });
       await newManager.initialize();
 
-      const newDir = path.join(process.cwd(), '.ally-sessions', newSessionId, 'patches');
+      const newDir = path.join(testSessionsDir, newSessionId, 'patches');
 
       // Directory should not exist until we capture an operation
       const existsBefore = await fs
@@ -80,7 +86,7 @@ describe('PatchManager', () => {
       expect(existsAfter).toBe(true);
 
       await newManager.cleanup();
-      await fs.rm(path.join(process.cwd(), '.ally-sessions', newSessionId), { recursive: true, force: true });
+      await fs.rm(path.join(testSessionsDir, newSessionId), { recursive: true, force: true });
     });
 
     it('should create patch index file when capturing first operation', async () => {
@@ -447,7 +453,8 @@ describe('PatchManager', () => {
       const newManager = new PatchManager({
         getSessionId: () => testSessionId,
         maxPatchesPerSession: 100,
-        maxPatchesSizeBytes: 10 * 1024 * 1024
+        maxPatchesSizeBytes: 10 * 1024 * 1024,
+        sessionsDir: testSessionsDir
       });
       await expect(newManager.initialize()).resolves.not.toThrow();
 
@@ -529,7 +536,8 @@ describe('PatchManager', () => {
       const newManager = new PatchManager({
         getSessionId: () => testSessionId,
         maxPatchesPerSession: 100,
-        maxPatchesSizeBytes: 10 * 1024 * 1024
+        maxPatchesSizeBytes: 10 * 1024 * 1024,
+        sessionsDir: testSessionsDir
       });
       await newManager.initialize();
 
@@ -606,7 +614,7 @@ describe('PatchManager', () => {
       expect(index.patches.find((p: any) => p.patch_number === 2)).toBeUndefined();
 
       // Check that quarantine file was created
-      const quarantineDir = path.join(process.cwd(), '.ally-sessions', '.quarantine');
+      const quarantineDir = path.join(testSessionsDir, '.quarantine');
       const quarantineFiles = await fs.readdir(quarantineDir);
       const quarantineFile = quarantineFiles.find(f => f.startsWith(`patches_${testSessionId}_`));
 
@@ -639,7 +647,7 @@ describe('PatchManager', () => {
       expect(orphanedExists).toBe(false);
 
       // Check quarantine directory
-      const quarantineDir = path.join(process.cwd(), '.ally-sessions', '.quarantine');
+      const quarantineDir = path.join(testSessionsDir, '.quarantine');
       const quarantineDirs = await fs.readdir(quarantineDir);
       const orphanedDir = quarantineDirs.find(d => d.startsWith(`orphaned_${testSessionId}_`));
 
@@ -686,7 +694,7 @@ describe('PatchManager', () => {
       expect(index.patches.find((p: any) => p.patch_number === 4)).toBeDefined();
 
       // Verify quarantine file
-      const quarantineDir = path.join(process.cwd(), '.ally-sessions', '.quarantine');
+      const quarantineDir = path.join(testSessionsDir, '.quarantine');
       const quarantineFiles = await fs.readdir(quarantineDir);
       const quarantineFile = quarantineFiles.find(f => f.startsWith(`patches_${testSessionId}_`));
 
@@ -705,7 +713,8 @@ describe('PatchManager', () => {
       const newManager = new PatchManager({
         getSessionId: () => newSessionId,
         maxPatchesPerSession: 100,
-        maxPatchesSizeBytes: 10 * 1024 * 1024
+        maxPatchesSizeBytes: 10 * 1024 * 1024,
+        sessionsDir: testSessionsDir
       });
       await newManager.initialize();
 
@@ -713,7 +722,7 @@ describe('PatchManager', () => {
       await expect(newManager.onSessionChange()).resolves.not.toThrow();
 
       await newManager.cleanup();
-      await fs.rm(path.join(process.cwd(), '.ally-sessions', newSessionId), { recursive: true, force: true }).catch(() => {});
+      await fs.rm(path.join(testSessionsDir, newSessionId), { recursive: true, force: true }).catch(() => {});
     });
 
     it('should handle validation when no session is active', async () => {
@@ -721,7 +730,8 @@ describe('PatchManager', () => {
       const noSessionManager = new PatchManager({
         getSessionId: () => null,
         maxPatchesPerSession: 100,
-        maxPatchesSizeBytes: 10 * 1024 * 1024
+        maxPatchesSizeBytes: 10 * 1024 * 1024,
+        sessionsDir: testSessionsDir
       });
       await noSessionManager.initialize();
 

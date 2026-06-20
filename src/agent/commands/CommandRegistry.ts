@@ -96,6 +96,7 @@ class CommandRegistryClass {
       'Prompts',
       'Agents',
       'Project',
+      'Memory',
       'Todos',
       'Tasks',
       'Marketplace',

@@ -9,7 +9,8 @@
  * - Plugin: plugin config
  * - Utility: undo
  *
- * Note: Memory commands have been removed. Use session metadata for persistent facts.
+ * Note: /memory inspects and prunes the autonomous memory store (see MemoryService);
+ * the agent itself reads and writes memory via the memory tool.
  */
 
 import { Agent } from './Agent.js';
@@ -29,6 +30,7 @@ import { TodoCommand } from './commands/TodoCommand.js';
 import { AgentCommand } from './commands/AgentCommand.js';
 import { MarketplaceCommand } from './commands/MarketplaceCommand.js';
 import { MCPCommand } from './commands/MCPCommand.js';
+import { MemoryCommand } from './commands/MemoryCommand.js';
 import { InstructionsCommand } from './commands/InstructionsCommand.js';
 import { RenameCommand } from './commands/RenameCommand.js';
 import { ResumeCommand } from './commands/ResumeCommand.js';
@@ -75,6 +77,7 @@ export class CommandHandler {
     this.registerCommand(new InitCommand());
     this.registerCommand(new ListDirsCommand());
     this.registerCommand(new MCPCommand());
+    this.registerCommand(new MemoryCommand());
     this.registerCommand(new ModelCommand());
     this.registerCommand(new OpenCommand());
     this.registerCommand(new MarketplaceCommand());
@@ -191,14 +194,6 @@ export class CommandHandler {
     this.commands.delete(name);
     return true;
   }
-
-  // ===========================
-  // Memory Commands - REMOVED
-  // ===========================
-  // Memory commands have been removed. Use session metadata for persistent facts instead.
-  // Session metadata can be accessed through the SessionManager service and persists
-  // across sessions without requiring a separate storage mechanism.
-
 
   // ===========================
   // NOTE: Undo functionality removed

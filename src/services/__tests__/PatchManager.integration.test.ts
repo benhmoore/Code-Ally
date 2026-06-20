@@ -15,9 +15,10 @@ describe('PatchManager Integration Tests', () => {
   let patchManager: PatchManager;
   let testSessionId: string;
   let testFilesDir: string;
+  let testSessionsDir: string;
 
   // Helper to get the actual patches directory
-  const getPatchesDir = () => path.join(process.cwd(), '.ally-sessions', testSessionId, 'patches');
+  const getPatchesDir = () => path.join(testSessionsDir, testSessionId, 'patches');
 
   beforeEach(async () => {
     // Create temporary directories for testing
@@ -25,14 +26,16 @@ describe('PatchManager Integration Tests', () => {
     const random = Math.random().toString(36).substring(7);
     testSessionId = `test-session-${timestamp}-${random}`;
     testFilesDir = path.join(os.tmpdir(), `code-ally-test-files-${timestamp}-${random}`);
+    testSessionsDir = path.join(os.tmpdir(), `code-ally-sessions-${timestamp}-${random}`);
 
     await fs.mkdir(testFilesDir, { recursive: true });
 
-    // Create PatchManager with test config
+    // Create PatchManager with test config (isolated sessions dir)
     patchManager = new PatchManager({
       getSessionId: () => testSessionId,
       maxPatchesPerSession: 100,
-      maxPatchesSizeBytes: 10 * 1024 * 1024
+      maxPatchesSizeBytes: 10 * 1024 * 1024,
+      sessionsDir: testSessionsDir
     });
     await patchManager.initialize();
   });
@@ -41,7 +44,7 @@ describe('PatchManager Integration Tests', () => {
     // Cleanup
     await patchManager.cleanup();
     try {
-      await fs.rm(path.join(process.cwd(), '.ally-sessions', testSessionId), { recursive: true, force: true });
+      await fs.rm(path.join(testSessionsDir, testSessionId), { recursive: true, force: true });
       await fs.rm(testFilesDir, { recursive: true, force: true });
     } catch (error) {
       // Ignore cleanup errors

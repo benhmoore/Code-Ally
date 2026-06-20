@@ -10,14 +10,15 @@
 
 import * as path from 'path';
 import { promises as fs } from 'fs';
+import { getProjectSessionsDir } from '../config/paths.js';
 
 export class ToolResultPersistence {
   private sessionsDir: string;
   private getSessionId: () => string | null;
 
-  constructor(getSessionId: () => string | null) {
+  constructor(getSessionId: () => string | null, sessionsDir?: string) {
     this.getSessionId = getSessionId;
-    this.sessionsDir = path.join(process.cwd(), '.ally-sessions');
+    this.sessionsDir = sessionsDir ?? getProjectSessionsDir();
   }
 
   /**

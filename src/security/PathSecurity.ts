@@ -13,6 +13,7 @@ import os from 'os';
 import { logger } from '../services/Logger.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { getProjectSessionsDir } from '../config/paths.js';
 import type { ConfigManager } from '../services/ConfigManager.js';
 import type { AdditionalDirectoriesManager } from '../services/AdditionalDirectoriesManager.js';
 
@@ -91,6 +92,17 @@ export function isPathWithinCwd(checkPath: string): boolean {
     // Check if the path is within CWD
     if (isPathWithinDirectory(absPath, workingDir)) {
       return true;
+    }
+
+    // Allow access to this project's own sessions directory. Sessions live
+    // outside the working tree (under ~/.ally), but they are Ally-managed data
+    // that features like session analysis must be able to read.
+    try {
+      if (isPathWithinDirectory(absPath, path.resolve(getProjectSessionsDir()))) {
+        return true;
+      }
+    } catch {
+      // Ignore - fall through to remaining checks
     }
 
     // Check additional directories and temp directory via ServiceRegistry

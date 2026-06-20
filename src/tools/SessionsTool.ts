@@ -24,6 +24,7 @@ import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { appendAgentResponseSuffix, resolveSubstantiveResponse } from '../utils/delegationUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
+import { getProjectSessionsDir } from '../config/paths.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
@@ -160,8 +161,8 @@ export class SessionsTool extends BaseTool {
     const startTime = Date.now();
 
     try {
-      // Get sessions directory path
-      const sessionsDir = path.join(process.cwd(), '.ally-sessions');
+      // Get sessions directory path (stored globally under ~/.ally, keyed by project)
+      const sessionsDir = getProjectSessionsDir();
 
       // Check if sessions directory exists
       try {
@@ -240,7 +241,7 @@ export class SessionsTool extends BaseTool {
         parentCallId: callId,
         parentAgent: parentAgent, // Enable activity monitoring coordination
         maxDuration: getThoroughnessDuration('quick'), // 1 minute limit for session analysis
-        focusDirectory: '.ally-sessions', // Restrict agent to sessions directory
+        focusDirectory: sessionsDir, // Restrict agent to sessions directory (absolute, outside cwd)
         excludeFiles: excludeFiles, // Exclude current session
         allowedTools: SESSION_ANALYSIS_TOOLS, // Restrict to read-only tools
       };

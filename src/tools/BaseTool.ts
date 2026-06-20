@@ -142,11 +142,14 @@ export abstract class BaseTool {
   readonly isLinkedPlugin?: boolean;
 
   /**
-   * Whether this is an internal tool restricted to specific agents
-   * Set to true for specialized tools that shouldn't be available to all agents
-   * (e.g., write-temp is only for explore agents)
+   * Whether this tool is restricted to the main (top-level) assistant.
+   *
+   * The main agent has no agent name; every delegated/specialized agent carries
+   * one. When true, the tool is hidden from (and rejected for) any named agent,
+   * so only the main loop can use it. Used by memory: sub-agents have ephemeral
+   * contexts and must not curate long-term memory.
    */
-  readonly internalTool: boolean = false;
+  readonly mainAgentOnly: boolean = false;
 
   /**
    * Whether this tool is exploratory in nature (reads/searches files without modifying them)

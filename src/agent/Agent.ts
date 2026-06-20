@@ -57,6 +57,7 @@ import {
   createActiveTodoReminder,
   createActivityTimeoutContinuationReminder,
   createThinkingLoopContinuationReminder,
+  createSystemReminder,
 } from '../utils/messageUtils.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 
@@ -158,6 +159,13 @@ export interface AgentConfig {
   /** Internal: Scoped registry for this agent (shadows global for 'agent' key to prevent race conditions) */
   _scopedRegistry?: any; // ScopedServiceRegistryProxy - typed as 'any' to avoid circular dependency
 }
+
+/**
+ * Context-usage ceiling (percent) above which automatic memory recall is skipped.
+ * Mirrors the index/skills injection gate so auto-recall never outlives the
+ * lighter index it elaborates on.
+ */
+const MEMORY_AUTO_RECALL_CONTEXT_LIMIT = 80;
 
 /**
  * Agent orchestrates the entire conversation flow
@@ -971,6 +979,12 @@ export class Agent {
       }
     }
 
+    // Surface relevant long-term memory as ephemeral background context (main agent only).
+    // Stripped each turn so it never accumulates; the service applies strict caps.
+    if (!this.config.isSpecializedAgent) {
+      await this.injectRelevantMemory(message);
+    }
+
     // Emit user message event
     this.emitEvent({
       id: this.generateId(),
@@ -1734,6 +1748,45 @@ export class Agent {
     // Checkpoint tracking is per-turn only, not based on historical messages
 
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages set, count:', this.conversationManager.getMessageCount());
+  }
+
+  /**
+   * Inject relevant project memory for the current user message as an ephemeral,
+   * background-context system reminder.
+   *
+   * Main agent only (the memory tool is hidden from sub-agents anyway). Skipped
+   * when context is already tight — memory is frequently used with local models,
+   * so this must not crowd a small window. MemoryService enforces strict caps and
+   * returns null when nothing is relevant enough to surface.
+   */
+  private async injectRelevantMemory(message: string): Promise<void> {
+    try {
+      // Match the index-injection gate (skills/index disappear at 80%); auto-recall
+      // is heavier, so it should never outlive the index it elaborates on.
+      if (
+        this.tokenManager &&
+        typeof this.tokenManager.getContextUsagePercentage === 'function' &&
+        this.tokenManager.getContextUsagePercentage() >= MEMORY_AUTO_RECALL_CONTEXT_LIMIT
+      ) {
+        return;
+      }
+
+      const memoryService = ServiceRegistry.getInstance().get<any>('memory_service');
+      if (!memoryService || typeof memoryService.getAutoRecallContext !== 'function') {
+        return;
+      }
+
+      const recall = await memoryService.getAutoRecallContext(message);
+      if (!recall) {
+        return;
+      }
+
+      // PERSIST: false - Ephemeral, recomputed from each user message and stripped after the turn.
+      this.conversationManager.addMessage(createSystemReminder(recall, false));
+      logger.debug('[AGENT_MEMORY]', this.instanceId, 'Injected relevant memory recall');
+    } catch (error) {
+      logger.warn('[AGENT_MEMORY] Failed to inject memory recall:', formatError(error));
+    }
   }
 
   /**

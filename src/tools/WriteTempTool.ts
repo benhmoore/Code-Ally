@@ -12,6 +12,7 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { createWriteTempHintReminder } from '../utils/messageUtils.js';
+import { AGENT_TYPES } from '../config/constants.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -20,7 +21,7 @@ export class WriteTempTool extends BaseTool {
   readonly name = 'write-temp';
   readonly description = 'Write temporary notes to /tmp for organizing exploration findings. Files are automatically namespaced to avoid conflicts.';
   readonly requiresConfirmation = false; // Safe operation - isolated to /tmp
-  readonly internalTool = true; // Only available to specific agents (ExploreTool)
+  readonly visibleTo = [AGENT_TYPES.EXPLORE]; // Restricted to explore agents (allow-list enforced by ToolManager)
 
   private sessionId: string;
 

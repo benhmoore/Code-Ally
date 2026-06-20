@@ -2,7 +2,7 @@
  * SessionManager - Manages conversation session persistence
  *
  * Handles creating, loading, saving, and cleaning up conversation sessions.
- * Sessions are stored as JSON files in .ally-sessions/ within each project directory.
+ * Sessions are stored as JSON files under ~/.ally/projects/<key>/sessions/, keyed by project path.
  *
  * Features:
  * - Session CRUD operations
@@ -13,6 +13,7 @@
 
 import { promises as fs } from 'fs';
 import { join } from 'path';
+import { getProjectSessionsDir } from '../config/paths.js';
 import { Session, SessionInfo, Message, IService } from '../types/index.js';
 import { generateShortId } from '../utils/id.js';
 import type { TodoItem } from './TodoManager.js';
@@ -25,6 +26,8 @@ import { TEXT_LIMITS, BUFFER_SIZES, ID_GENERATION } from '../config/constants.js
 export interface SessionManagerConfig {
   /** Maximum number of sessions to keep before auto-cleanup */
   maxSessions?: number;
+  /** Override the sessions storage directory (primarily for tests) */
+  sessionsDir?: string;
 }
 
 /**
@@ -55,8 +58,9 @@ export class SessionManager implements IService {
   private readonly MAX_CACHE_ENTRIES = 50; // FIFO eviction limit to prevent unbounded memory growth
 
   constructor(config: SessionManagerConfig = {}) {
-    // Sessions are stored in .ally-sessions/ within the current working directory
-    this.sessionsDir = join(process.cwd(), '.ally-sessions');
+    // Sessions are stored globally under ~/.ally/projects/<key>/sessions, keyed
+    // by project path, so conversation history stays out of the working tree.
+    this.sessionsDir = config.sessionsDir ?? getProjectSessionsDir();
     this.maxSessions = config.maxSessions ?? BUFFER_SIZES.MAX_SESSIONS_DEFAULT;
   }
 

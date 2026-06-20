@@ -34,3 +34,4 @@ export { WebFetchTool } from './WebFetchTool.js';
 export { WebSearchTool } from './WebSearchTool.js';
 export { ResearchTool } from './ResearchTool.js';
 export { SkillTool } from './SkillTool.js';
+export { MemoryTool } from './MemoryTool.js';

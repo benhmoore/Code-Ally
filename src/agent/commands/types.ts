@@ -14,6 +14,7 @@ export type HelpCategory =
   | 'Marketplace'
   | 'MCP'
   | 'Project'
+  | 'Memory'
   | 'Todos'
   | 'Tasks'
   | 'Prompts';

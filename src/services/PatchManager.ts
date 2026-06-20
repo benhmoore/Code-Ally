@@ -12,6 +12,7 @@ import { createUnifiedDiff, createPatchFileContent, extractDiffContent, calculat
 import { applyUnifiedDiff, simulatePatchApplication } from '../utils/patchApplier.js';
 import { IService, ServiceLifecycle } from '../types/index.js';
 import { resolvePath } from '../utils/pathUtils.js';
+import { getProjectSessionsDir } from '../config/paths.js';
 import { PatchValidator } from './PatchValidator.js';
 import { PatchFileManager } from './PatchFileManager.js';
 import { PatchIndexManager } from './PatchIndexManager.js';
@@ -75,6 +76,8 @@ export interface PatchManagerConfig {
   maxPatchesPerSession?: number;
   /** Maximum total size of patches directory per session in bytes (default: 10MB) */
   maxPatchesSizeBytes?: number;
+  /** Override the sessions storage directory (primarily for tests) */
+  sessionsDir?: string;
 }
 
 /**
@@ -90,7 +93,7 @@ export class PatchManager implements IService {
 
   constructor(config: PatchManagerConfig) {
     this.getSessionId = config.getSessionId;
-    this.sessionsDir = path.join(process.cwd(), '.ally-sessions');
+    this.sessionsDir = config.sessionsDir ?? getProjectSessionsDir();
 
     // Initialize managers
     this.validator = new PatchValidator();

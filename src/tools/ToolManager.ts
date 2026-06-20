@@ -38,6 +38,31 @@ function hasCustomFunctionDefinition(tool: BaseTool): tool is ToolWithCustomDefi
   );
 }
 
+/** Why a tool is not available to a given agent, or null if it is. */
+type AgentVisibilityBlock =
+  | { kind: 'visible_to'; visibleTo: string[] }
+  | { kind: 'main_only' };
+
+/**
+ * Single authority for agent-based tool visibility, shared by the function-definition
+ * filter (which hides the tool) and the call validator (which rejects it), so the two
+ * never disagree. The main loop has no agent name; every delegated agent does.
+ *
+ * - visible_to: tool is restricted to a named allow-list of agents.
+ * - main_only:  tool is restricted to the nameless main assistant.
+ */
+function getAgentVisibilityBlock(tool: BaseTool, currentAgentName?: string): AgentVisibilityBlock | null {
+  if (tool.visibleTo && tool.visibleTo.length > 0) {
+    if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
+      return { kind: 'visible_to', visibleTo: tool.visibleTo };
+    }
+  }
+  if (tool.mainAgentOnly && currentAgentName) {
+    return { kind: 'main_only' };
+  }
+  return null;
+}
+
 export class ToolManager {
   private tools: Map<string, BaseTool>;
   private validator: ToolValidator;
@@ -264,14 +289,10 @@ export class ToolManager {
         // Standalone MCP tools (mcp:xxx) are always included
       }
 
-      // Filter tools by visible_to array (if specified)
-      // Empty or missing array = visible to all agents
-      if (tool.visibleTo && tool.visibleTo.length > 0) {
-        // Non-empty array = only visible to specified agents
-        if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
-          filteredByAgent.push(tool.name);
-          continue;
-        }
+      // Filter tools by agent visibility (visible_to allow-list and main-agent-only)
+      if (getAgentVisibilityBlock(tool, currentAgentName)) {
+        filteredByAgent.push(tool.name);
+        continue;
       }
 
       // Filter by plan mode (only allow read-only + plan-specific tools)
@@ -481,20 +502,17 @@ export class ToolManager {
       return { valid: false, error: result };
     }
 
-    // Check visible_to constraint
-    if (tool.visibleTo && tool.visibleTo.length > 0) {
-      if (!currentAgentName || !tool.visibleTo.includes(currentAgentName)) {
-        const result = createStructuredError(
-          `Tool '${toolName}' is only visible to agents: [${tool.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`,
-          'agent_mismatch',
-          toolName,
-          {
-            visible_to: tool.visibleTo,
-            current_agent: currentAgentName || 'unknown'
-          }
-        );
-        return { valid: false, error: result };
-      }
+    // Check agent visibility constraints (visible_to allow-list and main-agent-only).
+    // Shares one authority with getFunctionDefinitions so filtering and enforcement never diverge.
+    const visibilityBlock = getAgentVisibilityBlock(tool, currentAgentName);
+    if (visibilityBlock) {
+      const message = visibilityBlock.kind === 'visible_to'
+        ? `Tool '${toolName}' is only visible to agents: [${visibilityBlock.visibleTo.join(', ')}]. Current agent is '${currentAgentName || 'unknown'}'`
+        : `Tool '${toolName}' is only available to the main assistant, not delegated agents (current agent: '${currentAgentName || 'unknown'}').`;
+      const details = visibilityBlock.kind === 'visible_to'
+        ? { visible_to: visibilityBlock.visibleTo, current_agent: currentAgentName || 'unknown' }
+        : { main_agent_only: true, current_agent: currentAgentName || 'unknown' };
+      return { valid: false, error: createStructuredError(message, 'agent_mismatch', toolName, details) };
     }
 
     // Check for duplicate calls
