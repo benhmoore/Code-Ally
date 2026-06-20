@@ -93,6 +93,37 @@ describe('ReadStateManager E2E Tests', () => {
       expect(editResult.error_type).toBe('validation_error');
       expect(editResult.error).toContain('not read');
     });
+
+    it('should reject LineEdit when only another agent scope read the file', async () => {
+      await readTool.execute(
+        {
+          file_paths: [testFile],
+          offset: 0,
+          limit: 100,
+        },
+        undefined,
+        undefined,
+        false,
+        false,
+        { agentId: 'agent-a' }
+      );
+
+      const editResult = await lineEditTool.execute(
+        {
+          file_path: testFile,
+          edits: [{ operation: 'replace', line_number: 50, content: 'Modified Line 50' }],
+        },
+        undefined,
+        undefined,
+        false,
+        false,
+        { agentId: 'agent-b' }
+      );
+
+      expect(editResult.success).toBe(false);
+      expect(editResult.error_type).toBe('validation_error');
+      expect(editResult.error).toContain('not read');
+    });
   });
 
   describe('Test 3: Invalidation After Edit', () => {

@@ -9,6 +9,8 @@
  */
 
 export interface ReadCacheEntry {
+  /** Scope that owns the cached read (usually an agent instance ID) */
+  scopeId?: string;
   filePath: string;
   mtimeMs: number;
   offset: number;
@@ -19,6 +21,7 @@ export interface ReadCacheEntry {
 }
 
 const MAX_CACHE_SIZE = 200;
+const DEFAULT_SCOPE_ID = 'default';
 
 export class ReadCache {
   private cache = new Map<string, ReadCacheEntry>();
@@ -26,22 +29,23 @@ export class ReadCache {
   /**
    * Build cache key from file path and read range
    */
-  private key(filePath: string, offset: number, limit: number): string {
-    return `${filePath}:${offset}:${limit}`;
+  private key(scopeId: string | undefined, filePath: string, offset: number, limit: number): string {
+    return `${scopeId ?? DEFAULT_SCOPE_ID}:${filePath}:${offset}:${limit}`;
   }
 
   /**
    * Check if a file read can be served from cache.
    * Returns the cached entry if the file hasn't been modified, null otherwise.
    */
-  check(filePath: string, mtimeMs: number, offset: number, limit: number): ReadCacheEntry | null {
-    const entry = this.cache.get(this.key(filePath, offset, limit));
+  check(filePath: string, mtimeMs: number, offset: number, limit: number, scopeId?: string): ReadCacheEntry | null {
+    const key = this.key(scopeId, filePath, offset, limit);
+    const entry = this.cache.get(key);
     if (!entry) {
       return null;
     }
     // Stale if file was modified since last read
     if (entry.mtimeMs !== mtimeMs) {
-      this.cache.delete(this.key(filePath, offset, limit));
+      this.cache.delete(key);
       return null;
     }
     // Update access time for LRU
@@ -52,7 +56,9 @@ export class ReadCache {
   /**
    * Record a successful file read for future deduplication
    */
-  record(entry: ReadCacheEntry): void {
+  record(entry: ReadCacheEntry, scopeId?: string): void {
+    const normalizedScopeId = entry.scopeId ?? scopeId ?? DEFAULT_SCOPE_ID;
+
     // Evict LRU if at capacity
     if (this.cache.size >= MAX_CACHE_SIZE) {
       let oldestKey: string | null = null;
@@ -69,17 +75,18 @@ export class ReadCache {
     }
 
     this.cache.set(
-      this.key(entry.filePath, entry.offset, entry.limit),
-      { ...entry, lastAccessTime: Date.now() }
+      this.key(normalizedScopeId, entry.filePath, entry.offset, entry.limit),
+      { ...entry, scopeId: normalizedScopeId, lastAccessTime: Date.now() }
     );
   }
 
   /**
-   * Invalidate all cache entries for a given file path (e.g., after a write/edit)
+   * Invalidate cache entries for a given file path (e.g., after a write/edit).
+   * If no scope is provided, all scoped entries for that file are invalidated.
    */
-  invalidate(filePath: string): void {
+  invalidate(filePath: string, scopeId?: string): void {
     for (const [key, entry] of this.cache) {
-      if (entry.filePath === filePath) {
+      if (entry.filePath === filePath && (!scopeId || entry.scopeId === scopeId)) {
         this.cache.delete(key);
       }
     }

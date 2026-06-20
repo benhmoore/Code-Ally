@@ -227,6 +227,8 @@ export enum ActivityEventType {
   COMPACTION_START = 'compaction_start',
   COMPACTION_COMPLETE = 'compaction_complete',
   BACKGROUND_PROCESS_EXIT = 'background_process_exit',
+  AGENT_BACKGROUND_COMPLETE = 'agent_background_complete',
+  FOREGROUND_AGENT_CHANGED = 'foreground_agent_changed',
   USER_INTERJECTION = 'user_interjection',
   INTERJECTION_ACKNOWLEDGMENT = 'interjection_acknowledgment',
   LIBRARY_SELECT_REQUEST = 'library_select_request',
@@ -478,6 +480,8 @@ export type { PromptInfo } from '../services/PromptLibraryManager.js';
 export interface ToolExecutionContext {
   /** Scoped registry for this execution (shadows global for 'agent' key) */
   registryScope?: any; // ScopedServiceRegistryProxy - typed as 'any' to avoid circular dependency
+  /** Current agent instance ID for agent-scoped caches and read state */
+  agentId?: string;
   /** Current agent name for validation */
   agentName?: string;
   /** Form response data from user interaction (populated after form submission) */

@@ -553,7 +553,12 @@ export const useInputHandlers = (
             agent.getToolAbortSignal?.(),
             true,  // isUserInitiated (95% limit)
             false, // isContextFile (not applicable)
-            agent.getAgentName?.() // currentAgentName for tool-agent binding validation
+            agent.getAgentName?.(), // currentAgentName for tool-agent binding validation
+            {
+              registryScope: agent.getScopedRegistry?.(),
+              agentId: agent.getInstanceId?.(),
+              agentName: agent.getAgentName?.(),
+            }
           );
 
           // Emit TOOL_CALL_END event to complete the tool call
@@ -710,7 +715,12 @@ export const useInputHandlers = (
             agent.getToolAbortSignal?.(),
             true,  // isUserInitiated (95% limit)
             false, // isContextFile (not applicable)
-            agent.getAgentName?.() // currentAgentName for tool-agent binding validation
+            agent.getAgentName?.(), // currentAgentName for tool-agent binding validation
+            {
+              registryScope: agent.getScopedRegistry?.(),
+              agentId: agent.getInstanceId?.(),
+              agentName: agent.getAgentName?.(),
+            }
           );
 
           // Emit TOOL_CALL_END event to complete the tool call

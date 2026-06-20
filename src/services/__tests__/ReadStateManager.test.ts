@@ -111,6 +111,17 @@ describe('ReadStateManager', () => {
       expect(state2).toEqual([{ start: 20, end: 30 }]);
     });
 
+    it('should keep separate states for different agent scopes', () => {
+      manager.trackRead(testFile, 1, 10, 'agent-a');
+      manager.trackRead(testFile, 20, 30, 'agent-b');
+
+      const state1 = manager.getReadState(testFile, 'agent-a');
+      const state2 = manager.getReadState(testFile, 'agent-b');
+
+      expect(state1).toEqual([{ start: 1, end: 10 }]);
+      expect(state2).toEqual([{ start: 20, end: 30 }]);
+    });
+
     it('should insert range at beginning', () => {
       manager.trackRead(testFile, 20, 30);
       manager.trackRead(testFile, 1, 10);
@@ -414,6 +425,28 @@ describe('ReadStateManager', () => {
 
       expect(state1).toBeNull();
       expect(state2).toEqual([{ start: 20, end: 30 }]);
+    });
+
+    it('should clear all scopes for the file when scope is omitted', () => {
+      manager.trackRead(testFile, 1, 10, 'agent-a');
+      manager.trackRead(testFile, 20, 30, 'agent-b');
+      manager.trackRead(otherFile, 1, 5, 'agent-a');
+
+      manager.clearFile(testFile);
+
+      expect(manager.getReadState(testFile, 'agent-a')).toBeNull();
+      expect(manager.getReadState(testFile, 'agent-b')).toBeNull();
+      expect(manager.getReadState(otherFile, 'agent-a')).toEqual([{ start: 1, end: 5 }]);
+    });
+
+    it('should clear only the requested scope when scope is provided', () => {
+      manager.trackRead(testFile, 1, 10, 'agent-a');
+      manager.trackRead(testFile, 20, 30, 'agent-b');
+
+      manager.clearFile(testFile, 'agent-a');
+
+      expect(manager.getReadState(testFile, 'agent-a')).toBeNull();
+      expect(manager.getReadState(testFile, 'agent-b')).toEqual([{ start: 20, end: 30 }]);
     });
 
     it('should do nothing if file has no read state', () => {

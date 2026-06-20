@@ -7,9 +7,8 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
@@ -69,7 +68,7 @@ export class EditTool extends BaseTool {
    * Validate before permission request
    * Checks if target strings have been read for all edits in the batch
    */
-  async validateBeforePermission(args: any): Promise<ToolResult | null> {
+  async validateBeforePermission(args: any, executionContext?: ToolExecutionContext): Promise<ToolResult | null> {
     const filePath = args.file_path as string;
     const edits = args.edits as EditOperation[] | undefined;
 
@@ -78,7 +77,8 @@ export class EditTool extends BaseTool {
     }
 
     const absolutePath = resolvePath(filePath);
-    const registry = ServiceRegistry.getInstance();
+    const registry = this.getExecutionRegistry(executionContext);
+    const readScopeId = this.getReadScopeId(executionContext);
     const readStateManager = registry.get<ReadStateManager>('read_state_manager');
 
     if (!readStateManager) {
@@ -111,7 +111,8 @@ export class EditTool extends BaseTool {
           const validation = readStateManager.validateLinesRead(
             absolutePath,
             linesToEdit.start,
-            linesToEdit.end
+            linesToEdit.end,
+            readScopeId
           );
 
           if (!validation.success) {
@@ -228,7 +229,13 @@ export class EditTool extends BaseTool {
   /**
    * Execute batch edits - single code path for all edits
    */
-  protected async executeImpl(args: any): Promise<ToolResult> {
+  protected async executeImpl(
+    args: any,
+    _toolCallId?: string,
+    _isUserInitiated?: boolean,
+    _isContextFile?: boolean,
+    executionContext?: ToolExecutionContext
+  ): Promise<ToolResult> {
     this.captureParams(args);
 
     const filePath = args.file_path as string;
@@ -253,7 +260,7 @@ export class EditTool extends BaseTool {
     }
 
     // Execute batch edits (everything goes through this)
-    return this.executeBatchEdits(filePath, edits, showUpdatedContext);
+    return this.executeBatchEdits(filePath, edits, showUpdatedContext, executionContext);
   }
 
   /**
@@ -263,7 +270,8 @@ export class EditTool extends BaseTool {
   private async executeBatchEdits(
     filePath: string,
     edits: EditOperation[],
-    showUpdatedContext: boolean
+    showUpdatedContext: boolean,
+    executionContext?: ToolExecutionContext
   ): Promise<ToolResult> {
     // Step 1: Resolve absolute path
     const absolutePath = resolvePath(filePath);
@@ -284,7 +292,8 @@ export class EditTool extends BaseTool {
 
       // Step 4: Validate ALL edits atomically
       const validationErrors: string[] = [];
-      const registry = ServiceRegistry.getInstance();
+      const registry = this.getExecutionRegistry(executionContext);
+      const readScopeId = this.getReadScopeId(executionContext);
       const readStateManager = registry.get<ReadStateManager>('read_state_manager');
 
       // Track cumulative content for validation (each edit sees previous edits' results)
@@ -353,7 +362,8 @@ export class EditTool extends BaseTool {
             const validation = readStateManager.validateLinesRead(
               absolutePath,
               linesToEdit.start,
-              linesToEdit.end
+              linesToEdit.end,
+              readScopeId
             );
 
             if (!validation.success) {
@@ -415,6 +425,7 @@ export class EditTool extends BaseTool {
         operationType: 'edit',
         showUpdatedContext,
         readStateManager,
+        executionContext,
       });
 
       // Step 7: Build success response

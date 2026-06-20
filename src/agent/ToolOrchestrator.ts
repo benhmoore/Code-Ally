@@ -15,7 +15,7 @@
 
 import { ToolManager } from '../tools/ToolManager.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ActivityEventType, ToolResult } from '../types/index.js';
+import { ActivityEventType, ToolExecutionContext, ToolResult } from '../types/index.js';
 import { AgentConfig } from './Agent.js';
 import { unwrapBatchToolCalls, ToolCall } from '../utils/toolCallUtils.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
@@ -80,6 +80,7 @@ export interface IAgentForOrchestrator {
   getToolAbortSignal(): AbortSignal | undefined;
   getTurnStartTime(): number | undefined;
   getMaxDuration(): number | undefined;
+  getInstanceId?(): string;
   getAgentName(): string | undefined;
   getAgentDepth(): number;
   getScopedRegistry?(): any;
@@ -781,6 +782,12 @@ export class ToolOrchestrator {
     let permissionDenied = false; // Track if permission was denied to skip TOOL_CALL_END
     let validationFailed = false; // Track if validation failed (already emitted TOOL_CALL_END)
     let executionStartTime: number | undefined; // Track execution start time for session persistence
+    const scopedRegistry = this.agent.getScopedRegistry?.();
+    const executionContext: ToolExecutionContext = {
+      ...(scopedRegistry ? { registryScope: scopedRegistry } : {}),
+      agentId: this.agent.getInstanceId?.(),
+      agentName: this.agent.getAgentName(),
+    };
 
     try {
       // Preview changes (e.g., diffs) BEFORE permission check
@@ -794,7 +801,8 @@ export class ToolOrchestrator {
         const validationResult = await this.toolManager.validateBeforePermission(
           toolName,
           args,
-          this.agent.getAgentName()
+          this.agent.getAgentName(),
+          executionContext
         );
         if (validationResult) {
           // Validation failed - emit END event and return error without requesting permission
@@ -898,9 +906,6 @@ export class ToolOrchestrator {
 
       // Execute tool via tool manager (pass ID for streaming output and agent name for binding validation)
       // Pass scoped registry in execution context to prevent race conditions in parallel execution
-      const scopedRegistry = this.agent.getScopedRegistry?.();
-      const executionContext = scopedRegistry ? { registryScope: scopedRegistry } : undefined;
-
       result = await this.toolManager.executeTool(
         toolName,
         args,

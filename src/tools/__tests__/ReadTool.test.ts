@@ -5,6 +5,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ReadTool } from '@tools/ReadTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { ReadCache } from '@services/ReadCache.js';
+import { ReadStateManager } from '@services/ReadStateManager.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -14,10 +17,16 @@ describe('ReadTool', () => {
   let readTool: ReadTool;
   let tempDir: string;
   let testFile: string;
+  let registry: ServiceRegistry;
 
   beforeEach(async () => {
     activityStream = new ActivityStream();
     readTool = new ReadTool(activityStream);
+    registry = ServiceRegistry.getInstance();
+    registry['_services'].clear();
+    registry['_descriptors'].clear();
+    registry.registerInstance('read_cache', new ReadCache());
+    registry.registerInstance('read_state_manager', new ReadStateManager());
 
     // Create temp directory and test file
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'read-tool-test-'));
@@ -28,6 +37,8 @@ describe('ReadTool', () => {
   afterEach(async () => {
     // Clean up temp directory
     await fs.rm(tempDir, { recursive: true, force: true });
+    registry['_services'].clear();
+    registry['_descriptors'].clear();
   });
 
   describe('basic properties', () => {
@@ -145,6 +156,58 @@ describe('ReadTool', () => {
 
       expect(result.success).toBe(true);
       expect(result.content).toContain('Binary file');
+    });
+
+    it('should only deduplicate unchanged reads within the same agent scope', async () => {
+      const firstAgentRead = await readTool.execute(
+        { file_paths: [testFile] },
+        undefined,
+        undefined,
+        false,
+        false,
+        { agentId: 'agent-a' }
+      );
+      expect(firstAgentRead.success).toBe(true);
+      expect(firstAgentRead.content).toContain('Line 1');
+
+      const secondAgentRead = await readTool.execute(
+        { file_paths: [testFile] },
+        undefined,
+        undefined,
+        false,
+        false,
+        { agentId: 'agent-b' }
+      );
+      expect(secondAgentRead.success).toBe(true);
+      expect(secondAgentRead.content).toContain('Line 1');
+      expect(secondAgentRead.content).not.toContain('File unchanged since last read');
+
+      const sameAgentRead = await readTool.execute(
+        { file_paths: [testFile] },
+        undefined,
+        undefined,
+        false,
+        false,
+        { agentId: 'agent-b' }
+      );
+      expect(sameAgentRead.success).toBe(true);
+      expect(sameAgentRead.content).toContain('File unchanged since last read');
+    });
+
+    it('should track read state in the reading agent scope only', async () => {
+      const readStateManager = registry.get<ReadStateManager>('read_state_manager')!;
+
+      await readTool.execute(
+        { file_paths: [testFile], limit: 2 },
+        undefined,
+        undefined,
+        false,
+        false,
+        { agentId: 'agent-a' }
+      );
+
+      expect(readStateManager.validateLinesRead(testFile, 1, 2, 'agent-a').success).toBe(true);
+      expect(readStateManager.validateLinesRead(testFile, 1, 2, 'agent-b').success).toBe(false);
     });
   });
 

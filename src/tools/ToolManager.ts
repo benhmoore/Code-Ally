@@ -544,7 +544,8 @@ export class ToolManager {
   async validateBeforePermission(
     toolName: string,
     args: Record<string, any>,
-    currentAgentName?: string
+    currentAgentName?: string,
+    executionContext?: ToolExecutionContext
   ): Promise<ToolResult | null> {
     // Perform common validation
     const validationResult = this.validateToolCall(toolName, args, currentAgentName);
@@ -553,7 +554,7 @@ export class ToolManager {
     }
 
     // Call tool-specific pre-permission validation
-    return await validationResult.tool.validateBeforePermission(args);
+    return await validationResult.tool.validateBeforePermission(args, executionContext);
   }
 
   async executeTool(

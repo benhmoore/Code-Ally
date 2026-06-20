@@ -5,9 +5,8 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { FocusManager } from '../services/FocusManager.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
@@ -155,7 +154,13 @@ export class WriteTool extends BaseTool {
     );
   }
 
-  protected async executeImpl(args: any): Promise<ToolResult> {
+  protected async executeImpl(
+    args: any,
+    _toolCallId?: string,
+    _isUserInitiated?: boolean,
+    _isContextFile?: boolean,
+    executionContext?: ToolExecutionContext
+  ): Promise<ToolResult> {
     // Capture parameters
     this.captureParams(args);
 
@@ -184,7 +189,8 @@ export class WriteTool extends BaseTool {
     const absolutePath = resolvePath(filePath);
 
     // Validate focus constraint if active
-    const registry = ServiceRegistry.getInstance();
+    const registry = this.getExecutionRegistry(executionContext);
+    const readScopeId = this.getReadScopeId(executionContext);
     const focusManager = registry.get<FocusManager>('focus_manager');
 
     if (focusManager && focusManager.isFocused()) {
@@ -234,12 +240,21 @@ export class WriteTool extends BaseTool {
       // Write the file
       await fs.writeFile(absolutePath, content, 'utf-8');
 
+      // Any write makes every agent's previous view of this file stale.
+      const readCache = registry.get<{ invalidate(path: string): void }>('read_cache');
+      if (readCache) {
+        readCache.invalidate(absolutePath);
+      }
+
       // Track the written content as read (model knows what it wrote)
       // This allows immediate edits to the newly created file without requiring a separate read
       const readStateManager = registry.get<ReadStateManager>('read_state_manager');
-      if (readStateManager && content.length > 0) {
-        const lines = content.split('\n');
-        readStateManager.trackRead(absolutePath, 1, lines.length);
+      if (readStateManager) {
+        readStateManager.clearFile(absolutePath);
+        if (content.length > 0) {
+          const lines = content.split('\n');
+          readStateManager.trackRead(absolutePath, 1, lines.length, readScopeId);
+        }
       }
 
       // Capture the operation as a patch for undo functionality

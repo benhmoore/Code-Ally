@@ -6,7 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import type { AgentData } from '../types/agents.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -136,7 +136,13 @@ export class WriteAgentTool extends BaseTool {
     // No diff preview for agent creation
   }
 
-  protected async executeImpl(args: any): Promise<ToolResult> {
+  protected async executeImpl(
+    args: any,
+    _toolCallId?: string,
+    _isUserInitiated?: boolean,
+    _isContextFile?: boolean,
+    executionContext?: ToolExecutionContext
+  ): Promise<ToolResult> {
     try {
       this.captureParams(args);
 
@@ -227,10 +233,19 @@ export class WriteAgentTool extends BaseTool {
       const { filePath: absolutePath, content } = await agentManager.writeAgentFile(agentData);
 
       // Track read state
-      const readStateManager = ServiceRegistry.getInstance().get<ReadStateManager>('read_state_manager');
-      if (readStateManager && content.length > 0) {
-        const lines = content.split('\n');
-        readStateManager.trackRead(absolutePath, 1, lines.length);
+      const registry = this.getExecutionRegistry(executionContext);
+      const readCache = registry.get<{ invalidate(path: string): void }>('read_cache');
+      if (readCache) {
+        readCache.invalidate(absolutePath);
+      }
+
+      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      if (readStateManager) {
+        readStateManager.clearFile(absolutePath);
+        if (content.length > 0) {
+          const lines = content.split('\n');
+          readStateManager.trackRead(absolutePath, 1, lines.length, this.getReadScopeId(executionContext));
+        }
       }
 
       // Capture operation patch

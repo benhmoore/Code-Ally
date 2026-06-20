@@ -5,7 +5,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ReadCache } from '../services/ReadCache.js';
@@ -179,7 +179,13 @@ For multi-file exploration, prefer explore() to preserve context.`;
     };
   }
 
-  protected async executeImpl(args: any, _toolCallId?: string, isUserInitiated: boolean = false, isContextFile: boolean = false): Promise<ToolResult> {
+  protected async executeImpl(
+    args: any,
+    _toolCallId?: string,
+    isUserInitiated: boolean = false,
+    isContextFile: boolean = false,
+    executionContext?: ToolExecutionContext
+  ): Promise<ToolResult> {
     this.captureParams(args);
 
     const filePaths = args.file_paths;
@@ -199,7 +205,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
 
     // Check if we have enough remaining context for the non-truncatable result
     // Get remaining context from ServiceRegistry's TokenManager if available
-    const registry = ServiceRegistry.getInstance();
+    const registry = this.getExecutionRegistry(executionContext);
     const tokenManager = registry.get<any>('token_manager');
     if (tokenManager) {
       const remainingTokens = this.getRemainingContext(tokenManager);
@@ -264,7 +270,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
 
     for (const filePath of filePaths) {
       try {
-        const { content, lineCount } = await this.readFile(filePath, limit, offset);
+        const { content, lineCount } = await this.readFile(filePath, limit, offset, executionContext);
         results.push(content);
         filesRead++;
         totalLines += lineCount;
@@ -491,13 +497,15 @@ For multi-file exploration, prefer explore() to preserve context.`;
   private async readFile(
     filePath: string,
     limit: number,
-    offset: number
+    offset: number,
+    executionContext?: ToolExecutionContext
   ): Promise<{ content: string; lineCount: number }> {
     // Resolve absolute path
     const absolutePath = resolvePath(filePath);
 
     // Validate focus constraint if active
-    const registry = ServiceRegistry.getInstance();
+    const registry = this.getExecutionRegistry(executionContext);
+    const readScopeId = this.getReadScopeId(executionContext);
     const focusManager = registry.get<FocusManager>('focus_manager');
 
     if (focusManager && focusManager.isFocused()) {
@@ -535,7 +543,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
     // Check read deduplication cache — return stub if file unchanged since last read
     const readCache = registry.get<ReadCache>('read_cache');
     if (readCache) {
-      const cached = readCache.check(absolutePath, stat.mtimeMs, offset, limit);
+      const cached = readCache.check(absolutePath, stat.mtimeMs, offset, limit, readScopeId);
       if (cached) {
         // Still track read state so edit validation works
         const readStateManager = registry.get<ReadStateManager>('read_state_manager');
@@ -544,7 +552,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
           const cachedEndLine = limit > 0
             ? Math.min(cachedStartLine + limit - 1, cached.totalLines)
             : cached.totalLines;
-          readStateManager.trackRead(absolutePath, cachedStartLine, cachedEndLine);
+          readStateManager.trackRead(absolutePath, cachedStartLine, cachedEndLine, readScopeId);
         }
         return {
           content: `=== ${absolutePath} ===\n[File unchanged since last read (${cached.lineCount} lines). Content already in conversation context.]`,
@@ -573,12 +581,13 @@ For multi-file exploration, prefer explore() to preserve context.`;
       // Track read state
       const readStateManager = registry.get<ReadStateManager>('read_state_manager');
       if (readStateManager) {
-        readStateManager.trackRead(absolutePath, streamedStart + 1, streamedStart + streamedLines.length);
+        readStateManager.trackRead(absolutePath, streamedStart + 1, streamedStart + streamedLines.length, readScopeId);
       }
 
       // Record in read cache
       if (readCache) {
         readCache.record({
+          scopeId: readScopeId,
           filePath: absolutePath,
           mtimeMs: stat.mtimeMs,
           offset,
@@ -652,12 +661,13 @@ For multi-file exploration, prefer explore() to preserve context.`;
       // Track the lines that were read (1-indexed)
       const startLineNumber = startLine + 1;
       const endLineNumber = Math.min(endLine, totalLines);
-      readStateManager.trackRead(absolutePath, startLineNumber, endLineNumber);
+      readStateManager.trackRead(absolutePath, startLineNumber, endLineNumber, readScopeId);
     }
 
     // Record in read cache for future deduplication
     if (readCache) {
       readCache.record({
+        scopeId: readScopeId,
         filePath: absolutePath,
         mtimeMs: stat.mtimeMs,
         offset,

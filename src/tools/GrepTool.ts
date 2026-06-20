@@ -6,9 +6,8 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { FocusManager } from '../services/FocusManager.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
@@ -155,7 +154,13 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
     };
   }
 
-  protected async executeImpl(args: any): Promise<ToolResult> {
+  protected async executeImpl(
+    args: any,
+    _toolCallId?: string,
+    _isUserInitiated?: boolean,
+    _isContextFile?: boolean,
+    executionContext?: ToolExecutionContext
+  ): Promise<ToolResult> {
     // Capture parameters
     this.captureParams(args);
 
@@ -204,7 +209,8 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
       const absolutePath = resolvePath(searchPath);
 
       // Validate focus constraint if active
-      const registry = ServiceRegistry.getInstance();
+      const registry = this.getExecutionRegistry(executionContext);
+      const readScopeId = this.getReadScopeId(executionContext);
       const focusManager = registry.get<FocusManager>('focus_manager');
 
       if (focusManager && focusManager.isFocused()) {
@@ -375,7 +381,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
           for (const match of matches) {
             const startLine = match.line - (match.before?.length || 0);
             const endLine = match.line + (match.after?.length || 0);
-            readStateManager.trackRead(match.file, startLine, endLine);
+            readStateManager.trackRead(match.file, startLine, endLine, readScopeId);
           }
         }
       }

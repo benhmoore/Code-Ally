@@ -367,7 +367,11 @@ NOT for: Exploration (use explore), planning (use plan).`;
           undefined, // abort signal (agent doesn't exist yet)
           false, // isUserInitiated
           true,  // isContextFile - enables 40% limit
-          undefined // currentAgentName (agent doesn't exist yet)
+          agentType, // currentAgentName for tool-agent binding validation
+          {
+            agentId: `context:${toolCallId}`,
+            agentName: agentType,
+          }
         );
 
         // Validate read result before adding to conversation

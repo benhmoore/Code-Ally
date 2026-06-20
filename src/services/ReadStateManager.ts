@@ -14,6 +14,8 @@ export interface ReadRange {
 }
 
 export interface FileReadState {
+  /** Scope that owns this read state (usually an agent instance ID) */
+  scopeId: string;
   /** Absolute path to the file */
   filePath: string;
   /** Array of read ranges, kept sorted and merged */
@@ -34,6 +36,8 @@ export interface ValidationResult {
     missingRanges?: string;
   };
 }
+
+const DEFAULT_SCOPE_ID = 'default';
 
 export class ReadStateManager {
   private fileStates: Map<string, FileReadState>;
@@ -68,13 +72,21 @@ export class ReadStateManager {
   }
 
   /**
+   * Build state key from read owner and file path.
+   */
+  private key(filePath: string, scopeId?: string): string {
+    return `${scopeId ?? DEFAULT_SCOPE_ID}:${filePath}`;
+  }
+
+  /**
    * Track that a range of lines has been read
    *
    * @param filePath - Absolute path to the file
    * @param startLine - Starting line number (1-indexed)
    * @param endLine - Ending line number (1-indexed, inclusive)
+   * @param scopeId - Read owner scope (usually an agent instance ID)
    */
-  trackRead(filePath: string, startLine: number, endLine: number): void {
+  trackRead(filePath: string, startLine: number, endLine: number, scopeId?: string): void {
     // Validate inputs - fail fast for programming errors
     if (startLine < 1) {
       throw new Error(`Invalid start line ${startLine} for ${filePath}. Line numbers must be >= 1.`);
@@ -84,13 +96,15 @@ export class ReadStateManager {
     }
 
     // Get or create file state
-    let fileState = this.fileStates.get(filePath);
+    const stateKey = this.key(filePath, scopeId);
+    let fileState = this.fileStates.get(stateKey);
     if (!fileState) {
       fileState = {
+        scopeId: scopeId ?? DEFAULT_SCOPE_ID,
         filePath,
         readRanges: [],
       };
-      this.fileStates.set(filePath, fileState);
+      this.fileStates.set(stateKey, fileState);
     }
 
     // Add new range and merge with existing ranges
@@ -104,14 +118,16 @@ export class ReadStateManager {
    * @param filePath - Absolute path to the file
    * @param startLine - Starting line number (1-indexed)
    * @param endLine - Ending line number (1-indexed, inclusive)
+   * @param scopeId - Read owner scope (usually an agent instance ID)
    * @returns Validation result with success status and message
    */
   validateLinesRead(
     filePath: string,
     startLine: number,
-    endLine: number
+    endLine: number,
+    scopeId?: string
   ): ValidationResult {
-    const fileState = this.fileStates.get(filePath);
+    const fileState = this.fileStates.get(this.key(filePath, scopeId));
 
     // If file has no read state, validation fails
     if (!fileState || fileState.readRanges.length === 0) {
@@ -185,14 +201,16 @@ export class ReadStateManager {
    * @param filePath - Absolute path to the file
    * @param editLine - Line number where edit occurred (1-indexed)
    * @param lineDelta - Number of lines added (positive) or removed (negative)
+   * @param scopeId - Read owner scope to invalidate
    */
-  invalidateAfterEdit(filePath: string, editLine: number, lineDelta: number): void {
+  invalidateAfterEdit(filePath: string, editLine: number, lineDelta: number, scopeId?: string): void {
     // If no line shift, nothing to invalidate
     if (lineDelta === 0) {
       return;
     }
 
-    const fileState = this.fileStates.get(filePath);
+    const stateKey = this.key(filePath, scopeId);
+    const fileState = this.fileStates.get(stateKey);
     if (!fileState) {
       return;
     }
@@ -215,19 +233,32 @@ export class ReadStateManager {
 
     if (newRanges.length === 0) {
       // All ranges were invalidated - remove file state
-      this.fileStates.delete(filePath);
+      this.fileStates.delete(stateKey);
     } else {
       fileState.readRanges = newRanges;
     }
   }
 
   /**
-   * Clear all read state for a file
+   * Clear read state for a file.
+   *
+   * If no scope is provided, all scoped states for that file are cleared. This is
+   * used after writes/edits because every agent's prior view of that file is stale.
    *
    * @param filePath - Absolute path to the file
+   * @param scopeId - Optional read owner scope to clear
    */
-  clearFile(filePath: string): void {
-    this.fileStates.delete(filePath);
+  clearFile(filePath: string, scopeId?: string): void {
+    if (scopeId) {
+      this.fileStates.delete(this.key(filePath, scopeId));
+      return;
+    }
+
+    for (const [key, state] of this.fileStates) {
+      if (state.filePath === filePath) {
+        this.fileStates.delete(key);
+      }
+    }
   }
 
   /**
@@ -241,10 +272,11 @@ export class ReadStateManager {
    * Get the current read state for a file
    *
    * @param filePath - Absolute path to the file
+   * @param scopeId - Read owner scope (usually an agent instance ID)
    * @returns Array of read ranges, or null if file has no read state
    */
-  getReadState(filePath: string): ReadRange[] | null {
-    const fileState = this.fileStates.get(filePath);
+  getReadState(filePath: string, scopeId?: string): ReadRange[] | null {
+    const fileState = this.fileStates.get(this.key(filePath, scopeId));
     return fileState ? [...fileState.readRanges] : null;
   }
 

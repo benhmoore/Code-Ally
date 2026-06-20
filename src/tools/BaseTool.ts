@@ -294,7 +294,7 @@ export abstract class BaseTool {
         throw new Error('AbortError: Tool execution was interrupted');
       }
 
-      const result = await this.executeImpl(args, callId, isUserInitiated, isContextFile);
+      const result = await this.executeImpl(args, callId, isUserInitiated, isContextFile, executionContext);
 
       return result;
     } catch (error) {
@@ -343,7 +343,7 @@ export abstract class BaseTool {
    * @param _args - Tool-specific parameters
    * @returns ToolResult with success=false if validation fails, or null if validation passes
    */
-  async validateBeforePermission(_args: any): Promise<ToolResult | null> {
+  async validateBeforePermission(_args: any, _executionContext?: ToolExecutionContext): Promise<ToolResult | null> {
     // Default: no pre-permission validation
     return null;
   }
@@ -355,7 +355,46 @@ export abstract class BaseTool {
    * @param isUserInitiated - Internal flag for user-initiated execution (optional, defaults to false)
    * @param isContextFile - Internal flag for context file read (optional, defaults to false)
    */
-  protected abstract executeImpl(args: any, toolCallId?: string, isUserInitiated?: boolean, isContextFile?: boolean): Promise<ToolResult>;
+  protected abstract executeImpl(
+    args: any,
+    toolCallId?: string,
+    isUserInitiated?: boolean,
+    isContextFile?: boolean,
+    executionContext?: ToolExecutionContext
+  ): Promise<ToolResult>;
+
+  /**
+   * Get the service registry for the current tool execution.
+   *
+   * Tool calls from delegated agents may carry a scoped registry so services can
+   * resolve through that agent's execution context before falling back globally.
+   */
+  protected getExecutionRegistry(executionContext?: ToolExecutionContext): Pick<ServiceRegistry, 'get'> {
+    return executionContext?.registryScope ?? this.currentExecutionContext?.registryScope ?? ServiceRegistry.getInstance();
+  }
+
+  /**
+   * Get the read/cache ownership scope for the current tool execution.
+   *
+   * Prefer the explicit agent instance ID passed by ToolOrchestrator. Fall back to
+   * the execution registry's agent for direct tool invocations, then to a default
+   * scope for tests and non-agent contexts.
+   */
+  protected getReadScopeId(executionContext?: ToolExecutionContext): string {
+    const explicitAgentId = executionContext?.agentId ?? this.currentExecutionContext?.agentId;
+    if (typeof explicitAgentId === 'string' && explicitAgentId.length > 0) {
+      return explicitAgentId;
+    }
+
+    const registry = this.getExecutionRegistry(executionContext);
+    const currentAgent = registry.get<any>('agent');
+    const registryAgentId = currentAgent?.getInstanceId?.();
+    if (typeof registryAgentId === 'string' && registryAgentId.length > 0) {
+      return registryAgentId;
+    }
+
+    return 'default';
+  }
 
   /**
    * Emit an event to the activity stream
@@ -761,12 +800,14 @@ export abstract class BaseTool {
     operationType: string;
     showUpdatedContext: boolean;
     readStateManager: ReadStateManager | null;
+    executionContext?: ToolExecutionContext;
   }): Promise<{
     patchNumber: number | null;
     diff: string;
     updatedContentTracked: boolean;
   }> {
-    const { absolutePath, originalContent, modifiedContent, operationType, showUpdatedContext, readStateManager } = options;
+    const { absolutePath, originalContent, modifiedContent, operationType, showUpdatedContext, readStateManager, executionContext } = options;
+    const readScopeId = this.getReadScopeId(executionContext);
 
     // Write modified content
     await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
@@ -777,7 +818,7 @@ export abstract class BaseTool {
     }
 
     // Invalidate read cache for the modified file
-    const cacheRegistry = ServiceRegistry.getInstance();
+    const cacheRegistry = this.getExecutionRegistry(executionContext);
     const readCache = cacheRegistry.get<{ invalidate(path: string): void }>('read_cache');
     if (readCache) {
       readCache.invalidate(absolutePath);
@@ -798,7 +839,7 @@ export abstract class BaseTool {
     let updatedContentTracked = false;
     if (showUpdatedContext && readStateManager) {
       const lines = modifiedContent.split('\n');
-      readStateManager.trackRead(absolutePath, 1, lines.length);
+      readStateManager.trackRead(absolutePath, 1, lines.length, readScopeId);
       updatedContentTracked = true;
     }
 
