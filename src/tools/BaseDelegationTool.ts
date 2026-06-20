@@ -25,7 +25,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
+import { TEXT_LIMITS, FORMATTING, applyLeafDelegationPolicy } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
 import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 import { runFleetDelegation, backgroundedMessage } from './fleetDelegation.js';
@@ -280,7 +280,9 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         thoroughness: thoroughness,
         agentType: config.agentType,
         agentDepth: newDepth,
-        allowedTools: config.allowedTools,
+        // Single-level delegation: a sub-agent is a leaf, so strip any delegation
+        // tools from its declared toolset (e.g. Plan's 'explore') at depth >= 1.
+        allowedTools: applyLeafDelegationPolicy(config.allowedTools, newDepth),
       };
 
       // Add optional config
@@ -302,10 +304,11 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
       if (!agentPoolService) {
         // Graceful fallback: AgentPoolService not available
         logger.debug(`[${this.name.toUpperCase()}_TOOL] AgentPoolService not available, falling back to ephemeral agent`);
+        // Ephemeral fallback (no pool): still isolate the sub-agent on its own scoped stream.
         delegationAgent = new Agent(
           modelClient,
           toolManager,
-          this.activityStream,
+          this.activityStream.createScoped(`${config.agentType}-ephemeral`),
           agentConfig,
           configManager,
           permissionManager
@@ -353,6 +356,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
       // The run: send the task, resolve + post-process the response. Context
       // usage is captured here (while the agent is still active, before release).
       let capturedContextUsage = 0;
+      let capturedToolUseCount = 0;
       const run = async (): Promise<string> => {
         logger.debug(`[${this.name.toUpperCase()}_TOOL] Sending task to agent...`);
         const taskMessage = this.formatTaskMessage(taskPrompt);
@@ -369,6 +373,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         });
         finalResponse = await this.postProcessResponse(finalResponse, config, scopedRegistry);
         capturedContextUsage = delegationAgent.getContextUsagePercentage();
+        capturedToolUseCount = delegationAgent.getToolUseCount();
         return finalResponse;
       };
 
@@ -391,7 +396,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
           id: callId,
           type: ActivityEventType.AGENT_END,
           timestamp: Date.now(),
-          data: { agentName: config.agentType, result: finalResponse, duration: durationSec, contextUsage: capturedContextUsage },
+          data: { agentName: config.agentType, result: finalResponse, duration: durationSec, contextUsage: capturedContextUsage, toolUseCount: capturedToolUseCount },
         });
       };
 
@@ -423,7 +428,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
           runInBackground: false,
           run,
           cleanup,
-          buildEndData: () => ({ contextUsage: capturedContextUsage }),
+          buildEndData: () => ({ contextUsage: capturedContextUsage, toolUseCount: capturedToolUseCount }),
         });
       } catch (error) {
         await cleanup();

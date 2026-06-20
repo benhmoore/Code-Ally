@@ -638,6 +638,7 @@ Only set run_in_background=false when your very next step depends on the result.
           agentName: agentType,
           result: taskResult.result,
           duration,
+          toolUseCount: taskResult.toolUseCount ?? 0,
         },
       });
 
@@ -813,7 +814,8 @@ Only set run_in_background=false when your very next step depends on the result.
     if (!agentPoolService) {
       // Graceful fallback: AgentPoolService not available
       logger.debug('[AGENT_TOOL] AgentPoolService not available, falling back to ephemeral agent');
-      const agent = new Agent(modelClient, toolManager, this.activityStream, agentConfig, configManager, permissionManager);
+      // Ephemeral fallback (no pool): still isolate the sub-agent on its own scoped stream.
+      const agent = new Agent(modelClient, toolManager, this.activityStream.createScoped(`${agentType}-ephemeral`), agentConfig, configManager, permissionManager);
       return { agent, pooledAgent: null, agentId: null };
     }
 
@@ -917,16 +919,20 @@ Only set run_in_background=false when your very next step depends on the result.
   private formatExecutionResponse(params: {
     finalResponse: string;
     agentId: string | null;
-  }): { result: string; agent_id?: string } {
-    const { finalResponse, agentId } = params;
+    toolUseCount?: number;
+  }): { result: string; agent_id?: string; toolUseCount?: number } {
+    const { finalResponse, agentId, toolUseCount } = params;
 
     // Append note to all agent responses
     const result = appendAgentResponseSuffix(finalResponse);
 
     // Return result with agent_id (always returned since agents always persist)
-    const returnValue: { result: string; agent_id?: string } = { result };
+    const returnValue: { result: string; agent_id?: string; toolUseCount?: number } = { result };
     if (agentId) {
       returnValue.agent_id = agentId;
+    }
+    if (toolUseCount !== undefined) {
+      returnValue.toolUseCount = toolUseCount;
     }
     return returnValue;
   }
@@ -958,7 +964,7 @@ Only set run_in_background=false when your very next step depends on the result.
    *
    * Agents always persist in the agent pool for reuse.
    */
-  private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string; backgrounded?: boolean }> {
+  private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string; backgrounded?: boolean; toolUseCount?: number }> {
     const { agentData, agentType, taskPrompt, thoroughness, callId, depth, initialMessages, contextImages, runInBackground, notifyWhenDone } = params;
 
     logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
@@ -993,7 +999,7 @@ Only set run_in_background=false when your very next step depends on the result.
       throw new Error('AgentManager not found in registry');
     }
 
-    const baseConfig = agentManager.buildBaseConfig(agentData, agentType, toolManager);
+    const baseConfig = agentManager.buildBaseConfig(agentData, agentType, toolManager, depth);
 
     if (baseConfig.allowedTools !== undefined) {
       logger.debug('[AGENT_TOOL] Agent has access to', baseConfig.allowedTools.length, 'tools');
@@ -1106,7 +1112,7 @@ Only set run_in_background=false when your very next step depends on the result.
     if (!manager) {
       try {
         const finalResponse = await this.executeAgent({ agent: subAgent, agentType, taskPrompt, callId, maxDuration, thoroughness, images: processedImages });
-        return this.formatExecutionResponse({ finalResponse, agentId });
+        return this.formatExecutionResponse({ finalResponse, agentId, toolUseCount: subAgent.getToolUseCount() });
       } finally {
         this.activeDelegations.delete(callId);
         await this.releaseAgent({ pooledAgent, subAgent, callId });
@@ -1131,6 +1137,8 @@ Only set run_in_background=false when your very next step depends on the result.
         runInBackground: runInBackground ?? false,
         run: () => this.executeAgent({ agent: subAgent, agentType, taskPrompt, callId, maxDuration, thoroughness, images: processedImages }),
         cleanup,
+        // Supply the tool-use count for the detached/background AGENT_END summary.
+        buildEndData: () => ({ toolUseCount: subAgent.getToolUseCount() }),
       });
     } catch (error) {
       // addTask cap overflow (background): release and surface the error.
@@ -1156,7 +1164,7 @@ Only set run_in_background=false when your very next step depends on the result.
     if (outcome.status === 'error' && outcome.error) {
       throw new Error(outcome.error);
     }
-    return this.formatExecutionResponse({ finalResponse: outcome.result, agentId });
+    return this.formatExecutionResponse({ finalResponse: outcome.result, agentId, toolUseCount: subAgent.getToolUseCount() });
   }
 
   /**

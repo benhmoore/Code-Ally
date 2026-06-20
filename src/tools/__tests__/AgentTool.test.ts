@@ -105,6 +105,7 @@ describe('AgentTool', () => {
             getTokenManager: vi.fn().mockReturnValue({
               getContextUsagePercentage: () => 0,
             }),
+            getToolUseCount: vi.fn().mockReturnValue(0),
           },
           agentId: 'test-agent-id',
           release: async () => {},
@@ -220,107 +221,27 @@ describe('AgentTool', () => {
       expect(result.success).toBe(true);
     });
 
-    it('should allow agent delegation at maximum allowed depth', async () => {
-      // Mock a parent agent at depth 2 (so new agent will be at depth 3, which is max)
-      const mockParentAgent = {
-        getAgentDepth: vi.fn().mockReturnValue(2),
-      };
-
-      registry.registerInstance('agent', mockParentAgent);
-
-      const result = await tool.execute({
-        agent_type: 'task',
-        task_prompt: 'Test task at maximum allowed depth',
-        run_in_background: false,
-      }, 'test-call-id');
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should allow first-level self-delegation (agent calling itself once)', async () => {
-      // Mock an agent trying to call itself
-      // With MAX_AGENT_CYCLE_DEPTH = 2, self-delegation is allowed the first time
-      const mockAgent = {
+    it('should reject delegation from a sub-agent (single-level delegation)', async () => {
+      // Single-level delegation: a sub-agent (depth >= 1) is a leaf and cannot
+      // delegate further, so newDepth would exceed MAX_AGENT_DEPTH (1). This is the
+      // hard backstop behind stripping delegation tools and the agent roster from
+      // sub-agent prompts.
+      const mockSubAgent = {
         getAgentDepth: vi.fn().mockReturnValue(1),
         getAgentName: vi.fn().mockReturnValue('task'),
         getAgentCallStack: vi.fn().mockReturnValue([]),
       };
 
-      registry.registerInstance('agent', mockAgent);
+      registry.registerInstance('agent', mockSubAgent);
 
       const result = await tool.execute({
         agent_type: 'task',
-        task_prompt: 'Test self-delegation',
+        task_prompt: 'Sub-agent attempting to delegate',
         run_in_background: false,
-      }, 'test-call-id');
-
-      // First-level self-delegation is allowed (occurrenceCount = 0 < 2)
-      expect(result.success).toBe(true);
-    });
-
-    it('should allow first-level circular delegation (A → B → A)', async () => {
-      // Mock an agent with 'task' in its call stack
-      // With MAX_AGENT_CYCLE_DEPTH = 2, first-level cycles are allowed
-      const mockAgent = {
-        getAgentDepth: vi.fn().mockReturnValue(2),
-        getAgentName: vi.fn().mockReturnValue('specialized'),
-        getAgentCallStack: vi.fn().mockReturnValue(['task']),
-      };
-
-      registry.registerInstance('agent', mockAgent);
-
-      // Try to delegate back to 'task' - should be allowed (occurrenceCount = 1 < 2)
-      const result = await tool.execute({
-        agent_type: 'task',
-        task_prompt: 'Test circular delegation',
-        run_in_background: false,
-      }, 'test-call-id');
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should reject deep circular delegation (exceeds MAX_AGENT_CYCLE_DEPTH)', async () => {
-      // Mock an agent where 'task' already appears 2 times in the stack
-      // This simulates: task → other → task → specialized
-      // Trying to delegate back to 'task' again would make it appear 3 times
-      const mockAgent = {
-        getAgentDepth: vi.fn().mockReturnValue(2),
-        getAgentName: vi.fn().mockReturnValue('specialized'),
-        getAgentCallStack: vi.fn().mockReturnValue(['task', 'other', 'task']),
-      };
-
-      registry.registerInstance('agent', mockAgent);
-
-      // Try to delegate back to 'task' - should be rejected (occurrenceCount = 2 >= 2)
-      const result = await tool.execute({
-        agent_type: 'task',
-        task_prompt: 'Test deep circular delegation',
       }, 'test-call-id');
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('already appears 2 times');
-      expect(result.error).toContain('Maximum cycle depth is 2');
-      expect(result.error_type).toBe('validation_error');
-    });
-
-    it('should allow delegation to different agent (no cycle)', async () => {
-      // Mock an agent with some agents in call stack
-      const mockAgent = {
-        getAgentDepth: vi.fn().mockReturnValue(1),
-        getAgentName: vi.fn().mockReturnValue('specialized'),
-        getAgentCallStack: vi.fn().mockReturnValue([]),
-      };
-
-      registry.registerInstance('agent', mockAgent);
-
-      // Delegate to a different agent (general) - should succeed
-      const result = await tool.execute({
-        agent_type: 'task',
-        task_prompt: 'Test valid delegation',
-        run_in_background: false,
-      }, 'test-call-id');
-
-      expect(result.success).toBe(true);
+      expect(result.error_type).toBe('depth_limit_exceeded');
     });
   });
 

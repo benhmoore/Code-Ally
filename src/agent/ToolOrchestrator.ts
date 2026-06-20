@@ -788,6 +788,9 @@ export class ToolOrchestrator {
       ...(scopedRegistry ? { registryScope: scopedRegistry } : {}),
       agentId: this.agent.getInstanceId?.(),
       agentName: this.agent.getAgentName(),
+      // Route tool-emitted events to this agent's (possibly scoped) stream so a
+      // sub-agent's streaming output stays isolated from the main conversation.
+      activityStream: this.activityStream,
     };
 
     try {

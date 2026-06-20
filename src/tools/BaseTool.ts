@@ -400,10 +400,18 @@ export abstract class BaseTool {
   }
 
   /**
-   * Emit an event to the activity stream
+   * Emit an event to the activity stream.
+   *
+   * Prefers the scoped stream the orchestrator supplied for the current execution
+   * (via ToolExecutionContext) so a sub-agent's events route to its own isolated
+   * stream. Tool instances are shared singletons that captured the root stream at
+   * construction, so without this a sub-agent's streaming output would leak to the
+   * main conversation. Falls back to the construction-time stream when emitting
+   * outside an execution context.
    */
   protected emitEvent(event: ActivityEvent): void {
-    this.activityStream.emit(event);
+    const stream = this.currentExecutionContext?.activityStream ?? this.activityStream;
+    stream.emit(event);
   }
 
   /**

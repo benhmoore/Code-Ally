@@ -197,6 +197,10 @@ export class OllamaClient extends ModelClient {
   async send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse> {
     const { functions, stream = false, maxRetries: _maxRetries = 3, temperature, parentId, suppressThinking = false, dynamicMaxTokens, signal } = options;
 
+    // Per-request stream override: a sub-agent supplies its scoped stream so its
+    // thinking/assistant events route to its own stream instead of the shared root.
+    const eventStream: ActivityStream | undefined = options.activityStream ?? this.activityStream;
+
     // Generate unique request ID for this request
     // Generate request ID: req-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     const requestId = `req-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
@@ -231,7 +235,7 @@ export class OllamaClient extends ModelClient {
 
         try {
           // Execute request with cancellation support
-          const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, signal, parentId, suppressThinking);
+          const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream);
 
           // Validate and repair tool calls (ALL responses, not just non-streaming)
           if (result.tool_calls && result.tool_calls.length > 0) {
@@ -376,7 +380,8 @@ export class OllamaClient extends ModelClient {
     attempt: number,
     callerSignal: AbortSignal,
     parentId?: string,
-    suppressThinking?: boolean
+    suppressThinking?: boolean,
+    eventStream?: ActivityStream
   ): Promise<LLMResponse> {
     // Per-request abort controller. The caller's signal is the OWNER of this
     // request: when the owning agent interrupts, only its requests abort. We keep
@@ -440,7 +445,7 @@ export class OllamaClient extends ModelClient {
 
       // Process response
       if (stream) {
-        return await this.processStreamingResponse(requestId, response, abortController, callerSignal, parentId, suppressThinking);
+        return await this.processStreamingResponse(requestId, response, abortController, callerSignal, parentId, suppressThinking, eventStream);
       } else {
         // Non-streaming mode - parse response
         // GAP 2: For non-streaming, the entire response arrives at once, so HTTP errors
@@ -453,7 +458,7 @@ export class OllamaClient extends ModelClient {
           logger.debug(`[OllamaClient] Failed to parse non-streaming response JSON:`, parseError);
           throw parseError;
         }
-        return this.parseNonStreamingResponse(data, requestId, parentId, suppressThinking);
+        return this.parseNonStreamingResponse(data, requestId, parentId, suppressThinking, eventStream);
       }
     } catch (error: any) {
       // A timeout aborts the internal controller and surfaces here as an AbortError
@@ -479,7 +484,8 @@ export class OllamaClient extends ModelClient {
     abortController: AbortController,
     callerSignal: AbortSignal,
     parentId?: string,
-    suppressThinking?: boolean
+    suppressThinking?: boolean,
+    eventStream: ActivityStream | undefined = this.activityStream
   ): Promise<LLMResponse> {
     if (!response.body) {
       throw new Error('Response body is null');
@@ -562,8 +568,8 @@ export class OllamaClient extends ModelClient {
               contentWasStreamed = true;
 
               // Emit assistant content chunk event for UI streaming
-              if (this.activityStream) {
-                this.activityStream.emit({
+              if (eventStream) {
+                eventStream.emit({
                   id: `assistant-${requestId}-${Date.now()}`,
                   type: ActivityEventType.ASSISTANT_CHUNK,
                   timestamp: Date.now(),
@@ -580,8 +586,8 @@ export class OllamaClient extends ModelClient {
               aggregatedMessage.thinking = aggregatedThinking;
 
               // Emit thinking chunk event for UI streaming
-              if (this.activityStream) {
-                this.activityStream.emit({
+              if (eventStream) {
+                eventStream.emit({
                   id: `thinking-${requestId}-${Date.now()}`,
                   type: ActivityEventType.THOUGHT_CHUNK,
                   timestamp: Date.now(),
@@ -596,8 +602,8 @@ export class OllamaClient extends ModelClient {
               logger.debug('[THINKING-COMPLETE]', `(${aggregatedThinking.length} chars)\n${aggregatedThinking}`);
 
               // Only emit if thinking display is not suppressed
-              if (this.activityStream && aggregatedThinking && !suppressThinking) {
-                this.activityStream.emit({
+              if (eventStream && aggregatedThinking && !suppressThinking) {
+                eventStream.emit({
                   id: `thinking-complete-${requestId}`,
                   type: ActivityEventType.THOUGHT_COMPLETE,
                   timestamp: Date.now(),
@@ -639,8 +645,8 @@ export class OllamaClient extends ModelClient {
             aggregatedMessage.content = aggregatedContent;
             contentWasStreamed = true;
 
-            if (this.activityStream) {
-              this.activityStream.emit({
+            if (eventStream) {
+              eventStream.emit({
                 id: `assistant-${requestId}-${Date.now()}`,
                 type: ActivityEventType.ASSISTANT_CHUNK,
                 timestamp: Date.now(),
@@ -727,7 +733,7 @@ export class OllamaClient extends ModelClient {
   /**
    * Parse non-streaming response from Ollama
    */
-  private parseNonStreamingResponse(data: any, requestId: string, parentId?: string, suppressThinking?: boolean): LLMResponse {
+  private parseNonStreamingResponse(data: any, requestId: string, parentId?: string, suppressThinking?: boolean, eventStream: ActivityStream | undefined = this.activityStream): LLMResponse {
     const message = data.message || {};
 
     const response: LLMResponse = {
@@ -743,8 +749,8 @@ export class OllamaClient extends ModelClient {
 
       // Emit THOUGHT_COMPLETE event for non-streaming responses
       // Only emit if thinking display is not suppressed
-      if (this.activityStream && !suppressThinking) {
-        this.activityStream.emit({
+      if (eventStream && !suppressThinking) {
+        eventStream.emit({
           id: `thinking-complete-${requestId}`,
           type: ActivityEventType.THOUGHT_COMPLETE,
           timestamp: Date.now(),

@@ -313,20 +313,32 @@ const AppContentComponent: React.FC<{
   // agent's new turns (and their tool calls) appear without constant repaints.
   React.useEffect(() => {
     if (state.activeAgentId === 'main') return;
+    const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+    const task = manager?.getTask(state.activeAgentId);
     const refresh = () => {
-      const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
-      const task = manager?.getTask(state.activeAgentId);
-      if (!task) return;
-      const count = task.subAgent.getMessages().filter((m) => m.role !== 'system').length;
+      const t = manager?.getTask(state.activeAgentId);
+      if (!t) return;
+      const count = t.subAgent.getMessages().filter((m) => m.role !== 'system').length;
       if (count !== enteredCountRef.current) {
-        applyAgentView(task.subAgent);
+        applyAgentView(t.subAgent);
       }
     };
-    const unsubs = [
-      ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
-      ActivityEventType.TOOL_CALL_END,
-      ActivityEventType.AGENT_BACKGROUND_COMPLETE,
-    ].map((type) => activityStream.subscribe(type, () => setTimeout(refresh, 0)));
+    const unsubs: Array<() => void> = [];
+    // After stream isolation, the entered agent's own activity lives ONLY on its
+    // scoped stream — subscribe there so its new turns/tool calls refresh the view
+    // (and only this agent's activity does, not unrelated main-conversation events).
+    const agentStream = task?.subAgent.getActivityStream?.();
+    if (agentStream) {
+      unsubs.push(
+        ...[ActivityEventType.ASSISTANT_MESSAGE_COMPLETE, ActivityEventType.TOOL_CALL_END].map(
+          (type) => agentStream.subscribe(type, () => setTimeout(refresh, 0))
+        )
+      );
+    }
+    // Completion of a backgrounded run is signalled on the root (parent) stream.
+    unsubs.push(
+      activityStream.subscribe(ActivityEventType.AGENT_BACKGROUND_COMPLETE, () => setTimeout(refresh, 0))
+    );
     return () => unsubs.forEach((u) => u());
   }, [state.activeAgentId, activityStream, applyAgentView]);
 

@@ -5,6 +5,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { OllamaClient } from '../OllamaClient.js';
 import type { Message } from '@shared/index.js';
+import { ActivityEventType } from '@shared/index.js';
+import { ActivityStream } from '@services/ActivityStream.js';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -88,6 +90,42 @@ describe('OllamaClient', () => {
       const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.thinking).toBe('First I need to understand the request...');
+    });
+
+    it('routes thinking events to the per-request stream, not the construction stream', async () => {
+      // The model client is shared across agents. A sub-agent passes its scoped
+      // stream per request so its reasoning stays isolated from the main conversation.
+      const rootStream = new ActivityStream();
+      const scopedStream = rootStream.createScoped('agent-1');
+      const rootThoughts: unknown[] = [];
+      const scopedThoughts: unknown[] = [];
+      rootStream.subscribe(ActivityEventType.THOUGHT_COMPLETE, (e) => rootThoughts.push(e));
+      scopedStream.subscribe(ActivityEventType.THOUGHT_COMPLETE, (e) => scopedThoughts.push(e));
+
+      const scopedClient = new OllamaClient({
+        endpoint: 'http://localhost:11434',
+        modelName: 'qwen2.5-coder:32b',
+        temperature: 0.3,
+        contextSize: 16384,
+        maxTokens: 5000,
+        activityStream: rootStream,
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          message: { role: 'assistant', content: 'Done.', thinking: 'Reasoning about the task...' },
+        }),
+      });
+
+      await scopedClient.send([{ role: 'user', content: 'Help me' }], {
+        stream: false,
+        signal: new AbortController().signal,
+        activityStream: scopedStream,
+      });
+
+      expect(scopedThoughts.length).toBe(1);
+      expect(rootThoughts.length).toBe(0);
     });
 
     it('should handle tool calls', async () => {

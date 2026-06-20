@@ -483,6 +483,20 @@ export class Agent {
   }
 
   /**
+   * Count the tool calls this agent has made across its conversation.
+   *
+   * Used by delegation tools to report a tool-use count in AGENT_END so the main
+   * conversation can render a "Done (N tool uses)" summary without ingesting the
+   * sub-agent's individual (now stream-isolated) tool calls.
+   */
+  public getToolUseCount(): number {
+    return this.conversationManager.getMessages().reduce(
+      (sum, msg) => sum + (msg.role === 'assistant' && msg.tool_calls ? msg.tool_calls.length : 0),
+      0
+    );
+  }
+
+  /**
    * Get the model client (used by CommandHandler for /compact)
    */
   getModelClient(): ModelClient {
@@ -571,6 +585,16 @@ export class Agent {
    */
   getAgentDepth(): number {
     return this.agentDepth;
+  }
+
+  /**
+   * Get this agent's ActivityStream. For the main agent this is the root stream;
+   * for a sub-agent it is the scoped child stream carrying only that agent's own
+   * activity. The entered-agent ("fleet") view subscribes to this to render a
+   * sub-agent's live transcript in isolation from the main conversation.
+   */
+  getActivityStream(): ActivityStream {
+    return this.activityStream;
   }
 
   /**
@@ -1282,7 +1306,8 @@ export class Agent {
         this.agentName,
         executionContext.thoroughness,
         this.config.agentType,
-        this.conversationManager.getMessages()
+        this.conversationManager.getMessages(),
+        this.agentDepth
       );
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Custom agent prompt regenerated with current context');
     } else {
@@ -1361,6 +1386,10 @@ export class Agent {
         stream: !this.config.isSpecializedAgent && this.appConfig.parallel_tools,
         // Pass parentCallId for associating thinking events with tool calls
         parentId: executionContext.parentCallId,
+        // Route thinking/assistant events to THIS agent's stream. For a sub-agent
+        // that is its scoped stream, keeping its reasoning isolated from the main
+        // conversation (the shared model client otherwise emits on the root stream).
+        activityStream: this.activityStream,
         // Dynamic output token limit based on remaining context
         dynamicMaxTokens,
         signal: this.interruptionManager.beginRequest(),
@@ -2147,13 +2176,15 @@ export class Agent {
     this.stopActivityMonitoring();
 
     // Clean up ActivityStream listeners to prevent memory leaks
-    // This is critical for long-running sessions with many agents
+    // This is critical for long-running sessions with many agents.
     //
-    // IMPORTANT: Specialized agents share an ActivityStream with the main agent
-    // (via AgentPoolService), so they must NOT cleanup the shared stream.
-    // Only the main/root agent (isSpecializedAgent=false) should cleanup.
-    // This prevents destroying ALL UI subscriptions when any delegated agent finishes.
-    if (!this.config.isSpecializedAgent && this.activityStream && typeof this.activityStream.cleanup === 'function') {
+    // Each agent owns its stream: the main/root agent owns the root stream (torn
+    // down at shutdown), and a sub-agent owns a scoped child stream (parentId set)
+    // that must be released on disposal. We must NEVER cleanup the shared root
+    // stream from a sub-agent — but sub-agents no longer share it, so a scoped
+    // stream is the precise signal that cleanup is safe and required.
+    const ownsScopedStream = this.activityStream?.getParentId?.() !== undefined;
+    if ((!this.config.isSpecializedAgent || ownsScopedStream) && this.activityStream && typeof this.activityStream.cleanup === 'function') {
       this.activityStream.cleanup();
     }
 

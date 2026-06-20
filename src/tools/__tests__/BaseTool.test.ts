@@ -27,6 +27,18 @@ class MockTool extends BaseTool {
   }
 }
 
+// Tool that streams output, to exercise event routing during execution
+class EmittingTool extends BaseTool {
+  readonly name = 'emitting-tool';
+  readonly description = 'A tool that emits an output chunk';
+  readonly requiresConfirmation = false;
+
+  protected async executeImpl(): Promise<ToolResult> {
+    this.emitOutputChunk('streamed output');
+    return this.formatSuccessResponse({ result: 'ok' });
+  }
+}
+
 describe('BaseTool', () => {
   let activityStream: ActivityStream;
   let tool: MockTool;
@@ -54,6 +66,40 @@ describe('BaseTool', () => {
       const result = await tool.execute({ shouldFail: true });
       expect(result.success).toBe(false);
       expect(result.error).toContain('Mock error');
+    });
+  });
+
+  describe('activity stream isolation', () => {
+    it('routes emitted events to the execution context stream, not the construction stream', async () => {
+      // Tools are shared singletons constructed with the root stream. A sub-agent
+      // supplies its scoped stream via the execution context; the tool's output
+      // must follow it so a sub-agent's activity never leaks to the root stream.
+      const rootStream = new ActivityStream();
+      const scopedStream = rootStream.createScoped('agent-1');
+      const rootEvents: ActivityEvent[] = [];
+      const scopedEvents: ActivityEvent[] = [];
+      rootStream.subscribe('*', (e) => rootEvents.push(e));
+      scopedStream.subscribe('*', (e) => scopedEvents.push(e));
+
+      const emittingTool = new EmittingTool(rootStream);
+      await emittingTool.execute({}, 'call-1', undefined, false, false, {
+        activityStream: scopedStream,
+      });
+
+      const isOutput = (e: ActivityEvent) => e.type === ActivityEventType.TOOL_OUTPUT_CHUNK;
+      expect(scopedEvents.some(isOutput)).toBe(true);
+      expect(rootEvents.some(isOutput)).toBe(false);
+    });
+
+    it('falls back to the construction stream when no execution context is provided', async () => {
+      const rootStream = new ActivityStream();
+      const rootEvents: ActivityEvent[] = [];
+      rootStream.subscribe('*', (e) => rootEvents.push(e));
+
+      const emittingTool = new EmittingTool(rootStream);
+      await emittingTool.execute({}, 'call-1');
+
+      expect(rootEvents.some((e) => e.type === ActivityEventType.TOOL_OUTPUT_CHUNK)).toBe(true);
     });
   });
 

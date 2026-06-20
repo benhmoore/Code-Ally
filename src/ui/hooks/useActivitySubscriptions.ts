@@ -523,10 +523,15 @@ export const useActivitySubscriptions = (
       pendingChunks.current.clear();
     }
 
-    // Capture context usage for the tool call (event.id is the tool call ID)
-    if (event.id && typeof contextUsage === 'number') {
+    // Capture context usage + tool-use count for the tool call (event.id is the
+    // tool call ID). toolUseCount feeds the collapsed "Done (N tool uses)" summary,
+    // since the sub-agent's individual tool calls are stream-isolated and never
+    // ingested into the main conversation.
+    const toolUseCount = event.data?.toolUseCount;
+    if (event.id && (typeof contextUsage === 'number' || typeof toolUseCount === 'number')) {
       scheduleToolUpdate.current(event.id, {
-        contextUsage,
+        ...(typeof contextUsage === 'number' ? { contextUsage } : {}),
+        ...(typeof toolUseCount === 'number' ? { toolUseCount } : {}),
       });
     }
     // Note: isCancelling is cleared via an effect tied to isThinking (see above),

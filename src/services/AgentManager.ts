@@ -19,7 +19,7 @@ import { serializeAgent, parseAgentContent } from '../utils/agentContentUtils.js
 import { validateAgentName } from '../utils/namingValidation.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { BaseTool } from '../tools/BaseTool.js';
-import { AGENT_DELEGATION_TOOLS } from '../config/constants.js';
+import { isAgentDelegationTool, applyLeafDelegationPolicy } from '../config/constants.js';
 import type { AgentData, AgentInfo, BaseAgentConfig } from '../types/agents.js';
 
 export class AgentManager {
@@ -122,7 +122,8 @@ export class AgentManager {
   public computeAllowedTools(
     agentData: AgentData,
     toolManager: ToolManager,
-    allToolNames: string[]
+    allToolNames: string[],
+    agentDepth?: number
   ): string[] | undefined {
     let allowedTools: string[] | undefined;
 
@@ -142,15 +143,17 @@ export class AgentManager {
       allowedTools = undefined;
     }
 
-    // Step 2: Apply can_see_agents filtering
-    if (agentData.can_see_agents === false && allowedTools !== undefined) {
-      // Remove agent delegation tools from explicit list
-      const agentToolNames = new Set<string>(AGENT_DELEGATION_TOOLS);
-      allowedTools = allowedTools.filter(toolName => !agentToolNames.has(toolName));
-    } else if (agentData.can_see_agents === false && allowedTools === undefined) {
-      // Agent is unrestricted but can't see agents - compute all tools except agent tools
-      const agentToolNames = new Set<string>(AGENT_DELEGATION_TOOLS);
-      allowedTools = allToolNames.filter(toolName => !agentToolNames.has(toolName));
+    // Step 2: Apply can_see_agents filtering. Removing delegation tools from an
+    // unrestricted agent first materializes the full tool list, then filters it.
+    if (agentData.can_see_agents === false) {
+      const base = allowedTools ?? allToolNames;
+      allowedTools = base.filter(toolName => !isAgentDelegationTool(toolName));
+    }
+
+    // Step 3: Single-level delegation. A sub-agent (depth >= 1) is a leaf and cannot
+    // delegate further, so strip delegation tools regardless of its declared tools.
+    if (agentDepth !== undefined && agentDepth >= 1) {
+      allowedTools = applyLeafDelegationPolicy(allowedTools ?? allToolNames, agentDepth);
     }
 
     return allowedTools;
@@ -184,10 +187,11 @@ export class AgentManager {
   public buildBaseConfig(
     agentData: AgentData,
     agentType: string,
-    toolManager: ToolManager
+    toolManager: ToolManager,
+    agentDepth?: number
   ): BaseAgentConfig {
     const allToolNames = toolManager.getAllTools().map(t => t.name);
-    const allowedTools = this.computeAllowedTools(agentData, toolManager, allToolNames);
+    const allowedTools = this.computeAllowedTools(agentData, toolManager, allToolNames, agentDepth);
 
     return {
       baseAgentPrompt: agentData.system_prompt,

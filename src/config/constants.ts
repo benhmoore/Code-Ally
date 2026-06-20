@@ -905,7 +905,15 @@ export const AGENT_CONFIG = {
   MIN_SEARCHES_FOR_HIT_RATE: 5,
 
   /** Maximum agent nesting depth (0=root Ally, 1-5=delegated agents) */
-  MAX_AGENT_DEPTH: 5,
+  /**
+   * Maximum agent nesting depth. Single-level delegation: the root agent (depth 0)
+   * may delegate to a sub-agent (depth 1), but sub-agents are leaves and cannot
+   * delegate further. This is the hard backstop — sub-agents are also denied
+   * delegation tools and the agent roster in their prompts (see
+   * applyLeafDelegationPolicy and getAgentSystemPrompt), so depth 2 should never be
+   * attempted; this rejects it if it ever is.
+   */
+  MAX_AGENT_DEPTH: 1,
 
   /** Maximum consecutive permission denial interjections before giving up */
   MAX_INTERJECTION_RETRIES: 5,
@@ -920,12 +928,12 @@ export const AGENT_CONFIG = {
    * Maximum recursion depth for delegation context search (prevents stack overflow)
    *
    * IMPORTANT: Should be MAX_AGENT_DEPTH + 1 to allow searching entire delegation tree.
-   * - MAX_AGENT_DEPTH=5 allows: Ally(0) → A1(1) → A2(2) → A3(3) → A4(4) → A5(5) = 6 levels
-   * - MAX_DELEGATION_RECURSION_DEPTH=6 allows searching all 6 levels
+   * - MAX_AGENT_DEPTH=1 allows: Ally(0) → A1(1) = 2 levels
+   * - MAX_DELEGATION_RECURSION_DEPTH=2 allows searching both levels
    *
    * If you change MAX_AGENT_DEPTH, update this value accordingly.
    */
-  MAX_DELEGATION_RECURSION_DEPTH: 6,
+  MAX_DELEGATION_RECURSION_DEPTH: 2,
 
   /** Maximum concurrent delegations per manager (prevents resource exhaustion) */
   MAX_CONCURRENT_DELEGATIONS: 20,
@@ -1041,6 +1049,25 @@ export const RESPONSE_LOOP_DETECTOR = {
  * Also used to determine when nested tool outputs should be hidden
  */
 export const AGENT_DELEGATION_TOOLS = ['agent', 'manage-agents', 'explore', 'plan', 'sessions', 'agent-ask', 'research'] as const;
+
+/** Set form of {@link AGENT_DELEGATION_TOOLS} for O(1) membership checks. */
+export const AGENT_DELEGATION_TOOL_SET: ReadonlySet<string> = new Set(AGENT_DELEGATION_TOOLS);
+
+/** Whether a tool name delegates to an agent. Single source of truth for delegation-tool checks. */
+export function isAgentDelegationTool(toolName: string | undefined | null): boolean {
+  return toolName != null && AGENT_DELEGATION_TOOL_SET.has(toolName);
+}
+
+/**
+ * Apply the single-level delegation policy. Depth is the single source of truth:
+ * the root agent (depth 0) may delegate; any sub-agent (depth >= 1) is a leaf and
+ * must neither see nor call other agents, so its delegation tools are stripped.
+ * Pairs with omitting the agent roster from leaf system prompts and the hard
+ * MAX_AGENT_DEPTH backstop.
+ */
+export function applyLeafDelegationPolicy(tools: string[], agentDepth: number): string[] {
+  return agentDepth >= 1 ? tools.filter(t => !isAgentDelegationTool(t)) : tools;
+}
 
 // ===========================================
 // THOROUGHNESS LEVELS

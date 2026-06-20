@@ -173,11 +173,12 @@ export class AgentPoolService implements IService {
     // Compute early: agents with initial messages are "fresh" (one-off, not pooled for reuse)
     const shouldCreateFresh = agentConfig.initialMessages && agentConfig.initialMessages.length > 0;
 
-    // RUNTIME ASSERTION: Pooled agents must be specialized to prevent shared resource cleanup
+    // RUNTIME ASSERTION: Pooled agents must be specialized.
     //
-    // Pooled agents share ActivityStream with the main agent. If a pooled agent has
-    // isSpecializedAgent=false, it would call activityStream.cleanup() on finalization
-    // and destroy all UI subscriptions.
+    // Each pooled agent owns a scoped child ActivityStream and tears it down on
+    // finalization. A pooled agent with isSpecializedAgent=false would instead be
+    // treated as the root agent and could cleanup the shared root stream, destroying
+    // all UI subscriptions. Requiring specialization keeps that invariant.
     //
     // This assertion fires when:
     // - Agent has custom ToolManager (filtered tools) - always requires specialization
@@ -274,13 +275,19 @@ export class AgentPoolService implements IService {
       logger.debug(`[AGENT_POOL] Creating agent ${agentId} with default ModelClient`);
     }
 
-    // Create agent with error handling
+    // Create agent with error handling.
+    //
+    // Each pooled agent gets its OWN scoped ActivityStream (keyed by the stable
+    // agentId) so its internal tool calls, output, and thinking are isolated from
+    // the main conversation stream. The delegation lifecycle (AGENT_START/END and
+    // the `agent` tool call itself) is emitted on the PARENT stream by the
+    // delegation tool, so the main view still shows the collapsed delegation.
     let agent: Agent;
     try {
       agent = new Agent(
         modelClient,
         toolManager,
-        this.activityStream,
+        this.activityStream.createScoped(agentId),
         agentConfig,
         this.configManager,
         this.permissionManager

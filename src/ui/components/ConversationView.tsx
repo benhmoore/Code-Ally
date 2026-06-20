@@ -8,7 +8,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
-import { BUFFER_SIZES, AGENT_DELEGATION_TOOLS, LAYOUT } from '@config/constants.js';
+import { LAYOUT } from '@config/constants.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
 import { createDivider } from '../utils/uiHelpers.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -98,30 +98,6 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
     }
   });
 
-  // Limit agent delegations to show only last N tool calls
-  const limitAgentToolCalls = (
-    calls: (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[]
-  ): (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] => {
-    return calls.map(call => {
-      // Check if this is an agent delegation
-      const isAgentDelegation = AGENT_DELEGATION_TOOLS.includes(call.toolName as any);
-
-      if (isAgentDelegation && call.children && call.children.length > BUFFER_SIZES.TOP_ITEMS_PREVIEW) {
-        // Keep total count before limiting
-        call.totalChildCount = call.children.length;
-        // Keep only last N children
-        call.children = call.children.slice(-BUFFER_SIZES.TOP_ITEMS_PREVIEW);
-      }
-
-      // Recursively process children
-      if (call.children?.length) {
-        call.children = limitAgentToolCalls(call.children);
-      }
-
-      return call;
-    });
-  };
-
   // Filter out invisible tools recursively
   const filterInvisibleTools = (
     calls: (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[]
@@ -156,9 +132,10 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
     return result;
   };
 
-  // First limit agent tool calls, then filter invisible tools, then process transparent wrappers
-  const limitedCalls = limitAgentToolCalls(rootCalls);
-  const visibleCalls = filterInvisibleTools(limitedCalls);
+  // Filter invisible tools, then promote transparent wrappers' children.
+  // (Agent delegations no longer carry ingested child tool calls — those are
+  // stream-isolated to the sub-agent — so there is nothing to limit here.)
+  const visibleCalls = filterInvisibleTools(rootCalls);
   return processTransparentWrappers(visibleCalls);
 }
 

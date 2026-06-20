@@ -563,10 +563,13 @@ ${context}${todoContext}`;
  * @param thoroughness - Optional thoroughness level for dynamic regeneration: 'quick', 'medium', 'very thorough', 'uncapped'
  * @param agentType - Optional agent type identifier (e.g., 'explore', 'plan') for thoroughness adjustments
  */
-export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string, callingAgentName?: string, thoroughness?: string, agentType?: string, conversationMessages?: readonly Message[]): Promise<string> {
-  // Get context with agent information filtered by calling agent name
+export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string, callingAgentName?: string, thoroughness?: string, agentType?: string, conversationMessages?: readonly Message[], agentDepth: number = 0): Promise<string> {
+  // Get context with agent information filtered by calling agent name.
+  // Single-level delegation: only the root agent (depth 0 — the main agent or a
+  // root-level custom persona) sees the agent roster. A sub-agent (depth >= 1) is a
+  // leaf and is not shown other agents, reinforcing that it cannot delegate.
   const context = await getContextInfo({
-    includeAgents: true,
+    includeAgents: agentDepth < 1,
     includeProjectInstructions: false,
     tokenManager,
     toolResultManager,

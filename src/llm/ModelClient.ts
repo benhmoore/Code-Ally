@@ -30,6 +30,15 @@ export interface SendOptions {
   /** Suppress thinking display (for background services like title generation) */
   suppressThinking?: boolean;
   /**
+   * Per-request ActivityStream override for thinking/assistant content events.
+   * The model client is shared across agents, so it captured the root stream at
+   * construction. A sub-agent passes its own scoped stream here so its reasoning
+   * and response content stay isolated from the main conversation. Falls back to
+   * the construction-time stream when omitted. Typed 'any' to avoid a circular
+   * dependency (matches ModelClientConfig.activityStream).
+   */
+  activityStream?: any;
+  /**
    * Dynamic max tokens calculated from remaining context.
    * When provided, overrides the client's static maxTokens for this request.
    * Calculated as: floor((contextSize - inputTokens) * 0.9)

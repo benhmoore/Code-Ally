@@ -4,7 +4,7 @@
  * Common UI patterns and utilities for consistent rendering across components.
  */
 
-import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS } from '@config/constants.js';
+import { TEXT_LIMITS, isAgentDelegationTool } from '@config/constants.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 
 /**
@@ -50,7 +50,7 @@ export function createDivider(terminalWidth: number): string {
  * ```
  */
 export function isAgentDelegation(toolName: string): boolean {
-  return (AGENT_DELEGATION_TOOLS as readonly string[]).includes(toolName);
+  return isAgentDelegationTool(toolName);
 }
 
 /**

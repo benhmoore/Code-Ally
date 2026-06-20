@@ -300,6 +300,7 @@ export interface ToolCallState {
   agentId?: string; // Pool agent ID for agent delegations (used to look up agent type)
   agentModel?: string; // Model used by agent delegation (for display when different from primary)
   contextUsage?: number; // Context usage percentage for agent delegations (0-100)
+  toolUseCount?: number; // Tool uses made by an agent delegation (from AGENT_END), shown in the collapsed summary
   isCompacting?: boolean; // Whether this agent is currently compacting its context
   diffPreview?: {
     oldContent: string;
@@ -485,6 +486,14 @@ export interface ToolExecutionContext {
   agentId?: string;
   /** Current agent name for validation */
   agentName?: string;
+  /**
+   * Scoped ActivityStream for this execution. The owning agent's orchestrator sets
+   * this to its (possibly scoped) stream so tool-emitted events — streaming output,
+   * diff previews — route to the agent that ran the tool rather than to whichever
+   * stream the shared tool instance captured at construction. Structurally typed to
+   * avoid a circular import (ActivityEvent is declared in this file).
+   */
+  activityStream?: { emit(event: ActivityEvent): void };
   /** Form response data from user interaction (populated after form submission) */
   formResponse?: Record<string, any>;
 }

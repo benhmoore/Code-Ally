@@ -17,7 +17,7 @@ import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { formatDisplayName } from '../utils/uiHelpers.js';
-import { TEXT_LIMITS, AGENT_DELEGATION_TOOLS, UI_DELAYS, BUFFER_SIZES, ANIMATION_TIMING } from '@config/constants.js';
+import { TEXT_LIMITS, isAgentDelegationTool, UI_DELAYS, BUFFER_SIZES, ANIMATION_TIMING } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -34,8 +34,6 @@ interface ToolCallDisplayProps {
   level?: number;
   /** Config for output display preferences */
   config?: any;
-  /** Whether any ancestor is an agent tool (used to hide non-agent tool outputs) */
-  hasAgentAncestor?: boolean;
   /** Compaction notices to check for nested notices */
   compactionNotices?: CompactionNotice[];
 }
@@ -187,8 +185,6 @@ function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: 
   return subtext;
 }
 
-// Agent tools are imported from constants
-const AGENT_TYPE_TOOLS = new Set<string>(AGENT_DELEGATION_TOOLS);
 const ARROW_BLINK_INTERVAL_MS = 500;
 
 /**
@@ -218,14 +214,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   toolCall,
   level = 0,
   config,
-  hasAgentAncestor = false,
   compactionNotices = [],
 }) => {
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
-
-  // Check if this tool is an agent - if so, children should hide their output
-  const isAgentTool = AGENT_TYPE_TOOLS.has(toolCall.toolName);
-  const childrenHaveAgentAncestor = isAgentTool || hasAgentAncestor;
 
   // Track interjections for this tool call
   const [interjections, setInterjections] = useState<Array<{ message: string; timestamp: number }>>([]);
@@ -305,7 +296,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const durationStr = formatDuration(duration);
 
   // Check if this is an agent delegation
-  const isAgentDelegation = AGENT_DELEGATION_TOOLS.includes(toolCall.toolName as any);
+  const isAgentDelegation = isAgentDelegationTool(toolCall.toolName);
 
   // Determine display name:
   // 1. For agent tools: Use agent_type (foundational value) and transform to Title Case
@@ -390,7 +381,10 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         ? (arrowVisible ? UI_SYMBOLS.NAVIGATION.ARROW_RIGHT : ' ')
         : statusIcon;
 
-  const toolCallCount = toolCall.totalChildCount || 0;
+  // Tool-use count for the collapsed agent summary. Sub-agent tool calls are
+  // stream-isolated and never ingested, so for agent delegations the authoritative
+  // count comes from AGENT_END (toolUseCount); non-agent tools still use child count.
+  const toolCallCount = (isAgentDelegation ? toolCall.toolUseCount : undefined) ?? toolCall.totalChildCount ?? 0;
 
   // Trim all leading/trailing whitespace from output for clean display
   const trimmedOutput = toolCall.output?.trim();
@@ -534,10 +528,10 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Output as threaded child (hidden if collapsed, has agent ancestor, or own hideOutput, unless show_full_tool_output is enabled) */}
+      {/* Output as threaded child (hidden if collapsed or own hideOutput, unless show_full_tool_output is enabled) */}
       {/* For linked plugins (dev mode) or alwaysShowFullOutput tools, always show output - overrides all other settings */}
       {(() => {
-        const shouldShowOutput = toolCall.isLinkedPlugin || toolCall.alwaysShowFullOutput || (!hasAgentAncestor && (!toolCall.hideOutput || config?.show_full_tool_output));
+        const shouldShowOutput = toolCall.isLinkedPlugin || toolCall.alwaysShowFullOutput || (!toolCall.hideOutput || config?.show_full_tool_output);
         if (toolCall.collapsed || !shouldShowOutput || !trimmedOutput || toolCall.error) return null;
 
         // Get the output text to display
@@ -595,8 +589,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       {/* Error output - Show clean error message from error_details */}
       {/* For linked plugins (dev mode), always show errors - overrides all other settings */}
       {(() => {
-        const shouldShowError = toolCall.isLinkedPlugin || !hasAgentAncestor;
-        if (toolCall.collapsed || !shouldShowError || !toolCall.error || !toolCall.result?.error_details) return null;
+        if (toolCall.collapsed || !toolCall.error || !toolCall.result?.error_details) return null;
         // Use structured error_details.message (clean error without tool call formatting)
         const errorMessage = toolCall.result.error_details.message;
         // For linked plugins, show last N lines; otherwise truncate to first line
@@ -767,7 +760,6 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
                     toolCall={item.data}
                     level={level + 1}
                     config={config}
-                    hasAgentAncestor={childrenHaveAgentAncestor}
                     compactionNotices={compactionNotices}
                   />
                 );
@@ -775,21 +767,6 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
             })}
           </>
         );
-      })()}
-
-      {/* Truncation indicator for agent delegations with many tool calls - shown at the end */}
-      {!toolCall.collapsed && (!toolCall.hideOutput || config?.show_full_tool_output) && isAgentDelegation && (() => {
-        const visibleCount = toolCall.children?.length || 0;
-        const hiddenCount = toolCallCount - visibleCount;
-        if (hiddenCount > 0) {
-          return (
-            <Box>
-              <Text>{indent}    </Text>
-              <Text dimColor>+{hiddenCount} more tool use{hiddenCount === 1 ? '' : 's'}</Text>
-            </Box>
-          );
-        }
-        return null;
       })()}
 
       {/* Completion summary for finished agents - always show even when collapsed */}
