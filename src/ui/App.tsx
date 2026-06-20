@@ -593,28 +593,14 @@ const AppContentComponent: React.FC<{
             selectedIndex={modal.messageSelectRequest.selectedIndex}
             visible={true}
           />
-          {/* Hidden InputPrompt for keyboard handling only */}
-          <Box height={0} overflow="hidden">
-            <InputPrompt
-              onSubmit={handleInput}
-              onInterjection={handleInterjection}
-              isActive={true}
-              commandHistory={commandHistory || undefined}
-              completionProvider={completionProvider || undefined}
-              messageSelectRequest={modal.messageSelectRequest}
-              onMessageNavigate={newIndex => {
-                if (modal.messageSelectRequest) {
-                  modal.setMessageSelectRequest({ ...modal.messageSelectRequest, selectedIndex: newIndex });
-                }
-              }}
-              activityStream={activityStream}
-              agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
-            />
-          </Box>
+          {renderKeyboardInput({
+            messageSelectRequest: modal.messageSelectRequest,
+            onMessageNavigate: newIndex => {
+              if (modal.messageSelectRequest) {
+                modal.setMessageSelectRequest({ ...modal.messageSelectRequest, selectedIndex: newIndex });
+              }
+            },
+          })}
         </Box>
       ) : /* Prompt Add Wizard (replaces input when active) */
       modal.promptAddRequest ? (
@@ -688,25 +674,11 @@ const AppContentComponent: React.FC<{
             visible={true}
             loading={modal.modelSelectLoading}
           />
-          {/* Hidden InputPrompt for keyboard handling only */}
-          <Box height={0} overflow="hidden">
-            <InputPrompt
-              onSubmit={handleInput}
-              onInterjection={handleInterjection}
-              isActive={true}
-              commandHistory={commandHistory || undefined}
-              completionProvider={completionProvider || undefined}
-              modelSelectRequest={modal.modelSelectRequest}
-              modelSelectedIndex={modal.modelSelectedIndex}
-              onModelNavigate={modal.setModelSelectedIndex}
-              activityStream={activityStream}
-              agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
-            />
-          </Box>
+          {renderKeyboardInput({
+            modelSelectRequest: modal.modelSelectRequest,
+            modelSelectedIndex: modal.modelSelectedIndex,
+            onModelNavigate: modal.setModelSelectedIndex,
+          })}
         </Box>
       ) : modal.rewindOptionsRequest ? (
         /* Rewind Options Selector (shown after selecting message in rewind) */
@@ -766,21 +738,14 @@ const AppContentComponent: React.FC<{
                 visible={true}
                 patches={patches}
               />
-              {/* Hidden InputPrompt for keyboard handling only */}
-              <Box height={0} overflow="hidden">
-                <InputPrompt
-                  onSubmit={handleInput}
-                  onInterjection={handleInterjection}
-                  isActive={true}
-                  commandHistory={commandHistory || undefined}
-                  completionProvider={completionProvider || undefined}
-                  rewindRequest={modal.rewindRequest}
-                  onRewindNavigate={newIndex => {
+              {renderKeyboardInput({
+                  rewindRequest: modal.rewindRequest,
+                  onRewindNavigate: newIndex => {
                     if (modal.rewindRequest) {
                       modal.setRewindRequest({ ...modal.rewindRequest, selectedIndex: newIndex });
                     }
-                  }}
-                  onRewindEnter={selectedIndex => {
+                  },
+                  onRewindEnter: selectedIndex => {
                     // Show options selector when Enter is pressed
                     const userMessages = state.messages.filter(m => m.role === 'user');
                     const targetMessage = userMessages[selectedIndex];
@@ -818,15 +783,8 @@ const AppContentComponent: React.FC<{
                         });
                       });
                     }
-                  }}
-                  activityStream={activityStream}
-                  agent={agent}
-                  prefillText={modal.inputPrefillText}
-                  onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-                  bufferValue={modal.inputBuffer}
-                  onBufferChange={modal.setInputBuffer}
-                />
-              </Box>
+                  },
+              })}
             </Box>
           );
         })()
@@ -836,28 +794,14 @@ const AppContentComponent: React.FC<{
           {statusIndicator}
 
           <UndoFileList request={modal.undoFileListRequest} visible={true} />
-          {/* Hidden InputPrompt for keyboard handling only */}
-          <Box height={0} overflow="hidden">
-            <InputPrompt
-              onSubmit={handleInput}
-              onInterjection={handleInterjection}
-              isActive={true}
-              commandHistory={commandHistory || undefined}
-              completionProvider={completionProvider || undefined}
-              undoFileListRequest={modal.undoFileListRequest}
-              onUndoFileListNavigate={newIndex => {
-                if (modal.undoFileListRequest) {
-                  modal.setUndoFileListRequest({ ...modal.undoFileListRequest, selectedIndex: newIndex });
-                }
-              }}
-              activityStream={activityStream}
-              agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
-            />
-          </Box>
+          {renderKeyboardInput({
+            undoFileListRequest: modal.undoFileListRequest,
+            onUndoFileListNavigate: newIndex => {
+              if (modal.undoFileListRequest) {
+                modal.setUndoFileListRequest({ ...modal.undoFileListRequest, selectedIndex: newIndex });
+              }
+            },
+          })}
         </Box>
       ) : modal.libraryClearConfirmRequest ? (
         /* Library Clear Confirmation */
@@ -869,29 +813,15 @@ const AppContentComponent: React.FC<{
             selectedIndex={modal.libraryClearConfirmRequest.selectedIndex}
             visible={true}
           />
-          {/* Hidden InputPrompt for keyboard handling only */}
-          <Box height={0} overflow="hidden">
-            <InputPrompt
-              onSubmit={handleInput}
-              onInterjection={handleInterjection}
-              isActive={true}
-              commandHistory={commandHistory || undefined}
-              completionProvider={completionProvider || undefined}
-              libraryClearConfirmRequest={modal.libraryClearConfirmRequest}
-              onLibraryClearConfirmNavigate={newIndex => {
-                modal.setLibraryClearConfirmRequest({
-                  ...modal.libraryClearConfirmRequest!,
-                  selectedIndex: newIndex,
-                });
-              }}
-              activityStream={activityStream}
-              agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
-            />
-          </Box>
+          {renderKeyboardInput({
+            libraryClearConfirmRequest: modal.libraryClearConfirmRequest,
+            onLibraryClearConfirmNavigate: newIndex => {
+              modal.setLibraryClearConfirmRequest({
+                ...modal.libraryClearConfirmRequest!,
+                selectedIndex: newIndex,
+              });
+            },
+          })}
         </Box>
       ) : modal.undoRequest ? (
         /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
@@ -899,25 +829,11 @@ const AppContentComponent: React.FC<{
           {statusIndicator}
 
           <UndoPrompt request={modal.undoRequest} selectedIndex={modal.undoSelectedIndex} visible={true} />
-          {/* Hidden InputPrompt for keyboard handling only */}
-          <Box height={0} overflow="hidden">
-            <InputPrompt
-              onSubmit={handleInput}
-              onInterjection={handleInterjection}
-              isActive={true}
-              commandHistory={commandHistory || undefined}
-              completionProvider={completionProvider || undefined}
-              undoRequest={modal.undoRequest}
-              undoSelectedIndex={modal.undoSelectedIndex}
-              onUndoNavigate={modal.setUndoSelectedIndex}
-              activityStream={activityStream}
-              agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
-            />
-          </Box>
+          {renderKeyboardInput({
+            undoRequest: modal.undoRequest,
+            undoSelectedIndex: modal.undoSelectedIndex,
+            onUndoNavigate: modal.setUndoSelectedIndex,
+          })}
         </Box>
       ) : modal.toolFormRequest ? (
         /* Tool Form Wizard (replaces input when active) */
@@ -975,27 +891,13 @@ const AppContentComponent: React.FC<{
             cursorPosition={modal.planApprovalCursorPosition}
             onCursorChange={modal.setPlanApprovalCursorPosition}
           />
-          {/* Hidden InputPrompt for keyboard handling only */}
-          <Box height={0} overflow="hidden">
-            <InputPrompt
-              onSubmit={handleInput}
-              onInterjection={handleInterjection}
-              isActive={true}
-              commandHistory={commandHistory || undefined}
-              completionProvider={completionProvider || undefined}
-              planApprovalRequest={modal.planApprovalRequest}
-              planApprovalSelectedIndex={modal.planApprovalSelectedIndex}
-              onPlanApprovalNavigate={modal.setPlanApprovalSelectedIndex}
-              planApprovalFeedbackText={modal.planApprovalFeedbackText}
-              onPlanApprovalFeedbackSubmit={handleInterjection}
-              activityStream={activityStream}
-              agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
-            />
-          </Box>
+          {renderKeyboardInput({
+            planApprovalRequest: modal.planApprovalRequest,
+            planApprovalSelectedIndex: modal.planApprovalSelectedIndex,
+            onPlanApprovalNavigate: modal.setPlanApprovalSelectedIndex,
+            planApprovalFeedbackText: modal.planApprovalFeedbackText,
+            onPlanApprovalFeedbackSubmit: handleInterjection,
+          })}
         </Box>
       ) : modal.permissionRequest ? (
         /* Permission Prompt (replaces input when active) */
@@ -1013,31 +915,17 @@ const AppContentComponent: React.FC<{
             onCursorChange={modal.setPermissionCursorPosition}
             queueLength={modal.permissionRequestQueueLength}
           />
-          {/* Hidden InputPrompt for keyboard handling only */}
-          <Box height={0} overflow="hidden">
-            <InputPrompt
-              onSubmit={handleInput}
-              onInterjection={handleInterjection}
-              isActive={true}
-              commandHistory={commandHistory || undefined}
-              completionProvider={completionProvider || undefined}
-              permissionRequest={modal.permissionRequest}
-              permissionSelectedIndex={modal.permissionSelectedIndex}
-              onPermissionNavigate={modal.setPermissionSelectedIndex}
-              onAutoAllowToggle={() => modal.setAutoAllowMode(!modal.autoAllowMode)}
-              onSwitchToDefault={handleSwitchToDefault}
-              currentAgent={state.currentAgent}
-              defaultAgent={defaultAgent}
-              activityStream={activityStream}
-              agent={agent}
-              prefillText={modal.inputPrefillText}
-              onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-              bufferValue={modal.inputBuffer}
-              onBufferChange={modal.setInputBuffer}
-              permissionInstructText={modal.permissionInstructText}
-              onPermissionInstructSubmit={handleInterjection}
-            />
-          </Box>
+          {renderKeyboardInput({
+            permissionRequest: modal.permissionRequest,
+            permissionSelectedIndex: modal.permissionSelectedIndex,
+            onPermissionNavigate: modal.setPermissionSelectedIndex,
+            onAutoAllowToggle: () => modal.setAutoAllowMode(!modal.autoAllowMode),
+            onSwitchToDefault: handleSwitchToDefault,
+            currentAgent: state.currentAgent,
+            defaultAgent: defaultAgent,
+            permissionInstructText: modal.permissionInstructText,
+            onPermissionInstructSubmit: handleInterjection,
+          })}
         </Box>
       ) : (
         /* Input Group - Status Indicator + Input Prompt */
