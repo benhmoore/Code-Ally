@@ -73,6 +73,7 @@ export class TreeTool extends BaseTool {
   readonly description =
     'Display directory tree structure for one or more paths. Automatically filters out build artifacts, dependencies, and temporary files. More efficient than multiple ls calls.';
   readonly requiresConfirmation = false; // Read-only operation
+  readonly hideOutput = true;
   readonly isExploratoryTool = true;
 
   readonly usageGuidance = `**When to use tree:**
@@ -523,7 +524,10 @@ Prefer over multiple ls calls.`;
     const paths = args.paths as string[];
     if (!paths || !Array.isArray(paths) || paths.length === 0) return null;
 
-    return paths.join(', ');
+    const visiblePaths = paths.filter(treePath => treePath !== '.' && treePath !== './');
+    if (visiblePaths.length === 0) return null;
+
+    return visiblePaths.join(', ');
   }
 
   /**

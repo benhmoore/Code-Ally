@@ -710,6 +710,7 @@ export const useInputHandlers = (
               arguments: { paths: filteredMentions.directories },
               visibleInChat: treeTool.visibleInChat ?? true,
               isTransparent: treeTool.isTransparentWrapper || false,
+              hideOutput: treeTool.hideOutput || false,
             },
           });
 

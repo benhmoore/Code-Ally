@@ -46,6 +46,15 @@ describe('TreeTool', () => {
     });
   });
 
+  describe('display behavior', () => {
+    it('hides tree output and omits the default dot path from subtext', () => {
+      expect(treeTool.hideOutput).toBe(true);
+      expect(treeTool.formatSubtext({ paths: ['.'] })).toBeNull();
+      expect(treeTool.formatSubtext({ paths: ['./'] })).toBeNull();
+      expect(treeTool.formatSubtext({ paths: ['src'] })).toBe('src');
+    });
+  });
+
   describe('getResultPreview', () => {
     it('previews the compact display tree instead of the raw model content', async () => {
       const result = await treeTool.execute({
