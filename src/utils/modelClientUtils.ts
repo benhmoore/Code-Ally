@@ -116,17 +116,15 @@ export async function getModelClientForAgent(
     `${context} Creating dedicated client (model: ${targetModel}, reasoning_effort: ${resolvedReasoningEffort}, maxTokens: ${effectiveMaxTokens})`
   );
 
-  // Dynamically import OllamaClient to avoid circular dependencies
-  const { OllamaClient } = await import('../llm/OllamaClient.js');
-
-  // Create dedicated client with agent-specific settings
-  return new OllamaClient({
-    endpoint: appConfig.endpoint,
+  // Route through the factory so the dedicated client honors the configured
+  // provider, sampling, and auth — not just the Ollama defaults.
+  const { createModelClient } = await import('../llm/createModelClient.js');
+  return createModelClient({
+    config: appConfig,
     modelName: targetModel,
     temperature: agentConfig?.temperature ?? appConfig.temperature,
-    contextSize: appConfig.context_size,
     maxTokens: effectiveMaxTokens,
-    activityStream: activityStream,
     reasoningEffort: resolvedReasoningEffort,
+    activityStream,
   });
 }

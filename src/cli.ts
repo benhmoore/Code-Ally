@@ -19,7 +19,7 @@ import { ActivityStream } from './services/ActivityStream.js';
 import { FormManager } from './services/FormManager.js';
 import { PathResolver } from './services/PathResolver.js';
 import { TodoManager } from './services/TodoManager.js';
-import { OllamaClient } from './llm/OllamaClient.js';
+import { createModelClient } from './llm/createModelClient.js';
 import { MessageHistory } from './llm/MessageHistory.js';
 import { ToolManager } from './tools/ToolManager.js';
 import { TrustManager } from './agent/TrustManager.js';
@@ -883,29 +883,13 @@ async function main() {
     registry.registerInstance('patch_manager', patchManager);
 
     // Create LLM client (main agent model)
-    const modelClient = new OllamaClient({
-      endpoint: config.endpoint,
-      modelName: config.model,
-      temperature: config.temperature,
-      contextSize: config.context_size,
-      maxTokens: config.max_tokens,
-      reasoningEffort: config.reasoning_effort,
-      activityStream,
-    });
+    const modelClient = await createModelClient({ config, activityStream });
     registry.registerInstance('model_client', modelClient);
 
     // Create service model client (for background services like titles, idle messages)
     // Defaults to main model if service_model not specified
     const serviceModelName = config.service_model ?? config.model;
-    const serviceModelClient = new OllamaClient({
-      endpoint: config.endpoint,
-      modelName: serviceModelName,
-      temperature: config.temperature,
-      contextSize: config.context_size,
-      maxTokens: config.max_tokens,
-      reasoningEffort: config.reasoning_effort,
-      activityStream,
-    });
+    const serviceModelClient = await createModelClient({ config, modelName: serviceModelName, activityStream });
     registry.registerInstance('service_model_client', serviceModelClient);
 
     // Create session title generator for idle task coordination

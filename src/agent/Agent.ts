@@ -236,6 +236,11 @@ export class Agent {
   // Timeout continuation tracking - counts attempts to continue after activity timeout
   private timeoutContinuationAttempts: number = 0;
 
+  // Per-turn LLM round-trip backstop. Counts every call to getLLMResponse within a
+  // turn (productive tool loop + all retry/continuation paths). Reset at the start
+  // of each user turn; enforced in getLLMResponse to stop runaway loops.
+  private llmRoundTripsThisTurn: number = 0;
+
   // Cleanup queue - tool call IDs to remove at end of turn
   // cleanup-call queues IDs here, they're removed after model completes response
   private pendingCleanupIds: string[] = [];
@@ -906,6 +911,9 @@ export class Agent {
     // Reset timeout continuation counter on new user input
     this.timeoutContinuationAttempts = 0;
 
+    // Reset the per-turn LLM round-trip backstop counter
+    this.llmRoundTripsThisTurn = 0;
+
     // Reset exploratory tool streak on new user input
     this.toolOrchestrator.resetExploratoryStreak();
 
@@ -1266,6 +1274,19 @@ export class Agent {
    * @returns LLM response with potential tool calls
    */
   private async getLLMResponse(executionContext: AgentExecutionContext): Promise<LLMResponse> {
+    // Per-turn round-trip backstop: stop a runaway loop (e.g. a model that keeps
+    // emitting empty/malformed output or never satisfies a requirement) before it
+    // fills the context window. Returns a plain text response with no tool calls,
+    // so the loop terminates gracefully on the next processing pass.
+    this.llmRoundTripsThisTurn++;
+    if (this.llmRoundTripsThisTurn > AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN) {
+      logger.warn('[AGENT]', this.instanceId, `Reached per-turn round-trip limit (${AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN}); stopping to avoid an unbounded loop`);
+      return {
+        role: 'assistant',
+        content: `I've reached the maximum number of model round-trips for this turn (${AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN}) and am stopping to avoid an unbounded loop. The task may be incomplete — please review what was done and let me know how you'd like to proceed.`,
+      };
+    }
+
     // Get function definitions from tool manager
     // Exclude restricted tools based on agent type
     const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
@@ -1380,7 +1401,8 @@ export class Agent {
       // Hand the model client this agent's request signal so an interrupt cancels
       // ONLY this agent's request — never sibling/background agents that share the
       // same underlying client.
-      const response = await this.modelClient.send(this.conversationManager.getMessages(), {
+      const sentMessages = this.conversationManager.getMessages();
+      const response = await this.modelClient.send(sentMessages, {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
         stream: !this.config.isSpecializedAgent && this.appConfig.parallel_tools,
@@ -1394,6 +1416,15 @@ export class Agent {
         dynamicMaxTokens,
         signal: this.interruptionManager.beginRequest(),
       });
+
+      // Calibrate the token estimator against the backend's actual prompt-token
+      // count. The gap (tool schemas, chat template, the model's own tokenizer)
+      // is what the message-only estimate misses; feeding it back keeps budget
+      // decisions accurate for whatever open model is running.
+      if (response.usage?.promptTokens) {
+        const estimated = this.tokenManager.estimateMessagesTokens(sentMessages);
+        this.tokenManager.calibrate(estimated, response.usage.promptTokens);
+      }
 
       // Remove ephemeral system-reminder messages after receiving response
       // These are temporary context hints that should not persist

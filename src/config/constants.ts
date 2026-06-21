@@ -883,6 +883,15 @@ export const AGENT_CONFIG = {
   /** Maximum tool call history for cycle detection (sliding window) */
   MAX_TOOL_HISTORY: 15,
 
+  /**
+   * Hard backstop on LLM round-trips within a single user turn (productive tool
+   * loop + every retry/continuation path combined). Set high enough that no
+   * legitimate task reaches it; it exists only to stop a model that spirals on
+   * empty/malformed output or never-satisfied requirements from running until the
+   * context fills. On exhaustion the turn ends gracefully with a stop message.
+   */
+  MAX_LLM_ROUNDTRIPS_PER_TURN: 150,
+
   /** Number of identical tool calls that trigger cycle detection */
   CYCLE_THRESHOLD: 3,
 
@@ -1147,16 +1156,6 @@ export type ReasoningEffort = typeof REASONING_EFFORT[keyof typeof REASONING_EFF
  * Valid reasoning effort values for API (excludes INHERIT)
  */
 export const REASONING_EFFORT_API_VALUES = [
-  REASONING_EFFORT.LOW,
-  REASONING_EFFORT.MEDIUM,
-  REASONING_EFFORT.HIGH,
-] as const;
-
-/**
- * All valid reasoning effort values including INHERIT (for agent configuration)
- */
-export const REASONING_EFFORT_ALL_VALUES = [
-  REASONING_EFFORT.INHERIT,
   REASONING_EFFORT.LOW,
   REASONING_EFFORT.MEDIUM,
   REASONING_EFFORT.HIGH,

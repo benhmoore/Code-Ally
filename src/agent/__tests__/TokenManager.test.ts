@@ -248,4 +248,52 @@ describe('TokenManager', () => {
       expect(tokenManager.hasSeenContent('/path/to/file')).toBe(false);
     });
   });
+
+  describe('Calibration against server token counts', () => {
+    const message: Message = { id: 'm1', role: 'user', content: 'hello world', timestamp: 1 };
+
+    it('starts with zero overhead (no calibration applied)', () => {
+      expect(tokenManager.getCalibrationOverhead()).toBe(0);
+      tokenManager.updateTokenCount([message]);
+      expect(tokenManager.getCurrentTokenCount()).toBeGreaterThan(0);
+    });
+
+    it('adds the measured gap so reported counts track the server', () => {
+      tokenManager.updateTokenCount([message]);
+      const estimated = tokenManager.estimateMessagesTokens([message]);
+      // Server says the prompt was 500 tokens larger (tool schemas + template).
+      tokenManager.calibrate(estimated, estimated + 500);
+      expect(tokenManager.getCalibrationOverhead()).toBe(500);
+      expect(tokenManager.getCurrentTokenCount()).toBe(estimated + 500);
+    });
+
+    it('snaps to the first sample then smooths subsequent ones', () => {
+      tokenManager.calibrate(1000, 1400); // gap 400, first sample snaps
+      expect(tokenManager.getCalibrationOverhead()).toBe(400);
+      tokenManager.calibrate(1000, 1900); // gap 900, EMA: 400*0.6 + 900*0.4 = 600
+      expect(tokenManager.getCalibrationOverhead()).toBe(600);
+    });
+
+    it('ignores invalid or non-positive samples', () => {
+      tokenManager.calibrate(0, 500);
+      tokenManager.calibrate(NaN, 500);
+      tokenManager.calibrate(500, 0);
+      expect(tokenManager.getCalibrationOverhead()).toBe(0);
+    });
+
+    it('never reports a negative count even with a large negative gap', () => {
+      tokenManager.updateTokenCount([message]);
+      const estimated = tokenManager.estimateMessagesTokens([message]);
+      tokenManager.calibrate(estimated, 1); // huge over-estimate
+      expect(tokenManager.getCurrentTokenCount()).toBeGreaterThanOrEqual(0);
+      expect(tokenManager.getRemainingTokens()).toBeGreaterThanOrEqual(0);
+    });
+
+    it('is cleared by reset()', () => {
+      tokenManager.calibrate(1000, 1500);
+      expect(tokenManager.getCalibrationOverhead()).toBe(500);
+      tokenManager.reset();
+      expect(tokenManager.getCalibrationOverhead()).toBe(0);
+    });
+  });
 });

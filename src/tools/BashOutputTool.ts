@@ -77,7 +77,7 @@ export class BashOutputTool extends BaseTool {
         return this.formatErrorResponse(
           `Invalid regex pattern: ${formatError(error)}`,
           'validation_error',
-          'Example: bash-output(bash_id="shell-123", filter="ERROR.*")'
+          'Example: bash-output(shell_id="shell-123", filter="ERROR.*")'
         );
       }
     }

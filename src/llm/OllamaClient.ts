@@ -17,11 +17,15 @@ import {
   ModelClientConfig,
   SendOptions,
   LLMResponse,
+  SamplingParams,
 } from './ModelClient.js';
 import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
+import { resolveModelProfile } from './modelProfile.js';
+import { buildRequestHeaders } from './requestHeaders.js';
+import { CircuitBreaker, runWithRetries } from './httpTransport.js';
 
 /**
  * Ollama API payload structure
@@ -30,15 +34,28 @@ interface OllamaPayload {
   model: string;
   messages: readonly Message[];
   stream: boolean;
+  /**
+   * Model unload timing. Ollama reads keep_alive as a TOP-LEVEL field of
+   * /api/chat — placing it under `options` (as earlier versions did) silently
+   * has no effect.
+   */
+  keep_alive?: number;
   options: {
     temperature: number;
     num_ctx: number;
     num_predict: number;
-    keep_alive?: number;
+    top_p?: number;
+    top_k?: number;
+    min_p?: number;
+    repeat_penalty?: number;
+    stop?: string[];
   };
   tools?: FunctionDefinition[];
   tool_choice?: string;
-  reasoning_effort?: string; // For gpt-oss and reasoning models
+  /** OpenAI-style reasoning knob — gpt-oss family only. */
+  reasoning_effort?: string;
+  /** Ollama's generic reasoning toggle — GLM/DeepSeek-R1/QwQ/etc. */
+  think?: boolean;
 }
 
 /**
@@ -47,7 +64,18 @@ interface OllamaPayload {
 interface ValidationResult {
   valid: boolean;
   errors: string[];
-  partial_repairs?: any[];
+}
+
+/**
+ * Extract server-reported token usage from an Ollama chunk/response, if present.
+ * Ollama puts prompt_eval_count / eval_count on the final (done) object.
+ */
+function extractOllamaUsage(obj: any): LLMResponse['usage'] | undefined {
+  if (!obj) return undefined;
+  const promptTokens = typeof obj.prompt_eval_count === 'number' ? obj.prompt_eval_count : undefined;
+  const completionTokens = typeof obj.eval_count === 'number' ? obj.eval_count : undefined;
+  if (promptTokens === undefined && completionTokens === undefined) return undefined;
+  return { promptTokens, completionTokens };
 }
 
 export class OllamaClient extends ModelClient {
@@ -58,14 +86,15 @@ export class OllamaClient extends ModelClient {
   private _maxTokens: number; // Not readonly - allows runtime changes
   private _reasoningEffort?: string; // Not readonly - allows runtime changes
   private readonly keepAlive?: number;
+  private readonly sampling?: SamplingParams;
+  private readonly requestHeaders: Record<string, string>;
   private apiUrl: string;
   private readonly activityStream?: ActivityStream;
 
   // Track active requests for cancellation (keyed by request ID)
   private activeRequests: Map<string, AbortController> = new Map();
 
-  private circuitBreakerFailures: number = 0;
-  private circuitBreakerOpenUntil: number = 0;
+  private readonly breaker = new CircuitBreaker();
 
   /**
    * Initialize the Ollama client
@@ -92,6 +121,8 @@ export class OllamaClient extends ModelClient {
     this._maxTokens = config.maxTokens;
     this._reasoningEffort = config.reasoningEffort;
     this.keepAlive = config.keepAlive;
+    this.sampling = config.sampling;
+    this.requestHeaders = buildRequestHeaders({ apiKey: config.apiKey, headers: config.headers });
     this.activityStream = config.activityStream;
     this.apiUrl = `${this._endpoint}/api/chat`;
   }
@@ -113,8 +144,7 @@ export class OllamaClient extends ModelClient {
     logger.debug(`[OLLAMA_CLIENT] Changing endpoint from ${this._endpoint} to ${newEndpoint}`);
     this._endpoint = newEndpoint;
     this.apiUrl = `${this._endpoint}/api/chat`;
-    this.circuitBreakerFailures = 0;
-    this.circuitBreakerOpenUntil = 0;
+    this.breaker.reset();
   }
 
   /**
@@ -195,7 +225,7 @@ export class OllamaClient extends ModelClient {
    * @returns Promise resolving to the LLM's response
    */
   async send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse> {
-    const { functions, stream = false, maxRetries: _maxRetries = 3, temperature, parentId, suppressThinking = false, dynamicMaxTokens, signal } = options;
+    const { functions, stream = false, temperature, parentId, suppressThinking = false, dynamicMaxTokens, signal } = options;
 
     // Per-request stream override: a sub-agent supplies its scoped stream so its
     // thinking/assistant events route to its own stream instead of the shared root.
@@ -206,34 +236,40 @@ export class OllamaClient extends ModelClient {
     const requestId = `req-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
     logger.debug('[OLLAMA_CLIENT] Starting request:', requestId);
 
-    // Reset circuit breaker at the start of each new request
-    // This ensures each user request gets a fresh start, while the circuit breaker
-    // still protects against persistent failures during retries within this request
-    this.circuitBreakerFailures = 0;
-    this.circuitBreakerOpenUntil = 0;
-
     // Prepare payload
     const payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
 
     try {
-      // Infinite retry loop with capped exponential backoff
-      let attempt = 0;
-      const startTime = Date.now();
-
-      while (true) {
-        // Check circuit breaker
-        if (Date.now() < this.circuitBreakerOpenUntil) {
-          logger.error('[OLLAMA_CLIENT] Circuit breaker open - Ollama appears to be persistently failing');
-          return this.handleRequestError(new Error('Circuit breaker open - retries paused'));
-        }
-
-        // Check total time budget
-        if (Date.now() - startTime > RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME) {
-          logger.error('[OLLAMA_CLIENT] Maximum retry time exceeded (30 minutes)');
-          return this.handleRequestError(new Error('Request timeout after 30 minutes'));
-        }
-
-        try {
+      // Shared retry policy (capped backoff + circuit breaker + time budget).
+      // The per-attempt work below is Ollama-specific; the loop is not.
+      return await runWithRetries<LLMResponse>({
+        breaker: this.breaker,
+        onRetry: (label, delaySec, attemptNum) => {
+          logger.debug(`[OLLAMA_CLIENT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attemptNum})...`);
+          this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
+        },
+        onInterrupted: () => {
+          logger.debug('[OLLAMA_CLIENT] Request aborted:', requestId);
+          return {
+            role: 'assistant',
+            content: '', // Empty content - don't pollute conversation history
+            interrupted: true,
+          };
+        },
+        onError: (error: any) => {
+          logger.debug(`[OLLAMA_CLIENT] Non-retryable error on request ${requestId}`);
+          // Check if this is an image-related error
+          const errorMsg = error.message || String(error);
+          const isImageError = errorMsg.includes('Cannot decode or download image') ||
+                               errorMsg.includes('image') && (error.httpStatus === 400 || error.httpStatus === 415);
+          const errorResponse = this.handleRequestError(error);
+          if (isImageError) {
+            logger.debug('[OLLAMA_CLIENT] Image-related error detected - marking for image removal from history');
+            (errorResponse as any).shouldStripImages = true;
+          }
+          return errorResponse;
+        },
+        attempt: async (attempt) => {
           // Execute request with cancellation support
           const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream);
 
@@ -241,9 +277,9 @@ export class OllamaClient extends ModelClient {
           if (result.tool_calls && result.tool_calls.length > 0) {
             const validationResult = this.normalizeToolCallsInMessage(result);
 
-            // GAP 3: Return validation error response for Agent-level continuation
-            // Instead of retrying the entire request, return error response with malformed tool calls
-            // This allows Agent to add the assistant's response to history and request continuation
+            // Return a validation-error response for Agent-level continuation rather
+            // than retrying the whole request. This is a terminal (non-retried)
+            // outcome, so it is returned from attempt() — not thrown.
             if (!validationResult.valid) {
               logger.warn(
                 `[OLLAMA_CLIENT] Tool call validation failed in ${stream ? 'streaming' : 'non-streaming'} response, ` +
@@ -251,7 +287,6 @@ export class OllamaClient extends ModelClient {
               );
               logger.debug('[OLLAMA_CLIENT] Validation errors:', validationResult.errors);
 
-              // Return error response with malformed tool calls and validation errors
               return {
                 role: 'assistant',
                 content: result.content || '',
@@ -263,67 +298,9 @@ export class OllamaClient extends ModelClient {
             }
           }
 
-          // Validation passed or no tool calls - reset circuit breaker and return result
-          this.circuitBreakerFailures = 0;
           return result;
-        } catch (error: any) {
-          // Handle abort/interruption
-          if (error.name === 'AbortError') {
-            logger.debug('[OLLAMA_CLIENT] Request aborted:', requestId);
-            return {
-              role: 'assistant',
-              content: '', // Empty content - don't pollute conversation history
-              interrupted: true,
-            };
-          }
-
-          // Classify error and retry with jittered exponential backoff
-          const errorClass = this.classifyError(error);
-
-          if (errorClass !== 'non_retryable') {
-            const circuitError = this.incrementCircuitBreakerFailure();
-            if (circuitError) {
-              return this.handleRequestError(circuitError);
-            }
-
-            const delayMs = this.getRetryDelayMs(attempt);
-            const delaySec = (delayMs / 1000).toFixed(1);
-
-            const labels: Record<string, string> = {
-              network: 'Connection failed',
-              server: `Server error (HTTP ${error.httpStatus})`,
-              json: 'Response parse error',
-              stream_timeout: 'Stream timeout',
-              rate_limit: 'Rate limited',
-            };
-            const label = labels[errorClass] || 'Error';
-
-            logger.debug(`[OLLAMA_CLIENT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attempt + 1})...`);
-            this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
-            await this.sleep(delayMs);
-            attempt++;
-            continue;
-          }
-
-          // Non-retryable error - return error response
-          logger.debug(`[OLLAMA_CLIENT] Non-retryable error on request ${requestId}`);
-
-          // Check if this is an image-related error
-          const errorMsg = error.message || String(error);
-          const isImageError = errorMsg.includes('Cannot decode or download image') ||
-                               errorMsg.includes('image') && (error.httpStatus === 400 || error.httpStatus === 415);
-
-          const errorResponse = this.handleRequestError(error);
-
-          // If image error, mark response to trigger image stripping from history
-          if (isImageError) {
-            logger.debug('[OLLAMA_CLIENT] Image-related error detected - marking for image removal from history');
-            (errorResponse as any).shouldStripImages = true;
-          }
-
-          return errorResponse;
-        }
-      }
+        },
+      });
     } finally {
       // Always clean up request tracking
       logger.debug('[OLLAMA_CLIENT] Cleaning up request:', requestId);
@@ -352,13 +329,33 @@ export class OllamaClient extends ModelClient {
       },
     };
 
-    if (this.keepAlive !== undefined) {
-      payload.options.keep_alive = this.keepAlive;
+    // Apply explicit sampling overrides. Only set fields are copied through, so
+    // an unset field preserves the model's own Modelfile default.
+    if (this.sampling) {
+      const { top_p, top_k, min_p, repeat_penalty, stop } = this.sampling;
+      if (top_p !== undefined) payload.options.top_p = top_p;
+      if (top_k !== undefined) payload.options.top_k = top_k;
+      if (min_p !== undefined) payload.options.min_p = min_p;
+      if (repeat_penalty !== undefined) payload.options.repeat_penalty = repeat_penalty;
+      if (stop !== undefined && stop.length > 0) payload.options.stop = stop;
     }
 
-    // Add reasoning_effort if configured (for gpt-oss and reasoning models)
-    if (this._reasoningEffort) {
-      payload.reasoning_effort = this._reasoningEffort;
+    // keep_alive is a TOP-LEVEL field of /api/chat (Ollama ignores it under options).
+    if (this.keepAlive !== undefined) {
+      payload.keep_alive = this.keepAlive;
+    }
+
+    // Reasoning control is family-specific: gpt-oss uses `reasoning_effort`,
+    // the GLM/DeepSeek-R1/QwQ family uses the generic `think` boolean, and
+    // non-reasoning models get neither (sending either is at best ignored and
+    // at worst rejected by the backend).
+    const profile = resolveModelProfile(this._modelName);
+    if (profile.reasoningControl === 'reasoning_effort') {
+      if (this._reasoningEffort) {
+        payload.reasoning_effort = this._reasoningEffort;
+      }
+    } else if (profile.reasoningControl === 'think') {
+      payload.think = true;
     }
 
     // Add function definitions if provided
@@ -420,9 +417,7 @@ export class OllamaClient extends ModelClient {
       // Create fetch promise
       const fetchPromise = fetch(this.apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.requestHeaders,
         body: JSON.stringify(payload),
         signal: abortController.signal,
       });
@@ -620,6 +615,8 @@ export class OllamaClient extends ModelClient {
 
             // Check for completion
             if (chunkData.done) {
+              const usage = extractOllamaUsage(chunkData);
+              if (usage) aggregatedMessage.usage = usage;
               break;
             }
           } catch (parseError) {
@@ -667,6 +664,10 @@ export class OllamaClient extends ModelClient {
           if (message.tool_calls) {
             aggregatedMessage.tool_calls = message.tool_calls;
           }
+
+          // Capture server-reported token usage from the final chunk
+          const usage = extractOllamaUsage(chunkData);
+          if (usage) aggregatedMessage.usage = usage;
         } catch (parseError) {
           // Final buffer wasn't valid JSON - log for debugging
           logger.warn('[OLLAMA_CLIENT] Failed to parse final buffer content:', parseError);
@@ -769,6 +770,9 @@ export class OllamaClient extends ModelClient {
       this.convertFunctionCallToToolCalls(response, message.function_call);
     }
 
+    const usage = extractOllamaUsage(data);
+    if (usage) response.usage = usage;
+
     return response;
   }
 
@@ -827,7 +831,6 @@ export class OllamaClient extends ModelClient {
     return {
       valid: errors.length === 0,
       errors,
-      partial_repairs: validCalls,
     };
   }
 
@@ -892,23 +895,6 @@ export class OllamaClient extends ModelClient {
     return { valid: true, errors: [], repaired };
   }
 
-
-  /**
-   * Increments circuit breaker failure counter and opens circuit if threshold exceeded.
-   * @returns Error to return if circuit breaker opened, null otherwise
-   */
-  private incrementCircuitBreakerFailure(): Error | null {
-    this.circuitBreakerFailures++;
-    if (this.circuitBreakerFailures >= RETRY_CONFIG.CIRCUIT_BREAKER_THRESHOLD) {
-      this.circuitBreakerOpenUntil = Date.now() + RETRY_CONFIG.CIRCUIT_BREAKER_COOLDOWN;
-      logger.warn(
-        `[OLLAMA_CLIENT] Circuit breaker opened after ${RETRY_CONFIG.CIRCUIT_BREAKER_THRESHOLD} consecutive failures`
-      );
-      return new Error('Too many consecutive failures');
-    }
-    return null;
-  }
-
   /**
    * Handle request errors and generate user-friendly responses
    */
@@ -961,56 +947,6 @@ export class OllamaClient extends ModelClient {
       error: true,
       suggestions,
     };
-  }
-
-  /**
-   * Classify an error for retry decisions.
-   * Returns a category that determines retry strategy.
-   */
-  private classifyError(error: any): 'network' | 'server' | 'json' | 'stream_timeout' | 'rate_limit' | 'non_retryable' {
-    if (error.name === 'AbortError') return 'non_retryable';
-
-    if (error.httpStatus === 429) return 'rate_limit';
-
-    if (
-      error.name === 'TypeError' ||
-      error.message?.includes('fetch') ||
-      error.message?.includes('network') ||
-      error.message?.includes('ECONNREFUSED') ||
-      error.message?.includes('ECONNRESET') ||
-      error.message?.includes('EPIPE') ||
-      error.message?.includes('ETIMEDOUT')
-    ) return 'network';
-
-    if (error.httpStatus === 500 || error.httpStatus === 503) return 'server';
-
-    if (error instanceof SyntaxError) return 'json';
-
-    if (error.message?.includes('Stream read timeout')) return 'stream_timeout';
-
-    return 'non_retryable';
-  }
-
-  /**
-   * Compute retry delay with exponential backoff and jitter.
-   *
-   * Formula: base * 2^attempt + random(0, 0.25 * base * 2^attempt)
-   * This spreads retries across time to avoid thundering herds.
-   */
-  private getRetryDelayMs(attempt: number, maxDelaySeconds: number = RETRY_CONFIG.MAX_BACKOFF_SECONDS): number {
-    const baseDelayMs = Math.min(
-      1000 * Math.pow(2, attempt),
-      maxDelaySeconds * 1000
-    );
-    const jitter = Math.random() * 0.25 * baseDelayMs;
-    return baseDelayMs + jitter;
-  }
-
-  /**
-   * Sleep for specified milliseconds
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**

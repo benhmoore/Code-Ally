@@ -76,7 +76,7 @@ export const SYSTEM_REMINDERS = {
     TOOL_CALL_ERRORS: {
       text: (errors: string[]) => {
         const errorDetails = errors.join('\n- ');
-        return `Your previous response contained tool call validation errors:\n- ${errorDetails}\n\nPlease try again with properly formatted tool calls.`;
+        return `Your previous response contained tool call validation errors:\n- ${errorDetails}\n\nTo fix: every tool call needs (1) a valid tool name from the available tools, and (2) an "arguments" object holding exactly the parameters that tool's schema requires — as structured fields, never a JSON string. Re-issue the corrected call(s); do not repeat the same malformed call.`;
       },
       persist: false,
     },

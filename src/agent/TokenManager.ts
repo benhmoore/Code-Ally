@@ -27,9 +27,21 @@ const MAX_CACHE_SIZE = 1000;
 /** Target cache size after cleanup (keeps most recent entries) */
 const CACHE_CLEANUP_TARGET = 500;
 
+/** EMA weight applied to each new calibration sample after the first. */
+const CALIBRATION_ALPHA = 0.4;
+
 export class TokenManager {
   private contextSize: number;
   private currentTokenCount: number = 0;
+  /**
+   * Smoothed gap (in tokens) between the backend's actual prompt-token count and
+   * our local message estimate. Captures the fixed overhead the estimate omits —
+   * tool schemas, the chat template, and the model's own tokenizer vs Anthropic's.
+   * Added to every reported count so budget decisions track what the server
+   * actually sees. Starts at 0 (no correction) and converges within a turn or two.
+   */
+  private overheadTokens: number = 0;
+  private calibrated: boolean = false;
   private seenFiles: Map<string, string> = new Map(); // path -> content hash
   private toolResultHashes: Map<string, string> = new Map(); // content hash -> tool_call_id (first occurrence)
   private messageTokenCache: Map<string, MessageTokenCacheEntry> = new Map(); // message id -> token count + content fingerprint
@@ -218,12 +230,45 @@ export class TokenManager {
   }
 
   /**
-   * Get the current token count
+   * Calibrate the estimator against a backend-reported prompt-token count.
+   *
+   * Records the gap between what the server actually counted and what our local
+   * estimate produced for the same request, smoothing it across turns. This gap
+   * is then added to every reported count, so the message-only estimate (which
+   * omits tool schemas and chat-template overhead, and uses a different
+   * tokenizer than the served model) is corrected toward ground truth.
+   *
+   * @param estimatedPromptTokens Our raw estimate for the messages that were sent
+   * @param actualPromptTokens The backend's reported prompt token count
+   */
+  calibrate(estimatedPromptTokens: number, actualPromptTokens: number): void {
+    if (!Number.isFinite(estimatedPromptTokens) || !Number.isFinite(actualPromptTokens)) return;
+    if (estimatedPromptTokens <= 0 || actualPromptTokens <= 0) return;
+
+    const gap = actualPromptTokens - estimatedPromptTokens;
+    // Snap to the first real sample, then smooth subsequent ones.
+    const alpha = this.calibrated ? CALIBRATION_ALPHA : 1.0;
+    this.overheadTokens = Math.round(this.overheadTokens * (1 - alpha) + gap * alpha);
+    this.calibrated = true;
+  }
+
+  /** The current calibration overhead in tokens (0 until first calibrated). */
+  getCalibrationOverhead(): number {
+    return this.overheadTokens;
+  }
+
+  /** Apply the calibration overhead to a raw estimate (never below zero). */
+  private effective(rawTokens: number): number {
+    return Math.max(0, rawTokens + this.overheadTokens);
+  }
+
+  /**
+   * Get the current token count (calibrated to the backend's accounting).
    *
    * @returns Current token count
    */
   getCurrentTokenCount(): number {
-    return this.currentTokenCount;
+    return this.effective(this.currentTokenCount);
   }
 
   /**
@@ -239,7 +284,7 @@ export class TokenManager {
     if (this.contextSize === 0) {
       return 0;
     }
-    const percentage = (this.currentTokenCount / this.contextSize) * 100;
+    const percentage = (this.effective(this.currentTokenCount) / this.contextSize) * 100;
     return Math.min(100, Math.floor(percentage));
   }
 
@@ -329,6 +374,8 @@ export class TokenManager {
    */
   reset(): void {
     this.currentTokenCount = 0;
+    this.overheadTokens = 0;
+    this.calibrated = false;
     this.seenFiles.clear();
     this.toolResultHashes.clear();
     this.messageTokenCache.clear();
@@ -363,7 +410,7 @@ export class TokenManager {
    * @returns Remaining token count
    */
   getRemainingTokens(): number {
-    return Math.max(0, this.contextSize - this.currentTokenCount);
+    return Math.max(0, this.contextSize - this.effective(this.currentTokenCount));
   }
 
   /**
@@ -441,7 +488,7 @@ export class TokenManager {
   } {
     return {
       contextSize: this.contextSize,
-      currentTokens: this.currentTokenCount,
+      currentTokens: this.getCurrentTokenCount(),
       remainingTokens: this.getRemainingTokens(),
       usagePercentage: this.getContextUsagePercentage(),
       trackedFiles: this.seenFiles.size,

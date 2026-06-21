@@ -4,12 +4,14 @@
  * Generates concise, level-specific guidelines via templates to avoid
  * duplicating shared instructions across variants. Shared context
  * (READ-ONLY access, write-temp, etc.) belongs in the agent base prompt.
+ *
+ * Note: effort is expressed as a TOOL-CALL budget, not wall-clock time — a model
+ * cannot perceive elapsed minutes, so a time limit is not an actionable instruction.
  */
 
 /** Level-specific configuration */
 interface ThoroughnessConfig {
   label: string;
-  timeLimit: string;
   toolCalls: string;
   delegation: string;
   extras?: string[];
@@ -18,7 +20,6 @@ interface ThoroughnessConfig {
 const EXPLORE_CONFIGS: Record<string, ThoroughnessConfig> = {
   quick: {
     label: 'QUICK',
-    timeLimit: '~1 minute maximum',
     toolCalls: '2-5',
     delegation: 'Only delegate if task clearly splits into 2+ parallel quick searches',
     extras: [
@@ -28,7 +29,6 @@ const EXPLORE_CONFIGS: Record<string, ThoroughnessConfig> = {
   },
   medium: {
     label: 'MEDIUM',
-    timeLimit: '~3 minutes maximum',
     toolCalls: '3-6 (if not delegating)',
     delegation: 'Strongly consider delegation for multi-area explorations',
     extras: [
@@ -38,7 +38,6 @@ const EXPLORE_CONFIGS: Record<string, ThoroughnessConfig> = {
   },
   'very thorough': {
     label: 'VERY THOROUGH',
-    timeLimit: '~6 minutes maximum',
     toolCalls: '6-12 (if not delegating)',
     delegation: 'DEFAULT to delegation for complex explorations with multiple components',
     extras: [
@@ -49,7 +48,6 @@ const EXPLORE_CONFIGS: Record<string, ThoroughnessConfig> = {
   },
   uncapped: {
     label: 'UNCAPPED',
-    timeLimit: 'No time limit imposed',
     toolCalls: 'as needed',
     delegation: 'PREFER delegation for any multi-part exploration',
     extras: [
@@ -62,14 +60,12 @@ const EXPLORE_CONFIGS: Record<string, ThoroughnessConfig> = {
 const PLAN_CONFIGS: Record<string, ThoroughnessConfig> = {
   quick: {
     label: 'QUICK',
-    timeLimit: '~1 minute maximum',
     toolCalls: '5-10',
     delegation: 'Use explore() only for complex multi-file analysis',
     extras: ['Focus on speed and efficiency'],
   },
   medium: {
     label: 'MEDIUM',
-    timeLimit: '~3 minutes maximum',
     toolCalls: '6-9',
     delegation: 'Use explore() for complex multi-file pattern analysis',
     extras: [
@@ -79,7 +75,6 @@ const PLAN_CONFIGS: Record<string, ThoroughnessConfig> = {
   },
   'very thorough': {
     label: 'VERY THOROUGH',
-    timeLimit: '~6 minutes maximum',
     toolCalls: '9-12',
     delegation: 'Use explore() for complex multi-file pattern analysis',
     extras: [
@@ -89,7 +84,6 @@ const PLAN_CONFIGS: Record<string, ThoroughnessConfig> = {
   },
   uncapped: {
     label: 'UNCAPPED',
-    timeLimit: 'No time limit imposed',
     toolCalls: 'as many as needed',
     delegation: 'Use explore() freely for thorough analysis',
     extras: [
@@ -102,7 +96,6 @@ const PLAN_CONFIGS: Record<string, ThoroughnessConfig> = {
 function buildGuidelines(config: ThoroughnessConfig, agentType: string): string {
   const lines = [
     `**Thoroughness: ${config.label}**`,
-    `- **Time**: ${config.timeLimit}`,
     `- **Tool calls**: Aim for ${config.toolCalls}`,
     `- **Delegation**: ${config.delegation}`,
   ];

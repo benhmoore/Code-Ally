@@ -11,7 +11,7 @@
  */
 
 // Core abstractions
-export { ModelClient, type ModelClientConfig, type SendOptions, type LLMResponse, type StreamChunk } from './ModelClient.js';
+export { ModelClient, type ModelClientConfig, type SendOptions, type LLMResponse, type SamplingParams } from './ModelClient.js';
 
 // Implementations
 export { OllamaClient } from './OllamaClient.js';

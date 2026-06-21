@@ -65,7 +65,7 @@ export class AskUserQuestionTool extends BaseTool {
   readonly name = 'ask-user-question';
   readonly displayName = 'Questions';
   readonly description =
-    'Ask the user questions. Prefer structured choices (2-5 options, automatic "Other") over free-form. Only omit options for unpredictable answers like names or URLs. 1-10 questions per invocation.';
+    'Ask the user questions. Prefer structured choices (2-6 options, automatic "Other") over free-form. Only omit options for unpredictable answers like names or URLs. 1-10 questions per invocation.';
   readonly requiresConfirmation = false;
   readonly supportsInteractiveForm = true;
   readonly alwaysShowFullOutput = true;
@@ -99,7 +99,7 @@ export class AskUserQuestionTool extends BaseTool {
                   },
                   header: {
                     type: 'string',
-                    description: 'Short tag/label for quick identification (max 16 chars). Examples: "Auth method", "Library", "Approach"',
+                    description: 'Short tag/label for quick identification (max 20 chars). Examples: "Auth method", "Library", "Approach"',
                   },
                   options: {
                     type: 'array',

@@ -343,11 +343,20 @@ export interface Config {
   explore_model?: string | null; // Model for Explore agent. Defaults to global model.
   plan_model?: string | null; // Model for Plan agent. Defaults to global model.
   agent_creation_model?: string | null; // Model for ManageAgents agent. Defaults to global model.
+  provider?: 'ollama' | 'openai-compat'; // LLM backend protocol. Defaults to 'ollama' (native /api/chat). 'openai-compat' targets /v1/chat/completions (vLLM, llama.cpp, LM Studio, cloud hosts).
   endpoint: string;
+  api_key?: string | null; // Bearer token for authenticated endpoints (cloud/remote). Stored separately with encryption like search_api_key.
   context_size: number;
   temperature: number;
   max_tokens: number;
   reasoning_effort?: string; // Reasoning level for models that support it (e.g., "low", "medium", "high")
+
+  // Sampling (optional; unset preserves the backend's model-tuned defaults)
+  top_p?: number; // Nucleus sampling cutoff (0-1)
+  top_k?: number; // Top-k sampling cutoff (0 disables)
+  min_p?: number; // Min-p sampling cutoff (0-1)
+  repeat_penalty?: number; // Repetition penalty (1.0 = none)
+  stop?: string[]; // Stop sequences that halt generation
 
   // Agent Settings
   default_agent?: string; // Default primary agent to use at startup. Defaults to 'ally' if not set or if the specified agent doesn't exist.

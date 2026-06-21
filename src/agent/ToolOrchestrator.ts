@@ -678,6 +678,29 @@ export class ToolOrchestrator {
       }
     }
 
+    // Cycle escalation: structurally break a read-loop instead of only warning.
+    // A model stuck re-reading the same file ignores text nudges, so for an exact
+    // duplicate `read` that the cycle detector has confirmed is NOT a valid repeat
+    // (file content is unchanged since the prior read — see isValidFileRepeat),
+    // skip re-execution and point the model at the result already in context.
+    // Scoped to `read` only: it is the one tool whose isValidRepeat analysis is
+    // content-change-aware, so blocking can't suppress a legitimately-changed result
+    // the way it could for stateful tools like bash.
+    const cycleInfo = this.cycleDetectionResults.get(id);
+    if (
+      cycleInfo?.issueType === 'exact_duplicate' &&
+      !cycleInfo.isValidRepeat &&
+      (toolName === 'read' || toolName === 'Read')
+    ) {
+      logger.debug('[TOOL_ORCHESTRATOR] Blocking exact-duplicate read re-execution for cycle break:', toolName, 'count:', cycleInfo.count);
+      return {
+        success: true,
+        error: '',
+        content: `[Skipped: this exact read was already performed ${cycleInfo.count} times and the file is unchanged since. Its content is already in the conversation above — use that instead of re-reading. If you need different lines, change the offset/limit; otherwise proceed with the task or a different action.]`,
+        _non_truncatable: true,
+      } as ToolResult;
+    }
+
     // If we have a parent context from a nested agent, use it; otherwise use the group parentId
     const effectiveParentId = this.parentCallId || parentId;
     logger.debug('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId, 'emitStartEvent:', emitStartEvent);

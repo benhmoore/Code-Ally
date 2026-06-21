@@ -239,7 +239,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false, maxRetries: 1, signal: new AbortController().signal });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.content).toBe('Success');
       expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -254,7 +254,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false, maxRetries: 0, signal: new AbortController().signal });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.error).toBe(true);
       expect(result.content).toContain('HTTP 404');
@@ -277,7 +277,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false, maxRetries: 1, signal: new AbortController().signal });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.content).toBe('Success');
     });
@@ -291,7 +291,7 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false, maxRetries: 0, signal: new AbortController().signal });
+      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
 
       expect(result.suggestions?.some(s => s.includes('ollama list'))).toBe(true);
     });
@@ -807,7 +807,7 @@ describe('OllamaClient', () => {
       });
     });
 
-    it('should include keep_alive if provided', async () => {
+    it('should include keep_alive at the top level if provided', async () => {
       const clientWithKeepAlive = new OllamaClient({
         endpoint: 'http://localhost:11434',
         modelName: 'qwen2.5-coder:32b',
@@ -831,7 +831,9 @@ describe('OllamaClient', () => {
       const callArgs = mockFetch.mock.calls[0];
       const payload = JSON.parse(callArgs[1].body);
 
-      expect(payload.options.keep_alive).toBe(600);
+      // Ollama reads keep_alive as a top-level field of /api/chat, not under options.
+      expect(payload.keep_alive).toBe(600);
+      expect(payload.options.keep_alive).toBeUndefined();
     });
   });
 });

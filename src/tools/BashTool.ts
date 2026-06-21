@@ -128,7 +128,7 @@ export class BashTool extends BaseTool {
             },
             timeout: {
               type: 'integer',
-              description: `Timeout in seconds (default: 60, max: 1200, use -1 for no timeout)`,
+              description: `Timeout in seconds (default: 60, max: 600, use -1 for no timeout)`,
             },
             output_mode: {
               type: 'string',

@@ -24,11 +24,16 @@ export const DEFAULT_CONFIG: Config = {
   explore_model: null, // Model for Explore agent (defaults to global model)
   plan_model: null, // Model for Plan agent (defaults to global model)
   agent_creation_model: null, // Model for ManageAgents agent (defaults to global model)
+  provider: 'ollama', // LLM backend protocol: 'ollama' (native) or 'openai-compat' (/v1/chat/completions)
   endpoint: 'http://localhost:11434', // Ollama API endpoint
+  api_key: null, // Bearer token for authenticated endpoints (encrypted at rest)
   context_size: 16384, // Context window size in tokens
   temperature: 0.3, // Generation temperature (0.0-1.0)
   max_tokens: 16384, // Max tokens to generate per response (or 90% of context_size, whichever is lower)
   reasoning_effort: REASONING_EFFORT.LOW, // Reasoning level for gpt-oss and reasoning models
+  // Sampling overrides are omitted by default so each model's own tuned defaults
+  // (e.g. Ollama Modelfile PARAMETERs) are preserved. Set any of top_p / top_k /
+  // min_p / repeat_penalty / stop to override.
 
   // ==========================================
   // AGENT SETTINGS
@@ -125,11 +130,18 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   explore_model: 'string',
   plan_model: 'string',
   agent_creation_model: 'string',
+  provider: 'string',
   endpoint: 'string',
+  api_key: 'string',
   context_size: 'number',
   temperature: 'number',
   max_tokens: 'number',
   reasoning_effort: 'string',
+  top_p: 'number',
+  top_k: 'number',
+  min_p: 'number',
+  repeat_penalty: 'number',
+  stop: 'string[]',
 
   // Agent Settings
   default_agent: 'string',
@@ -237,6 +249,32 @@ export function validateConfigValue(
       return { valid: true, coercedValue: lowerValue };
     }
     return { valid: false, error: `reasoning_effort must be one of: ${REASONING_EFFORT_API_VALUES.join(', ')}` };
+  }
+
+  // Validate provider values
+  const VALID_PROVIDERS = ['ollama', 'openai-compat'] as const;
+  if (key === 'provider' && typeof value === 'string') {
+    const lowerValue = value.toLowerCase();
+    if (VALID_PROVIDERS.includes(lowerValue as any)) {
+      return { valid: true, coercedValue: lowerValue };
+    }
+    return { valid: false, error: `provider must be one of: ${VALID_PROVIDERS.join(', ')}` };
+  }
+
+  // Handle null/undefined/empty api_key (no auth)
+  if (key === 'api_key' && (value === null || value === undefined || value === '')) {
+    return { valid: true, coercedValue: null };
+  }
+
+  // Validate stop sequences (array of strings)
+  if (key === 'stop') {
+    if (value === null || value === undefined) {
+      return { valid: true, coercedValue: undefined };
+    }
+    if (Array.isArray(value) && value.every(v => typeof v === 'string')) {
+      return { valid: true, coercedValue: value };
+    }
+    return { valid: false, error: 'stop must be an array of strings' };
   }
 
   // Validate search_provider values

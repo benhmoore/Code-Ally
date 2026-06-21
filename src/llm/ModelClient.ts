@@ -14,6 +14,25 @@
 import { Message, FunctionDefinition } from '../types/index.js';
 
 /**
+ * Sampling parameters beyond temperature. Every field is optional: when a field
+ * is undefined the backend's own model-tuned default is preserved (for Ollama,
+ * the value baked into the model's Modelfile). Only explicitly-set fields are
+ * sent, so configuring these never silently overrides a model's curated defaults.
+ */
+export interface SamplingParams {
+  /** Nucleus sampling cutoff (0-1). */
+  top_p?: number;
+  /** Top-k sampling cutoff (0 disables). */
+  top_k?: number;
+  /** Min-p sampling cutoff (0-1). */
+  min_p?: number;
+  /** Repetition penalty (1.0 = none). */
+  repeat_penalty?: number;
+  /** Stop sequences that halt generation. */
+  stop?: string[];
+}
+
+/**
  * Options for sending messages to the LLM
  */
 export interface SendOptions {
@@ -21,8 +40,6 @@ export interface SendOptions {
   functions?: FunctionDefinition[];
   /** Enable streaming responses */
   stream?: boolean;
-  /** Maximum number of retry attempts */
-  maxRetries?: number;
   /** Temperature for response generation (0.0 to 2.0, higher = more creative) */
   temperature?: number;
   /** Parent call ID for associating events with specific agents/tool calls */
@@ -91,22 +108,18 @@ export interface LLMResponse {
   partial?: boolean;
   /** Error message for partial/interrupted responses */
   error_message?: string;
-}
-
-/**
- * Chunk of data from a streaming response
- */
-export interface StreamChunk {
-  /** Role of the message (typically 'assistant') */
-  role?: 'assistant';
-  /** Content chunk */
-  content?: string;
-  /** Thinking/reasoning chunk */
-  thinking?: string;
-  /** Tool calls (complete array, not incremental) */
-  tool_calls?: LLMResponse['tool_calls'];
-  /** Indicates the stream is complete */
-  done?: boolean;
+  /**
+   * Server-reported token accounting, when the backend provides it (Ollama's
+   * prompt_eval_count/eval_count, OpenAI's usage.prompt_tokens/completion_tokens).
+   * This is ground truth for the model's actual tokenizer and is used to
+   * calibrate the local estimator — far more reliable than any static heuristic.
+   */
+  usage?: {
+    /** Tokens the model saw in the prompt (the full request). */
+    promptTokens?: number;
+    /** Tokens the model generated. */
+    completionTokens?: number;
+  };
 }
 
 /**
@@ -127,6 +140,12 @@ export interface ModelClientConfig {
   keepAlive?: number;
   /** Reasoning effort level for reasoning models: "low", "medium", "high" (optional) */
   reasoningEffort?: string;
+  /** Additional sampling parameters (optional; unset fields preserve model defaults) */
+  sampling?: SamplingParams;
+  /** Bearer token for authenticated endpoints (cloud / remote OpenAI-compatible). */
+  apiKey?: string;
+  /** Extra HTTP headers merged into every request (optional). */
+  headers?: Record<string, string>;
   /** Activity stream for emitting events (optional) */
   activityStream?: any; // Using 'any' to avoid circular dependency
 }
