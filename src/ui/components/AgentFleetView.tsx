@@ -34,12 +34,12 @@ export interface AgentFleetViewProps {
   maxVisible?: number;
 }
 
-const STATUS_DOT: Record<BackgroundAgentStatus, string> = {
-  running: '○',
-  done: '●',
-  error: '●',
-  cancelled: '○',
-};
+const CURRENT_AGENT_DOT = '●';
+const INACTIVE_AGENT_DOT = '○';
+
+export function agentFleetDot(isCurrentAgent: boolean): string {
+  return isCurrentAgent ? CURRENT_AGENT_DOT : INACTIVE_AGENT_DOT;
+}
 
 function statusColor(status: BackgroundAgentStatus): string | undefined {
   switch (status) {
@@ -91,7 +91,7 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
       {/* main row (selectable index 0) */}
       <SelectionIndicator isSelected={focused && selectedIndex === 0}>
         <Text color={activeAgentId === 'main' ? UI_COLORS.TEXT_DEFAULT : undefined} bold>
-          {'●'} main
+          {agentFleetDot(activeAgentId === 'main')} main
         </Text>
       </SelectionIndicator>
 
@@ -104,7 +104,7 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
         const isSelected = focused && actualIndex === selectedIndex;
         const isViewed = activeAgentId === agent.id;
         const elapsedSeconds = Math.round(((agent.endTime ?? now) - agent.startTime) / 1000);
-        const dot = STATUS_DOT[agent.status];
+        const dot = agentFleetDot(isViewed);
         const color = statusColor(agent.status);
 
         return (
