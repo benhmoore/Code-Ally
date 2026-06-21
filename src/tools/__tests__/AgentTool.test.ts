@@ -314,4 +314,212 @@ describe('AgentTool', () => {
       expect(endEvents.length).toBeGreaterThan(0);
     });
   });
+
+  // ----------------------------------------------------------------------------
+  // CHARACTERIZATION TESTS
+  //
+  // These pin AgentTool's CURRENT observable behavior — the public tool contract
+  // and the untested, refactor-risky paths (extended validation, cycle guard,
+  // empty-response recovery, display helpers). They exist as a safety net for the
+  // planned AgentTool -> BaseDelegationTool consolidation: any behavior change in
+  // these areas should be a deliberate, visible test edit, not a silent regression.
+  // ----------------------------------------------------------------------------
+
+  describe('function definition contract', () => {
+    it('should expose the documented parameter schema', () => {
+      const def = tool.getFunctionDefinition();
+      expect(def.type).toBe('function');
+      expect(def.function.name).toBe('agent');
+
+      const props = def.function.parameters.properties as Record<string, any>;
+      // The full public parameter surface the consolidation must preserve.
+      expect(Object.keys(props).sort()).toEqual(
+        ['agent_type', 'context_files', 'context_images', 'notify_when_done', 'run_in_background', 'task_prompt', 'thoroughness'].sort()
+      );
+      expect(props.task_prompt.type).toBe('string');
+      expect(props.agent_type.type).toBe('string');
+      expect(props.thoroughness.type).toBe('string');
+      expect(props.context_files.type).toBe('array');
+      expect(props.context_files.items.type).toBe('string');
+      expect(props.context_images.type).toBe('array');
+      expect(props.context_images.items.type).toBe('string');
+      expect(props.run_in_background.type).toBe('boolean');
+      expect(props.notify_when_done.type).toBe('boolean');
+
+      // task_prompt is the only required parameter.
+      expect(def.function.parameters.required).toEqual(['task_prompt']);
+    });
+  });
+
+  describe('extended validation', () => {
+    it('should reject agent_type that is empty after trimming', async () => {
+      const result = await tool.execute({
+        agent_type: '   ',
+        task_prompt: 'Test task',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('agent_type cannot be empty');
+    });
+
+    it('should reject agent_type with path-traversal / invalid characters', async () => {
+      const result = await tool.execute({
+        agent_type: '../etc/passwd',
+        task_prompt: 'Test task',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('invalid characters');
+    });
+
+    it('should reject agent_type longer than 100 characters', async () => {
+      const result = await tool.execute({
+        agent_type: 'a'.repeat(101),
+        task_prompt: 'Test task',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('too long');
+    });
+
+    it('should reject non-array context_files', async () => {
+      const result = await tool.execute({
+        task_prompt: 'Test task',
+        context_files: 'src/file.ts',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('context_files must be an array');
+    });
+
+    it('should reject context_files containing non-strings', async () => {
+      const result = await tool.execute({
+        task_prompt: 'Test task',
+        context_files: ['ok.ts', 42],
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('context_files must contain only strings');
+    });
+
+    it('should reject non-array context_images', async () => {
+      const result = await tool.execute({
+        task_prompt: 'Test task',
+        context_images: 'shot.png',
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('context_images must be an array');
+    });
+
+    it('should reject context_images containing non-strings', async () => {
+      const result = await tool.execute({
+        task_prompt: 'Test task',
+        context_images: ['shot.png', 7],
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('context_images must contain only strings');
+    });
+  });
+
+  describe('cycle-depth guard', () => {
+    it('should reject when the target agent already fills the call chain to MAX_AGENT_CYCLE_DEPTH', async () => {
+      // Exercise the cycle guard in isolation: depth 0 (so the depth check passes)
+      // but a call stack already holding the target agent MAX_AGENT_CYCLE_DEPTH times.
+      const stack = new Array(AGENT_CONFIG.MAX_AGENT_CYCLE_DEPTH).fill('task');
+      const mockAgent = {
+        getAgentDepth: vi.fn().mockReturnValue(0),
+        getAgentName: vi.fn().mockReturnValue('ally'),
+        getAgentCallStack: vi.fn().mockReturnValue(stack),
+      };
+      registry.registerInstance('agent', mockAgent);
+
+      const result = await tool.execute({
+        agent_type: 'task',
+        task_prompt: 'Recursive task',
+        run_in_background: false,
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error_type).toBe('validation_error');
+      expect(result.error).toContain('cycle depth');
+    });
+  });
+
+  describe('empty-response recovery', () => {
+    it('should fall back to a completion notice when the agent yields nothing', async () => {
+      // Override the pool so the agent returns empty for both the task and the
+      // explicit-summary retry, and has no extractable assistant messages.
+      registry.registerInstance('agent_pool', {
+        acquire: vi.fn().mockResolvedValue({
+          agent: {
+            sendMessage: vi.fn().mockResolvedValue(''),
+            getMessages: vi.fn().mockReturnValue([]),
+            getTokenManager: vi.fn().mockReturnValue({ getContextUsagePercentage: () => 0 }),
+            getToolUseCount: vi.fn().mockReturnValue(0),
+          },
+          agentId: 'empty-agent-id',
+          release: async () => {},
+        }),
+      });
+
+      const result = await tool.execute({
+        agent_type: 'task',
+        task_prompt: 'Task that produces no output',
+        run_in_background: false,
+      }, 'test-call-id');
+
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('did not provide a summary');
+    });
+  });
+
+  describe('display helpers', () => {
+    it('formatSubtext returns the task prompt, or null when absent', () => {
+      expect(tool.formatSubtext({ task_prompt: 'Do the thing' })).toBe('Do the thing');
+      expect(tool.formatSubtext({})).toBeNull();
+    });
+
+    it('getSubtextParameters lists task_prompt and description', () => {
+      expect(tool.getSubtextParameters()).toEqual(['task_prompt', 'description']);
+    });
+
+    it('getResultPreview shows duration and content for a successful result', () => {
+      const preview = tool.getResultPreview({
+        success: true,
+        error: '',
+        content: 'A short agent summary',
+        duration_seconds: 2,
+      } as any);
+
+      expect(preview.some(l => l.startsWith('Duration:'))).toBe(true);
+      expect(preview.some(l => l.includes('A short agent summary'))).toBe(true);
+    });
+
+    it('getResultPreview truncates long content with an ellipsis', () => {
+      const long = 'x'.repeat(200);
+      const preview = tool.getResultPreview({
+        success: true,
+        error: '',
+        content: long,
+      } as any, 3);
+
+      const contentLine = preview.find(l => l.includes('x'));
+      expect(contentLine).toBeDefined();
+      expect(contentLine!.endsWith('...')).toBe(true);
+      expect(contentLine!.length).toBeLessThan(long.length);
+    });
+
+    it('getResultPreview delegates to the base implementation for failures', () => {
+      // A failed result should not surface a "Duration:" success line.
+      const preview = tool.getResultPreview({
+        success: false,
+        error: 'something broke',
+        content: '',
+      } as any);
+
+      expect(preview.some(l => l.startsWith('Duration:'))).toBe(false);
+    });
+  });
 });
