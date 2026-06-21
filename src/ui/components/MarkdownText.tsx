@@ -96,12 +96,28 @@ export interface MarkdownTextProps {
   width?: number;
 }
 
-interface ParsedNode {
+/**
+ * Styled segment - represents text with formatting (color, italic, strikethrough, bold, code)
+ */
+export interface StyledSegment {
+  text: string;
+  color?: string;
+  italic?: boolean;
+  strikethrough?: boolean;
+  bold?: boolean;
+  code?: boolean;
+  underline?: boolean;
+}
+
+export interface ParsedNode {
   type: 'text' | 'code' | 'heading' | 'list' | 'list-item' | 'paragraph' | 'strong' | 'em' | 'codespan' | 'link' | 'table' | 'hr' | 'space' | 'blockquote';
   content?: string;
+  segments?: StyledSegment[];
   language?: string;
   depth?: number;
   ordered?: boolean;
+  task?: boolean;
+  checked?: boolean;
   children?: ParsedNode[];
   // Table-specific fields
   header?: string[];
@@ -133,20 +149,12 @@ export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme, widt
     }
 
     // Cache miss - parse markdown
-    try {
-      // Parse markdown to tokens
-      const tokens = marked.lexer(content);
-      const result = parseTokens(tokens);
+    const result = parseMarkdownContent(content);
 
-      // Store in cache for future renders
-      markdownParseCache.set(cacheKey, result);
+    // Store in cache for future renders
+    markdownParseCache.set(cacheKey, result);
 
-      return result;
-    } catch (error) {
-      // Fallback to plain text if parsing fails
-      // Don't cache errors - they might be transient
-      return [{ type: 'text' as const, content }];
-    }
+    return result;
   }, [content]);
 
   return (
@@ -159,37 +167,17 @@ export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme, widt
 };
 
 /**
- * Process nested paragraph tokens to handle line breaks properly
- * Converts br tokens to newline characters
+ * Parse markdown into renderable nodes. Exported for focused renderer tests;
+ * the component itself still owns caching and layout.
  */
-function processParagraphTokens(tokens: any[]): string {
-  let result = '';
-
-  for (const token of tokens) {
-    if (token.type === 'text') {
-      result += token.text;
-    } else if (token.type === 'strong') {
-      // Handle bold text - wrap in markdown
-      result += '**' + token.text + '**';
-    } else if (token.type === 'em') {
-      // Handle italic text - wrap in markdown
-      result += '*' + token.text + '*';
-    } else if (token.type === 'codespan') {
-      // Handle inline code - wrap in backticks
-      result += '`' + token.text + '`';
-    } else if (token.type === 'br') {
-      // Convert br to actual newline
-      result += '\n';
-    } else if (token.type === 'link') {
-      // Handle links - use markdown format
-      result += '[' + token.text + '](' + token.href + ')';
-    } else if (token.raw) {
-      // Fallback - use raw content
-      result += token.raw;
-    }
+export function parseMarkdownContent(content: string): ParsedNode[] {
+  try {
+    return parseTokens(marked.lexer(content));
+  } catch {
+    // Fallback to plain text if parsing fails. Do not cache errors; they may be
+    // caused by transient parser state or unusual partial streaming content.
+    return [{ type: 'text', content, segments: plainTextToSegments(content) }];
   }
-
-  return result;
 }
 
 /**
@@ -209,17 +197,18 @@ function parseTokens(tokens: any[]): ParsedNode[] {
       nodes.push({
         type: 'heading',
         content: token.text,
+        segments: token.tokens ? inlineTokensToSegments(token.tokens) : inlineMarkdownToSegments(token.text || ''),
         depth: token.depth,
       });
     } else if (token.type === 'table') {
       // Extract header
       const header = token.header.map((cell: any) =>
-        stripInlineMarkdown(cell.text || '')
+        cellToAnsi(cell)
       );
 
       // Extract rows
       const rows = token.rows.map((row: any) =>
-        row.map((cell: any) => stripInlineMarkdown(cell.text || ''))
+        row.map((cell: any) => cellToAnsi(cell))
       );
 
       nodes.push({
@@ -239,25 +228,14 @@ function parseTokens(tokens: any[]): ParsedNode[] {
       nodes.push({
         type: 'list',
         ordered: token.ordered,
-        children: token.items.map((item: any) => ({
-          type: 'list-item' as const,
-          content: item.text,
-        })),
+        children: token.items.map(parseListItem),
       });
     } else if (token.type === 'paragraph') {
-      // Process nested tokens to properly handle line breaks
-      if (token.tokens && Array.isArray(token.tokens)) {
-        const processedContent = processParagraphTokens(token.tokens);
-        nodes.push({
-          type: 'paragraph',
-          content: processedContent,
-        });
-      } else {
-        nodes.push({
-          type: 'paragraph',
-          content: token.text,
-        });
-      }
+      nodes.push({
+        type: 'paragraph',
+        content: token.text,
+        segments: token.tokens ? inlineTokensToSegments(token.tokens) : inlineMarkdownToSegments(token.text || ''),
+      });
     } else if (token.type === 'hr') {
       nodes.push({
         type: 'hr',
@@ -279,6 +257,7 @@ function parseTokens(tokens: any[]): ParsedNode[] {
         nodes.push({
           type: 'paragraph',
           content: (token as any).text,
+          segments: inlineMarkdownToSegments((token as any).text),
         });
       } else if ((token as any).raw) {
         // Last resort - use raw content but warn about unsupported token
@@ -286,6 +265,7 @@ function parseTokens(tokens: any[]): ParsedNode[] {
         nodes.push({
           type: 'text',
           content: (token as any).raw,
+          segments: plainTextToSegments((token as any).raw),
         });
       }
     }
@@ -310,7 +290,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
     return (
       <Box>
         <Text bold color={UI_COLORS.TEXT_DEFAULT}>
-          {node.content}
+          {renderSegmentsForTerminal(node.segments ?? plainTextToSegments(node.content || ''))}
         </Text>
       </Box>
     );
@@ -320,23 +300,23 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
     return (
       <Box flexDirection="column">
         {node.children?.map((item, idx) => {
-          const formatted = formatInlineMarkdown(item.content || '');
-          const bullet = node.ordered ? `${idx + 1}. ` : '• ';
+          const bullet = getListBullet(node.ordered, idx, item);
+          const itemLines = renderSegmentLinesForTerminal(item.segments ?? inlineMarkdownToSegments(item.content || ''));
+          const continuationIndent = ' '.repeat(visibleLength(bullet));
 
-          // Handle styled text segments
-          if (Array.isArray(formatted)) {
-            const styledText = segmentsToAnsiString(formatted);
-            return (
-              <Box key={idx} paddingLeft={2}>
-                <Text>{bullet}{styledText}</Text>
-              </Box>
-            );
-          }
-
-          // Handle plain string
           return (
-            <Box key={idx} paddingLeft={2}>
-              <Text>{bullet}{formatted}</Text>
+            <Box key={idx} flexDirection="column" paddingLeft={2}>
+              <Text>{bullet}{itemLines[0] ?? ''}</Text>
+              {itemLines.slice(1).map((line, lineIdx) => (
+                <Text key={lineIdx}>{continuationIndent}{line}</Text>
+              ))}
+              {item.children && item.children.length > 0 && (
+                <Box flexDirection="column" paddingLeft={2}>
+                  {item.children.map((child, childIdx) => (
+                    <RenderNode key={childIdx} node={child} highlighter={highlighter} width={Math.max(1, width - 2)} />
+                  ))}
+                </Box>
+              )}
             </Box>
           );
         })}
@@ -357,29 +337,13 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
   }
 
   if (node.type === 'paragraph') {
-    const content = node.content || '';
-
-    // Split content by newlines to handle hard line breaks
-    const lines = content.split('\n');
+    const lines = renderSegmentLinesForTerminal(node.segments ?? inlineMarkdownToSegments(node.content || ''));
 
     // If only one line, render as before
     if (lines.length === 1) {
-      const formatted = formatInlineMarkdown(content);
-
-      // Handle styled text segments - convert to ANSI string for proper wrapping
-      if (Array.isArray(formatted)) {
-        const styledText = segmentsToAnsiString(formatted);
-        return (
-          <Box>
-            <Text>{styledText}</Text>
-          </Box>
-        );
-      }
-
-      // Handle plain string
       return (
         <Box>
-          <Text>{formatted}</Text>
+          <Text>{lines[0] ?? ''}</Text>
         </Box>
       );
     }
@@ -388,22 +352,9 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
     return (
       <Box flexDirection="column">
         {lines.map((line, lineIdx) => {
-          const formatted = formatInlineMarkdown(line);
-
-          // Handle styled text segments - convert to ANSI string for proper wrapping
-          if (Array.isArray(formatted)) {
-            const styledText = segmentsToAnsiString(formatted);
-            return (
-              <Box key={lineIdx}>
-                <Text>{styledText}</Text>
-              </Box>
-            );
-          }
-
-          // Handle plain string
           return (
             <Box key={lineIdx}>
-              <Text>{formatted}</Text>
+              <Text>{line}</Text>
             </Box>
           );
         })}
@@ -425,31 +376,9 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
   }
 
   if (node.type === 'text') {
-    const formatted = formatInlineMarkdown(node.content || '');
-
-    // Handle styled text segments
-    if (Array.isArray(formatted)) {
-      return (
-        <Box>
-          {formatted.map((segment, idx) => (
-            <Text
-              key={idx}
-              color={segment.color}
-              bold={segment.bold}
-              italic={segment.italic}
-              strikethrough={segment.strikethrough}
-            >
-              {segment.text}
-            </Text>
-          ))}
-        </Box>
-      );
-    }
-
-    // Handle plain string
     return (
       <Box>
-        <Text>{formatted}</Text>
+        <Text>{renderSegmentsForTerminal(node.segments ?? plainTextToSegments(node.content || ''))}</Text>
       </Box>
     );
   }
@@ -599,7 +528,7 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][]; width: numbe
 
     // Table is too wide - need to distribute space proportionally
     // Set minimum width per column (at least 10 chars or header length)
-    const minWidths = header.map((h) => Math.max(FORMATTING.TABLE_COLUMN_MIN_WIDTH, h.length));
+    const minWidths = header.map((h) => Math.max(FORMATTING.TABLE_COLUMN_MIN_WIDTH, visibleLength(h)));
     const totalMinWidth = minWidths.reduce((sum, w) => sum + w, 0);
 
     // If even minimum widths don't fit, use equal distribution
@@ -621,13 +550,9 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][]; width: numbe
     });
   }, [header, validRows, width]);
 
-  // Process cell text with inline markdown and convert to ANSI
-  const processCellMarkdown = (text: string): string => {
-    // Parse inline markdown into styled segments
-    const segments = parseStyledText(text);
-    // Convert to ANSI string
-    return segmentsToAnsiString(segments);
-  };
+  // Cells are normalized to ANSI strings during parsing so column measurement
+  // and wrapping use the exact text that will be drawn.
+  const processCellMarkdown = (text: string): string => text;
 
   // Wrap and pad cell content using the shared, ANSI/wide-char-aware engine.
   const wrapCell = (text: string, cellWidth: number): string[] => wrapAnsiText(text, cellWidth);
@@ -714,49 +639,316 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][]; width: numbe
   );
 };
 
+type SegmentStyle = Omit<StyledSegment, 'text'>;
+
 /**
- * Format inline markdown (bold, italic, inline code, links)
+ * Parse inline markdown with marked's token stream. This is the only fallback
+ * path that reparses inline text; normal block rendering receives tokens from
+ * the top-level lexer and never reconstructs markdown delimiters.
  */
-/**
- * Styled segment - represents text with formatting (color, italic, strikethrough, bold, code)
- */
-interface StyledSegment {
-  text: string;
-  color?: string;
-  italic?: boolean;
-  strikethrough?: boolean;
-  bold?: boolean;
-  code?: boolean;
+export function inlineMarkdownToSegments(text: string): StyledSegment[] {
+  try {
+    const tokens = marked.lexer(text);
+    const segments: StyledSegment[] = [];
+
+    for (const token of tokens) {
+      if (token.type === 'paragraph' || token.type === 'heading') {
+        segments.push(...inlineTokensToSegments((token as any).tokens ?? [{ type: 'text', text: (token as any).text ?? '' }]));
+      } else if (token.type === 'space') {
+        segments.push({ text: '\n' });
+      } else {
+        segments.push(...plainTextToSegments((token as any).text ?? (token as any).raw ?? ''));
+      }
+    }
+
+    return mergeSegments(segments);
+  } catch {
+    return plainTextToSegments(text);
+  }
 }
 
-/**
- * Parse and format inline markdown, returning segments with styling information
- */
-function formatInlineMarkdown(text: string): string | StyledSegment[] {
-  // Check if there are any formatting markers that require segment-based rendering
-  const hasFormatting = /<(red|green|yellow|cyan|blue|magenta|white|gray|orange)>|<span\s+color=|`|~~|\*\*|\*|__|_/i.test(text);
+function inlineTokensToSegments(tokens: any[], baseStyle: SegmentStyle = {}): StyledSegment[] {
+  const segments: StyledSegment[] = [];
+  const styleStack: SegmentStyle[] = [];
+  let currentStyle: SegmentStyle = { ...baseStyle };
 
-  if (hasFormatting) {
-    return parseStyledText(text);
+  for (const token of tokens) {
+    const type = token.type;
+
+    if (type === 'html') {
+      const directive = parseInlineHtmlDirective(token.text ?? token.raw ?? '');
+      if (directive.kind === 'line-break') {
+        appendTextSegment(segments, '\n', currentStyle);
+      } else if (directive.kind === 'push-style') {
+        styleStack.push(currentStyle);
+        currentStyle = { ...currentStyle, ...directive.style };
+      } else if (directive.kind === 'pop-style') {
+        currentStyle = styleStack.pop() ?? { ...baseStyle };
+      } else {
+        appendTextSegment(segments, token.text ?? token.raw ?? '', currentStyle);
+      }
+      continue;
+    }
+
+    if (type === 'text') {
+      if (Array.isArray(token.tokens)) {
+        segments.push(...inlineTokensToSegments(token.tokens, currentStyle));
+      } else {
+        appendTextSegment(segments, token.text ?? token.raw ?? '', currentStyle);
+      }
+      continue;
+    }
+
+    if (type === 'escape') {
+      appendTextSegment(segments, token.text ?? token.raw ?? '', currentStyle);
+      continue;
+    }
+
+    if (type === 'br') {
+      appendTextSegment(segments, '\n', currentStyle);
+      continue;
+    }
+
+    if (type === 'codespan') {
+      appendTextSegment(segments, decodeCodeSpanText(token.text ?? ''), {
+        ...currentStyle,
+        code: true,
+        color: currentStyle.color ?? UI_COLORS.PRIMARY,
+      });
+      continue;
+    }
+
+    if (type === 'strong') {
+      segments.push(...inlineTokensToSegments(token.tokens ?? [{ type: 'text', text: token.text ?? '' }], {
+        ...currentStyle,
+        bold: true,
+      }));
+      continue;
+    }
+
+    if (type === 'em') {
+      segments.push(...inlineTokensToSegments(token.tokens ?? [{ type: 'text', text: token.text ?? '' }], {
+        ...currentStyle,
+        italic: true,
+      }));
+      continue;
+    }
+
+    if (type === 'del') {
+      segments.push(...inlineTokensToSegments(token.tokens ?? [{ type: 'text', text: token.text ?? '' }], {
+        ...currentStyle,
+        strikethrough: true,
+      }));
+      continue;
+    }
+
+    if (type === 'link') {
+      segments.push(...inlineTokensToSegments(token.tokens ?? [{ type: 'text', text: token.text ?? token.href ?? '' }], {
+        ...currentStyle,
+        color: currentStyle.color ?? UI_COLORS.PRIMARY,
+        underline: true,
+      }));
+      continue;
+    }
+
+    if (type === 'image') {
+      const label = token.text ? `Image: ${token.text}` : token.href ?? 'Image';
+      appendTextSegment(segments, label, { ...currentStyle, color: UI_COLORS.TEXT_DIM, italic: true });
+      continue;
+    }
+
+    if (Array.isArray(token.tokens)) {
+      segments.push(...inlineTokensToSegments(token.tokens, currentStyle));
+    } else {
+      appendTextSegment(segments, token.text ?? token.raw ?? '', currentStyle);
+    }
   }
 
-  // No formatting - return plain string with simple transformations
-  let formatted = text;
+  return mergeSegments(segments);
+}
 
-  // Handle LaTeX math expressions
-  formatted = processLatex(formatted);
+function plainTextToSegments(text: string, style: SegmentStyle = {}): StyledSegment[] {
+  const segments: StyledSegment[] = [];
+  appendTextSegment(segments, text, style);
+  return segments;
+}
 
-  // Handle markdown links - just show the text
-  formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, _url) => {
-    return text;
+function appendTextSegment(segments: StyledSegment[], text: string, style: SegmentStyle): void {
+  if (!text) {
+    return;
+  }
+
+  segments.push({
+    text: style.code ? text : processLatex(text),
+    ...style,
   });
+}
 
-  return formatted;
+function renderSegmentsForTerminal(segments: StyledSegment[]): string {
+  return segmentsToAnsiString(mergeSegments(segments));
+}
+
+export function renderInlineMarkdownForTerminal(text: string): string {
+  return renderSegmentsForTerminal(inlineMarkdownToSegments(text));
+}
+
+export function renderInlineMarkdownLinesForTerminal(text: string): string[] {
+  return renderSegmentLinesForTerminal(inlineMarkdownToSegments(text));
+}
+
+function renderSegmentLinesForTerminal(segments: StyledSegment[]): string[] {
+  return splitSegmentsOnNewlines(segments).map((line) => renderSegmentsForTerminal(line));
+}
+
+function splitSegmentsOnNewlines(segments: StyledSegment[]): StyledSegment[][] {
+  const lines: StyledSegment[][] = [[]];
+
+  for (const segment of segments) {
+    const parts = segment.text.split('\n');
+    for (const [index, part] of parts.entries()) {
+      if (index > 0) {
+        lines.push([]);
+      }
+
+      if (part) {
+        lines[lines.length - 1]?.push({ ...segment, text: part });
+      }
+    }
+  }
+
+  return lines;
+}
+
+function segmentsToPlainText(segments: StyledSegment[]): string {
+  return segments.map((segment) => segment.text).join('');
+}
+
+function cellToAnsi(cell: any): string {
+  const segments = cell?.tokens
+    ? inlineTokensToSegments(cell.tokens)
+    : inlineMarkdownToSegments(cell?.text ?? '');
+  return renderSegmentsForTerminal(segments);
+}
+
+function parseListItem(item: any): ParsedNode {
+  const segments: StyledSegment[] = [];
+  const children: ParsedNode[] = [];
+
+  for (const token of item.tokens ?? []) {
+    if (token.type === 'text') {
+      if (Array.isArray(token.tokens)) {
+        segments.push(...inlineTokensToSegments(token.tokens));
+      } else {
+        segments.push(...inlineMarkdownToSegments(token.text ?? ''));
+      }
+      continue;
+    }
+
+    if (token.type === 'paragraph') {
+      const paragraphSegments = token.tokens
+        ? inlineTokensToSegments(token.tokens)
+        : inlineMarkdownToSegments(token.text ?? '');
+
+      if (segments.length === 0 && children.length === 0) {
+        segments.push(...paragraphSegments);
+      } else {
+        children.push({
+          type: 'paragraph',
+          content: token.text,
+          segments: paragraphSegments,
+        });
+      }
+      continue;
+    }
+
+    if (token.type === 'space') {
+      if (segments.length > 0) {
+        appendTextSegment(segments, '\n', {});
+      }
+      continue;
+    }
+
+    children.push(...parseTokens([token]));
+  }
+
+  if (segments.length === 0 && item.text) {
+    segments.push(...inlineMarkdownToSegments(item.text));
+  }
+
+  return {
+    type: 'list-item',
+    content: item.text,
+    segments: mergeSegments(segments),
+    task: item.task === true,
+    checked: item.checked === true,
+    children,
+  };
+}
+
+function getListBullet(ordered: boolean | undefined, index: number, item: ParsedNode): string {
+  if (item.task) {
+    return `${item.checked ? UI_SYMBOLS.TODO.CHECKED : UI_SYMBOLS.TODO.UNCHECKED} `;
+  }
+
+  return ordered ? `${index + 1}. ` : `${UI_SYMBOLS.LIST.BULLET} `;
+}
+
+type InlineHtmlDirective =
+  | { kind: 'line-break' }
+  | { kind: 'push-style'; style: SegmentStyle }
+  | { kind: 'pop-style' }
+  | { kind: 'literal' };
+
+function parseInlineHtmlDirective(rawHtml: string): InlineHtmlDirective {
+  const html = rawHtml.trim();
+
+  if (/^<br\s*\/?>$/i.test(html)) {
+    return { kind: 'line-break' };
+  }
+
+  const namedOpen = html.match(/^<(red|green|yellow|cyan|blue|magenta|white|gray|grey|orange)>$/i);
+  if (namedOpen?.[1]) {
+    return { kind: 'push-style', style: { color: normalizeColor(namedOpen[1]) } };
+  }
+
+  const spanOpen = html.match(/^<span\s+color=["']?(red|green|yellow|cyan|blue|magenta|white|gray|grey|orange|#[0-9a-f]{6})["']?\s*>$/i);
+  if (spanOpen?.[1]) {
+    return { kind: 'push-style', style: { color: normalizeColor(spanOpen[1]) } };
+  }
+
+  if (/^<\/(red|green|yellow|cyan|blue|magenta|white|gray|grey|orange|span)>$/i.test(html)) {
+    return { kind: 'pop-style' };
+  }
+
+  return { kind: 'literal' };
+}
+
+function normalizeColor(color: string): string {
+  const normalized = color.toLowerCase();
+  if (normalized === 'orange') {
+    return UI_COLORS.WARNING;
+  }
+  if (normalized === 'grey') {
+    return 'gray';
+  }
+  return normalized;
+}
+
+function decodeCodeSpanText(text: string): string {
+  const BACKSLASH_PLACEHOLDER = '\x00BACKSLASH\x00';
+  return text
+    .replace(/\\\\/g, BACKSLASH_PLACEHOLDER)
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t')
+    .replace(/\\r/g, '\r')
+    .replace(/\\"/g, '"')
+    .replace(/\\'/g, "'")
+    .replace(new RegExp(BACKSLASH_PLACEHOLDER, 'g'), '\\');
 }
 
 /**
- * Convert styled segments to a single string with ANSI escape codes
- * This avoids Ink's Text component wrapping issues by pre-rendering styles
+ * Convert styled segments to a single string with ANSI escape codes. This avoids
+ * Ink's Text wrapping issues by pre-rendering styles into a single text node.
  */
 function segmentsToAnsiString(segments: StyledSegment[]): string {
   let result = '';
@@ -764,7 +956,6 @@ function segmentsToAnsiString(segments: StyledSegment[]): string {
   for (const segment of segments) {
     let text = segment.text;
 
-    // Apply color
     if (segment.color) {
       const colorCode = getAnsiColorCode(segment.color);
       if (colorCode) {
@@ -772,19 +963,20 @@ function segmentsToAnsiString(segments: StyledSegment[]): string {
       }
     }
 
-    // Apply bold
     if (segment.bold) {
       text = `\x1b[1m${text}\x1b[22m`;
     }
 
-    // Apply italic
     if (segment.italic) {
       text = `\x1b[3m${text}\x1b[23m`;
     }
 
-    // Apply strikethrough
     if (segment.strikethrough) {
       text = `\x1b[9m${text}\x1b[29m`;
+    }
+
+    if (segment.underline) {
+      text = `\x1b[4m${text}\x1b[24m`;
     }
 
     result += text;
@@ -793,220 +985,62 @@ function segmentsToAnsiString(segments: StyledSegment[]): string {
   return result;
 }
 
-/**
- * Get ANSI color code for a color name
- */
 function getAnsiColorCode(color: string): string | null {
   const colorMap: Record<string, string> = {
-    'red': '31',
-    'green': '32',
-    'yellow': '33',
-    'blue': '34',
-    'magenta': '35',
-    'cyan': '36',
-    'white': '37',
-    'gray': '90',
-    'grey': '90',
-    '#00A0E4': '36', // UI_COLORS.PRIMARY maps to cyan
+    red: '31',
+    green: '32',
+    yellow: '33',
+    blue: '34',
+    magenta: '35',
+    cyan: '36',
+    white: '37',
+    gray: '90',
+    grey: '90',
   };
-  return colorMap[color] || null;
+
+  if (colorMap[color]) {
+    return colorMap[color];
+  }
+
+  const hex = color.match(/^#([0-9a-f]{6})$/i);
+  if (!hex?.[1]) {
+    return null;
+  }
+
+  const red = Number.parseInt(hex[1].slice(0, 2), 16);
+  const green = Number.parseInt(hex[1].slice(2, 4), 16);
+  const blue = Number.parseInt(hex[1].slice(4, 6), 16);
+  return `38;2;${red};${green};${blue}`;
 }
 
-/**
- * Merge consecutive segments with identical styling
- * This reduces the number of Text components and improves wrapping behavior
- */
 function mergeSegments(segments: StyledSegment[]): StyledSegment[] {
   if (segments.length <= 1) return segments;
-  if (!segments[0]?.text) return segments;
 
   const merged: StyledSegment[] = [];
-  let currentText = segments[0].text;
-  let currentStyle: Omit<StyledSegment, 'text'> = {
-    color: segments[0].color,
-    bold: segments[0].bold,
-    italic: segments[0].italic,
-    strikethrough: segments[0].strikethrough,
-    code: segments[0].code,
-  };
+  let current: StyledSegment | null = null;
 
-  for (let i = 1; i < segments.length; i++) {
-    const next = segments[i];
-    if (!next?.text) continue;
+  for (const segment of segments) {
+    if (!segment.text) {
+      continue;
+    }
 
-    // Check if styling is identical
-    const sameStyle =
-      currentStyle.color === next.color &&
-      currentStyle.bold === next.bold &&
-      currentStyle.italic === next.italic &&
-      currentStyle.strikethrough === next.strikethrough &&
-      currentStyle.code === next.code;
-
-    if (sameStyle) {
-      // Merge text into current segment
-      currentText += next.text;
+    if (
+      current &&
+      current.color === segment.color &&
+      current.bold === segment.bold &&
+      current.italic === segment.italic &&
+      current.strikethrough === segment.strikethrough &&
+      current.code === segment.code &&
+      current.underline === segment.underline
+    ) {
+      current.text += segment.text;
     } else {
-      // Style changed - push current and start new segment
-      merged.push({ text: currentText, ...currentStyle });
-      currentText = next.text;
-      currentStyle = {
-        color: next.color,
-        bold: next.bold,
-        italic: next.italic,
-        strikethrough: next.strikethrough,
-        code: next.code,
-      };
+      current = { ...segment };
+      merged.push(current);
     }
   }
 
-  // Push the last segment
-  merged.push({ text: currentText, ...currentStyle });
   return merged;
-}
-
-/**
- * Parse text with markdown formatting into styled segments
- * Supports: colors, bold, italic, strikethrough, code, LaTeX
- */
-function parseStyledText(text: string): StyledSegment[] {
-  const segments: StyledSegment[] = [];
-
-  // Tokenize the text into formatting regions
-  // Priority: code > color > strikethrough > bold > italic
-  const tokens = tokenizeFormatting(text);
-
-  for (const token of tokens) {
-    if (token.text) {
-      // Process LaTeX in the text segment (but not in code segments)
-      if (!token.code) {
-        const processedText = processLatex(token.text);
-        segments.push({ ...token, text: processedText });
-      } else {
-        segments.push(token);
-      }
-    }
-  }
-
-  // Merge consecutive segments with same styling
-  const result = segments.length > 0 ? mergeSegments(segments) : [{ text }];
-  return result;
-}
-
-/**
- * Extract color name and content from color tag match
- * Handles both <color>text</color> and <span color="color">text</span> formats
- */
-function extractColorFromMatch(match: RegExpMatchArray): { color: string; content: string } | null {
-  // Handle <color>text</color> format (match[2] = color, match[3] = content)
-  if (match[2] && match[3]) {
-    const color = match[2].toLowerCase() === 'orange' ? UI_COLORS.WARNING : match[2].toLowerCase();
-    return { color, content: match[3] };
-  }
-  // Handle <span color="color">text</span> format (match[4] = color, match[5] = content)
-  if (match[4] && match[5]) {
-    const color = match[4].toLowerCase() === 'orange' ? UI_COLORS.WARNING : match[4].toLowerCase();
-    return { color, content: match[5] };
-  }
-  return null;
-}
-
-/**
- * Tokenize text into formatted segments
- * @param text - Text to tokenize
- * @param depth - Current recursion depth (prevents stack overflow)
- */
-function tokenizeFormatting(text: string, depth: number = 0): StyledSegment[] {
-  const MAX_DEPTH = 10;
-
-  // Prevent stack overflow from deeply nested formatting
-  if (depth > MAX_DEPTH) {
-    return [{ text }];
-  }
-
-  const segments: StyledSegment[] = [];
-  let pos = 0;
-
-  // Combined regex for all formatting types (order matters!)
-  // 1. Inline code (highest priority)
-  // 2. Color tags
-  // 3. Strikethrough
-  // 4. Bold
-  // 5. Italic
-  const formattingRegex = /`([^`]+)`|<(red|green|yellow|cyan|blue|magenta|white|gray|orange)>(.*?)<\/\2>|<span\s+color=["']?(red|green|yellow|cyan|blue|magenta|white|gray|orange)["']?>(.*?)<\/span>|~~(.*?)~~|\*\*([^*]+)\*\*|__([^_]+)__|(?<!\*)\*([^*]+)\*(?!\*)|(?<!_)_([^_]+)_(?!_)/g;
-
-  let match;
-  while ((match = formattingRegex.exec(text)) !== null) {
-    // Add plain text before this match
-    if (match.index > pos) {
-      segments.push({ text: text.substring(pos, match.index) });
-    }
-
-    // Determine what was matched and create appropriate segment
-    if (match[1]) {
-      // Inline code: `text` - render with primary color for distinction
-      // Process escape sequences in code blocks
-      // Use placeholder to handle \\ correctly
-      const BACKSLASH_PLACEHOLDER = '\x00BACKSLASH\x00';
-      const codeText = match[1]
-        .replace(/\\\\/g, BACKSLASH_PLACEHOLDER)  // Temporarily replace \\
-        .replace(/\\n/g, '\n')
-        .replace(/\\t/g, '\t')
-        .replace(/\\r/g, '\r')
-        .replace(/\\"/g, '"')
-        .replace(/\\'/g, "'")
-        .replace(new RegExp(BACKSLASH_PLACEHOLDER, 'g'), '\\');  // Restore \
-      segments.push({ text: codeText, code: true, color: UI_COLORS.PRIMARY });
-    } else {
-      // Try to extract color tag (handles both <color> and <span color="color"> formats)
-      const colorMatch = extractColorFromMatch(match);
-      if (colorMatch) {
-        // Recursively parse nested formatting
-        const nested = tokenizeFormatting(colorMatch.content, depth + 1);
-        for (const seg of nested) {
-          segments.push({ ...seg, color: colorMatch.color });
-        }
-      } else if (match[6]) {
-        // Strikethrough: ~~text~~
-        const nested = tokenizeFormatting(match[6], depth + 1);
-        for (const seg of nested) {
-          segments.push({ ...seg, strikethrough: true });
-        }
-      } else if (match[7]) {
-        // Bold: **text**
-        const nested = tokenizeFormatting(match[7], depth + 1);
-        for (const seg of nested) {
-          segments.push({ ...seg, bold: true });
-        }
-      } else if (match[8]) {
-        // Bold: __text__
-        const nested = tokenizeFormatting(match[8], depth + 1);
-        for (const seg of nested) {
-          segments.push({ ...seg, bold: true });
-        }
-      } else if (match[9]) {
-        // Italic: *text*
-        const nested = tokenizeFormatting(match[9], depth + 1);
-        for (const seg of nested) {
-          segments.push({ ...seg, italic: true });
-        }
-      } else if (match[10]) {
-        // Italic: _text_
-        const nested = tokenizeFormatting(match[10], depth + 1);
-        for (const seg of nested) {
-          segments.push({ ...seg, italic: true });
-        }
-      }
-    }
-
-    pos = match.index + match[0].length;
-  }
-
-  // Add any remaining plain text
-  if (pos < text.length) {
-    segments.push({ text: text.substring(pos) });
-  }
-
-  return segments;
 }
 
 /**
@@ -1121,17 +1155,17 @@ function nodeToPlainText(nodes: ParsedNode[]): string {
       parts.push(`${langLabel}\n${node.content || ''}`);
     } else if (node.type === 'heading') {
       // Headings - render as bold text
-      parts.push(node.content || '');
+      parts.push(node.segments ? segmentsToPlainText(node.segments) : node.content || '');
     } else if (node.type === 'list') {
       // Lists - render with appropriate bullets
       const items = node.children?.map((item, idx) => {
-        const bullet = node.ordered ? `${idx + 1}. ` : '  • ';
-        return bullet + stripInlineMarkdown(item.content || '');
+        const bullet = node.ordered ? `${idx + 1}. ` : `  ${UI_SYMBOLS.LIST.BULLET} `;
+        return bullet + (item.segments ? segmentsToPlainText(item.segments) : stripInlineMarkdown(item.content || ''));
       }) || [];
       parts.push(items.join('\n'));
     } else if (node.type === 'paragraph') {
       // Paragraphs - preserve inline formatting
-      parts.push(stripInlineMarkdown(node.content || ''));
+      parts.push(node.segments ? segmentsToPlainText(node.segments) : stripInlineMarkdown(node.content || ''));
     } else if (node.type === 'table') {
       // Tables - simplified text representation
       parts.push('[Table content omitted in blockquote]');
@@ -1145,7 +1179,7 @@ function nodeToPlainText(nodes: ParsedNode[]): string {
       }
     } else if (node.type === 'text') {
       // Plain text
-      parts.push(stripInlineMarkdown(node.content || ''));
+      parts.push(node.segments ? segmentsToPlainText(node.segments) : stripInlineMarkdown(node.content || ''));
     } else if (node.type === 'space') {
       // Space nodes represent blank lines - add empty string to preserve spacing
       parts.push('');
@@ -1159,27 +1193,5 @@ function nodeToPlainText(nodes: ParsedNode[]): string {
  * Strip inline markdown for plain text display
  */
 function stripInlineMarkdown(text: string): string {
-  let stripped = text;
-
-  // Convert <br> and <br/> tags to newlines
-  stripped = stripped.replace(/<br\s*\/?>/gi, '\n');
-
-  // Remove inline code
-  stripped = stripped.replace(/`([^`]+)`/g, '$1');
-
-  // Handle LaTeX math expressions
-  stripped = processLatex(stripped);
-
-  // Remove bold
-  stripped = stripped.replace(/\*\*([^*]+)\*\*/g, '$1');
-  stripped = stripped.replace(/__([^_]+)__/g, '$1');
-
-  // Remove italic
-  stripped = stripped.replace(/\*([^*]+)\*/g, '$1');
-  stripped = stripped.replace(/_([^_]+)_/g, '$1');
-
-  // Remove links
-  stripped = stripped.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-
-  return stripped;
+  return segmentsToPlainText(inlineMarkdownToSegments(text));
 }
