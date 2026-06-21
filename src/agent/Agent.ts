@@ -1397,6 +1397,25 @@ export class Agent {
         Math.floor(remainingTokens * TOKEN_MANAGEMENT.DYNAMIC_OUTPUT_PERCENT)
       );
 
+      // Append the volatile context as a trailing ephemeral system-reminder.
+      // Keeping the date, live usage, todos, plan-mode banner, and budget warnings
+      // OUT of msg[0] and at the END of the prompt is what lets the backend reuse
+      // its KV cache for the stable system prefix + the entire conversation; only
+      // this small trailing block is recomputed each round-trip. It is stripped
+      // immediately after the response by removeEphemeralSystemReminders().
+      const { getDynamicContextBlock } = await import('../prompts/systemMessages.js');
+      const dynamicContext = await getDynamicContextBlock({
+        tokenManager: this.tokenManager,
+        toolResultManager: this.toolResultManager,
+        includeTodos: !this.config.isSpecializedAgent,
+        includePlanMode: !this.config.isSpecializedAgent,
+      });
+      if (dynamicContext) {
+        const dynamicReminder = createSystemReminder(dynamicContext, false);
+        dynamicReminder.metadata = { ...(dynamicReminder.metadata ?? {}), ephemeral: true };
+        this.conversationManager.addMessage(dynamicReminder);
+      }
+
       // Send to model (includes system-reminder if present).
       // Hand the model client this agent's request signal so an interrupt cancels
       // ONLY this agent's request — never sibling/background agents that share the

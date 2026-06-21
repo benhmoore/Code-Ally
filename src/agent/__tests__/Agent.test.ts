@@ -156,9 +156,11 @@ describe('Agent - Interruption Handling', () => {
       const capturedMessages = (mockModelClient as any).capturedMessages;
       const lastCall = capturedMessages[capturedMessages.length - 1];
 
-      // Should NOT contain system reminder
+      // Should NOT contain the interruption reminder. (A trailing dynamic-context
+      // system-reminder is always sent — that's the KV-cache prefix design — so we
+      // assert specifically on the interruption reminder's distinctive text.)
       const hasSystemReminder = lastCall.some((msg: Message) =>
-        msg.role === 'system' && msg.content.includes('<system-reminder>')
+        msg.role === 'system' && msg.content.includes('User interrupted')
       );
       expect(hasSystemReminder).toBe(false);
     });
@@ -180,9 +182,10 @@ describe('Agent - Interruption Handling', () => {
       const capturedMessages = (mockModelClient as any).capturedMessages;
       const lastCall = capturedMessages[capturedMessages.length - 1];
 
-      // Should NOT contain system reminder on second message
+      // Should NOT contain the interruption reminder again (asserts on its
+      // distinctive text, since the trailing dynamic-context reminder is always sent).
       const hasSystemReminder = lastCall.some((msg: Message) =>
-        msg.role === 'system' && msg.content.includes('<system-reminder>')
+        msg.role === 'system' && msg.content.includes('User interrupted')
       );
       expect(hasSystemReminder).toBe(false);
     });

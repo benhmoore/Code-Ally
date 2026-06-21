@@ -192,7 +192,16 @@ function getContextBudgetReminder(tokenManager?: TokenManager): string {
 }
 
 /**
- * Get context information for system prompts
+ * Get the cache-stable context for the system prompt (msg[0]).
+ *
+ * This deliberately excludes anything that changes per round-trip — the current
+ * date and live context-usage percentage live in {@link getDynamicContextBlock},
+ * a trailing ephemeral message. Keeping msg[0] byte-stable across round-trips is
+ * what lets the backend reuse the KV cache for the entire system prefix and the
+ * conversation that follows it. The only content here that can shift mid-session
+ * (memory index, skills/agents rosters, gated by context %) changes rarely, so a
+ * one-time cache break on those events is an acceptable trade for a much smaller
+ * per-round-trip recompute.
  */
 export async function getContextInfo(options: {
   includeAgents?: boolean;
@@ -203,9 +212,10 @@ export async function getContextInfo(options: {
   callingAgentName?: string;
   conversationMessages?: readonly Message[];
 } = {}): Promise<string> {
-  const { includeAgents = true, includeProjectInstructions = true, tokenManager, toolResultManager, reasoningEffort, callingAgentName, conversationMessages } = options;
+  // toolResultManager is accepted for caller compatibility but no longer read
+  // here — live tool-call estimates moved to getDynamicContextBlock.
+  const { includeAgents = true, includeProjectInstructions = true, tokenManager, reasoningEffort, callingAgentName, conversationMessages } = options;
 
-  const currentDate = new Date().toISOString().replace('T', ' ').slice(0, TEXT_LIMITS.ISO_DATETIME_LENGTH);
   const workingDir = process.cwd();
   const osInfo = `${os.platform()} ${os.release()}`;
   const nodeVersion = process.version;
@@ -323,10 +333,6 @@ ${skillsSection}`;
     logger.warn('Failed to load skills for system prompt:', formatError(error));
   }
 
-  // Get context usage info with warnings
-  const contextUsage = getContextUsageInfo(tokenManager, toolResultManager);
-  const contextUsageSection = contextUsage ? `\n${contextUsage}` : '';
-
   // Build git info section
   const gitInfo = gitBranch ? ` (git repository, branch: ${gitBranch})` : '';
 
@@ -412,42 +418,108 @@ ${skillsSection}`;
   }
 
   return `
-- Current Date: ${currentDate}
 - Working Directory: ${workingDir}${gitInfo}${additionalDirsInfo}
 - Operating System: ${osInfo}
-- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${contextUsageSection}${profileInstructionsContent}${allyMdContent}${memoryIndexContent}${agentsInfo}${skillsInfo}${contextFilesSection}`;
+- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${profileInstructionsContent}${allyMdContent}${memoryIndexContent}${agentsInfo}${skillsInfo}${contextFilesSection}`;
 }
 
 /**
- * Generate the main system prompt dynamically
+ * Build the volatile context block: the per-round-trip state (date, live context
+ * usage, todos, plan-mode banner, budget warnings) that must NOT live in the
+ * cached system prefix. Agent.getLLMResponse appends the returned string as a
+ * trailing ephemeral system-reminder right before each send and strips it after
+ * the response — so the model always sees current state at the end of the prompt
+ * while the stable prefix (msg[0] + conversation) stays KV-cacheable.
+ *
+ * @param includeTodos - main agent only; sub-agents don't drive the todo list
+ * @param includePlanMode - main agent only; plan mode is a root-level concept
+ * @returns the block string, or '' when there is nothing volatile to report
+ */
+export async function getDynamicContextBlock(options: {
+  tokenManager?: TokenManager;
+  toolResultManager?: ToolResultManager;
+  includeTodos?: boolean;
+  includePlanMode?: boolean;
+} = {}): Promise<string> {
+  const { tokenManager, toolResultManager, includeTodos = false, includePlanMode = false } = options;
+
+  const currentDate = new Date().toISOString().replace('T', ' ').slice(0, TEXT_LIMITS.ISO_DATETIME_LENGTH);
+
+  // Live context usage with graduated warnings
+  const contextUsage = getContextUsageInfo(tokenManager, toolResultManager);
+  const contextUsageSection = contextUsage ? `\n${contextUsage}` : '';
+
+  // Todo state (main agent only) — surfaced every round-trip so the model keeps
+  // the plan in view, not just on the turn that the turn-start reminder fires.
+  let todoContext = '';
+  if (includeTodos) {
+    try {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      if (serviceRegistry && serviceRegistry.hasService('todo_manager')) {
+        const todoManager = serviceRegistry.get<any>('todo_manager');
+        if (todoManager && typeof todoManager.generateActiveContext === 'function') {
+          const todoStatus = todoManager.generateActiveContext();
+          if (todoStatus) {
+            todoContext = `\n${todoStatus}`;
+          }
+          if (typeof todoManager.logTodosIfChanged === 'function') {
+            todoManager.logTodosIfChanged();
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to load todos for dynamic context:', formatError(error));
+    }
+  }
+
+  // Plan-mode banner (main agent only)
+  let planModeSection = '';
+  if (includePlanMode) {
+    try {
+      const serviceRegistry = ServiceRegistry.getInstance();
+      if (serviceRegistry && serviceRegistry.hasService('plan_mode_manager')) {
+        const planModeManager = serviceRegistry.get<PlanModeManager>('plan_mode_manager');
+        if (planModeManager?.isActive()) {
+          planModeSection = `
+
+**PLAN MODE ACTIVE**
+You are in read-only plan mode. Only exploratory tools and write-plan are available.
+- Explore the codebase to understand patterns and architecture
+- Ask clarifying questions with ask-user-question
+- Write your plan with write-plan when ready
+- Call exit-plan-mode to present the plan for user approval
+You CANNOT write, edit, or delete project files in this mode.`;
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to check plan mode state:', formatError(error));
+    }
+  }
+
+  // Budget reminder (only present at 75%+)
+  const contextBudgetReminder = getContextBudgetReminder(tokenManager);
+
+  const body = `- Current Date: ${currentDate}${contextUsageSection}${todoContext}${planModeSection}${contextBudgetReminder}`;
+  if (!body.trim()) {
+    return '';
+  }
+  return `**Current Context:**
+${body}`;
+}
+
+/**
+ * Generate the main system prompt (the cache-stable msg[0]).
+ *
+ * Returns ONLY content that is stable across round-trips within a session:
+ * the core directives, tool/agent usage guidance, and the cache-stable context
+ * (environment, project instructions, memory index, rosters). Per-round-trip
+ * volatile state — date, live context usage, todos, plan-mode banner, budget
+ * warnings — is produced separately by {@link getDynamicContextBlock} and
+ * appended as a trailing ephemeral message, so this prefix can be KV-cached.
  */
 export async function getMainSystemPrompt(tokenManager?: TokenManager, toolResultManager?: ToolResultManager, isOnceMode: boolean = false, reasoningEffort?: string, conversationMessages?: readonly Message[]): Promise<string> {
   // Tool definitions are provided separately by the LLM client as function definitions
   const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager, reasoningEffort, conversationMessages });
-
-  // Get todo context
-  let todoContext = '';
-  try {
-    const serviceRegistry = ServiceRegistry.getInstance();
-
-    if (serviceRegistry && serviceRegistry.hasService('todo_manager')) {
-      const todoManager = serviceRegistry.get<any>('todo_manager');
-      if (todoManager && typeof todoManager.generateActiveContext === 'function') {
-        const todoStatus = todoManager.generateActiveContext();
-
-        if (todoStatus) {
-          todoContext = `\n${todoStatus}`;
-        }
-
-        // Log todos once per turn (when system prompt is regenerated)
-        if (typeof todoManager.logTodosIfChanged === 'function') {
-          todoManager.logTodosIfChanged();
-        }
-      }
-    }
-  } catch (error) {
-    logger.warn('Failed to load todos for system prompt:', formatError(error));
-  }
 
   // Get tool usage guidance
   let toolGuidanceContext = '';
@@ -503,36 +575,12 @@ ${guidances.join('\n\n')}`;
 This is a non-interactive, single-turn conversation. Your response will be final and the conversation will end immediately after you respond. There is no opportunity for follow-up questions or clarification. Make your response complete, clear, and self-contained.`
     : '';
 
-  // Get context budget reminder (only shown at 75%+)
-  const contextBudgetReminder = getContextBudgetReminder(tokenManager);
-
-  // Get plan mode augmentation
-  let planModeSection = '';
-  try {
-    const serviceRegistry = ServiceRegistry.getInstance();
-    if (serviceRegistry && serviceRegistry.hasService('plan_mode_manager')) {
-      const planModeManager = serviceRegistry.get<PlanModeManager>('plan_mode_manager');
-      if (planModeManager?.isActive()) {
-        planModeSection = `
-
-**PLAN MODE ACTIVE**
-You are in read-only plan mode. Only exploratory tools and write-plan are available.
-- Explore the codebase to understand patterns and architecture
-- Ask clarifying questions with ask-user-question
-- Write your plan with write-plan when ready
-- Call exit-plan-mode to present the plan for user approval
-You CANNOT write, edit, or delete project files in this mode.`;
-      }
-    }
-  } catch (error) {
-    logger.warn('Failed to check plan mode state:', formatError(error));
-  }
-
-  // Combine core directives with context
-  return `${CORE_DIRECTIVES}${onceModeInstructions}${planModeSection}${toolGuidanceContext}${agentGuidanceContext}${contextBudgetReminder}
+  // Combine core directives with the cache-stable context. Volatile state (date,
+  // usage, todos, plan-mode, budget) is appended separately per round-trip.
+  return `${CORE_DIRECTIVES}${onceModeInstructions}${toolGuidanceContext}${agentGuidanceContext}
 
 **Context:**
-${context}${todoContext}`;
+${context}`;
 }
 
 /**
@@ -561,9 +609,6 @@ export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt
     conversationMessages,
   });
 
-  // Get context budget reminder (only shown at 75%+)
-  const contextBudgetReminder = getContextBudgetReminder(tokenManager);
-
   // Build the base prompt with behavioral directives and general guidelines
   let promptWithDirectives = `**Primary Identity:**
 ${agentSystemPrompt}
@@ -588,12 +633,12 @@ ${GENERAL_GUIDELINES}`;
 ${taskPrompt}
 
 **Context:**
-${context}${contextBudgetReminder}
+${context}
 
 **Final Response Requirement**
 As a specialized agent, you must conclude with a comprehensive final response. Your final message will be returned as the tool result to the parent agent.
 
-- Monitor your context usage (shown above)
+- Monitor your context usage (shown in the Current Context block at the end of the prompt)
 - At 90%+ context, stop using tools and provide your final summary
 - Your final response should summarize: what you did, what you found, and any recommendations
 - If you run low on context, summarize what you've learned so far rather than making more tool calls
