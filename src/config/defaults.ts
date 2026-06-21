@@ -54,7 +54,7 @@ export const DEFAULT_CONFIG: Config = {
   theme: 'default', // UI theme name
   compact_threshold: 85, // Context % threshold for auto-compact (lowered from 95 to prevent retry loops)
   show_context_in_prompt: false, // Show context % in input prompt
-  show_thinking_in_chat: true, // Show model thinking content in chat conversation
+  show_thinking_in_chat: false, // Show model thinking content in chat conversation
   show_system_prompt_in_chat: false, // Show system prompts when agents are created
   show_full_tool_output: false, // Show full tool output without truncation in UI
   show_tool_parameters_in_chat: false, // Show tool parameter lists in parentheses after tool names
