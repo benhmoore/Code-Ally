@@ -24,6 +24,8 @@ import { AGENT_CONFIG } from '../config/constants.js';
 export interface TextLoopConfig {
   /** Event type to monitor (e.g., THOUGHT_CHUNK, RESPONSE_CHUNK) */
   eventType: ActivityEventType;
+  /** Event types that mark the end of the current text stream and clear accumulated text */
+  resetEventTypes?: readonly ActivityEventType[];
   /** Pattern matchers to apply */
   patterns: LoopPattern[];
   /** Grace period before starting checks (milliseconds) */
@@ -49,7 +51,8 @@ class TextLoopDetector {
   private checkTimer: NodeJS.Timeout | null = null;
   private isMonitoring: boolean = false;
   private hasDetectedLoop: boolean = false;
-  private unsubscribe: (() => void) | null = null;
+  private unsubscribeText: (() => void) | null = null;
+  private unsubscribeResets: Array<() => void> = [];
 
   constructor(config: TextLoopConfig, activityStream: ActivityStream, instanceId: string) {
     this.config = config;
@@ -59,12 +62,9 @@ class TextLoopDetector {
   }
 
   private subscribeToEvents(): void {
-    if (this.unsubscribe) {
-      this.unsubscribe();
-      this.unsubscribe = null;
-    }
+    this.unsubscribeFromEvents();
 
-    this.unsubscribe = this.activityStream.subscribe(
+    this.unsubscribeText = this.activityStream.subscribe(
       this.config.eventType,
       (event) => {
         const chunk = event.data?.chunk;
@@ -76,6 +76,53 @@ class TextLoopDetector {
         }
       }
     );
+
+    const resetEventTypes = Array.from(new Set(this.config.resetEventTypes ?? []))
+      .filter((eventType) => eventType !== this.config.eventType);
+
+    this.unsubscribeResets = resetEventTypes.map((eventType) =>
+      this.activityStream.subscribe(eventType, () => {
+        this.clearCurrentStream(`reset event: ${eventType}`);
+      })
+    );
+  }
+
+  private unsubscribeFromEvents(): void {
+    if (this.unsubscribeText) {
+      this.unsubscribeText();
+      this.unsubscribeText = null;
+    }
+
+    for (const unsubscribe of this.unsubscribeResets) {
+      unsubscribe();
+    }
+    this.unsubscribeResets = [];
+  }
+
+  private clearTimers(): void {
+    if (this.warmupTimer) {
+      clearTimeout(this.warmupTimer);
+      this.warmupTimer = null;
+    }
+
+    if (this.checkTimer) {
+      clearInterval(this.checkTimer);
+      this.checkTimer = null;
+    }
+
+    this.isMonitoring = false;
+  }
+
+  private clearCurrentStream(reason: string): void {
+    const hadState = this.accumulatedText.length > 0 || this.isMonitoring || this.hasDetectedLoop;
+
+    this.clearTimers();
+    this.accumulatedText = '';
+    this.hasDetectedLoop = false;
+
+    if (hadState) {
+      logger.debug('[TEXT_LOOP_DETECTOR]', this.instanceId, `Cleared current stream (${reason})`);
+    }
   }
 
   private start(): void {
@@ -145,31 +192,17 @@ class TextLoopDetector {
   }
 
   stop(): void {
-    if (!this.isMonitoring) return;
+    const wasMonitoring = this.isMonitoring;
+    this.clearTimers();
+    this.unsubscribeFromEvents();
 
-    if (this.warmupTimer) {
-      clearTimeout(this.warmupTimer);
-      this.warmupTimer = null;
-    }
-
-    if (this.checkTimer) {
-      clearInterval(this.checkTimer);
-      this.checkTimer = null;
-    }
-
-    if (this.unsubscribe) {
-      this.unsubscribe();
-      this.unsubscribe = null;
-    }
-
-    this.isMonitoring = false;
+    if (!wasMonitoring) return;
     logger.debug('[TEXT_LOOP_DETECTOR]', this.instanceId, 'Stopped');
   }
 
   reset(): void {
-    this.stop();
-    this.accumulatedText = '';
-    this.hasDetectedLoop = false;
+    this.clearCurrentStream('reset');
+    this.unsubscribeFromEvents();
     this.subscribeToEvents();
     logger.debug('[TEXT_LOOP_DETECTOR]', this.instanceId, 'Reset');
   }

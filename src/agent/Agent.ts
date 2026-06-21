@@ -102,6 +102,21 @@ export interface AgentExecutionContext {
   thoroughness?: string;
 }
 
+const MODEL_TEXT_STREAM_COMPLETION_EVENTS = [
+  ActivityEventType.TOOL_CALL_START,
+  ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
+  ActivityEventType.AGENT_END,
+] as const;
+
+const THINKING_TEXT_STREAM_RESET_EVENTS = [
+  ActivityEventType.THOUGHT_COMPLETE,
+  ...MODEL_TEXT_STREAM_COMPLETION_EVENTS,
+] as const;
+
+const RESPONSE_TEXT_STREAM_RESET_EVENTS = [
+  ...MODEL_TEXT_STREAM_COMPLETION_EVENTS,
+] as const;
+
 export interface AgentConfig {
   /** Whether this is a specialized/delegated agent */
   isSpecializedAgent?: boolean;
@@ -381,6 +396,7 @@ export class Agent {
       instanceId: this.instanceId,
       thinkingLoopConfig: {
         eventType: ActivityEventType.THOUGHT_CHUNK,
+        resetEventTypes: THINKING_TEXT_STREAM_RESET_EVENTS,
         patterns: [
           new CharacterRepetitionPattern(),
           new PhraseRepetitionPattern(),
@@ -392,6 +408,7 @@ export class Agent {
       },
       responseLoopConfig: {
         eventType: ActivityEventType.ASSISTANT_CHUNK,
+        resetEventTypes: RESPONSE_TEXT_STREAM_RESET_EVENTS,
         patterns: [
           new CharacterRepetitionPattern(),
           new PhraseRepetitionPattern(),

@@ -16,6 +16,7 @@ import { LoopDetector, TextLoopConfig, CycleInfo, IssueType } from '../LoopDetec
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ActivityEventType } from '../../types/index.js';
 import type { LoopPattern, LoopInfo } from '../types/loopDetection.js';
+import { RepeatedActionPattern } from '../patterns/loopPatterns.js';
 
 // ============================================================================
 // TEST UTILITIES
@@ -408,6 +409,53 @@ describe('LoopDetector', () => {
         expect(detector.getThinkingAccumulatedLength()).toBe(12); // "Hello world!"
       });
 
+      it('should clear accumulated text on configured reset events', () => {
+        detector = new LoopDetector(
+          {
+            instanceId: 'test-reset-event',
+            thinkingLoopConfig: {
+              eventType: ActivityEventType.THOUGHT_CHUNK,
+              resetEventTypes: [ActivityEventType.THOUGHT_COMPLETE],
+              patterns: [],
+              warmupPeriodMs: 100,
+              checkIntervalMs: 50,
+              onLoopDetected: loopDetectedCallback,
+            },
+          },
+          activityStream
+        );
+
+        activityStream.emit({
+          id: 'thought-1',
+          type: ActivityEventType.THOUGHT_CHUNK,
+          timestamp: Date.now(),
+          data: { chunk: 'first stream' },
+        });
+
+        expect(detector.getThinkingAccumulatedLength()).toBe(12);
+        expect(detector.isThinkingDetectorActive()).toBe(true);
+
+        activityStream.emit({
+          id: 'thought-complete-1',
+          type: ActivityEventType.THOUGHT_COMPLETE,
+          timestamp: Date.now(),
+          data: { thinking: 'first stream' },
+        });
+
+        expect(detector.getThinkingAccumulatedLength()).toBe(0);
+        expect(detector.isThinkingDetectorActive()).toBe(false);
+
+        activityStream.emit({
+          id: 'thought-2',
+          type: ActivityEventType.THOUGHT_CHUNK,
+          timestamp: Date.now(),
+          data: { chunk: 'second' },
+        });
+
+        expect(detector.getThinkingAccumulatedLength()).toBe(6);
+        expect(detector.isThinkingDetectorActive()).toBe(true);
+      });
+
       it('should ignore empty or whitespace-only chunks', () => {
         detector = new LoopDetector(
           {
@@ -499,6 +547,86 @@ describe('LoopDetector', () => {
         expect(loopDetectedCallback).toHaveBeenCalledWith(
           expect.objectContaining({
             patternName: 'test_pattern',
+          })
+        );
+      });
+
+      it('should not detect repeated planning across completed thought streams', () => {
+        const pattern = new RepeatedActionPattern();
+
+        detector = new LoopDetector(
+          {
+            instanceId: 'test-thinking-boundaries',
+            thinkingLoopConfig: {
+              eventType: ActivityEventType.THOUGHT_CHUNK,
+              resetEventTypes: [ActivityEventType.THOUGHT_COMPLETE],
+              patterns: [pattern],
+              warmupPeriodMs: 100,
+              checkIntervalMs: 50,
+              onLoopDetected: loopDetectedCallback,
+            },
+          },
+          activityStream
+        );
+
+        for (let i = 0; i < 3; i++) {
+          activityStream.emit({
+            id: `thought-${i}`,
+            type: ActivityEventType.THOUGHT_CHUNK,
+            timestamp: Date.now(),
+            data: { chunk: 'Let me explore:\n1. Read the next relevant file.' },
+          });
+
+          activityStream.emit({
+            id: `thought-complete-${i}`,
+            type: ActivityEventType.THOUGHT_COMPLETE,
+            timestamp: Date.now(),
+            data: { thinking: 'Let me explore:\n1. Read the next relevant file.' },
+          });
+        }
+
+        vi.advanceTimersByTime(200);
+
+        expect(loopDetectedCallback).not.toHaveBeenCalled();
+      });
+
+      it('should still detect repeated planning inside a single thought stream', () => {
+        const pattern = new RepeatedActionPattern();
+
+        detector = new LoopDetector(
+          {
+            instanceId: 'test-thinking-single-stream',
+            thinkingLoopConfig: {
+              eventType: ActivityEventType.THOUGHT_CHUNK,
+              resetEventTypes: [ActivityEventType.THOUGHT_COMPLETE],
+              patterns: [pattern],
+              warmupPeriodMs: 100,
+              checkIntervalMs: 50,
+              onLoopDetected: loopDetectedCallback,
+            },
+          },
+          activityStream
+        );
+
+        activityStream.emit({
+          id: 'thought-loop',
+          type: ActivityEventType.THOUGHT_CHUNK,
+          timestamp: Date.now(),
+          data: {
+            chunk: [
+              'Let me explore:\n1. Read the next relevant file.',
+              'Let me explore:\n1. Read the next relevant file.',
+              'Let me explore:\n1. Read the next relevant file.',
+            ].join('\n'),
+          },
+        });
+
+        vi.advanceTimersByTime(150);
+
+        expect(loopDetectedCallback).toHaveBeenCalledWith(
+          expect.objectContaining({
+            patternName: 'repeated_actions',
+            repetitionCount: 3,
           })
         );
       });
