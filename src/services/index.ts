@@ -30,6 +30,8 @@ export { PatchCleanupManager } from './PatchCleanupManager.js';
 export { BashProcessManager, CircularBuffer } from './BashProcessManager.js';
 export { BackgroundAgentManager } from './BackgroundAgentManager.js';
 export { BackgroundTaskRegistry } from './BackgroundTaskRegistry.js';
+export { ScheduledTaskManager } from './ScheduledTaskManager.js';
+export { SchedulerInstaller } from './SchedulerInstaller.js';
 export { IntegrationStore } from './IntegrationStore.js';
 
 // Re-export types
@@ -42,6 +44,13 @@ export type { PatchIndex } from './PatchValidator.js';
 export type { ProcessInfo } from './BashProcessManager.js';
 export type { BackgroundAgentTask, BackgroundAgentStatus } from './BackgroundAgentManager.js';
 export type { BackgroundTask, BackgroundTaskKind, BackgroundTaskStatus, WatcherSpec } from './BackgroundTaskRegistry.js';
+export type {
+  ScheduledTask,
+  ScheduledTaskSchedule,
+  ScheduledTaskStatus,
+  ScheduledTaskPermissionPolicy,
+  ScheduledRunRecord,
+} from './ScheduledTaskManager.js';
 
 // UI Polish services
 export { SyntaxHighlighter } from './SyntaxHighlighter.js';

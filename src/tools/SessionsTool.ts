@@ -39,6 +39,7 @@ const SESSION_ANALYSIS_PROMPT = `You are a specialized session analysis assistan
 
 **Your Environment:**
 - You are operating in the project's sessions directory (your focus directory)
+- Scheduled task runs are stored here too. Their session names start with \`scheduled_<task-id>_<timestamp>\`.
 - Each session is stored as a JSON file with structure:
   {
     "session_id": "session_...",
@@ -78,7 +79,7 @@ Analyze session history systematically and provide comprehensive results.`;
 export class SessionsTool extends BaseTool {
   readonly name = 'sessions';
   readonly description =
-    'Analyze past conversation sessions. Searches and analyzes this project\'s session history. Use when you need to find previous discussions, review past work, or understand conversation history.';
+    'Analyze past conversation sessions. Searches and analyzes this project\'s session history. Use when you need to find previous discussions, review past work, understand conversation history, or inspect completed scheduled task runs saved as scheduled_<task-id>_<timestamp> sessions.';
   readonly requiresConfirmation = false; // Read-only operation
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion

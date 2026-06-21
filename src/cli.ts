@@ -10,6 +10,7 @@ import React from 'react';
 import { render } from 'ink';
 import readline from 'readline';
 import chalk from 'chalk';
+import { spawn } from 'child_process';
 import { ServiceRegistry } from './services/ServiceRegistry.js';
 import type { MCPServerConfig as MCPServerConfigType } from './mcp/MCPConfig.js';
 import { ConfigManager } from './services/ConfigManager.js';
@@ -36,6 +37,9 @@ import { ProfileManager } from './services/ProfileManager.js';
 import { setActiveProfile } from './config/paths.js';
 import { initializePrimaryColor } from './ui/constants/colors.js';
 import { getAgentDisplayName } from './utils/agentTypeUtils.js';
+import { ScheduledTaskManager, ScheduledTask } from './services/ScheduledTaskManager.js';
+import { SchedulerInstaller } from './services/SchedulerInstaller.js';
+import { generateShortId } from './utils/id.js';
 
 /**
  * Comprehensive terminal state reset
@@ -95,7 +99,9 @@ function reassertTerminalState(): void {
  * This prevents the terminal from getting stuck waiting for input.
  */
 async function cleanExit(code: number = 0): Promise<void> {
-  resetTerminalState();
+  if (inkUIStarted) {
+    resetTerminalState();
+  }
 
   // Flush pending session saves if registry exists
   const ServiceRegistry = (await import('./services/ServiceRegistry.js')).ServiceRegistry;
@@ -498,6 +504,201 @@ async function handleOnceMode(
   }
 }
 
+function extractSchedulerArgs(argv: string[] = process.argv): string[] | null {
+  const index = argv.findIndex((arg, idx) => idx >= 2 && arg === 'scheduler');
+  return index === -1 ? null : argv.slice(index + 1);
+}
+
+function parseGlobalArg(argv: string[], name: string): string | undefined {
+  const index = argv.indexOf(name);
+  if (index === -1) return undefined;
+  return argv[index + 1];
+}
+
+function schedulerUsage(): string {
+  return `Usage:
+  ally scheduler install
+  ally scheduler uninstall
+  ally scheduler status
+  ally scheduler tick
+  ally scheduler run <task-id>
+  ally scheduler list [--all]`;
+}
+
+async function initializeSchedulerBasics(profileName?: string): Promise<ScheduledTaskManager> {
+  const profileManager = new ProfileManager();
+  await profileManager.initialize();
+  const activeProfile = profileName || 'default';
+  if (!(await profileManager.profileExists(activeProfile))) {
+    throw new Error(`Profile '${activeProfile}' does not exist`);
+  }
+  setActiveProfile(activeProfile);
+  const manager = new ScheduledTaskManager();
+  await manager.initialize();
+  return manager;
+}
+
+function formatScheduledTask(task: ScheduledTask): string {
+  const status = task.enabled ? 'enabled' : 'disabled';
+  const last = task.last_run_at
+    ? `${task.last_status} ${formatRelativeTime(new Date(task.last_run_at))}`
+    : task.last_status;
+  const schedule = task.schedule.type === 'once'
+    ? `once ${new Date(task.schedule.run_at).toLocaleString()} ${task.schedule.timezone}`
+    : `daily ${task.schedule.time} ${task.schedule.timezone}`;
+  return `${task.id}  ${task.title}  [${status}] ${schedule}  next ${new Date(task.next_run_at).toLocaleString()}  last ${last}`;
+}
+
+function appendBounded(buffer: string, chunk: Buffer | string, maxChars: number = 80_000): string {
+  const next = buffer + chunk.toString();
+  return next.length <= maxChars ? next : next.slice(next.length - maxChars);
+}
+
+async function runScheduledTask(manager: ScheduledTaskManager, task: ScheduledTask): Promise<number> {
+  const runId = `run-${Date.now()}-${generateShortId()}`;
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
+  const sessionId = `scheduled_${task.id}_${stamp}`;
+
+  await manager.recordRunStart(task.id, runId, sessionId, task.project_dir);
+
+  const scriptPath = process.argv[1];
+  if (!scriptPath) {
+    throw new Error('Unable to resolve Code Ally entrypoint for scheduled run');
+  }
+
+  const args = [
+    scriptPath,
+    '--profile',
+    task.profile,
+    '--scheduled-task',
+    task.id,
+    '--once',
+    task.run_prompt,
+    '--session',
+    sessionId,
+  ];
+
+  const child = spawn(process.execPath, args, {
+    cwd: task.project_dir,
+    env: {
+      ...process.env,
+      ALLY_SCHEDULED_RUN_ID: runId,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (chunk) => { stdout = appendBounded(stdout, chunk); });
+  child.stderr?.on('data', (chunk) => { stderr = appendBounded(stderr, chunk); });
+
+  const exitCode = await new Promise<number | null>((resolve) => {
+    child.on('close', (code) => resolve(code));
+    child.on('error', () => resolve(1));
+  });
+
+  const status = exitCode === 0 ? 'success' : 'error';
+  const summary = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n\n');
+  await manager.recordRunFinish(task.id, task.project_dir, runId, {
+    status,
+    sessionId,
+    summary: summary || `(no output, exit code ${exitCode ?? 'unknown'})`,
+    exitCode,
+  });
+
+  return exitCode ?? 1;
+}
+
+async function uninstallSchedulerIfIdle(manager: ScheduledTaskManager, installer: SchedulerInstaller): Promise<void> {
+  if (await manager.countEnabledAll() === 0) {
+    await installer.uninstall().catch((error) => {
+      logger.debug('[SCHEDULER] Failed to uninstall idle scheduler:', error);
+    });
+  }
+}
+
+async function handleSchedulerCli(args: string[], argv: string[] = process.argv): Promise<void> {
+  const command = args[0] || 'help';
+  const profile = parseGlobalArg(argv, '--profile');
+  const manager = await initializeSchedulerBasics(profile);
+  const installer = new SchedulerInstaller();
+
+  switch (command) {
+    case 'help':
+    case '--help':
+    case '-h':
+      console.log(schedulerUsage());
+      return;
+
+    case 'install': {
+      const result = await installer.install();
+      console.log(`Scheduler ${result.installed ? 'installed' : 'not installed'} (${result.platform}): ${result.detail}`);
+      return;
+    }
+
+    case 'uninstall': {
+      const result = await installer.uninstall();
+      console.log(`Scheduler uninstalled (${result.platform}): ${result.detail}`);
+      return;
+    }
+
+    case 'status': {
+      const result = await installer.status();
+      const enabled = (await manager.listAll()).filter((task) => task.enabled).length;
+      console.log(`Scheduler ${result.installed ? 'installed' : 'not installed'} (${result.platform}): ${result.detail}`);
+      console.log(`${enabled} enabled scheduled task${enabled === 1 ? '' : 's'}`);
+      return;
+    }
+
+    case 'list': {
+      const all = args.includes('--all');
+      const tasks = all ? await manager.listAll() : await manager.listCurrentProject();
+      if (tasks.length === 0) {
+        console.log('No scheduled tasks.');
+        return;
+      }
+      for (const task of tasks) {
+        console.log(formatScheduledTask(task));
+      }
+      return;
+    }
+
+    case 'tick': {
+      await manager.withGlobalLock(async () => {
+        const decisions = await manager.getDueTasks();
+        if (decisions.length === 0) {
+          return;
+        }
+        for (const decision of decisions) {
+          if (decision.skipped) {
+            await manager.markSkipped(decision.task, decision.reason || 'missed scheduled time');
+            continue;
+          }
+          if (decision.due) {
+            await runScheduledTask(manager, decision.task);
+          }
+        }
+      });
+      await uninstallSchedulerIfIdle(manager, installer);
+      return;
+    }
+
+    case 'run': {
+      const taskId = args[1];
+      if (!taskId) throw new Error('Usage: ally scheduler run <task-id>');
+      const task = await manager.findTask(taskId);
+      if (!task) throw new Error(`Scheduled task not found: ${taskId}`);
+      const exitCode = await runScheduledTask(manager, task);
+      await uninstallSchedulerIfIdle(manager, installer);
+      process.exitCode = exitCode;
+      return;
+    }
+
+    default:
+      throw new Error(`Unknown scheduler command: ${command}\n\n${schedulerUsage()}`);
+  }
+}
+
 
 /**
  * Track whether the Ink UI was started (requires terminal reset on exit)
@@ -682,6 +883,12 @@ async function handleProfileDelete(
  */
 async function main() {
   try {
+    const schedulerArgs = extractSchedulerArgs(process.argv);
+    if (schedulerArgs) {
+      await handleSchedulerCli(schedulerArgs, process.argv);
+      return;
+    }
+
     // Parse command-line arguments
     const parser = new ArgumentParser();
     const options = parser.parse();
@@ -773,6 +980,11 @@ async function main() {
       configManager.getConfig(),
       options
     );
+    if (options.scheduledTask) {
+      // Scheduled runs must use their stored deny-by-default policy, even if
+      // the user's interactive profile normally has auto_confirm enabled.
+      configOverrides.auto_confirm = false;
+    }
 
     // Configure logging
     configureLogging(options.verbose, options.debug);
@@ -815,6 +1027,17 @@ async function main() {
     // Create activity stream
     const activityStream = new ActivityStream();
     registry.registerInstance('activity_stream', activityStream);
+
+    // Create scheduled task manager (durable, project-scoped scheduler state)
+    const scheduledTaskManager = new ScheduledTaskManager(activityStream);
+    await scheduledTaskManager.initialize();
+    registry.registerInstance('scheduled_task_manager', scheduledTaskManager);
+    const scheduledTaskForRun = options.scheduledTask
+      ? await scheduledTaskManager.getTask(options.scheduledTask)
+      : null;
+    if (options.scheduledTask && !scheduledTaskForRun) {
+      throw new Error(`Scheduled task not found in this project: ${options.scheduledTask}`);
+    }
 
     // Create todo manager
     const todoManager = new TodoManager(activityStream);
@@ -1003,6 +1226,7 @@ async function main() {
     const { ResearchTool } = await import('./tools/ResearchTool.js');
     const { SkillTool } = await import('./tools/SkillTool.js');
     const { MemoryTool } = await import('./tools/MemoryTool.js');
+    const { ScheduledTasksTool } = await import('./tools/ScheduledTasksTool.js');
     const { EnterPlanModeTool } = await import('./tools/EnterPlanModeTool.js');
     const { ExitPlanModeTool } = await import('./tools/ExitPlanModeTool.js');
     const { WritePlanTool } = await import('./tools/WritePlanTool.js');
@@ -1047,6 +1271,7 @@ async function main() {
       new ResearchTool(activityStream), // Research agent delegation tool
       new SkillTool(activityStream), // Load skill instructions into context
       new MemoryTool(activityStream), // Autonomous project memory (save/recall facts)
+      new ScheduledTasksTool(activityStream), // Durable scheduled Ally tasks
       new EnterPlanModeTool(activityStream), // Enter plan mode for structured exploration
       new ExitPlanModeTool(activityStream), // Exit plan mode and present plan for approval
       new WritePlanTool(activityStream), // Write plan file during plan mode
@@ -1153,6 +1378,9 @@ async function main() {
     // Create trust manager for permission tracking
     // Note: autoAllowModeGetter will be set after UI initialization
     const trustManager = new TrustManager(config.auto_confirm, activityStream);
+    if (scheduledTaskForRun) {
+      trustManager.setScheduledPermissionPolicy(scheduledTaskForRun.permission_policy);
+    }
     registry.registerInstance('trust_manager', trustManager);
 
     // Wire up delegation name getter for INSTRUCT option in permission prompts
@@ -1261,6 +1489,8 @@ async function main() {
         allowTodoManagement: true, // Root privilege
         agentDepth: 0,
         agentCallStack: [],
+        isScheduledRun: Boolean(options.scheduledTask),
+        scheduledTaskId: options.scheduledTask,
       };
 
       // Get model client for custom agent (may use agent-specific model)
@@ -1281,6 +1511,8 @@ async function main() {
       agentConfig = {
         config,
         agentType,
+        isScheduledRun: Boolean(options.scheduledTask),
+        scheduledTaskId: options.scheduledTask,
       };
     }
 

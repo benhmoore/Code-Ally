@@ -38,6 +38,7 @@ export interface CLIOptions {
   once?: string;
   noSession?: boolean;
   resume?: string | boolean;
+  scheduledTask?: string;
 
   // Advanced settings
   autoConfirm?: boolean;
@@ -151,7 +152,8 @@ Use '/help' for complete interactive command reference.
       .option(
         '--resume [session]',
         'Resume a conversation from a session. If session ID provided, resume that session. If no ID provided, show interactive selection menu.'
-      );
+      )
+      .option('--scheduled-task <id>', 'Internal: run once under a scheduled task permission policy');
 
     // Advanced Settings
     this.program
@@ -208,6 +210,7 @@ Use '/help' for complete interactive command reference.
       once: opts.once,
       noSession: opts.session === false,
       resume: opts.resume,
+      scheduledTask: opts.scheduledTask,
 
       // Advanced
       autoConfirm: opts.autoConfirm,

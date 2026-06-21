@@ -264,6 +264,7 @@ export enum ActivityEventType {
   PLAN_MODE_ENTERED = 'plan_mode_entered',
   PLAN_APPROVAL_REQUEST = 'plan_approval_request',
   PLAN_APPROVAL_RESPONSE = 'plan_approval_response',
+  SCHEDULED_TASKS_UPDATED = 'scheduled_tasks_updated',
 }
 
 export interface ActivityEvent {

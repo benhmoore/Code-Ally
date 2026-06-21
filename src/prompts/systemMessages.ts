@@ -23,6 +23,7 @@ import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
 import { ContextFileLoader } from '../services/ContextFileLoader.js';
 import type { Message } from '../types/index.js';
 import { PlanModeManager } from '../services/PlanModeManager.js';
+import { getDefaultTimeZone } from '../services/ScheduledTaskManager.js';
 
 // --- Core Agent Identity and Directives ---
 
@@ -443,7 +444,20 @@ export async function getDynamicContextBlock(options: {
 } = {}): Promise<string> {
   const { tokenManager, toolResultManager, includeTodos = false, includePlanMode = false } = options;
 
-  const currentDate = new Date().toISOString().replace('T', ' ').slice(0, TEXT_LIMITS.ISO_DATETIME_LENGTH);
+  const now = new Date();
+  const localTimeZone = getDefaultTimeZone();
+  const currentLocalTime = new Intl.DateTimeFormat('en-US', {
+    timeZone: localTimeZone,
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  }).format(now);
+  const currentUtcTime = now.toISOString().replace('T', ' ').slice(0, TEXT_LIMITS.ISO_DATETIME_LENGTH);
 
   // Live context usage with graduated warnings
   const contextUsage = getContextUsageInfo(tokenManager, toolResultManager);
@@ -499,7 +513,9 @@ You CANNOT write, edit, or delete project files in this mode.`;
   // Budget reminder (only present at 75%+)
   const contextBudgetReminder = getContextBudgetReminder(tokenManager);
 
-  const body = `- Current Date: ${currentDate}${contextUsageSection}${todoContext}${planModeSection}${contextBudgetReminder}`;
+  const body = `- Current Local Time: ${currentLocalTime}
+- Current Time Zone: ${localTimeZone}
+- Current UTC Time: ${currentUtcTime}Z${contextUsageSection}${todoContext}${planModeSection}${contextBudgetReminder}`;
   if (!body.trim()) {
     return '';
   }
@@ -517,7 +533,15 @@ ${body}`;
  * warnings — is produced separately by {@link getDynamicContextBlock} and
  * appended as a trailing ephemeral message, so this prefix can be KV-cached.
  */
-export async function getMainSystemPrompt(tokenManager?: TokenManager, toolResultManager?: ToolResultManager, isOnceMode: boolean = false, reasoningEffort?: string, conversationMessages?: readonly Message[]): Promise<string> {
+export async function getMainSystemPrompt(
+  tokenManager?: TokenManager,
+  toolResultManager?: ToolResultManager,
+  isOnceMode: boolean = false,
+  reasoningEffort?: string,
+  conversationMessages?: readonly Message[],
+  isScheduledRun: boolean = false,
+  scheduledTaskId?: string,
+): Promise<string> {
   // Tool definitions are provided separately by the LLM client as function definitions
   const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager, reasoningEffort, conversationMessages });
 
@@ -575,9 +599,16 @@ ${guidances.join('\n\n')}`;
 This is a non-interactive, single-turn conversation. Your response will be final and the conversation will end immediately after you respond. There is no opportunity for follow-up questions or clarification. Make your response complete, clear, and self-contained.`
     : '';
 
+  const scheduledRunInstructions = isScheduledRun
+    ? `
+
+**IMPORTANT - Scheduled Task Run:**
+This is an unattended scheduled task execution${scheduledTaskId ? ` for \`${scheduledTaskId}\`` : ''}. Execute the scheduled user prompt using available tools when possible. Do not ask follow-up questions; no user is available in this run. If blocked by missing capability, denied permission, or an unavailable external dependency, report exactly what was attempted and what blocked completion. This run will be saved in session history as a \`scheduled_<task-id>_<timestamp>\` session.`
+    : '';
+
   // Combine core directives with the cache-stable context. Volatile state (date,
   // usage, todos, plan-mode, budget) is appended separately per round-trip.
-  return `${CORE_DIRECTIVES}${onceModeInstructions}${toolGuidanceContext}${agentGuidanceContext}
+  return `${CORE_DIRECTIVES}${onceModeInstructions}${scheduledRunInstructions}${toolGuidanceContext}${agentGuidanceContext}
 
 **Context:**
 ${context}`;

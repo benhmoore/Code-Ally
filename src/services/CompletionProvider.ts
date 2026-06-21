@@ -77,6 +77,7 @@ const METADATA_SUBCOMMAND_COMMANDS = new Set([
   '/debug',
   '/todo',
   '/task',
+  '/schedule',
   '/config',
   '/project',
   '/plugin',

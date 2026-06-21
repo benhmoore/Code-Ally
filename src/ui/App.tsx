@@ -49,6 +49,7 @@ import { useTerminalWidth } from './hooks/useTerminalWidth.js';
 import { useReflowOnResize } from './hooks/useReflowOnResize.js';
 import { useBackgroundProcesses } from './hooks/useBackgroundProcesses.js';
 import { useBackgroundAgents } from './hooks/useBackgroundAgents.js';
+import { useScheduledTaskCount } from './hooks/useScheduledTaskCount.js';
 import { useTaskWake } from './hooks/useTaskWake.js';
 import { useAgentSwitch } from './hooks/useAgentSwitch.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
@@ -141,6 +142,7 @@ const AppContentComponent: React.FC<{
 
   // Track background processes for status line
   const backgroundProcessCount = useBackgroundProcesses();
+  const scheduledTaskCount = useScheduledTaskCount();
 
   // Connect auto-allow mode to TrustManager after initialization
   useEffect(() => {
@@ -1200,6 +1202,12 @@ const AppContentComponent: React.FC<{
                       · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running task{backgroundProcessCount === 1 ? '' : 's'}</Text> (/task list)
                     </Text>
                   )}
+                  {scheduledTaskCount > 0 && (
+                    <Text>
+                      {' '}
+                      · <Text color={UI_COLORS.PRIMARY}>{scheduledTaskCount} scheduled</Text> (/schedule list)
+                    </Text>
+                  )}
                 </Text>
                 {modal.autoAllowMode ? (
                   <Text color={UI_COLORS.ERROR}> · Auto-allow enabled (Shift+Tab to disable)</Text>
@@ -1266,6 +1274,12 @@ const AppContentComponent: React.FC<{
                 <Text>
                   {' '}
                   · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running task{backgroundProcessCount === 1 ? '' : 's'}</Text> (/task list)
+                </Text>
+              )}
+              {scheduledTaskCount > 0 && (
+                <Text>
+                  {' '}
+                  · <Text color={UI_COLORS.PRIMARY}>{scheduledTaskCount} scheduled</Text> (/schedule list)
                 </Text>
               )}
             </Text>

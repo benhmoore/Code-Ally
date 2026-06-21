@@ -175,6 +175,10 @@ export interface AgentConfig {
   agentCallStack?: string[];
   /** Internal: Scoped registry for this agent (shadows global for 'agent' key to prevent race conditions) */
   _scopedRegistry?: any; // ScopedServiceRegistryProxy - typed as 'any' to avoid circular dependency
+  /** Internal: this root agent is executing an unattended scheduled task. */
+  isScheduledRun?: boolean;
+  /** Internal: scheduled task id for unattended scheduled task runs. */
+  scheduledTaskId?: string;
 }
 
 /**
@@ -1347,9 +1351,11 @@ export class Agent {
       updatedSystemPrompt = await getMainSystemPrompt(
         this.tokenManager,
         this.toolResultManager,
-        false,
+        this.config.isScheduledRun ?? false,
         this.appConfig.reasoning_effort,
-        this.conversationManager.getMessages()
+        this.conversationManager.getMessages(),
+        this.config.isScheduledRun ?? false,
+        this.config.scheduledTaskId
       );
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Main agent prompt regenerated with current context');
     }

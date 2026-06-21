@@ -20,6 +20,7 @@ import { ActivityEventType, ActivityEvent } from '../types/index.js';
 import { API_TIMEOUTS, TEXT_LIMITS, PERMISSION_MESSAGES } from '../config/constants.js';
 import { PermissionDeniedError } from '../security/PathSecurity.js';
 import { logger } from '../services/Logger.js';
+import type { ScheduledTaskPermissionPolicy, ScheduledCommandRule } from '../services/ScheduledTaskManager.js';
 
 /**
  * Trust scope levels for permission management
@@ -102,6 +103,13 @@ export class TrustManager {
   private autoAllowModeGetter?: () => boolean;
 
   /**
+   * Optional deny-by-default policy used for unattended scheduled task runs.
+   * When present, interactive prompts are disabled; matching operations are
+   * allowed and every other sensitive operation is denied immediately.
+   */
+  private scheduledPermissionPolicy?: ScheduledTaskPermissionPolicy;
+
+  /**
    * Delegation info getter function
    * Returns the agent display name if there's an active delegation (sub-agent running)
    * Used to decide whether to show INSTRUCT (with agent name) or DENY (no delegation)
@@ -152,6 +160,10 @@ export class TrustManager {
    * @returns True if permission granted, throws PermissionDeniedError if denied
    */
   async checkPermission(toolName: string, args: any, path?: CommandPath): Promise<boolean> {
+    if (this.scheduledPermissionPolicy) {
+      return this.checkScheduledPermission(toolName, args, path);
+    }
+
     // Auto-confirm mode bypasses all permission checks
     if (this.autoConfirm) {
       return true;
@@ -164,6 +176,63 @@ export class TrustManager {
 
     // Prompt user for permission
     return this.promptForPermission(toolName, args, path);
+  }
+
+  setScheduledPermissionPolicy(policy?: ScheduledTaskPermissionPolicy): void {
+    this.scheduledPermissionPolicy = policy;
+  }
+
+  private checkScheduledPermission(toolName: string, args: any, path?: CommandPath): boolean {
+    const policy = this.scheduledPermissionPolicy;
+    if (!policy) return false;
+
+    if (toolName === 'bash') {
+      const command = typeof path === 'object' && path?.command
+        ? path.command
+        : typeof args?.command === 'string'
+          ? args.command
+          : '';
+      if (!command) {
+        throw new PermissionDeniedError('Scheduled task denied bash: missing command');
+      }
+      if (this.matchesAny(command, policy.denied_bash_patterns ?? [], 'regex')) {
+        throw new PermissionDeniedError(`Scheduled task denied bash command: ${command}`);
+      }
+      if (this.matchesCommandRules(command, policy.allowed_bash_commands ?? [])) {
+        return true;
+      }
+      throw new PermissionDeniedError(`Scheduled task is not allowed to run bash command: ${command}`);
+    }
+
+    if ((policy.allowed_tools ?? []).includes(toolName)) {
+      return true;
+    }
+
+    throw new PermissionDeniedError(`Scheduled task is not allowed to use ${toolName}`);
+  }
+
+  private matchesCommandRules(command: string, rules: ScheduledCommandRule[]): boolean {
+    return rules.some((rule) => {
+      if (rule.match === 'exact') return command === rule.value;
+      if (rule.match === 'prefix') return command.startsWith(rule.value);
+      try {
+        return new RegExp(rule.value).test(command);
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private matchesAny(command: string, values: string[], mode: ScheduledCommandRule['match']): boolean {
+    return values.some((value) => {
+      if (mode === 'exact') return command === value;
+      if (mode === 'prefix') return command.startsWith(value);
+      try {
+        return new RegExp(value).test(command);
+      } catch {
+        return false;
+      }
+    });
   }
 
   /**

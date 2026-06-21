@@ -142,6 +142,33 @@ export function getProjectPlansDir(projectDir: string = process.cwd()): string {
 }
 
 /**
+ * Get the scheduled task store for a project. The file is project-scoped while
+ * each task records its profile so the scheduler can run it with the same
+ * runtime configuration that created it.
+ *
+ * @param projectDir - Absolute path to the project root (defaults to cwd)
+ * @returns Path to the project's scheduled task JSON file
+ */
+export function getProjectScheduledTasksFile(projectDir: string = process.cwd()): string {
+  return join(getProjectDataDir(projectDir), 'scheduled_tasks.json');
+}
+
+/**
+ * Global index of all scheduled tasks. This lets `ally scheduler tick` find
+ * due tasks without scanning every project data directory.
+ */
+export function getScheduledTasksIndexFile(): string {
+  return join(ALLY_HOME, 'scheduled_tasks_index.json');
+}
+
+/**
+ * Global scheduler lock file used to prevent overlapping ticks/runs.
+ */
+export function getSchedulerLockFile(): string {
+  return join(ALLY_HOME, 'scheduler.lock');
+}
+
+/**
  * Built-in agent definitions shipped with the application
  * Located in dist/agents/ after build
  */
