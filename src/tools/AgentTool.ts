@@ -36,6 +36,9 @@ import {
   appendAgentResponseSuffix,
   registerDelegation,
   completeDelegation,
+  resolveDelegationServices,
+  injectInterjection,
+  cancelRunningBackgroundAgents,
 } from '../utils/delegationUtils.js';
 import { FormManager } from '../services/FormManager.js';
 
@@ -702,33 +705,12 @@ Only set run_in_background=false when your very next step depends on the result.
     permissionManager: any;
   } {
     logger.debug('[AGENT_TOOL] Getting services from registry...');
-    const registry = ServiceRegistry.getInstance();
-    const mainModelClient = registry.get<ModelClient>('model_client');
-    const toolManager = registry.get<ToolManager>('tool_manager');
-    const configManager = registry.get<any>('config_manager');
-    const permissionManager = registry.get<any>('permission_manager');
-
-    // Enforce strict service availability
-    if (!mainModelClient) {
-      throw new Error('AgentTool requires model_client to be registered in ServiceRegistry');
-    }
-    if (!toolManager) {
-      throw new Error('AgentTool requires tool_manager to be registered in ServiceRegistry');
-    }
-    if (!configManager) {
-      throw new Error('AgentTool requires config_manager to be registered in ServiceRegistry');
-    }
-    if (!permissionManager) {
-      throw new Error('AgentTool requires permission_manager to be registered in ServiceRegistry');
-    }
-
-    const config = configManager.getConfig();
-    if (!config) {
-      throw new Error('ConfigManager.getConfig() returned null/undefined');
-    }
-
+    // Shared resolver (also used by BaseDelegationTool). Map appConfig -> config
+    // to preserve this method's existing return shape for its caller.
+    const { registry, mainModelClient, toolManager, configManager, permissionManager, appConfig } =
+      resolveDelegationServices('agent');
     logger.debug('[AGENT_TOOL] All required services available');
-    return { registry, mainModelClient, toolManager, config, configManager, permissionManager };
+    return { registry, mainModelClient, toolManager, config: appConfig, configManager, permissionManager };
   }
 
   /**
@@ -1205,14 +1187,7 @@ Only set run_in_background=false when your very next step depends on the result.
 
     // Also cancel any running background agents (their runs are detached from
     // activeDelegations' foreground lifecycle, so cover them explicitly).
-    const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
-    if (manager) {
-      for (const task of manager.listTasks()) {
-        if (task.status === 'running') {
-          manager.cancelTask(task.id);
-        }
-      }
-    }
+    cancelRunningBackgroundAgents();
   }
 
   /**
@@ -1220,20 +1195,7 @@ Only set run_in_background=false when your very next step depends on the result.
    * Used for routing interjections to subagents
    */
   injectUserMessage(message: string): void {
-    if (!this._currentPooledAgent) {
-      logger.warn('[AGENT_TOOL] injectUserMessage called but no active pooled agent');
-      return;
-    }
-
-    const agent = this._currentPooledAgent.agent;
-    if (!agent) {
-      logger.warn('[AGENT_TOOL] injectUserMessage called but pooled agent has no agent instance');
-      return;
-    }
-
-    logger.debug('[AGENT_TOOL] Injecting user message into pooled agent:', this._currentPooledAgent.agentId);
-    agent.addUserInterjection(message);
-    agent.interrupt('interjection');
+    injectInterjection(this._currentPooledAgent, message, '[AGENT_TOOL]');
   }
 
   /**

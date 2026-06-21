@@ -21,9 +21,7 @@ import { ToolResult, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry, ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
 import { Agent, AgentConfig } from '../agent/Agent.js';
-import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
-import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING, applyLeafDelegationPolicy } from '../config/constants.js';
 import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
@@ -37,6 +35,9 @@ import {
   resolveSubstantiveResponse,
   registerDelegation,
   completeDelegation,
+  resolveDelegationServices,
+  injectInterjection,
+  cancelRunningBackgroundAgents,
 } from '../utils/delegationUtils.js';
 import type { Config } from '../types/index.js';
 
@@ -192,31 +193,9 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
     const startTime = Date.now();
 
     try {
-      // Get required services
-      const registry = ServiceRegistry.getInstance();
-      const mainModelClient = registry.get<ModelClient>('model_client');
-      const toolManager = registry.get<ToolManager>('tool_manager');
-      const configManager = registry.get<any>('config_manager');
-      const permissionManager = registry.get<any>('permission_manager');
-
-      // Enforce strict service availability
-      if (!mainModelClient) {
-        throw new Error(`${this.name} requires model_client to be registered`);
-      }
-      if (!toolManager) {
-        throw new Error(`${this.name} requires tool_manager to be registered`);
-      }
-      if (!configManager) {
-        throw new Error(`${this.name} requires config_manager to be registered`);
-      }
-      if (!permissionManager) {
-        throw new Error(`${this.name} requires permission_manager to be registered`);
-      }
-
-      const appConfig = configManager.getConfig();
-      if (!appConfig) {
-        throw new Error('ConfigManager.getConfig() returned null/undefined');
-      }
+      // Resolve + validate the services every delegation needs (shared with AgentTool).
+      const { registry, mainModelClient, toolManager, configManager, permissionManager, appConfig } =
+        resolveDelegationServices(this.name);
 
       // Perform any additional setup (e.g., fetching available models)
       const additionalContext = await this.performAdditionalSetup(appConfig);
@@ -522,6 +501,9 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         agent.interrupt();
       }
     }
+    // A delegation promoted to the background (Ctrl+B) is detached from the
+    // foreground activeDelegations above, so cancel running background agents too.
+    cancelRunningBackgroundAgents();
   }
 
   /**
@@ -529,20 +511,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
    * Used for routing interjections to subagents
    */
   injectUserMessage(message: string): void {
-    if (!this._currentPooledAgent) {
-      logger.warn(`[${this.name.toUpperCase()}_TOOL] injectUserMessage called but no active pooled agent`);
-      return;
-    }
-
-    const agent = this._currentPooledAgent.agent;
-    if (!agent) {
-      logger.warn(`[${this.name.toUpperCase()}_TOOL] injectUserMessage called but pooled agent has no agent instance`);
-      return;
-    }
-
-    logger.debug(`[${this.name.toUpperCase()}_TOOL] Injecting user message into pooled agent:`, this._currentPooledAgent.agentId);
-    agent.addUserInterjection(message);
-    agent.interrupt('interjection');
+    injectInterjection(this._currentPooledAgent, message, `[${this.name.toUpperCase()}_TOOL]`);
   }
 
   /**

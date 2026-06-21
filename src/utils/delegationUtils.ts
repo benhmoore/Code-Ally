@@ -21,6 +21,9 @@ import { TEXT_LIMITS } from '../config/constants.js';
 import { extractSummaryFromConversation } from './agentUtils.js';
 import type { Agent } from '../agent/Agent.js';
 import type { PooledAgent } from '../services/AgentPoolService.js';
+import type { ModelClient } from '../llm/ModelClient.js';
+import type { ToolManager } from '../tools/ToolManager.js';
+import type { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 
 /**
  * Canonical reminder appended to every delegated-agent result, telling the
@@ -110,5 +113,94 @@ export function completeDelegation(callId: string): void {
     manager.transitionToCompleting(callId);
     manager.clear(callId);
     logger.debug(`[DELEGATION] Completed delegation: callId=${callId}`);
+  }
+}
+
+/** Core services every delegation tool needs to spin up a sub-agent. */
+export interface DelegationServices {
+  registry: ServiceRegistry;
+  mainModelClient: ModelClient;
+  toolManager: ToolManager;
+  configManager: any;
+  permissionManager: any;
+  appConfig: any;
+}
+
+/**
+ * Resolve and validate the services required to delegate to a sub-agent.
+ *
+ * Every delegation tool needs the same four services plus a non-null app config;
+ * this centralizes the lookup and the strict-availability checks that were
+ * duplicated in BaseDelegationTool and AgentTool.
+ *
+ * @param toolName - Tool name used in the "requires X" error messages
+ * @throws if any required service is missing or getConfig() returns null
+ */
+export function resolveDelegationServices(toolName: string): DelegationServices {
+  const registry = ServiceRegistry.getInstance();
+  const mainModelClient = registry.get<ModelClient>('model_client');
+  const toolManager = registry.get<ToolManager>('tool_manager');
+  const configManager = registry.get<any>('config_manager');
+  const permissionManager = registry.get<any>('permission_manager');
+
+  if (!mainModelClient) {
+    throw new Error(`${toolName} requires model_client to be registered`);
+  }
+  if (!toolManager) {
+    throw new Error(`${toolName} requires tool_manager to be registered`);
+  }
+  if (!configManager) {
+    throw new Error(`${toolName} requires config_manager to be registered`);
+  }
+  if (!permissionManager) {
+    throw new Error(`${toolName} requires permission_manager to be registered`);
+  }
+
+  const appConfig = configManager.getConfig();
+  if (!appConfig) {
+    throw new Error('ConfigManager.getConfig() returned null/undefined');
+  }
+
+  return { registry, mainModelClient, toolManager, configManager, permissionManager, appConfig };
+}
+
+/**
+ * Route an interjection to a running pooled sub-agent: queue the message and
+ * interrupt the agent so it picks the message up. No-op (with a warning) when no
+ * pooled agent is active. Shared by every delegation tool's injectUserMessage.
+ */
+export function injectInterjection(
+  pooledAgent: PooledAgent | null,
+  message: string,
+  context: string
+): void {
+  if (!pooledAgent) {
+    logger.warn(`${context} injectUserMessage called but no active pooled agent`);
+    return;
+  }
+  const agent = pooledAgent.agent;
+  if (!agent) {
+    logger.warn(`${context} injectUserMessage called but pooled agent has no agent instance`);
+    return;
+  }
+  logger.debug(`${context} Injecting user message into pooled agent:`, pooledAgent.agentId);
+  agent.addUserInterjection(message);
+  agent.interrupt('interjection');
+}
+
+/**
+ * Cancel every still-running background agent. Background runs are detached from
+ * a tool's foreground activeDelegations, so an interrupt-all must cover them
+ * explicitly. No-op when the BackgroundAgentManager is unavailable.
+ */
+export function cancelRunningBackgroundAgents(): void {
+  const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+  if (!manager) {
+    return;
+  }
+  for (const task of manager.listTasks()) {
+    if (task.status === 'running') {
+      manager.cancelTask(task.id);
+    }
   }
 }
