@@ -63,6 +63,11 @@ interface TreeOptions {
   ignoreGitignore: boolean;
 }
 
+interface TreeOutput {
+  content: string;
+  displayContent: string;
+}
+
 export class TreeTool extends BaseTool {
   readonly name = 'tree';
   readonly description =
@@ -155,7 +160,7 @@ Prefer over multiple ls calls.`;
     };
 
     // Process each path
-    const results: string[] = [];
+    const results: TreeOutput[] = [];
     const errors: string[] = [];
     let pathsProcessed = 0;
 
@@ -167,7 +172,11 @@ Prefer over multiple ls calls.`;
       } catch (error) {
         const errorMsg = formatError(error);
         errors.push(`${dirPath}: ${errorMsg}`);
-        results.push(`=== ${dirPath} ===\nError: ${errorMsg}`);
+        const displayPath = this.formatDisplayRootLabel(dirPath);
+        results.push({
+          content: `=== ${dirPath} ===\nError: ${errorMsg}`,
+          displayContent: `${displayPath}\nError: ${errorMsg}`,
+        });
       }
     }
 
@@ -179,11 +188,13 @@ Prefer over multiple ls calls.`;
       );
     }
 
-    const combinedOutput = results.join('\n\n');
+    const combinedOutput = results.map(result => result.content).join('\n\n');
+    const combinedDisplayOutput = results.map(result => result.displayContent).join('\n');
 
     // Return success with partial failure warning if needed
     return this.formatSuccessResponse({
       content: combinedOutput,
+      display_content: combinedDisplayOutput,
       paths_processed: pathsProcessed,
       paths_failed: errors.length,
       partial_failure: errors.length > 0,
@@ -193,7 +204,7 @@ Prefer over multiple ls calls.`;
   /**
    * Generate tree output for a directory
    */
-  private async generateTree(dirPath: string, options: TreeOptions): Promise<string> {
+  private async generateTree(dirPath: string, options: TreeOptions): Promise<TreeOutput> {
     // Resolve absolute path
     const absolutePath = resolvePath(dirPath);
 
@@ -217,12 +228,57 @@ Prefer over multiple ls calls.`;
     // Try native tree command first (faster, better formatting)
     const nativeTree = await this.tryNativeTree(absolutePath, options);
     if (nativeTree) {
-      return `=== ${dirPath} ===\n${nativeTree}`;
+      return this.formatTreeOutput(dirPath, absolutePath, nativeTree);
     }
 
     // Fallback to TypeScript implementation
     const jsTree = await this.buildTreeJS(absolutePath, options);
-    return `=== ${dirPath} ===\n${jsTree}`;
+    return this.formatTreeOutput(dirPath, absolutePath, jsTree);
+  }
+
+  private formatTreeOutput(dirPath: string, absolutePath: string, treeOutput: string): TreeOutput {
+    return {
+      content: `=== ${dirPath} ===\n${treeOutput}`,
+      displayContent: this.formatDisplayTreeOutput(dirPath, absolutePath, treeOutput),
+    };
+  }
+
+  /**
+   * Render the terminal-only tree view without the model-facing section banner
+   * or fully-qualified root path. The tool row already carries the requested
+   * path, so the display can lead with a compact root label and the tree itself.
+   */
+  private formatDisplayTreeOutput(dirPath: string, absolutePath: string, treeOutput: string): string {
+    const lines = treeOutput
+      .split('\n')
+      .map(line => line.trimEnd())
+      .filter(line => line.length > 0);
+
+    if (lines.length === 0) {
+      return this.formatDisplayRootLabel(dirPath, absolutePath);
+    }
+
+    lines[0] = this.formatDisplayRootLabel(dirPath, absolutePath);
+    return lines.join('\n');
+  }
+
+  private formatDisplayRootLabel(dirPath: string, absolutePath?: string): string {
+    const trimmedPath = (dirPath || '.').replace(/[\\/]+$/, '') || dirPath || '.';
+
+    if (trimmedPath === path.parse(trimmedPath).root) {
+      return trimmedPath;
+    }
+
+    if (trimmedPath === '.' || trimmedPath === './') {
+      const basename = absolutePath ? path.basename(absolutePath) : '.';
+      return `${basename || trimmedPath}/`;
+    }
+
+    if (path.isAbsolute(trimmedPath)) {
+      return `${path.basename(trimmedPath) || trimmedPath}/`;
+    }
+
+    return `${trimmedPath.replace(/^\.\//, '')}/`;
   }
 
   /**
@@ -487,20 +543,22 @@ Prefer over multiple ls calls.`;
 
     const lines: string[] = [];
 
-    // Show paths processed
+    const pathsProcessed = result.paths_processed ?? 0;
+
     if (result.partial_failure) {
       const failed = result.paths_failed ?? 0;
-      lines.push(`⚠️  Processed ${result.paths_processed} path(s), ${failed} failed`);
-    } else {
-      lines.push(`Processed ${result.paths_processed} path(s)`);
+      lines.push(`${pathsProcessed} path${pathsProcessed === 1 ? '' : 's'} shown, ${failed} failed`);
+    } else if (pathsProcessed > 1) {
+      lines.push(`${pathsProcessed} paths shown`);
     }
 
     // Show preview of content
-    if (result.content) {
-      const contentLines = result.content.split('\n').slice(0, maxLines - lines.length);
+    const previewContent = result.display_content ?? result.content;
+    if (previewContent) {
+      const contentLines = String(previewContent).split('\n').slice(0, maxLines - lines.length);
       lines.push(...contentLines);
 
-      if (result.content.split('\n').length > contentLines.length) {
+      if (String(previewContent).split('\n').length > contentLines.length) {
         lines.push('...');
       }
     }

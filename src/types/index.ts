@@ -80,7 +80,7 @@ export interface MessageMetadata {
    * (entered fleet agents, session resume) — kept separate from the message's
    * `content`, which holds the LLM wire format and must not be shown to the user.
    */
-  tool_result?: Record<string, { content?: string; error?: string; error_type?: ErrorType }>;
+  tool_result?: Record<string, { content?: string; display_content?: string; error?: string; error_type?: ErrorType }>;
   /** Agent that generated this message (for displaying agent name prefix) */
   agentName?: string;
 

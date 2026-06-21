@@ -30,6 +30,7 @@ import { ConfigManager } from '@services/ConfigManager.js';
 import { resolveProjectInstructionsFile } from '@config/paths.js';
 import { createStructuredError } from '@utils/errorUtils.js';
 import { createToolResultMessage } from '@llm/FunctionCalling.js';
+import { resolveDisplayContent } from '@utils/toolResultContent.js';
 
 /**
  * Input handler functions
@@ -737,6 +738,19 @@ export const useInputHandlers = (
             }
           );
 
+          const displayContent = resolveDisplayContent(result);
+          if (result.success && displayContent) {
+            activityStream.emit({
+              id: toolCallId,
+              type: ActivityEventType.TOOL_OUTPUT_CHUNK,
+              timestamp: Date.now(),
+              data: {
+                toolName: 'tree',
+                chunk: displayContent,
+              },
+            });
+          }
+
           // Emit TOOL_CALL_END event to complete the tool call
           activityStream.emit({
             id: toolCallId,
@@ -764,7 +778,20 @@ export const useInputHandlers = (
           );
 
           // Add tool result to Agent's conversation history
-          agent.addMessage(toolResultMessage);
+          agent.addMessage({
+            ...toolResultMessage,
+            metadata: {
+              tool_status: { [toolCallId]: result.success ? 'success' : 'error' },
+              tool_result: {
+                [toolCallId]: {
+                  content: result.content,
+                  ...(result.display_content !== undefined && { display_content: result.display_content }),
+                  ...(result.error && { error: result.error }),
+                  ...(result.error_type !== undefined && { error_type: result.error_type }),
+                },
+              },
+            },
+          });
         } catch (error) {
           // Emit TOOL_CALL_END event with error to prevent stuck UI
           if (toolCallId) {
