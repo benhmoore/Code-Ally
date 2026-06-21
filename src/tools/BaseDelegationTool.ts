@@ -266,32 +266,21 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
       const currentDepth = parentAgent?.getAgentDepth?.() ?? 0;
       const newDepth = currentDepth + 1;
 
-      // Create agent configuration with unique pool key per invocation
-      const agentConfig: AgentConfig = {
-        isSpecializedAgent: true,
-        verbose: false,
-        baseAgentPrompt: this.getSystemPrompt(appConfig, additionalContext),
-        taskPrompt: taskPrompt,
-        config: appConfig,
-        parentCallId: callId,
-        parentAgent: parentAgent,
-        _poolKey: `${this.name}-${callId}`,
+      // Build the sub-agent configuration. Extracted into an overridable method so
+      // a subclass with a richer setup (e.g. AgentTool, which loads an agent
+      // definition dynamically and injects context files) can supply its own config
+      // while reusing the rest of this orchestration.
+      const agentConfig = this.buildDelegationAgentConfig({
+        config,
+        appConfig,
+        additionalContext,
+        taskPrompt,
+        callId,
+        parentAgent,
+        newDepth,
+        thoroughness,
         maxDuration,
-        thoroughness: thoroughness,
-        agentType: config.agentType,
-        agentDepth: newDepth,
-        // Single-level delegation: a sub-agent is a leaf, so strip any delegation
-        // tools from its declared toolset (e.g. Plan's 'explore') at depth >= 1.
-        allowedTools: applyLeafDelegationPolicy(config.allowedTools, newDepth),
-      };
-
-      // Add optional config
-      if (config.requiredToolCalls) {
-        agentConfig.requiredToolCalls = config.requiredToolCalls;
-      }
-      if (config.allowTodoManagement) {
-        agentConfig.allowTodoManagement = config.allowTodoManagement;
-      }
+      });
 
       // Always use pooled agent for persistence
       let delegationAgent: Agent;
@@ -459,6 +448,56 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         { agent_used: config.agentType }
       );
     }
+  }
+
+  /**
+   * Build the sub-agent configuration for a delegation.
+   *
+   * The default builds the config from the tool's static {@link DelegationToolConfig}
+   * and {@link getSystemPrompt}. Subclasses that resolve their agent dynamically
+   * (e.g. AgentTool, which loads an agent definition and may inject context-file
+   * messages) override this to supply a richer config while reusing the surrounding
+   * acquire/run/cleanup orchestration in {@link executeDelegation}.
+   */
+  protected buildDelegationAgentConfig(params: {
+    config: DelegationToolConfig;
+    appConfig: Config;
+    additionalContext: any;
+    taskPrompt: string;
+    callId: string;
+    parentAgent: any;
+    newDepth: number;
+    thoroughness: string;
+    maxDuration: number | undefined;
+  }): AgentConfig {
+    const { config, appConfig, additionalContext, taskPrompt, callId, parentAgent, newDepth, thoroughness, maxDuration } = params;
+
+    const agentConfig: AgentConfig = {
+      isSpecializedAgent: true,
+      verbose: false,
+      baseAgentPrompt: this.getSystemPrompt(appConfig, additionalContext),
+      taskPrompt: taskPrompt,
+      config: appConfig,
+      parentCallId: callId,
+      parentAgent: parentAgent,
+      _poolKey: `${this.name}-${callId}`,
+      maxDuration,
+      thoroughness: thoroughness,
+      agentType: config.agentType,
+      agentDepth: newDepth,
+      // Single-level delegation: a sub-agent is a leaf, so strip any delegation
+      // tools from its declared toolset (e.g. Plan's 'explore') at depth >= 1.
+      allowedTools: applyLeafDelegationPolicy(config.allowedTools, newDepth),
+    };
+
+    if (config.requiredToolCalls) {
+      agentConfig.requiredToolCalls = config.requiredToolCalls;
+    }
+    if (config.allowTodoManagement) {
+      agentConfig.allowTodoManagement = config.allowTodoManagement;
+    }
+
+    return agentConfig;
   }
 
   /**
