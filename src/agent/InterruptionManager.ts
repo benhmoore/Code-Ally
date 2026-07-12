@@ -3,31 +3,32 @@
  *
  * Responsibilities:
  * - Track interruption state (interrupted, wasInterrupted)
- * - Manage interruption types (cancel vs interjection)
- * - Store interruption context (reason, timeout status)
+ * - Preserve a typed interruption cause
  * - Handle abort controller lifecycle for tool execution
  * - Provide clean API for interruption operations
  *
- * Interruption types:
- * - cancel: User pressed Ctrl+C, abort everything
- * - interjection: User submitted new message mid-response, handle gracefully
- *
- * Interruption contexts:
- * - User-initiated: Ctrl+C or new message
- * - Timeout: Agent stuck without tool calls (activity timeout)
- * - Permission denied: Security violation during tool execution
+ * User cancellation ends a turn. Interjections and internal recovery causes stop
+ * only the current generation so the owning Agent can continue coherently.
  */
 
 /**
  * Context information about an interruption
  */
-export interface InterruptionContext {
-  /** Human-readable reason for the interruption */
-  reason: string;
-  /** Whether this was triggered by a timeout */
-  isTimeout: boolean;
-  /** Whether this timeout is eligible for continuation (vs fatal) */
-  canContinueAfterTimeout?: boolean;
+export type UserInterruptionCause =
+  | { kind: 'user_cancel' }
+  | { kind: 'user_interjection' };
+
+export type RecoverableInterruptionCause =
+  | { kind: 'activity_timeout'; reason: string }
+  | { kind: 'thinking_loop'; reason: string }
+  | { kind: 'response_loop'; reason: string };
+
+export type InterruptionCause = UserInterruptionCause | RecoverableInterruptionCause;
+
+export function isRecoverableInterruption(
+  cause: InterruptionCause | null
+): cause is RecoverableInterruptionCause {
+  return cause !== null && cause.kind !== 'user_cancel' && cause.kind !== 'user_interjection';
 }
 
 /**
@@ -40,14 +41,8 @@ export class InterruptionManager {
   /** Whether the previous request was interrupted */
   private wasInterrupted: boolean = false;
 
-  /** Type of interruption currently active */
-  private interruptionType: 'cancel' | 'interjection' | null = null;
-
-  /** Context information about the current interruption */
-  private interruptionContext: InterruptionContext = {
-    reason: '',
-    isTimeout: false,
-  };
+  /** The single source of truth for why generation stopped. */
+  private cause: InterruptionCause | null = null;
 
   /** Abort controller for ongoing tool executions */
   private toolAbortController?: AbortController;
@@ -85,17 +80,8 @@ export class InterruptionManager {
    *
    * @returns Interruption type or null if not interrupted
    */
-  getInterruptionType(): 'cancel' | 'interjection' | null {
-    return this.interruptionType;
-  }
-
-  /**
-   * Get the current interruption context
-   *
-   * @returns Context information about the interruption
-   */
-  getInterruptionContext(): InterruptionContext {
-    return { ...this.interruptionContext };
+  getCause(): InterruptionCause | null {
+    return this.cause ? { ...this.cause } : null;
   }
 
   /**
@@ -106,9 +92,9 @@ export class InterruptionManager {
    *
    * @param type Type of interruption (default: 'cancel')
    */
-  interrupt(type: 'cancel' | 'interjection' = 'cancel'): void {
+  interrupt(cause: InterruptionCause): void {
     this.interrupted = true;
-    this.interruptionType = type;
+    this.cause = cause;
 
     // Both a hard cancel and an interjection stop the in-flight generation, so the
     // request signal is aborted for either type. Abort the EXISTING controller (the
@@ -117,24 +103,12 @@ export class InterruptionManager {
     this.requestAbortController!.abort();
 
     // Only a hard cancel tears down running tools; an interjection lets them finish.
-    if (type === 'cancel') {
+    if (cause.kind === 'user_cancel' || cause.kind === 'activity_timeout') {
       this.ensureAbortController();
       if (this.toolAbortController) {
         this.toolAbortController.abort();
       }
     }
-  }
-
-  /**
-   * Set interruption context
-   *
-   * Stores the reason and timeout status for this interruption.
-   * Used to provide meaningful error messages to users.
-   *
-   * @param context Context information about the interruption
-   */
-  setInterruptionContext(context: InterruptionContext): void {
-    this.interruptionContext = { ...context };
   }
 
   /**
@@ -145,11 +119,7 @@ export class InterruptionManager {
    */
   reset(): void {
     this.interrupted = false;
-    this.interruptionType = null;
-    this.interruptionContext = {
-      reason: '',
-      isTimeout: false,
-    };
+    this.cause = null;
 
     // A reset means the current interrupt has been handled and future work can
     // proceed. Do not keep an already-aborted controller around, or the next
@@ -238,7 +208,7 @@ export class InterruptionManager {
   startToolExecution(): AbortSignal {
     this.toolAbortController = new AbortController();
 
-    if (this.interrupted && this.interruptionType === 'cancel') {
+    if (this.interrupted && (this.cause?.kind === 'user_cancel' || this.cause?.kind === 'activity_timeout')) {
       this.toolAbortController.abort();
     }
 

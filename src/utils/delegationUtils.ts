@@ -185,7 +185,7 @@ export function injectInterjection(
   }
   logger.debug(`${context} Injecting user message into pooled agent:`, pooledAgent.agentId);
   agent.addUserInterjection(message);
-  agent.interrupt('interjection');
+  agent.interrupt({ kind: 'user_interjection' });
 }
 
 /**

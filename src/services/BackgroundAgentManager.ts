@@ -232,7 +232,7 @@ export class BackgroundAgentManager {
 
     if (task.status === 'running') {
       try {
-        task.subAgent.interrupt('cancel');
+        task.subAgent.interrupt({ kind: 'user_cancel' });
       } catch (error) {
         logger.warn(`[BackgroundAgentManager] Failed to interrupt agent ${id}:`, error);
       }
@@ -301,7 +301,7 @@ export class BackgroundAgentManager {
     logger.info(`[BackgroundAgentManager] Shutting down ${running.length} background agent(s)...`);
     for (const task of running) {
       try {
-        task.subAgent.interrupt('cancel');
+        task.subAgent.interrupt({ kind: 'user_cancel' });
       } catch (error) {
         logger.warn(`[BackgroundAgentManager] Failed to interrupt ${task.id} on shutdown:`, error);
       }

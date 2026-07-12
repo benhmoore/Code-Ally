@@ -19,7 +19,12 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { FocusManager } from '../services/FocusManager.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
 import { TokenManager } from './TokenManager.js';
-import { InterruptionManager } from './InterruptionManager.js';
+import {
+  InterruptionManager,
+  isRecoverableInterruption,
+  type RecoverableInterruptionCause,
+  type UserInterruptionCause,
+} from './InterruptionManager.js';
 import { ActivityMonitor } from './ActivityMonitor.js';
 import { RequiredToolTracker } from './RequiredToolTracker.js';
 import { RequirementValidator } from './RequirementTracker.js';
@@ -38,9 +43,6 @@ import { AgentLifecycleHandler } from './AgentLifecycleHandler.js';
 import { LoopDetector } from './LoopDetector.js';
 import { LoopInfo } from './types/loopDetection.js';
 import {
-  ReconstructionCyclePattern,
-  RepeatedQuestionPattern,
-  RepeatedActionPattern,
   CharacterRepetitionPattern,
   PhraseRepetitionPattern,
   SentenceRepetitionPattern,
@@ -233,8 +235,8 @@ export class Agent {
   // Lifecycle handling - idle coordinator, auto-cleanup
   private lifecycleHandler: AgentLifecycleHandler;
 
-  // Timeout continuation tracking - counts attempts to continue after activity timeout
-  private timeoutContinuationAttempts: number = 0;
+  // Number of internal generation recoveries in the current turn.
+  private recoveryAttempts: number = 0;
 
   // Per-turn LLM round-trip backstop. Counts every call to getLLMResponse within a
   // turn (productive tool loop + all retry/continuation paths). Reset at the start
@@ -380,9 +382,9 @@ export class Agent {
       thinkingLoopConfig: {
         eventType: ActivityEventType.THOUGHT_CHUNK,
         patterns: [
-          new ReconstructionCyclePattern(),
-          new RepeatedQuestionPattern(),
-          new RepeatedActionPattern(),
+          new CharacterRepetitionPattern(),
+          new PhraseRepetitionPattern(),
+          new SentenceRepetitionPattern(),
         ],
         warmupPeriodMs: THINKING_LOOP_DETECTOR.WARMUP_PERIOD_MS,
         checkIntervalMs: THINKING_LOOP_DETECTOR.CHECK_INTERVAL_MS,
@@ -728,7 +730,7 @@ export class Agent {
     // delegation completes in the tool code (AgentTool, BaseDelegationTool, etc.)
 
     // Reset per-invocation state counters
-    this.timeoutContinuationAttempts = 0;
+    this.recoveryAttempts = 0;
     this.toolOrchestrator.resetExploratoryStreak();
     this.pendingCleanupIds = [];
 
@@ -809,44 +811,36 @@ export class Agent {
   }
 
   /**
-   * Unified handler for interruption events (timeouts, loops)
-   * Prevents double interruption and sets appropriate context
+   * Abort the current generation for an internal, recoverable condition.
    */
-  private handleInterruptionEvent(tag: string, reason: string, isTimeout: boolean): void {
+  private interruptForRecovery(tag: string, cause: RecoverableInterruptionCause): void {
     const alreadyInterrupted = this.interruptionManager.isInterrupted();
 
-    logger.debug(tag, this.instanceId, reason);
-
-    // Always update context - later detection may have more specific reason
-    this.interruptionManager.setInterruptionContext({
-      reason,
-      isTimeout,
-      canContinueAfterTimeout: true,
-    });
+    logger.debug(tag, this.instanceId, cause.reason);
 
     if (!alreadyInterrupted) {
-      this.interrupt();
+      this.interruptionManager.interrupt(cause);
+      this.stopActivityMonitoring();
     }
   }
 
   /** Handle activity timeout - invoked by ActivityMonitor */
   private handleActivityTimeout(elapsedMs: number): void {
     const elapsedSeconds = Math.round(elapsedMs / 1000);
-    this.handleInterruptionEvent(
+    this.interruptForRecovery(
       '[AGENT_TIMEOUT]',
-      `Activity timeout: no tool calls for ${elapsedSeconds} seconds`,
-      true
+      { kind: 'activity_timeout', reason: `Activity timeout: no tool calls for ${elapsedSeconds} seconds` }
     );
   }
 
   /** Handle thinking loop - invoked by LoopDetector */
   private handleThinkingLoop(info: LoopInfo): void {
-    this.handleInterruptionEvent('[THINKING_LOOP]', `Thinking loop: ${info.reason}`, false);
+    this.interruptForRecovery('[THINKING_LOOP]', { kind: 'thinking_loop', reason: info.reason });
   }
 
   /** Handle response loop - invoked by LoopDetector */
   private handleResponseLoop(info: LoopInfo): void {
-    this.handleInterruptionEvent('[RESPONSE_LOOP]', `Response loop: ${info.reason}`, false);
+    this.interruptForRecovery('[RESPONSE_LOOP]', { kind: 'response_loop', reason: info.reason });
   }
 
   /**
@@ -908,8 +902,8 @@ export class Agent {
     // Reset all loop detection (tool cycles and text loops) on new user input
     this.loopDetector.reset();
 
-    // Reset timeout continuation counter on new user input
-    this.timeoutContinuationAttempts = 0;
+    // Reset internal recovery tracking on new user input
+    this.recoveryAttempts = 0;
 
     // Reset the per-turn LLM round-trip backstop counter
     this.llmRoundTripsThisTurn = 0;
@@ -1057,6 +1051,7 @@ export class Agent {
         (ids) => this.queueCleanup(ids)
       );
 
+      this.emitAgentEnd(false, undefined, finalResponse);
       return finalResponse;
     } catch (error) {
       logger.debug('[AGENT]', this.instanceId, 'sendMessage caught exception:', error instanceof Error ? error.message : String(error));
@@ -1128,17 +1123,16 @@ export class Agent {
   private handleInterruption(): string {
     this.interruptionManager.markRequestAsInterrupted();
 
-    const context = this.interruptionManager.getInterruptionContext();
-    const message = context.reason || PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
-    const wasTimeout = context.isTimeout;
+    const cause = this.interruptionManager.getCause();
+    const message = cause && 'reason' in cause ? cause.reason : PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
 
-    this.emitAgentEnd(true);
+    this.emitAgentEnd(true, cause?.kind);
 
     // Clear interruption state
     this.interruptionManager.reset();
 
     // Timeouts on subagents should fail as tool errors
-    if (wasTimeout && this.config.isSpecializedAgent) {
+    if (cause?.kind === 'activity_timeout' && this.config.isSpecializedAgent) {
       throw new Error(message);
     }
 
@@ -1164,20 +1158,19 @@ export class Agent {
    * Called when user presses Ctrl+C or submits a message during an ongoing request.
    * Immediately cancels the LLM request and sets interrupt flag for graceful cleanup.
    *
-   * @param type - Type of interruption: 'cancel' (default) or 'interjection'
+   * @param cause - User action that stopped generation
    */
-  interrupt(type: 'cancel' | 'interjection' = 'cancel'): void {
+  interrupt(cause: UserInterruptionCause = { kind: 'user_cancel' }): void {
     if (this.requestInProgress) {
       // Set interruption state and abort this agent's request signal. Because the
       // signal handed to ModelClient.send() is owned by this agent's
       // InterruptionManager, this cancels the in-flight LLM request immediately
       // and scoped to this agent alone — no global client cancellation.
-      this.interruptionManager.interrupt(type);
+      this.interruptionManager.interrupt(cause);
 
       // Stop activity monitoring
       this.stopActivityMonitoring();
 
-      this.emitAgentEnd(true);
     }
   }
 
@@ -1483,10 +1476,15 @@ export class Agent {
     executionContext: AgentExecutionContext,
     isRetry: boolean = false
   ): Promise<string> {
+    if (response.interrupted && !this.interruptionManager.isInterrupted()) {
+      throw new Error('Model generation stopped without an agent interruption cause');
+    }
+
     // Check for interruption
     if (this.interruptionManager.isInterrupted() || response.interrupted) {
       // Handle interjection vs cancellation
-      if (this.interruptionManager.getInterruptionType() === 'interjection') {
+      const cause = this.interruptionManager.getCause();
+      if (cause?.kind === 'user_interjection') {
         // Preserve partial response if we have content
         if (response.content || response.tool_calls) {
           this.conversationManager.addMessage({
@@ -1539,56 +1537,16 @@ export class Agent {
 
         return await this.processLLMResponse(continuationResponse, executionContext);
       } else {
-        // Check if this is a continuation-eligible timeout
-        const context = this.interruptionManager.getInterruptionContext();
-        const canContinueAfterTimeout = (context as any).canContinueAfterTimeout === true;
-
-        if (canContinueAfterTimeout) {
-          // Increment continuation counter for logging/metrics
-          // No longer enforcing a maximum - will continue indefinitely
-          this.timeoutContinuationAttempts++;
-          logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId,
-            `Attempting continuation (attempt ${this.timeoutContinuationAttempts})`);
-
-          // Ensure context room before adding continuation message
-          const contextUsage = this.tokenManager.getContextUsagePercentage();
-          if (contextUsage >= this.appConfig.compact_threshold) {
-            logger.debug('[AGENT_RETRY]', this.instanceId,
-              `Context at ${contextUsage}% (>= ${this.appConfig.compact_threshold}%), triggering auto-compaction before timeout continuation`);
-            await this.checkAutoCompaction();
-          }
-
-          // PERSIST: false - Ephemeral: One-time prompt to continue after interruption
-          // Distinguish between thinking loop and activity timeout
-          const isThinkingLoop = context.reason?.includes('Thinking loop');
-          const continuationPrompt = isThinkingLoop
-            ? createThinkingLoopContinuationReminder(context.reason || '')
-            : createActivityTimeoutContinuationReminder();
-          this.conversationManager.addMessage(continuationPrompt);
-
-          // Reset interruption state and retry
-          this.interruptionManager.reset();
-          this.requestInProgress = true;
-
-          // Restart activity monitoring
-          this.startActivityMonitoring();
-
-          // Reset loop detectors for fresh monitoring on retry
-          this.loopDetector.resetTextDetectors();
-
-          // Get new response from LLM
-          logger.debug('[AGENT_TIMEOUT_CONTINUATION]', this.instanceId, 'Requesting continuation after timeout...');
-          const continuationResponse = await this.getLLMResponse(executionContext);
-
-          // Process continuation
-          return await this.processLLMResponse(continuationResponse, executionContext);
+        // Internal detection stopped generation so it can be continued cleanly.
+        if (isRecoverableInterruption(cause)) {
+          return await this.continueAfterRecovery(cause, executionContext);
         }
 
         // Regular cancel - mark as interrupted for next request
         logger.debug('[AGENT]', this.instanceId, 'Returning USER_FACING_INTERRUPTION (regular cancel after timeout)');
         this.interruptionManager.markRequestAsInterrupted();
 
-        this.emitAgentEnd(true);
+        this.emitAgentEnd(true, cause?.kind);
 
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
@@ -1608,9 +1566,9 @@ export class Agent {
     // Check if an interruption happened during ResponseProcessor execution
     // This handles interjections that occur during tool execution or continuation logic
     if (this.interruptionManager.isInterrupted()) {
-      const interruptionType = this.interruptionManager.getInterruptionType();
+      const interruptionCause = this.interruptionManager.getCause();
 
-      if (interruptionType === 'interjection') {
+      if (interruptionCause?.kind === 'user_interjection') {
         // Preserve partial response from ResponseProcessor if we have content
         if (result && result.trim()) {
           this.conversationManager.addMessage({
@@ -1633,18 +1591,50 @@ export class Agent {
 
         // Process continuation
         return await this.processLLMResponse(continuationResponse, executionContext);
+      } else if (isRecoverableInterruption(interruptionCause)) {
+        return await this.continueAfterRecovery(interruptionCause, executionContext);
       } else {
         // Regular cancel - mark as interrupted for next request
         logger.debug('[AGENT]', this.instanceId, 'Returning USER_FACING_INTERRUPTION (interrupted after ResponseProcessor)');
         this.interruptionManager.markRequestAsInterrupted();
 
-        this.emitAgentEnd(true);
+        this.emitAgentEnd(true, interruptionCause?.kind);
 
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
     }
 
     return result;
+  }
+
+  private async continueAfterRecovery(
+    cause: RecoverableInterruptionCause,
+    executionContext: AgentExecutionContext
+  ): Promise<string> {
+    this.recoveryAttempts++;
+    logger.debug(
+      '[AGENT_RECOVERY]',
+      this.instanceId,
+      `${cause.kind}: ${cause.reason} (attempt ${this.recoveryAttempts})`
+    );
+
+    const contextUsage = this.tokenManager.getContextUsagePercentage();
+    if (contextUsage >= this.appConfig.compact_threshold) {
+      await this.checkAutoCompaction();
+    }
+
+    const continuationPrompt = cause.kind === 'activity_timeout'
+      ? createActivityTimeoutContinuationReminder()
+      : createThinkingLoopContinuationReminder(cause.reason);
+    this.conversationManager.addMessage(continuationPrompt);
+
+    this.interruptionManager.reset();
+    this.requestInProgress = true;
+    this.startActivityMonitoring();
+    this.loopDetector.resetTextDetectors();
+
+    const continuationResponse = await this.getLLMResponse(executionContext);
+    return await this.processLLMResponse(continuationResponse, executionContext);
   }
 
   /**
@@ -2044,7 +2034,11 @@ export class Agent {
    * Emit AGENT_END event with interruption flag
    * Handles the agentEndEmitted guard internally to prevent duplicate emissions
    */
-  private emitAgentEnd(interrupted: boolean = false): void {
+  private emitAgentEnd(
+    interrupted: boolean = false,
+    interruptionCause?: string,
+    content?: string
+  ): void {
     if (this.agentEndEmitted) return;
     this.emitEvent({
       id: this.generateId(),
@@ -2052,6 +2046,8 @@ export class Agent {
       timestamp: Date.now(),
       data: {
         interrupted,
+        interruptionCause,
+        content,
         isSpecializedAgent: this.config.isSpecializedAgent || false,
         instanceId: this.instanceId,
         agentName: this.config.agentType || 'ally',

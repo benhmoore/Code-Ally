@@ -7,7 +7,7 @@ import { Agent } from '../Agent.js';
 import { ToolManager } from '@tools/ToolManager.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import type { ModelClient, LLMResponse } from '@llm/ModelClient.js';
-import type { Message, Config } from '@shared/index.js';
+import { ActivityEventType, type Message, type Config } from '@shared/index.js';
 
 describe('Agent - Interruption Handling', () => {
   let agent: Agent;
@@ -63,6 +63,7 @@ describe('Agent - Interruption Handling', () => {
         // Check if we should return an interrupted response
         if (nextResponseInterrupted) {
           nextResponseInterrupted = false;
+          agent.interrupt();
           return {
             content: '',
             tool_calls: [],
@@ -102,6 +103,38 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('System Reminder Injection', () => {
+    it('recovers an internally stopped generation without ending the turn as interrupted', async () => {
+      const events: any[] = [];
+      activityStream.subscribe('*', event => events.push(event));
+
+      let requestCount = 0;
+      mockModelClient.send = vi.fn(async (_messages: Message[], options: any): Promise<LLMResponse> => {
+        requestCount++;
+        if (requestCount === 1) {
+          await new Promise<void>(resolve => {
+            options.signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          return { content: '', tool_calls: [], interrupted: true };
+        }
+        return { content: 'Recovered response', tool_calls: [], interrupted: false };
+      });
+
+      const resultPromise = agent.sendMessage('Take your time reasoning about this.');
+      await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledTimes(1));
+
+      (agent as any).interruptForRecovery('[TEST_RECOVERY]', {
+        kind: 'thinking_loop',
+        reason: 'confirmed mechanical repetition',
+      });
+
+      await expect(resultPromise).resolves.toBe('Recovered response');
+      expect(mockModelClient.send).toHaveBeenCalledTimes(2);
+
+      const endEvents = events.filter(event => event.type === ActivityEventType.AGENT_END);
+      expect(endEvents).toHaveLength(1);
+      expect(endEvents[0].data.interrupted).toBe(false);
+    });
+
     it('should inject system reminder after interruption', async () => {
       // Mark next response as interrupted before sending
       (mockModelClient as any).setNextResponseInterrupted(true);

@@ -439,6 +439,6 @@ Only start a NEW agent for completely unrelated areas.`;
 
     logger.debug('[AGENT_ASK_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
     agent.addUserInterjection(message);
-    agent.interrupt('interjection');
+    agent.interrupt({ kind: 'user_interjection' });
   }
 }

@@ -128,7 +128,7 @@ export const useInputHandlers = (
     if (!routedToTool) {
       logger.debug('[APP] Routing interjection to main agent');
       agent.addUserInterjection(message);
-      agent.interrupt('interjection');
+      agent.interrupt({ kind: 'user_interjection' });
     }
 
     // Add user message to UI conversation with parentId for reconstruction

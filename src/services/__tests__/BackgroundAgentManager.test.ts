@@ -99,7 +99,7 @@ describe('BackgroundAgentManager', () => {
     const t = makeTask('t1');
     manager.addTask(t);
     expect(manager.cancelTask('t1')).toBe(true);
-    expect(t.subAgent.interrupt).toHaveBeenCalledWith('cancel');
+    expect(t.subAgent.interrupt).toHaveBeenCalledWith({ kind: 'user_cancel' });
     expect(t.status).toBe('cancelled');
     // Cancellation only signals; the detached run owns pooled-agent release.
     expect(t.pooledAgent).toBeNull();
@@ -149,7 +149,7 @@ describe('BackgroundAgentManager', () => {
     manager.addTask(t1);
     manager.addTask(t2);
     await manager.shutdown();
-    expect(t1.subAgent.interrupt).toHaveBeenCalledWith('cancel');
+    expect(t1.subAgent.interrupt).toHaveBeenCalledWith({ kind: 'user_cancel' });
     expect(manager.getCount()).toBe(0);
   });
 });

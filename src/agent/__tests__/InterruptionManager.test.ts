@@ -6,7 +6,7 @@ describe('InterruptionManager', () => {
     const manager = new InterruptionManager();
 
     const firstSignal = manager.startToolExecution();
-    manager.interrupt('cancel');
+    manager.interrupt({ kind: 'user_cancel' });
 
     expect(firstSignal.aborted).toBe(true);
 
@@ -20,7 +20,7 @@ describe('InterruptionManager', () => {
   it('keeps newly started tool execution aborted while a cancel is active', () => {
     const manager = new InterruptionManager();
 
-    manager.interrupt('cancel');
+    manager.interrupt({ kind: 'user_cancel' });
     const signal = manager.startToolExecution();
 
     expect(signal.aborted).toBe(true);
@@ -39,7 +39,7 @@ describe('InterruptionManager', () => {
     const manager = new InterruptionManager();
 
     const requestSignal = manager.beginRequest();
-    manager.interrupt('cancel');
+    manager.interrupt({ kind: 'user_cancel' });
 
     expect(requestSignal.aborted).toBe(true);
   });
@@ -50,7 +50,7 @@ describe('InterruptionManager', () => {
     const requestSignal = manager.beginRequest();
     const toolSignal = manager.startToolExecution();
 
-    manager.interrupt('interjection');
+    manager.interrupt({ kind: 'user_interjection' });
 
     expect(requestSignal.aborted).toBe(true);
     expect(toolSignal.aborted).toBe(false);
@@ -62,7 +62,7 @@ describe('InterruptionManager', () => {
     const requestSignal = manager.beginRequest();
     const toolSignal = manager.startToolExecution();
 
-    manager.interrupt('cancel');
+    manager.interrupt({ kind: 'user_cancel' });
 
     expect(requestSignal.aborted).toBe(true);
     expect(toolSignal.aborted).toBe(true);
@@ -72,7 +72,7 @@ describe('InterruptionManager', () => {
     const manager = new InterruptionManager();
 
     const firstSignal = manager.beginRequest();
-    manager.interrupt('cancel');
+    manager.interrupt({ kind: 'user_cancel' });
     expect(firstSignal.aborted).toBe(true);
 
     manager.reset();
@@ -80,5 +80,20 @@ describe('InterruptionManager', () => {
 
     expect(secondSignal).not.toBe(firstSignal);
     expect(secondSignal.aborted).toBe(false);
+  });
+
+  it('preserves a typed recoverable cause while aborting only generation', () => {
+    const manager = new InterruptionManager();
+    const requestSignal = manager.beginRequest();
+    const toolSignal = manager.startToolExecution();
+
+    manager.interrupt({ kind: 'thinking_loop', reason: 'mechanical repetition' });
+
+    expect(requestSignal.aborted).toBe(true);
+    expect(toolSignal.aborted).toBe(false);
+    expect(manager.getCause()).toEqual({
+      kind: 'thinking_loop',
+      reason: 'mechanical repetition',
+    });
   });
 });

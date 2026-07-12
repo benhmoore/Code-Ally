@@ -392,7 +392,7 @@ export class SessionsTool extends BaseTool {
 
     logger.debug('[SESSIONS_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
     agent.addUserInterjection(message);
-    agent.interrupt('interjection');
+    agent.interrupt({ kind: 'user_interjection' });
   }
 
   /**

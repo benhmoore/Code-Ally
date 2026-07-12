@@ -1010,9 +1010,6 @@ export const THINKING_LOOP_DETECTOR = {
   /** Check every 5 seconds during thinking for loop patterns */
   CHECK_INTERVAL_MS: 5000,
 
-  /** Phrase must appear 2+ times to be considered a reconstruction cycle */
-  RECONSTRUCTION_THRESHOLD: 2,
-
   /** Question/action must appear 3+ times to be considered repetitive */
   REPETITION_THRESHOLD: 3,
 

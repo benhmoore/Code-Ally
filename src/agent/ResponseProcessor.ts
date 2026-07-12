@@ -778,18 +778,6 @@ export class ResponseProcessor {
 
       context.autoSaveSession();
 
-      this.emitEvent({
-        id: context.generateId(),
-        type: ActivityEventType.AGENT_END,
-        timestamp: Date.now(),
-        data: {
-          content: fallbackContent,
-          isSpecializedAgent: context.isSpecializedAgent,
-          instanceId: context.instanceId,
-          agentName: context.agentName || (context.isSpecializedAgent ? 'agent' : 'main'),
-        },
-      });
-
       return fallbackContent;
     }
 
@@ -828,19 +816,6 @@ export class ResponseProcessor {
 
     // Auto-save after text response
     context.autoSaveSession();
-
-    // Emit completion event
-    this.emitEvent({
-      id: context.generateId(),
-      type: ActivityEventType.AGENT_END,
-      timestamp: Date.now(),
-      data: {
-        content: content,
-        isSpecializedAgent: context.isSpecializedAgent,
-        instanceId: context.instanceId,
-        agentName: context.agentName || (context.isSpecializedAgent ? 'agent' : 'main'),
-      },
-    });
 
     return content;
   }
@@ -902,12 +877,12 @@ export class ResponseProcessor {
    */
   private checkForInterruption(): string | null {
     if (this.interruptionManager.isInterrupted()) {
-      // Only show visual interrupt message for cancel type (not interjection)
-      if (this.interruptionManager.getInterruptionType() === 'cancel') {
+      // Only a user cancellation produces the user-facing interruption message.
+      if (this.interruptionManager.getCause()?.kind === 'user_cancel') {
         this.interruptionManager.markRequestAsInterrupted();
         return PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
       }
-      // For interjections, return empty string to allow Agent.ts to handle gracefully
+      // Interjections and internal recovery are owned by Agent.ts.
       return '';
     }
     return null;

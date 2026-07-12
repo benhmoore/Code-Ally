@@ -7,82 +7,13 @@
  * perform similarity matching using Jaccard similarity on word sets.
  *
  * Key Features:
- * - Text extraction: Questions, actions, sentences
+ * - Sentence extraction
  * - Similarity detection: Jaccard word overlap with configurable threshold
  * - Grouping: Find clusters of similar text items
  * - Truncation: Safe text preview with ellipsis
  */
 
 import { THINKING_LOOP_DETECTOR } from '../../config/constants.js';
-
-/**
- * Regex patterns for action statement detection
- */
-const ACTION_PATTERNS = [
-  /\b(?:i will|i'll|i should|let me)\s+[^.!?]+[.!?]/gi,
-] as const;
-
-/**
- * Extract questions from text
- *
- * Questions are identified as sentences ending with "?".
- * Very short questions (<=10 chars) are filtered out to avoid noise.
- *
- * @param text - Text to extract questions from
- * @returns Array of question strings
- */
-export function extractQuestions(text: string): string[] {
-  // Split on sentence boundaries, keeping questions
-  const sentences = text.split(/[.!?]+/);
-  const questions: string[] = [];
-
-  // Track position to find questions
-  let currentPos = 0;
-  for (const sentence of sentences) {
-    const endPos = currentPos + sentence.length;
-    const nextChar = text[endPos];
-
-    if (nextChar === '?') {
-      const question = sentence.trim();
-      if (question.length > 10) {
-        // Skip very short questions
-        questions.push(question);
-      }
-    }
-
-    currentPos = endPos + 1;
-  }
-
-  return questions;
-}
-
-/**
- * Extract action statements from text
- *
- * Actions are phrases starting with "I will", "I'll", "I should", "Let me".
- * Very short actions (<=15 chars) are filtered out to avoid noise.
- *
- * @param text - Text to extract actions from
- * @returns Array of action strings
- */
-export function extractActions(text: string): string[] {
-  const actions: string[] = [];
-
-  for (const pattern of ACTION_PATTERNS) {
-    const matches = text.match(pattern);
-    if (matches) {
-      for (const match of matches) {
-        const action = match.trim();
-        if (action.length > 15) {
-          // Skip very short actions
-          actions.push(action);
-        }
-      }
-    }
-  }
-
-  return actions;
-}
 
 /**
  * Extract sentences from text
