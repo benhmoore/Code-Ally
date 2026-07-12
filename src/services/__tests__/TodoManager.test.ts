@@ -509,29 +509,6 @@ describe('TodoManager', () => {
     });
   });
 
-  describe('formatTodoUI', () => {
-    it('should return dimmed message for empty list', () => {
-      const ui = todoManager.formatTodoUI();
-      expect(ui).toContain('No todos');
-    });
-
-    it('should format todos for display', () => {
-      const todos = [
-        todoManager.createTodoItem('Task 1', 'in_progress'),
-        todoManager.createTodoItem('Task 2', 'pending'),
-        todoManager.createTodoItem('Task 3', 'completed'),
-      ];
-      todoManager.setTodos(todos);
-
-      const ui = todoManager.formatTodoUI();
-
-      expect(ui).toContain('IN PROGRESS');
-      expect(ui).toContain('Task 1');
-      expect(ui).toContain('Task 2');
-      expect(ui).toContain('Task 3');
-    });
-  });
-
   describe('logTodosIfChanged', () => {
     it('should log when context changes', async () => {
       const { logger } = await import('../Logger.js');

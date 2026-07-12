@@ -282,43 +282,6 @@ export class TodoManager {
   }
 
   /**
-   * Format todos for UI display
-   *
-   * @returns Formatted string for display
-   */
-  formatTodoUI(): string {
-    if (this.todos.length === 0) {
-      return '     [dim]No todos[/]';
-    }
-
-    const lines: string[] = [];
-    const inProgress = this.getInProgressTodo();
-    const pending = this.todos.filter(t => t.status === 'pending');
-    const completed = this.getCompletedTodos();
-
-    // Display in-progress task (highlighted)
-    if (inProgress) {
-      lines.push(`  [yellow]→ IN PROGRESS:[/] ${inProgress.task}`);
-    }
-
-    // Display pending tasks
-    pending.forEach((todo, index) => {
-      if (!inProgress && index === 0) {
-        lines.push(`  [yellow]NEXT →[/] ${todo.task}`);
-      } else {
-        lines.push(`    ${index + 1}. ${todo.task}`);
-      }
-    });
-
-    // Display completed tasks (dimmed)
-    completed.forEach(todo => {
-      lines.push(`  [dim green]✓[/] [dim]${todo.task}[/]`);
-    });
-
-    return lines.join('\n');
-  }
-
-  /**
    * Generate context string for system prompt injection
    *
    * @returns Formatted todo context or null if no tasks

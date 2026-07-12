@@ -20,9 +20,9 @@ import { logger } from '@services/Logger.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import { setTerminalProgress, clearTerminalProgress } from '@utils/terminal.js';
 import { ANIMATION_TIMING, POLLING_INTERVALS, BUFFER_SIZES, UI_DELAYS } from '@config/constants.js';
-import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { MarkdownText } from './MarkdownText.js';
+import { TodoList } from './TodoList.js';
 
 interface StatusIndicatorProps {
   /** Whether the agent is currently processing */
@@ -322,7 +322,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         const handleTodoUpdate = async () => {
           try {
             const todos = todoManager.getTodos();
-            setAllTodos([...todos].reverse());
+            setAllTodos(todos);
 
             // Update current task if in progress
             const inProgress = todoManager.getInProgressTodo();
@@ -420,9 +420,9 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
 
           setCurrentTask(newTask);
 
-          // Get all todos for display (reversed order)
+          // Get all todos for display (natural order: completed → in progress → pending)
           const todos = todoManager.getTodos();
-          setAllTodos([...todos].reverse());
+          setAllTodos(todos);
         }
       } catch (error) {
         // Silently handle errors to avoid interfering with Ink rendering
@@ -471,13 +471,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
       </Box>
     );
   }
-
-  // Get checkbox symbol based on status
-  const getCheckbox = (status: string): string => {
-    if (status === 'completed') return UI_SYMBOLS.TODO.CHECKED;
-    if (status === 'in_progress') return UI_SYMBOLS.TODO.UNCHECKED;
-    return UI_SYMBOLS.TODO.UNCHECKED;
-  };
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
@@ -530,38 +523,10 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({ isProcessing, 
         )}
       </Box>
 
-      {/* Todo list with improved display - always show if we have todos */}
+      {/* Todo list - always show if we have todos */}
       {allTodos.length > 0 && (
-        <Box flexDirection="column" marginLeft={3}>
-          {allTodos.map((todo, index) => (
-            <Box key={index} flexDirection="column">
-              {/* Parent todo */}
-              <Box>
-                {/* Arrow for in-progress task */}
-                {todo.status === 'in_progress' ? (
-                  <>
-                    <Text color={UI_COLORS.PRIMARY}>→ </Text>
-                    <Text color={UI_COLORS.PRIMARY}>{getCheckbox(todo.status)}</Text>
-                    <Text> </Text>
-                    <Text color={UI_COLORS.PRIMARY}>{todo.task}</Text>
-                  </>
-                ) : (
-                  <>
-                    <Text>   </Text>
-                    <Text color={todo.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT}>
-                      {getCheckbox(todo.status)}
-                    </Text>
-                    <Text> </Text>
-                    <Text color={todo.status === 'completed' ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.TEXT_DEFAULT} dimColor={todo.status === 'completed'}>
-                      {todo.task}
-                    </Text>
-                  </>
-                )}
-              </Box>
-
-              {/* Subtasks removed in simplified todo system */}
-            </Box>
-          ))}
+        <Box marginLeft={3}>
+          <TodoList todos={allTodos} />
         </Box>
       )}
     </Box>

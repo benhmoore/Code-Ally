@@ -108,14 +108,14 @@ export class TodoCommand extends Command {
 
     // Show in-progress task (highlighted)
     if (inProgress) {
-      output += `**In Progress**\n→ ${inProgress.task}\n\n`;
+      output += `**In Progress**\n→ ☐ ${inProgress.task}\n\n`;
     }
 
-    // Show pending tasks with indices
+    // Show pending tasks with indices (used by /todo complete <n>)
     if (pending.length > 0) {
       output += '**Pending**\n';
       pending.forEach((todo, index) => {
-        output += `\`${index}\`  ${todo.task}\n`;
+        output += `\`${index}\` ☐ ${todo.task}\n`;
       });
       output += '\n';
     }
@@ -124,7 +124,7 @@ export class TodoCommand extends Command {
     if (completed.length > 0) {
       output += '**Completed**\n';
       completed.forEach(todo => {
-        output += `✓ ${todo.task}\n`;
+        output += `☑ ${todo.task}\n`;
       });
     }
 
