@@ -19,7 +19,7 @@ import { Box, Text, useInput } from 'ink';
 import stringWidth from 'string-width';
 import { detectFilesAndImages } from '@utils/pathUtils.js';
 import { useInnerWidth } from '../hooks/useInnerWidth.js';
-import { wrapAnsiText } from '@utils/terminalText.js';
+import { stripAnsi, wrapAnsiText } from '@utils/terminalText.js';
 
 export interface TextInputProps {
   /** Current text value */
@@ -541,7 +541,18 @@ export const TextInput: React.FC<TextInputProps> = ({
       // ===== Regular Character Input =====
       if (input && !key.ctrl && !key.meta) {
         // Normalize line endings - convert \r\n and \r to \n
-        const normalizedInput = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        // Then sanitize for the buffer's 1-char-per-cell invariant: strip ANSI
+        // sequences, expand tabs (a raw \t renders wider than the 1 column the
+        // wrapping math budgets for it, corrupting the box layout), and drop
+        // any remaining control characters except newline.
+        const normalizedInput = stripAnsi(input.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
+          .replace(/\t/g, '    ')
+          // eslint-disable-next-line no-control-regex
+          .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
+
+        if (normalizedInput.length === 0) {
+          return;
+        }
 
         // Detect pasted file paths, images, and directories (multi-character input without newlines)
         if (normalizedInput.length > 1 && !normalizedInput.includes('\n')) {
@@ -576,30 +587,19 @@ export const TextInput: React.FC<TextInputProps> = ({
           }
         }
 
-        // Calculate new value and cursor position
+        // Calculate new value and cursor position.
+        // Applied synchronously even for multiline pastes: terminals deliver
+        // large pastes as multiple stdin chunks, so any deferred/two-phase
+        // update can interleave with the next chunk and drop content.
         const before = currentValue.slice(0, currentCursor);
         const after = currentValue.slice(currentCursor);
         const newValue = before + normalizedInput + after;
         const newCursor = currentCursor + normalizedInput.length;
 
-        // Multiline paste: two-phase render to help ink handle the height change
-        // Phase 1 sets minimal content, Phase 2 (next tick) sets actual content
-        // This prevents ink's diff algorithm from getting confused by sudden height jumps
-        // Both phases update value AND cursor to maintain consistent state
-        if (normalizedInput.includes('\n')) {
-          onValueChange(' ');
-          onCursorChange(1); // Consistent cursor for Phase 1 (at end of single space)
-          setImmediate(() => {
-            // Verify state hasn't changed since Phase 1 before applying Phase 2
-            // If user typed between phases, valueRef/cursorRef will differ from Phase 1
-            if (valueRef.current === ' ' && cursorRef.current === 1) {
-              onValueChange(newValue);
-              onCursorChange(newCursor);
-            }
-          });
-          return;
-        }
-
+        // Sync refs immediately (not just via useEffect after render) so the
+        // next paste chunk arriving before the re-render sees this chunk.
+        valueRef.current = newValue;
+        cursorRef.current = newCursor;
         onValueChange(newValue);
         onCursorChange(newCursor);
       }
@@ -689,8 +689,11 @@ export const TextInput: React.FC<TextInputProps> = ({
 
           if (cursorVisualLineOffset >= 0) break;
 
-          // Check if cursor is at end of this visual line
-          if (charIndex === cursorPosInLogicalLine) {
+          // Cursor at the end of the final visual line. For non-final visual
+          // lines this boundary belongs to the start of the next visual line -
+          // rendering it at the end would add a cell past a full-width row and
+          // overflow the box.
+          if (charIndex === cursorPosInLogicalLine && vl === visualLines.length - 1) {
             cursorVisualLineOffset = visualLineOffset;
             cursorPosInVisualLine = visualLineChars.length;
             break;
