@@ -17,7 +17,7 @@ import { formatError } from '@utils/errorUtils.js';
 import { BYTE_CONVERSIONS, FORMATTING } from '@config/constants.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
-import { testModelCapabilities } from '@llm/ModelValidation.js';
+import { listProviderModels, probeModelCapabilities } from '@llm/ProviderAdapter.js';
 import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
 
 export class ModelCommand extends Command {
@@ -78,13 +78,10 @@ export class ModelCommand extends Command {
       try {
         // Get endpoint from config
         const config = configManager.getConfig();
-        const endpoint = config.endpoint || 'http://localhost:11434';
-
-        // Test model capabilities (cached after first test)
-        const capabilities = await testModelCapabilities(endpoint, modelName);
+        const capabilities = await probeModelCapabilities(config, modelName);
 
         // For ally model, require tool support
-        if (modelType === 'ally' && !capabilities.supportsTools) {
+        if (modelType === 'ally' && capabilities.tools === 'unsupported') {
           return this.createError(`Model '${modelName}' does not support tools. Ally model requires tool support.`);
         }
 
@@ -108,8 +105,9 @@ export class ModelCommand extends Command {
         // Enhance response message with capability info
         const typeName = modelType === 'service' ? 'Service model' : 'Model';
         const capInfo = capabilities.fromCache ? ' (cached)' : '';
-        const imageNote = capabilities.supportsImages ? '' : ' (no image support)';
-        return this.createResponse(`${typeName} changed to: ${modelName}${capInfo}${imageNote}`);
+        const imageNote = capabilities.images === 'unsupported' ? ' (no image support)' : '';
+        const capabilityNote = capabilities.tools === 'unknown' ? ' (capabilities will be verified on first use)' : '';
+        return this.createResponse(`${typeName} changed to: ${modelName}${capInfo}${imageNote}${capabilityNote}`);
       } catch (error) {
         return this.createError(`Error changing model: ${formatError(error)}`);
       }
@@ -120,29 +118,25 @@ export class ModelCommand extends Command {
       const configKey = modelType === 'service' ? 'service_model' : 'model';
       const currentModel = configManager.getValue(configKey);
       const config = configManager.getConfig();
-      const endpoint = config.endpoint || 'http://localhost:11434';
-
-      // Fetch available models from Ollama
-      const response = await fetch(`${endpoint}/api/tags`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (!response.ok) {
+      const discovery = await listProviderModels(config);
+      if (discovery.error) {
         return this.createError(
-          `Failed to fetch models from Ollama (HTTP ${response.status}). Try /model <name> to set directly.`
+          `Failed to fetch models from the configured provider (${discovery.error}). Try /model <name> to set directly.`
         );
       }
 
-      const data = (await response.json()) as { models?: Array<{ name: string; size?: number; modified_at?: string }> };
-      const models = (data.models || []).map(m => ({
+      if (!discovery.supported) {
+        return this.createResponse('This provider does not support model discovery. Use /model <name> to set the exact model identifier.');
+      }
+      const models = discovery.models.map(m => ({
         name: m.name,
         size: m.size ? this.formatSize(m.size) : undefined,
-        modified: m.modified_at,
+        modified: m.modified,
       }));
 
       if (models.length === 0) {
-        return this.createResponse('No models available in Ollama. Install models with: ollama pull <model>');
+        const providerName = config.provider ?? 'ollama';
+        return this.createResponse(`No models were reported by ${providerName}. Use /model <name> to set one directly.`);
       }
 
       // Emit interactive selection request

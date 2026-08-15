@@ -239,9 +239,7 @@ export class SessionsTool extends BaseTool {
         baseAgentPrompt: SESSION_ANALYSIS_PROMPT,
         taskPrompt: task,
         config: config,
-        parentCallId: callId,
         parentAgent: parentAgent, // Enable activity monitoring coordination
-        maxDuration: getThoroughnessDuration('quick'), // 1 minute limit for session analysis
         focusDirectory: sessionsDir, // Restrict agent to sessions directory (absolute, outside cwd)
         excludeFiles: excludeFiles, // Exclude current session
         allowedTools: SESSION_ANALYSIS_TOOLS, // Restrict to read-only tools

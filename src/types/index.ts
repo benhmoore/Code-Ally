@@ -267,15 +267,61 @@ export enum ActivityEventType {
   SCHEDULED_TASKS_UPDATED = 'scheduled_tasks_updated',
 }
 
-export interface ActivityEvent {
-  id: string;
-  type: ActivityEventType;
-  timestamp: number;
-  parentId?: string;
-  data: any;
+export interface ToolCallStartActivityData {
+  toolName: string;
+  arguments?: Record<string, unknown>;
+  groupExecution?: boolean;
+  visibleInChat?: boolean;
+  isTransparent?: boolean;
+  collapsed?: boolean;
+  shouldCollapse?: boolean;
+  hideOutput?: boolean;
+  alwaysShowFullOutput?: boolean;
+  isLinkedPlugin?: boolean;
+  displayColor?: string;
+  displayIcon?: string;
+  hideToolName?: boolean;
 }
 
-export type ActivityCallback = (event: ActivityEvent) => void;
+export interface ToolCallEndActivityData {
+  success: boolean;
+  toolName?: string;
+  groupExecution?: boolean;
+  error?: string;
+  output?: string;
+  result?: ToolResult;
+  visibleInChat?: boolean;
+  isTransparent?: boolean;
+  collapsed?: boolean;
+  shouldCollapse?: boolean;
+}
+
+export type ActivityEventData<T extends ActivityEventType> =
+  ActivityEventType extends T ? Record<string, any> :
+  T extends ActivityEventType.TOOL_CALL_START ? ToolCallStartActivityData :
+  T extends ActivityEventType.TOOL_CALL_END ? ToolCallEndActivityData :
+  T extends ActivityEventType.TOOL_EXECUTION_START ? Record<string, never> :
+  T extends ActivityEventType.TOOL_OUTPUT_CHUNK ? { chunk: string; toolName?: string } :
+  T extends ActivityEventType.ASSISTANT_CHUNK ? { chunk: string } :
+  T extends ActivityEventType.ASSISTANT_MESSAGE_COMPLETE ? { content: string } :
+  T extends ActivityEventType.THOUGHT_CHUNK ? { chunk?: string; thinking?: boolean } :
+  T extends ActivityEventType.THOUGHT_COMPLETE ? { thinking: string } :
+  T extends ActivityEventType.STATUS_MESSAGE ? { message: string } :
+  T extends ActivityEventType.ERROR ? { error?: string; message?: string; groupExecution?: boolean } :
+  Record<string, any>;
+
+export interface ActivityEvent<T extends ActivityEventType = ActivityEventType> {
+  id: string;
+  type: T;
+  timestamp: number;
+  parentId?: string;
+  /** Monotonic order assigned by ActivityStream when the event is emitted. */
+  sequence?: number;
+  data: ActivityEventData<T>;
+}
+
+export type ActivityCallback<T extends ActivityEventType = ActivityEventType> =
+  (event: ActivityEvent<T>) => void;
 
 // ===========================
 // Tool Status Types
@@ -374,6 +420,7 @@ export interface Config {
   bash_timeout: number;
   auto_confirm: boolean;
   parallel_tools: boolean;
+  stream_responses: boolean;
   tool_call_activity_timeout: number; // Timeout in seconds for agents without tool call activity
 
   // UI Preferences

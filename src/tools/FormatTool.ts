@@ -75,9 +75,7 @@ export class FormatTool extends BaseTool {
     };
   }
 
-  async previewChanges(args: any, callId?: string): Promise<void> {
-    this.currentCallId = callId;
-
+  async previewChanges(args: any, _callId?: string): Promise<void> {
     const filePaths = args.file_paths as string[];
     if (!filePaths || !Array.isArray(filePaths)) {
       return;

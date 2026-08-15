@@ -184,8 +184,7 @@ async function handleConfigCommands(
   options: CLIOptions,
   configManager: ConfigManager
 ): Promise<boolean> {
-  // --init flag is now handled by the UI (via /init command)
-  // This section is kept for backwards compatibility warning
+  // --init starts the normal UI and requests the same wizard as /init.
   if (options.init) {
     console.log('\n✓ Starting Code Ally with setup wizard...\n');
     console.log('The setup wizard will appear in the UI.');
@@ -217,11 +216,11 @@ async function handleConfigCommands(
         process.exit(1);
       }
 
-      const value = configManager.getValue(field as any);
+      const value = configManager.getDisplayValue(field as any);
       console.log(`\n${field}: ${JSON.stringify(value, null, 2)}\n`);
     } else {
       // Show entire config
-      console.log('\n' + JSON.stringify(configManager.getConfig(), null, 2) + '\n');
+      console.log('\n' + JSON.stringify(configManager.getRedactedConfig(), null, 2) + '\n');
     }
 
     return true;
@@ -924,7 +923,7 @@ async function main() {
     }
 
     // Determine active profile (always defaults to 'default' if not specified)
-    let activeProfile = options.profile || 'default';
+    const activeProfile = options.profile || 'default';
 
     // Validate profile exists
     if (!(await profileManager.profileExists(activeProfile))) {
@@ -995,19 +994,17 @@ async function main() {
     // Check if critical config is missing - force setup wizard if so
     const forceSetup = needsSetup(config);
 
-    // Validate Ollama connectivity and model availability (skip if needs setup, in --once mode, or --init mode)
+    // Validate the configured provider and model (skip in setup/non-interactive paths).
     let forceModelSelector = false;
     let availableModels: any[] | undefined;
     if (!options.once && !forceSetup && !options.init) {
       const validationResult = await runStartupValidation(config);
 
-      // Critical error: Ollama not connected - exit immediately
-      if (!validationResult.ollamaConnected) {
+      if (!validationResult.providerConnected) {
         process.exit(1);
       }
 
-      // Model not found but Ollama is running - continue and show model selector
-      if (!validationResult.modelFound) {
+      if (validationResult.modelStatus === 'missing') {
         forceModelSelector = true;
         availableModels = validationResult.availableModels;
       }

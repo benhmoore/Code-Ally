@@ -11,7 +11,7 @@
 
 import { homedir } from 'os';
 import { existsSync } from 'fs';
-import { join, dirname, basename } from 'path';
+import { join, dirname, basename, resolve as pathResolve } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import { logger } from '../services/Logger.js';
@@ -271,14 +271,34 @@ export const PROJECT_INSTRUCTION_FILES = ['ALLY.md', 'CLAUDE.md', 'AGENTS.md'] a
  * @param dir Directory to search (defaults to the current working directory)
  * @returns Absolute path to the highest-precedence existing file, or null if none exist
  */
-export function resolveProjectInstructionsFile(dir: string = process.cwd()): string | null {
-  for (const name of PROJECT_INSTRUCTION_FILES) {
-    const candidate = join(dir, name);
-    if (existsSync(candidate)) {
-      return candidate;
+export function resolveProjectInstructionFiles(dir: string = process.cwd()): string[] {
+  const start = pathResolve(dir);
+  let projectRoot = start;
+  let cursor = start;
+  while (true) {
+    if (existsSync(join(cursor, '.git'))) {
+      projectRoot = cursor;
+      break;
     }
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
   }
-  return null;
+
+  const directories: string[] = [];
+  cursor = start;
+  while (true) {
+    directories.unshift(cursor);
+    if (cursor === projectRoot) break;
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+
+  return directories.flatMap((directory) => {
+    const name = PROJECT_INSTRUCTION_FILES.find((candidate) => existsSync(join(directory, candidate)));
+    return name ? [join(directory, name)] : [];
+  });
 }
 
 /**

@@ -19,11 +19,11 @@ import { useTerminalContext } from '../contexts/TerminalContext.js';
  * @returns Raw terminal width in columns.
  */
 export function useTerminalWidth(): number {
+  const { stdout } = useStdout();
   try {
     return useTerminalContext().width;
   } catch {
     // Fallback to direct measurement if used outside the provider.
-    const { stdout } = useStdout();
     return stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
   }
 }

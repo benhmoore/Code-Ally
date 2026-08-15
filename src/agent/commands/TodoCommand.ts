@@ -70,10 +70,11 @@ export class TodoCommand extends Command {
       case 'complete':
         return this.handleTodoComplete(todoManager, parts.length > 1 ? parts[1] : undefined);
 
-      case 'clear':
+      case 'clear': {
         // Check for "clear all" vs "clear"
         const clearAll = parts.length > 1 && parts[1]?.toLowerCase() === 'all';
         return this.handleTodoClear(todoManager, clearAll);
+      }
 
       default:
         return this.createError(`Unknown todo subcommand: ${subcommand}. Type /help for usage.`);

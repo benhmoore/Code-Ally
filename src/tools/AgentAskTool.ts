@@ -203,9 +203,7 @@ Only start a NEW agent for completely unrelated areas.`;
 
       // Map thoroughness to max duration for this turn
       const maxDuration = getThoroughnessDuration(thoroughness as any);
-      agent.setMaxDuration(maxDuration);
-      agent.setThoroughness(thoroughness);
-      logger.debug('[ASK_AGENT_TOOL] Set agent maxDuration to', maxDuration, 'minutes and thoroughness to', thoroughness);
+      logger.debug('[ASK_AGENT_TOOL] Using maxDuration', maxDuration, 'minutes and thoroughness', thoroughness);
 
       // Emit agent start event
       this.emitEvent({
@@ -231,7 +229,11 @@ Only start a NEW agent for completely unrelated areas.`;
         // Send message to agent with parentCallId in execution context
         // This ensures tool calls are nested under this agent-ask call in the UI
         logger.debug('[ASK_AGENT_TOOL] Sending message to agent:', agentId);
-        const response = await agent.sendMessage(message, { parentCallId: callId });
+        const response = await agent.sendMessage(message, {
+          parentCallId: callId,
+          maxDuration,
+          thoroughness,
+        });
         logger.debug('[ASK_AGENT_TOOL] Agent response received, length:', response?.length || 0);
 
         // Ensure we have a substantial response
@@ -269,7 +271,7 @@ Only start a NEW agent for completely unrelated areas.`;
         }
 
         // Build context reminder with original task
-        const taskContext = this.buildTaskContext(metadata);
+        const taskContext = this.buildTaskContext(metadata, thoroughness);
 
         // Append note that user cannot see this
         const result = appendAgentResponseSuffix(finalResponse);
@@ -326,7 +328,7 @@ Only start a NEW agent for completely unrelated areas.`;
    * Includes original task/requirements for context
    * Returns object with both system_reminder and system_reminder_persist
    */
-  private buildTaskContext(metadata: AgentMetadata): {
+  private buildTaskContext(metadata: AgentMetadata, thoroughness: string): {
     system_reminder: string;
     system_reminder_persist: boolean;
   } | null {
@@ -344,10 +346,7 @@ Only start a NEW agent for completely unrelated areas.`;
       const agentType = getAgentType(metadata);
       const displayName = getAgentDisplayName(agentType);
 
-      // Extract optional context
-      const maxDuration = config.maxDuration;
-      const thoroughness = config.thoroughness || 'uncapped';
-      const maxDurationNum = maxDuration ? getThoroughnessDuration(thoroughness as ThoroughnessLevel) || null : null;
+      const maxDurationNum = getThoroughnessDuration(thoroughness as ThoroughnessLevel) || null;
       const maxDurationStr = maxDurationNum ? formatMinutesSeconds(maxDurationNum) : null;
 
       // PERSIST: true - Persistent: Explains specialized agent's purpose and constraints

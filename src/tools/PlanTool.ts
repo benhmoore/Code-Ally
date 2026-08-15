@@ -2,11 +2,9 @@
  * PlanTool - Implementation planning with contextual research
  *
  * Creates detailed implementation plans by researching existing patterns,
- * architecture, and conventions in the codebase. Can delegate to explore
- * agent for complex pattern analysis.
+ * architecture, and conventions in the codebase.
  *
  * Key differences from ExploreTool:
- * - Has access to explore tool for nested research
  * - Output format: structured implementation plan
  * - Purpose: prescriptive (how to implement) vs descriptive (what exists)
  */
@@ -20,8 +18,7 @@ import { REASONING_EFFORT, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS 
 import { createPlanAcceptedReminder } from '../utils/messageUtils.js';
 import type { Config } from '../types/index.js';
 
-// Planning tools: read-only tools + explore for nested research + TodoWrite for task creation + ask-user-question for clarification
-const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'explore', 'todo-write', 'ask-user-question'];
+const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'todo-write', 'ask-user-question'];
 
 // Base prompt for planning (without thoroughness-specific guidelines)
 const PLANNING_BASE_PROMPT = `You are a software architect and planning specialist for Ally.
@@ -31,12 +28,12 @@ You have READ-ONLY access to the codebase. You CANNOT:
 - Write, edit, or delete any project files
 - Execute commands that modify state
 - Create or modify code
-You CAN use: read, glob, grep, ls, tree, batch, explore, ask-user-question, todo-write
+You CAN use: read, glob, grep, ls, tree, batch, ask-user-question, todo-write
 
 ## Process
 
 1. **Understand Requirements** - Analyze the request thoroughly. Use ask-user-question for ambiguous requirements, multiple valid approaches, or when you need clarification on scope, constraints, or preferences.
-2. **Explore Thoroughly** - Assess the codebase: Is it empty/new or existing? Find similar implementations, identify established patterns and conventions. Use explore() for complex multi-file pattern analysis.
+2. **Explore Thoroughly** - Assess the codebase: Is it empty/new or existing? Find similar implementations and identify established patterns and conventions.
 3. **Design Solution** - Create a detailed, actionable implementation plan with absolute file paths and line number references. Consider architectural trade-offs.
 4. **Detail the Plan** - Structure the plan with clear steps, file modifications, and considerations.
 
@@ -68,7 +65,6 @@ List 3-5 files that are most critical to this implementation, with absolute path
 - All file paths MUST be absolute
 - Never use emoji
 - Use ask-user-question when you encounter ambiguity or trade-offs
-- Use explore() for complex multi-file pattern analysis
 - Recognize empty projects quickly - don't search for nonexistent patterns`;
 
 export class PlanTool extends BaseDelegationTool {

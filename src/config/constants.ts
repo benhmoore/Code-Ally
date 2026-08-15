@@ -890,7 +890,10 @@ export const AGENT_CONFIG = {
    * empty/malformed output or never-satisfied requirements from running until the
    * context fills. On exhaustion the turn ends gracefully with a stop message.
    */
-  MAX_LLM_ROUNDTRIPS_PER_TURN: 150,
+  MAX_LLM_ROUNDTRIPS_PER_TURN: 40,
+
+  /** Hard ceiling across direct and batched tool calls in one user turn. */
+  MAX_TOOL_CALLS_PER_TURN: 200,
 
   /** Number of identical tool calls that trigger cycle detection */
   CYCLE_THRESHOLD: 3,

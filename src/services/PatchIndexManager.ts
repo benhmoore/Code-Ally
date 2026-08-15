@@ -114,7 +114,17 @@ export class PatchIndexManager {
       const dir = path.dirname(this.indexFilePath);
       await fs.mkdir(dir, { recursive: true });
 
-      await fs.writeFile(this.indexFilePath, JSON.stringify(this.patchIndex, null, 2), 'utf-8');
+      const tempPath = `${this.indexFilePath}.tmp.${process.pid}.${Date.now()}`;
+      try {
+        await fs.writeFile(tempPath, JSON.stringify(this.patchIndex, null, 2), {
+          encoding: 'utf-8',
+          mode: 0o600,
+        });
+        await fs.rename(tempPath, this.indexFilePath);
+      } catch (error) {
+        await fs.unlink(tempPath).catch(() => undefined);
+        throw error;
+      }
       logger.debug('Patch index saved');
     } catch (error) {
       logger.error('Failed to save patch index:', error);

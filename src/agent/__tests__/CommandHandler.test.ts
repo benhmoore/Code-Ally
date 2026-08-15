@@ -2,7 +2,7 @@
  * CommandHandler tests
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { CommandHandler } from '../CommandHandler.js';
 import { ConfigManager } from '@services/ConfigManager.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -10,19 +10,24 @@ import { AgentManager } from '@services/AgentManager.js';
 import { FocusManager } from '@services/FocusManager.js';
 import { ProjectManager } from '@services/ProjectManager.js';
 import type { Message } from '@shared/index.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
 
 describe('CommandHandler', () => {
   let commandHandler: CommandHandler;
   let configManager: ConfigManager;
   let serviceRegistry: ServiceRegistry;
   let mockAgent: any;
+  let tempDir: string;
 
   beforeEach(async () => {
     // Create service registry
     serviceRegistry = new ServiceRegistry();
 
     // Create and register services
-    configManager = new ConfigManager();
+    tempDir = await mkdtemp(path.join(os.tmpdir(), 'ally-command-handler-'));
+    configManager = new ConfigManager(path.join(tempDir, 'config.json'));
     await configManager.initialize();
 
     const agentManager = new AgentManager();
@@ -46,6 +51,10 @@ describe('CommandHandler', () => {
 
     // Create command handler
     commandHandler = new CommandHandler(mockAgent, serviceRegistry);
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
   });
 
   describe('parseCommand', () => {
@@ -99,8 +108,7 @@ describe('CommandHandler', () => {
     it('should handle /model', async () => {
       const result = await commandHandler.handleCommand('/model', []);
       expect(result.handled).toBe(true);
-      // In test environment, Ollama isn't running, so we get an error or model selector
-      expect(result.response).toMatch(/Error fetching models|Current model|Failed to fetch/);
+      expect(result.response).toMatch(/Error fetching models|Current model|Failed to fetch|No models were reported/);
     });
 
     it('should handle /model <name>', async () => {

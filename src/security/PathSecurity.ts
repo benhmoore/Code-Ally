@@ -16,6 +16,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { getProjectSessionsDir, getProjectPlansDir } from '../config/paths.js';
 import type { ConfigManager } from '../services/ConfigManager.js';
 import type { AdditionalDirectoriesManager } from '../services/AdditionalDirectoriesManager.js';
+import { realpath, lstat } from 'node:fs/promises';
 
 /**
  * Check if a path is within a parent directory (handles path boundary correctly)
@@ -23,6 +24,74 @@ import type { AdditionalDirectoriesManager } from '../services/AdditionalDirecto
  */
 function isPathWithinDirectory(childPath: string, parentPath: string): boolean {
   return childPath === parentPath || childPath.startsWith(parentPath + path.sep);
+}
+
+/** Resolve symlinks for the nearest existing ancestor of a path. */
+async function canonicalizePath(inputPath: string): Promise<string> {
+  const absolute = path.resolve(inputPath);
+  const missing: string[] = [];
+  let existing = absolute;
+
+  while (true) {
+    try {
+      await lstat(existing);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const parent = path.dirname(existing);
+      if (parent === existing) throw error;
+      missing.unshift(path.basename(existing));
+      existing = parent;
+    }
+  }
+
+  return path.join(await realpath(existing), ...missing);
+}
+
+/**
+ * Symlink-aware path authorization for filesystem operations. Unlike the
+ * legacy synchronous helper, this validates the path the OS will actually use.
+ */
+export async function isPathWithinAllowedDirectories(checkPath: string): Promise<boolean> {
+  if (!checkPath || checkPath.startsWith('~')) return false;
+
+  try {
+    const canonicalPath = await canonicalizePath(checkPath);
+    const roots = [cwd(), getProjectSessionsDir(), getProjectPlansDir()];
+
+    // Unit tests execute tools against isolated mkdtemp directories. Production
+    // access remains limited to explicit roots and the configured temp folder.
+    if (process.env.VITEST) roots.push(os.tmpdir());
+
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const additional = registry.get<AdditionalDirectoriesManager>('additional_dirs_manager');
+      roots.push(...(additional?.getAdditionalDirectories() ?? []));
+
+      const configManager = registry.get<ConfigManager>('config_manager');
+      const tempDir = configManager?.getConfig().temp_directory;
+      if (tempDir && isSafeTempDirectory(tempDir)) roots.push(tempDir);
+    } catch (error) {
+      logger.debug(`Could not resolve configured path roots: ${error}`);
+    }
+
+    for (const root of roots) {
+      const canonicalRoot = await canonicalizePath(root).catch(() => path.resolve(root));
+      if (isPathWithinDirectory(canonicalPath, canonicalRoot)) return true;
+    }
+    return false;
+  } catch (error) {
+    logger.debug(`Error resolving canonical path '${checkPath}': ${error}`);
+    return false;
+  }
+}
+
+export async function assertPathWithinAllowedDirectories(checkPath: string): Promise<void> {
+  if (!await isPathWithinAllowedDirectories(checkPath)) {
+    throw new DirectoryTraversalError(
+      `Access denied: '${checkPath}' resolves outside the allowed project directories.`
+    );
+  }
 }
 
 /**

@@ -43,7 +43,7 @@ describe('ToolResultManager', () => {
   });
 
   describe('Tool-Specific Truncation Notices', () => {
-    it('should provide bash-specific guidance when truncating bash output', () => {
+    it('should provide bash-specific guidance when truncating bash output', async () => {
       // Create a very long bash output to trigger truncation
       const longOutput = 'line\n'.repeat(1000); // ~1000 lines
 
@@ -52,7 +52,7 @@ describe('ToolResultManager', () => {
         { role: 'user', content: 'x'.repeat(1500 * 4) }, // ~1500 tokens
       ]);
 
-      const result = toolResultManager.processToolResult('bash', longOutput);
+      const result = await toolResultManager.processToolResult('bash', longOutput);
 
       // Should be truncated
       expect(result.length).toBeLessThan(longOutput.length);
@@ -64,7 +64,7 @@ describe('ToolResultManager', () => {
       expect(result).toContain('tail');
     });
 
-    it('should provide read-specific guidance when truncating read output', () => {
+    it('should provide read-specific guidance when truncating read output', async () => {
       const longOutput = 'line\n'.repeat(1000);
 
       // Set high context usage
@@ -72,7 +72,7 @@ describe('ToolResultManager', () => {
         { role: 'user', content: 'x'.repeat(1500 * 4) },
       ]);
 
-      const result = toolResultManager.processToolResult('read', longOutput);
+      const result = await toolResultManager.processToolResult('read', longOutput);
 
       // Should be truncated
       expect(result.length).toBeLessThan(longOutput.length);
@@ -83,7 +83,7 @@ describe('ToolResultManager', () => {
       expect(result).toContain('offset');
     });
 
-    it('should provide grep-specific guidance when truncating grep output', () => {
+    it('should provide grep-specific guidance when truncating grep output', async () => {
       const longOutput = 'match\n'.repeat(1000);
 
       // Set high context usage
@@ -91,7 +91,7 @@ describe('ToolResultManager', () => {
         { role: 'user', content: 'x'.repeat(1500 * 4) },
       ]);
 
-      const result = toolResultManager.processToolResult('grep', longOutput);
+      const result = await toolResultManager.processToolResult('grep', longOutput);
 
       // Should be truncated
       expect(result.length).toBeLessThan(longOutput.length);
@@ -102,7 +102,7 @@ describe('ToolResultManager', () => {
       expect(result).toContain('glob');
     });
 
-    it('should provide glob-specific guidance when truncating glob output', () => {
+    it('should provide glob-specific guidance when truncating glob output', async () => {
       const longOutput = 'file.txt\n'.repeat(1000);
 
       // Set high context usage
@@ -110,7 +110,7 @@ describe('ToolResultManager', () => {
         { role: 'user', content: 'x'.repeat(1500 * 4) },
       ]);
 
-      const result = toolResultManager.processToolResult('glob', longOutput);
+      const result = await toolResultManager.processToolResult('glob', longOutput);
 
       // Should be truncated
       expect(result.length).toBeLessThan(longOutput.length);
@@ -121,7 +121,7 @@ describe('ToolResultManager', () => {
       expect(result).toContain('patterns');
     });
 
-    it('should provide ls-specific guidance when truncating ls output', () => {
+    it('should provide ls-specific guidance when truncating ls output', async () => {
       const longOutput = 'file.txt\n'.repeat(1000);
 
       // Set high context usage
@@ -129,7 +129,7 @@ describe('ToolResultManager', () => {
         { role: 'user', content: 'x'.repeat(1500 * 4) },
       ]);
 
-      const result = toolResultManager.processToolResult('ls', longOutput);
+      const result = await toolResultManager.processToolResult('ls', longOutput);
 
       // Should be truncated
       expect(result.length).toBeLessThan(longOutput.length);
@@ -139,7 +139,7 @@ describe('ToolResultManager', () => {
       expect(result).toContain('specific path');
     });
 
-    it('should provide generic guidance for unknown tools', () => {
+    it('should provide generic guidance for unknown tools', async () => {
       const longOutput = 'data\n'.repeat(1000);
 
       // Set high context usage
@@ -147,7 +147,7 @@ describe('ToolResultManager', () => {
         { role: 'user', content: 'x'.repeat(1500 * 4) },
       ]);
 
-      const result = toolResultManager.processToolResult('unknown_tool', longOutput);
+      const result = await toolResultManager.processToolResult('unknown_tool', longOutput);
 
       // Should be truncated
       expect(result.length).toBeLessThan(longOutput.length);
@@ -157,7 +157,7 @@ describe('ToolResultManager', () => {
       expect(result).toContain('narrowing');
     });
 
-    it('should include context-aware reason in truncation notice', () => {
+    it('should include context-aware reason in truncation notice', async () => {
       const longOutput = 'x'.repeat(10000);
 
       // Test with low context - should mention "length" or "context"
@@ -167,7 +167,7 @@ describe('ToolResultManager', () => {
         { role: 'user', content: 'x'.repeat(200 * 4) }, // ~10% of 2000
       ]);
 
-      const lowResult = lowResultManager.processToolResult('bash', longOutput);
+      const lowResult = await lowResultManager.processToolResult('bash', longOutput);
       if (lowResult.includes('truncated')) {
         // Should have a truncation notice with tool guidance
         expect(lowResult).toContain('truncated');
@@ -184,7 +184,7 @@ describe('ToolResultManager', () => {
         { role: 'user', content: 'text content '.repeat(100) }, // Fill most of context
       ]);
 
-      const highResult = highResultManager.processToolResult('bash', realisticOutput);
+      const highResult = await highResultManager.processToolResult('bash', realisticOutput);
       // Should be truncated when context is high
       expect(highResult.length).toBeLessThan(realisticOutput.length);
       // Should contain truncation notice and tool guidance
@@ -192,7 +192,7 @@ describe('ToolResultManager', () => {
       expect(highResult).toContain('grep');
     });
 
-    it('should not truncate short outputs', () => {
+    it('should not truncate short outputs', async () => {
       const shortOutput = 'Short output';
 
       // Even with high context
@@ -200,14 +200,14 @@ describe('ToolResultManager', () => {
         { role: 'user', content: 'x'.repeat(1500 * 4) },
       ]);
 
-      const result = toolResultManager.processToolResult('bash', shortOutput);
+      const result = await toolResultManager.processToolResult('bash', shortOutput);
 
       // Should NOT be truncated
       expect(result).toBe(shortOutput);
       expect(result).not.toContain('truncated');
     });
 
-    it('should persist plain bash output instead of the serialized tool result wrapper', () => {
+    it('should persist plain bash output instead of the serialized tool result wrapper', async () => {
       const stdout = 'build line\n'.repeat(1000);
       const stderr = 'warning from stderr\n';
       const persistence = {
@@ -218,7 +218,7 @@ describe('ToolResultManager', () => {
       toolResultManager.setPersistence(persistence);
       toolResultManager.setLimits({ maxContextPercent: 0.01, minTokens: 10 });
 
-      const result = toolResultManager.processToolResult(
+      const result = await toolResultManager.processToolResult(
         'bash',
         {
           success: true,

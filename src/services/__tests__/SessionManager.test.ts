@@ -624,4 +624,28 @@ describe('SessionManager', () => {
       await newSessionManager.cleanup();
     });
   });
+
+  it('serializes autosave, metadata, field, and todo updates without losing data', async () => {
+    const sessionName = await sessionManager.createSession('concurrent-session');
+    sessionManager.setCurrentSession(sessionName);
+    const messages = [{ role: 'user' as const, content: 'latest message' }];
+
+    await sessionManager.autoSave(messages, undefined, ['queued'], undefined, ['/extra']);
+    await Promise.all([
+      sessionManager.updateMetadata(sessionName, { title: 'Concurrent title' }),
+      sessionManager.updateSession(sessionName, { active_plugins: ['example'] }),
+      sessionManager.setTodos([
+        { id: 'todo-1', content: 'Preserved todo', status: 'pending' as const },
+      ], sessionName),
+    ]);
+    await sessionManager.forceSave();
+
+    const saved = await sessionManager.loadSession(sessionName);
+    expect(saved?.messages).toEqual(messages);
+    expect(saved?.metadata?.title).toBe('Concurrent title');
+    expect(saved?.active_plugins).toEqual(['example']);
+    expect(saved?.todos?.[0]?.content).toBe('Preserved todo');
+    expect(saved?.idle_messages).toEqual(['queued']);
+    expect(saved?.additional_directories).toEqual(['/extra']);
+  });
 });

@@ -36,9 +36,7 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
   onCancel,
 }) => {
   // Detect edit mode by checking if initial values are provided
-  const isEditMode = React.useMemo(() => {
-    return title.trim().length > 0 && content.trim().length > 0;
-  }, []); // Only check on mount
+  const [isEditMode] = useState(() => title.trim().length > 0 && content.trim().length > 0);
 
   // Cursor positions for each field
   const [titleCursor, setTitleCursor] = useState(title.length);

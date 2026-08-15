@@ -2,37 +2,77 @@
  * CryptoService - Shared encryption/decryption service
  *
  * Provides AES-256-GCM encryption for sensitive data like API keys and secrets.
- * Uses a machine-specific key derivation with configurable salt per context.
+ * Uses a random installation-local key with per-context key derivation.
  */
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { chmodSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { ENCRYPTION_CONFIG } from '../config/encryption.js';
+import { ALLY_HOME } from '../config/paths.js';
 
 export interface CryptoServiceConfig {
   /** Unique salt string for this encryption context */
   salt: string;
+  /** Override the installation key path (primarily for isolated runtimes/tests). */
+  keyPath?: string;
 }
 
 export class CryptoService {
   private encryptionKey: Buffer | null = null;
   private readonly salt: Buffer;
+  private readonly keyPath: string;
 
   constructor(config: CryptoServiceConfig) {
     this.salt = Buffer.from(config.salt);
+    this.keyPath = config.keyPath ?? join(ALLY_HOME, '.secret-key');
   }
 
   /**
    * Get or derive the encryption key
-   * Key is derived from machine-specific identifier combined with context salt
+   * Key is derived from an installation-local secret combined with context salt
    */
   private getEncryptionKey(): Buffer {
     if (this.encryptionKey) {
       return this.encryptionKey;
     }
 
-    const keyMaterial = process.env.USER || process.env.USERNAME || 'ally-default';
+    const keyPath = this.keyPath;
+    mkdirSync(dirname(keyPath), { recursive: true, mode: 0o700 });
+    let keyMaterial: Buffer;
+    try {
+      const encodedKey = readFileSync(keyPath, 'utf-8').trim();
+      keyMaterial = this.decodeKeyMaterial(encodedKey);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+
+      keyMaterial = randomBytes(ENCRYPTION_CONFIG.KEY_LENGTH);
+      try {
+        const fd = openSync(keyPath, 'wx', 0o600);
+        try {
+          writeFileSync(fd, keyMaterial.toString('hex'), 'utf-8');
+        } finally {
+          closeSync(fd);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        keyMaterial = this.decodeKeyMaterial(readFileSync(keyPath, 'utf-8').trim());
+      }
+    }
+
+    chmodSync(keyPath, 0o600);
     this.encryptionKey = scryptSync(keyMaterial, this.salt, ENCRYPTION_CONFIG.KEY_LENGTH);
     return this.encryptionKey;
+  }
+
+  private decodeKeyMaterial(encodedKey: string): Buffer {
+    if (!/^[0-9a-f]{64}$/i.test(encodedKey)) {
+      throw new Error(`Invalid installation encryption key: ${this.keyPath}`);
+    }
+
+    return Buffer.from(encodedKey, 'hex');
   }
 
   /**
@@ -58,7 +98,6 @@ export class CryptoService {
    * @param encryptedValue Value in format: iv:authTag:ciphertext
    */
   decrypt(encryptedValue: string): string {
-    const key = this.getEncryptionKey();
     const parts = encryptedValue.split(ENCRYPTION_CONFIG.SEPARATOR);
 
     if (parts.length !== 3) {
@@ -69,9 +108,12 @@ export class CryptoService {
     const authTag = Buffer.from(parts[1]!, 'hex');
     const encrypted = parts[2]!;
 
-    const decipher = createDecipheriv(ENCRYPTION_CONFIG.ALGORITHM, key, iv);
+    const decipher = createDecipheriv(
+      ENCRYPTION_CONFIG.ALGORITHM,
+      this.getEncryptionKey(),
+      iv
+    );
     decipher.setAuthTag(authTag);
-
     return decipher.update(encrypted, 'hex', 'utf8') + decipher.final('utf8');
   }
 
@@ -120,6 +162,7 @@ export class CryptoService {
  * Pre-configured salt values for different contexts
  */
 export const CRYPTO_SALTS = {
+  CONFIG: 'ally-config-salt',
   PLUGIN_CONFIG: 'ally-plugin-config-salt',
   INTEGRATION: 'ally-integration-config-salt',
 } as const;

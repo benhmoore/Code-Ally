@@ -12,7 +12,6 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
-import { isPathWithinCwd } from '../security/PathSecurity.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import * as fs from 'fs/promises';
 import { ReadStateManager } from '../services/ReadStateManager.js';
@@ -45,27 +44,6 @@ export class LineEditTool extends BaseTool {
    * Validate LineEditTool arguments
    */
   validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
-    // Validate path
-    const filePath = args.file_path;
-    if (!filePath || typeof filePath !== 'string') {
-      return null; // Let other validation catch this
-    }
-
-    try {
-      const absolutePath = resolvePath(filePath);
-      if (!isPathWithinCwd(absolutePath)) {
-        return {
-          valid: false,
-          error: 'Path is outside the current working directory',
-          error_type: 'security_error',
-          suggestion: 'File paths must be within the current working directory. Use relative paths like "src/file.ts"',
-        };
-      }
-    } catch (error) {
-      // Path resolution failed - let the tool handle it
-      return null;
-    }
-
     // Validate line_number parameter
     if (args.line_number !== undefined && args.line_number !== null) {
       const lineNumber = Number(args.line_number);
@@ -273,20 +251,22 @@ export class LineEditTool extends BaseTool {
             case 'insert':
               modifiedLines = this.performInsert(modifiedLines, edit.line_number, content);
               break;
-            case 'delete':
+            case 'delete': {
               const deleteResult = this.performDelete(modifiedLines, edit.line_number, numLines, modifiedLines.length);
               if (deleteResult.error) {
                 throw new Error('Delete operation would fail');
               }
               modifiedLines = deleteResult.lines!;
               break;
-            case 'replace':
+            }
+            case 'replace': {
               const replaceResult = this.performReplace(modifiedLines, edit.line_number, content, numLines, modifiedLines.length);
               if (replaceResult.error) {
                 throw new Error('Replace operation would fail');
               }
               modifiedLines = replaceResult.lines!;
               break;
+            }
             default:
               throw new Error('Invalid operation');
           }
@@ -509,13 +489,14 @@ export class LineEditTool extends BaseTool {
         const numLines = edit.num_lines === undefined || edit.num_lines === null || isNaN(numLinesRaw) ? 1 : numLinesRaw;
 
         switch (edit.operation) {
-          case 'insert':
+          case 'insert': {
             modifiedLines = this.performInsert(modifiedLines, edit.line_number, content);
             const insertedLineCount = content.split('\n').length;
             appliedEdits.push(`Inserted ${insertedLineCount} line(s) at line ${edit.line_number}`);
             break;
+          }
 
-          case 'delete':
+          case 'delete': {
             const deleteResult = this.performDelete(modifiedLines, edit.line_number, numLines, modifiedLines.length);
             if (deleteResult.error) {
               // This shouldn't happen since we validated upfront, but handle gracefully
@@ -524,8 +505,9 @@ export class LineEditTool extends BaseTool {
             modifiedLines = deleteResult.lines!;
             appliedEdits.push(`Deleted ${numLines} line(s) starting at line ${edit.line_number}`);
             break;
+          }
 
-          case 'replace':
+          case 'replace': {
             const replaceResult = this.performReplace(modifiedLines, edit.line_number, content, numLines, modifiedLines.length);
             if (replaceResult.error) {
               // This shouldn't happen since we validated upfront, but handle gracefully
@@ -539,6 +521,7 @@ export class LineEditTool extends BaseTool {
                 : `Replaced ${numLines} line(s) starting at line ${edit.line_number} with ${newLineCount} line(s)`
             );
             break;
+          }
         }
       }
 

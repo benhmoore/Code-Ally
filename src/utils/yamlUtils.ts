@@ -87,7 +87,7 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
               break;
             }
             // Remove the indentation (first 2 spaces)
-            multilineContent.push(nextLine.replace(/^  /, ''));
+            multilineContent.push(nextLine.replace(/^ {2}/, ''));
             i++;
           }
           metadata[key] = multilineContent.join('\n').trim();
@@ -145,7 +145,7 @@ export function parseFrontmatterYAML(frontmatter: string): Record<string, any> {
               break;
             }
             // Parse nested key-value pair
-            const nestedMatch = nextLine.match(/^  ([\w-]+):\s*(.*)$/);
+            const nestedMatch = nextLine.match(/^ {2}([\w-]+):\s*(.*)$/);
             if (nestedMatch && nestedMatch[1] && nestedMatch[2] !== undefined) {
               const nestedKey = nestedMatch[1];
               const nestedValue = nestedMatch[2];

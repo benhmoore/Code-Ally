@@ -18,6 +18,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
+import { redactSensitiveText } from '../../utils/redaction.js';
 
 /**
  * Timeline entry types for unified chronological display
@@ -89,7 +90,7 @@ export class DebugCommand extends Command {
       case 'disable':
         return this.handleDebugDisable();
 
-      case 'calls':
+      case 'calls': {
         const toolCallHistory = serviceRegistry.getToolCallHistory();
         if (!toolCallHistory) {
           return this.createError('Tool call history not available');
@@ -98,8 +99,9 @@ export class DebugCommand extends Command {
           toolCallHistory,
           parts.length > 1 ? parts[1] : undefined
         );
+      }
 
-      case 'errors':
+      case 'errors': {
         const errorToolCallHistory = serviceRegistry.getToolCallHistory();
         if (!errorToolCallHistory) {
           return this.createError('Tool call history not available');
@@ -108,6 +110,7 @@ export class DebugCommand extends Command {
           errorToolCallHistory,
           parts.length > 1 ? parts[1] : undefined
         );
+      }
 
       case 'dump':
         return this.handleDebugDump(
@@ -410,7 +413,7 @@ export class DebugCommand extends Command {
       }
 
       // Write to file
-      fs.writeFileSync(filepath, content, 'utf-8');
+      fs.writeFileSync(filepath, redactSensitiveText(content), { encoding: 'utf-8', mode: 0o600 });
 
       const limitInfo = timeline.length < totalEntries
         ? ` (last ${timeline.length} of ${totalEntries} total entries)`

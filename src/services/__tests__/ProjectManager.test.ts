@@ -6,26 +6,23 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ProjectManager } from '../ProjectManager.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { tmpdir } from 'os';
 
 describe('ProjectManager', () => {
   let projectManager: ProjectManager;
-  const testStoragePath = join(homedir(), '.ally', 'project.test.json');
+  let testDirectory: string;
+  let testStoragePath: string;
 
   beforeEach(async () => {
-    projectManager = new ProjectManager();
-    // Override storage path for testing
-    (projectManager as any).storagePath = testStoragePath;
+    testDirectory = await fs.mkdtemp(join(tmpdir(), 'code-ally-project-'));
+    testStoragePath = join(testDirectory, 'project.json');
+    projectManager = new ProjectManager(testStoragePath);
     await projectManager.initialize();
   });
 
   afterEach(async () => {
     await projectManager.cleanup();
-    try {
-      await fs.unlink(testStoragePath);
-    } catch {
-      // Ignore if file doesn't exist
-    }
+    await fs.rm(testDirectory, { recursive: true, force: true });
   });
 
   describe('initProject', () => {
@@ -163,8 +160,7 @@ describe('ProjectManager', () => {
       await projectManager.save();
 
       // Create new instance
-      const newManager = new ProjectManager();
-      (newManager as any).storagePath = testStoragePath;
+      const newManager = new ProjectManager(testStoragePath);
       await newManager.load();
 
       const context = await newManager.getContext();

@@ -2,7 +2,7 @@
  * SetupWizard - First-run setup wizard for Code Ally
  *
  * Guides users through initial configuration:
- * - Ollama endpoint validation
+ * - Provider endpoint validation
  * - Model selection
  * - Context size configuration
  * - Temperature setting
@@ -11,19 +11,12 @@
 
 import { ConfigManager } from './ConfigManager.js';
 import { API_TIMEOUTS, CONTEXT_SIZES, VALID_CONTEXT_SIZES } from '../config/constants.js';
-
-export interface OllamaModel {
-  name: string;
-  modified_at: string;
-  size: number;
-}
-
-export interface OllamaListResponse {
-  models: OllamaModel[];
-}
+import { listProviderModels } from '../llm/ProviderAdapter.js';
 
 export interface SetupConfig {
+  provider: 'ollama' | 'openai-compat';
   endpoint: string;
+  api_key: string | null;
   model: string;
   service_model: string | null;
   context_size: number;
@@ -50,41 +43,20 @@ export class SetupWizard {
   }
 
   /**
-   * Mark setup as completed
-   */
-  async markSetupCompleted(): Promise<void> {
-    await this.configManager.setValue('setup_completed', true);
-  }
-
-  /**
    * Validate Ollama endpoint connectivity
    * @param endpoint - The Ollama API endpoint URL
    * @returns Promise<boolean> - true if connection successful
    */
-  async validateOllamaConnection(endpoint: string): Promise<boolean> {
-    try {
-      const url = `${endpoint}/api/tags`;
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_ENDPOINT_VALIDATION);
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        return false;
-      }
-
-      return true;
-    } catch (error) {
-      // Connection failures during setup are expected, no need to log
-      return false;
-    }
+  async validateConnection(
+    endpoint: string,
+    provider = this.configManager.getConfig().provider,
+    apiKey = this.configManager.getConfig().api_key
+  ): Promise<boolean> {
+    const result = await listProviderModels(
+      { provider, endpoint, api_key: apiKey },
+      API_TIMEOUTS.OLLAMA_ENDPOINT_VALIDATION
+    );
+    return !result.error;
   }
 
   /**
@@ -92,33 +64,16 @@ export class SetupWizard {
    * @param endpoint - The Ollama API endpoint URL
    * @returns Promise<string[]> - Array of model names
    */
-  async getAvailableModels(endpoint: string): Promise<string[]> {
-    try {
-      const url = `${endpoint}/api/tags`;
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_ENDPOINT_VALIDATION);
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        return [];
-      }
-
-      const data = (await response.json()) as OllamaListResponse;
-      const models = data.models.map((m) => m.name);
-
-      return models;
-    } catch (error) {
-      // Connection failures during setup are expected, no need to log
-      return [];
-    }
+  async getAvailableModels(
+    endpoint: string,
+    provider = this.configManager.getConfig().provider,
+    apiKey = this.configManager.getConfig().api_key
+  ): Promise<string[]> {
+    const result = await listProviderModels(
+      { provider, endpoint, api_key: apiKey },
+      API_TIMEOUTS.OLLAMA_ENDPOINT_VALIDATION
+    );
+    return result.models.map((model) => model.name);
   }
 
   /**
@@ -144,17 +99,10 @@ export class SetupWizard {
    * @param config - The setup configuration to apply
    */
   async applySetupConfig(config: SetupConfig): Promise<void> {
-    await this.configManager.setValue('endpoint', config.endpoint);
-    await this.configManager.setValue('model', config.model);
-    await this.configManager.setValue('service_model', config.service_model);
-    await this.configManager.setValue('context_size', config.context_size);
-    await this.configManager.setValue('temperature', config.temperature);
-    await this.configManager.setValue('auto_confirm', config.auto_confirm);
-    await this.configManager.setValue('enable_idle_messages', config.enable_idle_messages);
-    await this.configManager.setValue('enable_session_title_generation', config.enable_session_title_generation);
-    await this.configManager.setValue('tool_call_activity_timeout', config.tool_call_activity_timeout);
-
-    await this.markSetupCompleted();
+    await this.configManager.setValues({
+      ...config,
+      setup_completed: true,
+    });
   }
 
   /**

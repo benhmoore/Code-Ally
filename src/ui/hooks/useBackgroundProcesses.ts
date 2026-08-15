@@ -9,7 +9,7 @@ import { useState, useEffect } from 'react';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { BashProcessManager } from '@services/BashProcessManager.js';
 import { useActivityStreamContext } from '../contexts/ActivityContext.js';
-import { ActivityEventType, ActivityEvent } from '@shared/index.js';
+import { ActivityEventType } from '@shared/index.js';
 
 /**
  * Hook to get the count of running background bash processes
@@ -38,7 +38,7 @@ export function useBackgroundProcesses(): number {
 
     // Subscribe to activity events to update count when tools complete
     // TOOL_CALL_END events fire when bash commands start/complete
-    const unsubscribeToolEnd = activityStream.subscribe(ActivityEventType.TOOL_CALL_END, (event: ActivityEvent) => {
+    const unsubscribeToolEnd = activityStream.subscribe(ActivityEventType.TOOL_CALL_END, (event) => {
       const toolName = event.data?.toolName;
       // Update count when bash-related tools execute
       if (toolName === 'bash' || toolName === 'kill-shell') {

@@ -20,11 +20,11 @@ import { deriveWidths, useTerminalContext } from '../contexts/TerminalContext.js
  * @returns Printable width in columns.
  */
 export function useInnerWidth(): number {
+  const { stdout } = useStdout();
   try {
     return useTerminalContext().innerWidth;
   } catch {
     // Fallback to direct measurement if used outside the provider.
-    const { stdout } = useStdout();
     const rawWidth = stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
     return deriveWidths(rawWidth).innerWidth;
   }

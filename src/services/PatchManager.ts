@@ -90,6 +90,7 @@ export class PatchManager implements IService {
   private fileManager: PatchFileManager;
   private indexManager: PatchIndexManager;
   private cleanupManager: PatchCleanupManager;
+  private operationQueue: Promise<void> = Promise.resolve();
 
   constructor(config: PatchManagerConfig) {
     this.getSessionId = config.getSessionId;
@@ -204,6 +205,19 @@ export class PatchManager implements IService {
    * @returns Patch number if successful, null otherwise
    */
   async captureOperation(
+    operationType: string,
+    filePath: string,
+    originalContent: string,
+    newContent?: string
+  ): Promise<number | null> {
+    const result = this.operationQueue.then(() =>
+      this.captureOperationImpl(operationType, filePath, originalContent, newContent)
+    );
+    this.operationQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async captureOperationImpl(
     operationType: string,
     filePath: string,
     originalContent: string,

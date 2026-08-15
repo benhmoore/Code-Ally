@@ -27,6 +27,7 @@ import type {
   CommandMetadata,
   SubcommandEntry,
 } from '../agent/commands/types.js';
+import { listProviderModels } from '../llm/ProviderAdapter.js';
 
 /**
  * Interface for ConfigManager methods used by CompletionProvider
@@ -781,14 +782,14 @@ export class CompletionProvider {
         }));
     }
 
-    // Model field - fetch from Ollama
+    // Model field - fetch from the configured provider when discovery is supported.
     if (key === 'model' || key === 'service_model' || key === 'explore_model' || key === 'plan_model' || key === 'agent_creation_model') {
-      const models = await this.getOllamaModels();
+      const models = await this.getProviderModels();
       return models
         .filter(model => model.toLowerCase().includes(prefix.toLowerCase()))
         .map(model => ({
           value: model,
-          description: 'Ollama model',
+          description: 'Provider model',
           type: 'option' as const,
         }));
     }
@@ -891,9 +892,9 @@ export class CompletionProvider {
   }
 
   /**
-   * Get available models from Ollama endpoint
+   * Get available models from the configured provider.
    */
-  private async getOllamaModels(): Promise<string[]> {
+  private async getProviderModels(): Promise<string[]> {
     try {
       // Get endpoint from config
       if (!this.configManager || typeof this.configManager.getValue !== 'function') {
@@ -905,31 +906,14 @@ export class CompletionProvider {
         return [];
       }
 
-      const url = `${endpoint}/api/tags`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_MODEL_LIST_TIMEOUT);
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        return [];
-      }
-
-      const data = await response.json() as any;
-      if (data?.models && Array.isArray(data.models)) {
-        return data.models.map((m: any) => m.name || m.model).filter(Boolean);
-      }
-
-      return [];
+      const result = await listProviderModels({
+        provider: this.configManager.getValue('provider'),
+        endpoint,
+        api_key: this.configManager.getValue('api_key'),
+      }, API_TIMEOUTS.OLLAMA_MODEL_LIST_TIMEOUT);
+      return result.models.map((model) => model.name);
     } catch (error) {
-      // Failed to fetch models - this is expected if Ollama isn't running
-      logger.debug(`Unable to fetch Ollama models: ${formatError(error)}`);
+      logger.debug(`Unable to fetch provider models: ${formatError(error)}`);
       return [];
     }
   }

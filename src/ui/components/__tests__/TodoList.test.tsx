@@ -25,7 +25,6 @@ class FakeStdout extends EventEmitter {
 
 /** Strip ANSI escape sequences so we can assert on visible columns */
 const stripAnsi = (s: string): string =>
-  // eslint-disable-next-line no-control-regex
   s.replace(/\x1b\[[0-9;]*m/g, '');
 
 function renderToLines(todos: TodoItem[]): string[] {

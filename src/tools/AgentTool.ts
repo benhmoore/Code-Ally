@@ -725,8 +725,6 @@ Only set run_in_background=false when your very next step depends on the result.
     config: any;
     callId: string;
     depth: number;
-    maxDuration: number | undefined;
-    thoroughness: string;
     parentAgentName?: string;
     initialMessages?: Message[];
   }): AgentConfig {
@@ -737,8 +735,6 @@ Only set run_in_background=false when your very next step depends on the result.
       config,
       callId,
       depth,
-      maxDuration,
-      thoroughness,
       parentAgentName,
       initialMessages,
     } = params;
@@ -763,11 +759,8 @@ Only set run_in_background=false when your very next step depends on the result.
       isSpecializedAgent: true,
       verbose: false,
       config,
-      parentCallId: callId,
       parentAgent,
       _poolKey: poolKey,
-      maxDuration,
-      thoroughness,
       initialMessages,
       agentDepth: depth,
       agentCallStack: newCallStack,
@@ -1021,8 +1014,6 @@ Only set run_in_background=false when your very next step depends on the result.
       config,
       callId,
       depth,
-      maxDuration,
-      thoroughness,
       parentAgentName: params.parentAgentName,
       initialMessages,
     });

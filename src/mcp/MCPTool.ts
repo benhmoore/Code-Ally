@@ -20,6 +20,7 @@ export class MCPTool extends BaseTool {
   readonly requiresConfirmation: boolean;
   readonly displayName: string;
   readonly pluginName: string;
+  protected readonly usesLocalFileSystem = false;
 
   private readonly serverName: string;
   private readonly originalToolName: string;

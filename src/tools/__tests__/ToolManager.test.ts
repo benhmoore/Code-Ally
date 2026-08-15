@@ -162,37 +162,6 @@ describe('ToolManager', () => {
     });
   });
 
-  describe('file tracking', () => {
-    it('should return false for files when no ConversationManager is set', async () => {
-      // Simulate read tool call
-      await toolManager.executeTool('read', {
-        file_paths: ['test.txt'],
-        description: 'Read test file',
-      });
-
-      // Without ConversationManager, hasFileBeenRead returns false
-      expect(toolManager.hasFileBeenRead('test.txt')).toBe(false);
-    });
-
-    it('should return false for write files when no ConversationManager is set', async () => {
-      // Simulate write tool call
-      await toolManager.executeTool('write', {
-        file_path: 'output.txt',
-        content: 'test',
-        description: 'Write output file',
-      });
-
-      // Without ConversationManager, hasFileBeenRead returns false
-      expect(toolManager.hasFileBeenRead('output.txt')).toBe(false);
-    });
-
-    it('should have file tracking delegated to ConversationManager', () => {
-      // This test verifies the delegation behavior exists
-      // Actual file tracking is tested in ConversationManager tests
-      expect(typeof toolManager.hasFileBeenRead).toBe('function');
-    });
-  });
-
   describe('mainAgentOnly tools', () => {
     class MainOnlyTool extends BaseTool {
       readonly name = 'main-only';

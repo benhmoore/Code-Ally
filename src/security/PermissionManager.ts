@@ -16,6 +16,8 @@ import { TrustManager, CommandPath } from '../agent/TrustManager.js';
 import {
   hasPathTraversalPatterns,
   isPathWithinCwd,
+  isPathWithinAllowedDirectories,
+  assertPathWithinAllowedDirectories,
   DirectoryTraversalError,
 } from './PathSecurity.js';
 import { logger } from '../services/Logger.js';
@@ -55,13 +57,13 @@ export class PermissionManager {
     args: Record<string, any>
   ): Promise<boolean> {
     // Get permission path based on the tool and arguments
-    const permissionPath = this.getPermissionPath(toolName, args);
+    const permissionPath = await this.getPermissionPath(toolName, args);
 
     // Check all arguments for path traversal attempts
-    this.checkAllArgumentsForTraversal(toolName, args);
+    await this.checkAllArgumentsForTraversal(toolName, args);
 
     // Verify the path is within allowed directory bounds
-    this.verifyDirectoryAccess(toolName, permissionPath);
+    await this.verifyDirectoryAccess(toolName, permissionPath);
 
     // Check if already trusted
     if (this.trustManager.isTrusted(toolName, permissionPath)) {
@@ -82,12 +84,16 @@ export class PermissionManager {
    * @param args Tool arguments
    * @throws DirectoryTraversalError if any argument contains path traversal patterns
    */
-  private checkAllArgumentsForTraversal(
+  private async checkAllArgumentsForTraversal(
     toolName: string,
     args: Record<string, any>
-  ): void {
-    // For bash commands, the command is validated separately
-    if (toolName === 'bash' && 'command' in args) {
+  ): Promise<void> {
+    // Shell syntax is classified by TrustManager. Its working directory is a
+    // filesystem capability and must still pass canonical path validation.
+    if (toolName === 'bash') {
+      if (typeof args.working_dir === 'string') {
+        await assertPathWithinAllowedDirectories(args.working_dir);
+      }
       return;
     }
 
@@ -168,7 +174,7 @@ export class PermissionManager {
    * @param permissionPath Permission path to verify
    * @throws DirectoryTraversalError if access is outside allowed directories
    */
-  private verifyDirectoryAccess(toolName: string, permissionPath: CommandPath): void {
+  private async verifyDirectoryAccess(toolName: string, permissionPath: CommandPath): Promise<void> {
     // Extract path from permission path
     let targetPath: string | null = null;
 
@@ -182,7 +188,7 @@ export class PermissionManager {
 
     // If we have a target path, verify it's within CWD
     if (targetPath) {
-      if (!isPathWithinCwd(targetPath)) {
+      if (!await isPathWithinAllowedDirectories(targetPath)) {
         throw new DirectoryTraversalError(
           `Access denied: ${toolName} attempted to access '${targetPath}' which is outside ` +
             `the working directory '${this.startDirectory}'.`
@@ -198,16 +204,18 @@ export class PermissionManager {
    * @param args Tool arguments
    * @returns Permission path for trust checking
    */
-  private getPermissionPath(
+  private async getPermissionPath(
     toolName: string,
     args: Record<string, any>
-  ): CommandPath {
+  ): Promise<CommandPath> {
     // Bash tool uses command content
     if (toolName === 'bash' && 'command' in args) {
       const command = args.command as string;
-      const outsideCwd = this.isCommandOutsideCwd(command);
+      const workingDir = typeof args.working_dir === 'string' ? args.working_dir : this.startDirectory;
+      const outsideCwd = this.isCommandOutsideCwd(command) || !await isPathWithinAllowedDirectories(workingDir);
       return {
         command,
+        path: workingDir,
         outside_cwd: outsideCwd,
       };
     }

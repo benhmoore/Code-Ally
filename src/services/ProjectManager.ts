@@ -6,11 +6,12 @@
  */
 
 import { promises as fs } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import type { IService } from '../types/index.js';
 import { BUFFER_SIZES } from '../config/constants.js';
 import { PROFILES_DIR, getActiveProfile } from '../config/paths.js';
 import { logger } from './Logger.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 
 export interface ProjectContext {
   name: string;
@@ -26,9 +27,9 @@ export class ProjectManager implements IService {
   private readonly storagePath: string;
   private initialized: boolean = false;
 
-  constructor() {
-    // Project context is profile-specific
-    this.storagePath = join(PROFILES_DIR, getActiveProfile(), 'project.json');
+  constructor(storagePath = join(PROFILES_DIR, getActiveProfile(), 'project.json')) {
+    // Allow callers and tests to isolate persistence without mutating global path state.
+    this.storagePath = storagePath;
   }
 
   /**
@@ -88,8 +89,7 @@ export class ProjectManager implements IService {
 
     try {
       // Ensure directory exists
-      const profileDir = join(PROFILES_DIR, getActiveProfile());
-      await fs.mkdir(profileDir, { recursive: true });
+      await fs.mkdir(dirname(this.storagePath), { recursive: true });
 
       const data = {
         version: 1,
@@ -102,7 +102,7 @@ export class ProjectManager implements IService {
       };
 
       const content = JSON.stringify(data, null, 2);
-      await fs.writeFile(this.storagePath, content, 'utf-8');
+      await atomicWriteFile(this.storagePath, content, { mode: 0o600 });
     } catch (error) {
       logger.error('Error saving project context:', error);
       throw error;

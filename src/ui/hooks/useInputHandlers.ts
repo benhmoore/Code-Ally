@@ -27,7 +27,7 @@ import { fileToBase64, isImageFile } from '@utils/imageUtils.js';
 import { resolvePath } from '@utils/pathUtils.js';
 import { ModelCapabilitiesIndex } from '@services/ModelCapabilitiesIndex.js';
 import { ConfigManager } from '@services/ConfigManager.js';
-import { resolveProjectInstructionsFile } from '@config/paths.js';
+import { resolveProjectInstructionFiles } from '@config/paths.js';
 import { createStructuredError } from '@utils/errorUtils.js';
 import { createToolResultMessage } from '@llm/FunctionCalling.js';
 import { resolveDisplayContent } from '@utils/toolResultContent.js';
@@ -302,8 +302,9 @@ export const useInputHandlers = (
         try {
           // Append to whichever instructions file is actually ingested
           // (ALLY.md > CLAUDE.md > AGENTS.md), defaulting to ALLY.md if none exist.
+          const instructionFiles = resolveProjectInstructionFiles(process.cwd());
           const instructionsPath =
-            resolveProjectInstructionsFile(process.cwd()) ?? path.join(process.cwd(), 'ALLY.md');
+            instructionFiles.at(-1) ?? path.join(process.cwd(), 'ALLY.md');
           const fileName = path.basename(instructionsPath);
 
           // Read existing content or start fresh
@@ -941,7 +942,7 @@ export const useInputHandlers = (
         actions.setIsThinking(false);
       }
     }
-  }, [commandHandler, activityStream, state.messages, actions]);
+  }, [commandHandler, activityStream, state.messages, state.activeAgentId, actions]);
 
   return {
     handleInput,

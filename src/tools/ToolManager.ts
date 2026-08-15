@@ -16,7 +16,6 @@ import { logger } from '../services/Logger.js';
 import { validateToolName } from '../utils/namingValidation.js';
 import { DelegationContextManager } from '../services/DelegationContextManager.js';
 import { isInjectableTool } from './InjectableTool.js';
-import { ConversationManager } from '../agent/ConversationManager.js';
 import { PlanModeManager } from '../services/PlanModeManager.js';
 
 /**
@@ -63,15 +62,13 @@ function getAgentVisibilityBlock(tool: BaseTool, currentAgentName?: string): Age
 export class ToolManager {
   private tools: Map<string, BaseTool>;
   private validator: ToolValidator;
-  private duplicateDetector: DuplicateDetector;
+  private duplicateDetectors = new Map<string, DuplicateDetector>();
   private functionDefinitionsCache: Map<string, FunctionDefinition[]> = new Map();
   private delegationContextManager: DelegationContextManager;
-  private conversationManager?: ConversationManager;
 
   constructor(tools: BaseTool[]) {
     this.tools = new Map();
     this.validator = new ToolValidator();
-    this.duplicateDetector = new DuplicateDetector();
     this.delegationContextManager = new DelegationContextManager();
 
     for (const tool of tools) {
@@ -492,7 +489,8 @@ export class ToolManager {
   private validateToolCall(
     toolName: string,
     args: Record<string, any>,
-    currentAgentName?: string
+    currentAgentName?: string,
+    executionContext?: ToolExecutionContext
   ):
     | { valid: true; tool: BaseTool; duplicateCheck: { isDuplicate: boolean; shouldBlock: boolean; message: string | null } }
     | { valid: false; error: ToolResult } {
@@ -524,7 +522,7 @@ export class ToolManager {
     }
 
     // Check for duplicate calls
-    const duplicateCheck = this.duplicateDetector.check(toolName, args);
+    const duplicateCheck = this.getDuplicateDetector(executionContext, currentAgentName).check(toolName, args);
     if (duplicateCheck.shouldBlock) {
       const result = createStructuredError(
         duplicateCheck.message || 'Duplicate tool call detected',
@@ -574,7 +572,7 @@ export class ToolManager {
     executionContext?: ToolExecutionContext
   ): Promise<ToolResult | null> {
     // Perform common validation
-    const validationResult = this.validateToolCall(toolName, args, currentAgentName);
+    const validationResult = this.validateToolCall(toolName, args, currentAgentName, executionContext);
     if (!validationResult.valid) {
       return validationResult.error;
     }
@@ -595,7 +593,7 @@ export class ToolManager {
     executionContext?: ToolExecutionContext
   ): Promise<ToolResult> {
     // Perform common validation
-    const validationResult = this.validateToolCall(toolName, args, currentAgentName);
+    const validationResult = this.validateToolCall(toolName, args, currentAgentName, executionContext);
     if (!validationResult.valid) {
       return validationResult.error;
     }
@@ -606,7 +604,7 @@ export class ToolManager {
       const result = await tool.execute(args, callId, abortSignal, isUserInitiated, isContextFile, executionContext);
 
       if (result.success) {
-        this.duplicateDetector.recordCall(toolName, args);
+        this.getDuplicateDetector(executionContext, currentAgentName).recordCall(toolName, args);
 
         if (duplicateCheck.isDuplicate && duplicateCheck.message) {
           result.warning = duplicateCheck.message;
@@ -631,28 +629,15 @@ export class ToolManager {
   /**
    * Clear current turn state
    */
-  clearCurrentTurn(): void {
-    this.duplicateDetector.nextTurn();
-  }
-
-  /**
-   * Check if a file has been successfully read in the conversation.
-   *
-   * Delegates to ConversationManager to check if the file has been read
-   * with a successful outcome in the current conversation state.
-   *
-   * @param filePath - Absolute path to the file to check
-   * @returns true if file has been successfully read, false if not or if conversationManager not set
-   */
-  hasFileBeenRead(filePath: string): boolean {
-    return this.conversationManager?.hasSuccessfulReadFor(filePath) ?? false;
+  clearCurrentTurn(agentId?: string): void {
+    this.getDuplicateDetector(agentId ? { agentId } : undefined).nextTurn();
   }
 
   /**
    * Clear all tracked state
    */
   clearState(): void {
-    this.duplicateDetector.clear();
+    this.duplicateDetectors.clear();
   }
 
   /**
@@ -662,11 +647,16 @@ export class ToolManager {
     return this.delegationContextManager;
   }
 
-  /**
-   * Set the conversation manager
-   * Called by Agent during initialization to provide access to conversation state
-   */
-  setConversationManager(manager: ConversationManager): void {
-    this.conversationManager = manager;
+  private getDuplicateDetector(
+    executionContext?: ToolExecutionContext,
+    currentAgentName?: string
+  ): DuplicateDetector {
+    const scopeKey = executionContext?.agentId ?? currentAgentName ?? 'unscoped';
+    let detector = this.duplicateDetectors.get(scopeKey);
+    if (!detector) {
+      detector = new DuplicateDetector();
+      this.duplicateDetectors.set(scopeKey, detector);
+    }
+    return detector;
   }
 }

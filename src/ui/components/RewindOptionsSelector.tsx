@@ -133,10 +133,6 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     { isActive: visible }
   );
 
-  if (!visible) {
-    return null;
-  }
-
   const terminalWidth = useContentWidth();
   const divider = createDivider(terminalWidth);
 
@@ -165,6 +161,10 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     }
     return null;
   }, [previewData]);
+
+  if (!visible) {
+    return null;
+  }
 
   const displayLimit = 5;
   const hasMoreFiles = fileChanges.fileCount > displayLimit;

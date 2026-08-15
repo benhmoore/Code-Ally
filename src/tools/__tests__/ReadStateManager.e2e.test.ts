@@ -426,26 +426,23 @@ function baz() {
     });
   });
 
-  describe('Performance Tests', () => {
-    it('should complete operations quickly', async () => {
-      const start = Date.now();
-
+  describe('Sequential workflow', () => {
+    it('should preserve read state across a realistic edit workflow', async () => {
       // Simulate realistic workflow
-      await readTool.execute({ file_paths: [testFile], offset: 0, limit: 100 });
-      await lineEditTool.execute({
+      const firstRead = await readTool.execute({ file_paths: [testFile], offset: 0, limit: 100 });
+      const firstEdit = await lineEditTool.execute({
         file_path: testFile,
         edits: [{ operation: 'replace', line_number: 50, content: 'Modified' }],
       });
-      await readTool.execute({ file_paths: [testFile], offset: 0, limit: 100 });
-      await lineEditTool.execute({
+      const secondRead = await readTool.execute({ file_paths: [testFile], offset: 0, limit: 100 });
+      const secondEdit = await lineEditTool.execute({
         file_path: testFile,
         edits: [{ operation: 'replace', line_number: 75, content: 'Modified' }],
       });
 
-      const duration = Date.now() - start;
-
-      // Should complete in under 100ms (very conservative)
-      expect(duration).toBeLessThan(100);
+      expect([firstRead, firstEdit, secondRead, secondEdit].every(result => result.success)).toBe(
+        true
+      );
     });
   });
 

@@ -424,7 +424,7 @@ describe('ContextFileLoader', () => {
 
     it('should handle file with special characters', async () => {
       const filePath = join(testDir, 'special.ts');
-      await fs.writeFile(filePath, 'const emoji = "🚀";\nconst quote = `\``;', 'utf-8');
+      await fs.writeFile(filePath, 'const emoji = "🚀";\nconst quote = ```;', 'utf-8');
 
       const tokenManager = createMockTokenManager(10000);
       const loader = new ContextFileLoader(tokenManager);

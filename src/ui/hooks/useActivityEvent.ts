@@ -17,7 +17,6 @@ import { useActivityStream } from './useActivityStream.js';
  *
  * @param eventType - The type of event to listen for
  * @param callback - Function to call when event is emitted
- * @param deps - Dependency array (defaults to [eventType, callback])
  *
  * @example
  * ```tsx
@@ -27,29 +26,19 @@ import { useActivityStream } from './useActivityStream.js';
  *   setToolStatus('executing');
  * });
  *
- * // With custom dependencies
- * useActivityEvent(
- *   ActivityEventType.TOOL_OUTPUT_CHUNK,
- *   (event) => {
- *     if (event.id === toolCallId) {
- *       setOutput(prev => prev + event.data.chunk);
- *     }
- *   },
- *   [toolCallId]
- * );
+ * Callback updates do not resubscribe; a ref always invokes the latest callback.
  * ```
  */
-export const useActivityEvent = (
-  eventType: ActivityEventType | '*',
-  callback: ActivityCallback,
-  deps: readonly any[] = []
+export const useActivityEvent = <T extends ActivityEventType>(
+  eventType: T,
+  callback: ActivityCallback<T>
 ): void => {
   const activityStream = useActivityStream();
   const callbackRef = useRef(callback);
 
   // Store the wrapper function in a ref so it has stable identity
   // This ensures subscribe/unsubscribe work with the same function reference
-  const wrapperRef = useRef<ActivityCallback | null>(null);
+  const wrapperRef = useRef<ActivityCallback<T> | null>(null);
 
   // Always keep the ref updated with the latest callback
   useEffect(() => {
@@ -72,5 +61,5 @@ export const useActivityEvent = (
     return () => {
       unsubscribe();
     };
-  }, [activityStream, eventType, ...deps]);
+  }, [activityStream, eventType]);
 };

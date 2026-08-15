@@ -78,13 +78,14 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
   onCursorChange = () => {},
   queueLength,
 }) => {
+  const terminalWidth = useContentWidth();
+
   if (!visible) {
     return null;
   }
 
   const { toolName, sensitivity, options } = request;
   const color = getSensitivityColor(sensitivity);
-  const terminalWidth = useContentWidth();
 
   // Create divider line
   const divider = createDivider(terminalWidth);

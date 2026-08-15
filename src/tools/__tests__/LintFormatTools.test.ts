@@ -119,7 +119,8 @@ describe('LintTool', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Invalid file path');
+      expect(result.error).toContain('Access denied');
+      expect(result.error_type).toBe('security_error');
     });
 
     it('should include error details', async () => {

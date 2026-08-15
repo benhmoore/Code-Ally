@@ -1102,12 +1102,13 @@ export const useActivitySubscriptions = (
   });
 
   // Update rewind request with current state when it's first set
+  const setRewindRequest = modal.setRewindRequest;
   useEffect(() => {
     if (modal.rewindRequest && modal.rewindRequest.userMessagesCount === -1) {
       const userMessages = state.messages.filter(m => m.role === 'user');
 
       if (userMessages.length === 0) {
-        modal.setRewindRequest(undefined);
+        setRewindRequest(undefined);
         actions.addMessage({
           role: 'assistant',
           content: 'No user messages to rewind to.',
@@ -1117,21 +1118,23 @@ export const useActivitySubscriptions = (
 
       const initialIndex = Math.max(0, userMessages.length - 1);
 
-      modal.setRewindRequest({
+      setRewindRequest({
         ...modal.rewindRequest,
         userMessagesCount: userMessages.length,
         selectedIndex: initialIndex
       });
     }
-  }, [modal.rewindRequest, state.messages, actions]);
+  }, [modal.rewindRequest, state.messages, actions, setRewindRequest]);
 
   // Cleanup on unmount: flush pending chunks and cancel timers
   useEffect(() => {
+    const flushPendingToolChunks = flushChunks.current;
+    const flushPendingStreamingContent = flushStreamingContent.current;
     return () => {
       isMountedRef.current = false;
 
       // Flush any remaining chunks
-      flushChunks.current();
+      flushPendingToolChunks();
 
       // Cancel pending flush timer
       if (flushTimerRef.current) {
@@ -1140,7 +1143,7 @@ export const useActivitySubscriptions = (
       }
 
       // Flush any pending streaming content
-      flushStreamingContent.current();
+      flushPendingStreamingContent();
 
       // Cancel pending streaming flush timer
       if (streamingFlushTimerRef.current) {

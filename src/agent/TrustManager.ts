@@ -59,7 +59,7 @@ export type CommandPath = string | { command?: string; path?: string; outside_cw
 export enum PermissionChoice {
   ALLOW = 'Allow',
   DENY = 'Deny',
-  ALWAYS_ALLOW = 'Always Allow',
+  ALWAYS_ALLOW = 'Allow This Target',
   INSTRUCT = 'Tell Ally what to do differently',
 }
 
@@ -137,7 +137,7 @@ export class TrustManager {
 
     // Listen for permission responses if ActivityStream is provided
     if (this.activityStream) {
-      this.activityStream.subscribe(ActivityEventType.PERMISSION_RESPONSE, (event: ActivityEvent) => {
+      this.activityStream.subscribe(ActivityEventType.PERMISSION_RESPONSE, (event) => {
         this.handlePermissionResponse(event);
       });
 
@@ -282,8 +282,8 @@ export class TrustManager {
         return true;
 
       case PermissionChoice.ALWAYS_ALLOW:
-        // Session-wide trust - add to trusted tools
-        this.trustTool(toolName, TrustScope.GLOBAL);
+        // Scope trust to this exact file or command for the current session.
+        this.trustTool(toolName, TrustScope.PATH, this.getTrustPath(path));
         return true;
 
       case PermissionChoice.DENY:
@@ -318,21 +318,13 @@ export class TrustManager {
       return true;
     }
 
-    // Check if any command is extremely sensitive
-    const hasExtremelySensitive = toolCalls.some(call => {
-      const tier = this.getCommandSensitivity(call.function.name, null);
-      return tier === SensitivityTier.EXTREMELY_SENSITIVE;
-    });
-
     // Show appropriate menu based on sensitivity and delegation state
     // INSTRUCT only shown when there's an active delegation (sub-agent running)
     const activeDelegationName = this.getActiveDelegationNameGetter?.();
     const denyOption = activeDelegationName
       ? `Tell ${activeDelegationName} what to do instead...`
       : PermissionChoice.DENY;
-    const options = hasExtremelySensitive
-      ? [PermissionChoice.ALLOW, denyOption]
-      : [PermissionChoice.ALLOW, PermissionChoice.ALWAYS_ALLOW, denyOption];
+    const options = [PermissionChoice.ALLOW, denyOption];
 
     // Pass batch operation context to permission menu
     const choice = await this.showPermissionMenu(
@@ -346,14 +338,6 @@ export class TrustManager {
       case PermissionChoice.ALLOW:
         // Pre-approve all operations for this batch
         for (const call of toolCalls) {
-          this.markOperationAsApproved(call.function.name, null);
-        }
-        return true;
-
-      case PermissionChoice.ALWAYS_ALLOW:
-        // Trust all tools in the batch
-        for (const call of toolCalls) {
-          this.trustTool(call.function.name, TrustScope.GLOBAL);
           this.markOperationAsApproved(call.function.name, null);
         }
         return true;
@@ -401,15 +385,8 @@ export class TrustManager {
     }
 
     // Check for path-specific trust
-    if (typeof path === 'string') {
-      // Exact path match
-      if (trustedPaths.has(path)) {
-        return true;
-      }
-
-      // Check parent directory trust (TODO: implement if needed)
-      // For now, exact match only
-    }
+    const trustPath = this.getTrustPath(path);
+    if (trustPath && trustedPaths.has(trustPath)) return true;
 
     return false;
   }
@@ -509,17 +486,17 @@ export class TrustManager {
    * @returns Sensitivity tier
    */
   getCommandSensitivity(toolName: string, path?: CommandPath): SensitivityTier {
+    // Filesystem escape takes precedence over command-text classification.
+    if (path && typeof path === 'object' && path.outside_cwd) {
+      return SensitivityTier.EXTREMELY_SENSITIVE;
+    }
+
     // Bash tool uses command content analysis
     if (toolName === 'bash' && path && typeof path === 'object') {
       const command = path.command;
       if (command) {
         return this.getCommandSensitivityForBash(command);
       }
-    }
-
-    // Outside CWD access is extremely sensitive
-    if (path && typeof path === 'object' && path.outside_cwd) {
-      return SensitivityTier.EXTREMELY_SENSITIVE;
     }
 
     // Default to normal
@@ -656,7 +633,9 @@ export class TrustManager {
   /**
    * Handle permission response from UI
    */
-  private handlePermissionResponse(event: ActivityEvent): void {
+  private handlePermissionResponse(
+    event: ActivityEvent<ActivityEventType.PERMISSION_RESPONSE>
+  ): void {
     const { requestId, choice } = event.data;
 
     // Find pending permission request
@@ -695,6 +674,13 @@ export class TrustManager {
 
     // No path: tool name only
     return toolName;
+  }
+
+  private getTrustPath(path?: CommandPath): string | undefined {
+    if (typeof path === 'string') return path;
+    if (path?.command) return `command:${path.command}`;
+    if (path?.path) return `path:${path.path}`;
+    return undefined;
   }
 }
 
@@ -795,15 +781,15 @@ const EXTREMELY_SENSITIVE_PATTERNS: RegExp[] = [
  * Patterns for sensitive commands (require permission but allow "Always Allow")
  */
 const SENSITIVE_PATTERNS: RegExp[] = [
-  /ls\s+(-[alFhrt]+\s+)?(\.\.|\/|\~)[\/]?/, // List files outside CWD
-  /cat\s+(\.\.|\/|\~)[\/]?/, // Cat files outside CWD
-  /more\s+(\.\.|\/|\~)[\/]?/, // More files outside CWD
-  /less\s+(\.\.|\/|\~)[\/]?/, // Less files outside CWD
-  /head\s+(\.\.|\/|\~)[\/]?/, // Head files outside CWD
-  /tail\s+(\.\.|\/|\~)[\/]?/, // Tail files outside CWD
-  /grep\s+.+\s+(\.\.|\/|\~)[\/]?/, // Grep outside CWD
-  /find\s+(\.\.|\/|\~)[\/]?\s+/, // Find outside CWD
-  /^rm\s+[^\s\-\*]+$/, // Single file rm (no flags, wildcards, or multiple args)
+  /ls\s+(-[alFhrt]+\s+)?(?:\.\.|\/|~)\/?/, // List files outside CWD
+  /cat\s+(?:\.\.|\/|~)\/?/, // Cat files outside CWD
+  /more\s+(?:\.\.|\/|~)\/?/, // More files outside CWD
+  /less\s+(?:\.\.|\/|~)\/?/, // Less files outside CWD
+  /head\s+(?:\.\.|\/|~)\/?/, // Head files outside CWD
+  /tail\s+(?:\.\.|\/|~)\/?/, // Tail files outside CWD
+  /grep\s+.+\s+(?:\.\.|\/|~)\/?/, // Grep outside CWD
+  /find\s+(?:\.\.|\/|~)\/?\s+/, // Find outside CWD
+  /^rm\s+[^\s*-]+$/, // Single file rm (no flags, wildcards, or multiple args)
 ];
 
 /**

@@ -280,7 +280,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [showCompletions, setShowCompletions] = useState(false);
 
   // Debounce timer for completions
-  const [completionTimer, setCompletionTimer] = useState<NodeJS.Timeout | null>(null);
 
   // Force-quit mechanism (3x Ctrl+C within 2s)
   const [ctrlCCount, setCtrlCCount] = useState(0);
@@ -311,17 +310,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       setBuffer(bufferValue);
       setCursorPosition(bufferValue.length);
     }
-  }, [bufferValue]);
+  }, [bufferValue, buffer]);
 
   // Notify parent when buffer changes
   useEffect(() => {
     onBufferChange?.(buffer);
   }, [buffer, onBufferChange]);
 
-  /**
-   * Update completions based on current input
-   */
-  const updateCompletions = async () => {
+  const updateCompletions = React.useCallback(async () => {
     if (!completionProvider || !buffer.trim()) {
       setCompletions([]);
       setShowCompletions(false);
@@ -332,7 +328,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     setCompletions(results);
     setCompletionIndex(0);
     setShowCompletions(results.length > 0);
-  };
+  }, [completionProvider, buffer, cursorPosition]);
 
   /**
    * Debounced completion update
@@ -344,22 +340,16 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       return;
     }
 
-    if (completionTimer) {
-      clearTimeout(completionTimer);
-    }
-
     const timer = setTimeout(() => {
-      updateCompletions();
+      void updateCompletions();
     }, UI_DELAYS.COMPLETION_DEBOUNCE);
-
-    setCompletionTimer(timer);
 
     return () => {
       if (timer) {
         clearTimeout(timer);
       }
     };
-  }, [buffer, cursorPosition]);
+  }, [updateCompletions]);
 
   /**
    * Apply selected completion

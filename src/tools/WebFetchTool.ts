@@ -9,9 +9,13 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 
 const DEFAULT_MAX_LENGTH = 50000;
 const FETCH_TIMEOUT_MS = 30000;
+const MAX_RESPONSE_BYTES = 1_000_000;
+const MAX_REDIRECTS = 5;
 
 const ALLOWED_CONTENT_TYPES = [
   'text/html',
@@ -73,6 +77,83 @@ export class WebFetchTool extends BaseTool {
     } catch {
       return { valid: false, error: 'Invalid URL format' };
     }
+  }
+
+  private isPrivateAddress(address: string): boolean {
+    const normalized = address.toLowerCase().split('%')[0] ?? address.toLowerCase();
+    if (isIP(normalized) === 4) {
+      const [a = 0, b = 0, c = 0] = normalized.split('.').map(Number);
+      return a === 0 || a === 10 || a === 127 ||
+        (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+        (a === 100 && b >= 64 && b <= 127) ||
+        (a === 192 && (b === 168 || (b === 0 && (c === 0 || c === 2)))) ||
+        (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
+        (a === 203 && b === 0 && c === 113) || a >= 224;
+    }
+    if (isIP(normalized) === 6) {
+      if (normalized.startsWith('::ffff:')) {
+        const mapped = normalized.slice('::ffff:'.length);
+        if (isIP(mapped) === 4) return this.isPrivateAddress(mapped);
+        const hex = mapped.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+        if (hex) {
+          const high = Number.parseInt(hex[1]!, 16);
+          const low = Number.parseInt(hex[2]!, 16);
+          return this.isPrivateAddress(
+            `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`
+          );
+        }
+        return true;
+      }
+      return normalized === '::' || normalized === '::1' || normalized.startsWith('fc') ||
+        normalized.startsWith('fd') || /^fe[89ab]/.test(normalized) ||
+        normalized.startsWith('2001:db8:');
+    }
+    return true;
+  }
+
+  private async assertPublicUrl(url: URL): Promise<void> {
+    if (url.username || url.password) {
+      throw new Error('URLs containing embedded credentials are not allowed');
+    }
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+      throw new Error('Private or local network URLs are not allowed');
+    }
+    const addresses = isIP(hostname)
+      ? [{ address: hostname }]
+      : await lookup(hostname, { all: true, verbatim: true });
+    if (addresses.length === 0 || addresses.some(({ address }) => this.isPrivateAddress(address))) {
+      throw new Error('Private, loopback, link-local, and metadata network addresses are not allowed');
+    }
+  }
+
+  private async readLimitedBody(response: Response): Promise<string> {
+    const declaredLength = Number(response.headers.get('content-length') ?? 0);
+    if (declaredLength > MAX_RESPONSE_BYTES) {
+      throw new Error(`Response exceeds the ${MAX_RESPONSE_BYTES}-byte safety limit`);
+    }
+    if (!response.body) return '';
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error(`Response exceeds the ${MAX_RESPONSE_BYTES}-byte safety limit`);
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(bytes);
   }
 
   /**
@@ -183,14 +264,27 @@ export class WebFetchTool extends BaseTool {
       const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
       let response: Response;
+      let currentUrl = new URL(url);
       try {
-        response = await fetch(url, {
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; CodeAlly/1.0)',
-            'Accept': 'text/html,text/plain,application/json,*/*',
-          },
-        });
+        for (let redirectCount = 0; ; redirectCount += 1) {
+          await this.assertPublicUrl(currentUrl);
+          response = await fetch(currentUrl, {
+            signal: controller.signal,
+            redirect: 'manual',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; CodeAlly/1.0)',
+              'Accept': 'text/html,text/plain,application/json,*/*',
+            },
+          });
+          if (![301, 302, 303, 307, 308].includes(response.status)) break;
+          if (redirectCount >= MAX_REDIRECTS) throw new Error('Too many redirects');
+          const location = response.headers.get('location');
+          if (!location) throw new Error('Redirect response did not include a location');
+          currentUrl = new URL(location, currentUrl);
+          if (!['http:', 'https:'].includes(currentUrl.protocol)) {
+            throw new Error('Redirect target must use http or https');
+          }
+        }
       } finally {
         clearTimeout(timeoutId);
       }
@@ -228,7 +322,7 @@ export class WebFetchTool extends BaseTool {
       }
 
       // Read response body
-      const rawContent = await response.text();
+      const rawContent = await this.readLimitedBody(response);
 
       // Process content based on type
       let content: string;
@@ -257,8 +351,8 @@ export class WebFetchTool extends BaseTool {
       }
 
       return this.formatSuccessResponse({
-        content,
-        url,
+        content: `<untrusted-web-content source="${currentUrl.toString()}">\n${content}\n</untrusted-web-content>`,
+        url: currentUrl.toString(),
         content_type: mimeType,
         content_length: content.length,
         truncated,
@@ -267,6 +361,9 @@ export class WebFetchTool extends BaseTool {
     } catch (error) {
       // Handle specific error types
       if (error instanceof Error) {
+        if (error.message.includes('Private') || error.message.includes('local network') || error.message.includes('not allowed')) {
+          return this.formatErrorResponse(error.message, 'security_error');
+        }
         if (error.name === 'AbortError') {
           return this.formatErrorResponse(
             `Request timed out after ${FETCH_TIMEOUT_MS / 1000} seconds`,

@@ -88,7 +88,14 @@ export class PatchFileManager {
     }
 
     try {
-      await fs.writeFile(patchFile, content, 'utf-8');
+      const tempPath = `${patchFile}.tmp.${process.pid}.${Date.now()}`;
+      try {
+        await fs.writeFile(tempPath, content, { encoding: 'utf-8', mode: 0o600 });
+        await fs.rename(tempPath, patchFile);
+      } catch (error) {
+        await fs.unlink(tempPath).catch(() => undefined);
+        throw error;
+      }
       logger.debug(`Wrote patch file: ${patchFile}`);
       return patchFile;
     } catch (error) {

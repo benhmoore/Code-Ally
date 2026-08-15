@@ -12,7 +12,8 @@ import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
-import { isPathWithinCwd } from '../security/PathSecurity.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
+import { fileMutationCoordinator } from '../services/FileMutationCoordinator.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -24,33 +25,6 @@ export class WriteTool extends BaseTool {
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
-  }
-
-  /**
-   * Validate WriteTool arguments
-   */
-  validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
-    const filePath = args.file_path;
-    if (!filePath || typeof filePath !== 'string') {
-      return null; // Let other validation catch this
-    }
-
-    try {
-      const absolutePath = resolvePath(filePath);
-      if (!isPathWithinCwd(absolutePath)) {
-        return {
-          valid: false,
-          error: 'Path is outside the current working directory',
-          error_type: 'security_error',
-          suggestion: 'File paths must be within the current working directory. Use relative paths like "src/file.ts"',
-        };
-      }
-    } catch (error) {
-      // Path resolution failed - let the tool handle it
-      return null;
-    }
-
-    return null;
   }
 
   /**
@@ -204,6 +178,7 @@ export class WriteTool extends BaseTool {
     }
 
     try {
+      return await fileMutationCoordinator.run(absolutePath, async () => {
       // Check if file exists and read existing content if overwriting
       let fileExists = false;
       let existingContent = '';
@@ -238,7 +213,7 @@ export class WriteTool extends BaseTool {
       await fs.mkdir(directory, { recursive: true });
 
       // Write the file
-      await fs.writeFile(absolutePath, content, 'utf-8');
+      await atomicWriteFile(absolutePath, content);
 
       // Any write makes every agent's previous view of this file stale.
       const readCache = registry.get<{ invalidate(path: string): void }>('read_cache');
@@ -290,6 +265,7 @@ export class WriteTool extends BaseTool {
       }
 
       return response;
+      });
     } catch (error) {
       return this.formatErrorResponse(
         `Failed to write file: ${formatError(error)}`,

@@ -52,13 +52,14 @@ export const UndoPrompt: React.FC<UndoPromptProps> = ({
   selectedIndex,
   visible = true,
 }) => {
+  const terminalWidth = useContentWidth();
+
   if (!visible) {
     return null;
   }
 
   const { count, previewData } = request;
   const options = ['Confirm', 'Cancel'];
-  const terminalWidth = useContentWidth();
   const divider = createDivider(terminalWidth);
 
   return (

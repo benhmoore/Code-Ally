@@ -110,7 +110,7 @@ export class ToolResultManager {
    * @param toolCallId Optional tool call ID for persisting large outputs
    * @returns Processed (potentially truncated) tool result
    */
-  processToolResult(toolName: string, rawResult: string | any, toolCallId?: string): string {
+  async processToolResult(toolName: string, rawResult: string | any, toolCallId?: string): Promise<string> {
     if (!rawResult) {
       return '';
     }
@@ -153,15 +153,8 @@ export class ToolResultManager {
     // Persist full output to disk if persistence is available
     let persistedPath: string | null = null;
     if (this.persistence && toolCallId) {
-      // Fire-and-forget persistence — don't block the result pipeline
-      this.persistence.persistResult(toolCallId, persistedContent).then(path => {
-        if (path) {
-          // Path is already embedded in the preview below
-        }
-      }).catch(() => { /* silently ignore persistence failures */ });
-
-      // Get the expected path for the preview message
-      persistedPath = this.persistence.getResultPath(toolCallId);
+      // Do not advertise an artifact until it is durably available to read.
+      persistedPath = await this.persistence.persistResult(toolCallId, persistedContent);
     }
 
     // Calculate percentage kept for the warning

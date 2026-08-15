@@ -33,6 +33,8 @@ npm run build
 npm link  # Makes 'ally' command available globally
 ```
 
+Requires Node.js 20.9 or newer.
+
 ## Usage
 
 ```bash
@@ -244,14 +246,18 @@ ally --resume            # Resume last session
 
 ## Configuration
 
-Run `ally --init` for interactive setup, or edit `~/.ally/config.json`.
+Run `ally --init` for interactive setup. Profile overrides live at
+`~/.ally/profiles/<profile>/config.json`; the optional global base configuration
+lives at `~/.ally/config.json`.
 
 ### Model Settings
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `model` | (auto) | Primary model |
-| `endpoint` | `http://localhost:11434` | Ollama endpoint |
+| `provider` | `ollama` | `ollama` or `openai-compat` |
+| `endpoint` | `http://localhost:11434` | Provider base URL |
+| `api_key` | (none) | Bearer token for authenticated endpoints |
 | `context_size` | `16384` | Context window tokens |
 | `temperature` | `0.3` | Generation temperature |
 | `max_tokens` | `16384` | Max tokens per response |
@@ -267,6 +273,7 @@ Run `ally --init` for interactive setup, or edit `~/.ally/config.json`.
 | `bash_timeout` | `30` | Command timeout (seconds) |
 | `auto_confirm` | `false` | Skip permission prompts |
 | `parallel_tools` | `true` | Enable parallel tool execution |
+| `stream_responses` | `true` | Stream model responses independently of tool parallelism |
 | `default_agent` | `ally` | Default agent at startup |
 
 ### UI
@@ -298,6 +305,31 @@ ally --endpoint http://remote:11434
 ally --auto-confirm
 ally --reasoning-effort high
 ```
+
+OpenAI-compatible servers use `/v1/chat/completions` and, when available,
+`/v1/models`. Servers without model discovery can be configured with a model
+name manually. API keys are encrypted in profile files and redacted from config
+and debug output.
+
+### Project instructions
+
+Code Ally reads one instruction file per directory, from the repository root to
+the current directory. In each directory the precedence is `ALLY.md`, then
+`CLAUDE.md`, then `AGENTS.md`. This makes broad repository guidance apply first
+and lets a nested package add more specific guidance without silently replacing
+its parent instructions.
+
+### Safety boundaries
+
+- Local file tools resolve symlinks and are limited to the project, explicitly
+  added directories, project-managed session/plan storage, and the configured
+  temporary directory.
+- Concurrent edits to the same file are serialized and stale edits are rejected;
+  durable state is written atomically.
+- Web fetches reject private, loopback, link-local, and metadata-network targets,
+  including redirect and DNS-resolution bypasses, and cap response size.
+- `auto_confirm` removes interactive approval prompts; use it only in a trusted,
+  isolated workspace.
 
 ### Management
 

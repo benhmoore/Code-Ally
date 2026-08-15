@@ -43,7 +43,14 @@ export class ToolResultPersistence {
       // Sanitize toolCallId for use as filename
       const safeId = toolCallId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const filePath = path.join(resultsDir, `${safeId}.txt`);
-      await fs.writeFile(filePath, content, 'utf-8');
+      const tempPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
+      try {
+        await fs.writeFile(tempPath, content, { encoding: 'utf-8', mode: 0o600 });
+        await fs.rename(tempPath, filePath);
+      } catch (error) {
+        await fs.unlink(tempPath).catch(() => undefined);
+        throw error;
+      }
       return filePath;
     } catch {
       return null;

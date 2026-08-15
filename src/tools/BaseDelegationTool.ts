@@ -257,8 +257,6 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         callId,
         parentAgent,
         newDepth,
-        thoroughness,
-        maxDuration,
       });
 
       // Always use pooled agent for persistence
@@ -446,10 +444,8 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
     callId: string;
     parentAgent: any;
     newDepth: number;
-    thoroughness: string;
-    maxDuration: number | undefined;
   }): AgentConfig {
-    const { config, appConfig, additionalContext, taskPrompt, callId, parentAgent, newDepth, thoroughness, maxDuration } = params;
+    const { config, appConfig, additionalContext, taskPrompt, callId, parentAgent, newDepth } = params;
 
     const agentConfig: AgentConfig = {
       isSpecializedAgent: true,
@@ -457,11 +453,8 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
       baseAgentPrompt: this.getSystemPrompt(appConfig, additionalContext),
       taskPrompt: taskPrompt,
       config: appConfig,
-      parentCallId: callId,
       parentAgent: parentAgent,
       _poolKey: `${this.name}-${callId}`,
-      maxDuration,
-      thoroughness: thoroughness,
       agentType: config.agentType,
       agentDepth: newDepth,
       // Single-level delegation: a sub-agent is a leaf, so strip any delegation

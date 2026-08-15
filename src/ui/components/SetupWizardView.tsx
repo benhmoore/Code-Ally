@@ -3,7 +3,7 @@
  *
  * Multi-step wizard for configuring Code Ally on first run:
  * 1. Welcome screen
- * 2. Ollama endpoint configuration
+ * 2. Model provider and endpoint configuration
  * 3. Laptop preference (optional, for local endpoints)
  * 4. Model selection
  * 5. Context size selection
@@ -20,7 +20,7 @@ import { IntegrationStore } from '@services/IntegrationStore.js';
 import { logger } from '@services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
-import { testModelCapabilities } from '@llm/ModelValidation.js';
+import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
 import { ModalContainer } from './ModalContainer.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
@@ -32,10 +32,13 @@ import type { MCPServerManager } from '@mcp/MCPServerManager.js';
 
 enum SetupStep {
   WELCOME,
+  PROVIDER,
+  PROVIDER_API_KEY,
   ENDPOINT,
   VALIDATING_ENDPOINT,
   LAPTOP_PREFERENCE,
   MODEL,
+  MODEL_MANUAL,
   VALIDATING_MODEL,
   CONTEXT_SIZE,
   SEARCH_PROMPT,       // Ask if user wants to configure search
@@ -55,14 +58,35 @@ interface SetupWizardViewProps {
   onSkip?: () => void;
 }
 
+function isLocalEndpoint(endpointUrl: string): boolean {
+  try {
+    const url = new URL(endpointUrl);
+    const hostname = url.hostname.toLowerCase();
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('127.');
+  } catch {
+    return false;
+  }
+}
+
 export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, onSkip }) => {
   const [step, setStep] = useState<SetupStep>(SetupStep.WELCOME);
   const [welcomeChoiceIndex, setWelcomeChoiceIndex] = useState(0); // 0 = Continue, 1 = Skip
+  const [providerIndex, setProviderIndex] = useState(0);
+  const providers = [
+    { value: 'ollama' as const, label: 'Ollama', endpoint: 'http://localhost:11434' },
+    { value: 'openai-compat' as const, label: 'OpenAI-compatible', endpoint: 'http://localhost:8000' },
+  ];
+  const selectedProvider = providers[providerIndex]?.value ?? 'ollama';
   const [endpoint, setEndpoint] = useState('http://localhost:11434');
   const [endpointBuffer, setEndpointBuffer] = useState('http://localhost:11434');
   const [endpointCursor, setEndpointCursor] = useState('http://localhost:11434'.length);
+  const [providerApiKey, setProviderApiKey] = useState('');
+  const [providerApiKeyBuffer, setProviderApiKeyBuffer] = useState('');
+  const [providerApiKeyCursor, setProviderApiKeyCursor] = useState(0);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
+  const [modelBuffer, setModelBuffer] = useState('');
+  const [modelCursor, setModelCursor] = useState(0);
   const [selectedContextSizeIndex, setSelectedContextSizeIndex] = useState(1); // Default to 32K
   const [isLaptop, setIsLaptop] = useState(false);
   const [selectedLaptopChoiceIndex, setSelectedLaptopChoiceIndex] = useState(1); // Default to "No"
@@ -102,19 +126,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
 
   const contextSizeOptions = setupWizard.getContextSizeOptions();
 
-  // Check if endpoint is localhost/local
-  const isLocalEndpoint = (endpointUrl: string): boolean => {
-    try {
-      const url = new URL(endpointUrl);
-      const hostname = url.hostname.toLowerCase();
-      return hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('127.');
-    } catch {
-      return false;
-    }
-  };
-
   // TextInput is active on text entry steps
-  const isTextInputStep = step === SetupStep.ENDPOINT || step === SetupStep.SEARCH_API_KEY
+  const isTextInputStep = step === SetupStep.PROVIDER_API_KEY || step === SetupStep.ENDPOINT || step === SetupStep.MODEL_MANUAL || step === SetupStep.SEARCH_API_KEY
     || step === SetupStep.MCP_SERVER_INPUT || step === SetupStep.MCP_CUSTOM_NAME || step === SetupStep.MCP_CUSTOM_COMMAND;
 
   // Handle exit from TextInput's onCtrlC (empty buffer)
@@ -150,12 +163,31 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       } else if (key.return) {
         if (welcomeChoiceIndex === 0) {
           // Continue
-          setStep(SetupStep.ENDPOINT);
+          setStep(SetupStep.PROVIDER);
         } else {
           // Skip
           if (onSkip) {
             onSkip();
           }
+        }
+      }
+    } else if (step === SetupStep.PROVIDER) {
+      if (key.upArrow) {
+        setProviderIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setProviderIndex((prev) => Math.min(providers.length - 1, prev + 1));
+      } else if (key.return) {
+        const defaultEndpoint = providers[providerIndex]?.endpoint ?? providers[0]!.endpoint;
+        setEndpoint(defaultEndpoint);
+        setEndpointBuffer(defaultEndpoint);
+        setEndpointCursor(defaultEndpoint.length);
+        if (selectedProvider === 'openai-compat') {
+          setProviderApiKeyBuffer('');
+          setProviderApiKeyCursor(0);
+          setStep(SetupStep.PROVIDER_API_KEY);
+        } else {
+          setProviderApiKey('');
+          setStep(SetupStep.ENDPOINT);
         }
       }
     } else if (step === SetupStep.MODEL) {
@@ -259,29 +291,22 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
   });
 
-  // Validate endpoint when step changes to VALIDATING_ENDPOINT
-  useEffect(() => {
-    if (step === SetupStep.VALIDATING_ENDPOINT) {
-      validateEndpointAndFetchModels();
-    } else if (step === SetupStep.VALIDATING_MODEL) {
-      validateModelCapabilities();
-    }
-  }, [step]);
-
-  const validateEndpointAndFetchModels = async () => {
+  const validateEndpointAndFetchModels = React.useCallback(async () => {
     setError(null);
 
-    const isValid = await setupWizard.validateOllamaConnection(endpoint);
+    const isValid = await setupWizard.validateConnection(endpoint, selectedProvider, providerApiKey || null);
     if (!isValid) {
-      setError('Failed to connect to Ollama. Please check the endpoint and try again.');
+      setError('Failed to connect to the configured model provider. Check the endpoint and credentials.');
       setStep(SetupStep.ENDPOINT);
       return;
     }
 
-    const models = await setupWizard.getAvailableModels(endpoint);
+    const models = await setupWizard.getAvailableModels(endpoint, selectedProvider, providerApiKey || null);
     if (models.length === 0) {
-      setError('No models found at this endpoint. Please ensure Ollama has models installed.');
-      setStep(SetupStep.ENDPOINT);
+      setError(null);
+      setModelBuffer('');
+      setModelCursor(0);
+      setStep(SetupStep.MODEL_MANUAL);
       return;
     }
 
@@ -297,9 +322,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       // Keep default context size (32K - index 1) for desktop/server
       setStep(SetupStep.MODEL);
     }
-  };
+  }, [setupWizard, endpoint, selectedProvider, providerApiKey]);
 
-  const validateModelCapabilities = async () => {
+  const validateModelCapabilities = React.useCallback(async () => {
     setError(null);
 
     const selectedModel = availableModels[selectedModelIndex];
@@ -310,10 +335,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
 
     try {
-      // Test model capabilities using extracted utility
-      const result = await testModelCapabilities(endpoint, selectedModel);
+      const result = await probeModelCapabilities({ provider: selectedProvider, endpoint }, selectedModel);
 
-      if (!result.supportsTools) {
+      if (result.tools === 'unsupported') {
         setError(`Model '${selectedModel}' does not support tools. Please select a different model.`);
         setStep(SetupStep.MODEL);
         return;
@@ -326,7 +350,16 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       logger.warn('[SetupWizardView] Model validation error:', error);
       setStep(SetupStep.CONTEXT_SIZE);
     }
-  };
+  }, [availableModels, selectedModelIndex, selectedProvider, endpoint]);
+
+  // Validation is driven by explicit transient states so each transition runs once.
+  useEffect(() => {
+    if (step === SetupStep.VALIDATING_ENDPOINT) {
+      void validateEndpointAndFetchModels();
+    } else if (step === SetupStep.VALIDATING_MODEL) {
+      void validateModelCapabilities();
+    }
+  }, [step, validateEndpointAndFetchModels, validateModelCapabilities]);
 
   const handleEndpointSubmit = (value: string) => {
     if (!value.trim()) {
@@ -336,6 +369,24 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     setEndpoint(value);
     setError(null);
     setStep(SetupStep.VALIDATING_ENDPOINT);
+  };
+
+  const handleProviderApiKeySubmit = (value: string) => {
+    setProviderApiKey(value.trim());
+    setError(null);
+    setStep(SetupStep.ENDPOINT);
+  };
+
+  const handleModelSubmit = (value: string) => {
+    const model = value.trim();
+    if (!model) {
+      setError('Model name cannot be empty');
+      return;
+    }
+    setAvailableModels([model]);
+    setSelectedModelIndex(0);
+    setError(null);
+    setStep(SetupStep.VALIDATING_MODEL);
   };
 
   const [searchApiKey, setSearchApiKey] = useState('');
@@ -406,7 +457,9 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
 
     const config: SetupConfig = {
+      provider: selectedProvider,
       endpoint,
+      api_key: providerApiKey || null,
       model: selectedModel,
       service_model: null,
       context_size: selectedContextSize.value,
@@ -505,7 +558,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               </Text>
             </Box>
             <Box paddingLeft={2} marginBottom={1} flexDirection="column">
-              <Text dimColor>• Ollama endpoint</Text>
+              <Text dimColor>• Model provider and endpoint</Text>
               <Text dimColor>• Model selection</Text>
               <Text dimColor>• Context size</Text>
             </Box>
@@ -523,6 +576,49 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
           </>
         )}
 
+        {step === SetupStep.PROVIDER && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold><ChickAnimation /></Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>Step 1: Model Provider</Text>
+            </Box>
+            <Box marginBottom={1}><Text>Select the API protocol Code Ally should use.</Text></Box>
+            <Box marginLeft={2} flexDirection="column">
+              {providers.map((provider, index) => (
+                <SelectionIndicator key={provider.value} isSelected={providerIndex === index}>
+                  {provider.label}
+                </SelectionIndicator>
+              ))}
+            </Box>
+          </>
+        )}
+
+        {step === SetupStep.PROVIDER_API_KEY && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold><ChickAnimation /></Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>Step 2: Provider Credentials</Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>Enter a bearer API key, or leave blank for a local unauthenticated server.</Text>
+            </Box>
+            <TextInput
+              label="API Key:"
+              value={providerApiKeyBuffer}
+              onValueChange={setProviderApiKeyBuffer}
+              cursorPosition={providerApiKeyCursor}
+              onCursorChange={setProviderApiKeyCursor}
+              onSubmit={handleProviderApiKeySubmit}
+              onEscape={() => setStep(SetupStep.PROVIDER)}
+              onCtrlC={handleCtrlC}
+              isActive={true}
+              multiline={false}
+              mask="*"
+              placeholder="Optional"
+            />
+          </>
+        )}
+
         {/* Endpoint Configuration */}
         {step === SetupStep.ENDPOINT && (
           <>
@@ -531,12 +627,12 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 <ChickAnimation />
               </Text>
               <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Step 1: Ollama Endpoint
+                Step 2: {providers[providerIndex]?.label} Endpoint
               </Text>
             </Box>
             <Box marginBottom={1}>
               <Text>
-                Enter the URL where Ollama is running (default: http://localhost:11434)
+                Enter the provider base URL (default: {providers[providerIndex]?.endpoint})
               </Text>
             </Box>
             {error && (
@@ -584,6 +680,32 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
           </>
         )}
 
+        {step === SetupStep.MODEL_MANUAL && (
+          <>
+            <Box marginBottom={1} flexDirection="row" gap={1}>
+              <Text bold><ChickAnimation /></Text>
+              <Text color={UI_COLORS.TEXT_DEFAULT} bold>Step 3: Model Name</Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text>Model discovery is unavailable. Enter the exact model identifier.</Text>
+            </Box>
+            {error && <Box marginBottom={1}><Text color={UI_COLORS.ERROR}>{error}</Text></Box>}
+            <TextInput
+              label="Model:"
+              value={modelBuffer}
+              onValueChange={setModelBuffer}
+              cursorPosition={modelCursor}
+              onCursorChange={setModelCursor}
+              onSubmit={handleModelSubmit}
+              onEscape={() => setStep(SetupStep.ENDPOINT)}
+              onCtrlC={handleCtrlC}
+              isActive={true}
+              multiline={false}
+              placeholder="model-name"
+            />
+          </>
+        )}
+
         {/* Model Selection */}
         {step === SetupStep.MODEL && (
           <>
@@ -592,7 +714,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 <ChickAnimation />
               </Text>
               <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Step 2: Model Selection
+                Step 3: Model Selection
               </Text>
             </Box>
             <Box marginBottom={1}>
@@ -839,6 +961,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 onCtrlC={handleCtrlC}
                 isActive={true}
                 multiline={false}
+                mask="*"
                 placeholder="Enter your API key..."
               />
             </Box>

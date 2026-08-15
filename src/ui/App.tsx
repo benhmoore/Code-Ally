@@ -193,7 +193,7 @@ const AppContentComponent: React.FC<{
       },
     });
     logger.debug('[APP]', 'Emitted initial AGENT_SWITCHED event:', actualAgent, 'model:', actualModel);
-  }, []); // Run once on mount
+  }, [activityStream, agent]);
 
   // Get input handler functions
   const { handleInput, handleInterjection } = useInputHandlers(commandHandler, activityStream, state, actions);
@@ -279,7 +279,7 @@ const AppContentComponent: React.FC<{
     actions.setActiveAgentId(target.id);
     actions.setCurrentAgent(target.agentType);
     applyAgentView(task.subAgent);
-  }, [modal, backgroundAgents, state.activeAgentId, state.messages, state.activeToolCalls, activityStream, actions, returnToMain, applyAgentView]);
+  }, [backgroundAgents, state.activeAgentId, state.messages, state.activeToolCalls, activityStream, actions, returnToMain, applyAgentView]);
 
   // Ctrl+B: background all running foreground agents (they keep running; the
   // main loop returns and they appear in the fleet).
@@ -377,11 +377,12 @@ const AppContentComponent: React.FC<{
   };
 
   // Show setup wizard if needed
+  const setSetupWizardOpen = modal.setSetupWizardOpen;
   useEffect(() => {
     if (shouldShowSetupWizard) {
-      modal.setSetupWizardOpen(true);
+      setSetupWizardOpen(true);
     }
-  }, [shouldShowSetupWizard]);
+  }, [shouldShowSetupWizard, setSetupWizardOpen]);
 
   // Track whether we've already shown the model selector (to prevent showing it twice)
   const modelSelectorShownRef = useRef(false);
@@ -521,11 +522,8 @@ const AppContentComponent: React.FC<{
   }, [modal.rewindRequest]);
 
   // Get current focus display (if any)
-  const currentFocus = useMemo(() => {
-    const serviceRegistry = ServiceRegistry.getInstance();
-    const focusManager = serviceRegistry.get<FocusManager>('focus_manager');
-    return focusManager?.getFocusDisplay() ?? null;
-  }, [state.messages.length]); // Re-compute when messages change (focus commands add messages)
+  const focusManager = ServiceRegistry.getInstance().get<FocusManager>('focus_manager');
+  const currentFocus = focusManager?.getFocusDisplay() ?? null;
 
   // Get content width with max width constraint for readability (conversation view)
   const contentWidth = useContentWidth();

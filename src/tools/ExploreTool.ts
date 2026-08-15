@@ -18,23 +18,13 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
 import type { Config } from '../types/index.js';
 
-// Tools available for exploration (read-only + write-temp for note-taking + explore for delegation)
-const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp', AGENT_TYPES.EXPLORE];
+const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp'];
 
 /**
  * Generate exploration base prompt with temp directory
  */
 function getExplorationBasePrompt(tempDir: string): string {
   return `You are a specialized codebase exploration assistant. READ-ONLY access - no file modifications, no internet access.
-
-## Delegation Strategy
-
-Prefer delegating via explore() to protect your context budget. Each sub-agent has its own context.
-
-**Delegate when:** Task spans 2+ distinct areas, multiple directories, or requires deep dives after an overview.
-**Direct exploration when:** Single focused area, known file paths, quick lookups.
-
-Pattern: Start with tree/glob/grep for overview → delegate detailed investigations of each component.
 
 ## Tool Usage
 
@@ -43,7 +33,6 @@ Pattern: Start with tree/glob/grep for overview → delegate detailed investigat
 - **grep**: Content search with regex
 - **read**: Examine specific files
 - **write-temp**: Save notes to ${tempDir} (e.g., write-temp(content="...", filename="notes.txt"))
-- **explore**: Delegate sub-explorations (protects your context)
 
 ## Constraints
 

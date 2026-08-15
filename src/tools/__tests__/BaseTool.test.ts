@@ -39,6 +39,26 @@ class EmittingTool extends BaseTool {
   }
 }
 
+class ConcurrentTool extends BaseTool {
+  readonly name = 'concurrent-tool';
+  readonly description = 'Exercises overlapping invocations';
+  readonly requiresConfirmation = false;
+  private started = 0;
+  private release!: () => void;
+  private readonly bothStarted = new Promise<void>((resolve) => {
+    this.release = resolve;
+  });
+
+  protected async executeImpl(args: { label: string }): Promise<ToolResult> {
+    this.captureParams(args);
+    this.started += 1;
+    if (this.started === 2) this.release();
+    await this.bothStarted;
+    this.emitOutputChunk(args.label);
+    return this.formatErrorResponse(`failed-${args.label}`, 'user_error');
+  }
+}
+
 describe('BaseTool', () => {
   let activityStream: ActivityStream;
   let tool: MockTool;
@@ -70,6 +90,33 @@ describe('BaseTool', () => {
   });
 
   describe('activity stream isolation', () => {
+    it('keeps call IDs, streams, and error parameters isolated across overlapping calls', async () => {
+      const rootStream = new ActivityStream();
+      const firstStream = rootStream.createScoped('first');
+      const secondStream = rootStream.createScoped('second');
+      const firstEvents: ActivityEvent[] = [];
+      const secondEvents: ActivityEvent[] = [];
+      firstStream.subscribe('*', (event) => firstEvents.push(event));
+      secondStream.subscribe('*', (event) => secondEvents.push(event));
+      const concurrentTool = new ConcurrentTool(rootStream);
+
+      const [first, second] = await Promise.all([
+        concurrentTool.execute({ label: 'first' }, 'call-first', undefined, false, false, {
+          activityStream: firstStream,
+        }),
+        concurrentTool.execute({ label: 'second' }, 'call-second', undefined, false, false, {
+          activityStream: secondStream,
+        }),
+      ]);
+
+      expect(first.error_details?.parameters).toEqual({ label: 'first' });
+      expect(second.error_details?.parameters).toEqual({ label: 'second' });
+      expect(firstEvents.map((event) => event.id)).toContain('call-first');
+      expect(firstEvents.map((event) => event.id)).not.toContain('call-second');
+      expect(secondEvents.map((event) => event.id)).toContain('call-second');
+      expect(secondEvents.map((event) => event.id)).not.toContain('call-first');
+    });
+
     it('routes emitted events to the execution context stream, not the construction stream', async () => {
       // Tools are shared singletons constructed with the root stream. A sub-agent
       // supplies its scoped stream via the execution context; the tool's output

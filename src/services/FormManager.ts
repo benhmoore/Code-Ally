@@ -65,14 +65,12 @@ export class FormManager {
     this.activityStream = activityStream;
 
     // Subscribe to form response events
-    this.activityStream.subscribe(
-      ActivityEventType.TOOL_FORM_RESPONSE,
-      this.handleFormResponse.bind(this)
-    );
-    this.activityStream.subscribe(
-      ActivityEventType.TOOL_FORM_CANCEL,
-      this.handleFormCancel.bind(this)
-    );
+    this.activityStream.subscribe(ActivityEventType.TOOL_FORM_RESPONSE, (event) => {
+      this.handleFormResponse(event as unknown as ActivityEvent);
+    });
+    this.activityStream.subscribe(ActivityEventType.TOOL_FORM_CANCEL, (event) => {
+      this.handleFormCancel(event as unknown as ActivityEvent);
+    });
 
     // Reject any pending forms when the user interrupts the agent, so the
     // awaiting tool unwinds instead of blocking forever (forms have no timeout).

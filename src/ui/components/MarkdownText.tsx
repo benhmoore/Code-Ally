@@ -479,11 +479,6 @@ const CodeBlockRenderer: React.FC<{ content: string; language?: string; highligh
  * Automatically adjusts column widths to fit terminal width
  */
 const TableRenderer: React.FC<{ header: string[]; rows: string[][]; width: number }> = ({ header, rows, width }) => {
-  // Validate table structure
-  if (!header || header.length === 0) {
-    return <Text dimColor>Empty table</Text>;
-  }
-
   // Filter rows with mismatched column counts
   const expectedCols = header.length;
   const validRows = useMemo(() => {
@@ -549,6 +544,10 @@ const TableRenderer: React.FC<{ header: string[]; rows: string[][]; width: numbe
       return minWidth + proportionalBonus;
     });
   }, [header, validRows, width]);
+
+  if (header.length === 0) {
+    return <Text dimColor>Empty table</Text>;
+  }
 
   // Cells are normalized to ANSI strings during parsing so column measurement
   // and wrapping use the exact text that will be drawn.

@@ -137,8 +137,7 @@ export class ToolOrchestrator {
     this.config = config;
     this.toolResultManager = toolResultManager || null;
     this.permissionManager = permissionManager || null;
-    this.parentCallId = config.parentCallId; // Store parent context
-    logger.debug('[TOOL_ORCHESTRATOR] Created with parentCallId:', this.parentCallId);
+    logger.debug('[TOOL_ORCHESTRATOR] Created without invocation context');
   }
 
   /**
@@ -729,14 +728,10 @@ export class ToolOrchestrator {
 
     // Prepare tool display properties (needed for both START and END events)
     // Use cached properties if available, otherwise lookup and cache inline
-    let shouldCollapse: boolean;
-    let hideOutput: boolean;
-    let alwaysShowFullOutput: boolean;
-
     const props = this.getToolDisplayProps(toolName);
-    shouldCollapse = props.shouldCollapse;
-    hideOutput = props.hideOutput;
-    alwaysShowFullOutput = props.alwaysShowFullOutput;
+    const shouldCollapse = props.shouldCollapse;
+    const hideOutput = props.hideOutput;
+    const alwaysShowFullOutput = props.alwaysShowFullOutput;
 
     /**
      * COLLAPSED FLAG STATE MACHINE
@@ -833,7 +828,7 @@ export class ToolOrchestrator {
       // Preview changes (e.g., diffs) BEFORE permission check
       // Tool call now exists in state, so diff can attach to it
       if (tool) {
-        await tool.previewChanges(args, id);
+        await tool.runPreview(args, id, executionContext);
       }
 
       // Validate before requesting permission (fail fast on invalid states)
@@ -1164,7 +1159,7 @@ export class ToolOrchestrator {
     result: ToolResult
   ): Promise<void> {
     // Format result as natural language (pass toolCallId for cycle detection)
-    const formattedResult = this.formatToolResult(toolCall.function.name, result, toolCall.id);
+    const formattedResult = await this.formatToolResult(toolCall.function.name, result, toolCall.id);
 
     logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool:', toolCall.function.name, 'id:', toolCall.id, 'success:', result.success, 'resultLength:', formattedResult.length);
 
@@ -1273,7 +1268,7 @@ export class ToolOrchestrator {
    * @param toolCallId - Tool call ID for cycle detection
    * @returns Formatted result string
    */
-  private formatToolResult(toolName: string, result: ToolResult, toolCallId?: string): string {
+  private async formatToolResult(toolName: string, result: ToolResult, toolCallId?: string): Promise<string> {
     // Handle internal-only tool results (for special tools like delegate_task)
     if ((result as any)._internal_only) {
       return (result as any).result || 'Internal operation completed';
@@ -1304,7 +1299,7 @@ export class ToolOrchestrator {
     // Apply context-aware truncation if ToolResultManager is available
     // Pass the full result object so it can check for _non_truncatable flag
     if (this.toolResultManager) {
-      resultStr = this.toolResultManager.processToolResult(toolName, resultWithoutExtras, toolCallId);
+      resultStr = await this.toolResultManager.processToolResult(toolName, resultWithoutExtras, toolCallId);
     }
 
     // Append warning after truncation to ensure it's always visible

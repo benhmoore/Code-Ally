@@ -113,7 +113,7 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
         setInputCursor(strValue.length);
       }
     }
-  }, [fieldIndex, currentField?.name, values]);
+  }, [fieldIndex, currentField, values, fieldChanged, inputBuffer]);
 
   // Check if "Other" option is currently selected
   const isOtherSelected = currentField?.type === 'choice' &&

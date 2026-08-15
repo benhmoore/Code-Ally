@@ -491,7 +491,7 @@ export class OllamaClient extends ModelClient {
 
     let aggregatedContent = '';
     let aggregatedThinking = '';
-    let aggregatedMessage: Partial<LLMResponse> = { role: 'assistant' };
+    const aggregatedMessage: Partial<LLMResponse> = { role: 'assistant' };
     let contentWasStreamed = false;
     let hadThinking = false; // Track if we've seen thinking chunks
     let thinkingComplete = false; // Track if thinking block completed

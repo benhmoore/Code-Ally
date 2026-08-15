@@ -18,7 +18,8 @@ import { Session, SessionInfo, Message, IService } from '../types/index.js';
 import { generateShortId } from '../utils/id.js';
 import type { TodoItem } from './TodoManager.js';
 import { logger } from './Logger.js';
-import { TEXT_LIMITS, BUFFER_SIZES, ID_GENERATION } from '../config/constants.js';
+import { TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 
 /**
  * Configuration for SessionManager
@@ -45,8 +46,7 @@ export class SessionManager implements IService {
 
   // Debouncing for auto-save - reduces I/O by batching rapid saves
   private debounceTimer: NodeJS.Timeout | null = null;
-  private debouncedSession: Session | null = null;
-  private debouncedSessionName: string | null = null;
+  private pendingAutoSave: { sessionName: string; updates: Partial<Session> } | null = null;
   private readonly DEBOUNCE_DELAY_MS = 2000; // 2 seconds
   private isShuttingDown: boolean = false;
 
@@ -223,6 +223,20 @@ export class SessionManager implements IService {
     return join(this.sessionsDir, `${sessionName}.json`);
   }
 
+  private createEmptySession(sessionName: string): Session {
+    const now = new Date().toISOString();
+    return {
+      id: sessionName,
+      name: sessionName,
+      created_at: now,
+      updated_at: now,
+      working_dir: process.cwd(),
+      messages: [],
+      metadata: {},
+      active_plugins: [],
+    };
+  }
+
   /**
    * Filter messages for persistence:
    * - Remove system messages (regenerated on resume)
@@ -382,68 +396,71 @@ export class SessionManager implements IService {
    * @param session - Complete session object
    */
   private async saveSessionData(sessionName: string, session: Session): Promise<void> {
-    // Capture the existing write promise synchronously (before any async operations)
-    // This ensures we see the current queue state atomically
-    const existingWrite = this.writeQueue.get(sessionName);
+    await this.enqueueSessionOperation(sessionName, () => this.writeSessionFile(sessionName, session));
+  }
 
-    // Create our write promise that chains after the existing one
-    const writePromise = (async () => {
-      // Wait for the previous write to complete (if there was one)
-      // We ignore errors from previous writes - we'll try our write regardless
-      if (existingWrite) {
-        await existingWrite.catch(() => {
-          // Ignore errors from previous writes
-        });
-      }
+  /** Serialize an entire read-modify-write operation for one session. */
+  private async mutateSession(
+    sessionName: string,
+    createIfMissing: boolean,
+    update: (session: Session) => void
+  ): Promise<boolean> {
+    return this.enqueueSessionOperation(sessionName, async () => {
+      const session = await this.loadSession(sessionName) ??
+        (createIfMissing ? this.createEmptySession(sessionName) : null);
+      if (!session) return false;
 
-      // Now perform our atomic file write
-      const sessionPath = this.getSessionPath(sessionName);
-      // Generate temp file with timestamp and random suffix (base-36 string starting at index 7)
-      const tempPath = `${sessionPath}.tmp.${Date.now()}.${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
+      update(session);
+      session.updated_at = new Date().toISOString();
+      await this.writeSessionFile(sessionName, session);
+      return true;
+    });
+  }
 
+  private async enqueueSessionOperation<T>(
+    sessionName: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.writeQueue.get(sessionName);
+    let resolveResult!: (value: T) => void;
+    let rejectResult!: (reason?: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+
+    const queued = (async () => {
+      await previous?.catch(() => undefined);
       try {
-        // Write to temporary file first
-        await fs.writeFile(tempPath, JSON.stringify(session, null, 2), 'utf-8');
-
-        // Atomic rename - this is the critical operation
-        // On POSIX systems, rename() is atomic and will replace the target file
-        await fs.rename(tempPath, sessionPath);
-
-        // Update cache after successful write
-        this.sessionCache.set(sessionName, {
-          session: structuredClone(session), // Store a copy
-          loadedAt: Date.now(),
-        });
-        this.evictOldestCacheEntryIfNeeded();
-
-        logger.debug(`[SESSION] Saved session ${sessionName} atomically and updated cache`);
+        resolveResult(await operation());
       } catch (error) {
-        // Clean up temp file if it exists
-        try {
-          await fs.unlink(tempPath);
-        } catch {
-          // Ignore cleanup errors
-        }
+        rejectResult(error);
         throw error;
       }
     })();
 
-    // Update the queue with our promise BEFORE we await it
-    // This ensures the next caller will chain after us
-    this.writeQueue.set(sessionName, writePromise);
+    // The queue tracks a non-rejecting tail so one failed write cannot create an
+    // unhandled rejection or prevent later writes from running.
+    const tail = queued.catch(() => undefined);
+    this.writeQueue.set(sessionName, tail);
+    try {
+      return await result;
+    } finally {
+      if (this.writeQueue.get(sessionName) === tail) {
+        this.writeQueue.delete(sessionName);
+      }
+    }
+  }
 
-    // Wait for our write to complete
-    await writePromise;
-
-    // Clean up from the queue unconditionally
-    // This is safe because:
-    // 1. If no new write started, we remove our completed promise (correct cleanup)
-    // 2. If a new write started, it already captured our promise (line 324) and chained after it (line 330-334)
-    //    The chaining works because the promise was captured BEFORE being added to the queue, not because
-    //    it stays in the queue. New writes will re-add their promise immediately (line 363).
-    // 3. We can't accidentally delete a new write's promise because new writes execute line 363 (set)
-    //    BEFORE reaching their await, so the queue is already updated by the time we delete here.
-    this.writeQueue.delete(sessionName);
+  private async writeSessionFile(sessionName: string, session: Session): Promise<void> {
+    const sessionPath = this.getSessionPath(sessionName);
+    await atomicWriteFile(sessionPath, JSON.stringify(session, null, 2));
+    this.sessionCache.set(sessionName, {
+      session: structuredClone(session),
+      loadedAt: Date.now(),
+    });
+    this.evictOldestCacheEntryIfNeeded();
+    logger.debug(`[SESSION] Saved session ${sessionName} atomically and updated cache`);
   }
 
   /**
@@ -455,27 +472,10 @@ export class SessionManager implements IService {
    */
   async saveSession(sessionName: string, messages: readonly Message[]): Promise<boolean> {
     try {
-      // Load existing session or create new one
-      let session = await this.loadSession(sessionName);
-
-      if (!session) {
-        session = {
-          id: sessionName,
-          name: sessionName,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          working_dir: process.cwd(),
-          messages: [],
-          metadata: {},
-          active_plugins: [], // Initialize with empty array for backward compatibility
-        };
-      }
-
-      // Filter and update session messages
-      session.messages = this.filterMessagesForPersistence(messages);
-      session.updated_at = new Date().toISOString();
-
-      await this.saveSessionData(sessionName, session);
+      await this.flushPendingAutoSave(sessionName);
+      await this.mutateSession(sessionName, true, (session) => {
+        session.messages = this.filterMessagesForPersistence(messages);
+      });
       await this.cleanupOldSessions();
 
       return true;
@@ -788,22 +788,10 @@ export class SessionManager implements IService {
     metadata: Partial<Session['metadata']>
   ): Promise<boolean> {
     try {
-      const session = await this.loadSession(sessionName);
-      if (!session) return false;
-
-      session.metadata = {
-        ...session.metadata,
-        ...metadata,
-      };
-      session.updated_at = new Date().toISOString();
-
-      // Clear debounce cache since we're writing directly
-      // The session cache will be updated automatically by saveSessionData()
-      this.debouncedSession = null;
-      this.debouncedSessionName = null;
-
-      await this.saveSessionData(sessionName, session);
-      return true;
+      await this.flushPendingAutoSave(sessionName);
+      return await this.mutateSession(sessionName, false, (session) => {
+        session.metadata = { ...session.metadata, ...metadata };
+      });
     } catch (error) {
       logger.error(`Failed to update metadata for ${sessionName}:`, error);
       return false;
@@ -825,20 +813,10 @@ export class SessionManager implements IService {
     updates: Partial<Omit<Session, 'id' | 'name' | 'created_at'>>
   ): Promise<boolean> {
     try {
-      const session = await this.loadSession(sessionName);
-      if (!session) return false;
-
-      // Apply updates to session
-      Object.assign(session, updates);
-      session.updated_at = new Date().toISOString();
-
-      // Clear debounce cache since we're writing directly
-      // The session cache will be updated automatically by saveSessionData()
-      this.debouncedSession = null;
-      this.debouncedSessionName = null;
-
-      await this.saveSessionData(sessionName, session);
-      return true;
+      await this.flushPendingAutoSave(sessionName);
+      return await this.mutateSession(sessionName, false, (session) => {
+        Object.assign(session, updates);
+      });
     } catch (error) {
       logger.error(`Failed to update session ${sessionName}:`, error);
       return false;
@@ -904,33 +882,10 @@ export class SessionManager implements IService {
     if (!name) return false;
 
     try {
-      let session = await this.loadSession(name);
-
-      if (!session) {
-        // Create new session if it doesn't exist
-        session = {
-          id: name,
-          name,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          working_dir: process.cwd(),
-          messages: [],
-          todos: [],
-          metadata: {},
-          active_plugins: [], // Initialize with empty array for backward compatibility
-        };
-      }
-
-      session.todos = todos;
-      session.updated_at = new Date().toISOString();
-
-      // Clear debounce cache since we're writing directly
-      // The session cache will be updated automatically by saveSessionData()
-      this.debouncedSession = null;
-      this.debouncedSessionName = null;
-
-      await this.saveSessionData(name, session);
-      return true;
+      await this.flushPendingAutoSave(name);
+      return await this.mutateSession(name, true, (session) => {
+        session.todos = todos;
+      });
     } catch (error) {
       logger.error(`Failed to save todos for ${name}:`, error);
       return false;
@@ -942,19 +897,24 @@ export class SessionManager implements IService {
    * Used on cleanup to ensure no data loss
    */
   private async flushDebouncedSave(): Promise<void> {
-    // Cancel pending timer
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
+    await this.flushPendingAutoSave();
+  }
 
-    // Save if we have pending data
-    if (this.debouncedSession && this.debouncedSessionName) {
-      logger.debug('[SESSION] Flushing pending debounced save');
-      await this.saveSessionData(this.debouncedSessionName, this.debouncedSession);
-      this.debouncedSession = null;
-      this.debouncedSessionName = null;
-    }
+  /** Flush the pending message snapshot, optionally only for one session. */
+  private async flushPendingAutoSave(sessionName?: string): Promise<void> {
+    const pending = this.pendingAutoSave;
+    if (!pending || (sessionName && pending.sessionName !== sessionName)) return;
+
+    this.pendingAutoSave = null;
+    logger.debug('[SESSION] Flushing pending debounced save');
+    await this.mutateSession(pending.sessionName, true, (session) => {
+      Object.assign(session, pending.updates);
+      if (session.active_plugins === undefined) session.active_plugins = [];
+    });
   }
 
   /**
@@ -1001,50 +961,30 @@ export class SessionManager implements IService {
     }
 
     try {
-      // Use cached session if available to avoid redundant read
-      // Otherwise load from disk (first save in debounce window)
-      let session = this.debouncedSession && this.debouncedSessionName === name
-        ? this.debouncedSession
-        : await this.loadSession(name);
-
-      if (!session) {
-        session = {
-          id: name,
-          name,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          working_dir: process.cwd(),
-          messages: [],
-          todos: [],
-          metadata: {},
-          active_plugins: [], // Initialize with empty array for backward compatibility
-        };
+      // Session switches are rare, but a pending save for the previous session
+      // must be durable before the single debounce slot is reused.
+      if (this.pendingAutoSave && this.pendingAutoSave.sessionName !== name) {
+        await this.flushDebouncedSave();
       }
 
-      // Ensure backward compatibility - initialize active_plugins if undefined
-      if (session.active_plugins === undefined) {
-        session.active_plugins = [];
-      }
-
-      session.messages = filteredMessages;
+      const updates: Partial<Session> = {
+        ...(this.pendingAutoSave?.sessionName === name ? this.pendingAutoSave.updates : {}),
+        messages: filteredMessages,
+      };
       if (todos !== undefined) {
-        session.todos = todos;
+        updates.todos = todos;
       }
       if (idleMessages !== undefined && idleMessages.length > 0) {
         logger.debug(`[SESSION] Saving ${idleMessages.length} idle messages: ${JSON.stringify(idleMessages.slice(0, 3))}...`);
-        session.idle_messages = idleMessages;
+        updates.idle_messages = idleMessages;
       }
       if (projectContext !== undefined) {
-        session.project_context = projectContext;
+        updates.project_context = projectContext;
       }
       if (additionalDirectories !== undefined) {
-        session.additional_directories = additionalDirectories;
+        updates.additional_directories = additionalDirectories;
       }
-      session.updated_at = new Date().toISOString();
-
-      // Cache session in memory for debounced save
-      this.debouncedSession = session;
-      this.debouncedSessionName = name;
+      this.pendingAutoSave = { sessionName: name, updates };
 
       // Cancel existing timer
       if (this.debounceTimer) {
@@ -1055,21 +995,11 @@ export class SessionManager implements IService {
       this.debounceTimer = setTimeout(async () => {
         this.debounceTimer = null;
 
-        // Save the cached session
-        const sessionToSave = this.debouncedSession;
-        const sessionName = this.debouncedSessionName;
-
-        // Clear cache
-        this.debouncedSession = null;
-        this.debouncedSessionName = null;
-
-        if (sessionToSave && sessionName) {
-          try {
-            await this.saveSessionData(sessionName, sessionToSave);
-            logger.debug('[SESSION] Debounced save completed');
-          } catch (error) {
-            logger.error(`[SESSION] Failed to save debounced session ${sessionName}:`, error);
-          }
+        try {
+          await this.flushPendingAutoSave(name);
+          logger.debug('[SESSION] Debounced save completed');
+        } catch (error) {
+          logger.error(`[SESSION] Failed to save debounced session ${name}:`, error);
         }
       }, this.DEBOUNCE_DELAY_MS);
 

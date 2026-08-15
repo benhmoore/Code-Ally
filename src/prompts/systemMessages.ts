@@ -16,7 +16,7 @@ import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { logger } from '../services/Logger.js';
 import { getGitBranch } from '../utils/gitUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
-import { getProfileInstructionsFile, resolveProjectInstructionsFile } from '../config/paths.js';
+import { getProfileInstructionsFile, resolveProjectInstructionFiles } from '../config/paths.js';
 import type { TokenManager } from '../agent/TokenManager.js';
 import type { ToolResultManager } from '../services/ToolResultManager.js';
 import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
@@ -34,7 +34,7 @@ const ALLY_IDENTITY = `You are Ally, an AI coding assistant. Use tools to comple
 const BEHAVIORAL_DIRECTIVES = `**After tool calls, always provide a text response summarizing what you did. Never end a turn with only tool calls.**
 
 Critical:
-- **Clarify before acting**: When scope, approach, technology choices, or requirements are ambiguous, use ask-user-question BEFORE exploring, planning, or implementing. Never assume — the structured choices let users respond quickly.
+- Make reasonable, reversible assumptions and state them when useful. Ask the user only when ambiguity would materially change the result or authorize a consequential action.
 - Read files before editing them. Test/lint after code changes.
 - Use tools yourself — never instruct the user to run something you can do.
 - Read the system_reminder field in tool results and act on it.
@@ -44,17 +44,17 @@ Completing a task:
 - When the change is made and verified (tests/lint pass), stop and report concisely: what changed, what you verified, and any caveats. Don't keep working past the goal.
 
 Working efficiently:
-- Delegate exploration and multi-step work to agents to preserve your context.
+- Delegate only when isolated parallel work or specialized context clearly improves the task; direct work is preferable for focused changes.
 - Batch independent tool calls when it's efficient.
 - After a failure, retry with adjustments. If a tool call fails validation, read the error, fix the named parameter, and retry — never repeat the identical failing call.
-- Trust specialized agent results rather than re-verifying everything yourself.
+- Verify consequential delegated findings before changing files or reporting completion.
 - ALWAYS provide the description parameter (5-10 words) for tool calls — it's shown in the UI to help users track progress.
 
 Todos:
 - For tasks with 3+ distinct steps, call todo-write first to lay out the plan. Keep exactly one item in_progress at a time, and mark it completed the moment it's done — don't batch completions.
 
 Output formatting:
-- Be concise (1-3 sentences) in conversation; a final answer should be complete but never padded.
+- Match detail to the task. Keep progress updates brief and make final answers complete without padding.
 - NEVER use emoji — this is a professional development tool, not a chat app.
 - Use markdown: *italic*, ~~strikethrough~~, **bold**. For emphasis use color tags: <red>, <green>, <yellow>, <cyan>, <blue>, <orange>.
 - Avoid LaTeX (e.g., $$, \\frac{}, \\LaTeX); use plain text or markdown for mathematical expressions.
@@ -62,8 +62,8 @@ Output formatting:
 User interjections: Respond directly to what they said, then continue work incorporating their guidance.`;
 
 // Agent delegation guidelines for main assistant
-const AGENT_DELEGATION_GUIDELINES = `CRITICAL - Context Preservation:
-Your context budget is limited and precious. Agents work in isolated contexts, preserving yours for coordination. For exploration, analysis, or multi-step work, prefer agents over long direct grep/read sequences. If you have a question and don't immediately know the answer or where to find it, use an agent. (Which agent to use for what is covered per-tool below.)
+const AGENT_DELEGATION_GUIDELINES = `Agent delegation:
+Agents work in isolated contexts. Use them for genuinely independent investigations or specialized work, not as a default substitute for reading a known file or completing a cohesive change yourself.
 
 CRITICAL - Agent Context Isolation:
 Agents CANNOT see the current conversation. They ONLY receive the task_prompt parameter, so it MUST contain ALL necessary context — file paths, error messages, requirements, background. Never reference "the bug we discussed" or "the file mentioned earlier"; agents can't see that.
@@ -247,15 +247,13 @@ ${profileContent}`;
   let allyMdContent = '';
   if (includeProjectInstructions) {
     try {
-      const projectInstructionsPath = resolveProjectInstructionsFile(workingDir);
-      if (projectInstructionsPath) {
-        const projectContent = fs.readFileSync(projectInstructionsPath, 'utf-8').trim();
-        if (projectContent) {
-          allyMdContent = `
-- Project Instructions (${path.basename(projectInstructionsPath)}):
-${projectContent}`;
-        }
-      }
+      const instructionFiles = resolveProjectInstructionFiles(workingDir);
+      const sections = instructionFiles.map((instructionPath) => {
+        const projectContent = fs.readFileSync(instructionPath, 'utf-8').trim();
+        const relativePath = path.relative(workingDir, instructionPath) || path.basename(instructionPath);
+        return projectContent ? `### ${relativePath}\n${projectContent}` : '';
+      }).filter(Boolean);
+      if (sections.length > 0) allyMdContent = `\n- Project Instructions (root to leaf):\n${sections.join('\n\n')}`;
     } catch (error) {
       logger.warn('Failed to read project instructions:', formatError(error));
     }
@@ -641,7 +639,7 @@ export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt
   });
 
   // Build the base prompt with behavioral directives and general guidelines
-  let promptWithDirectives = `**Primary Identity:**
+  const promptWithDirectives = `**Primary Identity:**
 ${agentSystemPrompt}
 
 ${BEHAVIORAL_DIRECTIVES}

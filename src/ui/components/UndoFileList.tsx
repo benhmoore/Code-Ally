@@ -42,12 +42,13 @@ export const UndoFileList: React.FC<UndoFileListProps> = ({
   request,
   visible = true,
 }) => {
+  const terminalWidth = useContentWidth();
+
   if (!visible) {
     return null;
   }
 
   const { fileList, selectedIndex } = request;
-  const terminalWidth = useContentWidth();
   const divider = createDivider(terminalWidth);
 
   return (

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -26,11 +26,14 @@ describe('ScheduledTasksTool', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await ServiceRegistry.getInstance().shutdown();
     await fs.rm(dir, { recursive: true, force: true });
   });
 
   it('creates one-off tasks from local wall-clock date and time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     const result = await tool.execute({
       action: 'create',
       title: 'Alert at 2:10 PM',

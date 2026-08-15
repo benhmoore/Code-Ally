@@ -13,10 +13,21 @@ import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
 import { FormManager, FormCancelledError } from '../services/FormManager.js';
-import { promises as fs } from 'fs';
 import { createUnifiedDiff } from '../utils/diffUtils.js';
 import { stripDisplayOnlyFields } from '../utils/toolResultContent.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { atomicWriteFile } from '../utils/atomicFile.js';
+import { fileMutationCoordinator } from '../services/FileMutationCoordinator.js';
+import { readFile } from 'node:fs/promises';
+import { assertPathWithinAllowedDirectories, DirectoryTraversalError } from '../security/PathSecurity.js';
+
+interface ToolInvocationState {
+  callId?: string;
+  abortSignal?: AbortSignal;
+  executionContext?: ToolExecutionContext;
+  params: Record<string, any>;
+}
 
 export abstract class BaseTool {
   /**
@@ -74,6 +85,13 @@ export abstract class BaseTool {
    * with result.content, avoiding duplicate output in the UI.
    */
   readonly streamsOutput: boolean = false;
+
+  /**
+   * Whether conventional path arguments refer to the local filesystem.
+   * Remote/plugin tools must opt out because their `path` values belong to the
+   * remote service and cannot be authorized against local workspace roots.
+   */
+  protected readonly usesLocalFileSystem: boolean = true;
 
   /**
    * Whether this tool should appear in the conversation UI
@@ -205,10 +223,8 @@ export abstract class BaseTool {
    */
   protected formManager?: FormManager;
 
-  /**
-   * Current parameters (for error context)
-   */
-  protected currentParams: Record<string, any> = {};
+  /** Per-call state for shared tool instances. */
+  private readonly invocationState = new AsyncLocalStorage<ToolInvocationState>();
 
   constructor(activityStream: ActivityStream) {
     this.activityStream = activityStream;
@@ -237,17 +253,40 @@ export abstract class BaseTool {
   /**
    * Current tool call ID (set by ToolOrchestrator for streaming output)
    */
-  protected currentCallId?: string;
+  protected get currentCallId(): string | undefined {
+    return this.invocationState.getStore()?.callId;
+  }
 
   /**
    * Current abort signal (set during execute for access in executeImpl)
    */
-  protected currentAbortSignal?: AbortSignal;
+  protected get currentAbortSignal(): AbortSignal | undefined {
+    return this.invocationState.getStore()?.abortSignal;
+  }
 
   /**
    * Current execution context (set during execute for access in executeImpl)
    */
-  protected currentExecutionContext?: ToolExecutionContext;
+  protected get currentExecutionContext(): ToolExecutionContext | undefined {
+    return this.invocationState.getStore()?.executionContext;
+  }
+
+  protected get currentParams(): Readonly<Record<string, any>> {
+    return this.invocationState.getStore()?.params ?? {};
+  }
+
+  /** Run preview logic with the same invocation isolation as execution. */
+  async runPreview(
+    args: any,
+    callId?: string,
+    executionContext?: ToolExecutionContext
+  ): Promise<void> {
+    await this.validateFilesystemArgs(args);
+    await this.invocationState.run(
+      { callId, executionContext, params: {} },
+      () => this.previewChanges(args, callId)
+    );
+  }
 
   /**
    * Preview changes before execution (e.g., show diff for file edits)
@@ -260,8 +299,7 @@ export abstract class BaseTool {
    * @param args - Tool-specific parameters
    * @param callId - Tool call ID for event emission
    */
-  async previewChanges(_args: any, callId?: string): Promise<void> {
-    this.currentCallId = callId;
+  async previewChanges(_args: any, _callId?: string): Promise<void> {
     // Default: no preview
     // Override in subclasses that need to show previews
   }
@@ -288,38 +326,48 @@ export abstract class BaseTool {
     isContextFile: boolean = false,
     executionContext?: ToolExecutionContext
   ): Promise<ToolResult> {
-    this.currentCallId = callId;
-    this.currentAbortSignal = abortSignal;
-    this.currentExecutionContext = executionContext;
+    return this.invocationState.run(
+      { callId, abortSignal, executionContext, params: {} },
+      async () => {
+        try {
+          await this.validateFilesystemArgs(args);
+          if (abortSignal?.aborted) {
+            throw new Error('AbortError: Tool execution was interrupted');
+          }
 
-    try {
-      // Check if already aborted before starting
-      if (abortSignal?.aborted) {
-        throw new Error('AbortError: Tool execution was interrupted');
+          return await this.executeImpl(args, callId, isUserInitiated, isContextFile, executionContext);
+        } catch (error) {
+          if (error instanceof DirectoryTraversalError) {
+            return this.formatErrorResponse(error.message, 'security_error');
+          }
+          if (error instanceof Error &&
+              (error.message?.includes('AbortError') || abortSignal?.aborted)) {
+            return this.formatErrorResponse(
+              'Tool execution interrupted by user',
+              'interrupted'
+            );
+          }
+
+          return this.formatErrorResponse(
+            formatError(error),
+            'system_error'
+          );
+        }
       }
+    );
+  }
 
-      const result = await this.executeImpl(args, callId, isUserInitiated, isContextFile, executionContext);
+  private async validateFilesystemArgs(args: Record<string, any>): Promise<void> {
+    if (!this.usesLocalFileSystem) return;
 
-      return result;
-    } catch (error) {
-      // Detect abort errors
-      if (error instanceof Error &&
-          (error.message?.includes('AbortError') || abortSignal?.aborted)) {
-        return this.formatErrorResponse(
-          'Tool execution interrupted by user',
-          'interrupted'
-        );
+    for (const key of ['file_path', 'file_paths', 'path', 'working_dir', 'directory']) {
+      const value = args[key];
+      const paths = Array.isArray(value) ? value : [value];
+      for (const candidate of paths) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+          await assertPathWithinAllowedDirectories(candidate);
+        }
       }
-
-      const errorResult = this.formatErrorResponse(
-        formatError(error),
-        'system_error'
-      );
-      return errorResult;
-    } finally {
-      this.currentCallId = undefined;
-      this.currentAbortSignal = undefined;
-      this.currentExecutionContext = undefined;
     }
   }
 
@@ -529,7 +577,11 @@ export abstract class BaseTool {
         filtered[key] = value;
       }
     }
-    this.currentParams = filtered;
+    const state = this.invocationState.getStore();
+    if (!state) {
+      throw new Error(`${this.name}: captureParams() called outside an invocation`);
+    }
+    state.params = filtered;
   }
 
   /**
@@ -850,28 +902,24 @@ export abstract class BaseTool {
     const { absolutePath, originalContent, modifiedContent, operationType, showUpdatedContext, readStateManager, executionContext } = options;
     const readScopeId = this.getReadScopeId(executionContext);
 
-    // Write modified content
-    await fs.writeFile(absolutePath, modifiedContent, 'utf-8');
+    const patchNumber = await fileMutationCoordinator.run(absolutePath, async () => {
+      const currentContent = await readFile(absolutePath, 'utf-8');
+      if (currentContent !== originalContent) {
+        throw new Error(`File changed while ${this.name} was preparing the edit. Re-read ${absolutePath} and retry.`);
+      }
+      await atomicWriteFile(absolutePath, modifiedContent);
+      return this.captureOperationPatch(
+        operationType,
+        absolutePath,
+        originalContent,
+        modifiedContent
+      );
+    });
 
-    // Clear read state for the file
-    if (readStateManager) {
-      readStateManager.clearFile(absolutePath);
-    }
+    if (readStateManager) readStateManager.clearFile(absolutePath);
 
-    // Invalidate read cache for the modified file
     const cacheRegistry = this.getExecutionRegistry(executionContext);
-    const readCache = cacheRegistry.get<{ invalidate(path: string): void }>('read_cache');
-    if (readCache) {
-      readCache.invalidate(absolutePath);
-    }
-
-    // Capture patch for undo
-    const patchNumber = await this.captureOperationPatch(
-      operationType,
-      absolutePath,
-      originalContent,
-      modifiedContent
-    );
+    cacheRegistry.get<{ invalidate(path: string): void }>('read_cache')?.invalidate(absolutePath);
 
     // Generate diff
     const diff = createUnifiedDiff(originalContent, modifiedContent, absolutePath);

@@ -152,6 +152,21 @@ describe('ConfigManager', () => {
       expect(configManager.getValue('auto_confirm')).toBe(true);
     });
 
+    it('encrypts and redacts provider credentials while preserving runtime access', async () => {
+      await configManager.setValue('api_key', 'sk-test-secret-value');
+
+      const saved = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+      expect(saved.api_key).toMatch(/^__ENCRYPTED__:/);
+      expect(JSON.stringify(saved)).not.toContain('sk-test-secret-value');
+      expect(configManager.getValue('api_key')).toBe('sk-test-secret-value');
+      expect(configManager.getDisplayValue('api_key')).toBe('[REDACTED]');
+      expect(configManager.exportConfig()).not.toContain('sk-test-secret-value');
+
+      const reloaded = new ConfigManager(configPath);
+      await reloaded.initialize();
+      expect(reloaded.getValue('api_key')).toBe('sk-test-secret-value');
+    });
+
     it('should reject invalid types', async () => {
       await expect(
         configManager.setValue('temperature', 'invalid' as any)

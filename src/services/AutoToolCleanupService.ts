@@ -10,6 +10,7 @@ import { Message, BackgroundTask } from '../types/index.js';
 import { CancellableService } from '../types/CancellableService.js';
 import { POLLING_INTERVALS, API_TIMEOUTS, AUTO_TOOL_CLEANUP } from '../config/constants.js';
 import type { SessionManager } from './SessionManager.js';
+import { logger } from './Logger.js';
 
 /**
  * Configuration for AutoToolCleanupService
@@ -197,8 +198,8 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
     this.analyzeAndStoreAsync(sessionName, messages)
       .catch(error => {
         // Ignore abort/interrupt errors (expected when cancelled)
-        if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
-        } else {
+        if (error.name !== 'AbortError' && !error.message?.includes('abort') && !error.message?.includes('interrupt')) {
+          logger.warn(`[AUTO_TOOL_CLEANUP] Background analysis failed for '${sessionName}':`, error);
         }
       })
       .finally(() => {
@@ -223,28 +224,20 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
 
 
     // Store pending cleanups in session metadata
-    try {
-      const session = await this.sessionManager.loadSession(sessionName);
-      if (!session) {
-        return;
-      }
-
-      // Merge with existing pending cleanups
-      const existingCleanups = session.metadata?.pendingToolCleanups || [];
-      const allCleanups = [...new Set([...existingCleanups, ...analysis.irrelevantToolCallIds])];
-
-      // Use SessionManager's updateMetadata to ensure serialized writes
-      const success = await this.sessionManager.updateMetadata(sessionName, {
-        pendingToolCleanups: allCleanups,
-        lastCleanupAnalysisAt: Date.now(),
-      });
-
-      if (success) {
-      } else {
-      }
-    } catch (error) {
-      throw error;
+    const session = await this.sessionManager.loadSession(sessionName);
+    if (!session) {
+      return;
     }
+
+    // Merge with existing pending cleanups
+    const existingCleanups = session.metadata?.pendingToolCleanups || [];
+    const allCleanups = [...new Set([...existingCleanups, ...analysis.irrelevantToolCallIds])];
+
+    // Use SessionManager's updateMetadata to ensure serialized writes
+    await this.sessionManager.updateMetadata(sessionName, {
+      pendingToolCleanups: allCleanups,
+      lastCleanupAnalysisAt: Date.now(),
+    });
   }
 
   /**

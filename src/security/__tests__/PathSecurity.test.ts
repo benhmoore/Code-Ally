@@ -9,11 +9,13 @@ import { cwd } from 'process';
 import path from 'path';
 import {
   isPathWithinCwd,
+  isPathWithinAllowedDirectories,
   hasPathTraversalPatterns,
   DirectoryTraversalError,
   PermissionDeniedError,
 } from '../PathSecurity.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import { mkdtemp, symlink, rm } from 'node:fs/promises';
 
 describe('PathSecurity', () => {
   let workingDir: string;
@@ -33,6 +35,17 @@ describe('PathSecurity', () => {
   });
 
   describe('isPathWithinCwd', () => {
+    it('rejects a symlink inside the workspace that resolves outside it', async () => {
+      const inside = await mkdtemp(path.join(workingDir, '.path-security-'));
+      await symlink('/etc/passwd', path.join(inside, 'escape'));
+
+      try {
+        expect(await isPathWithinAllowedDirectories(path.join(inside, 'escape'))).toBe(false);
+      } finally {
+        await rm(inside, { recursive: true, force: true });
+      }
+    });
+
     it('should allow paths within the current working directory', () => {
       expect(isPathWithinCwd('./src')).toBe(true);
       expect(isPathWithinCwd('src/agent')).toBe(true);

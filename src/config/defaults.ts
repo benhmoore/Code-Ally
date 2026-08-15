@@ -46,6 +46,7 @@ export const DEFAULT_CONFIG: Config = {
   bash_timeout: 30, // Bash command timeout in seconds
   auto_confirm: false, // Skip permission prompts (dangerous)
   parallel_tools: true, // Enable parallel tool execution
+  stream_responses: true, // Stream main-agent responses independently of tool parallelism
   tool_call_activity_timeout: 120, // Timeout for agents without tool call activity (seconds)
 
   // ==========================================
@@ -150,6 +151,7 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   bash_timeout: 'number',
   auto_confirm: 'boolean',
   parallel_tools: 'boolean',
+  stream_responses: 'boolean',
   tool_call_activity_timeout: 'number',
 
   // UI Preferences

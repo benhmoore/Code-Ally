@@ -63,6 +63,7 @@ import {
   createSystemReminder,
 } from '../utils/messageUtils.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
+import { TurnController, type TurnSnapshot } from './TurnController.js';
 
 /**
  * Minimal interface for parent agent references
@@ -133,33 +134,12 @@ export interface AgentConfig {
   taskPrompt?: string;
   /** Application configuration */
   config: Config;
-  /**
-   * Parent tool call ID (for nested agents)
-   * @deprecated Use execution context parameter in sendMessage() instead.
-   *             This property is maintained for backward compatibility but will
-   *             be removed in a future version. Pass via AgentExecutionContext.
-   */
-  parentCallId?: string;
   /** Parent agent instance (for activity monitor pause/resume) */
   parentAgent?: IParentAgent;
   /** Required tool calls that must be executed before agent can exit */
   requiredToolCalls?: string[];
   /** Agent requirements specification (new requirements system) */
   requirements?: import('./RequirementTracker.js').AgentRequirements;
-  /**
-   * Maximum duration in minutes the agent should run before wrapping up (optional)
-   * @deprecated Use execution context parameter in sendMessage() instead.
-   *             This property is maintained for backward compatibility but will
-   *             be removed in a future version. Pass via AgentExecutionContext.
-   */
-  maxDuration?: number;
-  /**
-   * Dynamic thoroughness level for agent execution (for regeneration in agent-ask): 'quick', 'medium', 'very thorough', 'uncapped'
-   * @deprecated Use execution context parameter in sendMessage() instead.
-   *             This property is maintained for backward compatibility but will
-   *             be removed in a future version. Pass via AgentExecutionContext.
-   */
-  thoroughness?: string;
   /** Internal: Unique key for pool matching (used by AgentTool to distinguish custom agents) */
   _poolKey?: string;
   /** Directory to restrict this agent's file operations to (optional) */
@@ -258,10 +238,11 @@ export class Agent {
   // Number of internal generation recoveries in the current turn.
   private recoveryAttempts: number = 0;
 
-  // Per-turn LLM round-trip backstop. Counts every call to getLLMResponse within a
-  // turn (productive tool loop + all retry/continuation paths). Reset at the start
-  // of each user turn; enforced in getLLMResponse to stop runaway loops.
-  private llmRoundTripsThisTurn: number = 0;
+  private readonly turnController = new TurnController({
+    maxModelCalls: AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN,
+    maxToolCalls: AGENT_CONFIG.MAX_TOOL_CALLS_PER_TURN,
+  });
+  private activeExecutionContext: AgentExecutionContext = {};
 
   // Cleanup queue - tool call IDs to remove at end of turn
   // cleanup-call queues IDs here, they're removed after model completes response
@@ -303,7 +284,7 @@ export class Agent {
 
     // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'parentCallId:', config.parentCallId || 'none', 'depth:', this.agentDepth, 'scopedRegistry:', this.scopedRegistry ? 'yes' : 'no');
+    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created - isSpecialized:', config.isSpecializedAgent || false, 'depth:', this.agentDepth, 'scopedRegistry:', this.scopedRegistry ? 'yes' : 'no');
 
     // Initialize parent agent reference from config during construction (eager initialization)
     // This is set directly from the config parameter when the agent is created by AgentTool,
@@ -322,12 +303,8 @@ export class Agent {
     });
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'ConversationManager created');
 
-    // Connect ToolManager to ConversationManager for file tracking
-    this.toolManager.setConversationManager(this.conversationManager);
-
     // Create turn manager
     this.turnManager = new TurnManager({
-      maxDuration: config.maxDuration,
       instanceId: this.instanceId,
     });
 
@@ -883,15 +860,13 @@ export class Agent {
     executionContext?: AgentExecutionContext,
     images?: string[]
   ): Promise<string> {
-    // Extract execution context (prefer parameter, fallback to config for backward compatibility)
-    const parentCallId = executionContext?.parentCallId ?? this.config.parentCallId;
-    const maxDuration = executionContext?.maxDuration ?? this.config.maxDuration;
-    const thoroughness = executionContext?.thoroughness ?? this.config.thoroughness;
+    const { parentCallId, maxDuration, thoroughness } = executionContext ?? {};
+    this.activeExecutionContext = { parentCallId, maxDuration, thoroughness };
 
-    // Update ToolOrchestrator with fresh parentCallId for pooled agent reuse
-    if (parentCallId) {
-      this.toolOrchestrator.setParentCallId(parentCallId);
-    }
+    // Reset all invocation-scoped state when a pooled agent is reused.
+    this.toolOrchestrator.setParentCallId(parentCallId);
+    this.turnManager.setMaxDuration(maxDuration);
+    if (this.config.isSpecializedAgent) this.turnManager.resetTurn();
 
     // Runtime assertion: catch depth corruption bugs early
     // This should never happen if AgentTool validates depth correctly,
@@ -927,8 +902,7 @@ export class Agent {
     // Reset internal recovery tracking on new user input
     this.recoveryAttempts = 0;
 
-    // Reset the per-turn LLM round-trip backstop counter
-    this.llmRoundTripsThisTurn = 0;
+    this.turnController.start();
 
     // Reset exploratory tool streak on new user input
     this.toolOrchestrator.resetExploratoryStreak();
@@ -1074,11 +1048,13 @@ export class Agent {
       );
 
       this.emitAgentEnd(false, undefined, finalResponse);
+      this.turnController.finish('completed');
       return finalResponse;
     } catch (error) {
       logger.debug('[AGENT]', this.instanceId, 'sendMessage caught exception:', error instanceof Error ? error.message : String(error));
       // Mark delegation as failed for parent activity monitoring
       delegationSucceeded = false;
+      this.turnController.finish(isPermissionDeniedError(error) ? 'interrupted' : 'failed');
 
       // Handle permission denial - check if user provided instructions via INSTRUCT option
       if (isPermissionDeniedError(error)) {
@@ -1224,6 +1200,7 @@ export class Agent {
    * @returns AbortSignal for the tool execution
    */
   private startToolExecution(): AbortSignal {
+    this.turnController.beginToolExecution();
     return this.interruptionManager.startToolExecution();
   }
 
@@ -1255,34 +1232,6 @@ export class Agent {
   }
 
   /**
-   * Set the maximum duration for this agent in minutes
-   * Allows updating the time budget for individual turns (e.g., in agent-ask)
-   * @param minutes - Maximum duration in minutes
-   */
-  setMaxDuration(minutes: number | undefined): void {
-    this.turnManager.setMaxDuration(minutes);
-  }
-
-  /**
-   * Set the thoroughness level for this agent
-   * Used by agent-ask to update thoroughness for follow-up interactions
-   * @param thoroughness - Thoroughness level: 'quick', 'medium', 'very thorough', or 'uncapped'
-   */
-  setThoroughness(thoroughness: string | undefined): void {
-    // Validate thoroughness value
-    if (thoroughness !== undefined) {
-      const validValues = ['quick', 'medium', 'very thorough', 'uncapped'];
-      if (!validValues.includes(thoroughness)) {
-        logger.warn('[AGENT_THOROUGHNESS]', this.instanceId, 'Invalid thoroughness value:', thoroughness, '- ignoring');
-        return;
-      }
-    }
-
-    this.config.thoroughness = thoroughness;
-    logger.debug('[AGENT_THOROUGHNESS]', this.instanceId, 'Set thoroughness to:', thoroughness || 'undefined');
-  }
-
-  /**
    * Get response from LLM
    *
    * @param executionContext - Execution context for this invocation
@@ -1293,12 +1242,12 @@ export class Agent {
     // emitting empty/malformed output or never satisfies a requirement) before it
     // fills the context window. Returns a plain text response with no tool calls,
     // so the loop terminates gracefully on the next processing pass.
-    this.llmRoundTripsThisTurn++;
-    if (this.llmRoundTripsThisTurn > AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN) {
+    if (!this.turnController.beginModelCall()) {
+      const snapshot = this.turnController.snapshot();
       logger.warn('[AGENT]', this.instanceId, `Reached per-turn round-trip limit (${AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN}); stopping to avoid an unbounded loop`);
       return {
         role: 'assistant',
-        content: `I've reached the maximum number of model round-trips for this turn (${AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN}) and am stopping to avoid an unbounded loop. The task may be incomplete — please review what was done and let me know how you'd like to proceed.`,
+        content: `I stopped because this turn reached its ${snapshot.terminationReason === 'tool_budget' ? 'tool-call' : 'model-call'} safety budget. The task may be incomplete; review the completed work before continuing.`,
       };
     }
 
@@ -1441,7 +1390,7 @@ export class Agent {
       const response = await this.modelClient.send(sentMessages, {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
-        stream: !this.config.isSpecializedAgent && this.appConfig.parallel_tools,
+        stream: !this.config.isSpecializedAgent && this.appConfig.stream_responses,
         // Pass parentCallId for associating thinking events with tool calls
         parentId: executionContext.parentCallId,
         // Route thinking/assistant events to THIS agent's stream. For a sub-agent
@@ -1722,11 +1671,12 @@ export class Agent {
       detectCycles: (toolCalls) => this.loopDetector.detectCycles(toolCalls),
       recordToolCalls: (toolCalls, results) => {
         this.loopDetector.recordToolCalls(toolCalls, results);
+        this.turnController.recordToolCalls(toolCalls.length);
         // Increment checkpoint counters after successful tool execution
         this.checkpointTracker.incrementToolCalls(toolCalls.length);
       },
       clearCyclesIfBroken: () => this.loopDetector.clearCyclesIfBroken(),
-      clearCurrentTurn: () => this.toolManager.clearCurrentTurn(),
+      clearCurrentTurn: () => this.toolManager.clearCurrentTurn(this.instanceId),
       startToolExecution: () => this.startToolExecution(),
       getContextUsagePercentage: () => this.tokenManager.getContextUsagePercentage(),
       contextWarningThreshold: CONTEXT_THRESHOLDS.WARNING,
@@ -1742,6 +1692,10 @@ export class Agent {
         }
       },
     };
+  }
+
+  getTurnSnapshot(): TurnSnapshot {
+    return this.turnController.snapshot();
   }
 
   /**
@@ -1799,7 +1753,7 @@ export class Agent {
       data: {
         contextUsage,
         // Include parentCallId for specialized agents so UI can update the tool call
-        parentCallId: this.config.isSpecializedAgent ? this.config.parentCallId : undefined,
+        parentCallId: this.config.isSpecializedAgent ? this.activeExecutionContext.parentCallId : undefined,
       },
     });
 
@@ -1937,7 +1891,7 @@ export class Agent {
       isSpecializedAgent: this.config.isSpecializedAgent || false,
       compactThreshold: this.appConfig.compact_threshold,
       generateId: () => this.generateId(),
-      parentCallId: this.config.parentCallId,
+      parentCallId: this.activeExecutionContext.parentCallId,
       signal: this.interruptionManager.beginRequest(),
     }, {
       ...options,
@@ -2013,7 +1967,7 @@ export class Agent {
       isSpecializedAgent: this.config.isSpecializedAgent || false,
       compactThreshold: this.appConfig.compact_threshold,
       generateId: () => this.generateId(),
-      parentCallId: this.config.parentCallId,
+      parentCallId: this.activeExecutionContext.parentCallId,
       signal: this.interruptionManager.beginRequest(),
     });
 

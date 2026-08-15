@@ -9,6 +9,8 @@ Thanks for your interest in contributing to Code Ally! This document provides gu
 3. Install dependencies: `npm install`
 4. Create a branch: `git checkout -b feature/your-feature`
 
+Node.js 20.9 or newer is required.
+
 ## Development
 
 ```bash
@@ -16,13 +18,15 @@ npm run dev        # Development mode with watch
 npm run build      # Build the project
 npm test           # Run tests
 npm run type-check # TypeScript type checking
+npm run lint       # ESLint, including React hook safety
+npm run check      # Full local validation suite
 ```
 
 ## Code Style
 
 - Use TypeScript for all new code
 - Follow existing patterns in the codebase
-- Run type checking before submitting: `npm run type-check`
+- Run `npm run check` before submitting
 
 ## Pull Requests
 

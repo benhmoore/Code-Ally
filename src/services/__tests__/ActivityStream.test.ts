@@ -440,30 +440,28 @@ describe('ActivityStream', () => {
       expect(parentCallback).not.toHaveBeenCalled();
     });
 
-    it('should pass EventSubscriptionManager to scoped streams', () => {
-      const mockManager = {
-        dispatch: vi.fn(),
-      } as unknown as EventSubscriptionManager;
-
-      const rootStream = new ActivityStream(undefined, mockManager);
-      const scopedStream = rootStream.createScoped('parent-123');
-
-      // Scoped streams should NOT forward to EventSubscriptionManager
-      // (only root stream forwards)
-      const callback = vi.fn();
-      scopedStream.subscribe(ActivityEventType.TOOL_CALL_START, callback);
-
-      const event: ActivityEvent = {
+    it('shares monotonic ordering and replay history with scoped streams', () => {
+      const scopedStream = stream.createScoped('parent-123');
+      const first: ActivityEvent = {
         id: '1',
         type: ActivityEventType.TOOL_CALL_START,
         timestamp: Date.now(),
         data: { toolName: 'test' },
       };
+      const second: ActivityEvent = {
+        id: '2',
+        type: ActivityEventType.TOOL_CALL_END,
+        timestamp: Date.now(),
+        data: { success: true },
+      };
 
-      scopedStream.emit(event);
+      stream.emit(first);
+      scopedStream.emit(second);
 
-      // EventSubscriptionManager should NOT be called for scoped streams
-      expect(mockManager.dispatch).not.toHaveBeenCalled();
+      expect(first.sequence).toBe(1);
+      expect(second.sequence).toBe(2);
+      expect(second.parentId).toBe('parent-123');
+      expect(stream.getRecentEvents()).toEqual([first, second]);
     });
   });
 

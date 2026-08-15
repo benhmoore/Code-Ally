@@ -263,7 +263,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         return [...prev, { message, timestamp }].sort((a, b) => a.timestamp - b.timestamp);
       });
     }
-  }, [toolCall.id]);
+  });
 
   // Subscribe to INTERJECTION_ACKNOWLEDGMENT events to capture acknowledgments for this tool call
   useActivityEvent(ActivityEventType.INTERJECTION_ACKNOWLEDGMENT, (event) => {
@@ -286,7 +286,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         return [...prev, { message, timestamp }].sort((a, b) => a.timestamp - b.timestamp);
       });
     }
-  }, [toolCall.id]);
+  });
 
   // Calculate duration (no live updates - just shows duration at render time)
   // Use executionStartTime if available (excludes user permission deliberation time)

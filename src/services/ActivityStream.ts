@@ -11,16 +11,25 @@ import { logger } from './Logger.js';
 export class ActivityStream {
   private listeners: Map<ActivityEventType | string, Set<ActivityCallback>>;
   private parentId?: string;
+  private readonly state: {
+    sequence: number;
+    recentEvents: ActivityEvent[];
+  };
 
   /**
    * Maximum listeners allowed per event type before warning about potential memory leak
    * This threshold helps detect scenarios where listeners accumulate without cleanup
    */
   private readonly MAX_LISTENERS_PER_TYPE = 50;
+  private readonly MAX_RECENT_EVENTS = 500;
 
-  constructor(parentId?: string) {
+  constructor(
+    parentId?: string,
+    state?: { sequence: number; recentEvents: ActivityEvent[] }
+  ) {
     this.listeners = new Map();
     this.parentId = parentId;
+    this.state = state ?? { sequence: 0, recentEvents: [] };
   }
 
   /**
@@ -31,7 +40,7 @@ export class ActivityStream {
    * - Cached listener lookups to avoid repeated Map access
    * - Centralized error handling
    */
-  emit(event: ActivityEvent): void {
+  emit<T extends ActivityEventType>(event: ActivityEvent<T>): void {
     // Debug logging for ASSISTANT_MESSAGE_COMPLETE events
     if (event.type === ActivityEventType.ASSISTANT_MESSAGE_COMPLETE) {
       logger.debug('[ACTIVITY_STREAM]', 'emit() called for', event.type);
@@ -41,6 +50,19 @@ export class ActivityStream {
     // If this is a scoped stream, ensure the event has the parent ID
     if (this.parentId && !event.parentId) {
       event.parentId = this.parentId;
+    }
+
+    if (event.sequence === undefined) {
+      event.sequence = ++this.state.sequence;
+    } else {
+      this.state.sequence = Math.max(this.state.sequence, event.sequence);
+    }
+    this.state.recentEvents.push(event as unknown as ActivityEvent);
+    if (this.state.recentEvents.length > this.MAX_RECENT_EVENTS) {
+      this.state.recentEvents.splice(
+        0,
+        this.state.recentEvents.length - this.MAX_RECENT_EVENTS
+      );
     }
 
     // Single-pass iteration: collect both type-specific and wildcard listeners
@@ -58,7 +80,7 @@ export class ActivityStream {
     if (typeListeners) {
       for (const callback of typeListeners) {
         try {
-          callback(event);
+          callback(event as unknown as ActivityEvent);
         } catch (error) {
           logger.error(`Error in activity stream listener:`, error);
         }
@@ -69,7 +91,7 @@ export class ActivityStream {
     if (wildcardListeners) {
       for (const callback of wildcardListeners) {
         try {
-          callback(event);
+          callback(event as unknown as ActivityEvent);
         } catch (error) {
           logger.error(`Error in activity stream listener:`, error);
         }
@@ -100,6 +122,11 @@ export class ActivityStream {
    * unsubscribe();
    * ```
    */
+  subscribe<T extends ActivityEventType>(
+    eventType: T,
+    callback: ActivityCallback<T>
+  ): () => void;
+  subscribe(eventType: '*', callback: ActivityCallback): () => void;
   subscribe(
     eventType: ActivityEventType | '*',
     callback: ActivityCallback
@@ -138,7 +165,16 @@ export class ActivityStream {
    * @returns A new scoped ActivityStream
    */
   createScoped(parentId: string): ActivityStream {
-    return new ActivityStream(parentId);
+    return new ActivityStream(parentId, this.state);
+  }
+
+  /** Return a snapshot of the newest events, optionally filtered by type. */
+  getRecentEvents(limit = 100, eventType?: ActivityEventType): ActivityEvent[] {
+    const safeLimit = Math.max(0, Math.min(limit, this.MAX_RECENT_EVENTS));
+    const events = eventType
+      ? this.state.recentEvents.filter((event) => event.type === eventType)
+      : this.state.recentEvents;
+    return events.slice(-safeLimit);
   }
 
   /**

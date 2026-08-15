@@ -62,11 +62,11 @@ describe('BashTool', () => {
     it('should use working directory if provided', async () => {
       const result = await bashTool.execute({
         command: 'pwd',
-        working_dir: '/tmp',
+        working_dir: process.cwd(),
       });
 
       expect(result.success).toBe(true);
-      expect(result.content).toContain('/tmp');
+      expect(result.content).toContain(process.cwd());
     });
 
     it('should respect timeout', async () => {

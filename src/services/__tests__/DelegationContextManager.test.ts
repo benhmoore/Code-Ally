@@ -465,7 +465,7 @@ describe('DelegationContextManager', () => {
       manager.transitionToCompleting('call-2');
 
       // Only call-1 and call-3 executing
-      let stats = manager.getStats();
+      const stats = manager.getStats();
       expect(stats.executing).toBe(2);
       expect(stats.completing).toBe(1);
 

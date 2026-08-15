@@ -155,10 +155,6 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
   maxVisible = 10,
   patches = [],
 }) => {
-  if (!visible) {
-    return null;
-  }
-
   // Calculate file changes for each message (memoized)
   const fileChangesMap = React.useMemo(() => {
     const map = new Map<number, FileChangeStats>();
@@ -187,6 +183,10 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
 
   const terminalWidth = useContentWidth();
   const divider = createDivider(terminalWidth);
+
+  if (!visible) {
+    return null;
+  }
 
   if (messages.length === 0) {
     return (

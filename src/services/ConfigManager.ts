@@ -7,19 +7,28 @@
  */
 
 import { promises as fs } from 'fs';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 import type { Config, IService } from '../types/index.js';
 import { DEFAULT_CONFIG, validateConfigValue } from '../config/defaults.js';
 import { getConfigFile, getBaseConfigFile, ensureDirectories } from '../config/paths.js';
 import { logger } from './Logger.js';
+import { CryptoService, CRYPTO_SALTS } from './CryptoService.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
+
+const SECRET_CONFIG_KEYS = new Set<keyof Config>(['api_key', 'search_api_key']);
 
 export class ConfigManager implements IService {
   private _config: Config;
   private _configPath: string;
+  private readonly crypto: CryptoService;
 
   constructor(configPath?: string) {
     this._configPath = configPath || getConfigFile();
     this._config = { ...DEFAULT_CONFIG };
+    this.crypto = new CryptoService({
+      salt: CRYPTO_SALTS.CONFIG,
+      keyPath: configPath ? join(dirname(configPath), '.secret-key') : undefined,
+    });
   }
 
   /**
@@ -48,7 +57,7 @@ export class ConfigManager implements IService {
     try {
       const baseConfigPath = getBaseConfigFile();
       const content = await fs.readFile(baseConfigPath, 'utf-8');
-      const baseConfig = JSON.parse(content);
+      const baseConfig = this.decryptSecrets(JSON.parse(content));
 
       // Validate and coerce types
       const validatedConfig: Partial<Config> = {};
@@ -93,12 +102,12 @@ export class ConfigManager implements IService {
       const baseConfig = await this.loadBaseConfig();
 
       // Load profile-specific config
-      let profileConfig: Partial<Config> = {};
+      const profileConfig: Partial<Config> = {};
       const unknownKeys: string[] = [];
 
       try {
         const content = await fs.readFile(this._configPath, 'utf-8');
-        const rawProfileConfig = JSON.parse(content);
+        const rawProfileConfig = this.decryptSecrets(JSON.parse(content));
 
         // Validate and coerce types for profile config
         for (const [key, value] of Object.entries(rawProfileConfig)) {
@@ -169,11 +178,7 @@ export class ConfigManager implements IService {
       await fs.mkdir(profileConfigDir, { recursive: true });
 
       // Save the profile config as-is (already filtered to valid keys only)
-      await fs.writeFile(
-        profileConfigPath,
-        JSON.stringify(profileConfig, null, 2),
-        'utf-8'
-      );
+      await atomicWriteFile(profileConfigPath, JSON.stringify(this.encryptSecrets(profileConfig), null, 2), { mode: 0o600 });
 
       logger.debug('[CONFIG] Saved profile config (cleanup)');
     } catch (error) {
@@ -222,11 +227,7 @@ export class ConfigManager implements IService {
         }
       }
 
-      await fs.writeFile(
-        profileConfigPath,
-        JSON.stringify(configToSave, null, 2),
-        'utf-8'
-      );
+      await atomicWriteFile(profileConfigPath, JSON.stringify(this.encryptSecrets(configToSave), null, 2), { mode: 0o600 });
 
       logger.debug('[CONFIG] Saved profile config');
     } catch (error) {
@@ -240,6 +241,46 @@ export class ConfigManager implements IService {
    */
   getConfig(): Readonly<Config> {
     return { ...this._config };
+  }
+
+  getRedactedConfig(): Readonly<Config> {
+    const config = { ...this._config };
+    for (const key of SECRET_CONFIG_KEYS) {
+      if (config[key]) (config as any)[key] = '[REDACTED]';
+    }
+    return config;
+  }
+
+  getDisplayValue<K extends keyof Config>(key: K): Config[K] | string {
+    const value = this.getValue(key);
+    return SECRET_CONFIG_KEYS.has(key) && value ? '[REDACTED]' : value;
+  }
+
+  private encryptSecrets(config: Partial<Config>): Partial<Config> {
+    const result = { ...config };
+    for (const key of SECRET_CONFIG_KEYS) {
+      const value = result[key];
+      if (typeof value === 'string' && value && !this.crypto.isEncrypted(value)) {
+        (result as any)[key] = this.crypto.wrapEncrypted(this.crypto.encrypt(value));
+      }
+    }
+    return result;
+  }
+
+  private decryptSecrets(config: Record<string, unknown>): Record<string, unknown> {
+    const result = { ...config };
+    for (const key of SECRET_CONFIG_KEYS) {
+      const value = result[key];
+      if (typeof value === 'string' && this.crypto.isEncrypted(value)) {
+        try {
+          result[key] = this.crypto.decrypt(this.crypto.unwrapEncrypted(value));
+        } catch {
+          logger.warn(`[CONFIG] Could not decrypt ${key}; ignoring the stored value`);
+          result[key] = null;
+        }
+      }
+    }
+    return result;
   }
 
   /**
@@ -357,7 +398,7 @@ export class ConfigManager implements IService {
    * Export configuration as JSON string
    */
   exportConfig(): string {
-    return JSON.stringify(this._config, null, 2);
+    return JSON.stringify(this.getRedactedConfig(), null, 2);
   }
 
   /**

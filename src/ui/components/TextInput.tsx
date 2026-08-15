@@ -547,7 +547,6 @@ export const TextInput: React.FC<TextInputProps> = ({
         // any remaining control characters except newline.
         const normalizedInput = stripAnsi(input.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
           .replace(/\t/g, '    ')
-          // eslint-disable-next-line no-control-regex
           .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
 
         if (normalizedInput.length === 0) {
@@ -727,8 +726,6 @@ export const TextInput: React.FC<TextInputProps> = ({
     }
 
     return result;
-  // Note: splitLineByWidth is a stable function (no external deps), so not included in deps
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayValue, cursorLogicalLine, cursorPosInLogicalLine, contentWidth, promptWidth, bordered, isEmpty, placeholder, isActive]);
 
   // Render the text content with proper visual line handling

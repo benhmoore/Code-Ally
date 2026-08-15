@@ -9,6 +9,7 @@
  */
 
 import { BUFFER_SIZES } from '../config/constants.js';
+import { redactSensitiveText } from '../utils/redaction.js';
 
 export enum LogLevel {
   ERROR = 0,
@@ -57,6 +58,7 @@ class Logger {
    * Immediately serializes and truncates to prevent memory leaks
    */
   private storeLog(level: LogLevel, args: any[]): void {
+    if (level > this.logLevel) return;
     // Serialize immediately - don't keep references to original objects
     let message = args.map(arg => {
       if (typeof arg === 'object') {
@@ -68,6 +70,7 @@ class Logger {
       }
       return String(arg);
     }).join(' ');
+    message = redactSensitiveText(message);
 
     // Truncate to prevent single huge entries
     if (message.length > BUFFER_SIZES.MAX_LOG_MESSAGE_LENGTH) {

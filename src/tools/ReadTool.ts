@@ -211,8 +211,8 @@ For multi-file exploration, prefer explore() to preserve context.`;
       const remainingTokens = this.getRemainingContext(tokenManager);
       if (remainingTokens < estimatedTokens) {
         const examples = filePaths.length === 1
-          ? `read(file_paths=["${filePaths[0]}\"], limit=100) or read(file_paths=["${filePaths[0]}\"], offset=-100, limit=100) for last 100 lines`
-          : `read(file_paths=["${filePaths[0]}\"], limit=100) or read fewer files`;
+          ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=-100, limit=100) for last 100 lines`
+          : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
 
         return this.formatErrorResponse(
           `Insufficient context available: read would require ${estimatedTokens.toFixed(1)} tokens but only ${remainingTokens.toFixed(1)} remain. ` +
