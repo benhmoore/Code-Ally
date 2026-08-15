@@ -59,6 +59,7 @@ import {
   createActiveTodoReminder,
   createActivityTimeoutContinuationReminder,
   createThinkingLoopContinuationReminder,
+  createResponseLoopContinuationReminder,
   createSystemReminder,
 } from '../utils/messageUtils.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
@@ -1648,7 +1649,9 @@ export class Agent {
 
     const continuationPrompt = cause.kind === 'activity_timeout'
       ? createActivityTimeoutContinuationReminder()
-      : createThinkingLoopContinuationReminder(cause.reason);
+      : cause.kind === 'response_loop'
+        ? createResponseLoopContinuationReminder(cause.reason)
+        : createThinkingLoopContinuationReminder(cause.reason);
     this.conversationManager.addMessage(continuationPrompt);
 
     this.interruptionManager.reset();

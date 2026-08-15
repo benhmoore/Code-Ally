@@ -132,6 +132,15 @@ export const SYSTEM_REMINDERS = {
         `${reason}. You appear to be stuck in circular reasoning. Break out of this pattern and take a concrete action instead of continuing to reconsider the same points.`,
       persist: false,
     },
+
+    /** Response loop detected - stop repeating user-visible output */
+    // PERSIST: false - Ephemeral: One-time signal to stop repetitive output
+    // Cleaned up after turn since agent should answer or act immediately
+    RESPONSE_LOOP: {
+      text: (reason: string) =>
+        `${reason}. Your visible response appears to be repeating. Stop the repetition and either provide the concise final answer or take the next concrete tool action.`,
+      persist: false,
+    },
   },
 
   // ===========================================

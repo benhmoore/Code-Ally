@@ -181,6 +181,20 @@ export function createThinkingLoopContinuationReminder(reason: string): Message 
   );
 }
 
+/**
+ * Create a system reminder for response loop detection
+ *
+ * @param reason The detected loop pattern (e.g., "Repeated phrase detected")
+ * @returns System reminder message
+ */
+export function createResponseLoopContinuationReminder(reason: string): Message {
+  const config = SYSTEM_REMINDERS.INTERRUPTIONS.RESPONSE_LOOP;
+  return createSystemReminder(
+    resolveReminderText(config, reason),
+    config.persist
+  );
+}
+
 // ===========================================
 // PROGRESS REMINDERS
 // ===========================================
