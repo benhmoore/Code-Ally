@@ -12,9 +12,10 @@ import { PatchMetadata } from '@services/PatchManager.js';
 import { logger } from '@services/Logger.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
-import { createDivider } from '../utils/uiHelpers.js';
-import { useContentWidth } from '../hooks/useContentWidth.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
 
 export interface RewindSelectorProps {
   /** User messages only (pre-filtered) */
@@ -155,6 +156,11 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
   maxVisible = 10,
   patches = [],
 }) => {
+  const terminalRows = useTerminalRows();
+  const visibleCount = Math.min(
+    maxVisible,
+    visibleItemBudget(terminalRows, { chromeRows: 9, rowsPerItem: 2, maximum: maxVisible })
+  );
   // Calculate file changes for each message (memoized)
   const fileChangesMap = React.useMemo(() => {
     const map = new Map<number, FileChangeStats>();
@@ -181,77 +187,26 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
     return map;
   }, [messages, patches]);
 
-  const terminalWidth = useContentWidth();
-  const divider = createDivider(terminalWidth);
-
   if (!visible) {
     return null;
   }
 
   if (messages.length === 0) {
     return (
-      <Box flexDirection="column" paddingX={1}>
-        <Box>
-          <Text dimColor>{divider}</Text>
-        </Box>
-        <Box marginY={1}>
-          <Text color={UI_COLORS.PRIMARY}>No user messages to rewind to</Text>
-        </Box>
-      </Box>
+      <InteractiveSurface title="Rewind conversation">
+        <Text color={UI_COLORS.PRIMARY}>No user messages to rewind to.</Text>
+      </InteractiveSurface>
     );
   }
 
-  // Calculate windowing
   const totalMessages = messages.length;
-  const showScrollIndicators = totalMessages > maxVisible;
-
-  let startIdx = 0;
-  let endIdx = totalMessages;
-
-  if (showScrollIndicators) {
-    // Center selected item in window
-    const halfWindow = Math.floor(maxVisible / 2);
-    startIdx = Math.max(0, selectedIndex - halfWindow);
-    endIdx = Math.min(totalMessages, startIdx + maxVisible);
-
-    // Adjust if we're at the end
-    if (endIdx === totalMessages) {
-      startIdx = Math.max(0, endIdx - maxVisible);
-    }
-  }
-
-  const visibleMessages = messages.slice(startIdx, endIdx);
-  const hasMoreAbove = startIdx > 0;
-  const hasMoreBelow = endIdx < totalMessages;
+  const window = centeredWindow(messages, selectedIndex, visibleCount);
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      {/* Top divider */}
-      <Box>
-        <Text dimColor>{divider}</Text>
-      </Box>
-
-      {/* Header */}
-      <Box marginY={1}>
-        <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-          Rewind Conversation
-        </Text>
-      </Box>
-
-      <Box marginBottom={1}>
-        <Text dimColor>Select a prompt to rewind to ({totalMessages} messages):</Text>
-      </Box>
-
-      {/* Scroll indicator - more above */}
-      {hasMoreAbove && (
-        <Box>
-          <Text dimColor>  ↑ {startIdx} more...</Text>
-        </Box>
-      )}
-
-      {/* Message list */}
-      {visibleMessages.map((msg, idx) => {
-        const actualIndex = startIdx + idx;
+    <InteractiveSurface title="Rewind conversation" meta={`${totalMessages}`} footer={<KeyboardHintFooter action="rewind" />}>
+      {window.above > 0 && <Text dimColor>  ↑ {window.above} more</Text>}
+      {window.items.map((msg, idx) => {
+        const actualIndex = window.start + idx;
         const isSelected = actualIndex === selectedIndex;
         const time = formatTime((msg as any).timestamp);
         const content = truncateContent(msg.content);
@@ -275,15 +230,7 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
         );
       })}
 
-      {/* Scroll indicator - more below */}
-      {hasMoreBelow && (
-        <Box>
-          <Text dimColor>  ↓ {totalMessages - endIdx} more...</Text>
-        </Box>
-      )}
-
-      {/* Footer */}
-      <KeyboardHintFooter action="rewind to" />
-    </Box>
+      {window.below > 0 && <Text dimColor>  ↓ {window.below} more</Text>}
+    </InteractiveSurface>
   );
 };

@@ -13,11 +13,12 @@ import { Box, Text } from 'ink';
 import type { UndoFileEntry } from '@services/PatchManager.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
-import { createDivider } from '../utils/uiHelpers.js';
-import { useContentWidth } from '../hooks/useContentWidth.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { formatDiffStats, truncatePath } from '../utils/formatters.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
 
 export interface UndoFileListRequest {
   /** Request ID for tracking */
@@ -42,46 +43,30 @@ export const UndoFileList: React.FC<UndoFileListProps> = ({
   request,
   visible = true,
 }) => {
-  const terminalWidth = useContentWidth();
+  const terminalRows = useTerminalRows();
 
   if (!visible) {
     return null;
   }
 
   const { fileList, selectedIndex } = request;
-  const divider = createDivider(terminalWidth);
+  const visibleCount = visibleItemBudget(terminalRows, { chromeRows: 8, rowsPerItem: 2, maximum: 8 });
+  const window = centeredWindow(fileList, selectedIndex, visibleCount);
 
   return (
-    <Box flexDirection="column">
-      {/* Top divider */}
-      <Box>
-        <Text dimColor>{divider}</Text>
-      </Box>
-
-      {/* Header */}
-      <Box marginY={1}>
-        <Text color={UI_COLORS.PRIMARY} bold>
-          Undo Operations
-        </Text>
-      </Box>
-
-      {/* File count */}
-      <Box marginBottom={1}>
-        <Text dimColor>Recently modified files: </Text>
-        <Text bold color={UI_COLORS.PRIMARY}>{fileList.length}</Text>
-      </Box>
-
-      {/* File list */}
+    <InteractiveSurface title="Undo operations" tone={UI_COLORS.PRIMARY} meta={`${fileList.length}`} footer={<KeyboardHintFooter action="select" />}>
+      {window.above > 0 && <Text dimColor>  ↑ {window.above} more</Text>}
       {fileList.length > 0 ? (
-        <Box flexDirection="column" marginBottom={1}>
-          {fileList.map((fileEntry, index) => {
-            const isSelected = index === selectedIndex;
+        <Box flexDirection="column">
+          {window.items.map((fileEntry, index) => {
+            const actualIndex = window.start + index;
+            const isSelected = actualIndex === selectedIndex;
             const diffStats = formatDiffStats(fileEntry.stats);
             const timestamp = formatRelativeTime(fileEntry.timestamp);
             const filePath = truncatePath(fileEntry.file_path);
 
             return (
-              <Box key={index} flexDirection="column" marginBottom={index < fileList.length - 1 ? 1 : 0}>
+              <Box key={fileEntry.file_path} flexDirection="column">
                 <Box>
                   {/* Selection indicator */}
                   <SelectionIndicator isSelected={isSelected}>
@@ -108,13 +93,9 @@ export const UndoFileList: React.FC<UndoFileListProps> = ({
           })}
         </Box>
       ) : (
-        <Box marginBottom={1}>
-          <Text dimColor>No operations to undo</Text>
-        </Box>
+        <Text dimColor>No operations to undo.</Text>
       )}
-
-      {/* Footer */}
-      <KeyboardHintFooter action="select" cancelText="cancel" />
-    </Box>
+      {window.below > 0 && <Text dimColor>  ↓ {window.below} more</Text>}
+    </InteractiveSurface>
   );
 };

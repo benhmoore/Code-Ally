@@ -8,9 +8,9 @@
  */
 
 import React, { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
-import { ModalContainer } from './ModalContainer.js';
-import { ChickAnimation } from './ChickAnimation.js';
+import { Box, useInput } from 'ink';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
 
@@ -130,24 +130,11 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
   const isValid = title.trim().length > 0 && content.trim().length > 0;
 
   return (
-    <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
-      <Box flexDirection="column">
-        {/* Header with ChickAnimation */}
-        <Box marginBottom={1} flexDirection="row" gap={1}>
-          <Text bold>
-            <ChickAnimation />
-          </Text>
-          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-            {isEditMode ? 'Edit Prompt' : 'Add Prompt'}
-          </Text>
-        </Box>
-
-        {/* Description */}
-        <Box marginBottom={1}>
-          <Text>
-            {isEditMode ? 'Update your saved prompt details' : 'Create a new prompt for your library'}
-          </Text>
-        </Box>
+    <InteractiveSurface
+      title={isEditMode ? 'Edit prompt' : 'Add prompt'}
+      description={isEditMode ? 'Update the saved prompt.' : 'Create a reusable prompt.'}
+      footer={<KeyboardHintFooter hints={[{ key: 'tab/↑↓', label: 'move' }, { key: 'enter', label: isValid ? 'save' : 'save (fields required)' }, { key: 'esc', label: 'cancel' }]} />}
+    >
 
         {/* Form fields */}
         <Box flexDirection="column">
@@ -156,13 +143,6 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
           {renderField('Tags', tags, 'tags', 'Optional: comma-separated tags', false)}
         </Box>
 
-        {/* Footer separator and instructions */}
-        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-          <Text dimColor>
-            Tab/↑↓: Navigate • Enter: Save{!isValid && ' (title and content required)'} • Esc: Cancel
-          </Text>
-        </Box>
-      </Box>
-    </ModalContainer>
+    </InteractiveSurface>
   );
 };

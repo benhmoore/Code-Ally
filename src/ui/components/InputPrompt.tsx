@@ -236,18 +236,34 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [mentionedImages, setMentionedImages] = useState<string[]>([]);
   const [mentionedDirectories, setMentionedDirectories] = useState<string[]>([]);
   const [mentionedPlugins, setMentionedPlugins] = useState<string[]>([]);
+  const bufferRef = useRef(buffer);
+  const onPrefillConsumedRef = useRef(onPrefillConsumed);
+
+  /**
+   * Buffer invariant: local editing state and the parent-owned preservation
+   * buffer advance in the same event. Effect-based two-way synchronization
+   * can exchange stale values forever when a keystroke causes both to render.
+   */
+  const updateBuffer = React.useCallback((nextBuffer: string) => {
+    bufferRef.current = nextBuffer;
+    setBuffer(nextBuffer);
+    onBufferChange?.(nextBuffer);
+  }, [onBufferChange]);
+
+  useEffect(() => {
+    onPrefillConsumedRef.current = onPrefillConsumed;
+  }, [onPrefillConsumed]);
 
   // Handle prefill text
   useEffect(() => {
     if (prefillText !== undefined && prefillText !== '') {
-      setBuffer(prefillText);
+      updateBuffer(prefillText);
       setCursorPosition(prefillText.length);
-      onPrefillConsumed?.();
+      onPrefillConsumedRef.current?.();
     }
-  }, [prefillText, onPrefillConsumed]);
+  }, [prefillText, updateBuffer]);
 
   // Use refs to track current buffer and cursor position (avoids stale closure issues with paste)
-  const bufferRef = useRef(buffer);
   const cursorPositionRef = useRef(cursorPosition);
   useEffect(() => {
     bufferRef.current = buffer;
@@ -306,16 +322,12 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
   // Sync with external buffer value (when parent changes it)
   useEffect(() => {
-    if (bufferValue !== undefined && bufferValue !== buffer) {
+    if (bufferValue !== undefined && bufferValue !== bufferRef.current) {
+      bufferRef.current = bufferValue;
       setBuffer(bufferValue);
       setCursorPosition(bufferValue.length);
     }
-  }, [bufferValue, buffer]);
-
-  // Notify parent when buffer changes
-  useEffect(() => {
-    onBufferChange?.(buffer);
-  }, [buffer, onBufferChange]);
+  }, [bufferValue]);
 
   const updateCompletions = React.useCallback(async () => {
     if (!completionProvider || !buffer.trim()) {
@@ -373,7 +385,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
     const application = applyCompletionToInput(buffer, cursorPosition, completion, options);
 
-    setBuffer(application.nextValue);
+    updateBuffer(application.nextValue);
     setCursorPosition(application.nextCursorPosition);
     setShowCompletions(false);
     setCompletions([]);
@@ -406,7 +418,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     const result = commandHistory.getPrevious(historyIndex);
     if (result) {
       isNavigatingHistory.current = true; // Prevent completion updates
-      setBuffer(result.command);
+      updateBuffer(result.command);
       // Preserve column position, clamped to command length
       const savedColumn = historyIndex === -1 ? cursorPosition : historyBufferCursor;
       setCursorPosition(Math.min(savedColumn, result.command.length));
@@ -424,14 +436,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     const result = commandHistory.getNext(historyIndex);
     if (result) {
       isNavigatingHistory.current = true; // Prevent completion updates
-      setBuffer(result.command);
+      updateBuffer(result.command);
       // Preserve column position, clamped to command length
       setCursorPosition(Math.min(historyBufferCursor, result.command.length));
       setHistoryIndex(result.index);
     } else {
       // Reached end - restore original buffer and cursor position
       isNavigatingHistory.current = true; // Prevent completion updates
-      setBuffer(historyBuffer);
+      updateBuffer(historyBuffer);
       setCursorPosition(historyBufferCursor);
       setHistoryIndex(-1);
     }
@@ -476,7 +488,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    * Submit input
    */
   const resetInputState = () => {
-    setBuffer('');
+    updateBuffer('');
     setCursorPosition(0);
     setHistoryIndex(-1);
     setHistoryBuffer('');
@@ -578,7 +590,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     if (promptPrefilled) {
       onPromptPrefilledClear?.();
     }
-    setBuffer(newValue);
+    updateBuffer(newValue);
     setHistoryIndex(-1); // Reset history when editing
   };
 
@@ -1634,13 +1646,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   let borderColor: string = UI_COLORS.TEXT_DIM;
 
   if (isCommandMode) {
-    promptText = 'Command > ';
+    promptText = '/ ';
     borderColor = UI_COLORS.TEXT_DIM;
   } else if (isBashMode) {
-    promptText = 'Bash > ';
+    promptText = '! ';
     borderColor = UI_COLORS.TEXT_DIM;
   } else if (isMemoryMode) {
-    promptText = 'Memory > ';
+    promptText = '# ';
     borderColor = UI_COLORS.MEMORY;
   }
 
@@ -1671,9 +1683,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         isActive={textInputActive}
         multiline={true}
         placeholder={placeholder}
-        bordered={true}
-        borderColor={borderColor}
+        bordered={false}
+        showPrompt={true}
         promptText={promptText}
+        promptColor={borderColor}
       />
 
       {/* Completion dropdown */}

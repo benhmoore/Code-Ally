@@ -12,9 +12,9 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { AgentGenerationService } from '@services/AgentGenerationService.js';
-import { ModalContainer } from './ModalContainer.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
 import { UI_COLORS } from '../constants/colors.js';
 
 enum ConfigStep {
@@ -528,8 +528,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
   });
 
   return (
-    <Box flexDirection="column" width="100%">
-      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
+    <InteractiveSurface>
         <Box flexDirection="column" width="100%">
         <Box marginBottom={1}>
           <Text color={UI_COLORS.TEXT_DEFAULT} bold>
@@ -986,7 +985,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
           <Text dimColor>Esc cancel</Text>
         </Box>
         </Box>
-      </ModalContainer>
-    </Box>
+    </InteractiveSurface>
   );
 };

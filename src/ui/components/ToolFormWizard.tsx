@@ -13,7 +13,7 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { FormRequest, FormField } from '../../types/index.js';
 import { ChickAnimation } from './ChickAnimation.js';
-import { ModalContainer } from './ModalContainer.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -643,9 +643,8 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
   const queueIndicator = queueLength > 1 ? ` (${queueLength} pending)` : '';
 
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
-        <Box minHeight={10} width={80} flexDirection="column">
+    <InteractiveSurface>
+        <Box width="100%" flexDirection="column">
           {/* Tab bar for multi-field forms */}
           {renderTabBar()}
 
@@ -684,7 +683,6 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
             </Text>
           </Box>
         </Box>
-      </ModalContainer>
-    </Box>
+    </InteractiveSurface>
   );
 };

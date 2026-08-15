@@ -27,6 +27,8 @@ export interface TerminalContextValue {
   innerWidth: number;
   /** Printable width inside the root padding, capped at MAX_CONTENT_WIDTH. */
   contentWidth: number;
+  /** Raw terminal height in rows. */
+  rows: number;
 }
 
 /**
@@ -35,12 +37,16 @@ export interface TerminalContextValue {
  * Exported so the width hooks can reuse the exact same math in their
  * out-of-provider fallback path.
  */
-export function deriveWidths(rawWidth: number): TerminalContextValue {
+export function deriveWidths(
+  rawWidth: number,
+  rawRows: number = TEXT_LIMITS.TERMINAL_HEIGHT_FALLBACK
+): TerminalContextValue {
   const innerWidth = Math.max(1, rawWidth - LAYOUT.ROOT_PADDING_X * 2);
   return {
     width: rawWidth,
     innerWidth,
     contentWidth: Math.min(innerWidth, TEXT_LIMITS.MAX_CONTENT_WIDTH),
+    rows: Math.max(1, rawRows),
   };
 }
 
@@ -71,20 +77,22 @@ export interface TerminalProviderProps {
  */
 export const TerminalProvider: React.FC<TerminalProviderProps> = ({ children }) => {
   // Initialize with current terminal width
-  const getTerminalWidth = useCallback((): number => {
-    return process.stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
+  const getTerminalSize = useCallback((): { width: number; rows: number } => {
+    return {
+      width: process.stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK,
+      rows: process.stdout?.rows || TEXT_LIMITS.TERMINAL_HEIGHT_FALLBACK,
+    };
   }, []);
 
-  const [width, setWidth] = useState<number>(getTerminalWidth());
+  const [size, setSize] = useState(getTerminalSize);
 
   // Listen for terminal resize events
   useEffect(() => {
     const handleResize = () => {
-      // Only update when the column count actually changes to avoid redundant
-      // re-renders during height-only resizes.
-      setWidth((prev) => {
-        const newWidth = getTerminalWidth();
-        return newWidth === prev ? prev : newWidth;
+      // Update only when either terminal dimension changes.
+      setSize((prev) => {
+        const next = getTerminalSize();
+        return next.width === prev.width && next.rows === prev.rows ? prev : next;
       });
     };
 
@@ -95,10 +103,13 @@ export const TerminalProvider: React.FC<TerminalProviderProps> = ({ children }) 
     return () => {
       process.stdout?.off('resize', handleResize);
     };
-  }, [getTerminalWidth]);
+  }, [getTerminalSize]);
 
   // Memoize context value to prevent unnecessary re-renders
-  const value: TerminalContextValue = useMemo(() => deriveWidths(width), [width]);
+  const value: TerminalContextValue = useMemo(
+    () => deriveWidths(size.width, size.rows),
+    [size.width, size.rows]
+  );
 
   return <TerminalContext.Provider value={value}>{children}</TerminalContext.Provider>;
 };

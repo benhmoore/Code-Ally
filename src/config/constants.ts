@@ -318,8 +318,8 @@ export const UI_DELAYS = {
  * Animation frame rates and durations
  */
 export const ANIMATION_TIMING = {
-  /** Standard animation frame rate ~12fps (83ms) - matches Ink render FPS */
-  FRAME_RATE: 83,
+  /** Calm shared animation cadence (5fps). Fast enough to signal progress without visual churn. */
+  FRAME_RATE: 200,
 
   /** Thinking indicator animation speed (500ms) */
   THINKING_SPEED: 500,

@@ -11,14 +11,14 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import { useContentWidth } from '../hooks/useContentWidth.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { MarkdownText } from './MarkdownText.js';
-import { createDivider } from '../utils/uiHelpers.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { TextInput } from './TextInput.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
 
 /**
  * Plan approval request data (from PLAN_APPROVAL_REQUEST event)
@@ -61,43 +61,25 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
   cursorPosition,
   onCursorChange,
 }) => {
-  const terminalWidth = useContentWidth();
-  const divider = createDivider(terminalWidth);
+  const terminalRows = useTerminalRows();
 
-  // Truncate plan content for display (show first 40 lines max)
+  // The preview yields to controls on short terminals; the full plan remains on disk.
   const planLines = request.planContent.split('\n');
-  const truncated = planLines.length > 40;
+  const previewLines = Math.max(3, Math.min(12, terminalRows - 12));
+  const truncated = planLines.length > previewLines;
   const displayContent = truncated
-    ? planLines.slice(0, 40).join('\n') + '\n...(truncated)'
+    ? planLines.slice(0, previewLines).join('\n') + '\n…'
     : request.planContent;
 
   return (
-    <Box flexDirection="column">
-      {/* Top divider */}
-      <Box>
-        <Text dimColor>{divider}</Text>
-      </Box>
-
-      {/* Header */}
-      <Box marginY={1}>
-        <Text color={UI_COLORS.PRIMARY} bold>
-          Plan ready for review
-        </Text>
-      </Box>
-
-      {/* Plan file path */}
-      <Box marginBottom={1}>
-        <Text dimColor>File: {request.planFilePath}</Text>
-      </Box>
-
-      {/* Plan content preview */}
-      <Box flexDirection="column" marginBottom={1}>
+    <InteractiveSurface
+      title="Plan ready for review"
+      tone={UI_COLORS.PRIMARY}
+      description={request.planFilePath}
+      footer={<KeyboardHintFooter action="confirm" />}
+    >
+      <Box flexDirection="column">
         <MarkdownText content={displayContent} />
-      </Box>
-
-      {/* Divider before options */}
-      <Box>
-        <Text dimColor>{divider}</Text>
       </Box>
 
       {/* Options */}
@@ -132,8 +114,6 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
         })}
       </Box>
 
-      {/* Footer */}
-      <KeyboardHintFooter action="confirm" cancelText="cancel" />
-    </Box>
+    </InteractiveSurface>
   );
 };

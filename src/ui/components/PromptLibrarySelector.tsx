@@ -11,8 +11,10 @@ import { formatRelativeTime } from '../utils/timeUtils.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { UI_COLORS } from '../constants/colors.js';
-import { ChickAnimation } from './ChickAnimation.js';
-import { ModalContainer } from './ModalContainer.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
 
 export interface PromptLibrarySelectorProps {
   /** Available prompts */
@@ -75,102 +77,40 @@ export const PromptLibrarySelector: React.FC<PromptLibrarySelectorProps> = ({
   visible = true,
   maxVisible = 10,
 }) => {
+  const terminalRows = useTerminalRows();
+  const visibleCount = Math.min(
+    maxVisible,
+    visibleItemBudget(terminalRows, { chromeRows: 9, rowsPerItem: 3, maximum: maxVisible })
+  );
+
   if (!visible) {
     return null;
   }
 
   if (prompts.length === 0) {
     return (
-      <Box flexDirection="column" paddingX={2} paddingY={1} width="100%">
-        <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
-          <Box minHeight={20} width="100%" flexDirection="column">
-            {/* Header with ChickAnimation */}
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Prompt Library
-              </Text>
-            </Box>
-
-            {/* Empty message */}
-            <Box marginBottom={1}>
-              <Text>
-                No saved prompts in your library.
-              </Text>
-            </Box>
-
-            <Box marginBottom={1}>
-              <Text dimColor>
-                Use /prompt add to create your first prompt.
-              </Text>
-            </Box>
-
-            {/* Footer */}
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Esc: Close</Text>
-            </Box>
-          </Box>
-        </ModalContainer>
-      </Box>
+      <InteractiveSurface
+        title="Prompt library"
+        footer={<KeyboardHintFooter hints={[{ key: 'esc', label: 'close' }]} />}
+      >
+        <Text>No saved prompts.</Text>
+        <Text dimColor>Use /prompt add to create one.</Text>
+      </InteractiveSurface>
     );
   }
 
-  // Calculate windowing
   const totalPrompts = prompts.length;
-  const showScrollIndicators = totalPrompts > maxVisible;
-
-  let startIdx = 0;
-  let endIdx = totalPrompts;
-
-  if (showScrollIndicators) {
-    // Center selected item in window
-    const halfWindow = Math.floor(maxVisible / 2);
-    startIdx = Math.max(0, selectedIndex - halfWindow);
-    endIdx = Math.min(totalPrompts, startIdx + maxVisible);
-
-    // Adjust if we're at the end
-    if (endIdx === totalPrompts) {
-      startIdx = Math.max(0, endIdx - maxVisible);
-    }
-  }
-
-  const visiblePrompts = prompts.slice(startIdx, endIdx);
-  const hasMoreAbove = startIdx > 0;
-  const hasMoreBelow = endIdx < totalPrompts;
+  const window = centeredWindow(prompts, selectedIndex, visibleCount);
 
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1} width="100%">
-      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
-        <Box minHeight={20} width="100%" flexDirection="column">
-          {/* Header with ChickAnimation */}
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Prompt Library
-            </Text>
-          </Box>
-
-          {/* Subtitle */}
-          <Box marginBottom={1}>
-            <Text>
-              Select a prompt to use ({totalPrompts} available)
-            </Text>
-          </Box>
-
-          {/* Scroll indicator - more above */}
-          {hasMoreAbove && (
-            <Box marginBottom={1}>
-              <Text dimColor>↑ {startIdx} more above</Text>
-            </Box>
-          )}
-
-          {/* Prompt list */}
-          {visiblePrompts.map((prompt, idx) => {
-            const actualIndex = startIdx + idx;
+    <InteractiveSurface
+      title="Prompt library"
+      meta={`${totalPrompts}`}
+      footer={<KeyboardHintFooter action="use" />}
+    >
+          {window.above > 0 && <Text dimColor>  ↑ {window.above} more</Text>}
+          {window.items.map((prompt, idx) => {
+            const actualIndex = window.start + idx;
             const isSelected = actualIndex === selectedIndex;
             const displayTitle = truncateTitle(prompt.title);
             const contentPreview = truncateContent(prompt.content);
@@ -178,7 +118,7 @@ export const PromptLibrarySelector: React.FC<PromptLibrarySelectorProps> = ({
             const tagsDisplay = formatTagsDisplay(prompt.tags);
 
             return (
-              <Box key={prompt.id} flexDirection="column" marginBottom={1}>
+              <Box key={prompt.id} flexDirection="column">
                 <SelectionIndicator isSelected={isSelected}>
                   {displayTitle}
                 </SelectionIndicator>
@@ -194,19 +134,7 @@ export const PromptLibrarySelector: React.FC<PromptLibrarySelectorProps> = ({
             );
           })}
 
-          {/* Scroll indicator - more below */}
-          {hasMoreBelow && (
-            <Box marginBottom={1}>
-              <Text dimColor>↓ {totalPrompts - endIdx} more below</Text>
-            </Box>
-          )}
-
-          {/* Footer separator and instructions */}
-          <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-            <Text dimColor>↑↓: Navigate • Enter: Select • Esc: Cancel</Text>
-          </Box>
-        </Box>
-      </ModalContainer>
-    </Box>
+          {window.below > 0 && <Text dimColor>  ↓ {window.below} more</Text>}
+    </InteractiveSurface>
   );
 };

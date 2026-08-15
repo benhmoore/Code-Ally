@@ -14,9 +14,9 @@ import { DiffDisplay } from './DiffDisplay.js';
 import type { UndoPreview } from '@services/PatchManager.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
-import { createDivider } from '../utils/uiHelpers.js';
-import { useContentWidth } from '../hooks/useContentWidth.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
 
 export interface UndoRequest {
   /** Request ID for tracking */
@@ -52,7 +52,7 @@ export const UndoPrompt: React.FC<UndoPromptProps> = ({
   selectedIndex,
   visible = true,
 }) => {
-  const terminalWidth = useContentWidth();
+  const terminalRows = useTerminalRows();
 
   if (!visible) {
     return null;
@@ -60,33 +60,15 @@ export const UndoPrompt: React.FC<UndoPromptProps> = ({
 
   const { count, previewData } = request;
   const options = ['Confirm', 'Cancel'];
-  const divider = createDivider(terminalWidth);
+  const previewLimit = terminalRows >= 35 ? 3 : 1;
+  const visiblePreviews = previewData.slice(0, previewLimit);
 
   return (
-    <Box flexDirection="column">
-      {/* Top divider */}
-      <Box>
-        <Text dimColor>{divider}</Text>
-      </Box>
-
-      {/* Header */}
-      <Box marginY={1}>
-        <Text color={UI_COLORS.PRIMARY} bold>
-          Undo Confirmation
-        </Text>
-      </Box>
-
-      {/* Operation count */}
-      <Box marginBottom={1}>
-        <Text dimColor>Operations to undo: </Text>
-        <Text bold color={UI_COLORS.PRIMARY}>{count}</Text>
-      </Box>
-
-      {/* Preview each operation */}
+    <InteractiveSurface title="Confirm undo" tone={UI_COLORS.PRIMARY} meta={`${count} operation${count === 1 ? '' : 's'}`} footer={<KeyboardHintFooter action="confirm" />}>
       {previewData && previewData.length > 0 && (
-        <Box flexDirection="column" marginBottom={1}>
-          {previewData.map((preview, index) => (
-            <Box key={index} flexDirection="column" marginBottom={1}>
+        <Box flexDirection="column">
+          {visiblePreviews.map((preview, index) => (
+            <Box key={preview.file_path} flexDirection="column">
               {/* Operation header */}
               <Box marginBottom={0}>
                 {previewData.length > 1 && (
@@ -112,23 +94,25 @@ export const UndoPrompt: React.FC<UndoPromptProps> = ({
 
               {/* Diff preview */}
               {preview.current_content !== preview.predicted_content && (
-                <Box marginTop={1} marginBottom={1}>
+                <Box>
                   <DiffDisplay
                     oldContent={preview.current_content}
                     newContent={preview.predicted_content}
                     filePath={preview.file_path}
-                    maxLinesPerHunk={10}
+                    maxLinesPerHunk={terminalRows >= 35 ? 8 : 3}
                   />
                 </Box>
               )}
             </Box>
           ))}
+          {previewData.length > visiblePreviews.length && (
+            <Text dimColor>… {previewData.length - visiblePreviews.length} more</Text>
+          )}
         </Box>
       )}
 
       {/* Options */}
-      <Box flexDirection="column" marginTop={1}>
-        <Text dimColor>Select action:</Text>
+      <Box flexDirection="column">
         {options.map((option, index) => (
           <Box key={option} marginLeft={2}>
             <SelectionIndicator isSelected={selectedIndex === index}>
@@ -138,8 +122,6 @@ export const UndoPrompt: React.FC<UndoPromptProps> = ({
         ))}
       </Box>
 
-      {/* Footer */}
-      <KeyboardHintFooter action="confirm" />
-    </Box>
+    </InteractiveSurface>
   );
 };

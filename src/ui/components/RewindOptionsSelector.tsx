@@ -18,14 +18,15 @@ import { Box, Text, useInput } from 'ink';
 import { Message } from '@shared/index.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
-import { createDivider } from '../utils/uiHelpers.js';
-import { useContentWidth } from '../hooks/useContentWidth.js';
 import { UI_COLORS } from '../constants/colors.js';
 import type { UndoPreview } from '@services/PatchManager.js';
 import { calculateDiffStats } from '@utils/diffUtils.js';
 import { createTwoFilesPatch } from 'diff';
 import { formatDiffStats, truncatePath } from '../utils/formatters.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { visibleItemBudget } from '../utils/layout.js';
 
 /**
  * File change statistics
@@ -72,6 +73,7 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
   onConfirm,
   visible = true,
 }) => {
+  const terminalRows = useTerminalRows();
   // Build options array dynamically based on file count
   const hasFiles = fileChanges.fileCount > 0;
 
@@ -133,9 +135,6 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     { isActive: visible }
   );
 
-  const terminalWidth = useContentWidth();
-  const divider = createDivider(terminalWidth);
-
   const messagePreview = truncateContent(targetMessage.content);
 
   // Prepare file display data from preview data if available
@@ -166,34 +165,24 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     return null;
   }
 
-  const displayLimit = 5;
+  const displayLimit = visibleItemBudget(terminalRows, {
+    chromeRows: 15,
+    rowsPerItem: 2,
+    minimum: 1,
+    maximum: 5,
+  });
   const hasMoreFiles = fileChanges.fileCount > displayLimit;
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      {/* Top divider */}
-      <Box>
-        <Text dimColor>{divider}</Text>
-      </Box>
-
-      {/* Header */}
-      <Box marginY={1}>
-        <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-          Rewind Options
-        </Text>
-      </Box>
-
-      {/* Target message preview */}
-      <Box marginBottom={1} flexDirection="column">
-        <Text dimColor>Rewinding to:</Text>
-        <Box marginLeft={2}>
-          <Text color="white">"{messagePreview}"</Text>
-        </Box>
-      </Box>
+    <InteractiveSurface
+      title="Rewind options"
+      description={<>Rewind to “<Text color={UI_COLORS.TEXT_DEFAULT}>{messagePreview}</Text>”</>}
+      footer={<KeyboardHintFooter action="select" />}
+    >
 
       {/* File changes preview with diff stats */}
       {fileChanges.fileCount > 0 && (
-        <Box marginBottom={1} flexDirection="column">
+        <Box flexDirection="column">
           <Text dimColor>Files to restore ({fileChanges.fileCount}):</Text>
           {fileDisplays ? (
             <>
@@ -243,17 +232,17 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
       )}
 
       {/* Section header */}
-      <Box marginTop={1} marginBottom={1}>
+      <Box marginTop={1}>
         <Text dimColor>Select an option:</Text>
       </Box>
 
       {/* Radio options */}
-      <Box flexDirection="column" marginBottom={1}>
+      <Box flexDirection="column">
         {options.map((option, index) => {
           const isSelected = index === selectedOption;
 
           return (
-            <Box key={index} flexDirection="column" marginBottom={index < options.length - 1 ? 1 : 0}>
+            <Box key={option.choice} flexDirection="column">
               {/* Option label */}
               <SelectionIndicator isSelected={isSelected}>
                 <Text>{option.label}</Text>
@@ -269,8 +258,6 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
         })}
       </Box>
 
-      {/* Help text */}
-      <KeyboardHintFooter action="select" cancelText="cancel" />
-    </Box>
+    </InteractiveSurface>
   );
 };

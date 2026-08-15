@@ -9,8 +9,9 @@ import { Box, Text } from 'ink';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
-import { createDivider } from '../utils/uiHelpers.js';
-import { useContentWidth } from '../hooks/useContentWidth.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
 
 export interface ModelOption {
   name: string;
@@ -44,8 +45,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   visible = true,
   loading = false,
 }) => {
-  const terminalWidth = useContentWidth();
-  const divider = createDivider(terminalWidth);
+  const terminalRows = useTerminalRows();
+  const visibleCount = visibleItemBudget(terminalRows, { chromeRows: 9, maximum: 10 });
+  const window = centeredWindow(models, selectedIndex, visibleCount);
 
   if (!visible) {
     return null;
@@ -55,53 +57,29 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   if (loading) {
     const selectedModel = models[selectedIndex];
     return (
-      <Box flexDirection="column" paddingX={1}>
-        <Box flexDirection="column">
-          <Box>
-            <Text dimColor>{divider}</Text>
-          </Box>
-          <Box marginY={1}>
-            <Text color={UI_COLORS.PRIMARY}>
-              Testing capabilities for {selectedModel?.name || 'model'}...
-            </Text>
-          </Box>
-        </Box>
-      </Box>
+      <InteractiveSurface title={`Select ${typeName || 'model'}`}>
+        <Text color={UI_COLORS.PRIMARY}>
+          Testing {selectedModel?.name || 'model'}…
+        </Text>
+      </InteractiveSurface>
     );
   }
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Box flexDirection="column">
-        {/* Top divider */}
-        <Box>
-          <Text dimColor>{divider}</Text>
-        </Box>
-
-        <Box marginY={1}>
-          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-            Select {typeName || 'Model'}
-          </Text>
-        </Box>
-
-        {currentModel && (
-          <Box marginBottom={1}>
-            <Text dimColor>Current: </Text>
-            <Text color={UI_COLORS.PRIMARY}>{currentModel}</Text>
-          </Box>
-        )}
-
-        <Box marginBottom={1}>
-          <Text dimColor>Available models ({models.length}):</Text>
-        </Box>
-
-        {/* Model list */}
-        {models.map((model, idx) => {
-          const isSelected = idx === selectedIndex;
+    <InteractiveSurface
+      title={`Select ${typeName || 'model'}`}
+      description={currentModel ? <>Current: <Text color={UI_COLORS.PRIMARY}>{currentModel}</Text></> : undefined}
+      meta={`${models.length}`}
+      footer={<KeyboardHintFooter action="select" />}
+    >
+        {window.above > 0 && <Text dimColor>  ↑ {window.above} more</Text>}
+        {window.items.map((model, idx) => {
+          const actualIndex = window.start + idx;
+          const isSelected = actualIndex === selectedIndex;
           const isCurrent = model.name === currentModel;
 
           return (
-            <Box key={idx}>
+            <Box key={model.name}>
               <SelectionIndicator isSelected={isSelected}>
                 {model.name}
                 {isCurrent && (
@@ -115,9 +93,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           );
         })}
 
-        {/* Footer */}
-        <KeyboardHintFooter action="select" />
-      </Box>
-    </Box>
+        {window.below > 0 && <Text dimColor>  ↓ {window.below} more</Text>}
+    </InteractiveSurface>
   );
 };

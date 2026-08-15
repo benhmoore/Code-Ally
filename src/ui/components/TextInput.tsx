@@ -9,7 +9,7 @@
  * - Line navigation (Ctrl+A start, Ctrl+E end)
  * - Kill line operations (Ctrl+K forward, Ctrl+U backward)
  * - Word deletion (Ctrl+W, Alt+Backspace)
- * - Multiline support with Ctrl+Enter
+ * - Multiline support with Shift+Enter
  * - Clear buffer (Ctrl+C)
  * - Visual cursor rendering with inverse colors
  */
@@ -46,7 +46,7 @@ export interface TextInputProps {
   onCtrlC?: () => void;
   /** Whether input is currently active/enabled */
   isActive?: boolean;
-  /** Enable multiline mode (Ctrl+Enter for newline, Enter submits) */
+  /** Enable multiline mode (Shift+Enter for newline, Enter submits) */
   multiline?: boolean;
   /** Placeholder text when empty */
   placeholder?: string;
@@ -54,8 +54,12 @@ export interface TextInputProps {
   bordered?: boolean;
   /** Border color (hex or color name) - only used when bordered={true} */
   borderColor?: string;
-  /** Optional prompt prefix (e.g., "> " or "ally> ") - only used when bordered={true} */
+  /** Show the prompt prefix in an inline input. Bordered inputs always show it. */
+  showPrompt?: boolean;
+  /** Optional prompt prefix (e.g., "> " or "ally> ") */
   promptText?: string;
+  /** Prompt prefix color. */
+  promptColor?: string;
   /**
    * Mask character for hidden input (e.g., passwords).
    * When set, displays this character for each character in the value,
@@ -74,6 +78,11 @@ export interface TextInputProps {
    * @default 'cyan' (UI_COLORS.PRIMARY)
    */
   labelColor?: string;
+}
+
+/** Single source of truth for the multiline submit contract. */
+export function enterInsertsNewline(multiline: boolean, shift: boolean): boolean {
+  return multiline && shift;
 }
 
 /**
@@ -96,7 +105,9 @@ export const TextInput: React.FC<TextInputProps> = ({
   placeholder = 'Type here...',
   bordered = false,
   borderColor = 'gray',
+  showPrompt = false,
   promptText = '> ',
+  promptColor = 'gray',
   mask,
   label,
   labelColor = 'cyan',
@@ -120,7 +131,8 @@ export const TextInput: React.FC<TextInputProps> = ({
   // Calculate available content width based on container structure
   // Bordered: border (2) + paddingX (2) = 4 chars overhead, plus prompt on first line
   // Inline: marginLeft (1) = 1 char overhead
-  const promptWidth = bordered ? stringWidth(promptText) : 0;
+  const hasPrompt = bordered || showPrompt;
+  const promptWidth = hasPrompt ? stringWidth(promptText) : 0;
   const containerOverhead = bordered ? 4 : 1;
   const contentWidth = Math.max(10, terminalWidth - containerOverhead);
 
@@ -409,13 +421,13 @@ export const TextInput: React.FC<TextInputProps> = ({
 
       // ===== Submit (Enter) =====
       if (key.return) {
-        if (multiline && key.ctrl) {
-          // Ctrl+Enter in multiline mode - insert newline
+        if (enterInsertsNewline(multiline, key.shift)) {
+          // Shift+Enter in multiline mode - insert newline
           const before = currentValue.slice(0, currentCursor);
           const after = currentValue.slice(currentCursor);
           onValueChange(before + '\n' + after);
           onCursorChange(currentCursor + 1);
-        } else if (!multiline || !key.ctrl) {
+        } else {
           if (onSubmitCapture?.(currentValue)) {
             return;
           }
@@ -521,7 +533,7 @@ export const TextInput: React.FC<TextInputProps> = ({
       // ===== Arrow Keys (Up/Down) for visual line navigation =====
       // Navigate between visual lines (wrapped text), not just logical lines
       if (multiline && key.upArrow) {
-        const firstLineWidth = bordered ? contentWidth - promptWidth : contentWidth;
+        const firstLineWidth = hasPrompt ? contentWidth - promptWidth : contentWidth;
         const newPos = navigateVisualLine(currentValue, currentCursor, -1, contentWidth, firstLineWidth);
         if (newPos !== null) {
           onCursorChange(newPos);
@@ -530,7 +542,7 @@ export const TextInput: React.FC<TextInputProps> = ({
       }
 
       if (multiline && key.downArrow) {
-        const firstLineWidth = bordered ? contentWidth - promptWidth : contentWidth;
+        const firstLineWidth = hasPrompt ? contentWidth - promptWidth : contentWidth;
         const newPos = navigateVisualLine(currentValue, currentCursor, 1, contentWidth, firstLineWidth);
         if (newPos !== null) {
           onCursorChange(newPos);
@@ -641,7 +653,7 @@ export const TextInput: React.FC<TextInputProps> = ({
       const isCursorLogicalLine = logicalIndex === cursorLogicalLine;
 
       // Calculate available width for this line (first line has prompt overhead)
-      const lineWidth = isFirstLogicalLine && bordered
+      const lineWidth = isFirstLogicalLine && hasPrompt
         ? contentWidth - promptWidth
         : contentWidth;
 
@@ -726,21 +738,21 @@ export const TextInput: React.FC<TextInputProps> = ({
     }
 
     return result;
-  }, [displayValue, cursorLogicalLine, cursorPosInLogicalLine, contentWidth, promptWidth, bordered, isEmpty, placeholder, isActive]);
+  }, [displayValue, cursorLogicalLine, cursorPosInLogicalLine, contentWidth, promptWidth, hasPrompt, isEmpty, placeholder, isActive]);
 
   // Render the text content with proper visual line handling
   const renderContent = () => (
     <>
       {visualLinesData.map((visualLine, index) => {
         const { text, isFirstLogicalLine, hasCursor, cursorPos, isPlaceholder } = visualLine;
-        const prompt = bordered && isFirstLogicalLine ? promptText : '';
+        const prompt = hasPrompt && isFirstLogicalLine ? promptText : '';
         const textColor = isPlaceholder ? 'gray' : 'white';
 
         return (
           <Box key={`vline-${index}`}>
-            {/* Prompt prefix - only show on first visual line when bordered */}
-            {bordered && isFirstLogicalLine && (
-              <Text color="gray">
+            {/* Prompt prefix - only show on the first visual line */}
+            {hasPrompt && isFirstLogicalLine && (
+              <Text color={promptColor}>
                 {prompt}
               </Text>
             )}
@@ -800,7 +812,7 @@ export const TextInput: React.FC<TextInputProps> = ({
         {renderContent()}
       </Box>
     ) : (
-      <Box flexDirection="column" width="100%" marginLeft={1}>
+      <Box flexDirection="column" width="100%" marginLeft={showPrompt ? 0 : 1}>
         {renderContent()}
       </Box>
     )

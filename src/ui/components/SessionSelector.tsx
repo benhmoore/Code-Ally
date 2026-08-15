@@ -12,8 +12,9 @@ import { TEXT_LIMITS } from '@config/constants.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
-import { createDivider } from '../utils/uiHelpers.js';
-import { useContentWidth } from '../hooks/useContentWidth.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
 
 export interface SessionSelectorProps {
   /** Available sessions */
@@ -56,8 +57,11 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   visible = true,
   maxVisible = 10,
 }) => {
-  const terminalWidth = useContentWidth();
-  const divider = createDivider(terminalWidth);
+  const terminalRows = useTerminalRows();
+  const visibleCount = Math.min(
+    maxVisible,
+    visibleItemBudget(terminalRows, { chromeRows: 9, rowsPerItem: 3, maximum: maxVisible })
+  );
 
   if (!visible) {
     return null;
@@ -65,79 +69,21 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
 
   if (sessions.length === 0) {
     return (
-      <Box flexDirection="column" paddingX={1}>
-        <Box flexDirection="column">
-          {/* Top divider */}
-          <Box>
-            <Text dimColor>{divider}</Text>
-          </Box>
-
-          <Box marginY={1}>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Resume Session
-            </Text>
-          </Box>
-          <Text color={UI_COLORS.PRIMARY}>No sessions found</Text>
-          <Box marginTop={1}>
-            <Text dimColor>Start a new conversation to create a session.</Text>
-          </Box>
-        </Box>
-      </Box>
+      <InteractiveSurface title="Resume session" footer={<KeyboardHintFooter hints={[{ key: 'esc', label: 'close' }]} />}>
+        <Text color={UI_COLORS.PRIMARY}>No sessions found</Text>
+        <Text dimColor>Start a conversation to create one.</Text>
+      </InteractiveSurface>
     );
   }
 
-  // Calculate windowing
   const totalSessions = sessions.length;
-  const showScrollIndicators = totalSessions > maxVisible;
-
-  let startIdx = 0;
-  let endIdx = totalSessions;
-
-  if (showScrollIndicators) {
-    // Center selected item in window
-    const halfWindow = Math.floor(maxVisible / 2);
-    startIdx = Math.max(0, selectedIndex - halfWindow);
-    endIdx = Math.min(totalSessions, startIdx + maxVisible);
-
-    // Adjust if we're at the end
-    if (endIdx === totalSessions) {
-      startIdx = Math.max(0, endIdx - maxVisible);
-    }
-  }
-
-  const visibleSessions = sessions.slice(startIdx, endIdx);
-  const hasMoreAbove = startIdx > 0;
-  const hasMoreBelow = endIdx < totalSessions;
+  const window = centeredWindow(sessions, selectedIndex, visibleCount);
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Box flexDirection="column">
-        {/* Top divider */}
-        <Box>
-          <Text dimColor>{divider}</Text>
-        </Box>
-
-        {/* Header */}
-        <Box marginY={1}>
-          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-            Resume Session
-          </Text>
-        </Box>
-
-        <Box marginBottom={1}>
-          <Text dimColor>Select a session to resume ({totalSessions} available):</Text>
-        </Box>
-
-        {/* Scroll indicator - more above */}
-        {hasMoreAbove && (
-          <Box>
-            <Text dimColor>  ↑ {startIdx} more...</Text>
-          </Box>
-        )}
-
-        {/* Session list */}
-        {visibleSessions.map((session, idx) => {
-          const actualIndex = startIdx + idx;
+    <InteractiveSurface title="Resume session" meta={`${totalSessions}`} footer={<KeyboardHintFooter action="resume" />}>
+        {window.above > 0 && <Text dimColor>  ↑ {window.above} more</Text>}
+        {window.items.map((session, idx) => {
+          const actualIndex = window.start + idx;
           const isSelected = actualIndex === selectedIndex;
           const displayName = truncateDisplayName(session.display_name);
           const workingDir = shortenPath(session.working_dir);
@@ -162,16 +108,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
           );
         })}
 
-        {/* Scroll indicator - more below */}
-        {hasMoreBelow && (
-          <Box>
-            <Text dimColor>  ↓ {totalSessions - endIdx} more...</Text>
-          </Box>
-        )}
-
-        {/* Footer */}
-        <KeyboardHintFooter action="select" />
-      </Box>
-    </Box>
+        {window.below > 0 && <Text dimColor>  ↓ {window.below} more</Text>}
+    </InteractiveSurface>
   );
 };

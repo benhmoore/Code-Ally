@@ -165,7 +165,7 @@ const AppContentComponent: React.FC<{
   }, []);
 
   // Handle session resumption on mount
-  const { sessionLoaded } = useSessionResume(
+  useSessionResume(
     resumeSession,
     agent,
     actions,
@@ -563,9 +563,6 @@ const AppContentComponent: React.FC<{
       isProcessing={state.isThinking}
       isCompacting={state.isCompacting}
       isCancelling={isCancelling}
-      recentMessages={displayedMessages.slice(-3)}
-      sessionLoaded={sessionLoaded}
-      isResuming={!!resumeSession}
       activeToolCalls={state.activeToolCalls}
       activeSubAgents={state.activeSubAgents}
     />
@@ -606,7 +603,6 @@ const AppContentComponent: React.FC<{
           isThinking={state.isThinking}
           streamingContent={state.streamingContent}
           activeToolCalls={state.activeToolCalls}
-          contextUsage={state.contextUsage}
           compactionNotices={state.compactionNotices}
           rewindNotices={state.rewindNotices}
           statusMessages={state.statusMessages}
@@ -1141,164 +1137,32 @@ const AppContentComponent: React.FC<{
             focused={modal.fleetFocused}
             activeAgentId={state.activeAgentId}
           />
-        </Box>
-      )}
 
-      {/* Footer / Help - full width */}
-      <Box width={terminalWidth - 2} paddingLeft={1}>
-        {isDebugMode ? (
-          <Box flexDirection="column">
-            {/* Debug Mode: Line 1 - Session and Memory */}
-            <Text dimColor>
-              <Text color="yellow">DEBUG MODE</Text>
-              <Text> · Session: {debugStats.sessionId}</Text>
-              <Text>
-                {' '}
-                · Memory: {debugStats.heapMB} MB heap / {debugStats.rssMB} MB RSS
-              </Text>
-            </Text>
-            {/* Debug Mode: Line 2 - Tokens, Todos, Model, Exit */}
+          {/* Persistent metadata belongs to the normal input state only. */}
+          <Box width={terminalWidth - 2} paddingLeft={1}>
             {modal.isWaitingForExitConfirmation ? (
-              <Text>
-                <Text color={UI_COLORS.PRIMARY}>Ctrl+C again to exit</Text>
-              </Text>
+              <Text color={UI_COLORS.PRIMARY}>ctrl+c again to exit</Text>
             ) : (
-              <>
-                <Text dimColor>
-                  <Text>
-                    Tokens: {debugStats.tokensUsed.toLocaleString()}/{debugStats.tokensTotal.toLocaleString()} (
-                    {state.contextUsage}%)
-                  </Text>
-                  {debugStats.todoTotal > 0 && (
-                    <Text>
-                      {' '}
-                      · Todos: {debugStats.todoPending} pending, {debugStats.todoCompleted} done, {debugStats.todoTotal}{' '}
-                      total
-                    </Text>
-                  )}
-                  <Text> · {state.currentAgentModel || state.config.model || 'none'}</Text>
-                  {currentFocus && (
-                    <Text>
-                      {' '}
-                      · Focus: <Text color="magenta">{currentFocus}</Text>
-                    </Text>
-                  )}
-                  {(() => {
-                    const activeProfile = getActiveProfile();
-                    return (
-                      activeProfile !== 'default' && (
-                        <Text>
-                          {' '}
-                          · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)
-                        </Text>
-                      )
-                    );
-                  })()}
-                  {backgroundProcessCount > 0 && (
-                    <Text>
-                      {' '}
-                      · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running task{backgroundProcessCount === 1 ? '' : 's'}</Text> (/task list)
-                    </Text>
-                  )}
-                  {scheduledTaskCount > 0 && (
-                    <Text>
-                      {' '}
-                      · <Text color={UI_COLORS.PRIMARY}>{scheduledTaskCount} scheduled</Text> (/schedule list)
-                    </Text>
-                  )}
-                </Text>
-                {modal.autoAllowMode ? (
-                  <Text color={UI_COLORS.ERROR}> · Auto-allow enabled (Shift+Tab to disable)</Text>
-                ) : (
-                  <Text dimColor> · Shift+Tab to auto-allow tools</Text>
+              <Text dimColor>
+                {isDebugMode && <Text color={UI_COLORS.PRIMARY}>debug · </Text>}
+                {state.currentAgentModel || state.config.model || 'no model'}
+                {isDebugMode && ` · ${debugStats.heapMB} MB · ${debugStats.tokensUsed.toLocaleString()}/${debugStats.tokensTotal.toLocaleString()} tokens`}
+                {currentFocus && <> · focus <Text color="magenta">{currentFocus}</Text></>}
+                {state.contextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
+                  <> · <Text color={state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? UI_COLORS.ERROR : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? UI_COLORS.WARNING : undefined}>
+                    {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left
+                  </Text></>
                 )}
-                {state.currentAgent !== defaultAgent && (
-                  <Text color={UI_COLORS.PRIMARY}>
-                    {' · Talking to '}{state.currentAgent}{' (esc to switch back)'}
-                  </Text>
-                )}
-                {state.currentAgent === defaultAgent && defaultAgent !== 'ally' && (
-                  <Text color={UI_COLORS.PRIMARY}>
-                    {' · Talking to '}{state.currentAgent}
-                  </Text>
-                )}
-              </>
+                {getActiveProfile() !== 'default' && <> · <Text color={UI_COLORS.PRIMARY}>{getActiveProfile()}</Text></>}
+                {backgroundProcessCount > 0 && <> · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running</Text></>}
+                {scheduledTaskCount > 0 && <> · <Text color={UI_COLORS.PRIMARY}>{scheduledTaskCount} scheduled</Text></>}
+                {modal.autoAllowMode && <> · <Text color={UI_COLORS.ERROR}>auto-allow on</Text></>}
+                {state.currentAgent !== defaultAgent && <> · <Text color={UI_COLORS.PRIMARY}>{state.currentAgent}</Text></>}
+              </Text>
             )}
           </Box>
-        ) : modal.isWaitingForExitConfirmation ? (
-          /* Exit Confirmation Mode */
-          <Text>
-            <Text color={UI_COLORS.PRIMARY}>Ctrl+C again to exit</Text>
-          </Text>
-        ) : (
-          /* Normal Mode: Single line */
-          <>
-            <Text dimColor>
-              {state.currentAgentModel || state.config.model || 'none'}
-              {currentFocus && (
-                <Text>
-                  {' '}
-                  · Focus: <Text color="magenta">{currentFocus}</Text>
-                </Text>
-              )}
-              {state.contextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
-                <>
-                  {' · '}
-                  {state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? (
-                    <Text color="red">
-                      {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - use /compact
-                    </Text>
-                  ) : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? (
-                    <Text color="yellow">
-                      {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left - consider /compact
-                    </Text>
-                  ) : (
-                    <Text>{CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left</Text>
-                  )}
-                </>
-              )}
-              {(() => {
-                const activeProfile = getActiveProfile();
-                return (
-                  activeProfile !== 'default' && (
-                    <Text>
-                      {' '}
-                      · <Text color={UI_COLORS.PRIMARY}>{activeProfile}</Text> (--profile to switch)
-                    </Text>
-                  )
-                );
-              })()}
-              {backgroundProcessCount > 0 && (
-                <Text>
-                  {' '}
-                  · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running task{backgroundProcessCount === 1 ? '' : 's'}</Text> (/task list)
-                </Text>
-              )}
-              {scheduledTaskCount > 0 && (
-                <Text>
-                  {' '}
-                  · <Text color={UI_COLORS.PRIMARY}>{scheduledTaskCount} scheduled</Text> (/schedule list)
-                </Text>
-              )}
-            </Text>
-            {modal.autoAllowMode ? (
-              <Text color={UI_COLORS.ERROR}> · Auto-allow enabled (Shift+Tab to disable)</Text>
-            ) : (
-              <Text dimColor> · Shift+Tab to auto-allow tools</Text>
-            )}
-            {state.currentAgent !== defaultAgent && (
-              <Text color={UI_COLORS.PRIMARY}>
-                {' · Talking to '}{state.currentAgent}{' (esc to switch back)'}
-              </Text>
-            )}
-            {state.currentAgent === defaultAgent && defaultAgent !== 'ally' && (
-              <Text color={UI_COLORS.PRIMARY}>
-                {' · Talking to '}{state.currentAgent}
-              </Text>
-            )}
-          </>
-        )}
-      </Box>
+        </Box>
+      )}
     </Box>
   );
 };

@@ -19,9 +19,9 @@ import { ConfigManager } from '@services/ConfigManager.js';
 import { IntegrationStore } from '@services/IntegrationStore.js';
 import { logger } from '@services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
 import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
-import { ModalContainer } from './ModalContainer.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -533,9 +533,8 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   };
 
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1} width="100%">
-      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
-        <Box minHeight={20} width="100%" flexDirection="column">
+    <InteractiveSurface>
+        <Box width="100%" flexDirection="column">
         {/* Welcome Step */}
         {step === SetupStep.WELCOME && (
           <>
@@ -1257,7 +1256,6 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
           </>
         )}
         </Box>
-      </ModalContainer>
-    </Box>
+    </InteractiveSurface>
   );
 };

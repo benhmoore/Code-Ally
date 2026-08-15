@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text, Static, useStdout } from 'ink';
-import { Message, ToolCallState, ToolCallTreeNode, SessionInfo } from '@shared/index.js';
+import { Box, Text, Static } from 'ink';
+import { Message, ToolCallState, ToolCallTreeNode } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
 import { CompactionNotice, RewindNotice, StatusMessage } from '../contexts/AppContext.js';
@@ -12,13 +12,12 @@ import { LAYOUT } from '@config/constants.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
 import { createDivider } from '../utils/uiHelpers.js';
 import { UI_COLORS } from '../constants/colors.js';
-import { formatRelativeTime } from '../utils/timeUtils.js';
 import { groupToolCallTimeline } from '../utils/toolCallSummaries.js';
 import type { ToolCallSummary, ToolCallTimelineItem } from '../utils/toolCallSummaries.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
-import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import type { SessionManager } from '@services/SessionManager.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { liveRegionBudget } from '../utils/layout.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -49,8 +48,6 @@ interface ConversationViewProps {
   streamingContent?: string;
   /** Active tool calls to display */
   activeToolCalls?: ToolCallState[];
-  /** Context usage percentage */
-  contextUsage: number;
   /** Compaction notices to display */
   compactionNotices?: CompactionNotice[];
   /** Rewind notices to display */
@@ -203,24 +200,30 @@ const MAX_VISIBLE_RUNNING_TOOLS = 8;
  * Prevents unbounded dynamic output growth during long streaming responses.
  */
 const MAX_STREAMING_LINES = 60;
-const ACTIVE_CONTENT_MIN_HEIGHT = 6;
-const ACTIVE_CONTENT_MAX_HEIGHT = 14;
-const ACTIVE_CONTENT_TERMINAL_RATIO = 0.4;
+
+function estimateToolRows(toolCall: ToolCallTreeNode): number {
+  let rows = 1;
+  const output = toolCall.output?.trim();
+  if (output && !toolCall.collapsed && (!toolCall.hideOutput || toolCall.alwaysShowFullOutput)) {
+    rows += Math.min(6, output.split('\n').length);
+  }
+  if (toolCall.diffPreview && !toolCall.collapsed) rows += 6;
+  if (toolCall.thinking && toolCall.thinkingEndTime) rows += 1;
+  if (!toolCall.collapsed) {
+    rows += (toolCall.children ?? []).reduce((sum, child) => sum + estimateToolRows(child), 0);
+  }
+  return rows;
+}
 
 const ActiveContent = React.memo<{
   runningToolCalls: ToolCallTreeNode[];
   streamingContent?: string;
-  contextUsage: number;
   config?: any;
   compactionNotices?: CompactionNotice[];
   pendingSummary?: ToolCallSummary;
 }>(({ runningToolCalls, streamingContent, config, compactionNotices, pendingSummary }) => {
-  const { stdout } = useStdout();
-  const terminalRows = stdout?.rows || process.stdout.rows || 24;
-  const maxActiveHeight = Math.max(
-    ACTIVE_CONTENT_MIN_HEIGHT,
-    Math.min(ACTIVE_CONTENT_MAX_HEIGHT, Math.floor(terminalRows * ACTIVE_CONTENT_TERMINAL_RATIO))
-  );
+  const terminalRows = useTerminalRows();
+  const maxActiveHeight = liveRegionBudget(terminalRows);
 
   // Early return null if nothing to render - prevents empty Box from taking space
   if (runningToolCalls.length === 0 && !streamingContent && !pendingSummary) {
@@ -233,17 +236,27 @@ const ActiveContent = React.memo<{
     : runningToolCalls;
   const hiddenToolCount = runningToolCalls.length - visibleTools.length;
 
-  // Truncate streaming content to last N lines
+  // Keep the newest streaming lines within the terminal-relative budget.
+  // `maxHeight` caps large output without reserving empty rows for small output.
   let displayStreaming = streamingContent?.trimStart();
   if (displayStreaming) {
     const lines = displayStreaming.split('\n');
-    if (lines.length > MAX_STREAMING_LINES) {
-      displayStreaming = '...\n' + lines.slice(-MAX_STREAMING_LINES).join('\n');
+    const reservedRows = visibleTools.length + (pendingSummary ? 1 : 0) + (hiddenToolCount > 0 ? 1 : 0);
+    const availableStreamingRows = Math.max(1, Math.min(MAX_STREAMING_LINES, maxActiveHeight - reservedRows));
+    if (lines.length > availableStreamingRows) {
+      displayStreaming = lines.slice(-availableStreamingRows).join('\n');
     }
   }
 
+  const estimatedRows =
+    visibleTools.reduce((sum, tool) => sum + estimateToolRows(tool), 0) +
+    (displayStreaming ? displayStreaming.split('\n').length : 0) +
+    (pendingSummary ? 1 : 0) +
+    (hiddenToolCount > 0 ? 1 : 0);
+  const constrainedHeight = estimatedRows > maxActiveHeight ? maxActiveHeight : undefined;
+
   return (
-    <Box flexDirection="column" height={maxActiveHeight} overflowY="hidden">
+    <Box flexDirection="column" height={constrainedHeight} overflowY="hidden">
       {/* Trailing context group, deferred out of Static so it can still absorb
           later context calls without rewriting already-printed output */}
       {pendingSummary && (
@@ -284,7 +297,6 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   messages,
   streamingContent,
   activeToolCalls = [],
-  contextUsage,
   compactionNotices = [],
   rewindNotices = [],
   statusMessages = [],
@@ -306,35 +318,8 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     compactionNoticesRef.current = compactionNotices;
   }, [compactionNotices]);
 
-  // Get git branch on mount
-  const [gitBranch, setGitBranch] = useState<string | null>(null);
-  useEffect(() => {
-    const branch = getGitBranch();
-    setGitBranch(branch);
-  }, []);
-
-  // Get recent sessions on mount
-  const [recentSessions, setRecentSessions] = useState<SessionInfo[]>([]);
-  useEffect(() => {
-    const fetchRecentSessions = async () => {
-      try {
-        const serviceRegistry = ServiceRegistry.getInstance();
-        const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
-        if (sessionManager) {
-          const sessions = await sessionManager.getSessionsInfoByDirectory();
-          // Sort by last modified descending and take top 3
-          const sortedSessions = sessions
-            .sort((a, b) => b.last_modified_timestamp - a.last_modified_timestamp)
-            .slice(0, 3);
-          setRecentSessions(sortedSessions);
-        }
-      } catch (error) {
-        // Silently handle errors by setting empty array
-        setRecentSessions([]);
-      }
-    };
-    fetchRecentSessions();
-  }, []);
+  // Resolve synchronously so the startup header never grows after first paint.
+  const [gitBranch] = useState(getGitBranch);
 
   // Memoize toolCallTree with reference equality check to prevent unnecessary recalculations
   const toolCallTree = React.useMemo(() => buildToolCallTree(activeToolCalls), [activeToolCalls]);
@@ -483,7 +468,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     // Only process new items since last render
     const newItems = completedTimeline.slice(renderedCountRef.current);
     newItems.forEach((item) => {
-      const spacing = { marginTop: 1 };
+      const spacing = { marginTop: jsxItemsRef.current.length === 0 ? 0 : 1 };
 
       if (item.type === 'message') {
         const isUser = item.message.role === 'user';
@@ -583,45 +568,21 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     <Box flexDirection="column">
       {/* Header - only show when no messages */}
       {messages.length === 0 && (
-        <Box flexDirection="column" marginTop={1} marginBottom={1} borderStyle="round" borderColor={UI_COLORS.TEXT_DIM} paddingX={1}>
-          <Box flexDirection="row">
-            <Box flexDirection="column" marginRight={2}>
-              <Text color={UI_COLORS.PRIMARY} bold>      __</Text>
-              <Text color={UI_COLORS.PRIMARY} bold>  ___( o)&gt;</Text>
-              <Text color={UI_COLORS.PRIMARY} bold>  \ &lt;_. )</Text>
-              <Text color={UI_COLORS.PRIMARY} bold>   `---&apos;  </Text>
-            </Box>
-            <Box flexDirection="column">
-              <Text>Ally v{packageJson.version}</Text>
-              <Text dimColor>{config?.model || 'No model configured'}</Text>
-              <Text dimColor>{process.cwd()}</Text>
-              {totalPluginCount !== undefined && totalPluginCount > 0 && (
-                <Text dimColor>
-                  {activePluginCount}/{totalPluginCount} plugin{totalPluginCount === 1 ? '' : 's'} active · tag with +/-
-                </Text>
-              )}
-              {totalMcpCount !== undefined && totalMcpCount > 0 && (
-                <Text dimColor>
-                  {activeMcpCount}/{totalMcpCount} mcp server{totalMcpCount === 1 ? '' : 's'} active
-                </Text>
-              )}
-              {gitBranch && (
-                <Text dimColor color={UI_COLORS.PRIMARY}>branch: {gitBranch}</Text>
-              )}
-            </Box>
-          </Box>
-          {recentSessions.length > 0 && (
-            <Box flexDirection="column" marginTop={1} marginLeft={12}>
-              <Text>Recent Activity</Text>
-              {recentSessions.map((session) => (
-                <Box key={session.session_id}>
-                  <Text dimColor>
-                    {session.display_name} ({formatRelativeTime(session.last_modified_timestamp)})
-                  </Text>
-                </Box>
-              ))}
-              <Text dimColor>/resume for more</Text>
-            </Box>
+        <Box flexDirection="column" marginBottom={1}>
+          <Text>
+            <Text color={UI_COLORS.PRIMARY} bold>( o)&gt; </Text>
+            <Text bold>Ally</Text>
+            <Text dimColor> v{packageJson.version} · {config?.model || 'no model'}</Text>
+          </Text>
+          <Text dimColor>
+            {process.cwd()}{gitBranch ? ` · ${gitBranch}` : ''}
+          </Text>
+          {((totalPluginCount ?? 0) > 0 || (totalMcpCount ?? 0) > 0) && (
+            <Text dimColor>
+              {(totalPluginCount ?? 0) > 0 ? `${activePluginCount ?? 0}/${totalPluginCount} plugins` : ''}
+              {(totalPluginCount ?? 0) > 0 && (totalMcpCount ?? 0) > 0 ? ' · ' : ''}
+              {(totalMcpCount ?? 0) > 0 ? `${activeMcpCount ?? 0}/${totalMcpCount} MCP` : ''}
+            </Text>
           )}
         </Box>
       )}
@@ -635,7 +596,6 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       <ActiveContent
         runningToolCalls={runningToolCalls}
         streamingContent={streamingContent}
-        contextUsage={contextUsage}
         config={config}
         compactionNotices={compactionNotices}
         pendingSummary={pendingContextSummary}
@@ -651,13 +611,18 @@ export const ConversationView = React.memo(ConversationViewComponent, (prevProps
   const messagesSame = prevProps.messages === nextProps.messages;
   const streamingSame = prevProps.streamingContent === nextProps.streamingContent;
   const toolCallsSame = prevProps.activeToolCalls === nextProps.activeToolCalls;
-  const contextSame = prevProps.contextUsage === nextProps.contextUsage;
   const compactionNoticesSame = prevProps.compactionNotices === nextProps.compactionNotices;
   const rewindNoticesSame = prevProps.rewindNotices === nextProps.rewindNotices;
   const statusMessagesSame = prevProps.statusMessages === nextProps.statusMessages;
   const isThinkingSame = prevProps.isThinking === nextProps.isThinking;
   const staticKeySame = prevProps.staticRemountKey === nextProps.staticRemountKey;
   const configSame = prevProps.config === nextProps.config;
+  const currentAgentSame = prevProps.currentAgent === nextProps.currentAgent;
+  const integrationCountsSame =
+    prevProps.activePluginCount === nextProps.activePluginCount &&
+    prevProps.totalPluginCount === nextProps.totalPluginCount &&
+    prevProps.activeMcpCount === nextProps.activeMcpCount &&
+    prevProps.totalMcpCount === nextProps.totalMcpCount;
 
-  return messagesSame && streamingSame && toolCallsSame && contextSame && compactionNoticesSame && rewindNoticesSame && statusMessagesSame && isThinkingSame && staticKeySame && configSame;
+  return messagesSame && streamingSame && toolCallsSame && compactionNoticesSame && rewindNoticesSame && statusMessagesSame && isThinkingSame && staticKeySame && configSame && currentAgentSame && integrationCountsSame;
 });

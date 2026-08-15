@@ -15,8 +15,8 @@ import { Box, Text, useInput } from 'ink';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { UI_COLORS } from '../constants/colors.js';
-import { ModalContainer } from './ModalContainer.js';
 import { ChickAnimation } from './ChickAnimation.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
 
@@ -241,9 +241,8 @@ This file provides project-specific guidance to Code Ally when working with this
   };
 
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1} width="100%">
-      <ModalContainer borderColor={UI_COLORS.TEXT_DIM}>
-        <Box minHeight={20} width="100%" flexDirection="column">
+    <InteractiveSurface>
+        <Box width="100%" flexDirection="column">
       {step === WizardStep.WELCOME && (
         <>
           {/* Header with ChickAnimation */}
@@ -703,7 +702,6 @@ This file provides project-specific guidance to Code Ally when working with this
         </>
       )}
         </Box>
-      </ModalContainer>
-    </Box>
+    </InteractiveSurface>
   );
 };

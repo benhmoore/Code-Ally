@@ -27,7 +27,7 @@ export interface ProgressIndicatorProps {
 /**
  * Spinner frame definitions - uses centralized UI_SYMBOLS
  */
-const SPINNERS: Record<SpinnerType, readonly string[]> = {
+export const SPINNER_FRAMES: Record<SpinnerType, readonly string[]> = {
   default: UI_SYMBOLS.SPINNER.DEFAULT,
   dots: UI_SYMBOLS.SPINNER.DOTS,
   line: UI_SYMBOLS.SPINNER.LINE,
@@ -48,7 +48,7 @@ export const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({
   color = UI_COLORS.PRIMARY,
   dimText = false,
 }) => {
-  const spinner = SPINNERS[type];
+  const spinner = SPINNER_FRAMES[type];
   const ticker = AnimationTicker.getInstance();
   const [frameIndex, setFrameIndex] = useState(0);
 

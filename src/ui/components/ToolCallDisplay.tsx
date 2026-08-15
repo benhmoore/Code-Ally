@@ -9,7 +9,7 @@
  * - Displays user interjections nested under running tool calls
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Box, Text } from 'ink';
 import { ToolCallState, ActivityEventType } from '@shared/index.js';
 import type { ToolCallTreeNode } from '@shared/index.js';
@@ -18,7 +18,7 @@ import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { formatDisplayName } from '../utils/uiHelpers.js';
-import { TEXT_LIMITS, isAgentDelegationTool, UI_DELAYS, BUFFER_SIZES, ANIMATION_TIMING } from '@config/constants.js';
+import { TEXT_LIMITS, isAgentDelegationTool, UI_DELAYS, BUFFER_SIZES } from '@config/constants.js';
 import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -26,7 +26,6 @@ import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { ToolManager } from '@tools/ToolManager.js';
 import { AgentPoolService } from '@services/AgentPoolService.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
-import { AnimationTicker } from '@services/AnimationTicker.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -186,8 +185,6 @@ function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: 
   return subtext;
 }
 
-const ARROW_BLINK_INTERVAL_MS = 500;
-
 /**
  * Determine if a child tool should be shown based on parent state and config
  * Exported for testing
@@ -224,26 +221,6 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
   // Track acknowledgments for this tool call
   const [acknowledgments, setAcknowledgments] = useState<Array<{ message: string; timestamp: number }>>([]);
-
-  // Flashing arrow for in-progress tool calls. This uses the shared UI ticker
-  // so running tool rows animate in the same render wave as spinners.
-  const [arrowVisible, setArrowVisible] = useState(true);
-
-  useEffect(() => {
-    if (!isRunning) {
-      setArrowVisible(true);
-      return;
-    }
-
-    const ticker = AnimationTicker.getInstance();
-    const framesPerBlink = Math.max(1, Math.round(ARROW_BLINK_INTERVAL_MS / ANIMATION_TIMING.FRAME_RATE));
-    const unsubscribe = ticker.subscribe(() => {
-      const visible = Math.floor(ticker.getFrame() / framesPerBlink) % 2 === 0;
-      setArrowVisible(prev => prev === visible ? prev : visible);
-    });
-
-    return unsubscribe;
-  }, [isRunning]);
 
   // Subscribe to USER_INTERJECTION events to capture interjections for this tool call
   useActivityEvent(ActivityEventType.USER_INTERJECTION, (event) => {
@@ -379,7 +356,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
     : toolCall.displayIcon
       ? toolCall.displayIcon
       : isRunning
-        ? (arrowVisible ? UI_SYMBOLS.NAVIGATION.ARROW_RIGHT : ' ')
+        ? UI_SYMBOLS.NAVIGATION.ARROW_RIGHT
         : statusIcon;
 
   // Tool-use count for the collapsed agent summary. Sub-agent tool calls are

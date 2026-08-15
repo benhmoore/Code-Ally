@@ -10,9 +10,11 @@ import { Box, Text } from 'ink';
 import { Message } from '@shared/index.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
-import { createDivider } from '../utils/uiHelpers.js';
-import { useContentWidth } from '../hooks/useContentWidth.js';
 import { UI_COLORS } from '../constants/colors.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { InteractiveSurface } from './InteractiveSurface.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
 
 export interface MessageSelectorProps {
   /** User messages only (pre-filtered) */
@@ -54,65 +56,28 @@ export const MessageSelector: React.FC<MessageSelectorProps> = ({
   visible = true,
   maxVisible = 10,
 }) => {
-  const contentWidth = useContentWidth();
+  const terminalRows = useTerminalRows();
+  const visibleCount = Math.min(
+    maxVisible,
+    visibleItemBudget(terminalRows, { chromeRows: 9, maximum: maxVisible })
+  );
 
   if (!visible) {
     return null;
   }
 
-  // Windowing logic (identical to RewindSelector)
   const totalMessages = messages.length;
-  const showScrollIndicators = totalMessages > maxVisible;
-
-  // Calculate visible window
-  let startIdx = 0;
-  let endIdx = totalMessages;
-
-  if (showScrollIndicators) {
-    // Keep selected item in middle of window when possible
-    const halfWindow = Math.floor(maxVisible / 2);
-    startIdx = Math.max(0, selectedIndex - halfWindow);
-    endIdx = Math.min(totalMessages, startIdx + maxVisible);
-
-    // Adjust start if we're near the end
-    if (endIdx === totalMessages && totalMessages > maxVisible) {
-      startIdx = Math.max(0, totalMessages - maxVisible);
-    }
-  }
-
-  const visibleMessages = messages.slice(startIdx, endIdx);
+  const window = centeredWindow(messages, selectedIndex, visibleCount);
 
   return (
-    <Box flexDirection="column">
-      {/* Header */}
-      <Box marginBottom={1}>
-        <Text bold color={UI_COLORS.TEXT_DEFAULT}>
-          Create Prompt from Message
-        </Text>
-      </Box>
-
-      {/* Divider */}
-      <Box marginBottom={1}>
-        <Text dimColor>{createDivider(contentWidth)}</Text>
-      </Box>
-
-      {/* Instructions */}
-      <Box marginBottom={1}>
-        <Text dimColor>
-          Select a message to use as prompt content ({totalMessages} message{totalMessages !== 1 ? 's' : ''}):
-        </Text>
-      </Box>
-
-      {/* Scroll indicator (top) */}
-      {showScrollIndicators && startIdx > 0 && (
-        <Box marginBottom={1}>
-          <Text dimColor>... {startIdx} more above ...</Text>
-        </Box>
-      )}
-
-      {/* Message list */}
-      {visibleMessages.map((msg, idx) => {
-        const actualIndex = startIdx + idx;
+    <InteractiveSurface
+      title="Create prompt from message"
+      meta={`${totalMessages}`}
+      footer={<KeyboardHintFooter hints={[{ key: '↑↓', label: 'move' }, { key: 'enter', label: 'use' }, { key: 'n', label: 'new' }, { key: 'esc', label: 'cancel' }]} />}
+    >
+      {window.above > 0 && <Text dimColor>  ↑ {window.above} more</Text>}
+      {window.items.map((msg, idx) => {
+        const actualIndex = window.start + idx;
         const isSelected = actualIndex === selectedIndex;
         const timestamp = formatTime(msg.timestamp);
         const preview = truncateContent(msg.content, 80);
@@ -127,22 +92,7 @@ export const MessageSelector: React.FC<MessageSelectorProps> = ({
         );
       })}
 
-      {/* Scroll indicator (bottom) */}
-      {showScrollIndicators && endIdx < totalMessages && (
-        <Box marginTop={1}>
-          <Text dimColor>... {totalMessages - endIdx} more below ...</Text>
-        </Box>
-      )}
-
-      {/* Divider */}
-      <Box marginTop={1} marginBottom={1}>
-        <Text dimColor>{createDivider(contentWidth)}</Text>
-      </Box>
-
-      {/* Keyboard hints */}
-      <Box flexDirection="column">
-        <Text dimColor>↑↓: Navigate  Enter: Select  N: New prompt  Esc: Cancel</Text>
-      </Box>
-    </Box>
+      {window.below > 0 && <Text dimColor>  ↓ {window.below} more</Text>}
+    </InteractiveSurface>
   );
 };

@@ -11,9 +11,11 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { Completion } from '@services/CompletionProvider.js';
-import { ModalContainer } from './ModalContainer.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 
 export interface CompletionDropdownProps {
   /** Available completions */
@@ -71,26 +73,22 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
   maxHeight = 8,
   visible = true,
 }) => {
+  const terminalRows = useTerminalRows();
+
   if (!visible || completions.length === 0) {
     return null;
   }
 
   const selectedCompletion = completions[selectedIndex];
 
-  // Calculate visible range (windowing for long lists)
-  const startIndex = Math.max(
-    0,
-    Math.min(selectedIndex - Math.floor(maxHeight / 2), completions.length - maxHeight)
+  const visibleCount = Math.min(
+    maxHeight,
+    visibleItemBudget(terminalRows, { chromeRows: 10, maximum: maxHeight })
   );
-  const endIndex = Math.min(startIndex + maxHeight, completions.length);
-  const visibleCompletions = completions.slice(startIndex, endIndex);
-
-  const showScrollUp = startIndex > 0;
-  const showScrollDown = endIndex < completions.length;
+  const window = centeredWindow(completions, selectedIndex, visibleCount);
 
   return (
-    <Box flexDirection="column" marginTop={1} width="80%">
-      <ModalContainer borderColor="gray">
+    <Box flexDirection="column" marginTop={1} paddingLeft={1} width="100%">
         {/* Header */}
         <Box marginBottom={0}>
           <Text dimColor>
@@ -99,15 +97,15 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
         </Box>
 
         {/* Scroll indicator */}
-        {showScrollUp && (
+        {window.above > 0 && (
           <Box justifyContent="center">
-            <Text dimColor>↑ more</Text>
+            <Text dimColor>↑ {window.above} more</Text>
           </Box>
         )}
 
         {/* Completion items */}
-        {visibleCompletions.map((completion, idx) => {
-          const actualIndex = startIndex + idx;
+        {window.items.map((completion, idx) => {
+          const actualIndex = window.start + idx;
           const isSelected = actualIndex === selectedIndex;
 
           return (
@@ -151,21 +149,18 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
         })}
 
         {/* Scroll indicator */}
-        {showScrollDown && (
+        {window.below > 0 && (
           <Box justifyContent="center">
-            <Text dimColor>↓ more</Text>
+            <Text dimColor>↓ {window.below} more</Text>
           </Box>
         )}
 
         {/* Footer hint */}
-        <Box marginTop={0} borderTop borderColor="gray">
-          <Text dimColor>
-            {selectedCompletion?.type === 'command'
-              ? 'Enter: accept command • Tab: insert • ↑↓: navigate • Esc: dismiss'
-              : 'Tab: insert • ↑↓: navigate • Esc: dismiss'}
-          </Text>
-        </Box>
-      </ModalContainer>
+        <KeyboardHintFooter
+          hints={selectedCompletion?.type === 'command'
+            ? [{ key: '↑↓', label: 'move' }, { key: 'enter', label: 'accept' }, { key: 'tab', label: 'insert' }, { key: 'esc', label: 'dismiss' }]
+            : [{ key: '↑↓', label: 'move' }, { key: 'tab', label: 'insert' }, { key: 'esc', label: 'dismiss' }]}
+        />
     </Box>
   );
 };
