@@ -16,7 +16,6 @@ import { LoopDetector, TextLoopConfig, CycleInfo, IssueType } from '../LoopDetec
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ActivityEventType } from '../../types/index.js';
 import type { LoopPattern, LoopInfo } from '../types/loopDetection.js';
-import { RepeatedActionPattern } from '../patterns/loopPatterns.js';
 
 // ============================================================================
 // TEST UTILITIES
@@ -552,7 +551,7 @@ describe('LoopDetector', () => {
       });
 
       it('should not detect repeated planning across completed thought streams', () => {
-        const pattern = new RepeatedActionPattern();
+        const pattern = new MockPattern('repeated_actions', 'Let me explore');
 
         detector = new LoopDetector(
           {
@@ -591,7 +590,7 @@ describe('LoopDetector', () => {
       });
 
       it('should still detect repeated planning inside a single thought stream', () => {
-        const pattern = new RepeatedActionPattern();
+        const pattern = new MockPattern('repeated_actions', 'Let me explore');
 
         detector = new LoopDetector(
           {
