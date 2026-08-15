@@ -12,6 +12,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { ToolCallState, ActivityEventType } from '@shared/index.js';
+import type { ToolCallTreeNode } from '@shared/index.js';
 import { CompactionNotice } from '../contexts/AppContext.js';
 import { DiffDisplay } from './DiffDisplay.js';
 import { formatDuration } from '../utils/timeUtils.js';
@@ -29,7 +30,7 @@ import { AnimationTicker } from '@services/AnimationTicker.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
-  toolCall: ToolCallState & { totalChildCount?: number; children?: ToolCallState[] };
+  toolCall: ToolCallTreeNode;
   /** Indentation level (0 = root) */
   level?: number;
   /** Config for output display preferences */

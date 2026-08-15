@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, Static, useStdout } from 'ink';
-import { Message, ToolCallState, SessionInfo } from '@shared/index.js';
+import { Message, ToolCallState, ToolCallTreeNode, SessionInfo } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
 import { CompactionNotice, RewindNotice, StatusMessage } from '../contexts/AppContext.js';
@@ -13,6 +13,9 @@ import { useContentWidth } from '../hooks/useContentWidth.js';
 import { createDivider } from '../utils/uiHelpers.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
+import { groupToolCallTimeline } from '../utils/toolCallSummaries.js';
+import type { ToolCallSummary, ToolCallTimelineItem } from '../utils/toolCallSummaries.js';
+import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { SessionManager } from '@services/SessionManager.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
@@ -73,13 +76,13 @@ interface ConversationViewProps {
 /**
  * Build tree structure from flat tool call list
  */
-function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] {
-  const toolCallMap = new Map<string, ToolCallState & { children?: ToolCallState[]; totalChildCount?: number }>();
+function buildToolCallTree(toolCalls: ToolCallState[]): ToolCallTreeNode[] {
+  const toolCallMap = new Map<string, ToolCallTreeNode>();
   toolCalls.forEach((tc) => {
     toolCallMap.set(tc.id, { ...tc, children: [], totalChildCount: 0 });
   });
 
-  const rootCalls: (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] = [];
+  const rootCalls: ToolCallTreeNode[] = [];
   toolCalls.forEach((tc) => {
     const toolCallWithChildren = toolCallMap.get(tc.id);
     if (!toolCallWithChildren) return;
@@ -100,8 +103,8 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
 
   // Filter out invisible tools recursively
   const filterInvisibleTools = (
-    calls: (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[]
-  ): (ToolCallState & { children?: ToolCallState[]; totalChildCount?: number })[] => {
+    calls: ToolCallTreeNode[]
+  ): ToolCallTreeNode[] => {
     return calls
       .filter(call => call.visibleInChat !== false)
       .map(call => {
@@ -114,9 +117,9 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
 
   // Process transparent wrappers: promote their children
   const processTransparentWrappers = (
-    calls: (ToolCallState & { children?: ToolCallState[] })[]
-  ): (ToolCallState & { children?: ToolCallState[] })[] => {
-    const result: (ToolCallState & { children?: ToolCallState[] })[] = [];
+    calls: ToolCallTreeNode[]
+  ): ToolCallTreeNode[] => {
+    const result: ToolCallTreeNode[] = [];
 
     for (const call of calls) {
       if (call.isTransparent && call.children?.length) {
@@ -143,7 +146,7 @@ function buildToolCallTree(toolCalls: ToolCallState[]): (ToolCallState & { child
  * Render tool call (children are rendered internally by ToolCallDisplay)
  */
 function renderToolCallTree(
-  toolCall: ToolCallState & { children?: ToolCallState[] },
+  toolCall: ToolCallTreeNode,
   level: number = 0,
   config?: any,
   compactionNotices?: CompactionNotice[]
@@ -164,11 +167,26 @@ function renderToolCallTree(
  */
 type TimelineItem =
   | { type: 'message'; message: Message; index: number; timestamp: number }
-  | { type: 'toolCall'; toolCall: ToolCallState & { children?: ToolCallState[] }; timestamp: number }
+  | ToolCallTimelineItem
   | { type: 'compactionNotice'; notice: CompactionNotice; timestamp: number }
   | { type: 'rewindNotice'; notice: RewindNotice; timestamp: number }
   | { type: 'statusMessage'; statusMessage: StatusMessage; timestamp: number };
 
+/**
+ * Timeline items other than tool calls, which groupToolCallTimeline passes through untouched
+ */
+type NonToolCallTimelineItem = Exclude<TimelineItem, { type: 'toolCall' }>;
+
+/**
+ * Renders a collapsed group of context-gathering tool calls as a single line,
+ * styled like a completed tool call so the timeline reads consistently.
+ */
+const ToolCallSummaryDisplay: React.FC<{ summary: ToolCallSummary }> = ({ summary }) => (
+  <Box>
+    <Text color={getStatusColor('success')}>{getStatusIcon('success')} </Text>
+    <Text dimColor>{summary.text}</Text>
+  </Box>
+);
 
 /**
  * Memoized active content - only re-renders when active tools change
@@ -190,12 +208,13 @@ const ACTIVE_CONTENT_MAX_HEIGHT = 14;
 const ACTIVE_CONTENT_TERMINAL_RATIO = 0.4;
 
 const ActiveContent = React.memo<{
-  runningToolCalls: (ToolCallState & { children?: ToolCallState[] })[];
+  runningToolCalls: ToolCallTreeNode[];
   streamingContent?: string;
   contextUsage: number;
   config?: any;
   compactionNotices?: CompactionNotice[];
-}>(({ runningToolCalls, streamingContent, config, compactionNotices }) => {
+  pendingSummary?: ToolCallSummary;
+}>(({ runningToolCalls, streamingContent, config, compactionNotices, pendingSummary }) => {
   const { stdout } = useStdout();
   const terminalRows = stdout?.rows || process.stdout.rows || 24;
   const maxActiveHeight = Math.max(
@@ -204,7 +223,7 @@ const ActiveContent = React.memo<{
   );
 
   // Early return null if nothing to render - prevents empty Box from taking space
-  if (runningToolCalls.length === 0 && !streamingContent) {
+  if (runningToolCalls.length === 0 && !streamingContent && !pendingSummary) {
     return null;
   }
 
@@ -225,6 +244,14 @@ const ActiveContent = React.memo<{
 
   return (
     <Box flexDirection="column" height={maxActiveHeight} overflowY="hidden">
+      {/* Trailing context group, deferred out of Static so it can still absorb
+          later context calls without rewriting already-printed output */}
+      {pendingSummary && (
+        <Box paddingLeft={2}>
+          <ToolCallSummaryDisplay summary={pendingSummary} />
+        </Box>
+      )}
+
       {hiddenToolCount > 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>({hiddenToolCount} more tool{hiddenToolCount !== 1 ? 's' : ''} running...)</Text>
@@ -315,7 +342,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   // Track completed tool IDs to stabilize completedToolCalls reference
   // This prevents the Static component from recalculating when only running tools update
   const prevCompletedIdsRef = useRef<Set<string>>(new Set());
-  const prevCompletedToolCallsRef = useRef<(ToolCallState & { children?: ToolCallState[] })[]>([]);
+  const prevCompletedToolCallsRef = useRef<ToolCallTreeNode[]>([]);
 
   // Separate completed from running tool calls with stable references
   const { completedToolCalls, runningToolCalls } = React.useMemo(() => {
@@ -347,7 +374,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
   // Build completed timeline (messages + completed tools + compaction notices)
   // Relies on React's memoization + AppContext ref equality for efficient updates
-  const completedTimeline = React.useMemo(() => {
+  const { completedTimeline, pendingContextSummary } = React.useMemo(() => {
     const timeline: TimelineItem[] = [];
 
     // Add all messages (except tool/system role messages and empty assistant messages)
@@ -425,8 +452,16 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     });
 
     timeline.sort((a, b) => a.timestamp - b.timestamp);
-    return timeline;
-  }, [messages, completedToolCalls, compactionNotices, rewindNotices, statusMessages]);
+
+    // Collapse consecutive context-gathering calls into one line. The trailing group is
+    // deferred to the dynamic region: Static output is append-only, so a group that can
+    // still grow must not be printed until a non-context item closes it.
+    const grouped = groupToolCallTimeline<NonToolCallTimelineItem>(timeline, {
+      disabled: config?.show_full_tool_output === true,
+    });
+
+    return { completedTimeline: grouped.items, pendingContextSummary: grouped.pendingSummary };
+  }, [messages, completedToolCalls, compactionNotices, rewindNotices, statusMessages, config?.show_full_tool_output]);
 
   // Append-only JSX accumulator for Static component.
   // Only renders JSX for NEW timeline items, avoiding O(n) re-creation of the full array.
@@ -471,6 +506,14 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           <Box key={`tool-${item.toolCall.id}`} {...spacing} paddingLeft={2}>
             <ErrorBoundary label={`tool-${item.toolCall.id}`}>
               {renderToolCallTree(item.toolCall, 0, config, compactionNoticesRef.current)}
+            </ErrorBoundary>
+          </Box>
+        );
+      } else if (item.type === 'toolCallSummary') {
+        jsxItemsRef.current.push(
+          <Box key={`tool-summary-${item.summary.id}`} {...spacing} paddingLeft={2}>
+            <ErrorBoundary label={`tool-summary-${item.summary.id}`}>
+              <ToolCallSummaryDisplay summary={item.summary} />
             </ErrorBoundary>
           </Box>
         );
@@ -595,6 +638,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         contextUsage={contextUsage}
         config={config}
         compactionNotices={compactionNotices}
+        pendingSummary={pendingContextSummary}
       />
     </Box>
   );

@@ -333,6 +333,14 @@ export interface ToolCallState {
   hideToolName?: boolean;
 }
 
+/**
+ * A tool call arranged into the parent/child tree the UI renders from.
+ */
+export interface ToolCallTreeNode extends ToolCallState {
+  children?: ToolCallTreeNode[];
+  totalChildCount?: number;
+}
+
 // ===========================
 // Configuration Types
 // ===========================
