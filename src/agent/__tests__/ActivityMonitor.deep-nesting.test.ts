@@ -93,9 +93,12 @@ describe('ActivityMonitor - Deep Agent Nesting', () => {
       // Resume with success - should record progress (reset timer)
       monitor.resume(true);
 
-      // Elapsed time should be very small (reset to now)
+      // The timer was reset, so elapsed restarts from now. Compared against the
+      // 50ms that just passed rather than a near-zero bound: an unreset timer
+      // would read >= 50, so this still proves the reset while leaving headroom
+      // for a loaded machine.
       const elapsedAfterSuccess = monitor.getElapsedTime();
-      expect(elapsedAfterSuccess).toBeLessThan(10);
+      expect(elapsedAfterSuccess).toBeLessThan(50);
 
       // Pause again for another delegation
       monitor.pause();
