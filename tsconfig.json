@@ -11,7 +11,10 @@
     "rootDir": "./src",
     "removeComments": true,
     "declaration": true,
-    "declarationMap": true,
+    // No declaration maps: they point .d.ts files back at .ts sources, and the
+    // published package ships only dist/ — so they are dead references that
+    // cost ~380 files in the tarball and resolve to nothing for a consumer.
+    "declarationMap": false,
     "sourceMap": true,
     "strict": true,
     "noUnusedLocals": true,
