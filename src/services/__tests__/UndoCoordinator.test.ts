@@ -329,17 +329,112 @@ describe('UndoCoordinator', () => {
   });
 
   describe('resolveRewindSelection', () => {
-    it('selects the most recent user message', () => {
-      const selection = makeCoordinator(null).resolveRewindSelection([
+    it('selects the most recent user message from the agent history', () => {
+      const agent = makeAgent([
         userMessage('one', 1),
         { role: 'assistant', content: 'hi' } as Message,
         userMessage('two', 2),
       ]);
+
+      const selection = makeCoordinator(null, agent).resolveRewindSelection();
+
       expect(selection).toEqual({ userMessagesCount: 2, selectedIndex: 1 });
     });
 
     it('returns null when there is nothing to rewind to', () => {
-      expect(makeCoordinator(null).resolveRewindSelection([])).toBeNull();
+      expect(makeCoordinator(null, makeAgent([])).resolveRewindSelection()).toBeNull();
+    });
+  });
+
+  // The selector hands back a position in the list it was shown. If the history
+  // shifts in between, that position no longer means the same message - and a
+  // wrong target reverts the user's files to the wrong point in time.
+  describe('rewind target identity', () => {
+    it('follows the selected message when earlier history is dropped', async () => {
+      const agent = makeAgent([userMessage('one', 1), userMessage('two', 2), userMessage('three', 3)]);
+      const coordinator = makeCoordinator(makePatchManager(), agent);
+
+      // User is offered three messages and picks the last one.
+      expect(coordinator.resolveRewindSelection()?.selectedIndex).toBe(2);
+
+      // Compaction drops the oldest message before the rewind is confirmed.
+      agent.getMessages = () => [userMessage('two', 2), userMessage('three', 3)];
+
+      const outcome = await coordinator.performRewind(2);
+
+      // Index 2 no longer exists; the target is found at its new position.
+      expect(agent.rewindToMessage).toHaveBeenCalledWith(1);
+      expect(outcome.targetTimestamp).toBe(3);
+    });
+
+    it('refuses to rewind when the selected message is gone', async () => {
+      const agent = makeAgent([userMessage('one', 1), userMessage('two', 2)]);
+      const coordinator = makeCoordinator(makePatchManager(), agent);
+
+      coordinator.resolveRewindSelection();
+      agent.getMessages = () => [userMessage('one', 1)];
+
+      await expect(coordinator.performRewind(1)).rejects.toThrow(
+        'no longer in the conversation history'
+      );
+      expect(agent.rewindToMessage).not.toHaveBeenCalled();
+    });
+
+    it('keeps duplicate prompts distinguishable', async () => {
+      const agent = makeAgent([
+        userMessage('continue', 1),
+        userMessage('continue', 2),
+        userMessage('continue', 3),
+      ]);
+      const coordinator = makeCoordinator(makePatchManager(), agent);
+
+      coordinator.resolveRewindSelection();
+      const outcome = await coordinator.performRewind(1);
+
+      // The second "continue", not the first or third.
+      expect(agent.rewindToMessage).toHaveBeenCalledWith(1);
+      expect(outcome.targetTimestamp).toBe(2);
+    });
+
+    it('rejects a position that was never offered', async () => {
+      const agent = makeAgent([userMessage('one', 1)]);
+      const coordinator = makeCoordinator(makePatchManager(), agent);
+
+      coordinator.resolveRewindSelection();
+
+      await expect(coordinator.performRewind(4)).rejects.toThrow('Invalid rewind selection: 4');
+    });
+
+    it('bounds-checks against live history when no selection was presented', async () => {
+      const agent = makeAgent([userMessage('one', 1)]);
+
+      await expect(makeCoordinator(makePatchManager(), agent).performRewind(3)).rejects.toThrow(
+        'Invalid message index: 3'
+      );
+    });
+
+    it('falls back to live history after a cancelled selection', async () => {
+      const agent = makeAgent([userMessage('one', 1), userMessage('two', 2)]);
+      const coordinator = makeCoordinator(makePatchManager(), agent);
+
+      coordinator.resolveRewindSelection();
+      coordinator.cancelRewindSelection();
+
+      // Without the stale targets, the position is read against live history.
+      await coordinator.performRewind(0);
+      expect(agent.rewindToMessage).toHaveBeenCalledWith(0);
+    });
+
+    it('does not reuse targets across two rewinds', async () => {
+      const agent = makeAgent([userMessage('one', 1), userMessage('two', 2)]);
+      const coordinator = makeCoordinator(makePatchManager(), agent);
+
+      coordinator.resolveRewindSelection();
+      await coordinator.performRewind(1);
+
+      // The first rewind consumed the presented targets; a second rewind driven
+      // straight from an event is bounds-checked, not resolved by identity.
+      await expect(coordinator.performRewind(5)).rejects.toThrow('Invalid message index: 5');
     });
   });
 

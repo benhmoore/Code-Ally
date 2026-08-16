@@ -1110,7 +1110,10 @@ export const useActivitySubscriptions = (
   const setRewindRequest = modal.setRewindRequest;
   useEffect(() => {
     if (modal.rewindRequest && modal.rewindRequest.userMessagesCount === -1) {
-      const selection = undoCoordinator.resolveRewindSelection(state.messages);
+      // Derived from the agent's history (the array the rewind truncates), not
+      // from the React transcript — the two can disagree, and acting on the
+      // wrong one reverts the user's files to the wrong point.
+      const selection = undoCoordinator.resolveRewindSelection();
 
       if (!selection) {
         setRewindRequest(undefined);
@@ -1127,7 +1130,7 @@ export const useActivitySubscriptions = (
         selectedIndex: selection.selectedIndex
       });
     }
-  }, [modal.rewindRequest, state.messages, actions, setRewindRequest, undoCoordinator]);
+  }, [modal.rewindRequest, actions, setRewindRequest, undoCoordinator]);
 
   // Cleanup on unmount: flush pending chunks and cancel timers
   useEffect(() => {
@@ -1499,6 +1502,12 @@ export const useActivitySubscriptions = (
     const { selectedIndex, cancelled, options } = event.data;
 
     modal.setRewindRequest(undefined);
+
+    if (cancelled || selectedIndex === undefined) {
+      // Drop the presented targets so a later event-driven rewind can't resolve
+      // its index against an abandoned selection.
+      undoCoordinator.cancelRewindSelection();
+    }
 
     if (!cancelled && selectedIndex !== undefined) {
       try {
