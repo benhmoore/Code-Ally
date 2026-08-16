@@ -49,6 +49,29 @@ async function canonicalizePath(inputPath: string): Promise<string> {
 }
 
 /**
+ * Extra roots granted by the harness itself, beyond the project and its
+ * configured directories.
+ *
+ * This exists because the test suite runs tools against isolated `mkdtemp`
+ * directories. It replaces a `process.env.VITEST` check that sat inside this
+ * function: an environment variable is set by whoever launched the process, so
+ * it let anything that could influence the environment widen the filesystem
+ * boundary. Granting a root now requires executing a call in-process, and
+ * nothing in production does.
+ */
+let extraAllowedRoots: readonly string[] = [];
+
+/**
+ * Grant additional allowed roots. Intended for test setup only — see
+ * `vitest.setup.ts`, the single caller. Production authorization comes from the
+ * project directory, the configured temp directory, and the user's explicitly
+ * added directories.
+ */
+export function setExtraAllowedRoots(roots: readonly string[]): void {
+  extraAllowedRoots = [...roots];
+}
+
+/**
  * Symlink-aware path authorization for filesystem operations. Unlike the
  * legacy synchronous helper, this validates the path the OS will actually use.
  */
@@ -57,11 +80,7 @@ export async function isPathWithinAllowedDirectories(checkPath: string): Promise
 
   try {
     const canonicalPath = await canonicalizePath(checkPath);
-    const roots = [cwd(), getProjectSessionsDir(), getProjectPlansDir()];
-
-    // Unit tests execute tools against isolated mkdtemp directories. Production
-    // access remains limited to explicit roots and the configured temp folder.
-    if (process.env.VITEST) roots.push(os.tmpdir());
+    const roots = [cwd(), getProjectSessionsDir(), getProjectPlansDir(), ...extraAllowedRoots];
 
     try {
       const registry = ServiceRegistry.getInstance();

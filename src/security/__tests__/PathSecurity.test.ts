@@ -10,12 +10,14 @@ import path from 'path';
 import {
   isPathWithinCwd,
   isPathWithinAllowedDirectories,
+  setExtraAllowedRoots,
   hasPathTraversalPatterns,
   DirectoryTraversalError,
   PermissionDeniedError,
 } from '../PathSecurity.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { mkdtemp, symlink, rm } from 'node:fs/promises';
+import os from 'node:os';
 
 describe('PathSecurity', () => {
   let workingDir: string;
@@ -159,6 +161,37 @@ describe('PathSecurity', () => {
       expect(error).toBeInstanceOf(PermissionDeniedError);
       expect(error.name).toBe('PermissionDeniedError');
       expect(error.message).toBe('Access denied');
+    });
+  });
+
+  describe('extra allowed roots', () => {
+    it('is not widened by the ambient environment', async () => {
+      // Regression: this function used to do `if (process.env.VITEST)
+      // roots.push(os.tmpdir())`, so anything able to set an environment
+      // variable could widen the filesystem boundary. Granting a root now
+      // requires an explicit in-process call.
+      const original = process.env.VITEST;
+      try {
+        process.env.VITEST = '1';
+        setExtraAllowedRoots([]);
+        expect(await isPathWithinAllowedDirectories(os.tmpdir())).toBe(false);
+      } finally {
+        if (original === undefined) delete process.env.VITEST;
+        else process.env.VITEST = original;
+        setExtraAllowedRoots([os.tmpdir()]);
+      }
+    });
+
+    it('grants only the roots explicitly provided', async () => {
+      const granted = await mkdtemp(path.join(os.tmpdir(), 'granted-'));
+      try {
+        setExtraAllowedRoots([granted]);
+        expect(await isPathWithinAllowedDirectories(granted)).toBe(true);
+        expect(await isPathWithinAllowedDirectories('/etc')).toBe(false);
+      } finally {
+        await rm(granted, { recursive: true, force: true });
+        setExtraAllowedRoots([os.tmpdir()]);
+      }
     });
   });
 });

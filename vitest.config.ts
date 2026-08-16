@@ -6,6 +6,10 @@ export default defineConfig({
     globals: true,
     environment: 'node',
 
+    // Grants the system temp dir to path authorization; see the file for why
+    // this is explicit setup rather than an env-var check inside PathSecurity.
+    setupFiles: ['./vitest.setup.ts'],
+
     // Prevent resource leaks
     pool: 'forks',
     poolOptions: {
