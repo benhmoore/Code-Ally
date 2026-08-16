@@ -6,10 +6,13 @@
  * - Slash commands
  * - Bash shortcuts (! prefix)
  * - Memory shortcuts (# prefix) - saves to the project instructions file
+ * - File/directory mentions (@ prefix) - attached as context before the message
  * - User interjections (mid-response messages)
  *
- * The `!` and `#` shortcuts are parsed here and executed by UserShortcutService,
- * which owns the tool execution, event emission and file writes they involve.
+ * The hook parses input and routes it; it owns no orchestration of its own.
+ * The `!` and `#` shortcuts are executed by UserShortcutService, and `@file` /
+ * `@dir` mentions by MentionAttachmentService. Those services own the tool
+ * execution, tool-result construction, event emission and history mutation.
  */
 
 import { useCallback } from 'react';
@@ -26,9 +29,7 @@ import { fileToBase64, isImageFile } from '@utils/imageUtils.js';
 import { resolvePath } from '@utils/pathUtils.js';
 import { ModelCapabilitiesIndex } from '@services/ModelCapabilitiesIndex.js';
 import { UserShortcutService } from '@services/UserShortcutService.js';
-import { createStructuredError } from '@utils/errorUtils.js';
-import { createToolResultMessage } from '@llm/FunctionCalling.js';
-import { resolveDisplayContent } from '@utils/toolResultContent.js';
+import { MentionAttachmentService } from '@services/MentionAttachmentService.js';
 
 /**
  * Input handler functions
@@ -175,6 +176,15 @@ export const useInputHandlers = (
     logger.debug('[INPUT_HANDLER]', 'Handling input with agent:', agent.getInstanceId());
 
     const trimmed = input.trim();
+
+    // Built per submission: the registry's tool manager and todo manager are
+    // swapped when the user enters a background agent's view.
+    const createMentionService = () =>
+      new MentionAttachmentService(
+        serviceRegistry.get('tool_manager'),
+        activityStream,
+        serviceRegistry.get('todo_manager') ?? null
+      );
 
     // Check for bash shortcuts (! prefix)
     if (trimmed.startsWith('!')) {
@@ -328,374 +338,24 @@ export const useInputHandlers = (
         : (filteredMentions?.files || []);
 
       if (readableFiles.length > 0) {
-        // Declare variables outside try block so they're accessible in catch
-        let toolCallId: string | undefined;
-        let readTool: any | undefined;
-
-        try {
-          // Get ToolManager from ServiceRegistry
-          const toolManager = serviceRegistry.get('tool_manager');
-
-          if (!toolManager) {
-            actions.addMessage({
-              role: 'assistant',
-              content: 'Error: Tool manager not available',
-            });
-            return;
-          }
-
-          // Get ReadTool
-          readTool = toolManager.getTool('read');
-
-          if (!readTool) {
-            actions.addMessage({
-              role: 'assistant',
-              content: 'Error: Read tool not available',
-            });
-            return;
-          }
-
-          // Generate unique tool call ID
-          toolCallId = `read-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-          // Create assistant message that describes the read execution
-          const assistantMessage = {
-            role: 'assistant' as const,
-            content: '',
-            tool_calls: [{
-              id: toolCallId,
-              type: 'function' as const,
-              function: {
-                name: 'read',
-                arguments: { file_paths: readableFiles },
-              },
-            }],
-          };
-
-          // Add assistant message to Agent's conversation history
-          agent.addMessage(assistantMessage);
-
-          // Emit TOOL_CALL_START event to create UI element
-          activityStream.emit({
-            id: toolCallId,
-            type: ActivityEventType.TOOL_CALL_START,
-            timestamp: Date.now(),
-            data: {
-              toolName: 'read',
-              arguments: { file_paths: readableFiles },
-              visibleInChat: readTool.visibleInChat ?? true,
-              isTransparent: readTool.isTransparentWrapper || false,
-            },
-          });
-
-          // Reset tool call activity timer to prevent timeout
-          if (typeof agent.resetToolCallActivity === 'function') {
-            agent.resetToolCallActivity();
-          }
-
-          // Auto-promote first pending todo to in_progress
-          // This helps the agent track progress through the todo list
-          const todoManager = serviceRegistry.get('todo_manager');
-
-          if (todoManager) {
-            const inProgress = todoManager.getInProgressTodo?.();
-            if (!inProgress) {
-              const nextPending = todoManager.getNextPendingTodo?.();
-              if (nextPending) {
-                // Find and update the todo
-                const todos = todoManager.getTodos();
-                const updated = todos.map((t: any) =>
-                  t.id === nextPending.id ? { ...t, status: 'in_progress' as const } : t
-                );
-                todoManager.setTodos(updated);
-              }
-            }
-          }
-
-          // Execute read tool via ToolManager.executeTool() for proper integration
-          const result = await toolManager.executeTool(
-            'read',
-            {
-              file_paths: readableFiles,
-              description: 'Read mentioned files',
-            },
-            toolCallId,
-            false, // isRetry
-            agent.getToolAbortSignal?.(),
-            true,  // isUserInitiated (95% limit)
-            false, // isContextFile (not applicable)
-            agent.getAgentName?.(), // currentAgentName for tool-agent binding validation
-            {
-              registryScope: agent.getScopedRegistry?.(),
-              agentId: agent.getInstanceId?.(),
-              agentName: agent.getAgentName?.(),
-            }
-          );
-
-          // Emit TOOL_CALL_END event to complete the tool call
-          activityStream.emit({
-            id: toolCallId,
-            type: ActivityEventType.TOOL_CALL_END,
-            timestamp: Date.now(),
-            data: {
-              toolName: 'read',
-              result,
-              success: result.success,
-              error: result.success ? undefined : result.error,
-              visibleInChat: readTool.visibleInChat ?? true,
-              isTransparent: readTool.isTransparentWrapper || false,
-              collapsed: readTool.shouldCollapse || false,
-            },
-          });
-
-          // Format tool result message for Agent via the canonical wire builder,
-          // which strips display-only fields so the model never sees them.
-          const toolResultMessage = createToolResultMessage(
-            toolCallId,
-            'read',
-            result,
-            !result.success,
-            result.success ? undefined : result.error_type
-          );
-
-          // Add tool result to Agent's conversation history
-          agent.addMessage(toolResultMessage);
-        } catch (error) {
-          // Emit TOOL_CALL_END event with error to prevent stuck UI
-          if (toolCallId) {
-            activityStream.emit({
-              id: toolCallId,
-              type: ActivityEventType.TOOL_CALL_END,
-              timestamp: Date.now(),
-              data: {
-                toolName: 'read',
-                result: createStructuredError(
-                  error instanceof Error ? error.message : 'Unknown error',
-                  'system_error',
-                  'read',
-                  { file_paths: readableFiles }
-                ),
-                success: false,
-                error: error instanceof Error ? error.message : 'Unknown error',
-                visibleInChat: readTool?.visibleInChat ?? true,
-                isTransparent: readTool?.isTransparentWrapper || false,
-                collapsed: readTool?.shouldCollapse || false,
-              },
-            });
-
-            // Add error tool result to Agent's conversation history
-            const errorToolResultMessage = {
-              role: 'tool' as const,
-              content: JSON.stringify(
-                createStructuredError(
-                  error instanceof Error ? error.message : 'Unknown error',
-                  'system_error',
-                  'read',
-                  { file_paths: readableFiles }
-                )
-              ),
-              tool_call_id: toolCallId,
-              name: 'read',
-            };
-            agent.addMessage(errorToolResultMessage);
-          }
-
-          // Show error to user
-          actions.addMessage({
-            role: 'assistant',
-            content: `Error reading mentioned files: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          });
+        const outcome = await createMentionService().attachFiles(
+          readableFiles,
+          agent,
+          actions.addMessage
+        );
+        if (outcome === 'aborted') {
           return;
         }
       }
 
       // Handle directory mentions - execute tree tool before sending user message
       if (filteredMentions?.directories && filteredMentions.directories.length > 0) {
-        // Declare variables outside try block so they're accessible in catch
-        let toolCallId: string | undefined;
-        let treeTool: any | undefined;
-
-        try {
-          // Get ToolManager from ServiceRegistry
-          const toolManager = serviceRegistry.get('tool_manager');
-
-          if (!toolManager) {
-            actions.addMessage({
-              role: 'assistant',
-              content: 'Error: Tool manager not available',
-            });
-            return;
-          }
-
-          // Get TreeTool
-          treeTool = toolManager.getTool('tree');
-
-          if (!treeTool) {
-            actions.addMessage({
-              role: 'assistant',
-              content: 'Error: Tree tool not available',
-            });
-            return;
-          }
-
-          // Generate unique tool call ID
-          toolCallId = `tree-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-          // Create assistant message that describes the tree execution
-          const assistantMessage = {
-            role: 'assistant' as const,
-            content: '',
-            tool_calls: [{
-              id: toolCallId,
-              type: 'function' as const,
-              function: {
-                name: 'tree',
-                arguments: { paths: filteredMentions.directories },
-              },
-            }],
-          };
-
-          // Add assistant message to Agent's conversation history
-          agent.addMessage(assistantMessage);
-
-          // Emit TOOL_CALL_START event to create UI element
-          activityStream.emit({
-            id: toolCallId,
-            type: ActivityEventType.TOOL_CALL_START,
-            timestamp: Date.now(),
-            data: {
-              toolName: 'tree',
-              arguments: { paths: filteredMentions.directories },
-              visibleInChat: treeTool.visibleInChat ?? true,
-              isTransparent: treeTool.isTransparentWrapper || false,
-              hideOutput: treeTool.hideOutput || false,
-            },
-          });
-
-          // Reset tool call activity timer to prevent timeout
-          if (typeof agent.resetToolCallActivity === 'function') {
-            agent.resetToolCallActivity();
-          }
-
-          // Execute tree tool via ToolManager.executeTool() for proper integration
-          const result = await toolManager.executeTool(
-            'tree',
-            {
-              paths: filteredMentions.directories,
-              description: 'Show directory structure',
-            },
-            toolCallId,
-            false, // isRetry
-            agent.getToolAbortSignal?.(),
-            true,  // isUserInitiated (95% limit)
-            false, // isContextFile (not applicable)
-            agent.getAgentName?.(), // currentAgentName for tool-agent binding validation
-            {
-              registryScope: agent.getScopedRegistry?.(),
-              agentId: agent.getInstanceId?.(),
-              agentName: agent.getAgentName?.(),
-            }
-          );
-
-          const displayContent = resolveDisplayContent(result);
-          if (result.success && displayContent) {
-            activityStream.emit({
-              id: toolCallId,
-              type: ActivityEventType.TOOL_OUTPUT_CHUNK,
-              timestamp: Date.now(),
-              data: {
-                toolName: 'tree',
-                chunk: displayContent,
-              },
-            });
-          }
-
-          // Emit TOOL_CALL_END event to complete the tool call
-          activityStream.emit({
-            id: toolCallId,
-            type: ActivityEventType.TOOL_CALL_END,
-            timestamp: Date.now(),
-            data: {
-              toolName: 'tree',
-              result,
-              success: result.success,
-              error: result.success ? undefined : result.error,
-              visibleInChat: treeTool.visibleInChat ?? true,
-              isTransparent: treeTool.isTransparentWrapper || false,
-              collapsed: treeTool.shouldCollapse || false,
-            },
-          });
-
-          // Format tool result message for Agent via the canonical wire builder,
-          // which strips display-only fields so the model never sees them.
-          const toolResultMessage = createToolResultMessage(
-            toolCallId,
-            'tree',
-            result,
-            !result.success,
-            result.success ? undefined : result.error_type
-          );
-
-          // Add tool result to Agent's conversation history
-          agent.addMessage({
-            ...toolResultMessage,
-            metadata: {
-              tool_status: { [toolCallId]: result.success ? 'success' : 'error' },
-              tool_result: {
-                [toolCallId]: {
-                  content: result.content,
-                  ...(result.display_content !== undefined && { display_content: result.display_content }),
-                  ...(result.error && { error: result.error }),
-                  ...(result.error_type !== undefined && { error_type: result.error_type }),
-                },
-              },
-            },
-          });
-        } catch (error) {
-          // Emit TOOL_CALL_END event with error to prevent stuck UI
-          if (toolCallId) {
-            activityStream.emit({
-              id: toolCallId,
-              type: ActivityEventType.TOOL_CALL_END,
-              timestamp: Date.now(),
-              data: {
-                toolName: 'tree',
-                result: createStructuredError(
-                  error instanceof Error ? error.message : 'Unknown error',
-                  'system_error',
-                  'tree',
-                  { paths: filteredMentions.directories }
-                ),
-                success: false,
-                error: error instanceof Error ? error.message : 'Unknown error',
-                visibleInChat: treeTool?.visibleInChat ?? true,
-                isTransparent: treeTool?.isTransparentWrapper || false,
-                collapsed: treeTool?.shouldCollapse || false,
-              },
-            });
-
-            // Add error tool result to Agent's conversation history
-            const errorToolResultMessage = {
-              role: 'tool' as const,
-              content: JSON.stringify(
-                createStructuredError(
-                  error instanceof Error ? error.message : 'Unknown error',
-                  'system_error',
-                  'tree',
-                  { paths: filteredMentions.directories }
-                )
-              ),
-              tool_call_id: toolCallId,
-              name: 'tree',
-            };
-            agent.addMessage(errorToolResultMessage);
-          }
-
-          // Show error to user
-          actions.addMessage({
-            role: 'assistant',
-            content: `Error showing directory structure: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          });
+        const outcome = await createMentionService().attachDirectories(
+          filteredMentions.directories,
+          agent,
+          actions.addMessage
+        );
+        if (outcome === 'aborted') {
           return;
         }
       }

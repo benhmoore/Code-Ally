@@ -40,6 +40,8 @@ import { SessionPersistence } from './SessionPersistence.js';
 import { AgentCompactor, type AppliedCompactionResult, type CompactionOptions } from './AgentCompactor.js';
 import { AgentLifecycleHandler } from './AgentLifecycleHandler.js';
 import { LoopDetector } from './LoopDetector.js';
+import { FocusScope } from './FocusScope.js';
+import { AgentInvocationState } from './AgentInvocationState.js';
 import { LoopInfo } from './types/loopDetection.js';
 import {
   CharacterRepetitionPattern,
@@ -175,9 +177,9 @@ export class Agent {
   // Agent name from agentType in config (for tool-agent binding)
   private agentName?: string;
 
-  // Request state
-  private requestInProgress: boolean = false;
-  private agentEndEmitted: boolean = false;
+  // Per-invocation state (request flags, recovery attempts, cleanup queue).
+  // Single source of truth for what must be wiped when a pooled agent is reused.
+  private readonly invocationState = new AgentInvocationState();
 
   // Interruption management - delegated to InterruptionManager
   private interruptionManager: InterruptionManager;
@@ -235,25 +237,17 @@ export class Agent {
   // Lifecycle handling - idle coordinator, auto-cleanup
   private lifecycleHandler: AgentLifecycleHandler;
 
-  // Number of internal generation recoveries in the current turn.
-  private recoveryAttempts: number = 0;
-
   private readonly turnController = new TurnController({
     maxModelCalls: AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN,
     maxToolCalls: AGENT_CONFIG.MAX_TOOL_CALLS_PER_TURN,
   });
   private activeExecutionContext: AgentExecutionContext = {};
 
-  // Cleanup queue - tool call IDs to remove at end of turn
-  // cleanup-call queues IDs here, they're removed after model completes response
-  private pendingCleanupIds: string[] = [];
-
   // Checkpoint reminder tracking - monitors tool calls to inject progress reminders
   private checkpointTracker: CheckpointTracker;
 
-  // Focus management - tracks if this agent set focus and needs to restore it
-  private previousFocus: string | null = null;
-  private didSetFocus: boolean = false;
+  // Focus management - scoped acquire/release of the process-global focus state
+  private readonly focusScope: FocusScope;
   private focusReady: Promise<void> | null = null;
 
   constructor(
@@ -447,10 +441,17 @@ export class Agent {
     // Create lifecycle handler for peripheral concerns
     this.lifecycleHandler = new AgentLifecycleHandler(this.instanceId);
 
+    // Focus is a process-global resource borrowed for this agent's lifetime.
+    // The manager is resolved lazily: it may be registered after construction.
+    this.focusScope = new FocusScope({
+      resolveTarget: () => ServiceRegistry.getInstance().get('focus_manager'),
+      label: this.instanceId,
+    });
+
     // Setup focus if focusDirectory is provided
     if (config.focusDirectory) {
       // Store the promise so tool execution can wait for focus to be ready
-      this.focusReady = this.setupFocus(config.focusDirectory).catch(error => {
+      this.focusReady = this.focusScope.acquire(config.focusDirectory, this.config.excludeFiles).catch(error => {
         logger.warn('[AGENT_FOCUS]', this.instanceId, 'Async focus setup failed:', error);
       });
     }
@@ -652,7 +653,7 @@ export class Agent {
    * @param toolCallIds - Tool call IDs to remove
    */
   queueCleanup(toolCallIds: string[]): void {
-    this.pendingCleanupIds.push(...toolCallIds);
+    this.invocationState.pendingCleanupIds.push(...toolCallIds);
     logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Queued cleanup for IDs:', toolCallIds);
   }
 
@@ -661,12 +662,12 @@ export class Agent {
    * Removes tool results that were marked for cleanup during the turn
    */
   private executePendingCleanups(): void {
-    if (this.pendingCleanupIds.length === 0) {
+    if (this.invocationState.pendingCleanupIds.length === 0) {
       return;
     }
 
-    const idsToRemove = [...this.pendingCleanupIds];
-    this.pendingCleanupIds = [];
+    const idsToRemove = [...this.invocationState.pendingCleanupIds];
+    this.invocationState.pendingCleanupIds = [];
 
     const result = this.conversationManager.removeToolResults(idsToRemove);
 
@@ -732,10 +733,9 @@ export class Agent {
     // Individual delegation contexts are cleared via transitionToCompleting() and clear() when each
     // delegation completes in the tool code (AgentTool, BaseDelegationTool, etc.)
 
-    // Reset per-invocation state counters
-    this.recoveryAttempts = 0;
+    // Reset every per-invocation field (counters, cleanup queue, request flags)
+    this.invocationState.reset();
     this.toolOrchestrator.resetExploratoryStreak();
-    this.pendingCleanupIds = [];
 
     // Reset ALL loop detection (text patterns + tool cycle history)
     this.loopDetector.reset();
@@ -743,16 +743,11 @@ export class Agent {
     // Reset interruption state
     this.interruptionManager.reset();
 
-    // Reset request state flags
-    this.requestInProgress = false;
-    this.agentEndEmitted = false;
-
     // Reset turn timing for fresh invocation
     this.turnManager.clearTurn();
 
-    // Reset focus state for pool reuse (prevents context seepage)
-    this.didSetFocus = false;
-    this.previousFocus = null;
+    // Drop focus ownership for pool reuse (prevents context seepage)
+    this.focusScope.reset();
     this.focusReady = null;
 
     logger.debug(`[AGENT] Reset agent ${this.instanceId} for reuse`);
@@ -904,7 +899,7 @@ export class Agent {
     this.loopDetector.reset();
 
     // Reset internal recovery tracking on new user input
-    this.recoveryAttempts = 0;
+    this.invocationState.recoveryAttempts = 0;
 
     this.turnController.start();
 
@@ -912,7 +907,7 @@ export class Agent {
     this.toolOrchestrator.resetExploratoryStreak();
 
     // Reset cleanup queue on new user input
-    this.pendingCleanupIds = [];
+    this.invocationState.pendingCleanupIds = [];
 
     // Reset checkpoint counters at turn start
     // Ensures counters only track within this turn, not across turns
@@ -1024,8 +1019,8 @@ export class Agent {
     try {
       // Reset interrupted flag and mark request in progress
       this.interruptionManager.reset();
-      this.requestInProgress = true;
-      this.agentEndEmitted = false;
+      this.invocationState.requestInProgress = true;
+      this.invocationState.agentEndEmitted = false;
 
       // Send to LLM and process response
       const response = await this.getLLMResponse({
@@ -1146,8 +1141,8 @@ export class Agent {
    * Clean up request state after completion or error
    */
   private cleanupRequestState(): void {
-    this.requestInProgress = false;
-    this.agentEndEmitted = false;
+    this.invocationState.requestInProgress = false;
+    this.invocationState.agentEndEmitted = false;
     this.interruptionManager.cleanup();
     this.stopActivityMonitoring();
     this.loopDetector.stopTextDetectors();
@@ -1163,7 +1158,7 @@ export class Agent {
    * @param cause - User action that stopped generation
    */
   interrupt(cause: UserInterruptionCause = { kind: 'user_cancel' }): void {
-    if (this.requestInProgress) {
+    if (this.invocationState.requestInProgress) {
       // Set interruption state and abort this agent's request signal. Because the
       // signal handed to ModelClient.send() is owned by this agent's
       // InterruptionManager, this cancels the in-flight LLM request immediately
@@ -1180,7 +1175,7 @@ export class Agent {
    * Check if a request is currently in progress
    */
   isProcessing(): boolean {
-    return this.requestInProgress;
+    return this.invocationState.requestInProgress;
   }
 
   /**
@@ -1604,11 +1599,11 @@ export class Agent {
     cause: RecoverableInterruptionCause,
     executionContext: AgentExecutionContext
   ): Promise<string> {
-    this.recoveryAttempts++;
+    this.invocationState.recoveryAttempts++;
     logger.debug(
       '[AGENT_RECOVERY]',
       this.instanceId,
-      `${cause.kind}: ${cause.reason} (attempt ${this.recoveryAttempts})`
+      `${cause.kind}: ${cause.reason} (attempt ${this.invocationState.recoveryAttempts})`
     );
 
     const contextUsage = this.tokenManager.getContextUsagePercentage();
@@ -1624,7 +1619,7 @@ export class Agent {
     this.conversationManager.addMessage(continuationPrompt);
 
     this.interruptionManager.reset();
-    this.requestInProgress = true;
+    this.invocationState.requestInProgress = true;
     this.startActivityMonitoring();
     this.loopDetector.resetTextDetectors();
 
@@ -1976,7 +1971,7 @@ export class Agent {
    * Check if a request is currently in progress
    */
   isRequestInProgress(): boolean {
-    return this.requestInProgress;
+    return this.invocationState.requestInProgress;
   }
 
   /**
@@ -2036,7 +2031,7 @@ export class Agent {
     interruptionCause?: string,
     content?: string
   ): void {
-    if (this.agentEndEmitted) return;
+    if (this.invocationState.agentEndEmitted) return;
     this.emitEvent({
       id: this.generateId(),
       type: ActivityEventType.AGENT_END,
@@ -2050,7 +2045,7 @@ export class Agent {
         agentName: this.config.agentType || 'ally',
       },
     });
-    this.agentEndEmitted = true;
+    this.invocationState.agentEndEmitted = true;
   }
 
   /**
@@ -2120,76 +2115,14 @@ export class Agent {
   }
 
   /**
-   * Setup focus for this agent
-   * Called during constructor if focusDirectory is provided
-   */
-  private async setupFocus(focusDirectory: string): Promise<void> {
-    try {
-      const registry = ServiceRegistry.getInstance();
-      const focusManager = registry.get('focus_manager');
-
-      if (!focusManager) {
-        logger.debug('[AGENT_FOCUS]', this.instanceId, 'FocusManager not available, skipping focus setup');
-        return;
-      }
-
-      // Save previous focus state
-      this.previousFocus = focusManager.getFocusDirectory();
-
-      // Set excluded files if provided
-      if (this.config.excludeFiles && this.config.excludeFiles.length > 0) {
-        focusManager.setExcludedFiles(this.config.excludeFiles);
-        logger.debug('[AGENT_FOCUS]', this.instanceId, 'Excluded', this.config.excludeFiles.length, 'files from access');
-      }
-
-      // Set new focus
-      const result = await focusManager.setFocus(focusDirectory);
-
-      if (result.success) {
-        this.didSetFocus = true;
-        logger.debug('[AGENT_FOCUS]', this.instanceId, 'Focus set to:', focusDirectory);
-      } else {
-        logger.warn('[AGENT_FOCUS]', this.instanceId, 'Failed to set focus:', result.message);
-      }
-    } catch (error) {
-      logger.warn('[AGENT_FOCUS]', this.instanceId, 'Error setting up focus:', error);
-    }
-  }
-
-  /**
    * Restore focus without full cleanup
    *
    * Used for pooled agents that need focus restored but shouldn't be fully cleaned up.
-   * This is called before releasing agents back to the pool.
+   * This is called before releasing agents back to the pool. Idempotent: cleanup()
+   * calls it again and the second call is a no-op.
    */
   async restoreFocus(): Promise<void> {
-    if (!this.didSetFocus) {
-      return; // Nothing to restore
-    }
-
-    try {
-      const registry = ServiceRegistry.getInstance();
-      const focusManager = registry.get('focus_manager');
-
-      if (focusManager) {
-        // Clear excluded files set by this agent
-        if (this.config.excludeFiles && this.config.excludeFiles.length > 0) {
-          focusManager.clearExcludedFiles();
-          logger.debug('[AGENT_FOCUS]', this.instanceId, 'Cleared excluded files');
-        }
-
-        // Restore previous focus
-        if (this.previousFocus) {
-          await focusManager.setFocus(this.previousFocus);
-          logger.debug('[AGENT_FOCUS]', this.instanceId, 'Restored previous focus:', this.previousFocus);
-        } else {
-          focusManager.clearFocus();
-          logger.debug('[AGENT_FOCUS]', this.instanceId, 'Cleared focus');
-        }
-      }
-    } catch (error) {
-      logger.warn('[AGENT_FOCUS]', this.instanceId, 'Error restoring focus:', error);
-    }
+    await this.focusScope.release();
   }
 
 

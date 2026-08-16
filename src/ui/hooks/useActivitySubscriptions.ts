@@ -6,7 +6,7 @@
  * It's a large hook but keeps all event handling logic in one place.
  */
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useMemo } from 'react';
 import { ActivityEventType, Message, ToolCallState, FormRequest } from '@shared/index.js';
 import type { Config } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
@@ -17,6 +17,7 @@ import { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
+import { UndoCoordinator } from '@services/UndoCoordinator.js';
 import { logger } from '@services/Logger.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
@@ -74,6 +75,19 @@ export const useActivitySubscriptions = (
 
   // Track cancellation state for immediate visual feedback
   const [isCancelling, setIsCancelling] = useState(false);
+
+  // Undo/rewind business logic lives in a service; this hook only routes events
+  // into it and pushes the results into React state.
+  const undoCoordinator = useMemo(
+    () =>
+      new UndoCoordinator({
+        getPatchManager: () => ServiceRegistry.getInstance().get('patch_manager'),
+        getAgent: () => agent,
+        getTodoManager: () => ServiceRegistry.getInstance().get('todo_manager'),
+        getTokenManager: () => ServiceRegistry.getInstance().get('token_manager'),
+      }),
+    [agent]
+  );
 
   // Clear the "Cancelling" indicator once the agent has actually stopped working.
   // isCancelling is set on USER_INTERRUPT_INITIATED; isThinking is reset in the
@@ -1076,15 +1090,11 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.REWIND_REQUEST, (event) => {
     const { requestId } = event.data;
 
-    // Check if there are any running tool calls (not just completed ones)
-    const runningToolCalls = state.activeToolCalls.filter(
-      (tc) => tc.status === 'executing' || tc.status === 'pending' || tc.status === 'validating'
-    );
-
-    if (state.isThinking || runningToolCalls.length > 0) {
+    const readiness = undoCoordinator.checkRewindReadiness(state.isThinking, state.activeToolCalls);
+    if (!readiness.allowed) {
       actions.addMessage({
         role: 'assistant',
-        content: 'Cannot rewind while agent is processing. Please wait for current operation to complete.',
+        content: readiness.message ?? '',
       });
       return;
     }
@@ -1100,26 +1110,24 @@ export const useActivitySubscriptions = (
   const setRewindRequest = modal.setRewindRequest;
   useEffect(() => {
     if (modal.rewindRequest && modal.rewindRequest.userMessagesCount === -1) {
-      const userMessages = state.messages.filter(m => m.role === 'user');
+      const selection = undoCoordinator.resolveRewindSelection(state.messages);
 
-      if (userMessages.length === 0) {
+      if (!selection) {
         setRewindRequest(undefined);
         actions.addMessage({
           role: 'assistant',
-          content: 'No user messages to rewind to.',
+          content: undoCoordinator.noUserMessagesMessage,
         });
         return;
       }
 
-      const initialIndex = Math.max(0, userMessages.length - 1);
-
       setRewindRequest({
         ...modal.rewindRequest,
-        userMessagesCount: userMessages.length,
-        selectedIndex: initialIndex
+        userMessagesCount: selection.userMessagesCount,
+        selectedIndex: selection.selectedIndex
       });
     }
-  }, [modal.rewindRequest, state.messages, actions, setRewindRequest]);
+  }, [modal.rewindRequest, state.messages, actions, setRewindRequest, undoCoordinator]);
 
   // Cleanup on unmount: flush pending chunks and cancel timers
   useEffect(() => {
@@ -1167,41 +1175,23 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.UNDO_FILE_SELECTED, async (event) => {
     const { patchNumber, filePath } = event.data;
 
-    const serviceRegistry = ServiceRegistry.getInstance();
-    const patchManager = serviceRegistry.get('patch_manager');
+    const outcome = await undoCoordinator.previewPatch(patchNumber, filePath);
 
-    if (!patchManager) {
+    if (outcome.status === 'error') {
       actions.addMessage({
         role: 'assistant',
-        content: 'Error: Patch manager not available',
+        content: outcome.message,
       });
       return;
     }
 
-    try {
-      const preview = await patchManager.previewSinglePatch(patchNumber);
-
-      if (!preview) {
-        actions.addMessage({
-          role: 'assistant',
-          content: `Error: Could not load preview for ${filePath}`,
-        });
-        return;
-      }
-
-      modal.setUndoRequest({
-        requestId: `undo_single_${patchNumber}`,
-        count: 1,
-        patches: [{ patch_number: patchNumber, file_path: filePath }],
-        previewData: [preview],
-      });
-      modal.setUndoSelectedIndex(0);
-    } catch (error) {
-      actions.addMessage({
-        role: 'assistant',
-        content: `Error loading preview: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
-    }
+    modal.setUndoRequest({
+      requestId: undoCoordinator.buildUndoRequestId(outcome.patchNumber),
+      count: 1,
+      patches: [{ patch_number: outcome.patchNumber, file_path: outcome.filePath }],
+      previewData: [outcome.preview],
+    });
+    modal.setUndoSelectedIndex(0);
   });
 
   // Undo file back
@@ -1214,62 +1204,29 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.UNDO_CONFIRM, async (event) => {
     const { requestId } = event.data;
 
-    const patchNumber = parseInt(requestId.replace('undo_single_', ''));
+    const outcome = await undoCoordinator.applyUndo(requestId);
 
-    if (isNaN(patchNumber)) {
-      actions.addMessage({
-        role: 'assistant',
-        content: 'Error: Invalid patch number',
-      });
-      return;
-    }
-
-    const serviceRegistry = ServiceRegistry.getInstance();
-    const patchManager = serviceRegistry.get('patch_manager');
-
-    if (!patchManager) {
-      actions.addMessage({
-        role: 'assistant',
-        content: 'Error: Patch manager not available',
-      });
-      return;
-    }
-
-    try {
-      const result = await patchManager.undoSinglePatch(patchNumber);
-
+    // The confirm modal is only dismissed once the undo has actually settled,
+    // so a rejected undo leaves the prompt up instead of half-closing the flow.
+    if (outcome.closeUndoRequest) {
       modal.setUndoRequest(undefined);
       modal.setUndoSelectedIndex(0);
+    }
 
-      if (result.success) {
-        const fileList = result.reverted_files.map((f: string) => `  - ${f}`).join('\n');
-        actions.addMessage({
-          role: 'assistant',
-          content: `Successfully undid operation:\n${fileList}`,
+    for (const content of outcome.messages) {
+      actions.addMessage({ role: 'assistant', content });
+    }
+
+    if (outcome.fileList) {
+      if (outcome.fileList.length > 0) {
+        modal.setUndoFileListRequest({
+          requestId: `undo_${Date.now()}`,
+          fileList: outcome.fileList,
+          selectedIndex: 0,
         });
-
-        const updatedFileList = await patchManager.getRecentFileList(10);
-        if (updatedFileList.length > 0) {
-          modal.setUndoFileListRequest({
-            requestId: `undo_${Date.now()}`,
-            fileList: updatedFileList,
-            selectedIndex: 0,
-          });
-        } else {
-          modal.setUndoFileListRequest(undefined);
-        }
       } else {
-        const errors = result.failed_operations.join('\n  - ');
-        actions.addMessage({
-          role: 'assistant',
-          content: `Undo failed:\n  - ${errors}`,
-        });
+        modal.setUndoFileListRequest(undefined);
       }
-    } catch (error) {
-      actions.addMessage({
-        role: 'assistant',
-        content: `Error during undo: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
     }
   });
 
@@ -1545,61 +1502,15 @@ export const useActivitySubscriptions = (
 
     if (!cancelled && selectedIndex !== undefined) {
       try {
-        // Get the target message BEFORE rewinding to extract its timestamp
-        const userMessages = agent.getMessages().filter(m => m.role === 'user');
-        const targetMessage = userMessages[selectedIndex];
-        const targetTimestamp = targetMessage?.timestamp;
-
-        // Initialize file restoration tracking
-        let restoredFiles: string[] = [];
-        let failedRestorations: string[] = [];
-
-        // Attempt to restore file changes ONLY if options.restoreFiles is true
-        const shouldRestoreFiles = options?.restoreFiles ?? true; // Default to true for backwards compatibility
-
-        if (shouldRestoreFiles && targetTimestamp !== undefined) {
-          const serviceRegistry = ServiceRegistry.getInstance();
-          const patchManager = serviceRegistry.get('patch_manager');
-
-          if (patchManager) {
-            try {
-              // Check if there are patches to undo
-              const patchesToUndo = await patchManager.getPatchesSinceTimestamp(targetTimestamp);
-
-              if (patchesToUndo.length > 0) {
-                logger.info(`Restoring ${patchesToUndo.length} file changes during rewind`);
-
-                // Restore file changes
-                const undoResult = await patchManager.undoOperationsSinceTimestamp(targetTimestamp);
-
-                if (undoResult.success) {
-                  restoredFiles = undoResult.reverted_files;
-                  logger.info(`Successfully restored ${restoredFiles.length} files`);
-                } else {
-                  // Partial success
-                  restoredFiles = undoResult.reverted_files;
-                  failedRestorations = undoResult.failed_operations;
-                  logger.warn(`Partial file restoration: ${restoredFiles.length} succeeded, ${failedRestorations.length} failed`);
-                }
-              } else {
-                logger.debug('No file changes to restore');
-              }
-            } catch (error) {
-              // Log but don't fail the entire rewind if patch restoration fails
-              logger.error('Error restoring file changes during rewind:', error);
-              failedRestorations = [`Patch restoration error: ${error instanceof Error ? error.message : 'Unknown error'}`];
-            }
-          }
-        } else if (!shouldRestoreFiles) {
-          logger.info('File restoration skipped (user opted out)');
-        } else {
-          logger.debug('Target message has no timestamp, skipping file restoration');
-        }
-
-        // Proceed with conversation rewind
-        const targetMessageContent = await agent.rewindToMessage(selectedIndex);
-
-        const rewindedMessages = agent.getMessages().filter(m => m.role !== 'system');
+        // Restore files and rewind conversation history (all business logic
+        // lives in UndoCoordinator; this handler only repaints the UI).
+        const {
+          targetTimestamp,
+          targetMessageContent,
+          rewindedMessages,
+          restoredFiles,
+          failedRestorations,
+        } = await undoCoordinator.performRewind(selectedIndex, options);
 
         const serviceRegistry = ServiceRegistry.getInstance();
 
@@ -1607,10 +1518,7 @@ export const useActivitySubscriptions = (
         actions.clearToolCalls();
         actions.clearRewindNotices();
 
-        const todoManager = serviceRegistry.get('todo_manager');
-        if (todoManager && typeof (todoManager as any).setTodos === 'function') {
-          (todoManager as any).setTodos([]);
-        }
+        undoCoordinator.clearTodos();
 
         // Reset conversation view (this will clear terminal and set new messages)
         actions.resetConversationView(rewindedMessages);
@@ -1632,10 +1540,8 @@ export const useActivitySubscriptions = (
         reconstructInterjectionsFromMessages(rewindedMessages, activityStream);
 
         // Update context usage after rewind (same as session resumption)
-        const tokenManager = serviceRegistry.get('token_manager');
-        if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
-          (tokenManager as any).updateTokenCount(agent.getMessages());
-          const contextUsage = (tokenManager as any).getContextUsagePercentage();
+        const contextUsage = undoCoordinator.refreshContextUsage();
+        if (contextUsage !== undefined) {
           actions.setContextUsage(contextUsage);
         }
 
