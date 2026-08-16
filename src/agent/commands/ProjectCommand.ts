@@ -10,9 +10,10 @@ import type { Message } from '@shared/index.js';
 import { ActivityEventType } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { ProjectManager } from '@services/ProjectManager.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
+import { getProjectInstructionsFile } from '../../config/paths.js';
+import { readFile, rm } from 'node:fs/promises';
 
 export class ProjectCommand extends Command {
   static readonly metadata: CommandMetadata = {
@@ -62,18 +63,13 @@ export class ProjectCommand extends Command {
       return { handled: true, response: 'Invalid project command' };
     }
 
-    const projectManager = serviceRegistry.get<ProjectManager>('project_manager');
-    if (!projectManager && subcommand.toLowerCase() !== 'init') {
-      return this.createError('Project manager not available');
-    }
-
     switch (subcommand.toLowerCase()) {
       case 'init':
         return this.handleInit(serviceRegistry);
       case 'view':
-        return this.handleView(projectManager!);
+        return this.handleView();
       case 'clear':
-        return this.handleClear(projectManager!);
+        return this.handleClear();
       case 'edit':
         return this.handleEdit();
       default:
@@ -98,33 +94,35 @@ export class ProjectCommand extends Command {
   }
 
   /**
-   * View project context - multi-line output, not yellow
+   * View ALLY.md contents - multi-line output, not yellow
    */
-  private async handleView(projectManager: ProjectManager): Promise<CommandResult> {
-    const context = await projectManager.getContext();
+  private async handleView(): Promise<CommandResult> {
+    const allyPath = getProjectInstructionsFile();
 
-    if (!context) {
+    let content: string;
+    try {
+      content = await readFile(allyPath, 'utf-8');
+    } catch {
       return {
         handled: true,
-        response: 'No project context found. Use /project init to create one.',
+        response: 'No ALLY.md found. Use /project init to create one.',
       };
     }
 
-    let output = `Project: ${context.name}\n\n`;
-    output += `Description: ${context.description}\n`;
-    output += `Files: ${context.files.length}\n`;
-    output += `Created: ${new Date(context.created).toLocaleString()}\n`;
-    output += `Updated: ${new Date(context.updated).toLocaleString()}\n`;
-
-    return { handled: true, response: output };
+    return { handled: true, response: `${allyPath}\n\n${content.trim()}` };
   }
 
   /**
-   * Clear project context - yellow output
+   * Delete ALLY.md - yellow output
    */
-  private async handleClear(projectManager: ProjectManager): Promise<CommandResult> {
-    await projectManager.clearContext();
-    return this.createResponse('Project context cleared.');
+  private async handleClear(): Promise<CommandResult> {
+    const allyPath = getProjectInstructionsFile();
+    try {
+      await rm(allyPath);
+    } catch {
+      return this.createResponse('No ALLY.md to clear.');
+    }
+    return this.createResponse(`Removed ${allyPath}.`);
   }
 
   /**

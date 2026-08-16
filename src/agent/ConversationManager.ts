@@ -53,6 +53,9 @@ export class ConversationManager {
   /** Agent instance ID for logging */
   private readonly instanceId: string;
 
+  /** Notified for each appended message; see setMessageAddedObserver. */
+  private messageAddedObserver: ((message: Message) => void) | null = null;
+
   /**
    * Create a new ConversationManager
    *
@@ -110,6 +113,28 @@ export class ConversationManager {
       '- Total messages:',
       this.messages.length
     );
+
+    // Notify last, so an observer always sees the message already in history.
+    this.messageAddedObserver?.(messageWithMetadata);
+  }
+
+  /**
+   * Observe every message appended to the conversation.
+   *
+   * The owning Agent registers here to keep token accounting, the context-usage
+   * event, and session autosave in step with history. Those side effects used to
+   * live in `Agent.addMessage`, but Agent and ResponseProcessor between them
+   * append 26 messages directly through this class — so the count the
+   * auto-compaction threshold reads went stale on every one of those writes.
+   * Hanging the side effects off the write itself fixes all of them at once,
+   * rather than depending on every future call site picking the right door.
+   *
+   * Deliberately NOT fired by `setMessages`: bulk replacement (compaction,
+   * rewind, session load) is followed by a full token recount, and an
+   * incremental observer there would double-count.
+   */
+  setMessageAddedObserver(observer: ((message: Message) => void) | null): void {
+    this.messageAddedObserver = observer;
   }
 
   /**

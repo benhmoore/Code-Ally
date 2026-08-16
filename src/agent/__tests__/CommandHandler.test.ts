@@ -8,9 +8,9 @@ import { ConfigManager } from '@services/ConfigManager.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { AgentManager } from '@services/AgentManager.js';
 import { FocusManager } from '@services/FocusManager.js';
-import { ProjectManager } from '@services/ProjectManager.js';
 import type { Message } from '@shared/index.js';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -34,14 +34,10 @@ describe('CommandHandler', () => {
 
     const focusManager = new FocusManager();
 
-    const projectManager = new ProjectManager();
-    await projectManager.initialize();
-
     // Register services with snake_case keys that CommandHandler expects
     serviceRegistry.registerInstance('config_manager', configManager);
     serviceRegistry.registerInstance('agent_manager', agentManager);
     serviceRegistry.registerInstance('focus_manager', focusManager);
-    serviceRegistry.registerInstance('project_manager', projectManager);
 
     // Mock agent
     mockAgent = {
@@ -166,15 +162,45 @@ describe('CommandHandler', () => {
   });
 
   describe('Project Commands', () => {
-    it('should handle /project view', async () => {
-      const result = await commandHandler.handleCommand('/project view', []);
-      expect(result.handled).toBe(true);
+    // /project view and /project clear operate on ALLY.md in the cwd, so run
+    // them against the temp dir rather than the repo checkout.
+    let originalCwd: string;
+
+    beforeEach(() => {
+      originalCwd = process.cwd();
+      process.chdir(tempDir);
     });
 
-    it('should handle /project clear', async () => {
+    afterEach(() => {
+      process.chdir(originalCwd);
+    });
+
+    it('should report a missing ALLY.md for /project view', async () => {
+      const result = await commandHandler.handleCommand('/project view', []);
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain('No ALLY.md found');
+    });
+
+    it('should show ALLY.md contents for /project view', async () => {
+      await writeFile(path.join(tempDir, 'ALLY.md'), '# ALLY.md\n\nhello project\n');
+      const result = await commandHandler.handleCommand('/project view', []);
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain('hello project');
+    });
+
+    it('should delete ALLY.md for /project clear', async () => {
+      const allyPath = path.join(tempDir, 'ALLY.md');
+      await writeFile(allyPath, '# ALLY.md\n');
       const result = await commandHandler.handleCommand('/project clear', []);
       expect(result.handled).toBe(true);
-      expect(result.response).toContain('cleared');
+      expect(result.response).toContain('Removed');
+      expect(existsSync(allyPath)).toBe(false);
+    });
+
+    it('should be a no-op for /project clear without ALLY.md', async () => {
+      const result = await commandHandler.handleCommand('/project clear', []);
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain('No ALLY.md to clear');
     });
   });
 

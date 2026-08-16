@@ -409,6 +409,10 @@ export class Agent {
     this.tokenManager = new TokenManager(this.appConfig.context_size);
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'TokenManager created with context size:', this.appConfig.context_size);
 
+    // Registered here, once both collaborators exist, so every append — however
+    // it reaches the conversation — carries its bookkeeping with it.
+    this.conversationManager.setMessageAddedObserver(message => this.onMessageAdded(message));
+
     // Create agent's own ToolResultManager using agent's TokenManager
     this.toolResultManager = new ToolResultManager(
       this.tokenManager,
@@ -1746,18 +1750,25 @@ export class Agent {
    * @param message - Message to add
    */
   addMessage(message: Message): void {
-    // Ensure message has ID and timestamp
-    const messageWithMetadata = {
-      ...message,
-      id: message.id || generateMessageId(),
-      timestamp: message.timestamp || Date.now(),
-    };
-    this.conversationManager.addMessage(messageWithMetadata);
+    // Thin pass-through. The bookkeeping that used to live here now hangs off
+    // ConversationManager itself (see onMessageAdded), so the 26 places that
+    // append directly through the manager get it too.
+    this.conversationManager.addMessage(message);
+  }
 
-    // Update token count incrementally with new message (O(1) instead of O(n))
-    this.tokenManager.addMessageTokens(messageWithMetadata);
+  /**
+   * Keep token accounting, the context-usage event, and autosave in step with
+   * every appended message, whoever appended it.
+   *
+   * Registered on ConversationManager rather than performed in `addMessage`
+   * because Agent and ResponseProcessor append 26 messages directly through the
+   * manager. Those writes previously skipped all of this, so the token count the
+   * auto-compaction threshold reads drifted until the next full recount.
+   */
+  private onMessageAdded(message: Message): void {
+    // Incremental: O(1) rather than re-counting the whole conversation.
+    this.tokenManager.addMessageTokens(message);
 
-    // Emit context usage update event for real-time UI updates
     const contextUsage = this.tokenManager.getContextUsagePercentage();
     this.emitEvent({
       id: this.generateId(),
@@ -1770,13 +1781,11 @@ export class Agent {
       },
     });
 
-    // Log message addition for context tracking
     const toolInfo = message.tool_calls ? ` toolCalls:${message.tool_calls.length}` : '';
     const toolCallId = message.tool_call_id ? ` toolCallId:${message.tool_call_id}` : '';
     const toolName = message.name ? ` name:${message.name}` : '';
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Message added:', message.role, toolInfo, toolCallId, toolName, '- Total messages:', this.conversationManager.getMessageCount());
 
-    // Auto-save session after adding message
     this.autoSaveSession();
   }
 
