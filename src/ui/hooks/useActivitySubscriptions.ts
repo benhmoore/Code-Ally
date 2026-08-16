@@ -8,7 +8,6 @@
 
 import { useRef, useEffect, useState, useMemo } from 'react';
 import { ActivityEventType, Message, ToolCallState, FormRequest } from '@shared/index.js';
-import type { Config } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
@@ -18,6 +17,8 @@ import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
 import { UndoCoordinator } from '@services/UndoCoordinator.js';
+import { ModelConfigCoordinator } from '@services/ModelConfigCoordinator.js';
+import { SessionRestoreCoordinator } from '@services/SessionRestoreCoordinator.js';
 import { logger } from '@services/Logger.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
@@ -87,6 +88,28 @@ export const useActivitySubscriptions = (
         getTokenManager: () => ServiceRegistry.getInstance().get('token_manager'),
       }),
     [agent]
+  );
+
+  // Model switching (capability probe, ConfigManager writes, runtime sync) lives
+  // in a service; this hook only routes events into it and repaints.
+  const modelConfigCoordinator = useMemo(
+    () =>
+      new ModelConfigCoordinator({
+        getConfigManager: () => ServiceRegistry.getInstance().get('config_manager'),
+        applyRuntimeConfig: (updates) =>
+          applyRuntimeConfigUpdates(ServiceRegistry.getInstance(), updates),
+      }),
+    []
+  );
+
+  // Session listing/restoration likewise; the hook keeps only the modal plumbing.
+  const sessionRestoreCoordinator = useMemo(
+    () =>
+      new SessionRestoreCoordinator({
+        getSessionManager: () => ServiceRegistry.getInstance().get('session_manager'),
+        getPatchManager: () => ServiceRegistry.getInstance().get('patch_manager'),
+      }),
+    []
   );
 
   // Clear the "Cancelling" indicator once the agent has actually stopped working.
@@ -999,7 +1022,10 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.MODEL_SELECT_RESPONSE, async (event) => {
     const { modelName, modelType } = event.data;
 
-    const effectiveModelType = modelType || modal.modelSelectRequest?.modelType || 'ally';
+    const slot = modelConfigCoordinator.resolveModelSlot(
+      modelType,
+      modal.modelSelectRequest?.modelType
+    );
 
     // If cancelled (no model selected), just clear the UI
     if (!modelName) {
@@ -1011,79 +1037,30 @@ export const useActivitySubscriptions = (
     // Show loading state while testing capabilities
     modal.setModelSelectLoading(true);
 
-    const clearModalState = () => {
-      modal.setModelSelectLoading(false);
-      modal.setModelSelectRequest(undefined);
-      modal.setModelSelectedIndex(0);
-    };
+    const outcome = await modelConfigCoordinator.switchModel(modelName, slot);
 
-    const registry = ServiceRegistry.getInstance();
-    const configManager = registry.get('config_manager');
-
-    if (!configManager) {
-      clearModalState();
-      return;
+    // Config state first, modal second, messages last - the original ordering.
+    if (outcome.configUpdate) {
+      actions.updateConfig(outcome.configUpdate);
     }
 
-    try {
-      const config = configManager.getConfig();
-      const endpoint = config.endpoint || 'http://localhost:11434';
+    modal.setModelSelectLoading(false);
+    modal.setModelSelectRequest(undefined);
+    modal.setModelSelectedIndex(0);
 
-      // Test model capabilities before switching
-      const { testModelCapabilities } = await import('@llm/ModelValidation.js');
-      const capabilities = await testModelCapabilities(endpoint, modelName);
-
-      // For ally model, require tool support
-      if (effectiveModelType === 'ally' && !capabilities.supportsTools) {
-        clearModalState();
-        actions.addMessage({
-          role: 'assistant',
-          content: `Model '${modelName}' does not support tools. Ally model requires tool support.`,
-        });
-        return;
-      }
-
-      const configKey = effectiveModelType === 'service' ? 'service_model' : 'model';
-
-      await configManager.setValue(configKey, modelName);
-
-      const updates = { [configKey]: modelName } as Partial<Config>;
-      applyRuntimeConfigUpdates(registry, updates);
-
-      if (effectiveModelType === 'service') {
-        actions.updateConfig({ service_model: modelName });
-      } else {
-        actions.updateConfig({ model: modelName });
-      }
-
-      clearModalState();
-
-      const typeName = effectiveModelType === 'service' ? 'Service model' : 'Model';
-      const capInfo = capabilities.fromCache ? ' (cached)' : '';
-      const imageNote = capabilities.supportsImages ? '' : ' (no image support)';
-      actions.addMessage({
-        role: 'assistant',
-        content: `${typeName} changed to: ${modelName}${capInfo}${imageNote}`,
-      });
-    } catch (error) {
-      clearModalState();
-      actions.addMessage({
-        role: 'assistant',
-        content: `Error changing model: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
+    for (const content of outcome.messages) {
+      actions.addMessage({ role: 'assistant', content });
     }
   });
 
   // Config updated (from commands that directly change config)
   useActivityEvent(ActivityEventType.CONFIG_UPDATED, (event) => {
-    const updates = event.data;
-    if (!updates || typeof updates !== 'object') return;
+    const updates = modelConfigCoordinator.normalizeConfigUpdates(event.data);
+    if (!updates) return;
 
-    // Update UI state
+    // UI state first, runtime services second - the original ordering.
     actions.updateConfig(updates);
-
-    const registry = ServiceRegistry.getInstance();
-    applyRuntimeConfigUpdates(registry, updates as Partial<Config>);
+    modelConfigCoordinator.applyRuntimeUpdates(updates);
   });
 
   // Rewind request
@@ -1244,22 +1221,16 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.SESSION_SELECT_REQUEST, async (event) => {
     const { requestId } = event.data;
 
-    const serviceRegistry = ServiceRegistry.getInstance();
-    const sessionManager = serviceRegistry.get('session_manager');
+    // Both failure modes (no session manager, listing threw) are deliberately
+    // silent for the user; the coordinator logs them.
+    const outcome = await sessionRestoreCoordinator.listSessions();
+    if (outcome.status !== 'ok') return;
 
-    if (!sessionManager) return;
-
-    try {
-      const sessions = await sessionManager.getSessionsInfoByDirectory();
-
-      modal.setSessionSelectRequest({
-        requestId,
-        sessions,
-        selectedIndex: 0,
-      });
-    } catch (error) {
-      logger.error('Failed to fetch sessions:', error);
-    }
+    modal.setSessionSelectRequest({
+      requestId,
+      sessions: outcome.sessions,
+      selectedIndex: 0,
+    });
   });
 
   // Session select response
@@ -1269,30 +1240,18 @@ export const useActivitySubscriptions = (
     modal.setSessionSelectRequest(undefined);
 
     if (!cancelled && sessionId) {
-      const serviceRegistry = ServiceRegistry.getInstance();
-      const sessionManager = serviceRegistry.get('session_manager');
+      // The loader closes over the currently foreground agent, so it is passed
+      // per call rather than injected once.
+      const outcome = await sessionRestoreCoordinator.restoreSession(sessionId, (sessionData) =>
+        loadSessionData(sessionData, agent, actions, activityStream)
+      );
 
-      if (!sessionManager) return;
-
-      try {
-        sessionManager.setCurrentSession(sessionId);
-
-        const patchManager = serviceRegistry.get('patch_manager');
-        if (patchManager) {
-          await patchManager.onSessionChange();
-        }
-
-        const sessionData = await sessionManager.getSessionData(sessionId);
-
-        // Use shared session loading logic
-        await loadSessionData(sessionData, agent, actions, activityStream);
-      } catch (error) {
+      if (outcome.status === 'error') {
         // Surface the failure instead of leaving the UI in an indeterminate
         // state with no feedback about why the session didn't load.
-        logger.error('[ACTIVITY] Failed to load selected session:', error);
         actions.addMessage({
           role: 'assistant',
-          content: `Failed to load session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          content: outcome.message,
           timestamp: Date.now(),
         });
       }
