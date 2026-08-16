@@ -11,7 +11,6 @@ import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/i
 import type { AgentData } from '../types/agents.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { ReadStateManager } from '../services/ReadStateManager.js';
 import { AgentManager } from '../services/AgentManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { validateAgentName } from '../utils/namingValidation.js';
@@ -33,7 +32,7 @@ export class WriteAgentTool extends BaseTool {
    * Resolve the AgentManager from the service registry.
    */
   private getAgentManager(): AgentManager | null {
-    return ServiceRegistry.getInstance().get<AgentManager>('agent_manager') ?? null;
+    return ServiceRegistry.getInstance().get('agent_manager') ?? null;
   }
 
   /**
@@ -235,12 +234,12 @@ export class WriteAgentTool extends BaseTool {
 
       // Track read state
       const registry = this.getExecutionRegistry(executionContext);
-      const readCache = registry.get<{ invalidate(path: string): void }>('read_cache');
+      const readCache = registry.get('read_cache');
       if (readCache) {
         readCache.invalidate(absolutePath);
       }
 
-      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      const readStateManager = registry.get('read_state_manager');
       if (readStateManager) {
         readStateManager.clearFile(absolutePath);
         if (content.length > 0) {

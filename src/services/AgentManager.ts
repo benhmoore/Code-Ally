@@ -58,7 +58,7 @@ export class AgentManager {
     // With the marketplace system, installed + enabled plugins are always active
     try {
       const registry = ServiceRegistry.getInstance();
-      const pm = registry.get<any>('plugin_manager');
+      const pm = registry.get('plugin_manager');
       if (pm) {
         return pm.isPluginEnabled(pluginName);
       }

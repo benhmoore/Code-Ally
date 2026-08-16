@@ -12,7 +12,6 @@ import type { Config, Message } from '@shared/index.js';
 import { ActivityEventType } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { ConfigManager } from '@services/ConfigManager.js';
 import { formatError } from '@utils/errorUtils.js';
 import { BYTE_CONVERSIONS, FORMATTING } from '@config/constants.js';
 import { CommandRegistry } from './CommandRegistry.js';
@@ -44,7 +43,7 @@ export class ModelCommand extends Command {
     _messages: Message[],
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
-    const configManager = serviceRegistry.get<ConfigManager>('config_manager');
+    const configManager = serviceRegistry.get('config_manager');
 
     if (!configManager) {
       return this.createError('Configuration manager not available');

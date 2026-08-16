@@ -11,7 +11,6 @@ import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 import { switchAgent } from '@services/AgentSwitcher.js';
 import { ActivityEventType } from '@shared/index.js';
-import { ActivityStream } from '@services/ActivityStream.js';
 import { logger } from '@services/Logger.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
@@ -56,7 +55,7 @@ export class SwitchCommand extends Command {
       const newAgent = await switchAgent(agentName, serviceRegistry);
 
       // Update currentAgent state in AppContext via activity stream
-      const activityStream = serviceRegistry.get<ActivityStream>('activity_stream');
+      const activityStream = serviceRegistry.get('activity_stream');
       if (activityStream) {
         activityStream.emit({
           id: `agent_switch_${Date.now()}`,

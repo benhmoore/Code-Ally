@@ -38,7 +38,7 @@ export const useAgentSwitch = (
 
         // Fetch the new agent from registry
         const registry = ServiceRegistry.getInstance();
-        const newAgent = registry.get<Agent>('agent');
+        const newAgent = registry.get('agent');
 
         if (!newAgent) {
           logger.error('[AGENT_SWITCH_HOOK]', 'Failed to get new agent from registry!');
@@ -52,7 +52,7 @@ export const useAgentSwitch = (
           logger.warn('[AGENT_SWITCH_HOOK]', 'Agent ID mismatch! Expected:', expectedAgentId, 'Got:', actualAgentId);
           // Wait a bit and retry once (registry update may be delayed)
           setTimeout(() => {
-            const retryAgent = registry.get<Agent>('agent');
+            const retryAgent = registry.get('agent');
             const retryId = retryAgent?.getInstanceId();
             if (retryAgent && retryId === expectedAgentId) {
               logger.debug('[AGENT_SWITCH_HOOK]', 'Retry successful, agent ID now matches');

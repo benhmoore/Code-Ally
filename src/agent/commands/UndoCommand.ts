@@ -9,7 +9,6 @@ import type { Message } from '@shared/index.js';
 import { ActivityEventType } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { PatchManager } from '@services/PatchManager.js';
 import { formatError } from '@utils/errorUtils.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
@@ -36,7 +35,7 @@ export class UndoCommand extends Command {
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
     // Get PatchManager from service registry
-    const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+    const patchManager = serviceRegistry.get('patch_manager');
 
     if (!patchManager) {
       return this.createError('Undo feature not available (patch manager not initialized)');

@@ -24,7 +24,6 @@ import { ActivityEventType } from '@shared/index.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 import type { PromptLibraryManager } from '@services/PromptLibraryManager.js';
-import type { Agent } from '../Agent.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 
@@ -72,7 +71,7 @@ export class PromptCommand extends Command {
     // Check if it's a subcommand
     if (this.SUBCOMMANDS.includes(firstArg)) {
       // Get PromptLibraryManager
-      const promptLibraryManager = serviceRegistry.get<PromptLibraryManager>('prompt_library_manager');
+      const promptLibraryManager = serviceRegistry.get('prompt_library_manager');
 
       if (!promptLibraryManager) {
         return this.createError('Prompt library manager not available.');
@@ -140,7 +139,7 @@ export class PromptCommand extends Command {
    */
   private async handleAdd(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
     // Get agent to access conversation messages
-    const agent = serviceRegistry.get<Agent>('agent');
+    const agent = serviceRegistry.get('agent');
 
     if (!agent) {
       // Agent not available - go straight to wizard

@@ -59,7 +59,7 @@ describe('ServiceRegistry', () => {
       const service = new SimpleService();
       registry.registerInstance('simple', service);
 
-      const retrieved = registry.get<SimpleService>('simple');
+      const retrieved = registry.get('simple');
       expect(retrieved).toBe(service);
     });
 
@@ -81,8 +81,8 @@ describe('ServiceRegistry', () => {
     it('should register a singleton service', () => {
       registry.registerSingleton('simple', SimpleService);
 
-      const instance1 = registry.get<SimpleService>('simple');
-      const instance2 = registry.get<SimpleService>('simple');
+      const instance1 = registry.get('simple');
+      const instance2 = registry.get('simple');
 
       expect(instance1).toBeInstanceOf(SimpleService);
       expect(instance1).toBe(instance2); // Same instance
@@ -99,7 +99,7 @@ describe('ServiceRegistry', () => {
         }
       );
 
-      const instance = registry.get<SimpleService>('simple');
+      const instance = registry.get('simple');
       expect(instance?.value).toBe('custom');
     });
 
@@ -109,7 +109,7 @@ describe('ServiceRegistry', () => {
         dependency: 'simple',
       });
 
-      const dependent = registry.get<ServiceWithDependency>('dependent');
+      const dependent = registry.get('dependent');
       expect(dependent).toBeInstanceOf(ServiceWithDependency);
       expect(dependent?.dependency).toBeInstanceOf(SimpleService);
     });
@@ -120,7 +120,7 @@ describe('ServiceRegistry', () => {
       // Wait a bit for async initialize to complete
       await new Promise(resolve => setTimeout(resolve, 10));
 
-      const service = registry.get<ServiceImplementingIService>('service');
+      const service = registry.get('service');
       expect(service?.initialized).toBe(true);
     });
   });
@@ -129,8 +129,8 @@ describe('ServiceRegistry', () => {
     it('should create new instance each time', () => {
       registry.registerTransient('simple', SimpleService);
 
-      const instance1 = registry.get<SimpleService>('simple');
-      const instance2 = registry.get<SimpleService>('simple');
+      const instance1 = registry.get('simple');
+      const instance2 = registry.get('simple');
 
       expect(instance1).toBeInstanceOf(SimpleService);
       expect(instance2).toBeInstanceOf(SimpleService);
@@ -151,7 +151,7 @@ describe('ServiceRegistry', () => {
       registry.registerInstance('simple', directInstance);
       registry.registerSingleton('simple', SimpleService); // This should be ignored
 
-      const retrieved = registry.get<SimpleService>('simple');
+      const retrieved = registry.get('simple');
       expect(retrieved?.value).toBe('direct');
     });
   });
@@ -161,7 +161,7 @@ describe('ServiceRegistry', () => {
       const service = new SimpleService();
       registry.registerInstance('simple', service);
 
-      const retrieved = registry.getRequired<SimpleService>('simple');
+      const retrieved = registry.getRequired('simple');
       expect(retrieved).toBe(service);
     });
 

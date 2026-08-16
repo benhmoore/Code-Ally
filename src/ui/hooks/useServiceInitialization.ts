@@ -12,7 +12,6 @@ import { CompletionProvider } from '@services/CompletionProvider.js';
 import { CommandHandler } from '@agent/CommandHandler.js';
 import { AgentManager } from '@services/AgentManager.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { ConfigManager } from '@services/ConfigManager.js';
 import { AppActions } from '../contexts/AppContext.js';
 
 /**
@@ -63,7 +62,7 @@ export const useServiceInitialization = (
       try {
         // Get service registry and config manager
         const serviceRegistry = ServiceRegistry.getInstance();
-        const configManager = serviceRegistry.get<ConfigManager>('config_manager');
+        const configManager = serviceRegistry.get('config_manager');
 
         // First-run detection: Check if setup has been completed
         // OR if explicitly requested via --init flag
@@ -97,7 +96,7 @@ export const useServiceInitialization = (
 
         // Create completion provider with agent manager and config manager
         // Use the AgentManager from the registry (which has plugin agents registered)
-        const agentManager = serviceRegistry.get<AgentManager>('agent_manager') || new AgentManager();
+        const agentManager = serviceRegistry.get('agent_manager') || new AgentManager();
         const provider = new CompletionProvider(agentManager, configManager || undefined);
         setCompletionProvider(provider);
 

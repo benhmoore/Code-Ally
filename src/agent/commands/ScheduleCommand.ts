@@ -119,7 +119,7 @@ export class ScheduleCommand extends Command {
     _messages: Message[],
     serviceRegistry: ServiceRegistry,
   ): Promise<CommandResult> {
-    const manager = this.getRequiredService<ScheduledTaskManager>(serviceRegistry, 'scheduled_task_manager', 'Scheduled tasks');
+    const manager = this.getRequiredService(serviceRegistry, 'scheduled_task_manager', 'Scheduled tasks');
     if ('handled' in manager) return manager;
 
     const subcommand = (args[0] || 'list').toLowerCase();

@@ -11,7 +11,6 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import type { AgentGenerationService } from '@services/AgentGenerationService.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
@@ -208,7 +207,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
   // Load available tools for custom selection
   const loadAvailableTools = () => {
     const registry = ServiceRegistry.getInstance();
-    const toolManager = registry.get<any>('tool_manager');
+    const toolManager = registry.get('tool_manager');
     if (toolManager) {
       const tools = toolManager.getAllTools();
       const toolNames = tools.map((t: any) => t.name).sort();
@@ -231,7 +230,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
     setError(null);
     try {
       const registry = ServiceRegistry.getInstance();
-      const configManager = registry.get<any>('config_manager');
+      const configManager = registry.get('config_manager');
       const config = configManager?.getConfig();
       const endpoint = config?.endpoint || 'http://localhost:11434';
 
@@ -272,7 +271,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
     try {
       const registry = ServiceRegistry.getInstance();
-      const configManager = registry.get<any>('config_manager');
+      const configManager = registry.get('config_manager');
       const config = configManager?.getConfig();
       const endpoint = config?.endpoint || 'http://localhost:11434';
 
@@ -302,7 +301,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
     try {
       const registry = ServiceRegistry.getInstance();
-      const agentGenerationService = registry.get<AgentGenerationService>('agent_generation_service');
+      const agentGenerationService = registry.get('agent_generation_service');
 
       if (!agentGenerationService) {
         throw new Error('Agent generation service not available');

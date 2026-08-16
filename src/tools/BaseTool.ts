@@ -478,7 +478,7 @@ export abstract class BaseTool {
     }
 
     const registry = this.getExecutionRegistry(executionContext);
-    const currentAgent = registry.get<any>('agent');
+    const currentAgent = registry.get('agent');
     const registryAgentId = currentAgent?.getInstanceId?.();
     if (typeof registryAgentId === 'string' && registryAgentId.length > 0) {
       return registryAgentId;
@@ -894,7 +894,7 @@ export abstract class BaseTool {
   ): Promise<number | null> {
     try {
       const registry = ServiceRegistry.getInstance();
-      const patchManager = registry.get<any>('patch_manager');
+      const patchManager = registry.get('patch_manager');
 
       if (!patchManager) {
         // PatchManager not registered - this is fine, just means undo is disabled
@@ -958,7 +958,7 @@ export abstract class BaseTool {
     if (readStateManager) readStateManager.clearFile(absolutePath);
 
     const cacheRegistry = this.getExecutionRegistry(executionContext);
-    cacheRegistry.get<{ invalidate(path: string): void }>('read_cache')?.invalidate(absolutePath);
+    cacheRegistry.get('read_cache')?.invalidate(absolutePath);
 
     // Generate diff
     const diff = createUnifiedDiff(originalContent, modifiedContent, absolutePath);

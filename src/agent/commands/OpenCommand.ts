@@ -12,7 +12,6 @@ import { Command } from './Command.js';
 import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { FileInteractionTracker } from '@services/FileInteractionTracker.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 
@@ -47,7 +46,7 @@ export class OpenCommand extends Command {
     if (inputPath) {
       target = inputPath;
     } else {
-      const tracker = serviceRegistry.get<FileInteractionTracker>('file_interaction_tracker');
+      const tracker = serviceRegistry.get('file_interaction_tracker');
       const lastTouched = tracker?.getLastTouched();
 
       if (!lastTouched) {

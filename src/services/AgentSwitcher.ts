@@ -8,12 +8,7 @@
 
 import { Agent, AgentConfig } from '../agent/Agent.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
-import { AgentManager } from './AgentManager.js';
 import { ModelClient } from '../llm/ModelClient.js';
-import { ToolManager } from '../tools/ToolManager.js';
-import { ActivityStream } from './ActivityStream.js';
-import { ConfigManager } from './ConfigManager.js';
-import { PermissionManager } from '../security/PermissionManager.js';
 import { Message } from '../types/index.js';
 import { logger } from './Logger.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
@@ -34,7 +29,7 @@ export async function switchAgent(
   logger.debug('[AGENT_SWITCHER]', 'Switching to agent:', targetAgentType);
 
   // Get current agent from registry
-  const currentAgent = registry.get<Agent>('agent');
+  const currentAgent = registry.get('agent');
   if (!currentAgent) {
     throw new Error('Current agent not found in registry');
   }
@@ -54,7 +49,7 @@ export async function switchAgent(
     isMainAgent = true;
 
     // Create config for main agent
-    const configManager = registry.get<ConfigManager>('config_manager');
+    const configManager = registry.get('config_manager');
     if (!configManager) {
       throw new Error('ConfigManager not found in registry');
     }
@@ -67,7 +62,7 @@ export async function switchAgent(
     };
   } else {
     // Load target agent definition from AgentManager
-    const agentManager = registry.get<AgentManager>('agent_manager');
+    const agentManager = registry.get('agent_manager');
     if (!agentManager) {
       throw new Error('AgentManager not found in registry');
     }
@@ -80,12 +75,12 @@ export async function switchAgent(
     logger.debug('[AGENT_SWITCHER]', 'Loaded agent definition:', agentData.name);
 
     // Get required services
-    const configManager = registry.get<ConfigManager>('config_manager');
+    const configManager = registry.get('config_manager');
     if (!configManager) {
       throw new Error('ConfigManager not found in registry');
     }
 
-    const toolManager = registry.get<ToolManager>('tool_manager');
+    const toolManager = registry.get('tool_manager');
     if (!toolManager) {
       throw new Error('ToolManager not found in registry');
     }
@@ -108,11 +103,11 @@ export async function switchAgent(
   }
 
   // Get required services with comprehensive null safety
-  const mainModelClient = registry.get<ModelClient>('model_client');
-  const toolManager = registry.get<ToolManager>('tool_manager');
-  const activityStream = registry.get<ActivityStream>('activity_stream');
-  const configManager = registry.get<ConfigManager>('config_manager');
-  const permissionManager = registry.get<PermissionManager>('permission_manager');
+  const mainModelClient = registry.get('model_client');
+  const toolManager = registry.get('tool_manager');
+  const activityStream = registry.get('activity_stream');
+  const configManager = registry.get('config_manager');
+  const permissionManager = registry.get('permission_manager');
 
   // Validate all required services are available
   const missingServices: string[] = [];
@@ -133,7 +128,7 @@ export async function switchAgent(
 
   // If switching to a custom agent (not 'ally'), check for agent-specific model settings
   if (!isMainAgent && targetAgentType !== AGENT_TYPES.ALLY) {
-    const agentManager = registry.get<AgentManager>('agent_manager');
+    const agentManager = registry.get('agent_manager');
     const agentData = agentManager ? await agentManager.loadAgent(targetAgentType) : null;
     const config = configManager!.getConfig();
 

@@ -10,7 +10,6 @@ import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -52,7 +51,7 @@ export class EditTool extends BaseTool {
     const absolutePath = resolvePath(filePath);
     const registry = this.getExecutionRegistry(executionContext);
     const readScopeId = this.getReadScopeId(executionContext);
-    const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+    const readStateManager = registry.get('read_state_manager');
 
     if (!readStateManager) {
       return null; // No read state manager, skip validation
@@ -268,7 +267,7 @@ export class EditTool extends BaseTool {
       const validationErrors: string[] = [];
       const registry = this.getExecutionRegistry(executionContext);
       const readScopeId = this.getReadScopeId(executionContext);
-      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      const readStateManager = registry.get('read_state_manager');
 
       // Track cumulative content for validation (each edit sees previous edits' results)
       let cumulativeContent = content;

@@ -150,7 +150,7 @@ export class MemoryTool extends BaseTool {
   ): Promise<ToolResult> {
     this.captureParams(args);
 
-    const memoryService = this.getExecutionRegistry(executionContext).get<MemoryService>('memory_service');
+    const memoryService = this.getExecutionRegistry(executionContext).get('memory_service');
     if (!memoryService) {
       return this.formatErrorResponse(
         'Memory service is not available.',

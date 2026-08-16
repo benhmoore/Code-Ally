@@ -310,7 +310,7 @@ export class ScheduledTasksTool extends BaseTool {
     }
 
     const registry = ServiceRegistry.getInstance();
-    const manager = registry.get<ScheduledTaskManager>('scheduled_task_manager');
+    const manager = registry.get('scheduled_task_manager');
     if (!manager) {
       return this.formatErrorResponse('ScheduledTaskManager not available', 'system_error');
     }

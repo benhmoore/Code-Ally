@@ -7,7 +7,6 @@
 
 import { useState, useEffect } from 'react';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { BashProcessManager } from '@services/BashProcessManager.js';
 import { useActivityStreamContext } from '../contexts/ActivityContext.js';
 import { ActivityEventType } from '@shared/index.js';
 
@@ -24,7 +23,7 @@ export function useBackgroundProcesses(): number {
     // Get initial count
     const updateCount = () => {
       const registry = ServiceRegistry.getInstance();
-      const processManager = registry.get<BashProcessManager>('bash_process_manager');
+      const processManager = registry.get('bash_process_manager');
 
       if (processManager) {
         const processes = processManager.listProcesses();

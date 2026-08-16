@@ -19,14 +19,12 @@ import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/inde
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { Agent, AgentConfig } from '../agent/Agent.js';
-import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
-import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { appendAgentResponseSuffix, resolveSubstantiveResponse } from '../utils/delegationUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import { getProjectSessionsDir } from '../config/paths.js';
-import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
+import { PooledAgent } from '../services/AgentPoolService.js';
 import { getThoroughnessDuration, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import * as path from 'path';
@@ -179,14 +177,14 @@ export class SessionsTool extends BaseTool {
 
       // Get current session to exclude it
       const registry = ServiceRegistry.getInstance();
-      const sessionManager = registry.get<any>('session_manager');
+      const sessionManager = registry.get('session_manager');
       const currentSessionId = sessionManager?.getCurrentSession();
 
       // Get required services
-      const mainModelClient = registry.get<ModelClient>('model_client');
-      const toolManager = registry.get<ToolManager>('tool_manager');
-      const configManager = registry.get<any>('config_manager');
-      const permissionManager = registry.get<any>('permission_manager');
+      const mainModelClient = registry.get('model_client');
+      const toolManager = registry.get('tool_manager');
+      const configManager = registry.get('config_manager');
+      const permissionManager = registry.get('permission_manager');
 
       // Enforce strict service availability
       if (!mainModelClient) {
@@ -230,7 +228,7 @@ export class SessionsTool extends BaseTool {
       }
 
       // Get parent agent for activity monitoring coordination
-      const parentAgent = registry.get<any>('agent');
+      const parentAgent = registry.get('agent') ?? undefined;
 
       // Create agent configuration with focusDirectory set to sessions dir
       // System prompt will be generated dynamically in sendMessage()
@@ -252,7 +250,7 @@ export class SessionsTool extends BaseTool {
       let agentId: string | null = null;
 
       // Use AgentPoolService for persistent agent
-      const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+      const agentPoolService = registry.get('agent_pool');
 
       if (!agentPoolService) {
         // Graceful fallback: AgentPoolService not available

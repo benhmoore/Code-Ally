@@ -128,7 +128,7 @@ export class TodoWriteTool extends BaseTool {
     try {
       // Get TodoManager from registry
       const registry = ServiceRegistry.getInstance();
-      const todoManager = registry.get<TodoManager>('todo_manager');
+      const todoManager = registry.get('todo_manager');
 
       if (!todoManager) {
         return this.formatErrorResponse('TodoManager not available', 'system_error');

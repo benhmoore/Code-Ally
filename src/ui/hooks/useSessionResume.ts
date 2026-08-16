@@ -9,9 +9,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { SessionManager } from '@services/SessionManager.js';
-import { PatchManager } from '@services/PatchManager.js';
-import { ToolManager } from '@tools/ToolManager.js';
 import { AppActions } from '../contexts/AppContext.js';
 import { Message, ToolCallState } from '@shared/index.js';
 import { resolveDisplayContent } from '@utils/toolResultContent.js';
@@ -66,7 +63,7 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
   const toolResultsMap = new Map<string, { output: string; error?: string; timestamp: number; metadata?: any }>();
 
   // Get ToolManager to look up tool visibility
-  const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+  const toolManager = serviceRegistry.get('tool_manager');
 
   // First pass: collect all tool results.
   // Output is read from the persisted DISPLAY payload (metadata.tool_result),
@@ -355,7 +352,7 @@ export const useSessionResume = (
       }
 
       const serviceRegistry = ServiceRegistry.getInstance();
-      const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
+      const sessionManager = serviceRegistry.get('session_manager');
 
       if (!sessionManager) {
         setSessionLoaded(true);
@@ -382,7 +379,7 @@ export const useSessionResume = (
         sessionManager.setCurrentSession(resumeSession);
 
         // Reload patches for the new session
-        const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+        const patchManager = serviceRegistry.get('patch_manager');
         if (patchManager) {
           await patchManager.onSessionChange();
         }

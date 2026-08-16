@@ -16,7 +16,6 @@ import { logger } from '../services/Logger.js';
 import { validateToolName } from '../utils/namingValidation.js';
 import { DelegationContextManager } from '../services/DelegationContextManager.js';
 import { isInjectableTool } from './InjectableTool.js';
-import { PlanModeManager } from '../services/PlanModeManager.js';
 
 /** Why a tool is not available to a given agent, or null if it is. */
 type AgentVisibilityBlock = { kind: 'visible_to'; visibleTo: string[] };
@@ -227,7 +226,7 @@ export class ToolManager {
     let enabledPluginNames: Set<string> | null = null;
     try {
       const registry = ServiceRegistry.getInstance();
-      const pluginManager = registry.get<any>('plugin_manager');
+      const pluginManager = registry.get('plugin_manager');
       if (pluginManager && typeof pluginManager.getEnabledPlugins === 'function') {
         const enabled = pluginManager.getEnabledPlugins() as Array<{ pluginName: string }>;
         enabledPluginNames = new Set(enabled.map((p: { pluginName: string }) => p.pluginName));
@@ -283,7 +282,7 @@ export class ToolManager {
       // Filter by plan mode (only allow read-only + plan-specific tools)
       try {
         const registry = ServiceRegistry.getInstance();
-        const planModeManager = registry.get<PlanModeManager>('plan_mode_manager');
+        const planModeManager = registry.get('plan_mode_manager');
         if (planModeManager?.isActive() && !planModeManager.isToolAllowed(tool.name)) {
           continue;
         }
@@ -351,7 +350,7 @@ export class ToolManager {
     // Include plan mode state in key
     try {
       const registry = ServiceRegistry.getInstance();
-      const planModeManager = registry.get<PlanModeManager>('plan_mode_manager');
+      const planModeManager = registry.get('plan_mode_manager');
       if (planModeManager?.isActive()) {
         parts.push('plan-mode:active');
       }

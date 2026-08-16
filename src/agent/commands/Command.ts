@@ -7,6 +7,7 @@
 
 import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
+import type { ServiceMap, ServiceName } from '@services/ServiceMap.js';
 import type { CommandResult } from '../CommandHandler.js';
 
 export abstract class Command {
@@ -125,17 +126,17 @@ export abstract class Command {
    * @param featureName - Human-readable feature name for error message
    * @returns The service or an error CommandResult
    */
-  protected getRequiredService<T>(
+  protected getRequiredService<K extends ServiceName>(
     serviceRegistry: ServiceRegistry,
-    serviceName: string,
+    serviceName: K,
     featureName: string
-  ): T | CommandResult {
-    const service = serviceRegistry.get<T>(serviceName);
+  ): NonNullable<ServiceMap[K]> | CommandResult {
+    const service = serviceRegistry.get(serviceName);
 
     if (!service) {
       return this.createError(`${featureName} not available`);
     }
 
-    return service;
+    return service as NonNullable<ServiceMap[K]>;
   }
 }

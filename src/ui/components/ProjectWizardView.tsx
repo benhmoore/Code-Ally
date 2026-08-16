@@ -14,6 +14,7 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { getProjectInstructionsFile } from '../../config/paths.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
@@ -182,7 +183,7 @@ export const ProjectWizardView: React.FC<ProjectWizardViewProps> = ({ onComplete
     setError(null);
 
     try {
-      const allyPath = path.join(process.cwd(), 'ALLY.md');
+      const allyPath = getProjectInstructionsFile();
 
       let content = `# ALLY.md
 

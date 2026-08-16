@@ -23,7 +23,6 @@ import type { Agent } from '../agent/Agent.js';
 import type { PooledAgent } from '../services/AgentPoolService.js';
 import type { ModelClient } from '../llm/ModelClient.js';
 import type { ToolManager } from '../tools/ToolManager.js';
-import type { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 
 /**
  * Canonical reminder appended to every delegated-agent result, telling the
@@ -83,7 +82,7 @@ function getDelegationManager(): {
   clear: (callId: string) => void;
 } | null {
   try {
-    const toolManager = ServiceRegistry.getInstance().get<any>('tool_manager');
+    const toolManager = ServiceRegistry.getInstance().get('tool_manager');
     return toolManager?.getDelegationContextManager?.() ?? null;
   } catch (error) {
     logger.debug(`[DELEGATION] Context manager unavailable: ${error}`);
@@ -138,10 +137,10 @@ export interface DelegationServices {
  */
 export function resolveDelegationServices(toolName: string): DelegationServices {
   const registry = ServiceRegistry.getInstance();
-  const mainModelClient = registry.get<ModelClient>('model_client');
-  const toolManager = registry.get<ToolManager>('tool_manager');
-  const configManager = registry.get<any>('config_manager');
-  const permissionManager = registry.get<any>('permission_manager');
+  const mainModelClient = registry.get('model_client');
+  const toolManager = registry.get('tool_manager');
+  const configManager = registry.get('config_manager');
+  const permissionManager = registry.get('permission_manager');
 
   if (!mainModelClient) {
     throw new Error(`${toolName} requires model_client to be registered`);
@@ -194,7 +193,7 @@ export function injectInterjection(
  * explicitly. No-op when the BackgroundAgentManager is unavailable.
  */
 export function cancelRunningBackgroundAgents(): void {
-  const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+  const manager = ServiceRegistry.getInstance().get('background_agent_manager');
   if (!manager) {
     return;
   }

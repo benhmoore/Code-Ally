@@ -17,7 +17,6 @@ import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import type { Config } from '../types/index.js';
-import type { IntegrationStore } from '../services/IntegrationStore.js';
 
 // Tools available for research (web access)
 const RESEARCH_TOOLS = ['web-search', 'web-fetch'];
@@ -91,7 +90,7 @@ web-search requires configured provider (Brave/Serper); web-fetch always availab
   protected async performAdditionalSetup(_config: Config): Promise<any> {
     try {
       const registry = ServiceRegistry.getInstance();
-      const integrationStore = registry.get<IntegrationStore>('integration_store');
+      const integrationStore = registry.get('integration_store');
 
       if (integrationStore) {
         this.hasSearchProvider = await integrationStore.isSearchConfigured();

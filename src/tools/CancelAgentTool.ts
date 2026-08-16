@@ -13,7 +13,6 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 import { formatDuration } from '../ui/utils/timeUtils.js';
 
 export class CancelAgentTool extends BaseTool {
@@ -59,7 +58,7 @@ export class CancelAgentTool extends BaseTool {
     }
 
     const registry = ServiceRegistry.getInstance();
-    const manager = registry.get<BackgroundAgentManager>('background_agent_manager');
+    const manager = registry.get('background_agent_manager');
     if (!manager) {
       return this.formatErrorResponse(
         'BackgroundAgentManager not available',

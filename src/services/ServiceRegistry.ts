@@ -11,6 +11,7 @@ import type { PluginManager } from '../marketplace/PluginManager.js';
 import type { PromptLibraryManager } from './PromptLibraryManager.js';
 import type { ToolCallHistory } from './ToolCallHistory.js';
 import type { SkillManager } from './SkillManager.js';
+import type { ServiceMap, ServiceName } from './ServiceMap.js';
 import { logger } from './Logger.js';
 
 /**
@@ -35,7 +36,7 @@ export class ServiceDescriptor<T = unknown> {
     public readonly serviceType: new (...args: unknown[]) => T,
     public readonly factory?: () => T,
     public readonly lifecycle: ServiceLifecycle = ServiceLifecycle.SINGLETON,
-    public readonly dependencies?: Record<string, string>
+    public readonly dependencies?: Record<string, ServiceName>
   ) {}
 
   /**
@@ -144,11 +145,11 @@ export class ServiceRegistry {
   /**
    * Register a singleton service (single instance, cached after creation)
    */
-  registerSingleton<T = unknown>(
-    name: string,
-    serviceType: new (...args: unknown[]) => T,
-    factory?: () => T,
-    dependencies?: Record<string, string>
+  registerSingleton<K extends ServiceName>(
+    name: K,
+    serviceType: new (...args: unknown[]) => ServiceMap[K],
+    factory?: () => ServiceMap[K],
+    dependencies?: Record<string, ServiceName>
   ): this {
     const descriptor = new ServiceDescriptor(
       serviceType,
@@ -163,11 +164,11 @@ export class ServiceRegistry {
   /**
    * Register a transient service (new instance each time)
    */
-  registerTransient<T = unknown>(
-    name: string,
-    serviceType: new (...args: unknown[]) => T,
-    factory?: () => T,
-    dependencies?: Record<string, string>
+  registerTransient<K extends ServiceName>(
+    name: K,
+    serviceType: new (...args: unknown[]) => ServiceMap[K],
+    factory?: () => ServiceMap[K],
+    dependencies?: Record<string, ServiceName>
   ): this {
     const descriptor = new ServiceDescriptor(
       serviceType,
@@ -182,7 +183,7 @@ export class ServiceRegistry {
   /**
    * Register an existing instance as a singleton
    */
-  registerInstance<T>(name: string, instance: T): this {
+  registerInstance<K extends ServiceName>(name: K, instance: ServiceMap[K]): this {
     this._services.set(name, instance);
     return this;
   }
@@ -194,17 +195,17 @@ export class ServiceRegistry {
    * to maintain backward compatibility. If you need to ensure initialization is complete,
    * use getRequired() or manually call ensureServiceInitialized() after getting the instance.
    */
-  get<T = unknown>(name: string, _serviceType?: new (...args: unknown[]) => T): T | null {
+  get<K extends ServiceName>(name: K): ServiceMap[K] | null {
     // Check direct instances first
     if (this._services.has(name)) {
-      return this._services.get(name) as T;
+      return this._services.get(name) as ServiceMap[K];
     }
 
     // Check descriptors
     if (this._descriptors.has(name)) {
       const descriptor = this._descriptors.get(name)!;
       const instance = descriptor.createInstance(this);
-      return instance as T;
+      return instance as ServiceMap[K];
     }
 
     return null;
@@ -214,7 +215,7 @@ export class ServiceRegistry {
    * Ensure a service is fully initialized
    * Call this after get() if you need to guarantee initialization is complete
    */
-  async ensureServiceInitialized(name: string): Promise<void> {
+  async ensureServiceInitialized(name: ServiceName): Promise<void> {
     const descriptor = this._descriptors.get(name);
     if (descriptor) {
       await descriptor.ensureInitialized();
@@ -224,18 +225,18 @@ export class ServiceRegistry {
   /**
    * Get a required service (throws if not found)
    */
-  getRequired<T = unknown>(name: string, _serviceType?: new (...args: unknown[]) => T): T {
-    const service = this.get<T>(name);
+  getRequired<K extends ServiceName>(name: K): NonNullable<ServiceMap[K]> {
+    const service = this.get(name);
     if (!service) {
       throw new Error(`Required service '${name}' not found in registry`);
     }
-    return service;
+    return service as NonNullable<ServiceMap[K]>;
   }
 
   /**
    * Check if a service exists in the registry
    */
-  hasService(name: string): boolean {
+  hasService(name: ServiceName): boolean {
     return this._services.has(name) || this._descriptors.has(name);
   }
 
@@ -304,7 +305,7 @@ export class ServiceRegistry {
    * Get the MarketplaceManager instance
    */
   getMarketplaceManager(): MarketplaceManager | undefined {
-    return this.get('marketplace_manager') as MarketplaceManager | undefined;
+    return this.get('marketplace_manager') ?? undefined;
   }
 
   /**
@@ -318,7 +319,7 @@ export class ServiceRegistry {
    * Get the PluginManager instance
    */
   getPluginManager(): PluginManager | undefined {
-    return this.get('plugin_manager') as PluginManager | undefined;
+    return this.get('plugin_manager') ?? undefined;
   }
 
   /**
@@ -337,7 +338,7 @@ export class ServiceRegistry {
     if (!manager) {
       throw new Error('PromptLibraryManager not registered in ServiceRegistry');
     }
-    return manager as PromptLibraryManager;
+    return manager;
   }
 
   /**
@@ -352,7 +353,7 @@ export class ServiceRegistry {
    * @returns ToolCallHistory instance or undefined if not registered
    */
   getToolCallHistory(): ToolCallHistory | undefined {
-    return this.get('tool_call_history') as ToolCallHistory | undefined;
+    return this.get('tool_call_history') ?? undefined;
   }
 
   /**
@@ -367,7 +368,7 @@ export class ServiceRegistry {
    * @returns SkillManager instance or undefined if not registered
    */
   getSkillManager(): SkillManager | undefined {
-    return this.get('skill_manager') as SkillManager | undefined;
+    return this.get('skill_manager') ?? undefined;
   }
 }
 
@@ -387,7 +388,7 @@ export class ScopedServiceRegistryProxy {
   /**
    * Register an instance in the scoped context
    */
-  registerInstance<T>(name: string, instance: T): this {
+  registerInstance<K extends ServiceName>(name: K, instance: ServiceMap[K]): this {
     this._overrides.set(name, instance);
     return this;
   }
@@ -395,28 +396,28 @@ export class ScopedServiceRegistryProxy {
   /**
    * Get a service (checks overrides first, then base registry)
    */
-  get<T = unknown>(name: string, _serviceType?: new (...args: unknown[]) => T): T | null {
+  get<K extends ServiceName>(name: K): ServiceMap[K] | null {
     if (this._overrides.has(name)) {
-      return this._overrides.get(name) as T;
+      return this._overrides.get(name) as ServiceMap[K];
     }
-    return this._base.get<T>(name);
+    return this._base.get(name);
   }
 
   /**
    * Get a required service
    */
-  getRequired<T = unknown>(name: string, _serviceType?: new (...args: unknown[]) => T): T {
-    const service = this.get<T>(name);
+  getRequired<K extends ServiceName>(name: K): NonNullable<ServiceMap[K]> {
+    const service = this.get(name);
     if (!service) {
       throw new Error(`Required service '${name}' not found in scoped registry`);
     }
-    return service;
+    return service as NonNullable<ServiceMap[K]>;
   }
 
   /**
    * Check if a service exists (checks both overrides and base)
    */
-  hasService(name: string): boolean {
+  hasService(name: ServiceName): boolean {
     return this._overrides.has(name) || this._base.hasService(name);
   }
 

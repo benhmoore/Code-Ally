@@ -9,7 +9,6 @@ import { Command } from './Command.js';
 import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { SessionManager } from '@services/SessionManager.js';
 import { setTerminalTitle } from '../../utils/terminal.js';
 import { logger } from '@services/Logger.js';
 import { CommandRegistry } from './CommandRegistry.js';
@@ -46,7 +45,7 @@ export class RenameCommand extends Command {
       return this.createError('Usage: /rename <title>');
     }
 
-    const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
+    const sessionManager = serviceRegistry.get('session_manager');
     if (!sessionManager) {
       return this.createError('Session manager not available');
     }

@@ -10,7 +10,6 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { AgentManager } from '../services/AgentManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { validateAgentName } from '../utils/namingValidation.js';
 
@@ -70,7 +69,7 @@ export class DeleteAgentTool extends BaseTool {
         );
       }
 
-      const agentManager = ServiceRegistry.getInstance().get<AgentManager>('agent_manager');
+      const agentManager = ServiceRegistry.getInstance().get('agent_manager');
       if (!agentManager) {
         return this.formatErrorResponse(
           'Internal error: AgentManager not available. Please restart the application.',

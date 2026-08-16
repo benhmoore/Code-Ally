@@ -17,7 +17,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { AgentPoolService, AgentMetadata, PooledAgent } from '../services/AgentPoolService.js';
+import { AgentMetadata, PooledAgent } from '../services/AgentPoolService.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { getAgentType, getAgentDisplayName } from '../utils/agentTypeUtils.js';
@@ -150,7 +150,7 @@ Only start a NEW agent for completely unrelated areas.`;
     try {
       // Get AgentPoolService
       const registry = ServiceRegistry.getInstance();
-      const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+      const agentPoolService = registry.get('agent_pool');
 
       if (!agentPoolService) {
         return this.formatErrorResponse(

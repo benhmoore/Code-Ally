@@ -10,7 +10,6 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { IntegrationStore } from '../services/IntegrationStore.js';
 import { SerperProvider, BraveProvider } from '../services/providers/index.js';
 import { SearchResult, ISearchProvider } from '../types/integration.js';
 import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
@@ -83,7 +82,7 @@ export class WebSearchTool extends BaseTool {
 
     // Get IntegrationStore from ServiceRegistry
     const registry = ServiceRegistry.getInstance();
-    const integrationStore = registry.get<IntegrationStore>('integration_store');
+    const integrationStore = registry.get('integration_store');
 
     if (!integrationStore) {
       return this.formatErrorResponse(

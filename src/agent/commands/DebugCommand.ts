@@ -12,7 +12,6 @@ import type { ToolCallHistory } from '@services/ToolCallHistory.js';
 import type { ToolCallState } from '@shared/index.js';
 import { logger, LogLevel, type LogEntry } from '@services/Logger.js';
 import { BUFFER_SIZES } from '@config/constants.js';
-import type { Agent } from '../Agent.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -310,7 +309,7 @@ export class DebugCommand extends Command {
       const allToolCalls = toolCallHistory?.getAll() || [];
 
       // Get conversation messages from agent
-      const agent = serviceRegistry.get<Agent>('agent');
+      const agent = serviceRegistry.get('agent');
       const messages = agent?.getConversationManager().getMessages() || [];
 
       // Build debug dump content

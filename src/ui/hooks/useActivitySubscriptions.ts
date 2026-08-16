@@ -16,11 +16,6 @@ import { reconstructInterjectionsFromMessages, reconstructToolCallsFromMessages,
 import { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { ConfigManager } from '@services/ConfigManager.js';
-import { SessionManager } from '@services/SessionManager.js';
-import { PatchManager } from '@services/PatchManager.js';
-import { ToolManager } from '@tools/ToolManager.js';
-import { AgentManager } from '@services/AgentManager.js';
 import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
 import { logger } from '@services/Logger.js';
 import { UI_DELAYS } from '@config/constants.js';
@@ -741,7 +736,7 @@ export const useActivitySubscriptions = (
     modal.setSetupWizardOpen(false);
 
     const registry = ServiceRegistry.getInstance();
-    const configManager = registry.get<ConfigManager>('config_manager');
+    const configManager = registry.get('config_manager');
 
     if (configManager) {
       try {
@@ -815,7 +810,7 @@ export const useActivitySubscriptions = (
     modal.setAgentWizardOpen(false);
 
     const serviceRegistry = ServiceRegistry.getInstance();
-    const agentManager = serviceRegistry.get<AgentManager>('agent_manager');
+    const agentManager = serviceRegistry.get('agent_manager');
 
     if (agentManager && name && description && systemPrompt) {
       try {
@@ -864,7 +859,7 @@ export const useActivitySubscriptions = (
     }
 
     const serviceRegistry = ServiceRegistry.getInstance();
-    const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+    const toolManager = serviceRegistry.get('tool_manager');
     const agentTool = toolManager?.getTool('agent');
 
     if (!agentTool) {
@@ -1009,7 +1004,7 @@ export const useActivitySubscriptions = (
     };
 
     const registry = ServiceRegistry.getInstance();
-    const configManager = registry.get<ConfigManager>('config_manager');
+    const configManager = registry.get('config_manager');
 
     if (!configManager) {
       clearModalState();
@@ -1173,7 +1168,7 @@ export const useActivitySubscriptions = (
     const { patchNumber, filePath } = event.data;
 
     const serviceRegistry = ServiceRegistry.getInstance();
-    const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+    const patchManager = serviceRegistry.get('patch_manager');
 
     if (!patchManager) {
       actions.addMessage({
@@ -1230,7 +1225,7 @@ export const useActivitySubscriptions = (
     }
 
     const serviceRegistry = ServiceRegistry.getInstance();
-    const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+    const patchManager = serviceRegistry.get('patch_manager');
 
     if (!patchManager) {
       actions.addMessage({
@@ -1290,7 +1285,7 @@ export const useActivitySubscriptions = (
     const { requestId } = event.data;
 
     const serviceRegistry = ServiceRegistry.getInstance();
-    const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
+    const sessionManager = serviceRegistry.get('session_manager');
 
     if (!sessionManager) return;
 
@@ -1315,14 +1310,14 @@ export const useActivitySubscriptions = (
 
     if (!cancelled && sessionId) {
       const serviceRegistry = ServiceRegistry.getInstance();
-      const sessionManager = serviceRegistry.get<SessionManager>('session_manager');
+      const sessionManager = serviceRegistry.get('session_manager');
 
       if (!sessionManager) return;
 
       try {
         sessionManager.setCurrentSession(sessionId);
 
-        const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+        const patchManager = serviceRegistry.get('patch_manager');
         if (patchManager) {
           await patchManager.onSessionChange();
         }
@@ -1564,7 +1559,7 @@ export const useActivitySubscriptions = (
 
         if (shouldRestoreFiles && targetTimestamp !== undefined) {
           const serviceRegistry = ServiceRegistry.getInstance();
-          const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+          const patchManager = serviceRegistry.get('patch_manager');
 
           if (patchManager) {
             try {

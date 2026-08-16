@@ -23,8 +23,6 @@ import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { ToolManager } from '@tools/ToolManager.js';
-import { AgentPoolService } from '@services/AgentPoolService.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 
 interface ToolCallDisplayProps {
@@ -60,7 +58,7 @@ function formatArgsPreview(args: any, toolName?: string): string {
   if (toolName) {
     try {
       const registry = ServiceRegistry.getInstance();
-      const toolManager = registry.get<ToolManager>('tool_manager');
+      const toolManager = registry.get('tool_manager');
 
       if (toolManager) {
         const tool = toolManager.getTool(toolName);
@@ -144,7 +142,7 @@ function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: 
   // Try to get tool instance from ToolManager and call formatSubtext()
   try {
     const registry = ServiceRegistry.getInstance();
-    const toolManager = registry.get<ToolManager>('tool_manager');
+    const toolManager = registry.get('tool_manager');
 
     if (toolManager) {
       const tool = toolManager.getTool(toolName);
@@ -300,7 +298,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
     // Special handling for agent-ask: look up agent name from pool
     try {
       const registry = ServiceRegistry.getInstance();
-      const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+      const agentPoolService = registry.get('agent_pool');
       const agentId = toolCall.arguments.agent_id;
 
       if (agentPoolService && agentPoolService.hasAgent(agentId)) {
@@ -322,7 +320,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
     // Try to get custom displayName from tool instance
     try {
       const registry = ServiceRegistry.getInstance();
-      const toolManager = registry.get<ToolManager>('tool_manager');
+      const toolManager = registry.get('tool_manager');
       const tool = toolManager?.getTool(toolCall.toolName);
       displayName = tool?.displayName || formatDisplayName(toolCall.toolName);
     } catch {

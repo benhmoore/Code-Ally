@@ -108,13 +108,13 @@ async function cleanExit(code: number = 0): Promise<void> {
   const registry = ServiceRegistry.getInstance();
   try {
     // Shutdown background bash processes if manager exists
-    const bashProcessManager = registry.get<any>('bash_process_manager');
+    const bashProcessManager = registry.get('bash_process_manager');
     if (bashProcessManager && typeof bashProcessManager.shutdown === 'function') {
       await bashProcessManager.shutdown();
     }
 
     // Shutdown background agents if manager exists
-    const backgroundAgentManager = registry.get<any>('background_agent_manager');
+    const backgroundAgentManager = registry.get('background_agent_manager');
     if (backgroundAgentManager && typeof backgroundAgentManager.shutdown === 'function') {
       await backgroundAgentManager.shutdown();
     }
@@ -1012,7 +1012,6 @@ async function main() {
 
     // Initialize service registry
     const registry = ServiceRegistry.getInstance();
-    registry.registerInstance('profile_manager', profileManager);
     registry.registerInstance('config_manager', configManager);
     registry.registerInstance('session_manager', sessionManager);
 
@@ -1392,7 +1391,7 @@ async function main() {
       }
 
       // Get the agent display name from the delegation
-      const agentPoolService = registry.get<any>('agent_pool');
+      const agentPoolService = registry.get('agent_pool');
       if (!agentPoolService) {
         return 'Agent'; // Fallback if pool service not available
       }
@@ -1434,7 +1433,6 @@ async function main() {
     // Load plugin skills and commands
     const markdownCommandLoader = new MarkdownCommandLoader();
     const pluginCommands = await markdownCommandLoader.loadAllPluginCommands(pluginManager);
-    registry.registerInstance('markdown_command_loader', markdownCommandLoader);
     registry.registerInstance('plugin_commands', pluginCommands);
 
     // Register plugin skills and agents with their managers
@@ -1448,11 +1446,6 @@ async function main() {
     const { AgentGenerationService } = await import('./services/AgentGenerationService.js');
     const agentGenerationService = new AgentGenerationService(serviceModelClient);
     registry.registerInstance('agent_generation_service', agentGenerationService);
-
-    // Create project manager for project context
-    const { ProjectManager } = await import('./services/ProjectManager.js');
-    const projectManager = new ProjectManager();
-    registry.registerInstance('project_manager', projectManager);
 
     // Create agent (creates its own TokenManager and ToolResultManager)
     // System prompt is generated dynamically in sendMessage() with current context
@@ -1561,8 +1554,8 @@ async function main() {
     if (idleMessageGenerator) {
       idleMessageGenerator.setOnQueueUpdated(() => {
         // Trigger auto-save to persist newly generated idle messages
-        const todoManager = registry.get<any>('todo_manager');
-        const additionalDirsManager = registry.get<any>('additional_dirs_manager');
+        const todoManager = registry.get('todo_manager');
+        const additionalDirsManager = registry.get('additional_dirs_manager');
 
         if (agent && sessionManager) {
           const todos = todoManager?.getTodos();

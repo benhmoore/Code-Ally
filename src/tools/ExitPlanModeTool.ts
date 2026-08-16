@@ -10,8 +10,6 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { PlanModeManager } from '../services/PlanModeManager.js';
-import { ToolManager } from './ToolManager.js';
 import { logger } from '../services/Logger.js';
 
 export class ExitPlanModeTool extends BaseTool {
@@ -42,7 +40,7 @@ export class ExitPlanModeTool extends BaseTool {
 
   protected async executeImpl(_args: any): Promise<ToolResult> {
     const registry = ServiceRegistry.getInstance();
-    const planModeManager = registry.get<PlanModeManager>('plan_mode_manager');
+    const planModeManager = registry.get('plan_mode_manager');
 
     if (!planModeManager) {
       return {
@@ -76,7 +74,7 @@ export class ExitPlanModeTool extends BaseTool {
       planModeManager.exitPlanMode();
 
       // Invalidate tool definitions cache to restore full tool access
-      const toolManager = registry.get<ToolManager>('tool_manager');
+      const toolManager = registry.get('tool_manager');
       if (toolManager) {
         toolManager.clearDefinitionsCache();
       }
@@ -120,7 +118,7 @@ export class ExitPlanModeTool extends BaseTool {
       // On error, still exit plan mode
       planModeManager.exitPlanMode();
 
-      const toolManager = registry.get<ToolManager>('tool_manager');
+      const toolManager = registry.get('tool_manager');
       if (toolManager) {
         toolManager.clearDefinitionsCache();
       }

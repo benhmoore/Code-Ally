@@ -16,7 +16,6 @@ import { ModelClient, LLMResponse } from '../llm/ModelClient.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { FocusManager } from '../services/FocusManager.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
 import { TokenManager } from './TokenManager.js';
 import {
@@ -190,8 +189,9 @@ export class Agent {
   private tokenManager: TokenManager;
   private toolResultManager: ToolResultManager; // ToolResultManager instance
 
-  // Agent instance ID for debugging
-  private readonly instanceId: string;
+  // Agent instance ID for debugging. Public because IParentAgent exposes it:
+  // an Agent handed to a sub-agent as its parent must satisfy that interface.
+  readonly instanceId: string;
 
   // Agent depth tracking (0=root, 1-3=delegated agents)
   private readonly agentDepth: number;
@@ -421,7 +421,7 @@ export class Agent {
     );
 
     // Wire tool result persistence for saving large outputs to disk
-    const toolResultPersistence = ServiceRegistry.getInstance().get<any>('tool_result_persistence');
+    const toolResultPersistence = ServiceRegistry.getInstance().get('tool_result_persistence');
     if (toolResultPersistence) {
       this.toolResultManager.setPersistence(toolResultPersistence);
     }
@@ -966,7 +966,7 @@ export class Agent {
     const hasTodoWriteAccess = !this.config.allowedTools || this.config.allowedTools.includes('todo-write');
     if (!this.config.isSpecializedAgent && hasTodoWriteAccess) {
       const registry = ServiceRegistry.getInstance();
-      const todoManager = registry.get<any>('todo_manager');
+      const todoManager = registry.get('todo_manager');
 
       if (todoManager) {
         const todos = todoManager.getTodos();
@@ -1846,7 +1846,7 @@ export class Agent {
         return;
       }
 
-      const memoryService = ServiceRegistry.getInstance().get<any>('memory_service');
+      const memoryService = ServiceRegistry.getInstance().get('memory_service');
       if (!memoryService || typeof memoryService.getAutoRecallContext !== 'function') {
         return;
       }
@@ -2126,7 +2126,7 @@ export class Agent {
   private async setupFocus(focusDirectory: string): Promise<void> {
     try {
       const registry = ServiceRegistry.getInstance();
-      const focusManager = registry.get<FocusManager>('focus_manager');
+      const focusManager = registry.get('focus_manager');
 
       if (!focusManager) {
         logger.debug('[AGENT_FOCUS]', this.instanceId, 'FocusManager not available, skipping focus setup');
@@ -2169,7 +2169,7 @@ export class Agent {
 
     try {
       const registry = ServiceRegistry.getInstance();
-      const focusManager = registry.get<FocusManager>('focus_manager');
+      const focusManager = registry.get('focus_manager');
 
       if (focusManager) {
         // Clear excluded files set by this agent

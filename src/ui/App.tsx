@@ -35,9 +35,8 @@ import { ToolFormWizard } from './components/ToolFormWizard.js';
 import { PlanApprovalPrompt } from './components/PlanApprovalPrompt.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { Agent } from '../agent/Agent.js';
-import { PatchManager, PatchMetadata } from '../services/PatchManager.js';
+import { PatchMetadata } from '../services/PatchManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { FocusManager } from '../services/FocusManager.js';
 import { logger, LogLevel } from '../services/Logger.js';
 import { useServiceInitialization } from './hooks/useServiceInitialization.js';
 import { useModalState } from './hooks/useModalState.js';
@@ -55,7 +54,6 @@ import { useAgentSwitch } from './hooks/useAgentSwitch.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { switchAgent } from '../services/AgentSwitcher.js';
 import { enterForegroundAgent, exitForegroundAgent } from '../services/ForegroundSwitcher.js';
-import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 import { SyntaxHighlighter } from '../services/SyntaxHighlighter.js';
 import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
@@ -147,7 +145,7 @@ const AppContentComponent: React.FC<{
   // Connect auto-allow mode to TrustManager after initialization
   useEffect(() => {
     const registry = ServiceRegistry.getInstance();
-    const trustManager = registry.get<any>('trust_manager');
+    const trustManager = registry.get('trust_manager');
     if (trustManager && trustManager.setAutoAllowModeGetter) {
       trustManager.setAutoAllowModeGetter(() => modal.autoAllowMode);
     }
@@ -267,7 +265,7 @@ const AppContentComponent: React.FC<{
     const target = backgroundAgents[selectedIndex - 1];
     if (!target) return;
     const registry = ServiceRegistry.getInstance();
-    const manager = registry.get<BackgroundAgentManager>('background_agent_manager');
+    const manager = registry.get('background_agent_manager');
     const task = manager?.getTask(target.id);
     if (!task) return;
     // Save the main view once, when leaving main (not on agent→agent switches).
@@ -284,7 +282,7 @@ const AppContentComponent: React.FC<{
   // Ctrl+B: background all running foreground agents (they keep running; the
   // main loop returns and they appear in the fleet).
   const handleBackgroundAgents = React.useCallback(() => {
-    const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
     manager?.requestDetachAll();
   }, []);
 
@@ -293,7 +291,7 @@ const AppContentComponent: React.FC<{
     if (selectedIndex === 0) return;
     const target = backgroundAgents[selectedIndex - 1];
     if (!target) return;
-    const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
     manager?.cancelTask(target.id);
     // If we were viewing the agent we just killed, return to the main view.
     if (state.activeAgentId === target.id) returnToMain();
@@ -315,7 +313,7 @@ const AppContentComponent: React.FC<{
   // agent's new turns (and their tool calls) appear without constant repaints.
   React.useEffect(() => {
     if (state.activeAgentId === 'main') return;
-    const manager = ServiceRegistry.getInstance().get<BackgroundAgentManager>('background_agent_manager');
+    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
     const task = manager?.getTask(state.activeAgentId);
     const refresh = () => {
       const t = manager?.getTask(state.activeAgentId);
@@ -455,7 +453,7 @@ const AppContentComponent: React.FC<{
         const registry = ServiceRegistry.getInstance();
 
         // Get session ID
-        const sessionManager = registry.get<any>('session_manager');
+        const sessionManager = registry.get('session_manager');
         const sessionId = sessionManager?.getCurrentSession() || 'none';
 
         // Get memory stats
@@ -464,12 +462,12 @@ const AppContentComponent: React.FC<{
         const rssMB = Math.round(memUsage.rss / 1024 / 1024);
 
         // Get token stats
-        const tokenManager = registry.get<any>('token_manager');
+        const tokenManager = registry.get('token_manager');
         const tokensUsed = tokenManager?.getCurrentTokenCount() || 0;
-        const tokensTotal = tokenManager?.contextSize || 200000;
+        const tokensTotal = tokenManager?.getContextSize() || 200000;
 
         // Get todo stats
-        const todoManager = registry.get<any>('todo_manager');
+        const todoManager = registry.get('todo_manager');
         const todos = todoManager?.getTodos() || [];
         const todoPending = todos.filter((t: any) => t.status === 'pending').length;
         const todoCompleted = todos.filter((t: any) => t.status === 'completed').length;
@@ -503,7 +501,7 @@ const AppContentComponent: React.FC<{
     if (modal.rewindRequest) {
       const fetchPatches = async () => {
         const serviceRegistry = ServiceRegistry.getInstance();
-        const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+        const patchManager = serviceRegistry.get('patch_manager');
 
         if (patchManager) {
           // Get all patches from the beginning of the session (timestamp 0)
@@ -522,7 +520,7 @@ const AppContentComponent: React.FC<{
   }, [modal.rewindRequest]);
 
   // Get current focus display (if any)
-  const focusManager = ServiceRegistry.getInstance().get<FocusManager>('focus_manager');
+  const focusManager = ServiceRegistry.getInstance().get('focus_manager');
   const currentFocus = focusManager?.getFocusDisplay() ?? null;
 
   // Get content width with max width constraint for readability (conversation view)
@@ -917,7 +915,7 @@ const AppContentComponent: React.FC<{
                     if (targetMessage) {
                       // Calculate file changes for this message
                       const serviceRegistry = ServiceRegistry.getInstance();
-                      const patchManager = serviceRegistry.get<PatchManager>('patch_manager');
+                      const patchManager = serviceRegistry.get('patch_manager');
 
                       const calculateFileChanges = async () => {
                         if (!patchManager || !targetMessage.timestamp) {

@@ -10,8 +10,6 @@ import { ActivityEventType } from '@shared/index.js';
 import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { Agent } from '../Agent.js';
-import type { ActivityStream } from '@services/ActivityStream.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 
@@ -37,7 +35,7 @@ export class ClearCommand extends Command {
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
     // Get agent from service registry
-    const agent = serviceRegistry.get<Agent>('agent');
+    const agent = serviceRegistry.get('agent');
 
     if (!agent) {
       return this.createError('Agent not available');
@@ -58,7 +56,7 @@ export class ClearCommand extends Command {
     }
 
     // Emit event to reset the UI view completely
-    const activityStream = serviceRegistry.get<ActivityStream>('activity_stream');
+    const activityStream = serviceRegistry.get('activity_stream');
     if (activityStream) {
       activityStream.emit({
         id: `clear-${Date.now()}`,

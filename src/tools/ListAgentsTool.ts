@@ -11,7 +11,6 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { AgentManager } from '../services/AgentManager.js';
 import { formatError } from '../utils/errorUtils.js';
 
 /**
@@ -101,7 +100,7 @@ export class ListAgentsTool extends BaseTool {
     try {
       this.captureParams(_args);
 
-      const agentManager = ServiceRegistry.getInstance().get<AgentManager>('agent_manager');
+      const agentManager = ServiceRegistry.getInstance().get('agent_manager');
       if (!agentManager) {
         return this.formatErrorResponse(
           'Internal error: AgentManager not available. Please restart the application.',

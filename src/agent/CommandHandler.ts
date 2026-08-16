@@ -97,7 +97,7 @@ export class CommandHandler {
     this.registerCommand(new UndoCommand());
 
     // Auto-register dynamic plugin commands stored during CLI init
-    const pluginCommands = this.serviceRegistry.get<Command[]>('plugin_commands');
+    const pluginCommands = this.serviceRegistry.get('plugin_commands');
     if (pluginCommands) {
       for (const cmd of pluginCommands) {
         this.registerDynamicCommand(cmd);

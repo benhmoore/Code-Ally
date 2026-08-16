@@ -8,8 +8,6 @@ import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { FocusManager } from '../services/FocusManager.js';
-import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
@@ -167,7 +165,7 @@ export class WriteTool extends BaseTool {
     // Validate focus constraint if active
     const registry = this.getExecutionRegistry(executionContext);
     const readScopeId = this.getReadScopeId(executionContext);
-    const focusManager = registry.get<FocusManager>('focus_manager');
+    const focusManager = registry.get('focus_manager');
 
     if (focusManager && focusManager.isFocused()) {
       const validation = await focusManager.validatePathInFocus(absolutePath);
@@ -218,14 +216,14 @@ export class WriteTool extends BaseTool {
       await atomicWriteFile(absolutePath, content);
 
       // Any write makes every agent's previous view of this file stale.
-      const readCache = registry.get<{ invalidate(path: string): void }>('read_cache');
+      const readCache = registry.get('read_cache');
       if (readCache) {
         readCache.invalidate(absolutePath);
       }
 
       // Track the written content as read (model knows what it wrote)
       // This allows immediate edits to the newly created file without requiring a separate read
-      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      const readStateManager = registry.get('read_state_manager');
       if (readStateManager) {
         readStateManager.clearFile(absolutePath);
         if (content.length > 0) {

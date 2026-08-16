@@ -11,8 +11,6 @@ import { ActivityEventType } from '@shared/index.js';
 import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { AgentManager } from '@services/AgentManager.js';
-import type { AgentPoolService } from '@services/AgentPoolService.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 
@@ -129,7 +127,7 @@ ${poolLines.join('\n')}`,
   }
 
   private async handleList(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const agentManager = serviceRegistry.get<AgentManager>('agent_manager');
+    const agentManager = serviceRegistry.get('agent_manager');
     if (!agentManager) {
       return this.createError('Agent manager not available');
     }
@@ -160,7 +158,7 @@ ${poolLines.join('\n')}`,
       return this.createError('Agent name required. Usage: /agent show <name>');
     }
 
-    const agentManager = serviceRegistry.get<AgentManager>('agent_manager');
+    const agentManager = serviceRegistry.get('agent_manager');
     if (!agentManager) {
       return this.createError('Agent manager not available');
     }
@@ -190,7 +188,7 @@ ${poolLines.join('\n')}`,
       return this.createError('Agent name required. Usage: /agent delete <name>');
     }
 
-    const agentManager = serviceRegistry.get<AgentManager>('agent_manager');
+    const agentManager = serviceRegistry.get('agent_manager');
     if (!agentManager) {
       return this.createError('Agent manager not available');
     }
@@ -213,7 +211,7 @@ ${poolLines.join('\n')}`,
       return this.createError('Usage: /agent use <name> <task>\nExample: /agent use repo-reviewer Analyze the codebase for quality issues');
     }
 
-    const agentManager = this.getRequiredService<AgentManager>(serviceRegistry, 'agent_manager', 'agent use');
+    const agentManager = this.getRequiredService(serviceRegistry, 'agent_manager', 'agent use');
     if ('handled' in agentManager) return agentManager; // Error result
 
     // Parse arguments: first word is agent name, rest is task
@@ -250,7 +248,7 @@ ${poolLines.join('\n')}`,
    * Show active agents in the pool
    */
   private async handleActive(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const agentPool = serviceRegistry.get<AgentPoolService>('agent_pool');
+    const agentPool = serviceRegistry.get('agent_pool');
     if (!agentPool) {
       return this.createError('Agent pool not available');
     }
@@ -288,7 +286,7 @@ ${poolLines.join('\n')}`,
    * Show pool statistics
    */
   private async handleStats(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const agentPool = serviceRegistry.get<AgentPoolService>('agent_pool');
+    const agentPool = serviceRegistry.get('agent_pool');
     if (!agentPool) {
       return this.createError('Agent pool not available');
     }
@@ -317,7 +315,7 @@ ${poolLines.join('\n')}`,
    * Clear specific agent or all agents from pool
    */
   private async handleClear(args: string[], serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const agentPool = serviceRegistry.get<AgentPoolService>('agent_pool');
+    const agentPool = serviceRegistry.get('agent_pool');
     if (!agentPool) {
       return this.createError('Agent pool not available');
     }

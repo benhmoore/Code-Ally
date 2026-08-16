@@ -8,7 +8,6 @@ import { Command } from './Command.js';
 import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { AdditionalDirectoriesManager } from '@services/AdditionalDirectoriesManager.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 import { createDirectoryRemovedReminder } from '@utils/messageUtils.js';
@@ -38,7 +37,7 @@ export class RemoveDirCommand extends Command {
     _messages: Message[],
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
-    const additionalDirsManager = serviceRegistry.get<AdditionalDirectoriesManager>('additional_dirs_manager');
+    const additionalDirsManager = serviceRegistry.get('additional_dirs_manager');
     if (!additionalDirsManager) {
       return this.createError('Additional directories feature not available');
     }

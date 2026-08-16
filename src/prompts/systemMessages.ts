@@ -22,7 +22,6 @@ import type { ToolResultManager } from '../services/ToolResultManager.js';
 import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
 import { ContextFileLoader } from '../services/ContextFileLoader.js';
 import type { Message } from '../types/index.js';
-import { PlanModeManager } from '../services/PlanModeManager.js';
 import { getDefaultTimeZone } from '../services/ScheduledTaskManager.js';
 
 // --- Core Agent Identity and Directives ---
@@ -246,7 +245,7 @@ ${profileContent}`;
   if (includeProjectInstructions) {
     try {
       const serviceRegistry = ServiceRegistry.getInstance();
-      const memoryService = serviceRegistry.get<any>('memory_service');
+      const memoryService = serviceRegistry.get('memory_service');
       if (memoryService && typeof memoryService.getPromptContext === 'function') {
         const contextPct = tokenManager && typeof tokenManager.getContextUsagePercentage === 'function'
           ? tokenManager.getContextUsagePercentage()
@@ -272,7 +271,7 @@ ${memoryContext.text}`;
       const serviceRegistry = ServiceRegistry.getInstance();
 
       if (serviceRegistry && serviceRegistry.hasService('agent_manager')) {
-        const agentManager = serviceRegistry.get<any>('agent_manager');
+        const agentManager = serviceRegistry.get('agent_manager');
         if (agentManager && typeof agentManager.getAgentsForSystemPrompt === 'function') {
           const agentsSection = await agentManager.getAgentsForSystemPrompt(callingAgentName);
 
@@ -320,7 +319,7 @@ ${skillsSection}`;
   try {
     const serviceRegistry = ServiceRegistry.getInstance();
     if (serviceRegistry && serviceRegistry.hasService('additional_dirs_manager')) {
-      const additionalDirsManager = serviceRegistry.get<any>('additional_dirs_manager');
+      const additionalDirsManager = serviceRegistry.get('additional_dirs_manager');
       if (additionalDirsManager) {
         const dirs = additionalDirsManager.getDisplayPaths();
         if (dirs && dirs.length > 0) {
@@ -340,7 +339,7 @@ ${skillsSection}`;
   try {
     const serviceRegistry = ServiceRegistry.getInstance();
     if (serviceRegistry && serviceRegistry.hasService('project_context_detector')) {
-      const detector = serviceRegistry.get<any>('project_context_detector');
+      const detector = serviceRegistry.get('project_context_detector');
       const context = detector?.getCached();
 
       if (context) {
@@ -370,7 +369,7 @@ ${skillsSection}`;
 
       if (!messages) {
         const serviceRegistry = ServiceRegistry.getInstance();
-        const activeAgent = serviceRegistry.get<any>('agent');
+        const activeAgent = serviceRegistry.get('agent');
         const conversationManager = activeAgent?.getConversationManager?.();
         if (conversationManager && typeof conversationManager.getMessages === 'function') {
           messages = conversationManager.getMessages();
@@ -448,7 +447,7 @@ export async function getDynamicContextBlock(options: {
     try {
       const serviceRegistry = ServiceRegistry.getInstance();
       if (serviceRegistry && serviceRegistry.hasService('todo_manager')) {
-        const todoManager = serviceRegistry.get<any>('todo_manager');
+        const todoManager = serviceRegistry.get('todo_manager');
         if (todoManager && typeof todoManager.generateActiveContext === 'function') {
           const todoStatus = todoManager.generateActiveContext();
           if (todoStatus) {
@@ -470,7 +469,7 @@ export async function getDynamicContextBlock(options: {
     try {
       const serviceRegistry = ServiceRegistry.getInstance();
       if (serviceRegistry && serviceRegistry.hasService('plan_mode_manager')) {
-        const planModeManager = serviceRegistry.get<PlanModeManager>('plan_mode_manager');
+        const planModeManager = serviceRegistry.get('plan_mode_manager');
         if (planModeManager?.isActive()) {
           planModeSection = `
 
@@ -529,7 +528,7 @@ export async function getMainSystemPrompt(
     const serviceRegistry = ServiceRegistry.getInstance();
 
     if (serviceRegistry && serviceRegistry.hasService('tool_manager')) {
-      const toolManager = serviceRegistry.get<any>('tool_manager');
+      const toolManager = serviceRegistry.get('tool_manager');
       if (toolManager && typeof toolManager.getToolUsageGuidance === 'function') {
         const guidances = toolManager.getToolUsageGuidance();
 
@@ -552,7 +551,7 @@ ${guidances.join('\n\n')}`;
     const serviceRegistry = ServiceRegistry.getInstance();
 
     if (serviceRegistry && serviceRegistry.hasService('agent_manager')) {
-      const agentManager = serviceRegistry.get<any>('agent_manager');
+      const agentManager = serviceRegistry.get('agent_manager');
       if (agentManager && typeof agentManager.getAgentUsageGuidance === 'function') {
         const guidances = await agentManager.getAgentUsageGuidance();
 

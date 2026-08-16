@@ -10,7 +10,6 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { BashProcessManager } from '../services/BashProcessManager.js';
 import { formatDuration } from '../ui/utils/timeUtils.js';
 
 export class KillShellTool extends BaseTool {
@@ -73,7 +72,7 @@ export class KillShellTool extends BaseTool {
 
     // Get process manager from registry
     const registry = ServiceRegistry.getInstance();
-    const processManager = registry.get<BashProcessManager>('bash_process_manager');
+    const processManager = registry.get('bash_process_manager');
 
     if (!processManager) {
       return this.formatErrorResponse(

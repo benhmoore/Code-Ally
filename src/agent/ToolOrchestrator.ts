@@ -23,9 +23,6 @@ import { PermissionManager } from '../security/PermissionManager.js';
 import { DirectoryTraversalError, isPermissionDeniedError } from '../security/PathSecurity.js';
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { TodoManager } from '../services/TodoManager.js';
-import { BashProcessManager } from '../services/BashProcessManager.js';
-import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
 import { formatError, createStructuredError, classifyToolError } from '../utils/errorUtils.js';
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
 import { ID_GENERATION, SYSTEM_REMINDER, TOOL_GUIDANCE } from '../config/constants.js';
@@ -40,7 +37,6 @@ import { createToolResultMessage } from '../llm/FunctionCalling.js';
 import { resolveDisplayContent, stripDisplayOnlyFields } from '../utils/toolResultContent.js';
 import { FormCancelledError } from '../services/FormManager.js';
 import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
-import { PlanModeManager } from '../services/PlanModeManager.js';
 
 /**
  * Safe tools that can run concurrently
@@ -639,7 +635,7 @@ export class ToolOrchestrator {
     if (!this.config.isSpecializedAgent) {
       // `get` returns null when the manager is not registered, so absence needs
       // no exception handling — and plan mode cannot be active if it is absent.
-      const planModeManager = ServiceRegistry.getInstance().get<PlanModeManager>('plan_mode_manager');
+      const planModeManager = ServiceRegistry.getInstance().get('plan_mode_manager');
 
       if (planModeManager) {
         let blocked: boolean;
@@ -695,7 +691,7 @@ export class ToolOrchestrator {
     // This helps the agent track progress through the todo list
     if (!(TOOL_NAMES.TODO_MANAGEMENT_TOOLS as readonly string[]).includes(toolName)) {
       const registry = ServiceRegistry.getInstance();
-      const todoManager = registry.get<TodoManager>('todo_manager');
+      const todoManager = registry.get('todo_manager');
 
       if (todoManager) {
         const inProgress = todoManager.getInProgressTodo();
@@ -856,7 +852,7 @@ export class ToolOrchestrator {
       if (tool && tool.supportsInteractiveForm && tool.formSchema) {
         try {
           const registry = ServiceRegistry.getInstance();
-          const formManager = registry.get<import('../services/FormManager.js').FormManager>('form_manager');
+          const formManager = registry.get('form_manager');
 
           if (!formManager) {
             throw new Error('FormManager not available - cannot request form');
@@ -1058,7 +1054,7 @@ export class ToolOrchestrator {
         // Inject background bash process reminders into every tool result
         // This ensures the agent is always aware of running background processes
         const registry = ServiceRegistry.getInstance();
-        const processManager = registry.get<BashProcessManager>('bash_process_manager');
+        const processManager = registry.get('bash_process_manager');
         if (processManager) {
           const statusReminders = processManager.getStatusReminders();
           if (statusReminders.length > 0) {
@@ -1078,7 +1074,7 @@ export class ToolOrchestrator {
         // Only the main agent consumes these (background agents are spawned by
         // and report back to the main conversation, not to sub-agents).
         if (!this.config.isSpecializedAgent) {
-          const bgManager = registry.get<BackgroundAgentManager>('background_agent_manager');
+          const bgManager = registry.get('background_agent_manager');
           if (bgManager) {
             const reminderParts: string[] = [];
 
@@ -1152,7 +1148,7 @@ export class ToolOrchestrator {
 
     // Track file interactions for /open command (only on success)
     if (result.success && FileInteractionTracker.isTrackedTool(toolCall.function.name)) {
-      const tracker = ServiceRegistry.getInstance().get<FileInteractionTracker>('file_interaction_tracker');
+      const tracker = ServiceRegistry.getInstance().get('file_interaction_tracker');
       if (tracker) {
         const args = toolCall.function.arguments;
         // Extract file path from tool arguments (file_path for write/edit, file_paths[0] for read)
@@ -1414,7 +1410,7 @@ export class ToolOrchestrator {
   private generateFocusReminder(): string | null {
     try {
       const registry = ServiceRegistry.getInstance();
-      const todoManager = registry.get<TodoManager>('todo_manager');
+      const todoManager = registry.get('todo_manager');
 
       if (!todoManager) {
         return null;

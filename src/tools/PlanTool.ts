@@ -13,7 +13,6 @@ import { BaseDelegationTool, DelegationToolConfig } from './BaseDelegationTool.j
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry, ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
-import { TodoManager } from '../services/TodoManager.js';
 import { REASONING_EFFORT, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
 import { createPlanAcceptedReminder } from '../utils/messageUtils.js';
 import type { Config } from '../types/index.js';
@@ -132,7 +131,7 @@ Skip for: Quick fixes, simple changes, or when the user asked you to plan (use e
     registry: ServiceRegistry | ScopedServiceRegistryProxy
   ): Promise<string> {
     // Get current todo summary to include in result
-    const currentTodoManager = registry.get<TodoManager>('todo_manager');
+    const currentTodoManager = registry.get('todo_manager');
     const todoSummary = currentTodoManager?.generateActiveContext();
 
     if (todoSummary) {

@@ -266,6 +266,20 @@ export function getProfileInstructionsFile(): string {
 export const PROJECT_INSTRUCTION_FILES = ['ALLY.md', 'CLAUDE.md', 'AGENTS.md'] as const;
 
 /**
+ * Get the native project instructions file path (ALLY.md) for a directory.
+ *
+ * This is the single canonical location for a project's committed context: the
+ * file `/project init` writes, `/project view` reads, and the system prompt
+ * ingests. Use this instead of re-deriving `join(cwd, 'ALLY.md')`.
+ *
+ * @param dir Directory to place the file in (defaults to the current working directory)
+ * @returns Absolute path to ALLY.md
+ */
+export function getProjectInstructionsFile(dir: string = process.cwd()): string {
+  return join(pathResolve(dir), PROJECT_INSTRUCTION_FILES[0]);
+}
+
+/**
  * Resolve the active project instructions file for a directory by precedence.
  *
  * @param dir Directory to search (defaults to the current working directory)

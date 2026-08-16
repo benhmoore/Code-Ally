@@ -195,7 +195,7 @@ describe('ReadTool', () => {
     });
 
     it('should track read state in the reading agent scope only', async () => {
-      const readStateManager = registry.get<ReadStateManager>('read_state_manager')!;
+      const readStateManager = registry.get('read_state_manager')!;
 
       await readTool.execute(
         { file_paths: [testFile], limit: 2 },

@@ -9,7 +9,6 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { BashProcessManager } from '../services/BashProcessManager.js';
 import { formatError } from '../utils/errorUtils.js';
 
 export class BashOutputTool extends BaseTool {
@@ -85,7 +84,7 @@ export class BashOutputTool extends BaseTool {
 
     // Get process manager from registry
     const registry = ServiceRegistry.getInstance();
-    const processManager = registry.get<BashProcessManager>('bash_process_manager');
+    const processManager = registry.get('bash_process_manager');
 
     if (!processManager) {
       return this.formatErrorResponse(
@@ -144,7 +143,7 @@ export class BashOutputTool extends BaseTool {
     // nothing to a reader. Show the command that shell is running instead; only
     // fall back to a shortened id if the process can't be resolved.
     let label: string | undefined;
-    const processManager = ServiceRegistry.getInstance().get<BashProcessManager>('bash_process_manager');
+    const processManager = ServiceRegistry.getInstance().get('bash_process_manager');
     const command = processManager?.getProcess(shellId)?.command;
     if (command) {
       label = command.length > 40 ? command.substring(0, 40) + '...' : command;

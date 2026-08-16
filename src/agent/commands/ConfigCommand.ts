@@ -9,7 +9,6 @@ import type { Config, Message } from '@shared/index.js';
 import { ActivityEventType } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { ConfigManager } from '@services/ConfigManager.js';
 import type { IntegrationStore } from '@services/IntegrationStore.js';
 import { formatError } from '@utils/errorUtils.js';
 import { CommandRegistry } from './CommandRegistry.js';
@@ -76,7 +75,7 @@ export class ConfigCommand extends Command {
   }
 
   private async handleConfigView(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const configManager = serviceRegistry.get<ConfigManager>('config_manager');
+    const configManager = serviceRegistry.get('config_manager');
 
     if (!configManager) {
       return this.createError('Configuration manager not available');
@@ -101,7 +100,7 @@ export class ConfigCommand extends Command {
     };
 
     // Get search config from IntegrationStore
-    const integrationStore = serviceRegistry.get<IntegrationStore>('integration_store');
+    const integrationStore = serviceRegistry.get('integration_store');
     const searchConfig = await this.getSearchConfig(integrationStore ?? undefined);
 
 
@@ -200,7 +199,7 @@ export class ConfigCommand extends Command {
     kvString: string,
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
-    const configManager = serviceRegistry.get<ConfigManager>('config_manager');
+    const configManager = serviceRegistry.get('config_manager');
 
     if (!configManager) {
       return this.createError('Configuration manager not available');
@@ -257,8 +256,7 @@ export class ConfigCommand extends Command {
    * Show available agents for default_agent configuration
    */
   private async showAvailableAgents(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const { AgentManager } = await import('@services/AgentManager.js');
-    const agentManager = serviceRegistry.get<InstanceType<typeof AgentManager>>('agent_manager');
+    const agentManager = serviceRegistry.get('agent_manager');
 
     if (!agentManager) {
       return this.createError('Agent manager not available');
@@ -342,7 +340,7 @@ export class ConfigCommand extends Command {
     value: string,
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
-    const integrationStore = serviceRegistry.get<IntegrationStore>('integration_store');
+    const integrationStore = serviceRegistry.get('integration_store');
 
     if (!integrationStore) {
       return this.createError('Integration store not available');
@@ -400,7 +398,7 @@ export class ConfigCommand extends Command {
   }
 
   private async handleConfigReset(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const configManager = serviceRegistry.get<ConfigManager>('config_manager');
+    const configManager = serviceRegistry.get('config_manager');
 
     if (!configManager) {
       return this.createError('Configuration manager not available');

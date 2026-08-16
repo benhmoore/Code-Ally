@@ -14,7 +14,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { BackgroundTaskRegistry, BackgroundTask } from '../services/BackgroundTaskRegistry.js';
+import { BackgroundTask } from '../services/BackgroundTaskRegistry.js';
 import { formatDuration } from '../ui/utils/timeUtils.js';
 
 const DEFAULT_TIMEOUT_SECONDS = 300; // 5 minutes
@@ -68,7 +68,7 @@ Returns results inline once they finish (or partial state on timeout).`;
     this.captureParams(args);
 
     const registry = ServiceRegistry.getInstance();
-    const taskRegistry = registry.get<BackgroundTaskRegistry>('background_task_registry');
+    const taskRegistry = registry.get('background_task_registry');
     if (!taskRegistry) {
       return this.formatErrorResponse('BackgroundTaskRegistry not available', 'system_error');
     }

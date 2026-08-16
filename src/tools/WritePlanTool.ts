@@ -13,7 +13,6 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { PlanModeManager } from '../services/PlanModeManager.js';
 import { getProjectPlansDir } from '../config/paths.js';
 import { logger } from '../services/Logger.js';
 
@@ -73,7 +72,7 @@ export class WritePlanTool extends BaseTool {
     }
 
     const registry = ServiceRegistry.getInstance();
-    const planModeManager = registry.get<PlanModeManager>('plan_mode_manager');
+    const planModeManager = registry.get('plan_mode_manager');
 
     if (!planModeManager) {
       return {

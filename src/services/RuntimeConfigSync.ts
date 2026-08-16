@@ -1,5 +1,4 @@
 import type { Config } from '../types/index.js';
-import { MessageHistory } from '../llm/MessageHistory.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
 import { IdleMessageGenerator } from './IdleMessageGenerator.js';
 import { SessionTitleGenerator } from './SessionTitleGenerator.js';
@@ -45,7 +44,7 @@ export function applyRuntimeConfigUpdates(
   serviceRegistry: ServiceRegistry,
   updates: Partial<Config>
 ): Config | null {
-  const configManager = serviceRegistry.get<any>('config_manager');
+  const configManager = serviceRegistry.get('config_manager');
   const fullConfig = configManager?.getConfig?.() as Config | undefined;
 
   if (!fullConfig) {
@@ -53,8 +52,8 @@ export function applyRuntimeConfigUpdates(
     return null;
   }
 
-  const modelClient = serviceRegistry.get<any>('model_client');
-  const serviceModelClient = serviceRegistry.get<any>('service_model_client');
+  const modelClient = serviceRegistry.get('model_client');
+  const serviceModelClient = serviceRegistry.get('service_model_client');
 
   syncCommonModelClientSettings(modelClient, updates);
   syncCommonModelClientSettings(serviceModelClient, updates);
@@ -67,7 +66,7 @@ export function applyRuntimeConfigUpdates(
     setIfAvailable(serviceModelClient, 'setModelName', fullConfig.service_model ?? fullConfig.model ?? '');
   }
 
-  const activeAgent = serviceRegistry.get<any>('agent');
+  const activeAgent = serviceRegistry.get('agent');
   if (typeof activeAgent?.applyConfigUpdates === 'function') {
     activeAgent.applyConfigUpdates(updates);
 
@@ -76,29 +75,26 @@ export function applyRuntimeConfigUpdates(
     }
   }
 
-  const agentPool = serviceRegistry.get<any>('agent_pool');
+  const agentPool = serviceRegistry.get('agent_pool');
   if (typeof agentPool?.applyConfigUpdates === 'function') {
     agentPool.applyConfigUpdates(updates);
   }
 
   if (hasUpdate(updates, 'context_size')) {
-    const messageHistory = serviceRegistry.get<MessageHistory>('message_history');
+    const messageHistory = serviceRegistry.get('message_history');
     messageHistory?.setMaxTokens(fullConfig.context_size);
   }
 
   if (hasUpdate(updates, 'auto_confirm')) {
-    const trustManager = serviceRegistry.get<any>('trust_manager');
+    const trustManager = serviceRegistry.get('trust_manager');
     setIfAvailable(trustManager, 'setAutoConfirm', fullConfig.auto_confirm);
   }
 
-  const toolManager = serviceRegistry.get<any>('tool_manager');
-  const bashTool = toolManager?.getTool?.('bash');
-  if (typeof bashTool?.setConfig === 'function') {
-    bashTool.setConfig(fullConfig);
-  }
+  const toolManager = serviceRegistry.get('tool_manager');
+  setIfAvailable(toolManager?.getTool('bash'), 'setConfig', fullConfig);
 
   if (hasUpdate(updates, 'enable_idle_messages')) {
-    const idleMessageGenerator = serviceRegistry.get<any>('idle_message_generator');
+    const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
     if (fullConfig.enable_idle_messages) {
       if (!idleMessageGenerator) {
         if (serviceModelClient) {
@@ -114,9 +110,9 @@ export function applyRuntimeConfigUpdates(
   }
 
   if (hasUpdate(updates, 'enable_session_title_generation')) {
-    let sessionTitleGenerator = serviceRegistry.get<any>('session_title_generator');
+    let sessionTitleGenerator = serviceRegistry.get('session_title_generator');
     if (!sessionTitleGenerator && serviceModelClient) {
-      const sessionManager = serviceRegistry.get<any>('session_manager');
+      const sessionManager = serviceRegistry.get('session_manager');
       if (sessionManager) {
         sessionTitleGenerator = new SessionTitleGenerator(
           serviceModelClient,

@@ -38,7 +38,7 @@ export class MemoryCommand extends Command {
     _messages: Message[],
     serviceRegistry: ServiceRegistry,
   ): Promise<CommandResult> {
-    const memoryService = this.getRequiredService<MemoryService>(serviceRegistry, 'memory_service', 'Memory');
+    const memoryService = this.getRequiredService(serviceRegistry, 'memory_service', 'Memory');
     if ('handled' in memoryService) {
       return memoryService;
     }

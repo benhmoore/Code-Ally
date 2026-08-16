@@ -843,7 +843,7 @@ export class ResponseProcessor {
   private clearInjectableToolDelegations(completedCallIds: string[]): void {
     try {
       const registry = ServiceRegistry.getInstance();
-      const toolManager = registry.get<any>('tool_manager');
+      const toolManager = registry.get('tool_manager');
       const delegationManager = toolManager?.getDelegationContextManager();
 
       if (!delegationManager) {

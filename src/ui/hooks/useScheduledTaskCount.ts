@@ -6,7 +6,6 @@
 
 import { useEffect, useState } from 'react';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { ScheduledTaskManager } from '@services/ScheduledTaskManager.js';
 import { useActivityStreamContext } from '../contexts/ActivityContext.js';
 import { ActivityEventType } from '@shared/index.js';
 
@@ -18,7 +17,7 @@ export function useScheduledTaskCount(): number {
     let cancelled = false;
     const update = async () => {
       const registry = ServiceRegistry.getInstance();
-      const manager = registry.get<ScheduledTaskManager>('scheduled_task_manager');
+      const manager = registry.get('scheduled_task_manager');
       if (!manager) {
         if (!cancelled) setCount(0);
         return;

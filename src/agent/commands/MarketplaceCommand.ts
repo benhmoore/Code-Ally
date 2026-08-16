@@ -11,12 +11,7 @@ import type { CommandResult } from '../CommandHandler.js';
 import { formatError } from '@utils/errorUtils.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
-import type { MarketplaceManager } from '@marketplace/MarketplaceManager.js';
-import type { PluginManager } from '@marketplace/PluginManager.js';
-import type { MCPServerManager } from '@mcp/MCPServerManager.js';
 import type { MCPServerConfig } from '@mcp/MCPConfig.js';
-import type { ToolManagerService } from '@marketplace/types.js';
-import type { SkillManager } from '@services/SkillManager.js';
 import { toKebabCase } from '@utils/namingValidation.js';
 
 export class MarketplaceCommand extends Command {
@@ -111,7 +106,7 @@ export class MarketplaceCommand extends Command {
   }
 
   private async listMarketplaces(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const mm = serviceRegistry.get<MarketplaceManager>('marketplace_manager');
+    const mm = serviceRegistry.get('marketplace_manager');
     if (!mm) return this.createError('Marketplace manager not available');
 
     const marketplaces = await mm.listMarketplaces();
@@ -153,7 +148,7 @@ export class MarketplaceCommand extends Command {
       return this.createError('Usage: /marketplace add <path> or /marketplace add github:<owner/repo>');
     }
 
-    const mm = serviceRegistry.get<MarketplaceManager>('marketplace_manager');
+    const mm = serviceRegistry.get('marketplace_manager');
     if (!mm) return this.createError('Marketplace manager not available');
 
     try {
@@ -177,7 +172,7 @@ export class MarketplaceCommand extends Command {
   ): Promise<CommandResult> {
     if (!name) return this.createError('Usage: /marketplace remove <name>');
 
-    const mm = serviceRegistry.get<MarketplaceManager>('marketplace_manager');
+    const mm = serviceRegistry.get('marketplace_manager');
     if (!mm) return this.createError('Marketplace manager not available');
 
     try {
@@ -192,7 +187,7 @@ export class MarketplaceCommand extends Command {
     name: string,
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
-    const mm = serviceRegistry.get<MarketplaceManager>('marketplace_manager');
+    const mm = serviceRegistry.get('marketplace_manager');
     if (!mm) return this.createError('Marketplace manager not available');
 
     try {
@@ -216,8 +211,8 @@ export class MarketplaceCommand extends Command {
       return this.createError('Usage: /marketplace install <plugin> or /marketplace install <marketplace>/<plugin>');
     }
 
-    const mm = serviceRegistry.get<MarketplaceManager>('marketplace_manager');
-    const pm = serviceRegistry.get<PluginManager>('plugin_manager');
+    const mm = serviceRegistry.get('marketplace_manager');
+    const pm = serviceRegistry.get('plugin_manager');
     if (!mm || !pm) return this.createError('Marketplace system not available');
 
     let marketplace: string;
@@ -255,8 +250,8 @@ export class MarketplaceCommand extends Command {
     const lines: string[] = [`Installed **${pluginName}** v${result.version} from ${marketplace}.`];
 
     if (result.mcpConfig) {
-      const mcpManager = serviceRegistry.get<MCPServerManager>('mcp_server_manager');
-      const toolManager = serviceRegistry.get<ToolManagerService>('tool_manager');
+      const mcpManager = serviceRegistry.get('mcp_server_manager');
+      const toolManager = serviceRegistry.get('tool_manager');
 
       if (mcpManager) {
         // Convert PluginMCPConfig to MCPServerConfig format
@@ -291,7 +286,7 @@ export class MarketplaceCommand extends Command {
     }
 
     // Load skills
-    const skillManager = serviceRegistry.get<SkillManager>('skill_manager');
+    const skillManager = serviceRegistry.get('skill_manager');
     if (skillManager) {
       try {
         await skillManager.loadPluginSkills(result.installPath, pluginName);
@@ -310,12 +305,12 @@ export class MarketplaceCommand extends Command {
   ): Promise<CommandResult> {
     if (!input) return this.createError('Usage: /marketplace uninstall <name>');
 
-    const pm = serviceRegistry.get<PluginManager>('plugin_manager');
+    const pm = serviceRegistry.get('plugin_manager');
     if (!pm) return this.createError('Plugin manager not available');
 
     // Stop MCP servers first
-    const mcpManager = serviceRegistry.get<MCPServerManager>('mcp_server_manager');
-    const toolManager = serviceRegistry.get<ToolManagerService>('tool_manager');
+    const mcpManager = serviceRegistry.get('mcp_server_manager');
+    const toolManager = serviceRegistry.get('tool_manager');
     if (mcpManager) {
       const removed = await mcpManager.removePluginServers(input);
       if (toolManager) {
@@ -330,7 +325,7 @@ export class MarketplaceCommand extends Command {
     }
 
     // Remove skills
-    const skillManager = serviceRegistry.get<SkillManager>('skill_manager');
+    const skillManager = serviceRegistry.get('skill_manager');
     if (skillManager) {
       await skillManager.removePluginSkills(input);
     }
@@ -347,7 +342,7 @@ export class MarketplaceCommand extends Command {
     input: string,
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
-    const pm = serviceRegistry.get<PluginManager>('plugin_manager');
+    const pm = serviceRegistry.get('plugin_manager');
     if (!pm) return this.createError('Plugin manager not available');
 
     if (input) {
@@ -376,10 +371,10 @@ export class MarketplaceCommand extends Command {
   }
 
   private async showStatus(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const pm = serviceRegistry.get<PluginManager>('plugin_manager');
+    const pm = serviceRegistry.get('plugin_manager');
     if (!pm) return this.createError('Plugin manager not available');
 
-    const mcpManager = serviceRegistry.get<MCPServerManager>('mcp_server_manager');
+    const mcpManager = serviceRegistry.get('mcp_server_manager');
     const plugins = pm.getInstalledPlugins();
 
     if (plugins.length === 0) {
@@ -418,7 +413,7 @@ export class MarketplaceCommand extends Command {
   ): Promise<CommandResult> {
     if (!input) return this.createError(`Usage: /marketplace ${enabled ? 'enable' : 'disable'} <name>`);
 
-    const pm = serviceRegistry.get<PluginManager>('plugin_manager');
+    const pm = serviceRegistry.get('plugin_manager');
     if (!pm) return this.createError('Plugin manager not available');
 
     const success = await pm.setEnabled(input, enabled);

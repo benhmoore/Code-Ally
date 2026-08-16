@@ -20,7 +20,6 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { BackgroundTaskRegistry } from '../services/BackgroundTaskRegistry.js';
 
 const DEFAULT_INTERVAL_SECONDS = 10;
 const DEFAULT_TIMEOUT_SECONDS = 1800; // 30 minutes
@@ -159,7 +158,7 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
     }
 
     const registry = ServiceRegistry.getInstance();
-    const taskRegistry = registry.get<BackgroundTaskRegistry>('background_task_registry');
+    const taskRegistry = registry.get('background_task_registry');
     if (!taskRegistry) {
       return this.formatErrorResponse('BackgroundTaskRegistry not available', 'system_error');
     }

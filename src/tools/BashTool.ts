@@ -13,7 +13,7 @@ import { TIMEOUT_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js
 import { formatError } from '../utils/errorUtils.js';
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { BashProcessManager, CircularBuffer } from '../services/BashProcessManager.js';
+import { CircularBuffer } from '../services/BashProcessManager.js';
 
 /**
  * Whitelist of safe environment variables to pass to spawned processes.
@@ -306,7 +306,7 @@ export class BashTool extends BaseTool {
   private async spawnBackground(command: string, workingDir: string): Promise<ToolResult> {
     // Get process manager from registry
     const registry = ServiceRegistry.getInstance();
-    const processManager = registry.get<BashProcessManager>('bash_process_manager');
+    const processManager = registry.get('bash_process_manager');
 
     if (!processManager) {
       return this.formatErrorResponse(
@@ -430,7 +430,7 @@ export class BashTool extends BaseTool {
   ): ToolResult {
     // Get process manager from registry
     const registry = ServiceRegistry.getInstance();
-    const processManager = registry.get<BashProcessManager>('bash_process_manager');
+    const processManager = registry.get('bash_process_manager');
 
     if (!processManager) {
       logger.warn('[BashTool] Cannot transition to background - BashProcessManager not available');

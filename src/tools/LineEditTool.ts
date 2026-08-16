@@ -15,7 +15,6 @@ import { resolvePath } from '../utils/pathUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import { TEXT_LIMITS, FORMATTING } from '../config/constants.js';
 import * as fs from 'fs/promises';
-import { ReadStateManager } from '../services/ReadStateManager.js';
 
 type LineOperation = 'insert' | 'delete' | 'replace';
 
@@ -97,7 +96,7 @@ export class LineEditTool extends BaseTool {
     const absolutePath = resolvePath(filePath);
     const registry = this.getExecutionRegistry(executionContext);
     const readScopeId = this.getReadScopeId(executionContext);
-    const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+    const readStateManager = registry.get('read_state_manager');
 
     if (!readStateManager) {
       return null; // No read state manager, skip validation
@@ -372,7 +371,7 @@ export class LineEditTool extends BaseTool {
       const validationErrors: string[] = [];
       const registry = this.getExecutionRegistry(executionContext);
       const readScopeId = this.getReadScopeId(executionContext);
-      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      const readStateManager = registry.get('read_state_manager');
 
       // Loop through all edits and collect ALL validation errors
       for (let i = 0; i < edits.length; i++) {

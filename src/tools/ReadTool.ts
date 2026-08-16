@@ -9,9 +9,6 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { ReadCache } from '../services/ReadCache.js';
-import { FocusManager } from '../services/FocusManager.js';
-import { ReadStateManager } from '../services/ReadStateManager.js';
 import { tokenCounter } from '../services/TokenCounter.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsFile, isBlockedDevicePath } from '../utils/pathValidator.js';
@@ -92,7 +89,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
   private getMaxTokens(): number {
     // Get context size from TokenManager (authoritative source)
     const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get<any>('token_manager');
+    const tokenManager = registry.get('token_manager');
     const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
 
     // Cap at 20% of context size to leave room for conversation
@@ -108,7 +105,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
   private getEphemeralMaxTokens(): number {
     // Get context size from TokenManager (authoritative source)
     const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get<any>('token_manager');
+    const tokenManager = registry.get('token_manager');
     const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
 
     return Math.floor(contextSize * TOKEN_MANAGEMENT.EPHEMERAL_READ_MAX_PERCENT);
@@ -121,7 +118,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
   private getUserInitiatedMaxTokens(): number {
     // Get context size from TokenManager (authoritative source)
     const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get<any>('token_manager');
+    const tokenManager = registry.get('token_manager');
     const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
 
     // Use 95% of context to leave room for user's message and response
@@ -135,7 +132,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
   private getContextFileMaxTokens(): number {
     // Get context size from TokenManager (authoritative source)
     const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get<any>('token_manager');
+    const tokenManager = registry.get('token_manager');
     const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
 
     // Use 40% of context for context files
@@ -209,7 +206,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
     // Check if we have enough remaining context for the non-truncatable result
     // Get remaining context from ServiceRegistry's TokenManager if available
     const registry = this.getExecutionRegistry(executionContext);
-    const tokenManager = registry.get<any>('token_manager');
+    const tokenManager = registry.get('token_manager');
     if (tokenManager) {
       const remainingTokens = this.getRemainingContext(tokenManager);
       if (remainingTokens < estimatedTokens) {
@@ -509,7 +506,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
     // Validate focus constraint if active
     const registry = this.getExecutionRegistry(executionContext);
     const readScopeId = this.getReadScopeId(executionContext);
-    const focusManager = registry.get<FocusManager>('focus_manager');
+    const focusManager = registry.get('focus_manager');
 
     if (focusManager && focusManager.isFocused()) {
       const validation = await focusManager.validatePathInFocus(absolutePath);
@@ -544,12 +541,12 @@ For multi-file exploration, prefer explore() to preserve context.`;
     }
 
     // Check read deduplication cache — return stub if file unchanged since last read
-    const readCache = registry.get<ReadCache>('read_cache');
+    const readCache = registry.get('read_cache');
     if (readCache) {
       const cached = readCache.check(absolutePath, stat.mtimeMs, offset, limit, readScopeId);
       if (cached) {
         // Still track read state so edit validation works
-        const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+        const readStateManager = registry.get('read_state_manager');
         if (readStateManager) {
           const cachedStartLine = offset <= 0 ? 1 : offset;
           const cachedEndLine = limit > 0
@@ -582,7 +579,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
       );
 
       // Track read state
-      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      const readStateManager = registry.get('read_state_manager');
       if (readStateManager) {
         readStateManager.trackRead(absolutePath, streamedStart + 1, streamedStart + streamedLines.length, readScopeId);
       }
@@ -659,7 +656,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
     );
 
     // Track read state for validation by edit tools
-    const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+    const readStateManager = registry.get('read_state_manager');
     if (readStateManager) {
       // Track the lines that were read (1-indexed)
       const startLineNumber = startLine + 1;

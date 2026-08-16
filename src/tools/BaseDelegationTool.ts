@@ -24,8 +24,7 @@ import { Agent, AgentConfig } from '../agent/Agent.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { TEXT_LIMITS, FORMATTING, applyLeafDelegationPolicy } from '../config/constants.js';
-import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
-import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
+import { PooledAgent } from '../services/AgentPoolService.js';
 import { runFleetDelegation, backgroundedMessage } from './fleetDelegation.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
@@ -239,7 +238,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
       const maxDuration = getThoroughnessDuration(thoroughness as any);
 
       // Get parent agent - the agent currently executing this tool
-      const parentAgent = registry.get<any>('agent');
+      const parentAgent = registry.get('agent');
 
       // Calculate agent depth for nesting
       const currentDepth = parentAgent?.getAgentDepth?.() ?? 0;
@@ -265,7 +264,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
       let agentId: string | null = null;
 
       // Use AgentPoolService for persistent agent
-      const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+      const agentPoolService = registry.get('agent_pool');
 
       if (!agentPoolService) {
         // Graceful fallback: AgentPoolService not available
@@ -366,7 +365,7 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         });
       };
 
-      const manager = registry.get<BackgroundAgentManager>('background_agent_manager');
+      const manager = registry.get('background_agent_manager');
 
       // Defensive legacy path if the manager is unavailable.
       if (!manager) {

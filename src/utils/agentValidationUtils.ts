@@ -7,9 +7,6 @@
  */
 
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { ToolManager } from '../tools/ToolManager.js';
-import { AgentManager } from '../services/AgentManager.js';
-import { ConfigManager } from '../services/ConfigManager.js';
 import { formatError } from './errorUtils.js';
 import { API_TIMEOUTS } from '../config/constants.js';
 import { testModelToolCalling } from '../llm/ModelValidation.js';
@@ -155,7 +152,7 @@ export async function validateTools(tools: string[]): Promise<ToolsValidationRes
     }
 
     const registry = ServiceRegistry.getInstance();
-    const toolManager = registry.get<ToolManager>('tool_manager');
+    const toolManager = registry.get('tool_manager');
 
     if (!toolManager) {
       return {
@@ -213,7 +210,7 @@ export async function validateModel(model: string): Promise<ModelValidationResul
     }
 
     const registry = ServiceRegistry.getInstance();
-    const configManager = registry.get<ConfigManager>('config_manager');
+    const configManager = registry.get('config_manager');
 
     if (!configManager) {
       return {
@@ -321,7 +318,7 @@ export async function validateModelToolCapability(
     }
 
     const registry = ServiceRegistry.getInstance();
-    const configManager = registry.get<ConfigManager>('config_manager');
+    const configManager = registry.get('config_manager');
 
     if (!configManager) {
       return {
@@ -477,7 +474,7 @@ export async function validateVisibilitySettings(
     // Validate agent names in visibleFromAgents
     if (visibleFromAgents && visibleFromAgents.length > 0) {
       const registry = ServiceRegistry.getInstance();
-      const agentManager = registry.get<AgentManager>('agent_manager');
+      const agentManager = registry.get('agent_manager');
 
       if (!agentManager) {
         return {

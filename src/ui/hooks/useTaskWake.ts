@@ -17,7 +17,6 @@
 
 import { useEffect, useRef } from 'react';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { BackgroundTaskRegistry } from '@services/BackgroundTaskRegistry.js';
 import { useActivityStreamContext } from '../contexts/ActivityContext.js';
 import { ActivityEventType, ActivityEvent } from '@shared/index.js';
 
@@ -51,7 +50,7 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
     if (pendingRef.current.length === 0) return;
 
     const registry = ServiceRegistry.getInstance();
-    const taskRegistry = registry.get<BackgroundTaskRegistry>('background_task_registry');
+    const taskRegistry = registry.get('background_task_registry');
     if (!taskRegistry) return;
 
     const ids = pendingRef.current;
@@ -86,7 +85,7 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
       const taskId = event.data?.taskId;
       if (!taskId) return;
       const registry = ServiceRegistry.getInstance();
-      const taskRegistry = registry.get<BackgroundTaskRegistry>('background_task_registry');
+      const taskRegistry = registry.get('background_task_registry');
       if (!taskRegistry || !taskRegistry.isWatched(taskId)) return;
       taskRegistry.clearWatched(taskId); // wake at most once
       pendingRef.current.push(taskId);

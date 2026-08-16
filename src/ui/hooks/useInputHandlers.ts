@@ -5,18 +5,17 @@
  * - Regular user messages
  * - Slash commands
  * - Bash shortcuts (! prefix)
- * - Memory shortcuts (# prefix) - saves to ALLY.md
+ * - Memory shortcuts (# prefix) - saves to the project instructions file
  * - User interjections (mid-response messages)
+ *
+ * The `!` and `#` shortcuts are parsed here and executed by UserShortcutService,
+ * which owns the tool execution, event emission and file writes they involve.
  */
 
 import { useCallback } from 'react';
-import fs from 'fs';
-import path from 'path';
-import { Agent } from '@agent/Agent.js';
 import { CommandHandler } from '@agent/CommandHandler.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { ToolManager } from '@tools/ToolManager.js';
 import { isInjectableTool } from '@tools/InjectableTool.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ActivityEventType } from '@shared/index.js';
@@ -26,8 +25,7 @@ import { sendTerminalNotification } from '../../utils/terminal.js';
 import { fileToBase64, isImageFile } from '@utils/imageUtils.js';
 import { resolvePath } from '@utils/pathUtils.js';
 import { ModelCapabilitiesIndex } from '@services/ModelCapabilitiesIndex.js';
-import { ConfigManager } from '@services/ConfigManager.js';
-import { resolveProjectInstructionFiles } from '@config/paths.js';
+import { UserShortcutService } from '@services/UserShortcutService.js';
 import { createStructuredError } from '@utils/errorUtils.js';
 import { createToolResultMessage } from '@llm/FunctionCalling.js';
 import { resolveDisplayContent } from '@utils/toolResultContent.js';
@@ -78,7 +76,7 @@ export const useInputHandlers = (
   const handleInterjection = useCallback(async (message: string) => {
     // Get current agent from ServiceRegistry (supports agent switching)
     const serviceRegistry = ServiceRegistry.getInstance();
-    const agent = serviceRegistry.get<Agent>('agent');
+    const agent = serviceRegistry.get('agent');
 
     if (!agent) {
       logger.error('[INTERJECTION] No agent available to handle interjection');
@@ -93,7 +91,7 @@ export const useInputHandlers = (
     logger.debug('[APP] Handling interjection:', message);
 
     // Get ToolManager from ServiceRegistry
-    const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+    const toolManager = serviceRegistry.get('tool_manager');
 
     // Find currently active injectable tool (explore, plan, agent)
     const activeTool = toolManager?.getActiveInjectableTool();
@@ -162,7 +160,7 @@ export const useInputHandlers = (
   const handleInput = useCallback(async (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
     // Get current agent from ServiceRegistry (supports agent switching)
     const serviceRegistry = ServiceRegistry.getInstance();
-    const agent = serviceRegistry.get<Agent>('agent');
+    const agent = serviceRegistry.get('agent');
 
     if (!agent) {
       logger.error('[INPUT_HANDLER] No agent available to handle input');
@@ -183,114 +181,12 @@ export const useInputHandlers = (
       const bashCommand = trimmed.slice(1).trim();
 
       if (bashCommand) {
-        try {
-          // Get ToolManager from ServiceRegistry
-          const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
-
-          if (!toolManager) {
-            actions.addMessage({
-              role: 'assistant',
-              content: 'Error: Tool manager not available',
-            });
-            return;
-          }
-
-          // Get BashTool
-          const bashTool = toolManager.getTool('bash');
-
-          if (!bashTool) {
-            actions.addMessage({
-              role: 'assistant',
-              content: 'Error: Bash tool not available',
-            });
-            return;
-          }
-
-          // Generate unique tool call ID: bash-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
-          const toolCallId = `bash-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-          // Create assistant message that describes the bash execution
-          const assistantMessage = {
-            role: 'assistant' as const,
-            content: '',
-            tool_calls: [{
-              id: toolCallId,
-              type: 'function' as const,
-              function: {
-                name: 'bash',
-                arguments: { command: bashCommand },
-              },
-            }],
-          };
-
-          // Add messages to Agent's conversation history
-          agent.addMessage({ role: 'user', content: bashCommand });
-          agent.addMessage(assistantMessage);
-
-          // Add user message to UI
-          actions.addMessage({
-            role: 'user',
-            content: bashCommand,
-          });
-
-          // Emit TOOL_CALL_START event to create UI element
-          activityStream.emit({
-            id: toolCallId,
-            type: ActivityEventType.TOOL_CALL_START,
-            timestamp: Date.now(),
-            data: {
-              toolName: 'bash',
-              arguments: { command: bashCommand },
-              visibleInChat: bashTool.visibleInChat ?? true,
-              isTransparent: bashTool.isTransparentWrapper || false,
-            },
-          });
-
-          // Execute bash command with ID for streaming output
-          // Pass abort signal so ESC can cancel the command
-          const result = await bashTool.execute({
-            command: bashCommand,
-            description: 'Execute user command',
-          }, toolCallId, agent.getToolAbortSignal?.());
-
-          // Emit TOOL_CALL_END event to complete the tool call
-          activityStream.emit({
-            id: toolCallId,
-            type: ActivityEventType.TOOL_CALL_END,
-            timestamp: Date.now(),
-            data: {
-              toolName: 'bash',
-              result,
-              success: result.success,
-              error: result.success ? undefined : result.error,
-              visibleInChat: bashTool.visibleInChat ?? true,
-              isTransparent: bashTool.isTransparentWrapper || false,
-              collapsed: bashTool.shouldCollapse || false,
-            },
-          });
-
-          // Format tool result message for Agent via the canonical wire builder,
-          // which strips display-only fields so the model never sees them.
-          const toolResultMessage = createToolResultMessage(
-            toolCallId,
-            'bash',
-            result,
-            !result.success,
-            result.success ? undefined : result.error_type
-          );
-
-          // Add tool result to Agent's conversation history
-          agent.addMessage(toolResultMessage);
-
-          // Tool call display already shows the result, no need for additional message
-          return;
-        } catch (error) {
-          actions.addMessage({
-            role: 'assistant',
-            content: `Error executing bash command: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          });
-          return;
-        }
+        const shortcutService = new UserShortcutService(
+          serviceRegistry.get('tool_manager'),
+          activityStream
+        );
+        await shortcutService.runBashShortcut(bashCommand, agent, actions.addMessage);
+        return;
       }
     }
 
@@ -299,51 +195,12 @@ export const useInputHandlers = (
       const memoryContent = trimmed.slice(1).trim();
 
       if (memoryContent) {
-        try {
-          // Append to whichever instructions file is actually ingested
-          // (ALLY.md > CLAUDE.md > AGENTS.md), defaulting to ALLY.md if none exist.
-          const instructionFiles = resolveProjectInstructionFiles(process.cwd());
-          const instructionsPath =
-            instructionFiles.at(-1) ?? path.join(process.cwd(), 'ALLY.md');
-          const fileName = path.basename(instructionsPath);
-
-          // Read existing content or start fresh
-          let existingContent = '';
-          if (fs.existsSync(instructionsPath)) {
-            existingContent = fs.readFileSync(instructionsPath, 'utf-8');
-          }
-
-          // Append the new memory as a bullet point
-          const newLine = `- ${memoryContent}\n`;
-          const newContent = existingContent
-            ? existingContent.trimEnd() + '\n' + newLine
-            : newLine;
-
-          fs.writeFileSync(instructionsPath, newContent, 'utf-8');
-
-          logger.debug(`[INPUT_HANDLER] Memory saved to ${fileName}:`, memoryContent);
-
-          // Add user message showing what was saved
-          actions.addMessage({
-            role: 'user',
-            content: trimmed,
-          });
-
-          // Add confirmation response
-          actions.addMessage({
-            role: 'assistant',
-            content: `Memory saved to ${fileName}`,
-          });
-
-          return;
-        } catch (error) {
-          actions.addMessage({
-            role: 'assistant',
-            content: `Error saving memory: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            metadata: { isError: true },
-          });
-          return;
-        }
+        const shortcutService = new UserShortcutService(
+          serviceRegistry.get('tool_manager'),
+          activityStream
+        );
+        shortcutService.saveMemoryShortcut(memoryContent, trimmed, actions.addMessage);
+        return;
       }
     }
 
@@ -401,7 +258,7 @@ export const useInputHandlers = (
       // Check if current model supports images
       let modelSupportsImages = true; // Default to true if we can't determine
       try {
-        const configManager = serviceRegistry.get<ConfigManager>('config_manager');
+        const configManager = serviceRegistry.get('config_manager');
         if (configManager) {
           const config = configManager.getConfig();
           const endpoint = config.endpoint || 'http://localhost:11434';
@@ -477,7 +334,7 @@ export const useInputHandlers = (
 
         try {
           // Get ToolManager from ServiceRegistry
-          const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+          const toolManager = serviceRegistry.get('tool_manager');
 
           if (!toolManager) {
             actions.addMessage({
@@ -538,7 +395,7 @@ export const useInputHandlers = (
 
           // Auto-promote first pending todo to in_progress
           // This helps the agent track progress through the todo list
-          const todoManager = serviceRegistry.get<any>('todo_manager');
+          const todoManager = serviceRegistry.get('todo_manager');
 
           if (todoManager) {
             const inProgress = todoManager.getInProgressTodo?.();
@@ -660,7 +517,7 @@ export const useInputHandlers = (
 
         try {
           // Get ToolManager from ServiceRegistry
-          const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+          const toolManager = serviceRegistry.get('tool_manager');
 
           if (!toolManager) {
             actions.addMessage({

@@ -9,7 +9,6 @@ import { Command } from './Command.js';
 import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
-import type { BashProcessManager } from '@services/BashProcessManager.js';
 import { formatDuration } from '../../ui/utils/timeUtils.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
@@ -100,7 +99,7 @@ ${lines.join('\n')}
    * Handle /task list - List all running background processes
    */
   private async handleList(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const processManager = serviceRegistry.get<BashProcessManager>('bash_process_manager');
+    const processManager = serviceRegistry.get('bash_process_manager');
 
     if (!processManager) {
       return this.createError('Background process manager not available');
@@ -150,7 +149,7 @@ ${lines.join('\n')}
     args: string[],
     serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
-    const processManager = serviceRegistry.get<BashProcessManager>('bash_process_manager');
+    const processManager = serviceRegistry.get('bash_process_manager');
 
     if (!processManager) {
       return this.createError('Background process manager not available');

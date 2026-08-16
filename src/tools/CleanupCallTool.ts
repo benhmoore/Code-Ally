@@ -10,6 +10,7 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import type { ToolRemovalResult } from '../agent/ConversationManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { UI_COLORS } from '../ui/constants/colors.js';
 
@@ -126,7 +127,7 @@ export class CleanupCallTool extends BaseTool {
     try {
       // Get Agent from ServiceRegistry
       const registry = ServiceRegistry.getInstance();
-      const agent = registry.get<any>('agent');
+      const agent = registry.get('agent');
 
       if (!agent) {
         return this.formatErrorResponse(
@@ -152,7 +153,7 @@ export class CleanupCallTool extends BaseTool {
       const notFoundIds = toolCallIds.filter((id: string) => !validIds.includes(id));
 
       // Immediately remove prior-turn results
-      let immediateResult = { removed_count: 0, removed_ids: [], not_found_ids: [] };
+      let immediateResult: ToolRemovalResult = { removed_count: 0, removed_ids: [], not_found_ids: [] };
       if (priorTurns.length > 0) {
         immediateResult = conversationManager.removeToolResults(priorTurns);
       }

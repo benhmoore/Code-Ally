@@ -56,7 +56,7 @@ export class TodoCommand extends Command {
     }
 
     // Get TodoManager
-    const todoManager = serviceRegistry.get<TodoManager>('todo_manager');
+    const todoManager = serviceRegistry.get('todo_manager');
 
     if (!todoManager) {
       return this.createError('Todo manager not available.');
@@ -85,7 +85,7 @@ export class TodoCommand extends Command {
    * Show the todo list with in-progress, pending, and completed sections
    */
   private async handleTodoShow(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const todoManager = serviceRegistry.get<TodoManager>('todo_manager');
+    const todoManager = serviceRegistry.get('todo_manager');
 
     if (!todoManager) {
       return this.createError('Todo manager not available.');

@@ -9,8 +9,6 @@ import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { FocusManager } from '../services/FocusManager.js';
-import { ReadStateManager } from '../services/ReadStateManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateExists } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -213,7 +211,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
       // Validate focus constraint if active
       const registry = this.getExecutionRegistry(executionContext);
       const readScopeId = this.getReadScopeId(executionContext);
-      const focusManager = registry.get<FocusManager>('focus_manager');
+      const focusManager = registry.get('focus_manager');
 
       if (focusManager && focusManager.isFocused()) {
         const validation = await focusManager.validatePathInFocus(absolutePath);
@@ -378,7 +376,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
         responseData.matches_by_file = matchesByFile;
 
         // Track reads for content mode - full lines were displayed
-        const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+        const readStateManager = registry.get('read_state_manager');
         if (readStateManager) {
           for (const match of matches) {
             const startLine = match.line - (match.before?.length || 0);

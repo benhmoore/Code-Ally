@@ -11,7 +11,6 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { FocusManager } from '../services/FocusManager.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { validateIsDirectory } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -214,7 +213,7 @@ Prefer over multiple ls calls.`;
 
     // Validate focus constraint if active
     const registry = ServiceRegistry.getInstance();
-    const focusManager = registry.get<FocusManager>('focus_manager');
+    const focusManager = registry.get('focus_manager');
 
     if (focusManager && focusManager.isFocused()) {
       const validation = await focusManager.validatePathInFocus(absolutePath);

@@ -24,9 +24,7 @@ import { formatError } from '../utils/errorUtils.js';
 import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, ID_GENERATION, AGENT_CONFIG, PERMISSION_MESSAGES, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
 import { ModelCapabilitiesIndex } from '../services/ModelCapabilitiesIndex.js';
 import { fileToBase64 } from '../utils/imageUtils.js';
-import { AgentPoolService, PooledAgent } from '../services/AgentPoolService.js';
-import { BackgroundAgentManager } from '../services/BackgroundAgentManager.js';
-import { BackgroundTaskRegistry } from '../services/BackgroundTaskRegistry.js';
+import { PooledAgent } from '../services/AgentPoolService.js';
 import { runFleetDelegation, backgroundedMessage } from './fleetDelegation.js';
 import { getThoroughnessDuration, getThoroughnessMaxTokens, formatElapsed } from '../ui/utils/timeUtils.js';
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
@@ -40,7 +38,6 @@ import {
   injectInterjection,
   cancelRunningBackgroundAgents,
 } from '../utils/delegationUtils.js';
-import { FormManager } from '../services/FormManager.js';
 
 /**
  * Parameters for agent execution
@@ -306,7 +303,7 @@ Only set run_in_background=false when your very next step depends on the result.
 
     // Extract current agent depth and validate nesting limit
     const registry = ServiceRegistry.getInstance();
-    const currentAgent = registry.get<any>('agent');
+    const currentAgent = registry.get('agent');
     const currentDepth = currentAgent?.getAgentDepth?.() ?? 0;
     const newDepth = currentDepth + 1;
 
@@ -357,7 +354,7 @@ Only set run_in_background=false when your very next step depends on the result.
       try {
         // Get ToolManager and ReadTool from ServiceRegistry
         const serviceRegistry = ServiceRegistry.getInstance();
-        const toolManager = serviceRegistry.get<ToolManager>('tool_manager');
+        const toolManager = serviceRegistry.get('tool_manager');
 
         if (!toolManager) {
           return this.formatErrorResponse(
@@ -581,7 +578,7 @@ Only set run_in_background=false when your very next step depends on the result.
       // Determine the model that will be used for this agent
       // Need to get config to resolve the fallback model
       const registry = ServiceRegistry.getInstance();
-      const configManager = registry.get<any>('config_manager');
+      const configManager = registry.get('config_manager');
       const config = configManager?.getConfig();
       const agentModel = agentData.model || config?.model || 'unknown';
 
@@ -744,12 +741,12 @@ Only set run_in_background=false when your very next step depends on the result.
 
     // Build updated agent call stack for circular delegation detection
     const registry = ServiceRegistry.getInstance();
-    const currentAgent = registry.get<any>('agent');
+    const currentAgent = registry.get('agent');
     const currentCallStack = currentAgent?.getAgentCallStack?.() ?? [];
     const newCallStack = parentAgentName ? [...currentCallStack, parentAgentName] : currentCallStack;
 
     // Get parent agent reference
-    const parentAgent = registry.get<any>('agent');
+    const parentAgent = registry.get('agent') ?? undefined;
 
     // Create unique pool key for this agent config
     const poolKey = agentData._pluginName
@@ -787,7 +784,7 @@ Only set run_in_background=false when your very next step depends on the result.
       params;
 
     const registry = ServiceRegistry.getInstance();
-    const agentPoolService = registry.get<AgentPoolService>('agent_pool');
+    const agentPoolService = registry.get('agent_pool');
 
     if (!agentPoolService) {
       // Graceful fallback: AgentPoolService not available
@@ -972,7 +969,7 @@ Only set run_in_background=false when your very next step depends on the result.
     logger.debug('[AGENT_TOOL] Set maxDuration to', maxDuration, 'minutes for thoroughness:', thoroughness);
 
     // 4. Build base config from agent data (computes allowed tools internally)
-    const agentManager = registry.get<AgentManager>('agent_manager');
+    const agentManager = registry.get('agent_manager');
     if (!agentManager) {
       throw new Error('AgentManager not found in registry');
     }
@@ -998,7 +995,7 @@ Only set run_in_background=false when your very next step depends on the result.
 
     // Inject FormManager into the effective ToolManager (needed for interactive forms)
     const effectiveToolManager = filteredToolManager || toolManager;
-    const formManager = registry.get<FormManager>('form_manager');
+    const formManager = registry.get('form_manager');
     if (formManager) {
       effectiveToolManager.setFormManager(formManager);
       logger.debug('[AGENT_TOOL] FormManager injected into agent ToolManager');
@@ -1084,7 +1081,7 @@ Only set run_in_background=false when your very next step depends on the result.
     // fleet (foreground AND background), can be entered, and — for foreground —
     // can be promoted to background via Ctrl+B. If the manager is unavailable,
     // fall back to the legacy blocking path.
-    const manager = registry.get<BackgroundAgentManager>('background_agent_manager');
+    const manager = registry.get('background_agent_manager');
     if (!manager) {
       try {
         const finalResponse = await this.executeAgent({ agent: subAgent, agentType, taskPrompt, callId, maxDuration, thoroughness, images: processedImages });
@@ -1127,7 +1124,7 @@ Only set run_in_background=false when your very next step depends on the result.
       // clearly want to be told), or when the model opted in with notify_when_done.
       const detachedByUser = !runInBackground; // foreground run promoted via Ctrl+B
       if (detachedByUser || notifyWhenDone) {
-        registry.get<BackgroundTaskRegistry>('background_task_registry')?.markWatched(outcome.taskId);
+        registry.get('background_task_registry')?.markWatched(outcome.taskId);
       }
       const verb = runInBackground ? 'started in background' : 'moved to background';
       return {
@@ -1149,7 +1146,7 @@ Only set run_in_background=false when your very next step depends on the result.
   private getAgentManager(): AgentManager {
     if (!this.agentManager) {
       const registry = ServiceRegistry.getInstance();
-      const agentManager = registry.get<AgentManager>('agent_manager');
+      const agentManager = registry.get('agent_manager');
       if (!agentManager) {
         throw new Error('AgentManager not registered in ServiceRegistry');
       }

@@ -64,7 +64,7 @@ export class FocusManager {
     try {
       const registry = ServiceRegistry.getInstance();
       if (registry.hasService('additional_dirs_manager')) {
-        return registry.get<IAdditionalDirsManager>('additional_dirs_manager');
+        return registry.get('additional_dirs_manager');
       }
     } catch {
       // Service not available

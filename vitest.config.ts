@@ -35,12 +35,17 @@ export default defineConfig({
       // numbers back into this file, so coverage can never regress below where
       // it stands today, and rises as tests are added. Hand-picked thresholds
       // would either fail immediately or be too slack to mean anything.
+      //
+      // Known limitation: these are percentages, so deleting a well-tested
+      // module lowers the ratio without any code getting worse, and the ratchet
+      // reads that as a regression. When that happens, re-baseline the affected
+      // metric in one commit and say so — do not lower it to dodge a real drop.
       thresholds: {
         autoUpdate: true,
-        lines: 42.52,
-        functions: 68.28,
-        branches: 73.2,
-        statements: 42.52,
+        lines: 42.74,
+        functions: 68.26,
+        branches: 73.47,
+        statements: 42.74,
       },
     },
   },

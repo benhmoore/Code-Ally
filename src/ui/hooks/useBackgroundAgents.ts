@@ -11,7 +11,7 @@
 
 import { useState, useEffect } from 'react';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { BackgroundAgentManager, BackgroundAgentStatus } from '@services/BackgroundAgentManager.js';
+import { BackgroundAgentStatus } from '@services/BackgroundAgentManager.js';
 import { useActivityStreamContext } from '../contexts/ActivityContext.js';
 import { ActivityEventType } from '@shared/index.js';
 import { POLLING_INTERVALS, BACKGROUND_AGENT } from '@config/constants.js';
@@ -28,7 +28,7 @@ export interface BackgroundAgentInfo {
 
 function readAgents(): BackgroundAgentInfo[] {
   const registry = ServiceRegistry.getInstance();
-  const manager = registry.get<BackgroundAgentManager>('background_agent_manager');
+  const manager = registry.get('background_agent_manager');
   if (!manager) return [];
 
   const now = Date.now();

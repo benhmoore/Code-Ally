@@ -14,7 +14,6 @@ import path from 'path';
 import * as os from 'os';
 import { AgentManager } from './AgentManager.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
-import type { FileInteractionTracker } from './FileInteractionTracker.js';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { CACHE_TIMEOUTS, BUFFER_SIZES, REASONING_EFFORT_API_VALUES, API_TIMEOUTS } from '../config/constants.js';
@@ -630,7 +629,7 @@ export class CompletionProvider {
       }
 
       const registry = ServiceRegistry.getInstance();
-      const tracker = registry.get<FileInteractionTracker>('file_interaction_tracker');
+      const tracker = registry.get('file_interaction_tracker');
 
       if (!tracker) {
         return [];
@@ -738,7 +737,7 @@ export class CompletionProvider {
     try {
       const { ServiceRegistry } = await import('./ServiceRegistry.js');
       const registry = ServiceRegistry.getInstance();
-      const pm = registry.get<any>('plugin_manager');
+      const pm = registry.get('plugin_manager');
       if (!pm) return [];
 
       const installed = pm.getInstalledPlugins() as Array<{ pluginName: string; pluginKey: string; enabled: boolean }>;

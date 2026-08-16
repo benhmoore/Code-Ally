@@ -14,8 +14,6 @@ import { logger } from '../services/Logger.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { getProjectSessionsDir, getProjectPlansDir } from '../config/paths.js';
-import type { ConfigManager } from '../services/ConfigManager.js';
-import type { AdditionalDirectoriesManager } from '../services/AdditionalDirectoriesManager.js';
 import { realpath, lstat } from 'node:fs/promises';
 
 /**
@@ -84,10 +82,10 @@ export async function isPathWithinAllowedDirectories(checkPath: string): Promise
 
     try {
       const registry = ServiceRegistry.getInstance();
-      const additional = registry.get<AdditionalDirectoriesManager>('additional_dirs_manager');
+      const additional = registry.get('additional_dirs_manager');
       roots.push(...(additional?.getAdditionalDirectories() ?? []));
 
-      const configManager = registry.get<ConfigManager>('config_manager');
+      const configManager = registry.get('config_manager');
       const tempDir = configManager?.getConfig().temp_directory;
       if (tempDir && isSafeTempDirectory(tempDir)) roots.push(tempDir);
     } catch (error) {
@@ -209,13 +207,13 @@ export function isPathWithinCwd(checkPath: string): boolean {
       const registry = ServiceRegistry.getInstance();
 
       // Check additional directories added via /add-dir
-      const additionalDirsManager = registry.get<AdditionalDirectoriesManager>('additional_dirs_manager');
+      const additionalDirsManager = registry.get('additional_dirs_manager');
       if (additionalDirsManager?.isPathInAdditionalDirectory(absPath)) {
         return true;
       }
 
       // Also allow access to configured temp directory
-      const configManager = registry.get<ConfigManager>('config_manager');
+      const configManager = registry.get('config_manager');
       if (configManager) {
         const config = configManager.getConfig();
         const tempDir = path.resolve(config.temp_directory);

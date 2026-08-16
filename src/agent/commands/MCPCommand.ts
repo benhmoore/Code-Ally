@@ -17,7 +17,6 @@ import { applyConfigDefaults } from '@mcp/MCPConfig.js';
 import { MCP_PRESETS, MCP_PRESET_ORDER, buildConfigFromPreset } from '@mcp/MCPPresets.js';
 import { parseKeyValuePairs, parseImportPayload } from '@mcp/MCPServerSpec.js';
 import type { ImportResult } from '@mcp/MCPServerSpec.js';
-import type { ToolManagerService } from '@marketplace/types.js';
 import { toKebabCase } from '@utils/namingValidation.js';
 
 export class MCPCommand extends Command {
@@ -86,7 +85,7 @@ export class MCPCommand extends Command {
   }
 
   private getManager(serviceRegistry: ServiceRegistry): MCPServerManager | null {
-    return serviceRegistry.get<MCPServerManager>('mcp_server_manager');
+    return serviceRegistry.get('mcp_server_manager');
   }
 
   private async listServers(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
@@ -170,7 +169,7 @@ export class MCPCommand extends Command {
       const tools = await manager.startServer(name);
 
       // Register discovered tools with ToolManager
-      const toolManager = serviceRegistry.get<ToolManagerService>('tool_manager');
+      const toolManager = serviceRegistry.get('tool_manager');
       if (toolManager && tools.length > 0) {
         for (const tool of tools) {
           toolManager.registerTool(tool);
@@ -231,7 +230,7 @@ export class MCPCommand extends Command {
       const tools = await manager.startServer(name);
 
       // Register new tools
-      const toolManager = serviceRegistry.get<ToolManagerService>('tool_manager');
+      const toolManager = serviceRegistry.get('tool_manager');
       if (toolManager && tools.length > 0) {
         for (const tool of tools) {
           toolManager.registerTool(tool);
@@ -514,7 +513,7 @@ export class MCPCommand extends Command {
     serviceRegistry: ServiceRegistry
   ): void {
     const tools = manager.getDiscoveredTools(serverName);
-    const toolManager = serviceRegistry.get<ToolManagerService>('tool_manager');
+    const toolManager = serviceRegistry.get('tool_manager');
     if (toolManager && tools.length > 0) {
       for (const tool of tools) {
         const toolName = `mcp-${toKebabCase(serverName)}-${toKebabCase(tool.name)}`;

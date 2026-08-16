@@ -33,7 +33,7 @@ export class PathResolver {
       try {
         const registry = ServiceRegistry.getInstance();
         if (registry.hasService('focus_manager')) {
-          this._focusManager = registry.get<IFocusManager>('focus_manager')!;
+          this._focusManager = registry.get('focus_manager')!;
         }
       } catch (error) {
         // Focus manager not available - expected if not initialized
@@ -173,7 +173,7 @@ let _pathResolver: PathResolver | null = null;
 export function getPathResolver(): PathResolver {
   if (!_pathResolver) {
     const registry = ServiceRegistry.getInstance();
-    let resolver = registry.get<PathResolver>('path_resolver');
+    let resolver = registry.get('path_resolver');
 
     if (!resolver) {
       resolver = new PathResolver();

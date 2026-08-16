@@ -12,8 +12,6 @@ import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/i
 import type { AgentData } from '../types/agents.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { ReadStateManager } from '../services/ReadStateManager.js';
-import { AgentManager } from '../services/AgentManager.js';
 import { formatError } from '../utils/errorUtils.js';
 import { parseAgentContent } from '../utils/agentContentUtils.js';
 import { validateAgentName } from '../utils/namingValidation.js';
@@ -125,7 +123,7 @@ export class EditAgentTool extends BaseTool {
         );
       }
 
-      const agentManager = ServiceRegistry.getInstance().get<AgentManager>('agent_manager');
+      const agentManager = ServiceRegistry.getInstance().get('agent_manager');
       if (!agentManager) {
         return this.formatErrorResponse(
           'Internal error: AgentManager not available. Please restart the application.',
@@ -203,12 +201,12 @@ export class EditAgentTool extends BaseTool {
 
       // Track read state
       const registry = this.getExecutionRegistry(executionContext);
-      const readCache = registry.get<{ invalidate(path: string): void }>('read_cache');
+      const readCache = registry.get('read_cache');
       if (readCache) {
         readCache.invalidate(absolutePath);
       }
 
-      const readStateManager = registry.get<ReadStateManager>('read_state_manager');
+      const readStateManager = registry.get('read_state_manager');
       if (readStateManager) {
         readStateManager.clearFile(absolutePath);
         if (updatedContent.length > 0) {

@@ -2,8 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text } from 'ink';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { TodoManager, TodoItem, getActiveForm } from '@services/TodoManager.js';
-import { ActivityStream } from '@services/ActivityStream.js';
+import { TodoItem, getActiveForm } from '@services/TodoManager.js';
 import { ActivityEventType, ToolCallState } from '@shared/index.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
 import { formatElapsed } from '../utils/timeUtils.js';
@@ -26,7 +25,7 @@ function getActiveAgentName(toolCalls: ToolCallState[]): string | null {
     const id = ask.arguments?.agent_id;
     if (typeof id !== 'string') return 'Assistant';
     try {
-      const pool = ServiceRegistry.getInstance().get<any>('agent_pool');
+      const pool = ServiceRegistry.getInstance().get('agent_pool');
       const metadata = pool?.getAgentMetadata(id);
       return metadata ? getAgentDisplayName(getAgentType(metadata)) : 'Assistant';
     } catch {
@@ -78,8 +77,8 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   useEffect(() => {
     try {
       const registry = ServiceRegistry.getInstance();
-      const todoManager = registry.get<TodoManager>('todo_manager');
-      const activityStream = registry.get<ActivityStream>('activity_stream');
+      const todoManager = registry.get('todo_manager');
+      const activityStream = registry.get('activity_stream');
       const refresh = () => setTodos(todoManager?.getTodos() ?? []);
       refresh();
       return activityStream?.subscribe(ActivityEventType.TODO_UPDATE, refresh);
