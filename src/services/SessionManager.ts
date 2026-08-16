@@ -466,9 +466,11 @@ export class SessionManager implements IService {
 
   private async writeSessionFile(sessionName: string, session: Session): Promise<void> {
     const sessionPath = this.getSessionPath(sessionName);
-    await atomicWriteFile(sessionPath, JSON.stringify(stampVersion(session, SESSION_SCHEMA), null, 2));
+    // Cache exactly what lands on disk so a cache hit and a disk read agree.
+    const versioned = stampVersion(session, SESSION_SCHEMA);
+    await atomicWriteFile(sessionPath, JSON.stringify(versioned, null, 2));
     this.sessionCache.set(sessionName, {
-      session: structuredClone(session),
+      session: structuredClone(versioned),
       loadedAt: Date.now(),
     });
     this.evictOldestCacheEntryIfNeeded();
