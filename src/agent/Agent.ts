@@ -1745,9 +1745,9 @@ export class Agent {
    * @param message - Message to add
    */
   addMessage(message: Message): void {
-    // Thin pass-through. The bookkeeping that used to live here now hangs off
-    // ConversationManager itself (see onMessageAdded), so the 26 places that
-    // append directly through the manager get it too.
+    // Thin pass-through: the bookkeeping hangs off ConversationManager itself
+    // (see onMessageAdded), so the 26 places that append directly through the
+    // manager get it too.
     this.conversationManager.addMessage(message);
   }
 
@@ -1757,8 +1757,8 @@ export class Agent {
    *
    * Registered on ConversationManager rather than performed in `addMessage`
    * because Agent and ResponseProcessor append 26 messages directly through the
-   * manager. Those writes previously skipped all of this, so the token count the
-   * auto-compaction threshold reads drifted until the next full recount.
+   * manager. Were those writes to skip this, the token count the auto-compaction
+   * threshold reads would drift until the next full recount.
    */
   private onMessageAdded(message: Message): void {
     // Incremental: O(1) rather than re-counting the whole conversation.

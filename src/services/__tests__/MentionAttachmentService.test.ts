@@ -1,8 +1,7 @@
 /**
  * MentionAttachmentService tests
  *
- * Covers the `@file` and `@dir` mention paths, which previously lived inline in
- * the useInputHandlers React hook and had no coverage at all. The invariants
+ * Covers the `@file` and `@dir` mention paths. The invariants
  * that matter to the model are the message sequence and the tool_calls/tool
  * pairing; the invariant that matters to the user is that a started tool call is
  * always closed, including when execution throws.

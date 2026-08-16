@@ -2,8 +2,7 @@
  * ModelConfigCoordinator - Business logic behind model switching and runtime
  * config propagation
  *
- * Owns the non-rendering work of the model/config cluster that used to live
- * inline in `useActivitySubscriptions`:
+ * Owns the non-rendering work of the model/config cluster:
  *   - validating a picked model's capabilities before adopting it
  *   - persisting the choice through ConfigManager
  *   - pushing config changes into the live services (RuntimeConfigSync)
@@ -46,9 +45,9 @@ export interface ModelConfigCoordinatorDeps {
   /** Applies a config patch to the live services (RuntimeConfigSync). */
   applyRuntimeConfig: (updates: Partial<Config>) => void;
   /**
-   * Capability probe. Defaults to a lazy import of `@llm/ModelValidation.js`,
-   * preserving the original handler's deferred load, and is overridable so
-   * tests need no network or model index.
+   * Capability probe. Defaults to a lazy import of `@llm/ModelValidation.js`
+   * so the model index is only loaded when a switch actually happens, and is
+   * overridable so tests need no network or model index.
    */
   testModelCapabilities?: ModelCapabilityProbe;
 }
@@ -57,14 +56,13 @@ export interface ModelConfigCoordinatorDeps {
  * Outcome of a model switch.
  *
  * `configUpdate` is the patch the UI must apply to its own config state, and it
- * is populated only on success. The hook applies it *before* dismissing the
- * picker, which is the original ordering.
+ * is populated only on success. The hook applies it before dismissing the
+ * picker.
  *
- * NOTE (preserved behavior): `unavailable` - a missing ConfigManager - is
- * silent. The original handler cleared the modal and returned without telling
- * the user anything, so a misconfigured registry looks like the picker simply
- * closed. Encoded as its own status rather than normalized into an error
- * message so the UI still behaves identically.
+ * `unavailable` - a missing ConfigManager - carries no message: the picker just
+ * closes, so a misconfigured registry looks to the user like nothing happened.
+ * It is a distinct status rather than an error message so the oddity is visible
+ * to callers instead of being papered over.
  */
 export interface ModelSwitchOutcome {
   status: 'unavailable' | 'unsupported' | 'switched' | 'error';
@@ -97,16 +95,16 @@ export class ModelConfigCoordinator {
   /**
    * Probe, persist and adopt a newly selected model.
    *
-   * Order is load-bearing and preserved from the inline implementation:
+   * Order is load-bearing:
    *   1. probe capabilities against the configured endpoint
    *   2. reject a tool-less model for the ally slot
    *   3. persist through ConfigManager
    *   4. sync the live services
    *
-   * NOTE (preserved behavior): the tool-support requirement is enforced for the
-   * ally slot only. A service model is adopted even when the probe says it
-   * cannot call tools - the probe still runs and its cache/image notes are still
-   * reported.
+   * The tool-support requirement applies to the ally slot only. A service model
+   * is adopted even when the probe says it cannot call tools, since background
+   * work (titles, idle messages) never calls any; the probe still runs and its
+   * cache/image notes are still reported.
    */
   async switchModel(modelName: string, slot: ModelSlot): Promise<ModelSwitchOutcome> {
     const configManager = this.deps.getConfigManager();
@@ -167,8 +165,7 @@ export class ModelConfigCoordinator {
    * Push a config patch into the live services.
    *
    * Kept separate from {@link normalizeConfigUpdates} so the hook can update its
-   * own config state in between, which is the original ordering: UI state first,
-   * runtime services second.
+   * own config state in between: UI state first, runtime services second.
    */
   applyRuntimeUpdates(updates: Partial<Config>): void {
     this.deps.applyRuntimeConfig(updates);

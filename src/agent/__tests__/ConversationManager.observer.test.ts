@@ -2,10 +2,10 @@
  * The message-added observer is how token accounting, the context-usage event,
  * and session autosave stay in step with history.
  *
- * Those side effects used to live only in `Agent.addMessage`, while Agent and
- * ResponseProcessor between them appended 26 messages straight through
- * ConversationManager — so the token count that the auto-compaction threshold
- * reads went stale on every one of those writes.
+ * Agent and ResponseProcessor between them append 26 messages straight through
+ * ConversationManager. Were the side effects hung off `Agent.addMessage`
+ * instead, the token count that the auto-compaction threshold reads would go
+ * stale on every one of those writes.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';

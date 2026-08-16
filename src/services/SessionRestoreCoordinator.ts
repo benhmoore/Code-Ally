@@ -1,8 +1,7 @@
 /**
  * SessionRestoreCoordinator - Business logic behind the session picker
  *
- * Owns the two non-rendering halves of the session-select cluster that used to
- * live inline in `useActivitySubscriptions`:
+ * Owns the two non-rendering halves of the session-select cluster:
  *   - listing the sessions recorded for the current working directory
  *   - switching the active session and replaying its data into the app
  *
@@ -46,12 +45,10 @@ export interface SessionRestoreCoordinatorDeps {
 /**
  * Result of listing sessions for the picker.
  *
- * NOTE (preserved behavior): both `unavailable` and `error` are *silent* for the
- * user. The original handler logged the failure and returned without opening the
- * modal and without adding any chat message, so pressing the shortcut looks like
- * nothing happened. That is encoded here as distinct statuses rather than
- * normalized into an error message, so the UI keeps behaving exactly as before
- * while the oddity stays visible in the type.
+ * Both `unavailable` and `error` are silent for the user: the failure is logged,
+ * the modal never opens, and no chat message appears, so pressing the shortcut
+ * looks like nothing happened. They are distinct statuses rather than one error
+ * message so the oddity stays visible in the type.
  */
 export type SessionListOutcome =
   | { status: 'ok'; sessions: SessionInfo[] }
@@ -61,13 +58,12 @@ export type SessionListOutcome =
 /**
  * Result of restoring a session.
  *
- * NOTE (preserved behavior): `sessionSwitched` reports the genuinely odd
- * ordering of the original handler. `setCurrentSession()` (and the patch
- * manager rebind) happen *before* the session data is read, so a failure while
- * reading or replaying leaves the app pointed at the newly selected session
- * while the visible transcript still belongs to the previous one. Nothing rolls
- * that back. It is surfaced explicitly instead of being quietly "fixed",
- * because a rollback would change which session subsequent writes land in.
+ * `sessionSwitched` reports a hazard in the ordering: `setCurrentSession()` and
+ * the patch manager rebind happen before the session data is read, so a failure
+ * while reading or replaying leaves the app pointed at the newly selected
+ * session while the visible transcript still belongs to the previous one.
+ * Nothing rolls that back, because a rollback would change which session
+ * subsequent writes land in - so the caller is told instead.
  */
 export type SessionRestoreOutcome =
   | { status: 'ok' }
@@ -103,7 +99,7 @@ export class SessionRestoreCoordinator {
   /**
    * Switch the active session and replay it.
    *
-   * Order is load-bearing and preserved from the inline implementation:
+   * Order is load-bearing:
    *   1. point the session manager at the selected session
    *   2. let the patch manager rebind to that session's patch history
    *   3. read the session data

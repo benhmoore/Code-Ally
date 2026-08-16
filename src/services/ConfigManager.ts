@@ -33,8 +33,7 @@ export class ConfigManager implements IService {
    *
    * They are kept verbatim and written back on every save. A config written by
    * a newer build must survive a run by an older one, and a key rename must
-   * never silently destroy the user's setting. (This used to be a lossy,
-   * always-on rewrite that dropped such keys during load.)
+   * never silently destroy the user's setting.
    */
   private _unknownProfileKeys: Record<string, unknown> = {};
 

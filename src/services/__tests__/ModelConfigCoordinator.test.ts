@@ -158,8 +158,8 @@ describe('ModelConfigCoordinator', () => {
       expect(applyRuntimeConfig).not.toHaveBeenCalled();
     });
 
-    // Preserved behavior: the tool requirement is enforced for the ally slot
-    // only. Background work (titles, idle messages) does not call tools.
+    // The tool requirement applies to the ally slot only; background work
+    // (titles, idle messages) never calls tools.
     it('accepts a tool-less model for the service slot', async () => {
       const configManager = makeConfigManager();
       const { coordinator } = makeCoordinator(configManager, async () =>
@@ -172,8 +172,8 @@ describe('ModelConfigCoordinator', () => {
       expect(configManager.setValue).toHaveBeenCalledWith('service_model', 'toyllm');
     });
 
-    // Preserved behavior: a missing ConfigManager is silent - the picker just
-    // closes. Encoded as its own status so the oddity stays visible.
+    // A missing ConfigManager is silent - the picker just closes. It gets its
+    // own status so the oddity stays visible to callers.
     it('reports a missing config manager without telling the user', async () => {
       const { coordinator, applyRuntimeConfig } = makeCoordinator(null);
 

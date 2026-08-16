@@ -1,8 +1,8 @@
 /**
  * UserShortcutService tests
  *
- * Covers the `!` bash shortcut and the `#` memory shortcut, which previously
- * lived inline in the useInputHandlers React hook and had no coverage.
+ * Covers the `!` bash shortcut and the `#` memory shortcut: how each is
+ * dispatched, and what each hands back to the caller.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';

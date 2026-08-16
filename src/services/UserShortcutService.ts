@@ -7,9 +7,9 @@
  *   `!<command>` - run a shell command as the user
  *   `#<text>`    - append a line to the project instructions file
  *
- * Both used to be implemented inline inside the `useInputHandlers` React hook,
- * which made them impossible to test without mounting React and let the bash
- * shortcut call `BashTool.execute()` directly - bypassing ToolManager argument
+ * Both live here rather than inline in the `useInputHandlers` React hook.
+ * Inline they cannot be tested without mounting React, and the bash shortcut
+ * reaches `BashTool.execute()` directly - bypassing ToolManager argument
  * validation, duplicate detection and tool/agent visibility enforcement.
  *
  * This service owns that orchestration. The hook parses the input, calls the

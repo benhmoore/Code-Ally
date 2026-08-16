@@ -70,9 +70,8 @@ describe('SessionRestoreCoordinator', () => {
       expect(await coordinator.listSessions()).toEqual({ status: 'ok', sessions });
     });
 
-    // Preserved behavior: both failures are silent for the user - the picker
-    // simply never opens. Encoded as distinct statuses so callers can tell them
-    // apart without the oddity being hidden.
+    // Both failures are silent for the user - the picker simply never opens.
+    // They stay distinct statuses so callers can tell them apart.
     it('reports a missing session manager', async () => {
       expect(await makeCoordinator(null).listSessions()).toEqual({ status: 'unavailable' });
     });
@@ -148,7 +147,7 @@ describe('SessionRestoreCoordinator', () => {
       expect(loadSession).not.toHaveBeenCalled();
     });
 
-    // Preserved behavior: the session pointer moves before the data is read, so
+    // The session pointer moves before the data is read, so
     // a later failure leaves the app pointed at the new session while the
     // visible transcript still belongs to the old one. Nothing rolls that back;
     // `sessionSwitched` is how the caller learns it happened.

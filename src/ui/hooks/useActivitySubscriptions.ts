@@ -1039,7 +1039,8 @@ export const useActivitySubscriptions = (
 
     const outcome = await modelConfigCoordinator.switchModel(modelName, slot);
 
-    // Config state first, modal second, messages last - the original ordering.
+    // Config state first, modal second, messages last: the picker must not
+    // close before the new model is in state, or the UI repaints from stale config.
     if (outcome.configUpdate) {
       actions.updateConfig(outcome.configUpdate);
     }
@@ -1058,7 +1059,7 @@ export const useActivitySubscriptions = (
     const updates = modelConfigCoordinator.normalizeConfigUpdates(event.data);
     if (!updates) return;
 
-    // UI state first, runtime services second - the original ordering.
+    // UI state first, runtime services second.
     actions.updateConfig(updates);
     modelConfigCoordinator.applyRuntimeUpdates(updates);
   });

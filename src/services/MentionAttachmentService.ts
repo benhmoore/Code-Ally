@@ -8,11 +8,11 @@
  * assistant(tool_calls) -> tool sequence, emit the tool-lifecycle events the
  * terminal renders, and close itself out even when execution fails or throws.
  *
- * That orchestration used to live inline in the `useInputHandlers` React hook,
- * where it could not be tested without mounting React. It lives here instead;
- * the hook parses mentions, calls this service and renders the messages it hands
- * back. The hook performs no tool execution, no tool-result construction, no
- * tool-lifecycle event emission and no conversation-history mutation of its own.
+ * That orchestration lives here rather than in the `useInputHandlers` React
+ * hook, where it cannot be tested without mounting React. The hook parses
+ * mentions, calls this service and renders the messages it hands back; it
+ * performs no tool execution, no tool-result construction, no tool-lifecycle
+ * event emission and no conversation-history mutation of its own.
  *
  * This is deliberately a *sibling* of {@link UserShortcutService} rather than a
  * method on it. Shortcuts (`!`, `#`) are terminal actions - the user asked for
