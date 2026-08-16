@@ -12,12 +12,65 @@ import { RETRY_CONFIG } from '../config/constants.js';
 /** Retry category for a request error. */
 export type ErrorClass = 'network' | 'server' | 'json' | 'stream_timeout' | 'rate_limit' | 'non_retryable';
 
+const NON_RETRYABLE_SERVER_ERROR_PATTERNS = [
+  /system message must be at the beginning/i,
+  /(?:does not support|unsupported) (?:tools?|images?|thinking|reasoning)/i,
+  /invalid (?:model|request|message|role|option|parameter|format|template)/i,
+  /model .+ (?:not found|does not exist)/i,
+  /(?:requires more|not enough|insufficient) (?:system )?(?:memory|ram)/i,
+];
+
+/** HTTP failure with the response body and an explicit retry decision. */
+export class HttpResponseError extends Error {
+  readonly httpStatus: number;
+  readonly responseBody: string;
+  readonly retryable: boolean;
+
+  constructor(httpStatus: number, responseBody: string) {
+    const detail = extractHttpErrorDetail(responseBody);
+    super(detail ? `HTTP ${httpStatus}: ${detail}` : `HTTP ${httpStatus}`);
+    this.name = 'HttpResponseError';
+    this.httpStatus = httpStatus;
+    this.responseBody = responseBody;
+    this.retryable = isRetryableHttpResponse(httpStatus, responseBody);
+  }
+}
+
+function extractHttpErrorDetail(responseBody: string): string {
+  const trimmed = responseBody.trim();
+  if (!trimmed) return '';
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed?.error === 'string') return parsed.error;
+    if (typeof parsed?.message === 'string') return parsed.message;
+  } catch {
+    // The body is plain text; surface it as received.
+  }
+
+  return trimmed;
+}
+
+function isRetryableHttpResponse(httpStatus: number, responseBody: string): boolean {
+  if (httpStatus === 429) return true;
+  if (httpStatus !== 500 && httpStatus !== 503) return false;
+
+  return !NON_RETRYABLE_SERVER_ERROR_PATTERNS.some(pattern => pattern.test(responseBody));
+}
+
+/** Build a response-aware error for the shared retry policy. */
+export function createHttpResponseError(httpStatus: number, responseBody: string): HttpResponseError {
+  return new HttpResponseError(httpStatus, responseBody);
+}
+
 /**
  * Classify an error for retry decisions. Returns a category that determines the
  * retry strategy; 'non_retryable' means surface the error to the caller.
  */
 export function classifyHttpError(error: any): ErrorClass {
   if (error?.name === 'AbortError') return 'non_retryable';
+
+  if (error?.retryable === false) return 'non_retryable';
 
   if (error?.httpStatus === 429) return 'rate_limit';
 

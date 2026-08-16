@@ -260,6 +260,25 @@ describe('OllamaClient', () => {
       expect(result.content).toContain('HTTP 404');
     });
 
+    it('does not retry deterministic Ollama validation errors', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => JSON.stringify({
+          error: 'system message must be at the beginning',
+        }),
+      });
+
+      const result = await client.send(
+        [{ role: 'user', content: 'Test' }],
+        { stream: false, signal: new AbortController().signal }
+      );
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(result.error).toBe(true);
+      expect(result.content).toContain('HTTP 500: system message must be at the beginning');
+    });
+
     it('should handle JSON parse errors with retry', async () => {
       mockFetch
         .mockResolvedValueOnce({
@@ -805,6 +824,37 @@ describe('OllamaClient', () => {
         num_ctx: 16384,
         num_predict: 5000,
       });
+    });
+
+    it('sends late system reminders as user continuations without mutating history', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          message: { role: 'assistant', content: 'Test' },
+        }),
+      });
+
+      const reminder: Message = {
+        role: 'system',
+        content: '<system-reminder>Current context</system-reminder>',
+        metadata: { ephemeral: true },
+      };
+      const messages: Message[] = [
+        { role: 'system', content: 'Stable instructions' },
+        { role: 'user', content: 'Hello' },
+        reminder,
+      ];
+
+      await client.send(messages, { stream: false, signal: new AbortController().signal });
+
+      const payload = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(payload.messages.map((message: Message) => message.role)).toEqual([
+        'system',
+        'user',
+        'user',
+      ]);
+      expect(payload.messages[2].content).toBe(reminder.content);
+      expect(reminder.role).toBe('system');
     });
 
     it('should include keep_alive at the top level if provided', async () => {

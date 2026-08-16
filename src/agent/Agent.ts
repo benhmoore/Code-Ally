@@ -1368,7 +1368,9 @@ export class Agent {
       // OUT of msg[0] and at the END of the prompt is what lets the backend reuse
       // its KV cache for the stable system prefix + the entire conversation; only
       // this small trailing block is recomputed each round-trip. It is stripped
-      // immediately after the response by removeEphemeralSystemReminders().
+      // immediately after the response by removeEphemeralSystemReminders(). The
+      // native Ollama transport preserves this position while mapping late
+      // system reminders to user continuations for strict model templates.
       const { getDynamicContextBlock } = await import('../prompts/systemMessages.js');
       const dynamicContext = await getDynamicContextBlock({
         tokenManager: this.tokenManager,

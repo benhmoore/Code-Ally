@@ -25,7 +25,8 @@ import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
-import { CircuitBreaker, runWithRetries } from './httpTransport.js';
+import { CircuitBreaker, createHttpResponseError, runWithRetries } from './httpTransport.js';
+import { normalizeOllamaMessages } from './ollamaMessages.js';
 
 /**
  * Ollama API payload structure
@@ -320,7 +321,7 @@ export class OllamaClient extends ModelClient {
   ): OllamaPayload {
     const payload: OllamaPayload = {
       model: this._modelName,
-      messages,
+      messages: normalizeOllamaMessages(messages),
       stream,
       options: {
         temperature: temperature !== undefined ? temperature : this._temperature,
@@ -432,10 +433,7 @@ export class OllamaClient extends ModelClient {
       // Check response status
       if (!response.ok) {
         const errorText = await response.text();
-        // Create error with status code attached for retry logic
-        const error: any = new Error(`HTTP ${response.status}: ${errorText}`);
-        error.httpStatus = response.status;
-        throw error;
+        throw createHttpResponseError(response.status, errorText);
       }
 
       // Process response
