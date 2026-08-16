@@ -14,6 +14,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -80,7 +81,7 @@ export class SessionsTool extends BaseTool {
   readonly name = 'sessions';
   readonly description =
     'Analyze past conversation sessions. Searches and analyzes this project\'s session history. Use when you need to find previous discussions, review past work, understand conversation history, or inspect completed scheduled task runs saved as scheduled_<task-id>_<timestamp> sessions.';
-  readonly requiresConfirmation = false; // Read-only operation
+  readonly capabilities = [ToolCapability.FsRead] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output

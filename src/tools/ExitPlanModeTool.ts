@@ -18,7 +18,8 @@ export class ExitPlanModeTool extends BaseTool {
   readonly name = 'exit-plan-mode';
   readonly description =
     'Exit plan mode and present the plan for user approval. The user can approve, approve with context clearing, or provide feedback for revision.';
-  readonly requiresConfirmation = false;
+  /** Flips an in-process mode flag; touches nothing requiring authorization. */
+  readonly capabilities = [] as const;
   readonly hideOutput = true;
 
   constructor(activityStream: ActivityStream) {

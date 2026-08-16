@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -15,7 +16,7 @@ export class SkillTool extends BaseTool {
   readonly displayName = 'Load Skill';
   readonly description =
     'Load detailed instructions for a skill. Use this when you need to follow a specific skill\'s workflow.';
-  readonly requiresConfirmation = false; // Read-only operation
+  readonly capabilities = [ToolCapability.FsRead] as const;
   readonly hideOutput = true; // Hide instructions from user, they're for the LLM
 
   constructor(activityStream: ActivityStream) {

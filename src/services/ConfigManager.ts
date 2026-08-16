@@ -14,6 +14,13 @@ import { getConfigFile, getBaseConfigFile, ensureDirectories } from '../config/p
 import { logger } from './Logger.js';
 import { CryptoService, CRYPTO_SALTS } from './CryptoService.js';
 import { atomicWriteFile } from '../utils/atomicFile.js';
+import {
+  migrateRecord,
+  stampVersion,
+  SchemaTooNewError,
+  SCHEMA_VERSION_KEY,
+} from '../utils/versionedStore.js';
+import { CONFIG_SCHEMA } from '../config/schemas.js';
 
 const SECRET_CONFIG_KEYS = new Set<keyof Config>(['api_key', 'search_api_key']);
 
@@ -21,6 +28,15 @@ export class ConfigManager implements IService {
   private _config: Config;
   private _configPath: string;
   private readonly crypto: CryptoService;
+  /**
+   * Keys present in the profile config file that this build does not recognize.
+   *
+   * They are kept verbatim and written back on every save. A config written by
+   * a newer build must survive a run by an older one, and a key rename must
+   * never silently destroy the user's setting. (This used to be a lossy,
+   * always-on rewrite that dropped such keys during load.)
+   */
+  private _unknownProfileKeys: Record<string, unknown> = {};
 
   constructor(configPath?: string) {
     this._configPath = configPath || getConfigFile();
@@ -57,11 +73,16 @@ export class ConfigManager implements IService {
     try {
       const baseConfigPath = getBaseConfigFile();
       const content = await fs.readFile(baseConfigPath, 'utf-8');
-      const baseConfig = this.decryptSecrets(JSON.parse(content));
+      const baseConfig = this.decryptSecrets(
+        migrateRecord<Record<string, unknown>>(JSON.parse(content), CONFIG_SCHEMA)
+      );
 
       // Validate and coerce types
       const validatedConfig: Partial<Config> = {};
       for (const [key, value] of Object.entries(baseConfig)) {
+        if (key === SCHEMA_VERSION_KEY) {
+          continue;
+        }
         if (key in DEFAULT_CONFIG) {
           const validated = validateConfigValue(key as keyof Config, value);
           if (validated.valid) {
@@ -79,6 +100,10 @@ export class ConfigManager implements IService {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         // Base config doesn't exist, return empty
         return {};
+      }
+      if (error instanceof SchemaTooNewError) {
+        logger.error(`[CONFIG] ${error.message}`);
+        throw error;
       }
       logger.warn('[CONFIG] Error loading base config:', error);
       return {};
@@ -103,14 +128,19 @@ export class ConfigManager implements IService {
 
       // Load profile-specific config
       const profileConfig: Partial<Config> = {};
-      const unknownKeys: string[] = [];
+      const unknownKeys: Record<string, unknown> = {};
 
       try {
         const content = await fs.readFile(this._configPath, 'utf-8');
-        const rawProfileConfig = this.decryptSecrets(JSON.parse(content));
+        // Unversioned profile configs (every existing install) read as v0.
+        const migrated = migrateRecord<Record<string, unknown>>(JSON.parse(content), CONFIG_SCHEMA);
+        const rawProfileConfig = this.decryptSecrets(migrated);
 
         // Validate and coerce types for profile config
         for (const [key, value] of Object.entries(rawProfileConfig)) {
+          if (key === SCHEMA_VERSION_KEY) {
+            continue;
+          }
           if (key in DEFAULT_CONFIG) {
             const validated = validateConfigValue(key as keyof Config, value);
             if (validated.valid) {
@@ -119,15 +149,24 @@ export class ConfigManager implements IService {
               logger.warn(`[CONFIG] Invalid value for ${key} in profile config: ${validated.error}. Using inherited value.`);
             }
           } else {
-            unknownKeys.push(key);
+            unknownKeys[key] = value;
           }
         }
       } catch (error) {
+        // A profile config from a newer build is refused outright: the file is
+        // left untouched and the caller sees the error rather than a silently
+        // defaulted config that the next save would overwrite.
+        if (error instanceof SchemaTooNewError) {
+          logger.error(`[CONFIG] ${error.message}`);
+          throw error;
+        }
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
           logger.warn('[CONFIG] Error loading profile config:', error);
         }
         // Profile config doesn't exist or is invalid, that's ok
       }
+
+      this._unknownProfileKeys = unknownKeys;
 
       // Build final config with 3-tier inheritance
       // Priority: profileConfig > baseConfig > DEFAULT_CONFIG
@@ -147,14 +186,17 @@ export class ConfigManager implements IService {
         }
       }
 
-      // If unknown keys were found, clean the profile config file
-      // IMPORTANT: We need to preserve the loaded profileConfig values when cleaning,
-      // not re-save based on this._config comparison to defaults
-      if (unknownKeys.length > 0) {
-        await this.saveProfileConfig(profileConfig);
-        logger.info(`\nProfile config cleanup: Removed unknown keys: ${unknownKeys.join(', ')}\n`);
+      // Unknown keys are NOT removed. They are retained in _unknownProfileKeys
+      // and written back on every save, so a key this build doesn't know about
+      // (a newer build's setting, or one renamed since) survives untouched.
+      const unknownKeyNames = Object.keys(unknownKeys);
+      if (unknownKeyNames.length > 0) {
+        logger.debug(`[CONFIG] Preserving unrecognized profile config keys: ${unknownKeyNames.join(', ')}`);
       }
     } catch (error) {
+      if (error instanceof SchemaTooNewError) {
+        throw error;
+      }
       logger.error('[CONFIG] Error in loadConfig:', error);
       // Return defaults on error
       this._config = { ...DEFAULT_CONFIG };
@@ -162,29 +204,26 @@ export class ConfigManager implements IService {
   }
 
   /**
-   * Save a specific profile config object directly to disk
+   * Write the profile config file.
    *
-   * This is used when cleaning unknown keys during loadConfig to preserve
-   * the exact values that were loaded, without re-comparing to defaults.
+   * Unrecognized keys read at load time are merged back in (known keys win, so
+   * a key this build understands is never shadowed by a stale copy), and the
+   * schema version is stamped on the way out.
    *
-   * @param profileConfig The profile config object to save
+   * @param profileConfig The recognized profile overrides to persist
    */
-  private async saveProfileConfig(profileConfig: Partial<Config>): Promise<void> {
-    try {
-      const profileConfigPath = this._configPath;
+  private async writeProfileConfig(profileConfig: Partial<Config>): Promise<void> {
+    const profileConfigPath = this._configPath;
 
-      // Ensure profile config directory exists
-      const profileConfigDir = dirname(profileConfigPath);
-      await fs.mkdir(profileConfigDir, { recursive: true });
+    // Ensure profile config directory exists
+    await fs.mkdir(dirname(profileConfigPath), { recursive: true });
 
-      // Save the profile config as-is (already filtered to valid keys only)
-      await atomicWriteFile(profileConfigPath, JSON.stringify(this.encryptSecrets(profileConfig), null, 2), { mode: 0o600 });
+    const payload = stampVersion(
+      { ...this._unknownProfileKeys, ...this.encryptSecrets(profileConfig) },
+      CONFIG_SCHEMA
+    );
 
-      logger.debug('[CONFIG] Saved profile config (cleanup)');
-    } catch (error) {
-      logger.error('[CONFIG] Error saving profile config:', error);
-      throw error;
-    }
+    await atomicWriteFile(profileConfigPath, JSON.stringify(payload, null, 2), { mode: 0o600 });
   }
 
   /**
@@ -195,12 +234,6 @@ export class ConfigManager implements IService {
    */
   async saveConfig(): Promise<void> {
     try {
-      const profileConfigPath = this._configPath;
-
-      // Ensure profile config directory exists
-      const profileConfigDir = dirname(profileConfigPath);
-      await fs.mkdir(profileConfigDir, { recursive: true });
-
       // Only save values that differ from base config + defaults
       // This keeps profile config minimal
       const baseConfig = await this.loadBaseConfig();
@@ -227,7 +260,7 @@ export class ConfigManager implements IService {
         }
       }
 
-      await atomicWriteFile(profileConfigPath, JSON.stringify(this.encryptSecrets(configToSave), null, 2), { mode: 0o600 });
+      await this.writeProfileConfig(configToSave);
 
       logger.debug('[CONFIG] Saved profile config');
     } catch (error) {

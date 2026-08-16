@@ -46,7 +46,8 @@ export class ExploreTool extends BaseDelegationTool {
   readonly name = 'explore';
   readonly description =
     'Explore codebase with read-only access. Delegates to specialized exploration agent. Use when you need to understand code structure, find implementations, or analyze architecture. Returns comprehensive findings.';
-  readonly requiresConfirmation = false; // Read-only operation
+  /** Delegates read-only exploration; the child's tool calls are gated individually. */
+  readonly capabilities = [] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output

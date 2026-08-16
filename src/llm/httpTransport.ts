@@ -1,13 +1,13 @@
 /**
  * Shared HTTP transport concerns for ModelClient implementations.
  *
- * Error classification, retry backoff, and the circuit breaker are protocol-
+ * Error classification, retry backoff, and stream-read timeouts are protocol-
  * agnostic — they behave identically whether the backend speaks Ollama's native
  * NDJSON API or an OpenAI-compatible /v1 API. Keeping them here means both
  * clients share one battle-tested implementation instead of diverging copies.
  */
 
-import { RETRY_CONFIG } from '../config/constants.js';
+import { API_TIMEOUTS, RETRY_CONFIG } from '../config/constants.js';
 
 /** Retry category for a request error. */
 export type ErrorClass = 'network' | 'server' | 'json' | 'stream_timeout' | 'rate_limit' | 'non_retryable';
@@ -118,39 +118,30 @@ export function getRetryDelayMs(attempt: number, maxDelaySeconds: number = RETRY
 }
 
 /**
- * Circuit breaker that opens after a run of consecutive failures and stays open
- * for a cooldown window, so a persistently-failing backend stops being hammered.
+ * Read the next chunk from a response stream, bounded by a timeout.
+ *
+ * A backend can open a stream, send headers, and then stall indefinitely without
+ * closing the connection. The overall request budget is only checked *between*
+ * attempts, so without this the read would hang forever. The thrown message is
+ * the one `classifyHttpError` maps to the retryable 'stream_timeout' class.
  */
-export class CircuitBreaker {
-  private failures = 0;
-  private openUntil = 0;
+export async function readWithTimeout<T>(
+  reader: { read(): Promise<{ done: boolean; value?: T }> },
+  timeoutMs: number = API_TIMEOUTS.LLM_REQUEST_BASE
+): Promise<{ done: boolean; value?: T }> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error('Stream read timeout - no data received'));
+    }, timeoutMs);
+  });
 
-  /** Clear all state — call at the start of each new top-level request. */
-  reset(): void {
-    this.failures = 0;
-    this.openUntil = 0;
-  }
-
-  /** Whether the breaker is currently open (retries paused). */
-  isOpen(): boolean {
-    return Date.now() < this.openUntil;
-  }
-
-  /** Reset just the failure counter (call on a successful response). */
-  recordSuccess(): void {
-    this.failures = 0;
-  }
-
-  /**
-   * Record a failure. Returns true if this failure tripped the breaker open.
-   */
-  recordFailure(): boolean {
-    this.failures++;
-    if (this.failures >= RETRY_CONFIG.CIRCUIT_BREAKER_THRESHOLD) {
-      this.openUntil = Date.now() + RETRY_CONFIG.CIRCUIT_BREAKER_COOLDOWN;
-      return true;
-    }
-    return false;
+  try {
+    return await Promise.race([reader.read(), timeoutPromise]);
+  } finally {
+    // Always clear the timer: a settled read must never leave a dangling timer
+    // that later rejects (and aborts) a healthy iteration.
+    clearTimeout(timeoutHandle);
   }
 }
 
@@ -160,10 +151,14 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Drive a request to completion with the shared retry policy: capped
- * exponential backoff for retryable errors, a circuit breaker for persistent
- * failures, and an overall time budget. The protocol-specific work (build the
- * request, parse the response, run any validation) lives entirely inside
- * `attempt`; everything here is identical across backends.
+ * exponential backoff for retryable errors, a consecutive-failure ceiling, and
+ * an overall time budget. The protocol-specific work (build the request, parse
+ * the response, run any validation) lives entirely inside `attempt`; everything
+ * here is identical across backends.
+ *
+ * All retry bookkeeping is per-request local state. Clients are shared across
+ * concurrent agents, so anything stored on the instance would let one agent's
+ * failures cancel another's request.
  *
  * `attempt` should return the final response for a non-retryable outcome — even
  * an application-level error response that should NOT trigger a retry (e.g. a
@@ -172,7 +167,6 @@ function sleep(ms: number): Promise<void> {
  * an AbortError on cancellation.
  */
 export async function runWithRetries<T>(params: {
-  breaker: CircuitBreaker;
   /** Execute one attempt. `attemptNum` starts at 0. */
   attempt: (attemptNum: number) => Promise<T>;
   /** Build the response returned when the caller aborts (AbortError). */
@@ -182,24 +176,19 @@ export async function runWithRetries<T>(params: {
   /** Notified before each backoff sleep, for user-visible status. */
   onRetry?: (label: string, delaySeconds: string, attemptNum: number) => void;
 }): Promise<T> {
-  const { breaker, attempt, onInterrupted, onError, onRetry } = params;
-  breaker.reset();
+  const { attempt, onInterrupted, onError, onRetry } = params;
 
   let attemptNum = 0;
+  let failures = 0;
   const startTime = Date.now();
 
   while (true) {
-    if (breaker.isOpen()) {
-      return onError(new Error('Circuit breaker open - retries paused'));
-    }
     if (Date.now() - startTime > RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME) {
       return onError(new Error('Request timeout after 30 minutes'));
     }
 
     try {
-      const result = await attempt(attemptNum);
-      breaker.recordSuccess();
-      return result;
+      return await attempt(attemptNum);
     } catch (error: any) {
       if (error?.name === 'AbortError') {
         return onInterrupted();
@@ -207,7 +196,8 @@ export async function runWithRetries<T>(params: {
 
       const errorClass = classifyHttpError(error);
       if (errorClass !== 'non_retryable') {
-        if (breaker.recordFailure()) {
+        failures++;
+        if (failures >= RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES) {
           return onError(new Error('Too many consecutive failures'));
         }
         const delayMs = getRetryDelayMs(attemptNum);

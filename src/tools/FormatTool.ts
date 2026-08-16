@@ -9,6 +9,7 @@ import * as fsSync from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ensureRegistryInitialized, getDefaultRegistry } from '../checkers/CheckerRegistry.js';
@@ -46,7 +47,7 @@ export class FormatTool extends BaseTool {
   readonly name = 'format';
   readonly description =
     'Format and auto-fix code files in batch. Supports TypeScript/JavaScript (prettier, eslint --fix), JSON, and YAML. Shows diff preview before changes';
-  readonly requiresConfirmation = true; // SENSITIVE: Modifies files
+  readonly capabilities = [ToolCapability.FsRead, ToolCapability.FsWrite] as const;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -63,6 +64,7 @@ export class FormatTool extends BaseTool {
           properties: {
             file_paths: {
               type: 'array',
+              format: 'local-path',
               description: 'List of file paths to format (required)',
               items: {
                 type: 'string',

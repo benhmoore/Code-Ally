@@ -18,6 +18,8 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { logger } from '@services/Logger.js';
 import { getMCPConfigFile } from '@config/paths.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
+import { ToolCapability } from '@tools/ToolCapability.js';
 import type { IService } from '@shared/index.js';
 import type { ActivityStream } from '@services/ActivityStream.js';
 import type { MCPConfig, MCPServerConfig } from './MCPConfig.js';
@@ -165,10 +167,18 @@ export class MCPServerManager implements IService {
 
       // Create BaseTool wrappers
       const ownerPlugin = this.pluginServerOwnership.get(name);
+      // `requiresConfirmation` stays a user preference in MCP config; this is the
+      // single point where it becomes a tool capability. Every MCP call reaches a
+      // system outside this machine, so Network is always present; RemoteEffect is
+      // what makes it confirmable.
+      const capabilities = config.requiresConfirmation
+        ? [ToolCapability.Network, ToolCapability.RemoteEffect]
+        : [ToolCapability.Network];
+
       return MCPToolFactory.createTools(
         name,
         definitions,
-        config.requiresConfirmation,
+        capabilities,
         this,
         this.activityStream,
         ownerPlugin
@@ -453,7 +463,7 @@ export class MCPServerManager implements IService {
       servers: Object.fromEntries(this.serverConfigs),
     };
     try {
-      await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      await atomicWriteFile(configPath, JSON.stringify(config, null, 2));
     } catch (error) {
       logger.error(`[MCP] Failed to save config to ${configPath}:`, error);
     }

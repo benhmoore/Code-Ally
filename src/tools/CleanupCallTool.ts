@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -27,7 +28,7 @@ export class CleanupCallTool extends BaseTool {
   readonly name = 'cleanup-call';
   readonly description =
     'Remove tool result messages from conversation to free up context space. Useful for cleaning up large tool outputs after extracting the needed information.';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [ToolCapability.FsRead] as const;
   readonly visibleInChat = true; // Show as a notice in chat
   readonly hideOutput = true; // Hide detailed output
   readonly breaksExploratoryStreak = false; // Part of cleanup → explore workflow

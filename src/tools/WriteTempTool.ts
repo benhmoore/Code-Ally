@@ -8,6 +8,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -20,7 +21,8 @@ import * as os from 'os';
 export class WriteTempTool extends BaseTool {
   readonly name = 'write-temp';
   readonly description = 'Write temporary notes to /tmp for organizing exploration findings. Files are automatically namespaced to avoid conflicts.';
-  readonly requiresConfirmation = false; // Safe operation - isolated to /tmp
+  // Scratch files only, confined to os.tmpdir() — never the user's workspace.
+  readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly visibleTo = [AGENT_TYPES.EXPLORE]; // Restricted to explore agents (allow-list enforced by ToolManager)
 
   private sessionId: string;

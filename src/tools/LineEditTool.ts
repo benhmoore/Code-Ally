@@ -7,6 +7,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -33,7 +34,7 @@ export class LineEditTool extends BaseTool {
   readonly displayName = 'Edit Line';
   readonly description =
     'Edit files by line number with insert, delete, and replace operations. Always accepts an array of edits for atomic processing. Line numbers are 1-indexed. Edits are automatically sorted and applied bottom-to-top to prevent line shifting issues.';
-  readonly requiresConfirmation = true; // Destructive operation
+  readonly capabilities = [ToolCapability.FsRead, ToolCapability.FsWrite] as const;
   readonly hideOutput = true; // Hide output from result preview
 
   constructor(activityStream: ActivityStream) {
@@ -164,6 +165,7 @@ export class LineEditTool extends BaseTool {
           properties: {
             file_path: {
               type: 'string',
+              format: 'local-path',
               description: 'Absolute or relative path to the file to edit',
             },
             edits: {

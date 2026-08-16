@@ -19,7 +19,9 @@ import { randomUUID } from 'crypto';
 import { IService } from '../types/index.js';
 import { logger } from './Logger.js';
 import { getPromptsDir } from '../config/paths.js';
-import { ID_GENERATION } from '../config/constants.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
+import { migrateRecord, stampVersion, SchemaTooNewError } from '../utils/versionedStore.js';
+import { PROMPT_LIBRARY_SCHEMA } from '../config/schemas.js';
 
 /**
  * Prompt data structure
@@ -36,7 +38,10 @@ export interface PromptInfo {
  * Storage container for prompts
  */
 interface PromptLibraryData {
-  version: string;         // Schema version for future migrations
+  /** Persisted schema version; see src/utils/versionedStore.ts. */
+  schema_version?: number;
+  /** Legacy free-form label kept for files written by older builds. */
+  version?: string;
   prompts: PromptInfo[];
 }
 
@@ -89,9 +94,15 @@ export class PromptLibraryManager implements IService {
         return null;
       }
 
-      const data = JSON.parse(content) as PromptLibraryData;
-      return data;
+      // Libraries written before versioning carry no schema_version and read as
+      // v0. One written by a newer build throws and is left untouched.
+      return migrateRecord<PromptLibraryData>(JSON.parse(content), PROMPT_LIBRARY_SCHEMA);
     } catch (error) {
+      if (error instanceof SchemaTooNewError) {
+        logger.error(`[PROMPT_LIBRARY] ${error.message}`);
+        throw error;
+      }
+
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         // File doesn't exist yet - this is normal for first run
         return null;
@@ -128,26 +139,11 @@ export class PromptLibraryManager implements IService {
       });
 
       // Now perform our atomic file write
-      const tempPath = `${this.libraryFile}.tmp.${Date.now()}.${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
-
-      try {
-        // Write to temporary file first
-        await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-
-        // Atomic rename - this is the critical operation
-        // On POSIX systems, rename() is atomic and will replace the target file
-        await fs.rename(tempPath, this.libraryFile);
-
-        logger.debug('[PROMPT_LIBRARY] Saved library atomically');
-      } catch (error) {
-        // Clean up temp file if it exists
-        try {
-          await fs.unlink(tempPath);
-        } catch {
-          // Ignore cleanup errors
-        }
-        throw error;
-      }
+      await atomicWriteFile(
+        this.libraryFile,
+        JSON.stringify(stampVersion(data, PROMPT_LIBRARY_SCHEMA), null, 2)
+      );
+      logger.debug('[PROMPT_LIBRARY] Saved library atomically');
     })();
 
     // Update the queue with our promise
@@ -198,10 +194,7 @@ export class PromptLibraryManager implements IService {
    * @returns The newly created prompt
    */
   async addPrompt(title: string, content: string, tags?: string[]): Promise<PromptInfo> {
-    const library = await this.loadLibrary() ?? {
-      version: '1.0',
-      prompts: [],
-    };
+    const library = await this.loadLibrary() ?? { prompts: [] };
 
     // Create new prompt with UUID
     const newPrompt: PromptInfo = {

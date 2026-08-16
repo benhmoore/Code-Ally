@@ -31,7 +31,7 @@ describe('LintTool', () => {
     });
 
     it('should not require confirmation', () => {
-      expect(lintTool.requiresConfirmation).toBe(false);
+      expect(lintTool.requiresConfirmation({})).toBe(false);
     });
 
     it('should have function definition', () => {
@@ -192,7 +192,7 @@ describe('FormatTool', () => {
     });
 
     it('should require confirmation', () => {
-      expect(formatTool.requiresConfirmation).toBe(true);
+      expect(formatTool.requiresConfirmation({})).toBe(true);
     });
 
     it('should have function definition', () => {

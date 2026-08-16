@@ -195,7 +195,7 @@ export class TrustManager {
       if (!command) {
         throw new PermissionDeniedError('Scheduled task denied bash: missing command');
       }
-      if (this.matchesAny(command, policy.denied_bash_patterns ?? [], 'regex')) {
+      if (this.matchesAnyPattern(command, policy.denied_bash_patterns ?? [])) {
         throw new PermissionDeniedError(`Scheduled task denied bash command: ${command}`);
       }
       if (this.matchesCommandRules(command, policy.allowed_bash_commands ?? [])) {
@@ -211,24 +211,33 @@ export class TrustManager {
     throw new PermissionDeniedError(`Scheduled task is not allowed to use ${toolName}`);
   }
 
+  /**
+   * Allow-list matcher for scheduled bash commands. Exhaustive by design: only
+   * the two literal match kinds grant anything, and every other value — an
+   * unknown kind, a typo, a rule smuggled into a hand-edited store — returns
+   * false. There is no regex branch, because a regex allow-rule fails open.
+   */
   private matchesCommandRules(command: string, rules: ScheduledCommandRule[]): boolean {
     return rules.some((rule) => {
-      if (rule.match === 'exact') return command === rule.value;
-      if (rule.match === 'prefix') return command.startsWith(rule.value);
-      try {
-        return new RegExp(rule.value).test(command);
-      } catch {
-        return false;
+      switch (rule?.match) {
+        case 'exact':
+          return command === rule.value;
+        case 'prefix':
+          return command.startsWith(rule.value);
+        default:
+          return false;
       }
     });
   }
 
-  private matchesAny(command: string, values: string[], mode: ScheduledCommandRule['match']): boolean {
-    return values.some((value) => {
-      if (mode === 'exact') return command === value;
-      if (mode === 'prefix') return command.startsWith(value);
+  /**
+   * Deny-list matcher. Regex is safe in this direction: a broad or malformed
+   * pattern can only deny more, never grant.
+   */
+  private matchesAnyPattern(command: string, patterns: string[]): boolean {
+    return patterns.some((pattern) => {
       try {
-        return new RegExp(value).test(command);
+        return new RegExp(pattern).test(command);
       } catch {
         return false;
       }

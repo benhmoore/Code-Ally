@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ToolManager } from '@tools/ToolManager.js';
 import { BaseTool } from '@tools/BaseTool.js';
-import { ToolResult } from '@shared/index.js';
+import { ToolResult, FunctionDefinition } from '@shared/index.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 
@@ -16,7 +16,18 @@ import { ServiceRegistry } from '@services/ServiceRegistry.js';
 class PluginToolA extends BaseTool {
   readonly name = 'plugin-tool-a';
   readonly description = 'A tool from plugin A';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [] as const;
+
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: { type: 'object', properties: {} },
+      },
+    };
+  }
   readonly pluginName = 'plugin:plugin-a';
 
   protected async executeImpl(_args: any): Promise<ToolResult> {
@@ -27,7 +38,18 @@ class PluginToolA extends BaseTool {
 class PluginToolB extends BaseTool {
   readonly name = 'plugin-tool-b';
   readonly description = 'A tool from plugin B';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [] as const;
+
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: { type: 'object', properties: {} },
+      },
+    };
+  }
   readonly pluginName = 'plugin:plugin-b';
 
   protected async executeImpl(_args: any): Promise<ToolResult> {
@@ -38,7 +60,18 @@ class PluginToolB extends BaseTool {
 class CoreTool extends BaseTool {
   readonly name = 'core-tool';
   readonly description = 'A core tool';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [] as const;
+
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: { type: 'object', properties: {} },
+      },
+    };
+  }
 
   protected async executeImpl(_args: any): Promise<ToolResult> {
     return this.formatSuccessResponse({ result: 'core executed' });

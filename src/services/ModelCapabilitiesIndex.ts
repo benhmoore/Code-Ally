@@ -9,6 +9,7 @@
 import { promises as fs } from 'fs';
 import { join, dirname } from 'path';
 import { ALLY_HOME } from '../config/paths.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 import { logger } from './Logger.js';
 
 export interface ModelCapability {
@@ -98,19 +99,10 @@ export class ModelCapabilitiesIndex {
     const dir = dirname(this.filePath);
     await fs.mkdir(dir, { recursive: true });
 
-    // Atomic write: write to temp file first, then rename
-    const tempPath = `${this.filePath}.tmp`;
     try {
-      await fs.writeFile(tempPath, JSON.stringify(this.data, null, 2), 'utf-8');
-      await fs.rename(tempPath, this.filePath);
+      await atomicWriteFile(this.filePath, JSON.stringify(this.data, null, 2));
       logger.debug('[ModelCapabilities] Cache saved successfully');
     } catch (error) {
-      // Clean up temp file if rename failed
-      try {
-        await fs.unlink(tempPath);
-      } catch {
-        // Ignore cleanup errors
-      }
       logger.error('[ModelCapabilities] Failed to save cache:', error);
       throw error;
     }

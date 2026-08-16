@@ -15,6 +15,8 @@ import { Message } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { logger } from '../services/Logger.js';
 import { SYSTEM_REMINDER } from '../config/constants.js';
+import { createToolResultMessage } from '../llm/FunctionCalling.js';
+import { reconcileToolCallPairs } from '../utils/conversationRecovery.js';
 
 /**
  * Configuration for ConversationManager
@@ -424,6 +426,72 @@ export class ConversationManager {
    * @param toolCallIds - Array of tool call IDs to remove
    * @returns ToolRemovalResult with counts, ID lists, and read file paths
    */
+  /**
+   * Restore the tool_call/tool_result pairing invariant across the whole
+   * conversation, repairing history in place.
+   *
+   * Called immediately before every request is built, which is the one point
+   * every producer funnels through — cheaper and far more reliable than trying
+   * to keep each individual mutation site well-behaved. Repairing history
+   * rather than only the outgoing array keeps persistence and the wire
+   * identical, so a resumed session sees what the model saw.
+   *
+   * @returns true if anything had to be repaired
+   */
+  reconcileToolCalls(): boolean {
+    const reconciled = reconcileToolCallPairs([...this.messages]);
+
+    // A synthesis and a drop can cancel out in the count, so compare identity:
+    // reconcile reuses the original message objects for anything it keeps.
+    const unchanged =
+      reconciled.length === this.messages.length &&
+      reconciled.every((msg, i) => msg === this.messages[i]);
+    if (unchanged) return false;
+
+    // Route through setMessages so toolResultIndex is rebuilt by the existing path.
+    this.setMessages(reconciled);
+    return true;
+  }
+
+  /**
+   * Append a result for every tool call that does not have one yet.
+   *
+   * Used when a batch is abandoned part-way — a permission denial, for example —
+   * and the remaining calls would otherwise be left unanswered. Tools that
+   * already produced a result are skipped: `toolResultIndex` is the only
+   * authoritative record of which ids are answered, so asking it here is what
+   * keeps a recovery path from appending a second result for the same
+   * `tool_call_id` (which the index would silently shadow, leaving history and
+   * index disagreeing, and which most providers reject outright).
+   *
+   * @returns how many results were appended
+   */
+  addMissingToolResults(
+    toolCalls: Array<{ id: string; function: { name: string } }>,
+    result: unknown,
+    errorType?: string
+  ): number {
+    let added = 0;
+
+    for (const toolCall of toolCalls) {
+      if (this.toolResultIndex.has(toolCall.id)) continue;
+
+      const message = createToolResultMessage(
+        toolCall.id,
+        toolCall.function.name,
+        result,
+        true,
+        errorType
+      );
+
+      // Route through addMessage so the index stays in sync for free.
+      this.addMessage({ ...message, timestamp: Date.now() } as Message);
+      added++;
+    }
+
+    return added;
+  }
+
   removeToolResults(toolCallIds: string[]): ToolRemovalResult {
     // Categorize IDs as found vs not found using O(1) index lookup
     const removedIds: string[] = [];

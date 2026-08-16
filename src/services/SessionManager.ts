@@ -20,6 +20,8 @@ import type { TodoItem } from './TodoManager.js';
 import { logger } from './Logger.js';
 import { TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
 import { atomicWriteFile } from '../utils/atomicFile.js';
+import { migrateRecord, stampVersion, SchemaTooNewError } from '../utils/versionedStore.js';
+import { SESSION_SCHEMA } from '../config/schemas.js';
 
 /**
  * Configuration for SessionManager
@@ -354,7 +356,10 @@ export class SessionManager implements IService {
         return null;
       }
 
-      const session = JSON.parse(content) as Session;
+      // Pre-versioning session files carry no schema_version and read as v0.
+      // A file from a NEWER build throws SchemaTooNewError below and is left
+      // exactly where it is - never quarantined, never rewritten.
+      const session = migrateRecord<Session>(JSON.parse(content), SESSION_SCHEMA);
 
       // Update cache with loaded session
       this.sessionCache.set(sessionName, {
@@ -368,6 +373,13 @@ export class SessionManager implements IService {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return null;
+      }
+
+      // A session written by a newer build is refused, not quarantined and not
+      // overwritten: the file stays byte-for-byte as it is on disk.
+      if (error instanceof SchemaTooNewError) {
+        logger.error(`Refusing to read session ${sessionName}: ${error.message}`);
+        throw error;
       }
 
       // If JSON parse fails, the file is corrupted - quarantine it
@@ -454,7 +466,7 @@ export class SessionManager implements IService {
 
   private async writeSessionFile(sessionName: string, session: Session): Promise<void> {
     const sessionPath = this.getSessionPath(sessionName);
-    await atomicWriteFile(sessionPath, JSON.stringify(session, null, 2));
+    await atomicWriteFile(sessionPath, JSON.stringify(stampVersion(session, SESSION_SCHEMA), null, 2));
     this.sessionCache.set(sessionName, {
       session: structuredClone(session),
       loadedAt: Date.now(),
@@ -640,7 +652,15 @@ export class SessionManager implements IService {
 
     // Load all sessions in parallel
     const sessions = await Promise.all(
-      sessionNames.map(name => this.loadSession(name))
+      // A session written by a newer build cannot be summarized; it is skipped
+      // (and left untouched on disk) rather than failing the whole listing.
+      sessionNames.map(name => this.loadSession(name).catch(error => {
+        if (error instanceof SchemaTooNewError) {
+          logger.warn(`Skipping session ${name} in listing: ${error.message}`);
+          return null;
+        }
+        throw error;
+      }))
     );
 
     // Filter out null results and process sessions

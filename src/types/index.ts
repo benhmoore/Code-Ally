@@ -136,6 +136,13 @@ export interface ParameterSchema {
   items?: ParameterSchema;
   properties?: Record<string, ParameterSchema>;
   required?: string[];
+  /**
+   * Marks a string value as a path on the local filesystem. `BaseTool.execute`
+   * walks the schema and authorizes every value marked this way against the
+   * allowed workspace roots, so path authorization follows the declaration
+   * rather than a hardcoded list of parameter names.
+   */
+  format?: 'local-path';
 }
 
 export type ErrorType =
@@ -506,6 +513,11 @@ export interface SessionMetadata {
 }
 
 export interface Session {
+  /**
+   * Persisted schema version (see src/utils/versionedStore.ts). Absent on files
+   * written before versioning existed; those are read as v0 and migrated.
+   */
+  schema_version?: number;
   id: string;
   name: string;
   title?: string;

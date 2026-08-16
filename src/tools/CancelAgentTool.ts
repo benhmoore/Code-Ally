@@ -9,6 +9,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -18,7 +19,7 @@ import { formatDuration } from '../ui/utils/timeUtils.js';
 export class CancelAgentTool extends BaseTool {
   readonly name = 'cancel-agent';
   readonly description = 'Cancel a background agent started with agent(run_in_background=true)';
-  readonly requiresConfirmation = true; // Stops in-flight work
+  readonly capabilities = [ToolCapability.ProcessControl] as const;
   readonly hideOutput = false;
 
   constructor(activityStream: ActivityStream) {

@@ -37,7 +37,7 @@ import { ProfileManager } from './services/ProfileManager.js';
 import { setActiveProfile } from './config/paths.js';
 import { initializePrimaryColor } from './ui/constants/colors.js';
 import { getAgentDisplayName } from './utils/agentTypeUtils.js';
-import { ScheduledTaskManager, ScheduledTask } from './services/ScheduledTaskManager.js';
+import { ScheduledTaskManager, ScheduledTask, presetPolicy } from './services/ScheduledTaskManager.js';
 import { SchedulerInstaller } from './services/SchedulerInstaller.js';
 import { generateShortId } from './utils/id.js';
 
@@ -1376,7 +1376,9 @@ async function main() {
     // Note: autoAllowModeGetter will be set after UI initialization
     const trustManager = new TrustManager(config.auto_confirm, activityStream);
     if (scheduledTaskForRun) {
-      trustManager.setScheduledPermissionPolicy(scheduledTaskForRun.permission_policy);
+      // Grants are re-derived from current code on every run, so a hand-edited
+      // store or a record written by an older build cannot broaden them.
+      trustManager.setScheduledPermissionPolicy(presetPolicy(scheduledTaskForRun.policy_preset));
     }
     registry.registerInstance('trust_manager', trustManager);
 

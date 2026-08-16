@@ -5,7 +5,9 @@
  * and event emission. All concrete tools must extend this class.
  */
 
-import { ToolResult, ActivityEvent, ActivityEventType, ErrorType, ToolExecutionContext, FormSchema } from '../types/index.js';
+import { ToolResult, ActivityEvent, ActivityEventType, ErrorType, ToolExecutionContext, FormSchema, FunctionDefinition } from '../types/index.js';
+import { ToolCapability, capabilitiesRequireConfirmation } from './ToolCapability.js';
+import { collectLocalPaths } from './schemaPaths.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -41,9 +43,54 @@ export abstract class BaseTool {
   abstract readonly description: string;
 
   /**
-   * Whether this tool requires user confirmation before execution
+   * What this tool can do to the local machine.
+   *
+   * Confirmation is computed from this declaration, never declared directly —
+   * see `requiresConfirmation`. Declare the tool's maximum capability set; if
+   * the risk varies per invocation, narrow it in `capabilitiesFor`.
    */
-  abstract readonly requiresConfirmation: boolean;
+  abstract readonly capabilities: readonly ToolCapability[];
+
+  /**
+   * The shell command this invocation would run, or null if it runs none.
+   *
+   * Tools that execute a model-supplied command line declare it here so the
+   * permission layer classifies the command itself — sensitivity tiering, trust
+   * scoping, scheduled-run policy — instead of keying that policy on the tool's
+   * name. Fixed-argv spawns (ripgrep, formatters) are not shell commands and
+   * must keep returning null.
+   */
+  getShellCommand(_args: Record<string, any>): string | null {
+    return null;
+  }
+
+  /**
+   * The capabilities a specific invocation actually exercises.
+   *
+   * Defaults to the declared set. Override only when arguments change what the
+   * tool does — `watch`, for example, runs a shell command for one condition
+   * and merely stats a file for another.
+   */
+  capabilitiesFor(_args: Record<string, any>): readonly ToolCapability[] {
+    return this.capabilities;
+  }
+
+  /**
+   * Whether an invocation must be confirmed by the user.
+   *
+   * Derived from declared capabilities so the gate lives in exactly one place.
+   */
+  requiresConfirmation(args: Record<string, any> = {}): boolean {
+    return capabilitiesRequireConfirmation(this.capabilitiesFor(args));
+  }
+
+  /**
+   * The tool's model-facing schema.
+   *
+   * Abstract because path authorization walks this schema: a tool that did not
+   * supply one would silently present no path parameters to authorize.
+   */
+  abstract getFunctionDefinition(): FunctionDefinition;
 
   /**
    * Optional custom display name for UI presentation
@@ -85,13 +132,6 @@ export abstract class BaseTool {
    * with result.content, avoiding duplicate output in the UI.
    */
   readonly streamsOutput: boolean = false;
-
-  /**
-   * Whether conventional path arguments refer to the local filesystem.
-   * Remote/plugin tools must opt out because their `path` values belong to the
-   * remote service and cannot be authorized against local workspace roots.
-   */
-  protected readonly usesLocalFileSystem: boolean = true;
 
   /**
    * Whether this tool should appear in the conversation UI
@@ -357,17 +397,16 @@ export abstract class BaseTool {
     );
   }
 
+  /**
+   * Authorize every argument the tool's schema marks as `format: 'local-path'`.
+   *
+   * Driven by the declaration rather than by parameter naming, so a tool cannot
+   * escape path authorization by calling its parameter something unexpected.
+   */
   private async validateFilesystemArgs(args: Record<string, any>): Promise<void> {
-    if (!this.usesLocalFileSystem) return;
-
-    for (const key of ['file_path', 'file_paths', 'path', 'working_dir', 'directory']) {
-      const value = args[key];
-      const paths = Array.isArray(value) ? value : [value];
-      for (const candidate of paths) {
-        if (typeof candidate === 'string' && candidate.trim()) {
-          await assertPathWithinAllowedDirectories(candidate);
-        }
-      }
+    const { parameters } = this.getFunctionDefinition().function;
+    for (const candidate of collectLocalPaths(args, parameters)) {
+      await assertPathWithinAllowedDirectories(candidate);
     }
   }
 

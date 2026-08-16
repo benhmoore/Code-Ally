@@ -23,7 +23,8 @@ const MAX_TIMEOUT_SECONDS = 1800;    // 30 minutes
 export class WaitTool extends BaseTool {
   readonly name = 'wait';
   readonly description = 'Block until background tasks (agents, shells, watchers) complete, then return their results';
-  readonly requiresConfirmation = false;
+  /** Blocks on already-running work; touches nothing requiring authorization. */
+  readonly capabilities = [] as const;
   readonly hideOutput = false;
   readonly usageGuidance = `**When to use wait:**
 After spawning background agents/processes, call wait when your NEXT step depends

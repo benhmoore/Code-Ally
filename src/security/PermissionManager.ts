@@ -15,10 +15,7 @@ import { cwd } from 'process';
 import { TrustManager, CommandPath } from '../agent/TrustManager.js';
 import {
   hasPathTraversalPatterns,
-  isPathWithinCwd,
   isPathWithinAllowedDirectories,
-  assertPathWithinAllowedDirectories,
-  DirectoryTraversalError,
 } from './PathSecurity.js';
 import { logger } from '../services/Logger.js';
 
@@ -59,11 +56,10 @@ export class PermissionManager {
     // Get permission path based on the tool and arguments
     const permissionPath = await this.getPermissionPath(toolName, args);
 
-    // Check all arguments for path traversal attempts
-    await this.checkAllArgumentsForTraversal(toolName, args);
-
-    // Verify the path is within allowed directory bounds
-    await this.verifyDirectoryAccess(toolName, permissionPath);
+    // Path authorization is NOT done here. Every tool's path arguments are
+    // authorized against the allowed roots by BaseTool from its declared schema,
+    // which covers all tools rather than only the confirm-gated ones this method
+    // ever saw. This method's job is now solely trust/consent.
 
     // Check if already trusted
     if (this.trustManager.isTrusted(toolName, permissionPath)) {
@@ -75,126 +71,6 @@ export class PermissionManager {
 
     // Prompt for permission (this may throw PermissionDeniedError)
     return await this.trustManager.checkPermission(toolName, args, permissionPath);
-  }
-
-  /**
-   * Check all string arguments for path traversal patterns
-   *
-   * @param toolName Name of the tool being used
-   * @param args Tool arguments
-   * @throws DirectoryTraversalError if any argument contains path traversal patterns
-   */
-  private async checkAllArgumentsForTraversal(
-    toolName: string,
-    args: Record<string, any>
-  ): Promise<void> {
-    // Shell syntax is classified by TrustManager. Its working directory is a
-    // filesystem capability and must still pass canonical path validation.
-    if (toolName === 'bash') {
-      if (typeof args.working_dir === 'string') {
-        await assertPathWithinAllowedDirectories(args.working_dir);
-      }
-      return;
-    }
-
-    // Arguments that represent file content, not paths
-    // These should NOT be checked for path traversal patterns
-    const contentArguments = new Set(['content', 'old_string', 'new_string', 'message']);
-
-    // Check all string arguments for path traversal patterns
-    for (const [argName, argValue] of Object.entries(args)) {
-      if (typeof argValue === 'string') {
-        // Skip empty strings
-        if (!argValue || argValue.trim() === '') {
-          continue;
-        }
-
-        // Skip content arguments - they can contain any text including ".."
-        if (contentArguments.has(argName)) {
-          continue;
-        }
-
-        // Check for path traversal patterns
-        if (hasPathTraversalPatterns(argValue)) {
-          logger.debug(
-            `Path traversal pattern detected in ${toolName} argument ${argName}: ${argValue}`
-          );
-          throw new DirectoryTraversalError(
-            `Access denied: The argument '${argName}' contains path traversal patterns. ` +
-              `Operations are restricted to '${this.startDirectory}' and its subdirectories.`
-          );
-        }
-
-        // Check if it's a potential file path
-        if (argValue.includes('/') || argValue.includes('\\') || argValue.includes('.')) {
-          try {
-            // Verify it doesn't resolve to a path outside allowed directories
-            const absPath = path.resolve(argValue);
-            if (!isPathWithinCwd(absPath)) {
-              logger.debug(
-                `Path outside allowed directories detected in ${toolName} argument ${argName}: ${argValue}`
-              );
-              throw new DirectoryTraversalError(
-                `Access denied: The path '${argValue}' in argument '${argName}' is outside allowed directories.`
-              );
-            }
-          } catch (error) {
-            if (error instanceof DirectoryTraversalError) {
-              throw error;
-            }
-            // If we can't parse it as a path, log and continue
-            logger.debug(
-              `Could not validate potential path in ${toolName} argument ${argName}: ${error}`
-            );
-          }
-        }
-      }
-
-      // Check string arrays recursively
-      else if (Array.isArray(argValue)) {
-        for (const item of argValue) {
-          if (typeof item === 'string' && hasPathTraversalPatterns(item)) {
-            logger.debug(
-              `Path traversal pattern detected in ${toolName} list argument ${argName}: ${item}`
-            );
-            throw new DirectoryTraversalError(
-              `Access denied: The list argument '${argName}' contains path traversal patterns. ` +
-                `Operations are restricted to '${this.startDirectory}' and its subdirectories.`
-            );
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Verify that directory access is allowed
-   *
-   * @param toolName Name of the tool
-   * @param permissionPath Permission path to verify
-   * @throws DirectoryTraversalError if access is outside allowed directories
-   */
-  private async verifyDirectoryAccess(toolName: string, permissionPath: CommandPath): Promise<void> {
-    // Extract path from permission path
-    let targetPath: string | null = null;
-
-    if (typeof permissionPath === 'string') {
-      targetPath = permissionPath;
-    } else if (permissionPath && typeof permissionPath === 'object') {
-      if ('path' in permissionPath && permissionPath.path) {
-        targetPath = permissionPath.path;
-      }
-    }
-
-    // If we have a target path, verify it's within CWD
-    if (targetPath) {
-      if (!await isPathWithinAllowedDirectories(targetPath)) {
-        throw new DirectoryTraversalError(
-          `Access denied: ${toolName} attempted to access '${targetPath}' which is outside ` +
-            `the working directory '${this.startDirectory}'.`
-        );
-      }
-    }
   }
 
   /**

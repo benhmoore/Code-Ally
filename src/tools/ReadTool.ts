@@ -5,6 +5,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -27,7 +28,7 @@ export class ReadTool extends BaseTool {
   readonly name = 'read';
   readonly description =
     'Read multiple file contents at once. Use for reading related files together, checking code before editing';
-  readonly requiresConfirmation = false; // Read-only operation
+  readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
   readonly hideOutput = true; // Hide file content from user, show summary in subtext
 
@@ -155,9 +156,11 @@ For multi-file exploration, prefer explore() to preserve context.`;
           properties: {
             file_paths: {
               type: 'array',
+              format: 'local-path',
               description: 'File paths to read',
               items: {
                 type: 'string',
+                format: 'local-path',
               },
             },
             limit: {

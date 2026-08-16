@@ -47,7 +47,7 @@ describe('GlobTool', () => {
     });
 
     it('should not require confirmation', () => {
-      expect(globTool.requiresConfirmation).toBe(false);
+      expect(globTool.requiresConfirmation({})).toBe(false);
     });
 
     it('should have function definition', () => {

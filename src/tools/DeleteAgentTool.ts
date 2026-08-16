@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -16,7 +17,7 @@ import { validateAgentName } from '../utils/namingValidation.js';
 export class DeleteAgentTool extends BaseTool {
   readonly name = 'delete-agent';
   readonly description = 'Delete an agent from the profile. Removes the agent file permanently.';
-  readonly requiresConfirmation = false; // Trust the manage-agents agent
+  readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly hideOutput = false; // Show deletion confirmation
   readonly visibleTo = ['manage-agents']; // Only visible to manage-agents agent
 

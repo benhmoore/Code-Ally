@@ -13,6 +13,7 @@ import { applyUnifiedDiff, simulatePatchApplication } from '../utils/patchApplie
 import { IService, ServiceLifecycle } from '../types/index.js';
 import { resolvePath } from '../utils/pathUtils.js';
 import { getProjectSessionsDir } from '../config/paths.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 import { PatchValidator } from './PatchValidator.js';
 import { PatchFileManager } from './PatchFileManager.js';
 import { PatchIndexManager } from './PatchIndexManager.js';
@@ -426,10 +427,7 @@ export class PatchManager implements IService {
         const dir = path.dirname(filePath);
         await fs.mkdir(dir, { recursive: true });
 
-        // Atomic write using temp file + rename
-        const tempFile = `${filePath}.tmp.${Date.now()}`;
-        await fs.writeFile(tempFile, result.content, 'utf-8');
-        await fs.rename(tempFile, filePath);
+        await atomicWriteFile(filePath, result.content);
         logger.info(`Applied reverse patch to ${filePath}`);
       } else if (fileExists) {
         // Delete file if reverse resulted in empty content

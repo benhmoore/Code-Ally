@@ -9,6 +9,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { logger } from './Logger.js';
 import { BUFFER_SIZES } from '../config/constants.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 
 /**
  * PatchFileManager class
@@ -88,14 +89,7 @@ export class PatchFileManager {
     }
 
     try {
-      const tempPath = `${patchFile}.tmp.${process.pid}.${Date.now()}`;
-      try {
-        await fs.writeFile(tempPath, content, { encoding: 'utf-8', mode: 0o600 });
-        await fs.rename(tempPath, patchFile);
-      } catch (error) {
-        await fs.unlink(tempPath).catch(() => undefined);
-        throw error;
-      }
+      await atomicWriteFile(patchFile, content, { mode: 0o600 });
       logger.debug(`Wrote patch file: ${patchFile}`);
       return patchFile;
     } catch (error) {

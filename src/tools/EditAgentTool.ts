@@ -7,6 +7,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import type { AgentData } from '../types/agents.js';
 import { ActivityStream } from '../services/ActivityStream.js';
@@ -22,7 +23,7 @@ import { stat } from 'fs/promises';
 export class EditAgentTool extends BaseTool {
   readonly name = 'edit-agent';
   readonly description = 'Modify existing agent configuration. Supports partial updates - only provided fields are updated.';
-  readonly requiresConfirmation = false; // Validated before execution
+  readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly hideOutput = true; // Hide output from result preview
   readonly visibleTo = ['manage-agents']; // Only visible to manage-agents agent
 

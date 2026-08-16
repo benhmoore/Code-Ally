@@ -37,7 +37,8 @@ export class AgentAskTool extends BaseTool {
   readonly displayName = 'Follow Up';
   readonly description =
     'Continue conversation with a persistent agent created by explore/plan/agent. Send additional messages to the same agent instance. All agents automatically persist and can be queried later. Use when you need follow-up questions or iterative refinement.';
-  readonly requiresConfirmation = false; // Read-only operation (for explore agents) or planning operation
+  /** Delegates to an existing agent; its tool calls are gated individually. */
+  readonly capabilities = [] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Show output (but controlled by formatSubtext)

@@ -71,7 +71,8 @@ export class PlanTool extends BaseDelegationTool {
   readonly name = 'plan';
   readonly description =
     'Software architect agent for designing implementation plans. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.';
-  readonly requiresConfirmation = false; // Read-only operation
+  /** Delegates planning; the child's tool calls are gated individually. */
+  readonly capabilities = [] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output

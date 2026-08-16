@@ -239,7 +239,7 @@ describe('WriteTool', () => {
     });
 
     it('should require confirmation', () => {
-      expect(writeTool.requiresConfirmation).toBe(true);
+      expect(writeTool.requiresConfirmation({})).toBe(true);
     });
 
     it('should have proper function definition', () => {

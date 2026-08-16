@@ -13,14 +13,14 @@ import type { MCPServerManager } from './MCPServerManager.js';
 import type { MCPToolDefinition } from './types.js';
 import { toKebabCase } from '@utils/namingValidation.js';
 import { logger } from '@services/Logger.js';
+import { ToolCapability } from '@tools/ToolCapability.js';
 
 export class MCPTool extends BaseTool {
   readonly name: string;
   readonly description: string;
-  readonly requiresConfirmation: boolean;
+  readonly capabilities: readonly ToolCapability[];
   readonly displayName: string;
   readonly pluginName: string;
-  protected readonly usesLocalFileSystem = false;
 
   private readonly serverName: string;
   private readonly originalToolName: string;
@@ -30,7 +30,7 @@ export class MCPTool extends BaseTool {
   constructor(
     serverName: string,
     definition: MCPToolDefinition,
-    requiresConfirmation: boolean,
+    capabilities: readonly ToolCapability[],
     serverManager: MCPServerManager,
     activityStream: ActivityStream,
     /** If this tool comes from a marketplace plugin, the plugin name */
@@ -49,7 +49,7 @@ export class MCPTool extends BaseTool {
     this.name = `mcp-${serverPart}-${toolPart}`;
 
     this.description = definition.description || `MCP tool ${definition.name} from ${serverName}`;
-    this.requiresConfirmation = requiresConfirmation;
+    this.capabilities = capabilities;
     this.pluginName = ownerPluginName ? `plugin:${ownerPluginName}` : `mcp:${serverName}`;
 
     // Human-readable display: "ServerName / Tool Name"

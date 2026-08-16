@@ -10,6 +10,7 @@ import * as path from 'path';
 import { logger } from './Logger.js';
 import { PatchMetadata } from './PatchManager.js';
 import { PatchValidator, PatchIndex } from './PatchValidator.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 
 /**
  * PatchIndexManager class
@@ -114,17 +115,9 @@ export class PatchIndexManager {
       const dir = path.dirname(this.indexFilePath);
       await fs.mkdir(dir, { recursive: true });
 
-      const tempPath = `${this.indexFilePath}.tmp.${process.pid}.${Date.now()}`;
-      try {
-        await fs.writeFile(tempPath, JSON.stringify(this.patchIndex, null, 2), {
-          encoding: 'utf-8',
-          mode: 0o600,
-        });
-        await fs.rename(tempPath, this.indexFilePath);
-      } catch (error) {
-        await fs.unlink(tempPath).catch(() => undefined);
-        throw error;
-      }
+      await atomicWriteFile(this.indexFilePath, JSON.stringify(this.patchIndex, null, 2), {
+        mode: 0o600,
+      });
       logger.debug('Patch index saved');
     } catch (error) {
       logger.error('Failed to save patch index:', error);

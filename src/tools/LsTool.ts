@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { resolvePath } from '../utils/pathUtils.js';
@@ -31,7 +32,7 @@ export class LsTool extends BaseTool {
   readonly displayName = 'List';
   readonly description =
     'List files and directories with sizes, types, and modification times';
-  readonly requiresConfirmation = false; // Read-only operation
+  readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
 
   constructor(activityStream: ActivityStream) {
@@ -52,6 +53,7 @@ export class LsTool extends BaseTool {
           properties: {
             path: {
               type: 'string',
+              format: 'local-path',
               description: 'Directory path to list (default: current directory)',
             },
             type: {

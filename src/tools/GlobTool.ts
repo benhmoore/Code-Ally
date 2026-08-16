@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -29,7 +30,7 @@ export class GlobTool extends BaseTool {
   readonly displayName = 'Find Files';
   readonly description =
     'Find files using glob patterns, sorted by modification time (newest first). Examples: \'*.ts\' (TypeScript files), \'**/*.test.js\' (test files recursively). Use * for wildcards, ** for recursive';
-  readonly requiresConfirmation = false; // Read-only operation
+  readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
 
   constructor(activityStream: ActivityStream) {
@@ -55,6 +56,7 @@ export class GlobTool extends BaseTool {
             },
             path: {
               type: 'string',
+              format: 'local-path',
               description: 'Search root directory (default: current directory)',
             },
             exclude: {

@@ -37,4 +37,46 @@ describe('scheduled permission policy', () => {
     await expect(manager.checkPermission('edit', { file_path: 'a.txt' }, 'a.txt'))
       .rejects.toBeInstanceOf(PermissionDeniedError);
   });
+
+  describe('allow-rule matching is exhaustive and fails closed', () => {
+    it('refuses a regex allow-rule, including the catch-all .*', async () => {
+      const manager = new TrustManager(false);
+      manager.setScheduledPermissionPolicy({
+        allowed_bash_commands: [{ match: 'regex', value: '.*' } as any],
+      });
+
+      await expect(manager.checkPermission('bash', { command: 'rm -rf /' }, { command: 'rm -rf /' }))
+        .rejects.toBeInstanceOf(PermissionDeniedError);
+      await expect(manager.checkPermission('bash', { command: 'git push' }, { command: 'git push' }))
+        .rejects.toBeInstanceOf(PermissionDeniedError);
+    });
+
+    it('refuses unknown, misspelled, and missing match kinds', async () => {
+      const manager = new TrustManager(false);
+      manager.setScheduledPermissionPolicy({
+        allowed_bash_commands: [
+          { match: 'startswith', value: 'curl' } as any,
+          { match: 'Exact', value: 'whoami' } as any,
+          { value: 'id' } as any,
+          null as any,
+        ],
+      });
+
+      for (const command of ['curl http://evil', 'whoami', 'id']) {
+        await expect(manager.checkPermission('bash', { command }, { command }))
+          .rejects.toBeInstanceOf(PermissionDeniedError);
+      }
+    });
+
+    it('still honors regex deny patterns, which fail closed', async () => {
+      const manager = new TrustManager(false);
+      manager.setScheduledPermissionPolicy({
+        allowed_bash_commands: [{ match: 'prefix', value: 'git ' }],
+        denied_bash_patterns: ['.*'],
+      });
+
+      await expect(manager.checkPermission('bash', { command: 'git status' }, { command: 'git status' }))
+        .rejects.toBeInstanceOf(PermissionDeniedError);
+    });
+  });
 });

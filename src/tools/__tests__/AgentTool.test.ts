@@ -142,7 +142,7 @@ describe('AgentTool', () => {
   describe('metadata', () => {
     it('should have correct metadata', () => {
       expect(tool.name).toBe('agent');
-      expect(tool.requiresConfirmation).toBe(false);
+      expect(tool.requiresConfirmation({})).toBe(false);
       expect(tool.suppressExecutionAnimation).toBe(true);
     });
   });

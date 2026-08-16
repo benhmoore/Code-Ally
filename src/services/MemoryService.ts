@@ -19,6 +19,7 @@ import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { IService } from '../types/index.js';
 import { getProjectMemoryDir } from '../config/paths.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 import { logger } from './Logger.js';
 
 /** The four memory categories, mirroring the recall taxonomy. */
@@ -157,7 +158,7 @@ export class MemoryService implements IService {
       updated: timestamp,
     };
 
-    await this.writeFileAtomic(this.filePathFor(name), serializeMemory(record));
+    await this.enqueueWrite(this.filePathFor(name), serializeMemory(record));
     this.recordsCache = null;
     await this.rebuildIndex();
 
@@ -370,7 +371,7 @@ export class MemoryService implements IService {
   private async rebuildIndex(): Promise<void> {
     try {
       const markdown = buildIndexMarkdown(await this.loadRecords());
-      await this.writeFileAtomic(this.indexPath, markdown);
+      await this.enqueueWrite(this.indexPath, markdown);
     } catch (error) {
       logger.warn('[MEMORY] Failed to rebuild index:', error);
     }
@@ -401,10 +402,10 @@ export class MemoryService implements IService {
   }
 
   /**
-   * Atomically write a file, serializing concurrent writes to the same path via
+   * Write a file, serializing concurrent writes to the same path via
    * a promise-chained queue (no locks, no busy-wait). Mirrors SessionManager.
    */
-  private async writeFileAtomic(filePath: string, content: string): Promise<void> {
+  private async enqueueWrite(filePath: string, content: string): Promise<void> {
     const previous = this.writeQueue.get(filePath);
 
     const writePromise = (async () => {
@@ -412,14 +413,7 @@ export class MemoryService implements IService {
         await previous.catch(() => {});
       }
 
-      const tempPath = `${filePath}.tmp.${randomUUID()}`;
-      try {
-        await fs.writeFile(tempPath, content, 'utf-8');
-        await fs.rename(tempPath, filePath);
-      } catch (error) {
-        await fs.unlink(tempPath).catch(() => {});
-        throw error;
-      }
+      await atomicWriteFile(filePath, content);
     })();
 
     this.writeQueue.set(filePath, writePromise);

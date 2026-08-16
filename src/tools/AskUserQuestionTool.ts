@@ -66,7 +66,8 @@ export class AskUserQuestionTool extends BaseTool {
   readonly displayName = 'Questions';
   readonly description =
     'Ask the user questions. Prefer structured choices (2-6 options, automatic "Other") over free-form. Only omit options for unpredictable answers like names or URLs. 1-10 questions per invocation.';
-  readonly requiresConfirmation = false;
+  /** Prompts the user; touches nothing requiring authorization. */
+  readonly capabilities = [] as const;
   readonly supportsInteractiveForm = true;
   readonly alwaysShowFullOutput = true;
 

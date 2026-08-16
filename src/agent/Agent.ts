@@ -1244,6 +1244,14 @@ export class Agent {
     // so the loop terminates gracefully on the next processing pass.
     if (!this.turnController.beginModelCall()) {
       const snapshot = this.turnController.snapshot();
+
+      // Explain once. Any of the turn's many continuation/retry paths can
+      // re-enter here after the budget trips; without this guard each one
+      // appends another copy of the same notice.
+      if (!this.turnController.claimBudgetNotice()) {
+        return { role: 'assistant', content: '' };
+      }
+
       logger.warn('[AGENT]', this.instanceId, `Reached per-turn round-trip limit (${AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN}); stopping to avoid an unbounded loop`);
       return {
         role: 'assistant',
@@ -1388,6 +1396,12 @@ export class Agent {
       // Hand the model client this agent's request signal so an interrupt cancels
       // ONLY this agent's request — never sibling/background agents that share the
       // same underlying client.
+      // Last line of defence for the tool_call/tool_result pairing invariant.
+      // Every producer funnels through here, so one check covers them all —
+      // including ephemeral read results pruned at end of turn, which orphan a
+      // tool call during entirely ordinary use.
+      this.conversationManager.reconcileToolCalls();
+
       const sentMessages = this.conversationManager.getMessages();
       const response = await this.modelClient.send(sentMessages, {
         functions,
@@ -1647,20 +1661,17 @@ export class Agent {
 
             logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Permission denied during tool execution - adding tool results before interruption');
 
-            // Add tool result messages to conversation history so model knows what happened
-            // This ensures the conversation is complete before we interrupt
-            for (const toolCall of unwrappedToolCalls) {
-              const toolResultMessage: Message = {
-                role: 'tool',
-                tool_call_id: toolCall.id,
-                name: toolCall.function.name,
-                content: JSON.stringify(PERMISSION_DENIED_TOOL_RESULT),
-                timestamp: Date.now(),
-              };
-              this.conversationManager.addMessage(toolResultMessage);
-            }
+            // Answer only the calls still unanswered. Sequential execution
+            // appends each result as it completes, so an earlier tool in the
+            // batch may already have one; appending a second result for the same
+            // id would corrupt tool_call/result pairing.
+            const added = this.conversationManager.addMissingToolResults(
+              unwrappedToolCalls,
+              PERMISSION_DENIED_TOOL_RESULT,
+              'permission_denied'
+            );
 
-            logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Added permission denial tool results. Total messages now:', this.conversationManager.getMessageCount());
+            logger.debug('[AGENT_CONTEXT]', this.instanceId, `Added ${added} permission denial tool result(s). Total messages now:`, this.conversationManager.getMessageCount());
 
             // Save session with permission denial context
             this.autoSaveSession();
@@ -1990,17 +2001,12 @@ export class Agent {
    * @param messages - Messages to compact (defaults to this.messages)
    * @param options - Compaction options
    * @param options.customInstructions - Optional additional instructions for summarization
-   * @param options.preserveLastUserMessage - Whether to preserve the last user message (default: true for auto-compact)
    * @param options.timestampLabel - Label for the summary timestamp (e.g., "auto-compacted" or none for manual)
    * @returns Compacted message array
    */
   async compactConversation(
     messages: readonly Message[] = this.conversationManager.getMessages(),
-    options: {
-      customInstructions?: string;
-      preserveLastUserMessage?: boolean;
-      timestampLabel?: string;
-    } = {}
+    options: CompactionOptions = {}
   ): Promise<Message[]> {
     return this.agentCompactor.compactConversation(messages, options, this.interruptionManager.beginRequest());
   }

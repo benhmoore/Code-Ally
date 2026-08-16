@@ -79,11 +79,13 @@ export const RETRY_CONFIG = {
   /** Maximum total time for a single LLM request with all retries (30 minutes) */
   MAX_TOTAL_REQUEST_TIME: 30 * 60 * 1000,
 
-  /** Circuit breaker threshold - number of consecutive failures before opening */
-  CIRCUIT_BREAKER_THRESHOLD: 10,
-
-  /** Circuit breaker cooldown period in milliseconds (1 minute) */
-  CIRCUIT_BREAKER_COOLDOWN: 1 * 60 * 1000,
+  /**
+   * Consecutive retryable failures tolerated within a single request before the
+   * request gives up. Scoped to one request: the count lives in `runWithRetries`
+   * and dies with it, so a later request always starts fresh against a backend
+   * that may have recovered in the meantime.
+   */
+  MAX_CONSECUTIVE_FAILURES: 10,
 } as const;
 
 // ===========================================
@@ -889,11 +891,22 @@ export const AGENT_CONFIG = {
    * legitimate task reaches it; it exists only to stop a model that spirals on
    * empty/malformed output or never-satisfied requirements from running until the
    * context fills. On exhaustion the turn ends gracefully with a stop message.
+   *
+   * Sized for a long autonomous session, not a single exchange: a real debugging
+   * or refactoring task routinely spends well over a hundred round-trips, and
+   * cutting one off mid-task is a worse failure than the spiral this guards
+   * against. Runaway loops are caught far earlier and far more precisely by
+   * LoopDetector, the cycle detector, and ActivityMonitor; this is only the last
+   * resort behind them.
    */
-  MAX_LLM_ROUNDTRIPS_PER_TURN: 40,
+  MAX_LLM_ROUNDTRIPS_PER_TURN: 300,
 
-  /** Hard ceiling across direct and batched tool calls in one user turn. */
-  MAX_TOOL_CALLS_PER_TURN: 200,
+  /**
+   * Hard ceiling across direct and batched tool calls in one user turn. Kept
+   * loose relative to the round-trip budget so productive tool-heavy work is
+   * bounded by the round-trip backstop rather than by this.
+   */
+  MAX_TOOL_CALLS_PER_TURN: 1000,
 
   /** Number of identical tool calls that trigger cycle detection */
   CYCLE_THRESHOLD: 3,
@@ -1124,6 +1137,17 @@ export const PERMISSION_DENIED_TOOL_RESULT = {
   success: false,
   error: PERMISSION_MESSAGES.GENERIC_DENIAL,
   error_type: 'permission_denied' as const,
+} as const;
+
+/**
+ * Standard tool result for a call that never produced one — the turn was
+ * interrupted, or the result was pruned while the call survived. Synthesized so
+ * the tool_call/tool_result pairing the provider requires stays intact.
+ */
+export const INTERRUPTED_TOOL_RESULT = {
+  success: false,
+  error: 'Tool call did not complete; no result was recorded.',
+  error_type: 'interrupted' as const,
 } as const;
 
 // ===========================================

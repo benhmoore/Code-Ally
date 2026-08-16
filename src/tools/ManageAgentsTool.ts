@@ -15,6 +15,7 @@
  */
 
 import { BaseDelegationTool, DelegationToolConfig } from './BaseDelegationTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
@@ -260,7 +261,7 @@ export class ManageAgentsTool extends BaseDelegationTool {
   readonly name = 'manage-agents';
   readonly description =
     'Manage specialized agents for current profile. Delegates to agent management specialist with full CRUD capabilities (create, read, update, delete). Returns operation results and instructions.';
-  readonly requiresConfirmation = false; // No permission needed (write-agent handles validation)
+  readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output

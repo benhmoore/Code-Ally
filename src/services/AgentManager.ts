@@ -8,7 +8,7 @@
  * Profile-aware: Uses profile-specific agents directory via getAgentsDir()
  */
 
-import { readFile, writeFile, readdir, unlink, access, mkdir } from 'fs/promises';
+import { readFile, readdir, unlink, access, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { constants } from 'fs';
 import { logger } from './Logger.js';
@@ -17,6 +17,7 @@ import { getAgentsDir, BUILTIN_AGENTS_DIR } from '../config/paths.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
 import { serializeAgent, parseAgentContent } from '../utils/agentContentUtils.js';
 import { validateAgentName } from '../utils/namingValidation.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { BaseTool } from '../tools/BaseTool.js';
 import { isAgentDelegationTool, applyLeafDelegationPolicy } from '../config/constants.js';
@@ -383,7 +384,7 @@ export class AgentManager {
 
     const filePath = this.getAgentFilePath(agent.name);
     const content = serializeAgent(agent);
-    await writeFile(filePath, content, 'utf-8');
+    await atomicWriteFile(filePath, content);
 
     return { filePath, content };
   }

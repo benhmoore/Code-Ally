@@ -64,7 +64,6 @@ export class CompactCommand extends Command {
 
       await (agent as any).compactCurrentConversation({
         customInstructions,
-        preserveLastUserMessage: false,
         timestampLabel: undefined,
       });
 

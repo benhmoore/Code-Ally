@@ -13,6 +13,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { BUFFER_SIZES, UI_DELAYS } from '../config/constants.js';
 import { getProjectSessionsDir } from '../config/paths.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 import { logger } from './Logger.js';
 
 export interface CommandHistoryEntry {
@@ -115,8 +116,7 @@ export class CommandHistory {
       // Ensure parent directory exists
       await fs.mkdir(dir, { recursive: true });
 
-      // Write directly (atomic operation not strictly necessary for history)
-      await fs.writeFile(this.storagePath, JSON.stringify(this.history, null, 2), 'utf-8');
+      await atomicWriteFile(this.storagePath, JSON.stringify(this.history, null, 2));
     } catch (error) {
       logger.error('Error saving command history:', error);
       throw error;

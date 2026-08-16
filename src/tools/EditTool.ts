@@ -7,6 +7,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
@@ -29,7 +30,7 @@ interface EditOperation {
 export class EditTool extends BaseTool {
   readonly name = 'edit';
   readonly description = 'Make edits to a file using find-and-replace. Always accepts an array of edits for atomic processing. Edits are applied sequentially - each edit sees the cumulative result of previous edits.';
-  readonly requiresConfirmation = true; // Destructive operation
+  readonly capabilities = [ToolCapability.FsRead, ToolCapability.FsWrite] as const;
   readonly hideOutput = true; // Hide output from result preview
 
   constructor(activityStream: ActivityStream) {
@@ -117,6 +118,7 @@ export class EditTool extends BaseTool {
           properties: {
             file_path: {
               type: 'string',
+              format: 'local-path',
               description: 'Path to the file to edit',
             },
             edits: {

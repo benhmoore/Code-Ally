@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { FocusManager } from '../services/FocusManager.js';
@@ -38,7 +39,7 @@ export class GrepTool extends BaseTool {
   readonly displayName = 'Search';
   readonly description =
     'Search files for text patterns using ripgrep. Use for finding code patterns, text search across files, regex matching. Supports files_with_matches (default), content (with context), and count modes. Supports multiline regex patterns.';
-  readonly requiresConfirmation = false; // Read-only operation
+  readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
   readonly usageGuidance = `**When to use grep:**
 Locate patterns across files. Modes: files_with_matches (default), content (with context), count.
@@ -105,6 +106,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
             },
             path: {
               type: 'string',
+              format: 'local-path',
               description: 'File or directory to search (default: cwd)',
             },
             glob: {

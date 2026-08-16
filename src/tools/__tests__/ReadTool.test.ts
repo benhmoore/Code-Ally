@@ -47,7 +47,7 @@ describe('ReadTool', () => {
     });
 
     it('should not require confirmation', () => {
-      expect(readTool.requiresConfirmation).toBe(false);
+      expect(readTool.requiresConfirmation({})).toBe(false);
     });
 
     it('should have function definition', () => {

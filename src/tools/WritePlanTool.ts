@@ -9,6 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -20,7 +21,8 @@ export class WritePlanTool extends BaseTool {
   readonly name = 'write-plan';
   readonly description =
     'Write an implementation plan to a file during plan mode. Creates a markdown file in the project plans directory.';
-  readonly requiresConfirmation = false;
+  // Plans live in Code-Ally's own plans directory, not the user's source tree.
+  readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly hideOutput = true;
 
   constructor(activityStream: ActivityStream) {

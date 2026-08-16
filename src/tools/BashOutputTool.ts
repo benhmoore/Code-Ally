@@ -15,7 +15,8 @@ import { formatError } from '../utils/errorUtils.js';
 export class BashOutputTool extends BaseTool {
   readonly name = 'bash-output';
   readonly description = 'Read output from a background bash process';
-  readonly requiresConfirmation = false; // Read-only operation
+  /** Reads buffered output from an already-running process; authorizes nothing new. */
+  readonly capabilities = [] as const;
   readonly hideOutput = false;
 
   constructor(activityStream: ActivityStream) {

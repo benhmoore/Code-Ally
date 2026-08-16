@@ -15,35 +15,109 @@
 
 import { Message } from '../types/index.js';
 import { logger } from '../services/Logger.js';
+import { createToolResultMessage } from '../llm/FunctionCalling.js';
+import { INTERRUPTED_TOOL_RESULT } from '../config/constants.js';
 
 /**
- * Filter out assistant messages that contain tool_use calls without
- * corresponding tool result messages. These are "orphaned" — the tool
- * was requested but never executed (or the result was never saved).
+ * Restore the tool_call/tool_result pairing invariant.
+ *
+ * Every id in an assistant `tool_calls` must have exactly one `role:'tool'`
+ * message, and every tool message must belong to a preceding assistant call.
+ * Providers reject message arrays that violate this, and several ordinary code
+ * paths can break it — most commonly ephemeral read results, which are pruned at
+ * end of turn while the assistant message that requested them survives.
+ *
+ * Unanswered calls are repaired by SYNTHESIS rather than by deleting the
+ * assistant message: dropping it would rewrite earlier history and invalidate
+ * the stable prompt prefix the agent deliberately engineers for KV-cache reuse.
+ * A tool message with no parent is the one case where deletion is the only
+ * option, since there is nothing to synthesize from.
+ *
+ * Pure and idempotent — running it twice changes nothing.
  */
-export function filterUnresolvedToolUses(messages: Message[]): Message[] {
-  // Collect all tool_call_ids that have results
-  const resolvedIds = new Set<string>();
+export function reconcileToolCallPairs(messages: Message[]): Message[] {
+  const answeredIds = new Set<string>();
+  const calledIds = new Set<string>();
+
   for (const msg of messages) {
-    if (msg.role === 'tool' && msg.tool_call_id) {
-      resolvedIds.add(msg.tool_call_id);
+    if (msg.role === 'tool' && msg.tool_call_id) answeredIds.add(msg.tool_call_id);
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) calledIds.add(tc.id);
     }
   }
 
-  return messages.filter(msg => {
-    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-      // Keep if ALL tool calls have results
-      const allResolved = msg.tool_calls.every(tc => resolvedIds.has(tc.id));
-      if (!allResolved) {
-        const unresolvedCount = msg.tool_calls.filter(tc => !resolvedIds.has(tc.id)).length;
-        logger.debug(
-          `[CONVERSATION_RECOVERY] Filtering assistant message with ${unresolvedCount} unresolved tool_use block(s)`
-        );
-        return false;
-      }
+  const reconciled: Message[] = [];
+  let synthesized = 0;
+  let dropped = 0;
+
+  for (const msg of messages) {
+    // Drop a result whose parent call is gone — unsynthesizable.
+    if (msg.role === 'tool' && msg.tool_call_id && !calledIds.has(msg.tool_call_id)) {
+      dropped++;
+      continue;
     }
-    return true;
-  });
+
+    reconciled.push(msg);
+
+    if (msg.role !== 'assistant' || !msg.tool_calls?.length) continue;
+
+    // Answer any of this message's calls that nothing else answered, keeping the
+    // synthetic result adjacent to the call it belongs to.
+    for (const toolCall of msg.tool_calls) {
+      if (answeredIds.has(toolCall.id)) continue;
+
+      reconciled.push(
+        createToolResultMessage(
+          toolCall.id,
+          toolCall.function?.name ?? 'unknown',
+          INTERRUPTED_TOOL_RESULT,
+          true,
+          'interrupted'
+        ) as Message
+      );
+      answeredIds.add(toolCall.id);
+      synthesized++;
+    }
+  }
+
+  if (synthesized || dropped) {
+    logger.debug(
+      `[CONVERSATION_RECOVERY] Reconciled tool call pairing: synthesized ${synthesized} missing result(s), dropped ${dropped} parentless result(s)`
+    );
+  }
+
+  return reconciled;
+}
+
+/**
+ * Move a candidate split index back to the nearest safe conversation boundary.
+ *
+ * A "split" at index `i` means `messages.slice(i)` is retained and
+ * `messages.slice(0, i)` is handed off (summarized or dropped). Such a split is
+ * only legal where it does not land between an assistant message carrying
+ * `tool_calls` and that message's `role:'tool'` results: cutting there either
+ * strands results whose parent call is gone (providers reject the array) or
+ * strands a call whose results are gone.
+ *
+ * Since every tool result is preceded by the assistant message that requested
+ * it, walking backwards past any leading `role:'tool'` message is sufficient —
+ * the walk lands either on the parent assistant call itself (retaining call and
+ * results together) or at index 0 (retaining everything, which discards
+ * nothing and so cannot orphan anything).
+ *
+ * Total: any input, including out-of-range or negative candidates, yields an
+ * index clamped to [0, messages.length].
+ */
+export function findSafeSplitIndex(messages: Message[], candidateIndex: number): number {
+  if (messages.length === 0) return 0;
+
+  let index = Math.min(Math.max(Math.floor(candidateIndex) || 0, 0), messages.length);
+
+  while (index > 0 && index < messages.length && messages[index]?.role === 'tool') {
+    index--;
+  }
+
+  return index;
 }
 
 /**
@@ -128,7 +202,7 @@ export function detectTurnInterruption(
 /**
  * Run the full conversation recovery pipeline on a set of messages.
  *
- * 1. Filter unresolved tool_use blocks
+ * 1. Reconcile tool_call/tool_result pairing
  * 2. Filter orphaned thinking-only messages
  * 3. Filter whitespace-only assistant messages
  * 4. Optionally detect interruption state
@@ -143,7 +217,7 @@ export function recoverConversation(messages: Message[]): {
   const interruption = detectTurnInterruption(messages);
 
   // Run filtering pipeline
-  let cleaned = filterUnresolvedToolUses(messages);
+  let cleaned = reconcileToolCallPairs(messages);
   cleaned = filterOrphanedThinkingMessages(cleaned);
   cleaned = filterWhitespaceOnlyAssistantMessages(cleaned);
 

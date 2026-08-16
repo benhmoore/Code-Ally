@@ -21,6 +21,24 @@ export default defineConfig({
     // Limit parallelism
     fileParallelism: 4,
     maxConcurrency: 5,
+
+    coverage: {
+      provider: 'v8',
+      reporter: ['text-summary', 'lcov'],
+      include: ['src/**'],
+      exclude: ['src/**/__tests__/**', 'src/agents/**', 'dist/**'],
+      // A ratchet rather than a hand-picked target: vitest writes the measured
+      // numbers back into this file, so coverage can never regress below where
+      // it stands today, and rises as tests are added. Hand-picked thresholds
+      // would either fail immediately or be too slack to mean anything.
+      thresholds: {
+        autoUpdate: true,
+        lines: 42.52,
+        functions: 68.28,
+        branches: 73.2,
+        statements: 42.52,
+      },
+    },
   },
   resolve: {
     alias: {

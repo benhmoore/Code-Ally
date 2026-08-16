@@ -574,7 +574,7 @@ describe('LineEditTool', () => {
     });
 
     it('should require confirmation', () => {
-      expect(lineEditTool.requiresConfirmation).toBe(true);
+      expect(lineEditTool.requiresConfirmation({})).toBe(true);
     });
 
     it('should have proper function definition', () => {

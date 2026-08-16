@@ -40,7 +40,7 @@ describe('LsTool', () => {
     });
 
     it('should not require confirmation', () => {
-      expect(lsTool.requiresConfirmation).toBe(false);
+      expect(lsTool.requiresConfirmation({})).toBe(false);
     });
 
     it('should have function definition', () => {

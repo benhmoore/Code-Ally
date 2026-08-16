@@ -18,25 +18,6 @@ import { DelegationContextManager } from '../services/DelegationContextManager.j
 import { isInjectableTool } from './InjectableTool.js';
 import { PlanModeManager } from '../services/PlanModeManager.js';
 
-/**
- * Tool with custom function definition
- */
-interface ToolWithCustomDefinition extends BaseTool {
-  getFunctionDefinition(): FunctionDefinition;
-}
-
-/**
- * Type guard to check if a tool has a custom getFunctionDefinition method
- */
-function hasCustomFunctionDefinition(tool: BaseTool): tool is ToolWithCustomDefinition {
-  return (
-    typeof tool === 'object' &&
-    tool !== null &&
-    'getFunctionDefinition' in tool &&
-    typeof (tool as any).getFunctionDefinition === 'function'
-  );
-}
-
 /** Why a tool is not available to a given agent, or null if it is. */
 type AgentVisibilityBlock = { kind: 'visible_to'; visibleTo: string[] };
 
@@ -385,26 +366,7 @@ export class ToolManager {
    * Generate function definition for a single tool
    */
   private generateFunctionDefinition(tool: BaseTool): FunctionDefinition {
-    let functionDef: FunctionDefinition;
-
-    // Check if tool provides custom definition
-    if (hasCustomFunctionDefinition(tool)) {
-      functionDef = tool.getFunctionDefinition();
-    } else {
-      // Generate default definition by introspecting the tool
-      functionDef = {
-        type: 'function',
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: {
-            type: 'object',
-            properties: {},
-            required: [],
-          },
-        },
-      };
-    }
+    const functionDef: FunctionDefinition = tool.getFunctionDefinition();
 
     // Dynamically inject description parameter for UI subtext
     // Only inject if tool doesn't already define it

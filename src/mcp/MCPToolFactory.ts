@@ -7,6 +7,7 @@ import type { ActivityStream } from '@services/ActivityStream.js';
 import type { MCPServerManager } from './MCPServerManager.js';
 import type { MCPToolDefinition } from './types.js';
 import { MCPTool } from './MCPTool.js';
+import type { ToolCapability } from '@tools/ToolCapability.js';
 
 export class MCPToolFactory {
   /**
@@ -15,14 +16,14 @@ export class MCPToolFactory {
   static createTools(
     serverName: string,
     definitions: MCPToolDefinition[],
-    requiresConfirmation: boolean,
+    capabilities: readonly ToolCapability[],
     serverManager: MCPServerManager,
     activityStream: ActivityStream,
     /** If these tools come from a marketplace plugin, the plugin name */
     ownerPluginName?: string
   ): BaseTool[] {
     return definitions.map(def =>
-      new MCPTool(serverName, def, requiresConfirmation, serverManager, activityStream, ownerPluginName)
+      new MCPTool(serverName, def, capabilities, serverManager, activityStream, ownerPluginName)
     );
   }
 }

@@ -30,7 +30,8 @@ interface AgentSummary {
 export class ListAgentsTool extends BaseTool {
   readonly name = 'list-agents';
   readonly description = 'List all agents in current profile. Returns agent summaries with name, description, and configuration.';
-  readonly requiresConfirmation = false; // Read-only operation
+  /** Reads agent definitions from the profile; nothing here needs authorization. */
+  readonly capabilities = [] as const;
   readonly hideOutput = false; // Show agent list to user
   readonly visibleTo = ['manage-agents']; // Only manage-agents agent can use
 

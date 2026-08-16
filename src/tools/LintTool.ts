@@ -8,6 +8,7 @@ import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ensureRegistryInitialized, getDefaultRegistry } from '../checkers/CheckerRegistry.js';
@@ -43,7 +44,7 @@ export class LintTool extends BaseTool {
   readonly name = 'lint';
   readonly description =
     'Check files for syntax and parse errors. Supports TypeScript, JavaScript, JSON, and YAML. Returns detailed error and warning information';
-  readonly requiresConfirmation = false; // NON-DESTRUCTIVE: Read-only operation
+  readonly capabilities = [ToolCapability.FsRead] as const;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -60,6 +61,7 @@ export class LintTool extends BaseTool {
           properties: {
             file_paths: {
               type: 'array',
+              format: 'local-path',
               description: 'List of file paths to lint (required)',
               items: {
                 type: 'string',

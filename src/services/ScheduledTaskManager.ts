@@ -18,6 +18,9 @@ import { ActivityEventType, IService } from '../types/index.js';
 import type { ActivityStream } from './ActivityStream.js';
 import { generateShortId } from '../utils/id.js';
 import { logger } from './Logger.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
+import { migrateRecord, stampVersion, SchemaTooNewError } from '../utils/versionedStore.js';
+import { SCHEDULED_TASK_SCHEMA } from '../config/schemas.js';
 
 export type ScheduledTaskStatus = 'never_run' | 'running' | 'success' | 'error' | 'skipped';
 export type ScheduledTaskRunStatus = 'running' | 'success' | 'error' | 'skipped';
@@ -60,14 +63,80 @@ export type CreateScheduledTaskOnceSchedule = {
 };
 
 export type ScheduledCommandRule = {
-  match: 'exact' | 'prefix' | 'regex';
+  /**
+   * Only literal match kinds exist. There is deliberately no `regex` kind:
+   * an allow-rule expressed as a regex is fail-open (`.*` grants everything),
+   * and the matcher in TrustManager treats any unrecognized kind as no match.
+   */
+  match: 'exact' | 'prefix';
   value: string;
 };
 
 export interface ScheduledTaskPermissionPolicy {
   allowed_tools?: string[];
   allowed_bash_commands?: ScheduledCommandRule[];
+  /** Regex denials are fail-closed (a broken/broad pattern only denies more). */
   denied_bash_patterns?: string[];
+}
+
+/**
+ * The closed, code-owned set of permission policies a scheduled task may run
+ * under. Tasks persist the preset *name*; the grants are re-derived from the
+ * code below on every run, so an edited store file or a stale record can never
+ * widen what an unattended run is allowed to do. New capabilities are added by
+ * adding a preset here — never by letting a caller describe one.
+ */
+export const POLICY_PRESETS = ['none', 'git_push_only', 'docker_tests'] as const;
+export type PolicyPreset = (typeof POLICY_PRESETS)[number];
+
+export function isPolicyPreset(value: unknown): value is PolicyPreset {
+  return typeof value === 'string' && (POLICY_PRESETS as readonly string[]).includes(value);
+}
+
+/** Resolve a preset name to its grants. Unknown/missing names grant nothing. */
+export function presetPolicy(preset: PolicyPreset | undefined): ScheduledTaskPermissionPolicy {
+  switch (preset) {
+    case 'git_push_only':
+      return {
+        allowed_bash_commands: [
+          { match: 'exact', value: 'git status' },
+          { match: 'prefix', value: 'git status ' },
+          { match: 'exact', value: 'git rev-parse --is-inside-work-tree' },
+          { match: 'prefix', value: 'git rev-parse ' },
+          { match: 'prefix', value: 'git branch ' },
+          { match: 'prefix', value: 'git log ' },
+          { match: 'exact', value: 'git push' },
+          { match: 'prefix', value: 'git push ' },
+        ],
+        denied_bash_patterns: [
+          '\\bgit\\s+(add|commit|reset|checkout|clean|merge|rebase|cherry-pick|stash|pull)\\b',
+        ],
+      };
+    case 'docker_tests':
+      return {
+        allowed_bash_commands: [
+          { match: 'exact', value: 'docker info' },
+          { match: 'prefix', value: 'docker info ' },
+          { match: 'exact', value: 'docker ps' },
+          { match: 'prefix', value: 'docker ps ' },
+          { match: 'exact', value: 'open -a Docker' },
+          { match: 'prefix', value: 'open -a Docker ' },
+          { match: 'exact', value: 'systemctl start docker' },
+          { match: 'exact', value: 'systemctl --user start docker' },
+          { match: 'prefix', value: 'powershell -NoProfile -Command "Start-Process' },
+          { match: 'exact', value: 'npm test' },
+          { match: 'prefix', value: 'npm test ' },
+          { match: 'exact', value: 'npm run test' },
+          { match: 'prefix', value: 'npm run test ' },
+        ],
+        denied_bash_patterns: [
+          '\\b(rm|git\\s+commit|git\\s+add|git\\s+reset|git\\s+clean)\\b',
+        ],
+      };
+    case 'none':
+    default:
+      return {};
+  }
 }
 
 export interface ScheduledRunRecord {
@@ -88,7 +157,8 @@ export interface ScheduledTask {
   profile: string;
   schedule: ScheduledTaskSchedule;
   run_prompt: string;
-  permission_policy: ScheduledTaskPermissionPolicy;
+  /** Name of the code-owned preset this task runs under. Never inline rules. */
+  policy_preset: PolicyPreset;
   next_run_at: string;
   last_run_at?: string;
   last_status: ScheduledTaskStatus;
@@ -98,8 +168,13 @@ export interface ScheduledTask {
   history: ScheduledRunRecord[];
 }
 
+/**
+ * The store no longer carries its own `version` field: `schema_version` (see
+ * src/utils/versionedStore.ts) is the single version key, and the v0 -> v1
+ * migration in SCHEDULED_TASK_SCHEMA drops the legacy field from old files.
+ */
 interface ScheduledTaskStore {
-  version: 1;
+  schema_version?: number;
   tasks: ScheduledTask[];
 }
 
@@ -110,7 +185,7 @@ interface ScheduledTaskIndexEntry {
 }
 
 interface ScheduledTaskIndex {
-  version: 1;
+  schema_version?: number;
   tasks: ScheduledTaskIndexEntry[];
 }
 
@@ -125,7 +200,7 @@ export interface CreateScheduledTaskInput {
   title: string;
   run_prompt: string;
   schedule: CreateScheduledTaskDailySchedule | CreateScheduledTaskOnceSchedule;
-  permission_policy?: ScheduledTaskPermissionPolicy;
+  policy_preset?: PolicyPreset;
   enabled?: boolean;
   project_dir?: string;
   profile?: string;
@@ -135,7 +210,7 @@ export interface UpdateScheduledTaskInput {
   title?: string;
   run_prompt?: string;
   schedule?: Partial<CreateScheduledTaskDailySchedule> | Partial<CreateScheduledTaskOnceSchedule>;
-  permission_policy?: ScheduledTaskPermissionPolicy;
+  policy_preset?: PolicyPreset;
   enabled?: boolean;
 }
 
@@ -145,7 +220,6 @@ export interface ScheduledTaskManagerConfig {
   lockFile?: string;
 }
 
-const STORE_VERSION = 1 as const;
 const DEFAULT_GRACE_MINUTES = 10;
 const MAX_HISTORY = 20;
 const LOCK_STALE_MS = 15 * 60 * 1000;
@@ -332,11 +406,29 @@ export function computeNextRunAt(schedule: ScheduledTaskSchedule, from: Date = n
 }
 
 function emptyStore(): ScheduledTaskStore {
-  return { version: STORE_VERSION, tasks: [] };
+  return { tasks: [] };
 }
 
 function emptyIndex(): ScheduledTaskIndex {
-  return { version: STORE_VERSION, tasks: [] };
+  return { tasks: [] };
+}
+
+/**
+ * Strip anything a persisted record may carry that is no longer code-owned.
+ *
+ * Records written by older builds contain a free-form `permission_policy`
+ * object, and a hand-edited store file could contain one too. It is dropped
+ * here rather than tolerated: grants come only from `policy_preset`, and an
+ * unrecognized preset name degrades to `none` (no grants) instead of throwing.
+ */
+function sanitizePersistedTask(task: ScheduledTask): ScheduledTask {
+  const { permission_policy: _ignoredLegacyPolicy, ...rest } = task as ScheduledTask & {
+    permission_policy?: unknown;
+  };
+  return {
+    ...rest,
+    policy_preset: isPolicyPreset(rest.policy_preset) ? rest.policy_preset : 'none',
+  };
 }
 
 function conciseOutput(output: string, maxChars: number = 4000): string {
@@ -375,7 +467,7 @@ export class ScheduledTaskManager implements IService {
       profile,
       schedule,
       run_prompt: input.run_prompt.trim(),
-      permission_policy: input.permission_policy ?? {},
+      policy_preset: isPolicyPreset(input.policy_preset) ? input.policy_preset : 'none',
       next_run_at: computeNextRunAt(schedule),
       last_status: 'never_run',
       created_at: timestamp,
@@ -402,7 +494,7 @@ export class ScheduledTaskManager implements IService {
       ...current,
       ...(input.title !== undefined ? { title: input.title.trim() } : {}),
       ...(input.run_prompt !== undefined ? { run_prompt: input.run_prompt.trim() } : {}),
-      ...(input.permission_policy !== undefined ? { permission_policy: input.permission_policy } : {}),
+      ...(isPolicyPreset(input.policy_preset) ? { policy_preset: input.policy_preset } : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
       schedule,
       next_run_at: input.schedule || input.enabled === true ? computeNextRunAt(schedule) : current.next_run_at,
@@ -639,13 +731,21 @@ export class ScheduledTaskManager implements IService {
     const file = this.getStoreFile(projectDir);
     try {
       const raw = await fs.readFile(file, 'utf-8');
-      const parsed = JSON.parse(raw) as ScheduledTaskStore;
-      if (parsed.version !== STORE_VERSION || !Array.isArray(parsed.tasks)) {
+      // Files written before schema versioning (and files carrying the legacy
+      // `version: 1` field) read as v0 and are migrated forward with their
+      // tasks intact. A file from a newer build throws SchemaTooNewError, which
+      // propagates so no caller can follow up with a store-emptying write.
+      const parsed = migrateRecord<ScheduledTaskStore>(JSON.parse(raw), SCHEDULED_TASK_SCHEMA);
+      if (!Array.isArray(parsed.tasks)) {
         return emptyStore();
       }
-      return parsed;
+      return { ...parsed, tasks: parsed.tasks.map(sanitizePersistedTask) };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyStore();
+      if (error instanceof SchemaTooNewError) {
+        logger.error(`[ScheduledTaskManager] ${error.message}`);
+        throw error;
+      }
       logger.warn('[ScheduledTaskManager] Failed to load scheduled tasks:', error);
       return emptyStore();
     }
@@ -654,20 +754,24 @@ export class ScheduledTaskManager implements IService {
   private async saveStore(projectDir: string, store: ScheduledTaskStore): Promise<void> {
     const file = this.getStoreFile(projectDir);
     await fs.mkdir(dirname(file), { recursive: true });
-    await fs.writeFile(file, JSON.stringify(store, null, 2), 'utf-8');
+    await atomicWriteFile(file, JSON.stringify(stampVersion(store, SCHEDULED_TASK_SCHEMA), null, 2));
   }
 
   private async loadIndex(): Promise<ScheduledTaskIndex> {
     const file = this.getIndexFile();
     try {
       const raw = await fs.readFile(file, 'utf-8');
-      const parsed = JSON.parse(raw) as ScheduledTaskIndex;
-      if (parsed.version !== STORE_VERSION || !Array.isArray(parsed.tasks)) {
+      const parsed = migrateRecord<ScheduledTaskIndex>(JSON.parse(raw), SCHEDULED_TASK_SCHEMA);
+      if (!Array.isArray(parsed.tasks)) {
         return emptyIndex();
       }
       return parsed;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyIndex();
+      if (error instanceof SchemaTooNewError) {
+        logger.error(`[ScheduledTaskManager] ${error.message}`);
+        throw error;
+      }
       logger.warn('[ScheduledTaskManager] Failed to load scheduled task index:', error);
       return emptyIndex();
     }
@@ -676,7 +780,7 @@ export class ScheduledTaskManager implements IService {
   private async saveIndex(index: ScheduledTaskIndex): Promise<void> {
     const file = this.getIndexFile();
     await fs.mkdir(dirname(file), { recursive: true });
-    await fs.writeFile(file, JSON.stringify(index, null, 2), 'utf-8');
+    await atomicWriteFile(file, JSON.stringify(stampVersion(index, SCHEDULED_TASK_SCHEMA), null, 2));
   }
 
   private async upsertIndex(task: ScheduledTask): Promise<void> {

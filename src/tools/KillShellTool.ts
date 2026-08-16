@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -15,7 +16,7 @@ import { formatDuration } from '../ui/utils/timeUtils.js';
 export class KillShellTool extends BaseTool {
   readonly name = 'kill-shell';
   readonly description = 'Terminate a background bash process';
-  readonly requiresConfirmation = true; // Destructive operation
+  readonly capabilities = [ToolCapability.ProcessControl] as const;
   readonly hideOutput = false;
 
   constructor(activityStream: ActivityStream) {

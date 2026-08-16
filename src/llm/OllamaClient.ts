@@ -25,8 +25,9 @@ import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
-import { CircuitBreaker, createHttpResponseError, runWithRetries } from './httpTransport.js';
+import { createHttpResponseError, readWithTimeout, runWithRetries } from './httpTransport.js';
 import { normalizeOllamaMessages } from './ollamaMessages.js';
+import { validateToolCalls } from './toolCalls.js';
 
 /**
  * Ollama API payload structure
@@ -60,14 +61,6 @@ interface OllamaPayload {
 }
 
 /**
- * Validation result for tool calls
- */
-interface ValidationResult {
-  valid: boolean;
-  errors: string[];
-}
-
-/**
  * Extract server-reported token usage from an Ollama chunk/response, if present.
  * Ollama puts prompt_eval_count / eval_count on the final (done) object.
  */
@@ -94,8 +87,6 @@ export class OllamaClient extends ModelClient {
 
   // Track active requests for cancellation (keyed by request ID)
   private activeRequests: Map<string, AbortController> = new Map();
-
-  private readonly breaker = new CircuitBreaker();
 
   /**
    * Initialize the Ollama client
@@ -145,7 +136,6 @@ export class OllamaClient extends ModelClient {
     logger.debug(`[OLLAMA_CLIENT] Changing endpoint from ${this._endpoint} to ${newEndpoint}`);
     this._endpoint = newEndpoint;
     this.apiUrl = `${this._endpoint}/api/chat`;
-    this.breaker.reset();
   }
 
   /**
@@ -241,10 +231,9 @@ export class OllamaClient extends ModelClient {
     const payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
 
     try {
-      // Shared retry policy (capped backoff + circuit breaker + time budget).
+      // Shared retry policy (capped backoff + failure ceiling + time budget).
       // The per-attempt work below is Ollama-specific; the loop is not.
       return await runWithRetries<LLMResponse>({
-        breaker: this.breaker,
         onRetry: (label, delaySec, attemptNum) => {
           logger.debug(`[OLLAMA_CLIENT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attemptNum})...`);
           this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
@@ -274,32 +263,10 @@ export class OllamaClient extends ModelClient {
           // Execute request with cancellation support
           const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream);
 
-          // Validate and repair tool calls (ALL responses, not just non-streaming)
-          if (result.tool_calls && result.tool_calls.length > 0) {
-            const validationResult = this.normalizeToolCallsInMessage(result);
-
-            // Return a validation-error response for Agent-level continuation rather
-            // than retrying the whole request. This is a terminal (non-retried)
-            // outcome, so it is returned from attempt() — not thrown.
-            if (!validationResult.valid) {
-              logger.warn(
-                `[OLLAMA_CLIENT] Tool call validation failed in ${stream ? 'streaming' : 'non-streaming'} response, ` +
-                `returning error for Agent-level continuation...`
-              );
-              logger.debug('[OLLAMA_CLIENT] Validation errors:', validationResult.errors);
-
-              return {
-                role: 'assistant',
-                content: result.content || '',
-                tool_calls: result.tool_calls, // Include malformed calls
-                error: true,
-                tool_call_validation_failed: true,
-                validation_errors: validationResult.errors,
-              };
-            }
-          }
-
-          return result;
+          // Validate and repair tool calls (ALL responses, not just non-streaming).
+          // A validation failure is a terminal (non-retried) outcome, so it is
+          // returned from attempt() — not thrown.
+          return validateToolCalls(result);
         },
       });
     } finally {
@@ -513,25 +480,9 @@ export class OllamaClient extends ModelClient {
           throw new Error('Stream read timeout - no data received');
         }
 
-        // Add timeout protection for stream reads
-        // Ollama can start streaming but then hang without closing the stream
-        const readTimeout = API_TIMEOUTS.LLM_REQUEST_BASE;
-        let readTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          readTimeoutHandle = setTimeout(() => {
-            reject(new Error('Stream read timeout - no data received'));
-          }, readTimeout);
-        });
-
-        const readPromise = reader.read();
-        let done: boolean, value: Uint8Array | undefined;
-        try {
-          ({ done, value } = await Promise.race([readPromise, timeoutPromise]));
-        } finally {
-          // Clear the per-read timer so a settled read never leaves a dangling
-          // timer that rejects (and aborts) a later, healthy iteration.
-          clearTimeout(readTimeoutHandle);
-        }
+        // Timeout protection for stream reads: Ollama can start streaming and
+        // then hang without closing the stream.
+        const { done, value } = await readWithTimeout(reader);
         if (done) break;
 
         // Decode the chunk and prepend any buffered incomplete line from previous iteration
@@ -797,100 +748,6 @@ export class OllamaClient extends ModelClient {
     } catch (error) {
       logger.warn('Failed to convert function_call to tool_calls:', error);
     }
-  }
-
-  /**
-   * Normalize and validate tool calls in a message
-   */
-  private normalizeToolCallsInMessage(message: LLMResponse): ValidationResult {
-    const errors: string[] = [];
-    const validCalls: any[] = [];
-
-    if (!message.tool_calls || message.tool_calls.length === 0) {
-      return { valid: true, errors: [] };
-    }
-
-    for (let i = 0; i < message.tool_calls.length; i++) {
-      const call = message.tool_calls[i];
-      const repairResult = this.repairSingleToolCall(call, i);
-
-      if (repairResult.valid) {
-        validCalls.push(repairResult.repaired);
-      } else {
-        errors.push(...repairResult.errors);
-      }
-    }
-
-    // Update message with repaired calls
-    if (validCalls.length > 0) {
-      message.tool_calls = validCalls;
-    }
-
-    return {
-      valid: errors.length === 0,
-      errors,
-    };
-  }
-
-  /**
-   * Attempt to repair a single tool call
-   */
-  private repairSingleToolCall(
-    call: any,
-    index: number
-  ): { valid: boolean; errors: string[]; repaired?: any } {
-    const errors: string[] = [];
-    const repaired: any = { ...call };
-
-    // ALWAYS generate a unique ID to prevent duplicates from LLM
-    // LLMs don't maintain state across responses and can reuse IDs (e.g., functions.glob:4)
-    // Using timestamp + random suffix ensures uniqueness across the entire session
-    const random = Math.random().toString(36).substring(2, 9);
-    repaired.id = `call-${Date.now()}-${index}-${random}`;
-
-    // Repair missing type
-    if (!repaired.type) {
-      repaired.type = 'function';
-    }
-
-    // Handle flat structure (name/arguments at top level)
-    if (repaired.name && !repaired.function) {
-      repaired.function = {
-        name: repaired.name,
-        arguments: repaired.arguments || {},
-      };
-      delete repaired.name;
-      delete repaired.arguments;
-    }
-
-    // Validate function object
-    if (!repaired.function || typeof repaired.function !== 'object') {
-      errors.push(`Tool call ${index}: Missing or invalid function object`);
-      return { valid: false, errors };
-    }
-
-    // Validate function name
-    if (!repaired.function.name || typeof repaired.function.name !== 'string') {
-      errors.push(`Tool call ${index}: Missing or invalid function name`);
-      return { valid: false, errors };
-    }
-
-    // Parse JSON string arguments
-    if (typeof repaired.function.arguments === 'string') {
-      try {
-        repaired.function.arguments = JSON.parse(repaired.function.arguments);
-      } catch (error) {
-        errors.push(`Tool call ${index}: Invalid JSON in arguments: ${error}`);
-        return { valid: false, errors };
-      }
-    }
-
-    // Ensure arguments is an object
-    if (!repaired.function.arguments || typeof repaired.function.arguments !== 'object') {
-      repaired.function.arguments = {};
-    }
-
-    return { valid: true, errors: [], repaired };
   }
 
   /**

@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -23,7 +24,7 @@ export class WebSearchTool extends BaseTool {
   readonly displayName = 'Web Search';
   readonly description =
     'Search the web for information using the configured search provider. Returns search results with title, URL, and snippet.';
-  readonly requiresConfirmation = false; // Read-only operation
+  readonly capabilities = [ToolCapability.Network] as const;
   readonly isExploratoryTool = true;
 
   /**

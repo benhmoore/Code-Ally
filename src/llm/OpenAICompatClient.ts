@@ -3,11 +3,11 @@
  * backends (vLLM, llama.cpp's llama-server, LM Studio, TGI, and most cloud
  * open-model hosts, plus Ollama's own /v1 surface).
  *
- * Shares the retry policy, circuit breaker, error classification, and auth-header
- * rule with OllamaClient via ./httpTransport and ./requestHeaders. Only the wire
- * format differs: this client speaks SSE (`data: {...}`) with OpenAI-shaped
- * messages and tool calls, where tool-call arguments are JSON *strings* (not
- * objects) in both directions.
+ * Shares the retry policy, stream-read timeout, error classification, tool-call
+ * repair/validation, and auth-header rule with OllamaClient via ./httpTransport,
+ * ./toolCalls and ./requestHeaders. Only the wire format differs: this client
+ * speaks SSE (`data: {...}`) with OpenAI-shaped messages and tool calls, where
+ * tool-call arguments are JSON *strings* (not objects) in both directions.
  */
 
 import {
@@ -23,7 +23,8 @@ import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
-import { CircuitBreaker, createHttpResponseError, runWithRetries } from './httpTransport.js';
+import { createHttpResponseError, readWithTimeout, runWithRetries } from './httpTransport.js';
+import { validateToolCalls } from './toolCalls.js';
 
 /** OpenAI chat-completions request payload (the subset we send). */
 interface OpenAIPayload {
@@ -65,7 +66,6 @@ export class OpenAICompatClient extends ModelClient {
   private readonly activityStream?: ActivityStream;
 
   private activeRequests: Map<string, AbortController> = new Map();
-  private readonly breaker = new CircuitBreaker();
 
   constructor(config: ModelClientConfig) {
     super();
@@ -98,7 +98,6 @@ export class OpenAICompatClient extends ModelClient {
     logger.debug(`[OPENAI_COMPAT] Changing endpoint from ${this._endpoint} to ${newEndpoint}`);
     this._endpoint = newEndpoint;
     this.apiUrl = this.buildApiUrl(newEndpoint);
-    this.breaker.reset();
   }
 
   setModelName(newModelName: string): void {
@@ -141,14 +140,20 @@ export class OpenAICompatClient extends ModelClient {
 
     try {
       return await runWithRetries<LLMResponse>({
-        breaker: this.breaker,
         onRetry: (label, delaySec, attemptNum) => {
           logger.debug(`[OPENAI_COMPAT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attemptNum})...`);
           this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
         },
         onInterrupted: () => ({ role: 'assistant', content: '', interrupted: true }),
         onError: (error: any) => this.handleRequestError(error),
-        attempt: (attempt) => this.executeRequest(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream),
+        attempt: async (attempt) => {
+          const result = await this.executeRequest(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream);
+
+          // Repair/validate tool calls. A validation failure is a terminal
+          // (non-retried) outcome the Agent turns into a repair prompt, so it is
+          // returned from attempt() — not thrown.
+          return validateToolCalls(result);
+        },
       });
     } finally {
       this.activeRequests.delete(requestId);
@@ -324,79 +329,119 @@ export class OpenAICompatClient extends ModelClient {
     let contentWasStreamed = false;
     let usage: LLMResponse['usage'] | undefined;
     // Tool calls arrive incrementally, keyed by their `index`; arguments are
-    // concatenated as raw JSON-string fragments and parsed once at the end.
+    // concatenated as raw JSON-string fragments and parsed during validation.
     const toolAcc = new Map<number, { id: string; name: string; args: string }>();
 
-    while (true) {
-      if (callerSignal.aborted) {
-        return { role: 'assistant', content, interrupted: true, _content_was_streamed: contentWasStreamed };
-      }
+    /**
+     * Accumulated tool calls in internal shape, with `arguments` left as the raw
+     * accumulated JSON string. `repairSingleToolCall` parses that string and
+     * assigns a unique id, and reports a malformed call to the model instead of
+     * dropping it silently.
+     */
+    const toolCallsSoFar = (): LLMResponse['tool_calls'] => {
+      if (toolAcc.size === 0) return undefined;
+      return [...toolAcc.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, entry]) => ({
+          id: entry.id,
+          type: 'function',
+          function: { name: entry.name, arguments: entry.args },
+        })) as unknown as LLMResponse['tool_calls'];
+    };
 
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line || !line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (data === '[DONE]') continue;
-
-        let chunk: any;
-        try {
-          chunk = JSON.parse(data);
-        } catch {
-          logger.debug('[OPENAI_COMPAT] Skipping unparseable SSE chunk:', data.substring(0, 200));
-          continue;
+    try {
+      while (true) {
+        if (callerSignal.aborted) {
+          return { role: 'assistant', content, interrupted: true, _content_was_streamed: contentWasStreamed };
         }
 
-        // Usage may arrive on a trailing chunk with an empty choices array.
-        if (chunk.usage) {
-          usage = openAIUsage(chunk.usage);
-        }
+        // A server can open the stream and then stall without closing it; the
+        // overall request budget is only checked between attempts, so each read
+        // is bounded here.
+        const { done, value } = await readWithTimeout(reader);
+        if (done) break;
 
-        const delta = chunk.choices?.[0]?.delta;
-        if (!delta) continue;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-        if (delta.content) {
-          content += delta.content;
-          contentWasStreamed = true;
-          eventStream?.emit({
-            id: `assistant-${requestId}-${Date.now()}`,
-            type: ActivityEventType.ASSISTANT_CHUNK,
-            timestamp: Date.now(),
-            data: { chunk: delta.content },
-          });
-        }
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line || !line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (data === '[DONE]') continue;
 
-        // vLLM and some servers surface native reasoning as reasoning_content.
-        const reasoningChunk = delta.reasoning_content || delta.reasoning;
-        if (reasoningChunk) {
-          thinking += reasoningChunk;
-          if (!suppressThinking) {
+          let chunk: any;
+          try {
+            chunk = JSON.parse(data);
+          } catch {
+            logger.debug('[OPENAI_COMPAT] Skipping unparseable SSE chunk:', data.substring(0, 200));
+            continue;
+          }
+
+          // Usage may arrive on a trailing chunk with an empty choices array.
+          if (chunk.usage) {
+            usage = openAIUsage(chunk.usage);
+          }
+
+          const delta = chunk.choices?.[0]?.delta;
+          if (!delta) continue;
+
+          if (delta.content) {
+            content += delta.content;
+            contentWasStreamed = true;
             eventStream?.emit({
-              id: `thinking-${requestId}-${Date.now()}`,
-              type: ActivityEventType.THOUGHT_CHUNK,
+              id: `assistant-${requestId}-${Date.now()}`,
+              type: ActivityEventType.ASSISTANT_CHUNK,
               timestamp: Date.now(),
-              data: { chunk: reasoningChunk },
+              data: { chunk: delta.content },
             });
           }
-        }
 
-        if (Array.isArray(delta.tool_calls)) {
-          for (const tc of delta.tool_calls) {
-            const idx = tc.index ?? 0;
-            const entry = toolAcc.get(idx) ?? { id: '', name: '', args: '' };
-            if (tc.id) entry.id = tc.id;
-            if (tc.function?.name) entry.name = tc.function.name;
-            if (tc.function?.arguments) entry.args += tc.function.arguments;
-            toolAcc.set(idx, entry);
+          // vLLM and some servers surface native reasoning as reasoning_content.
+          const reasoningChunk = delta.reasoning_content || delta.reasoning;
+          if (reasoningChunk) {
+            thinking += reasoningChunk;
+            if (!suppressThinking) {
+              eventStream?.emit({
+                id: `thinking-${requestId}-${Date.now()}`,
+                type: ActivityEventType.THOUGHT_CHUNK,
+                timestamp: Date.now(),
+                data: { chunk: reasoningChunk },
+              });
+            }
+          }
+
+          if (Array.isArray(delta.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              const entry = toolAcc.get(idx) ?? { id: '', name: '', args: '' };
+              if (tc.id) entry.id = tc.id;
+              if (tc.function?.name) entry.name = tc.function.name;
+              if (tc.function?.arguments) entry.args += tc.function.arguments;
+              toolAcc.set(idx, entry);
+            }
           }
         }
       }
+    } catch (error: any) {
+      // Mid-stream failure. Once content has reached the UI, retrying from
+      // scratch would append a second response to the ASSISTANT_CHUNK events
+      // already emitted, so hand back what we have and let ResponseProcessor
+      // continue from it. With nothing streamed yet, let the transport retry.
+      if (!contentWasStreamed) throw error;
+
+      logger.debug('[OPENAI_COMPAT] Mid-stream error with partial response - returning partial data');
+      return {
+        role: 'assistant',
+        content,
+        tool_calls: toolCallsSoFar(),
+        thinking: thinking || undefined,
+        error: true,
+        partial: true,
+        error_message: `Response interrupted: ${error.message}`,
+        _content_was_streamed: contentWasStreamed,
+      } as LLMResponse;
     }
 
     if (thinking && !suppressThinking) {
@@ -412,14 +457,15 @@ export class OpenAICompatClient extends ModelClient {
     const result: LLMResponse = { role: 'assistant', content };
     if (thinking) result.thinking = thinking;
     if (usage) result.usage = usage;
-    const toolCalls = this.finalizeToolCalls([...toolAcc.entries()].sort((a, b) => a[0] - b[0]).map(e => e[1]));
-    if (toolCalls.length > 0) result.tool_calls = toolCalls;
+    const toolCalls = toolCallsSoFar();
+    if (toolCalls && toolCalls.length > 0) result.tool_calls = toolCalls;
     if (contentWasStreamed) {
       result._content_was_streamed = true;
       result._should_replace_streaming = true;
     }
     return result;
   }
+
 
   private parseNonStreamingResponse(
     data: any,
@@ -445,17 +491,17 @@ export class OpenAICompatClient extends ModelClient {
       }
     }
 
+    // Emitted in internal shape with `arguments` untouched (string or object);
+    // the shared repair pass parses, re-ids, and validates them.
     if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
-      const toolCalls = this.finalizeToolCalls(
-        message.tool_calls.map((tc: any) => ({
-          id: tc.id || '',
+      result.tool_calls = message.tool_calls.map((tc: any) => ({
+        id: tc.id || '',
+        type: 'function',
+        function: {
           name: tc.function?.name || '',
-          args: typeof tc.function?.arguments === 'string'
-            ? tc.function.arguments
-            : JSON.stringify(tc.function?.arguments ?? {}),
-        }))
-      );
-      if (toolCalls.length > 0) result.tool_calls = toolCalls;
+          arguments: tc.function?.arguments ?? {},
+        },
+      })) as unknown as LLMResponse['tool_calls'];
     }
 
     if (data.usage) {
@@ -464,36 +510,6 @@ export class OpenAICompatClient extends ModelClient {
     }
 
     return result;
-  }
-
-  /**
-   * Turn accumulated {id,name,args-string} tuples into internal tool calls:
-   * parse the JSON-string arguments to an object and guarantee a unique id.
-   * Calls with an unparseable/missing name are dropped.
-   */
-  private finalizeToolCalls(
-    raw: Array<{ id: string; name: string; args: string }>
-  ): NonNullable<LLMResponse['tool_calls']> {
-    const calls: NonNullable<LLMResponse['tool_calls']> = [];
-    raw.forEach((entry, index) => {
-      if (!entry.name) return;
-      let args: Record<string, any> = {};
-      if (entry.args.trim()) {
-        try {
-          args = JSON.parse(entry.args);
-        } catch {
-          logger.warn(`[OPENAI_COMPAT] Dropping tool call '${entry.name}' with unparseable arguments`);
-          return;
-        }
-      }
-      const random = Math.random().toString(36).substring(2, 9);
-      calls.push({
-        id: entry.id || `call-${Date.now()}-${index}-${random}`,
-        type: 'function',
-        function: { name: entry.name, arguments: args },
-      });
-    });
-    return calls;
   }
 
   private handleRequestError(error: any): LLMResponse {

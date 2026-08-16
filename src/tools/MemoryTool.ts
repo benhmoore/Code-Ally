@@ -9,6 +9,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition, ToolExecutionContext } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import {
@@ -30,7 +31,7 @@ export class MemoryTool extends BaseTool {
     'project constraints not derivable from the code, external references). ' +
     'Memory is private and stored outside the repo. ' +
     'Actions: save/update (upsert a fact), delete (remove one), recall (fetch by name or relevance), list (all).';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly displayColor = 'cyan';
   // Hide the raw result preview; the one-line subtext carries the display.
   // The model still receives the full result content.

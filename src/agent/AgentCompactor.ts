@@ -21,6 +21,7 @@ import { logger } from '../services/Logger.js';
 import { BUFFER_SIZES } from '../config/constants.js';
 import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
 import { parseToolCallArguments } from '../llm/FunctionCalling.js';
+import { findSafeSplitIndex } from '../utils/conversationRecovery.js';
 import path from 'path';
 
 /**
@@ -35,6 +36,13 @@ const MAX_SUMMARIZATION_CONTEXT_PERCENT = 70;
  * Set to 50% to leave ample room for the conversation to continue.
  */
 const EMERGENCY_TRUNCATION_TARGET_PERCENT = 50;
+
+/**
+ * Target context percentage occupied by the tail retained verbatim after
+ * summarizing compaction. Anything pushed out of the tail by this budget is
+ * summarized, never dropped.
+ */
+const SUMMARIZATION_RETENTION_TARGET_PERCENT = 50;
 
 /**
  * Maximum number of file references to preserve during compaction.
@@ -89,8 +97,6 @@ export interface CompactionContext {
 export interface CompactionOptions {
   /** Optional custom instructions for summarization */
   customInstructions?: string;
-  /** Whether to preserve the last user message (default: true for auto-compact) */
-  preserveLastUserMessage?: boolean;
   /** Label for the summary timestamp (e.g., "auto-compacted" or none for manual) */
   timestampLabel?: string;
 }
@@ -170,7 +176,6 @@ export class AgentCompactor {
       `Context at ${contextUsage}%, threshold ${threshold}% - triggering compaction`);
 
     await this.compactAndApply(context, {
-      preserveLastUserMessage: true,
       timestampLabel: 'auto-compacted',
       forceEmergency: contextUsage >= CONTEXT_THRESHOLDS.EMERGENCY,
       verification: 'below-threshold',
@@ -377,6 +382,40 @@ export class AgentCompactor {
     return messages.reduce((total, message) => total + this.tokenManager.estimateMessageTokens(message), 0);
   }
 
+  /**
+   * Pick where the verbatim-retained tail starts.
+   *
+   * Shared by both compaction strategies so the split point can never differ
+   * between them: start from the caller's candidate, snap it back to a legal
+   * tool_call/tool_result boundary, then walk forward boundary by boundary
+   * until the retained tail fits `budgetTokens`. Messages pushed out of the
+   * tail become the caller's hand-off set (summarized transcript for
+   * summarization, drop notice for emergency truncation) — this selector never
+   * discards anything on its own.
+   */
+  private selectRetainedSplit(
+    messages: Message[],
+    candidateIndex: number,
+    budgetTokens: number
+  ): number {
+    let split = findSafeSplitIndex(messages, candidateIndex);
+
+    while (
+      split < messages.length &&
+      this.estimateMessagesTokenCount(messages.slice(split)) > budgetTokens
+    ) {
+      // Advance to the next index that is itself a legal boundary; snapping
+      // backwards from split+1 would return `split` again and spin forever.
+      let next = split + 1;
+      while (next < messages.length && findSafeSplitIndex(messages, next) !== next) {
+        next++;
+      }
+      split = next;
+    }
+
+    return split;
+  }
+
   private contextUsagePercentageFor(tokenCount: number): number {
     const contextSize = this.tokenManager.getContextSize();
     if (contextSize === 0) {
@@ -542,31 +581,22 @@ export class AgentCompactor {
     // Available budget for non-system messages (subtract system prompt from target)
     const availableForMessages = targetTokens - systemPromptTokens;
 
-    // Start from the end and work backwards, keeping messages until we exceed available budget
-    const keptMessages: Message[] = [];
-    let totalTokens = 0;
-
-    for (let i = nonEphemeralMessages.length - 1; i >= 0; i--) {
-      const msg = nonEphemeralMessages[i]!;
-      const msgTokens = this.tokenManager.estimateMessageTokens(msg);
-
-      if (totalTokens + msgTokens > availableForMessages && keptMessages.length > 0) {
-        // Would exceed available budget, stop adding more
-        break;
-      }
-
-      keptMessages.push(msg);
-      totalTokens += msgTokens;
+    // Same boundary-aware split as summarizing compaction, starting from "keep
+    // everything" and giving ground only as far as the budget demands. Only the
+    // summarization step differs between the two strategies.
+    let split = this.selectRetainedSplit(nonEphemeralMessages, 0, availableForMessages);
+    if (split >= nonEphemeralMessages.length) {
+      // Never truncate to nothing: fall back to the last legal boundary so the
+      // most recent exchange survives even if it alone overruns the budget.
+      split = findSafeSplitIndex(nonEphemeralMessages, nonEphemeralMessages.length - 1);
     }
-
-    // Reverse once at the end - O(n) instead of O(n²)
-    keptMessages.reverse();
+    const keptMessages = nonEphemeralMessages.slice(split);
+    const droppedMessages = nonEphemeralMessages.slice(0, split);
 
     // Add emergency truncation notice with file references
-    const droppedCount = nonEphemeralMessages.length - keptMessages.length;
+    const droppedCount = droppedMessages.length;
     if (droppedCount > 0) {
       // Extract file references from dropped messages
-      const droppedMessages = nonEphemeralMessages.slice(0, nonEphemeralMessages.length - keptMessages.length);
       const fileRefs = this.extractFileReferences(droppedMessages);
 
       result.push({
@@ -733,13 +763,12 @@ export class AgentCompactor {
   ): Promise<Message[]> {
     const {
       customInstructions,
-      preserveLastUserMessage = true,
       timestampLabel = undefined,
     } = options;
 
     // Extract system message and other messages
     const systemMessage = messages[0]?.role === 'system' ? messages[0] : null;
-    let otherMessages = systemMessage ? messages.slice(1) : messages;
+    let otherMessages: Message[] = systemMessage ? messages.slice(1) : [...messages];
 
     // Filter out ephemeral messages before compaction
     // Cleanup happens at end-of-turn (ResponseProcessor.processTextResponse), but compaction can trigger
@@ -752,22 +781,37 @@ export class AgentCompactor {
       return [...messages];
     }
 
-    // Find the last user message (the one that triggered compaction or current user request)
-    const lastUserMessage = preserveLastUserMessage
-      ? [...otherMessages].reverse().find(m => m.role === 'user')
-      : undefined;
+    // Retain a verbatim tail starting at the last user message, snapped to a
+    // legal tool_call/tool_result boundary. Compaction can fire mid-turn (from
+    // getLLMResponse, between tool round-trips), so the tail routinely contains
+    // the in-flight turn's assistant tool_calls and their results; splitting on
+    // a raw index would strand or silently delete them.
+    const lastUserIndex = otherMessages.map(msg => msg.role).lastIndexOf('user');
+    const candidateIndex = lastUserIndex >= 0 ? lastUserIndex : otherMessages.length;
 
-    // Messages to summarize: everything except the last user message (if preserving it)
-    const messagesToSummarize = lastUserMessage
-      ? otherMessages.slice(0, otherMessages.lastIndexOf(lastUserMessage))
-      : [...otherMessages];
+    const systemPromptTokens = systemMessage
+      ? this.tokenManager.estimateMessageTokens(systemMessage)
+      : 0;
+    const retentionBudget = Math.max(
+      0,
+      Math.floor(this.tokenManager.getContextSize() * SUMMARIZATION_RETENTION_TARGET_PERCENT / 100) -
+        systemPromptTokens
+    );
 
-    // Guard: if we have no messages to actually summarize (e.g., lastUserMessage is first),
-    // return unchanged - there's nothing meaningful to compact
+    // Anything the budget pushes out of the tail moves into messagesToSummarize,
+    // so it is summarized rather than dropped.
+    const split = this.selectRetainedSplit(otherMessages, candidateIndex, retentionBudget);
+    const retained = otherMessages.slice(split);
+    const messagesToSummarize = otherMessages.slice(0, split);
+
+    // Guard: if we have no messages to actually summarize (e.g., the split sits
+    // at the start of history), return unchanged - nothing meaningful to compact
     if (messagesToSummarize.length < BUFFER_SIZES.MIN_MESSAGES_TO_SUMMARIZE) {
-      logger.debug('[AGENT_COMPACT]', 'Not enough messages to summarize after excluding last user message');
+      logger.debug('[AGENT_COMPACT]', 'Not enough messages to summarize before the retained tail');
       return [...messages];
     }
+
+    const retainedUserRequest = retained[0]?.role === 'user' ? retained[0] : undefined;
 
     // Build fixed parts of summarization request (system prompt + user request)
     const summarizationSystemContent = `You are summarizing a coding conversation to save context space.
@@ -804,9 +848,9 @@ Requirements:
     if (customInstructions) {
       finalRequest += ` Additional instructions: ${customInstructions}`;
     }
-    if (lastUserMessage) {
+    if (retainedUserRequest) {
       const currentRequest = this.truncateTextToTokenBudget(
-        lastUserMessage.content,
+        retainedUserRequest.content,
         Math.max(200, Math.floor(this.tokenManager.getContextSize() * 0.05))
       );
       finalRequest += `\n\nThe user's current request is: "${currentRequest}"`;
@@ -905,10 +949,8 @@ Requirements:
       });
     }
 
-    // Add the last user message if we're preserving it
-    if (lastUserMessage) {
-      compacted.push(lastUserMessage);
-    }
+    // Retained tail follows the summary verbatim, tool pairing intact
+    compacted.push(...retained);
 
     return compacted;
   }

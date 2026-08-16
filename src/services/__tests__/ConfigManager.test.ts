@@ -329,19 +329,20 @@ describe('ConfigManager', () => {
     });
   });
 
-  describe('unknown keys cleanup', () => {
-    it('should preserve user settings when cleaning unknown keys', async () => {
-      // Simulate an old config file with user customizations + an unknown key
+  describe('unknown keys', () => {
+    it('should preserve user settings and unknown keys across a load/save cycle', async () => {
+      // A config written by a newer build: known settings plus a key this build
+      // does not recognize. Dropping the unknown key would silently destroy the
+      // user's setting, so it must survive the round trip.
       const oldConfig = {
         model: 'custom-model',
         temperature: 0.7,
         auto_confirm: true,
-        old_removed_field: 'should-be-removed', // Unknown key
+        future_only_field: 'must-survive', // Unknown to this build
       };
 
       await fs.writeFile(configPath, JSON.stringify(oldConfig, null, 2));
 
-      // Load config (this should trigger cleanup)
       configManager = new ConfigManager(configPath);
       await configManager.initialize();
 
@@ -350,17 +351,18 @@ describe('ConfigManager', () => {
       expect(configManager.getValue('temperature')).toBe(0.7);
       expect(configManager.getValue('auto_confirm')).toBe(true);
 
-      // Verify cleaned config was written to disk
-      const savedContent = await fs.readFile(configPath, 'utf-8');
-      const savedConfig = JSON.parse(savedContent);
+      // Loading alone must not rewrite the file
+      expect(JSON.parse(await fs.readFile(configPath, 'utf-8'))).toEqual(oldConfig);
 
-      // User settings should be preserved
+      // A subsequent save keeps both the known settings and the unknown key
+      await configManager.setValue('temperature', 0.4);
+
+      const savedConfig = JSON.parse(await fs.readFile(configPath, 'utf-8'));
       expect(savedConfig.model).toBe('custom-model');
-      expect(savedConfig.temperature).toBe(0.7);
+      expect(savedConfig.temperature).toBe(0.4);
       expect(savedConfig.auto_confirm).toBe(true);
-
-      // Unknown key should be removed
-      expect(savedConfig.old_removed_field).toBeUndefined();
+      expect(savedConfig.future_only_field).toBe('must-survive');
+      expect(savedConfig.schema_version).toBe(1);
     });
 
     it('should not reset config when defaults change', async () => {

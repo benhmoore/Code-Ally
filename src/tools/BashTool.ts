@@ -5,6 +5,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { spawn, ChildProcess } from 'child_process';
@@ -42,7 +43,11 @@ export class BashTool extends BaseTool {
   readonly name = 'bash';
   readonly description =
     'Execute shell commands. Use for running scripts, system operations, building/testing code';
-  readonly requiresConfirmation = true;
+  readonly capabilities = [ToolCapability.ShellExec] as const;
+
+  getShellCommand(args: Record<string, any>): string | null {
+    return typeof args.command === 'string' ? args.command : null;
+  }
   readonly streamsOutput = true; // Output is emitted via emitOutputChunk() during execution
 
   private config?: Config;
@@ -136,6 +141,7 @@ export class BashTool extends BaseTool {
             },
             working_dir: {
               type: 'string',
+              format: 'local-path',
               description: 'Working directory for command execution (default: current directory)',
             },
             run_in_background: {

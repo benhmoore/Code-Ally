@@ -6,7 +6,7 @@ import {
   computeNextRunAt,
   resolveZonedDateTimeToUtc,
   ScheduledTaskManager,
-  ScheduledTaskPermissionPolicy,
+  presetPolicy,
 } from '../ScheduledTaskManager.js';
 
 describe('ScheduledTaskManager', () => {
@@ -67,19 +67,17 @@ describe('ScheduledTaskManager', () => {
   });
 
   it('creates, lists, updates, and deletes project tasks', async () => {
-    const policy: ScheduledTaskPermissionPolicy = {
-      allowed_bash_commands: [{ match: 'exact', value: 'git push' }],
-    };
     const task = await manager.create({
       title: 'Push commits',
       run_prompt: 'Push unpushed commits only.',
       schedule: { type: 'daily', time: '06:00', timezone: 'UTC' },
-      permission_policy: policy,
+      policy_preset: 'git_push_only',
       project_dir: dir,
       profile: 'default',
     });
 
     expect(task.id).toMatch(/^sched-/);
+    expect(task.policy_preset).toBe('git_push_only');
     expect((await manager.listCurrentProject({ projectDir: dir }))).toHaveLength(1);
     expect((await manager.listAll())).toHaveLength(1);
 
@@ -195,5 +193,76 @@ describe('ScheduledTaskManager', () => {
     await first;
 
     await expect(manager.withGlobalLock(async () => 'ok')).resolves.toBe('ok');
+  });
+
+  describe('policy presets are code-owned', () => {
+    it('only resolves grants from the preset name, never from stored rules', async () => {
+      // A store record as an older build (or a hand edit) could have left it:
+      // a free-form permission_policy granting blanket bash via a regex rule.
+      await fs.writeFile(
+        join(dir, 'scheduled_tasks.json'),
+        JSON.stringify({
+          version: 1,
+          tasks: [
+            {
+              id: 'sched-legacy',
+              title: 'Legacy task',
+              enabled: true,
+              project_dir: dir,
+              profile: 'default',
+              schedule: { type: 'daily', time: '06:00', timezone: 'UTC', grace_minutes: 10 },
+              run_prompt: 'do work',
+              policy_preset: 'none',
+              permission_policy: {
+                allowed_bash_commands: [{ match: 'regex', value: '.*' }],
+                allowed_tools: ['bash'],
+              },
+              next_run_at: '2030-01-01T06:00:00.000Z',
+              last_status: 'never_run',
+              created_at: '2026-01-01T00:00:00.000Z',
+              updated_at: '2026-01-01T00:00:00.000Z',
+              history: [],
+            },
+          ],
+        }),
+        'utf-8',
+      );
+
+      const [task] = await manager.listCurrentProject({ projectDir: dir });
+
+      expect(task).toBeDefined();
+      // The free-form policy is dropped on load, not merely unused.
+      expect((task as Record<string, unknown>).permission_policy).toBeUndefined();
+      expect(task!.policy_preset).toBe('none');
+      // Grants are re-derived from the preset name, so the stored rules buy nothing.
+      expect(presetPolicy(task!.policy_preset)).toEqual({});
+    });
+
+    it('degrades an unrecognized persisted preset name to no grants', async () => {
+      const task = await manager.create({
+        title: 'Bogus preset',
+        run_prompt: 'do work',
+        schedule: { type: 'daily', time: '06:00', timezone: 'UTC' },
+        policy_preset: 'wide_open' as any,
+        project_dir: dir,
+        profile: 'default',
+      });
+
+      expect(task.policy_preset).toBe('none');
+      expect(presetPolicy(task.policy_preset)).toEqual({});
+    });
+
+    it('keeps the shipped presets working', () => {
+      expect(presetPolicy('git_push_only').allowed_bash_commands)
+        .toContainEqual({ match: 'exact', value: 'git push' });
+      expect(presetPolicy('docker_tests').allowed_bash_commands)
+        .toContainEqual({ match: 'exact', value: 'npm test' });
+      // No preset may express an allow-rule as a regex.
+      for (const preset of ['none', 'git_push_only', 'docker_tests'] as const) {
+        for (const rule of presetPolicy(preset).allowed_bash_commands ?? []) {
+          expect(['exact', 'prefix']).toContain(rule.match);
+        }
+      }
+    });
   });
 });

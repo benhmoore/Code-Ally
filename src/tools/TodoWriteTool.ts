@@ -11,6 +11,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -32,7 +33,7 @@ export class TodoWriteTool extends BaseTool {
   readonly name = 'todo-write';
   readonly description =
     'Manage todo list. Each todo must have: content (imperative task), status (pending/in_progress/completed), activeForm (present continuous). Example: [{content: "Fix bug", status: "pending", activeForm: "Fixing bug"}]. Empty array clears list.';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly visibleInChat = false; // Todos shown in status bar, not as tool call entries
   readonly hideOutput = true; // Todo updates shown in status bar, not chat
   readonly breaksExploratoryStreak = false; // Task management, not productive work

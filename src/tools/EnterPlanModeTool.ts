@@ -20,7 +20,8 @@ export class EnterPlanModeTool extends BaseTool {
   readonly name = 'enter-plan-mode';
   readonly description =
     'Enter plan mode for structured read-only exploration before implementation. Restricts available tools to read-only operations until a plan is written and approved.';
-  readonly requiresConfirmation = false;
+  /** Flips an in-process mode flag; touches nothing requiring authorization. */
+  readonly capabilities = [] as const;
   readonly hideOutput = true;
   readonly displayIcon = '◈';
 

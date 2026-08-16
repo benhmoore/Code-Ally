@@ -480,7 +480,7 @@ describe('EditTool', () => {
     });
 
     it('should require confirmation', () => {
-      expect(editTool.requiresConfirmation).toBe(true);
+      expect(editTool.requiresConfirmation({})).toBe(true);
     });
 
     it('should have proper function definition', () => {

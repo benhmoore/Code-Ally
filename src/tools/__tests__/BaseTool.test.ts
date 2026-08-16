@@ -4,14 +4,35 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BaseTool } from '@tools/BaseTool.js';
-import { ToolResult, ActivityEvent, ActivityEventType } from '@shared/index.js';
+import { ToolResult, ActivityEvent, ActivityEventType, FunctionDefinition } from '@shared/index.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 
 // Mock tool implementation
 class MockTool extends BaseTool {
   readonly name = 'mock-tool';
   readonly description = 'A mock tool for testing';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [] as const;
+
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: {
+          type: 'object',
+          properties: {
+            data: { type: 'string', description: 'Arbitrary payload echoed back' },
+            shouldFail: { type: 'boolean', description: 'Force the mock to fail' },
+            param1: { type: 'string', description: 'First captured parameter' },
+            param2: { type: 'string', description: 'Second captured parameter' },
+            param3: { type: 'string', description: 'Third captured parameter' },
+            param4: { type: 'string', description: 'Fourth captured parameter' },
+          },
+        },
+      },
+    };
+  }
 
   protected async executeImpl(args: any): Promise<ToolResult> {
     this.captureParams(args);
@@ -31,7 +52,18 @@ class MockTool extends BaseTool {
 class EmittingTool extends BaseTool {
   readonly name = 'emitting-tool';
   readonly description = 'A tool that emits an output chunk';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [] as const;
+
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: { type: 'object', properties: {} },
+      },
+    };
+  }
 
   protected async executeImpl(): Promise<ToolResult> {
     this.emitOutputChunk('streamed output');
@@ -42,12 +74,29 @@ class EmittingTool extends BaseTool {
 class ConcurrentTool extends BaseTool {
   readonly name = 'concurrent-tool';
   readonly description = 'Exercises overlapping invocations';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [] as const;
   private started = 0;
   private release!: () => void;
   private readonly bothStarted = new Promise<void>((resolve) => {
     this.release = resolve;
   });
+
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: {
+          type: 'object',
+          properties: {
+            label: { type: 'string', description: 'Identifies the invocation' },
+          },
+          required: ['label'],
+        },
+      },
+    };
+  }
 
   protected async executeImpl(args: { label: string }): Promise<ToolResult> {
     this.captureParams(args);

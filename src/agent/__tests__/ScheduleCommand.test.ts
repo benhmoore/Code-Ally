@@ -22,7 +22,7 @@ describe('ScheduleCommand', () => {
                 grace_minutes: 10,
               },
               run_prompt: 'Start Safari.',
-              permission_policy: {},
+              policy_preset: 'none',
               next_run_at: '2026-06-22T19:00:00.000Z',
               last_run_at: '2026-06-21T19:00:18.000Z',
               last_status: 'success',

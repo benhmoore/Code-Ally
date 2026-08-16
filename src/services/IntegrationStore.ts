@@ -11,6 +11,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from './Logger.js';
 import { CryptoService, CRYPTO_SALTS } from './CryptoService.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 import type { IService } from '../types/index.js';
 import type { IntegrationSettings, SearchProviderType } from '../types/integration.js';
 import {
@@ -233,7 +234,7 @@ export class IntegrationStore implements IService {
       };
 
       const content = JSON.stringify(storedSettings, null, 2);
-      await fs.writeFile(settingsPath, content, 'utf-8');
+      await atomicWriteFile(settingsPath, content, { mode: 0o600 });
 
       logger.debug(`[IntegrationStore] Saved settings to ${settingsPath}`);
     } catch (error) {

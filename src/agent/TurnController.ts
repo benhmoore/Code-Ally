@@ -27,6 +27,7 @@ export class TurnController {
   private modelCalls = 0;
   private toolCalls = 0;
   private terminationReason?: TurnTerminationReason;
+  private budgetNoticeEmitted = false;
 
   constructor(private readonly limits: { maxModelCalls: number; maxToolCalls: number }) {}
 
@@ -36,6 +37,28 @@ export class TurnController {
     this.modelCalls = 0;
     this.toolCalls = 0;
     this.terminationReason = undefined;
+    this.budgetNoticeEmitted = false;
+  }
+
+  /**
+   * Claim the right to tell the user the turn hit its budget. True exactly once
+   * per turn.
+   *
+   * Once a budget trips, `beginModelCall` refuses every subsequent call — but
+   * the turn has thirteen re-entry points into the model loop (continuations,
+   * recovery, requirement retries), and any of them re-entering would otherwise
+   * produce another copy of the same notice. The user sees the explanation once;
+   * the refusal itself keeps working.
+   */
+  claimBudgetNotice(): boolean {
+    if (this.budgetNoticeEmitted) return false;
+    this.budgetNoticeEmitted = true;
+    return true;
+  }
+
+  /** Whether a budget has tripped and the turn is winding down. */
+  isBudgetExhausted(): boolean {
+    return this.terminationReason === 'model_budget' || this.terminationReason === 'tool_budget';
   }
 
   beginModelCall(): boolean {

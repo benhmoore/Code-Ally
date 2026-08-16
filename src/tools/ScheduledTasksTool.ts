@@ -8,19 +8,19 @@ import { FunctionDefinition, ToolResult } from '../types/index.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import {
   getDefaultTimeZone,
+  isPolicyPreset,
+  POLICY_PRESETS,
   resolveZonedDateTimeToUtc,
   ScheduledTaskManager,
   ScheduledTask,
-  ScheduledTaskPermissionPolicy,
 } from '../services/ScheduledTaskManager.js';
 import { SchedulerInstaller } from '../services/SchedulerInstaller.js';
+import { ToolCapability } from './ToolCapability.js';
 import { spawn } from 'child_process';
 
 const ACTIONS = ['list', 'create', 'update', 'delete', 'delete_all', 'enable', 'disable', 'run_now'] as const;
 type ScheduledTaskAction = (typeof ACTIONS)[number];
 
-const POLICY_PRESETS = ['custom', 'git_push_only', 'docker_tests'] as const;
-type PolicyPreset = (typeof POLICY_PRESETS)[number];
 const SCHEDULED_SESSION_HINT =
   'No active scheduled tasks. Completed one-off runs are saved in session history as `scheduled_<task-id>_<timestamp>` sessions; use the sessions tool to inspect them.';
 
@@ -28,60 +28,6 @@ type ToolScheduleInput = Record<string, any>;
 type NormalizedToolScheduleResult =
   | { ok: true; schedule: ToolScheduleInput }
   | { ok: false; error: string };
-
-function presetPolicy(preset: PolicyPreset | undefined): ScheduledTaskPermissionPolicy {
-  switch (preset) {
-    case 'git_push_only':
-      return {
-        allowed_bash_commands: [
-          { match: 'exact', value: 'git status' },
-          { match: 'prefix', value: 'git status ' },
-          { match: 'exact', value: 'git rev-parse --is-inside-work-tree' },
-          { match: 'prefix', value: 'git rev-parse ' },
-          { match: 'prefix', value: 'git branch ' },
-          { match: 'prefix', value: 'git log ' },
-          { match: 'exact', value: 'git push' },
-          { match: 'prefix', value: 'git push ' },
-        ],
-        denied_bash_patterns: [
-          '\\bgit\\s+(add|commit|reset|checkout|clean|merge|rebase|cherry-pick|stash|pull)\\b',
-        ],
-      };
-    case 'docker_tests':
-      return {
-        allowed_bash_commands: [
-          { match: 'exact', value: 'docker info' },
-          { match: 'prefix', value: 'docker info ' },
-          { match: 'exact', value: 'docker ps' },
-          { match: 'prefix', value: 'docker ps ' },
-          { match: 'exact', value: 'open -a Docker' },
-          { match: 'prefix', value: 'open -a Docker ' },
-          { match: 'exact', value: 'systemctl start docker' },
-          { match: 'exact', value: 'systemctl --user start docker' },
-          { match: 'prefix', value: 'powershell -NoProfile -Command "Start-Process' },
-          { match: 'exact', value: 'npm test' },
-          { match: 'prefix', value: 'npm test ' },
-          { match: 'exact', value: 'npm run test' },
-          { match: 'prefix', value: 'npm run test ' },
-        ],
-        denied_bash_patterns: [
-          '\\b(rm|git\\s+commit|git\\s+add|git\\s+reset|git\\s+clean)\\b',
-        ],
-      };
-    case 'custom':
-    default:
-      return {};
-  }
-}
-
-function mergePolicy(base: ScheduledTaskPermissionPolicy, override: ScheduledTaskPermissionPolicy | undefined): ScheduledTaskPermissionPolicy {
-  if (!override) return base;
-  return {
-    allowed_tools: [...(base.allowed_tools ?? []), ...(override.allowed_tools ?? [])],
-    allowed_bash_commands: [...(base.allowed_bash_commands ?? []), ...(override.allowed_bash_commands ?? [])],
-    denied_bash_patterns: [...(base.denied_bash_patterns ?? []), ...(override.denied_bash_patterns ?? [])],
-  };
-}
 
 function renderTasks(tasks: ScheduledTask[]): string {
   if (tasks.length === 0) return SCHEDULED_SESSION_HINT;
@@ -280,7 +226,13 @@ export class ScheduledTasksTool extends BaseTool {
     'For one-offs with absolute clock times like "today at 2:10 PM", use type="once" with date="YYYY-MM-DD" and time="HH:mm" in the local timezone; do not calculate UTC offsets yourself. ' +
     'For one-offs like "ten minutes from now", use type="once" with run_in_minutes=10. Do not use run_in_minutes for clock-time requests. ' +
     'If the user says "every morning" without a time, ask for a time before creating the task.';
-  readonly requiresConfirmation = false;
+  /**
+   * Persists task definitions into Code-Ally's own state, and `run_now` spawns
+   * `process.execPath` to execute a task. ShellExec makes this tool confirmable,
+   * which closes a self-escalation loop: a scheduled run that was granted
+   * nothing could otherwise create a broader successor task unprompted.
+   */
+  readonly capabilities = [ToolCapability.AppStateWrite, ToolCapability.ShellExec] as const;
   readonly mainAgentOnly = true;
   readonly displayColor = 'cyan';
 
@@ -334,11 +286,10 @@ export class ScheduledTasksTool extends BaseTool {
             policy_preset: {
               type: 'string',
               enum: [...POLICY_PRESETS],
-              description: 'Optional permission preset: git_push_only, docker_tests, or custom.',
-            },
-            permission_policy: {
-              type: 'object',
-              description: 'Custom scheduled permission policy with allowed_tools, allowed_bash_commands, and denied_bash_patterns.',
+              description:
+                'Permission preset the unattended run executes under. One of the presets defined in code: ' +
+                'none (no permissions), git_push_only, docker_tests. Defaults to none. ' +
+                'Presets cannot be described or extended here; a capability that no preset covers requires a new preset in code.',
             },
             all_projects: {
               type: 'boolean',
@@ -386,7 +337,7 @@ export class ScheduledTasksTool extends BaseTool {
             run_prompt: args.run_prompt,
             schedule: normalizedSchedule.schedule as any,
             enabled,
-            permission_policy: mergePolicy(presetPolicy(args.policy_preset), args.permission_policy),
+            policy_preset: isPolicyPreset(args.policy_preset) ? args.policy_preset : 'none',
           });
           const installMessage = await ensureSchedulerInstalledIfNeeded(enabledBefore, enabled);
           return this.formatSuccessResponse({
@@ -407,11 +358,7 @@ export class ScheduledTasksTool extends BaseTool {
             run_prompt: args.run_prompt,
             schedule: normalizedSchedule?.schedule as any,
             enabled: args.enabled,
-            permission_policy: args.permission_policy
-              ? mergePolicy(presetPolicy(args.policy_preset), args.permission_policy)
-              : args.policy_preset
-                ? presetPolicy(args.policy_preset)
-                : undefined,
+            policy_preset: isPolicyPreset(args.policy_preset) ? args.policy_preset : undefined,
           });
           if (!task) return this.formatErrorResponse(`Scheduled task not found: ${args.task_id}`, 'user_error');
           const installMessage = await ensureSchedulerInstalledIfNeeded(enabledBefore, task.enabled);

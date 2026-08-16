@@ -83,6 +83,62 @@ function createCompactor(
   return { compactor, conversationManager, activityStream, modelClient, tokenManager };
 }
 
+/**
+ * Assert the tool_call/tool_result invariant: every tool result has an earlier
+ * assistant message that requested it, and every retained assistant call is
+ * answered.
+ */
+function expectToolPairingIntact(messages: readonly Message[]): void {
+  const calledIds = new Set<string>();
+  const answeredIds = new Set<string>();
+
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) calledIds.add(tc.id);
+    }
+    if (msg.role === 'tool') {
+      expect(msg.tool_call_id).toBeTruthy();
+      // Parent must already have been seen — never a leading orphan.
+      expect(calledIds.has(msg.tool_call_id!)).toBe(true);
+      answeredIds.add(msg.tool_call_id!);
+    }
+  }
+
+  for (const id of calledIds) {
+    expect(answeredIds.has(id)).toBe(true);
+  }
+}
+
+/** A conversation whose newest turn is still in flight (tool calls + results). */
+function midTurnMessages(): Message[] {
+  return [
+    { role: 'system', content: 'system prompt' },
+    { role: 'user', content: 'Original goal' },
+    { role: 'assistant', content: `Older reply ${'X'.repeat(2000)}` },
+    { role: 'user', content: 'CURRENT REQUEST' },
+    {
+      role: 'assistant',
+      content: 'Calling first tool',
+      tool_calls: [{
+        id: 'call-1',
+        type: 'function',
+        function: { name: 'grep', arguments: { pattern: 'alpha' } },
+      }],
+    },
+    { role: 'tool', name: 'grep', tool_call_id: 'call-1', content: `TOOL RESULT ALPHA ${'y'.repeat(3000)}` },
+    {
+      role: 'assistant',
+      content: 'Calling second tool',
+      tool_calls: [{
+        id: 'call-2',
+        type: 'function',
+        function: { name: 'read', arguments: { file_paths: ['src/b.ts'] } },
+      }],
+    },
+    { role: 'tool', name: 'read', tool_call_id: 'call-2', content: `TOOL RESULT BETA ${'z'.repeat(3000)}` },
+  ];
+}
+
 describe('AgentCompactor', () => {
   it('keeps a bounded excerpt of an oversized newest summarized message', async () => {
     const hugeAssistantMessage = `RECENT HUGE RESULT\n${'x'.repeat(40000)}\nIMPORTANT TAIL`;
@@ -94,9 +150,7 @@ describe('AgentCompactor', () => {
     ];
     const { compactor, modelClient } = createCompactor(messages);
 
-    const compacted = await compactor.compactConversation(messages, {
-      preserveLastUserMessage: true,
-    }, new AbortController().signal);
+    const compacted = await compactor.compactConversation(messages, {}, new AbortController().signal);
 
     const request = modelClient.requests[0]!;
     expect(request).toHaveLength(2);
@@ -126,7 +180,7 @@ describe('AgentCompactor', () => {
     ];
     const { compactor, modelClient } = createCompactor(messages);
 
-    await compactor.compactConversation(messages, { preserveLastUserMessage: true }, new AbortController().signal);
+    await compactor.compactConversation(messages, {}, new AbortController().signal);
 
     const request = modelClient.requests[0]!;
     expect(request.map(msg => msg.role)).toEqual(['system', 'user']);
@@ -169,9 +223,7 @@ describe('AgentCompactor', () => {
     ];
     const { compactor } = createCompactor(messages);
 
-    const compacted = await compactor.compactConversation(messages, {
-      preserveLastUserMessage: true,
-    }, new AbortController().signal);
+    const compacted = await compactor.compactConversation(messages, {}, new AbortController().signal);
     const summary = compacted.find(msg => msg.metadata?.isConversationSummary);
 
     expect(summary?.metadata?.contextFileReferences).toEqual([editedPath, readPath]);
@@ -199,13 +251,16 @@ describe('AgentCompactor', () => {
       generateId: () => `evt-${events.length}`,
       signal: new AbortController().signal,
     }, {
-      preserveLastUserMessage: false,
       verification: 'reduced',
     });
 
     expect(result.newTokenCount).toBeLessThan(result.oldTokenCount);
-    expect(conversationManager.getMessages()).toHaveLength(2);
+    // system + summary + retained tail starting at the last user message
+    expect(conversationManager.getMessages().map(msg => msg.role)).toEqual([
+      'system', 'system', 'user', 'assistant',
+    ]);
     expect(conversationManager.getMessages()[1]?.metadata?.isConversationSummary).toBe(true);
+    expect(conversationManager.getMessages()[2]?.content).toBe('Next');
     expect(events.map(event => event.type)).toEqual([
       ActivityEventType.COMPACTION_START,
       ActivityEventType.COMPACTION_COMPLETE,
@@ -232,7 +287,6 @@ describe('AgentCompactor', () => {
       generateId: () => `evt-${events.length}`,
       signal: new AbortController().signal,
     }, {
-      preserveLastUserMessage: false,
       verification: 'reduced',
     })).rejects.toThrow('Compaction did not reduce token usage');
 
@@ -242,5 +296,87 @@ describe('AgentCompactor', () => {
       ActivityEventType.COMPACTION_COMPLETE,
     ]);
     expect(events.at(-1)?.data?.error).toBe(true);
+  });
+
+  it('retains the in-flight turn verbatim when compaction fires mid-turn', async () => {
+    const messages = midTurnMessages();
+    const { compactor } = createCompactor(messages);
+
+    const compacted = await compactor.compactConversation(messages, {}, new AbortController().signal);
+
+    // The whole in-flight turn survives: user request, both calls, both results.
+    expect(compacted.map(msg => msg.role)).toEqual([
+      'system', 'system', 'user', 'assistant', 'tool', 'assistant', 'tool',
+    ]);
+    expect(compacted[2]!.content).toBe('CURRENT REQUEST');
+    expect(compacted.some(msg => msg.content?.includes('TOOL RESULT ALPHA'))).toBe(true);
+    expect(compacted.some(msg => msg.content?.includes('TOOL RESULT BETA'))).toBe(true);
+    expectToolPairingIntact(compacted);
+  });
+
+  it('summarizes rather than drops the in-flight turn when the retained tail exceeds budget', async () => {
+    const messages = midTurnMessages();
+    // Context small enough that the tail from the last user message overruns the
+    // post-compaction retention budget, forcing the split forward.
+    const { compactor, modelClient } = createCompactor(messages, new MockModelClient(), new FakeTokenManager(2000));
+
+    const compacted = await compactor.compactConversation(messages, {}, new AbortController().signal);
+
+    // Split advanced to the next safe boundary: the second call + its result.
+    expect(compacted.map(msg => msg.role)).toEqual(['system', 'system', 'assistant', 'tool']);
+    expect(compacted[2]!.tool_calls?.[0]?.id).toBe('call-2');
+    expect(compacted[3]!.tool_call_id).toBe('call-2');
+    expectToolPairingIntact(compacted);
+
+    // Everything pushed out of the tail was SENT TO THE SUMMARIZER, not dropped.
+    const transcript = modelClient.requests[0]![1]!.content;
+    expect(transcript).toContain('CURRENT REQUEST');
+    expect(transcript).toContain('call-1: grep');
+    expect(transcript).toContain('TOOL RESULT ALPHA');
+  });
+
+  it('never splits an assistant tool_calls message away from its results', async () => {
+    const messages = midTurnMessages();
+
+    for (const contextSize of [8000, 4000, 2000, 1200]) {
+      const { compactor } = createCompactor(
+        messages,
+        new MockModelClient(),
+        new FakeTokenManager(contextSize)
+      );
+
+      const summarized = await compactor.compactConversation(messages, {}, new AbortController().signal);
+      expectToolPairingIntact(summarized);
+
+      const truncated: Message[] = (compactor as any).performEmergencyTruncation(messages);
+      expectToolPairingIntact(truncated);
+    }
+  });
+
+  it('emergency truncation never begins with a parentless tool result', () => {
+    // Budget fits the small tool result but not the huge assistant call that
+    // produced it — the pre-fix backwards keep-loop emitted a leading orphan.
+    const messages: Message[] = [
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: 'Goal' },
+      {
+        role: 'assistant',
+        content: 'A'.repeat(3000),
+        tool_calls: [{
+          id: 'call-huge',
+          type: 'function',
+          function: { name: 'grep', arguments: { pattern: 'x' } },
+        }],
+      },
+      { role: 'tool', name: 'grep', tool_call_id: 'call-huge', content: 'tiny result' },
+    ];
+    const { compactor } = createCompactor(messages, new MockModelClient(), new FakeTokenManager(400));
+
+    const truncated: Message[] = (compactor as any).performEmergencyTruncation(messages);
+
+    const firstNonSystem = truncated.find(msg => msg.role !== 'system');
+    expect(firstNonSystem?.role).not.toBe('tool');
+    expect(firstNonSystem?.tool_calls?.[0]?.id).toBe('call-huge');
+    expectToolPairingIntact(truncated);
   });
 });

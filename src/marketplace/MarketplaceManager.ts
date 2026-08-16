@@ -5,13 +5,14 @@
  * registry that lists available plugins.
  */
 
-import { readFile, writeFile, mkdir, access } from 'fs/promises';
+import { readFile, mkdir, access } from 'fs/promises';
 import { join } from 'path';
 import { constants } from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 import {
   KNOWN_MARKETPLACES_FILE,
   MARKETPLACE_DIR,
@@ -329,10 +330,9 @@ export class MarketplaceManager implements IService {
 
   private async saveKnownMarketplaces(): Promise<void> {
     await mkdir(MARKETPLACE_DIR, { recursive: true });
-    await writeFile(
+    await atomicWriteFile(
       KNOWN_MARKETPLACES_FILE,
-      JSON.stringify(this.knownMarketplaces, null, 2),
-      'utf-8'
+      JSON.stringify(this.knownMarketplaces, null, 2)
     );
   }
 }

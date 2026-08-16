@@ -11,6 +11,7 @@
 import * as path from 'path';
 import { promises as fs } from 'fs';
 import { getProjectSessionsDir } from '../config/paths.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 
 export class ToolResultPersistence {
   private sessionsDir: string;
@@ -43,14 +44,7 @@ export class ToolResultPersistence {
       // Sanitize toolCallId for use as filename
       const safeId = toolCallId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const filePath = path.join(resultsDir, `${safeId}.txt`);
-      const tempPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-      try {
-        await fs.writeFile(tempPath, content, { encoding: 'utf-8', mode: 0o600 });
-        await fs.rename(tempPath, filePath);
-      } catch (error) {
-        await fs.unlink(tempPath).catch(() => undefined);
-        throw error;
-      }
+      await atomicWriteFile(filePath, content, { mode: 0o600 });
       return filePath;
     } catch {
       return null;

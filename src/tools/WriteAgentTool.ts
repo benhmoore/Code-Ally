@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import type { AgentData } from '../types/agents.js';
 import { ActivityStream } from '../services/ActivityStream.js';
@@ -20,7 +21,7 @@ import { stat } from 'fs/promises';
 export class WriteAgentTool extends BaseTool {
   readonly name = 'write-agent';
   readonly description = 'Create a new agent definition file with structured parameters (name, description, system_prompt, and optional configuration). File is automatically created in the correct profile agents directory.';
-  readonly requiresConfirmation = false; // No permission needed (validated before creation)
+  readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly hideOutput = true; // Hide output from result preview
   readonly visibleTo = ['manage-agents']; // Only visible to manage-agents agent
 

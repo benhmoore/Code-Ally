@@ -51,7 +51,7 @@ describe('GrepTool', () => {
     });
 
     it('should not require confirmation', () => {
-      expect(grepTool.requiresConfirmation).toBe(false);
+      expect(grepTool.requiresConfirmation({})).toBe(false);
     });
 
     it('should have function definition', () => {

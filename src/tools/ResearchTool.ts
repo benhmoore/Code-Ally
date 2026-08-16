@@ -12,6 +12,7 @@
  */
 
 import { BaseDelegationTool, DelegationToolConfig } from './BaseDelegationTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -58,7 +59,8 @@ export class ResearchTool extends BaseDelegationTool {
   readonly name = 'research';
   readonly description =
     'Perform web research using search and fetch capabilities. Delegates to specialized research agent. Use when you need to find information from the web, verify facts, or gather current data. Returns synthesized findings with sources.';
-  readonly requiresConfirmation = false; // Research is read-only
+  // Delegates to a research agent; the child's own tool calls are gated individually.
+  readonly capabilities = [ToolCapability.Network] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output

@@ -101,31 +101,19 @@ ${MEMORY_GUIDELINES}`;
  */
 function getContextUsageInfo(tokenManager?: TokenManager, toolResultManager?: ToolResultManager): string {
   try {
-    // Use provided instances or fall back to ServiceRegistry
-    let tm = tokenManager;
-    let trm = toolResultManager;
+    // Both managers are agent-scoped and injected by the owning Agent. A
+    // registry fallback used to sit here; it looked up 'tool_result_manager',
+    // a key registered nowhere in the repo, so it silently returned null and
+    // degraded the prompt. There is no global counterpart to fall back to, so
+    // absence simply means no usage line.
+    const tm = tokenManager;
+    const trm = toolResultManager;
 
-    if (!tm || !trm) {
-      const serviceRegistry = ServiceRegistry.getInstance();
-      if (!serviceRegistry) return '';
-
-      // Note: Using ServiceRegistry.get<any>() is intentional to avoid circular dependencies.
-      // Services are optional/lazy-loaded and duck-typed at runtime via method checks below.
-      if (!tm) tm = serviceRegistry.get<any>('token_manager');
-      if (!trm) trm = serviceRegistry.get<any>('tool_result_manager');
-    }
-
-    if (!tm || typeof tm.getContextUsagePercentage !== 'function') {
-      return '';
-    }
+    if (!tm) return '';
 
     const contextPct = tm.getContextUsagePercentage();
     const remainingTokens = tm.getRemainingTokens ? tm.getRemainingTokens() : 0;
-    let remainingCalls = 0;
-
-    if (trm && typeof trm.estimateRemainingToolCalls === 'function') {
-      remainingCalls = trm.estimateRemainingToolCalls();
-    }
+    const remainingCalls = trm ? trm.estimateRemainingToolCalls() : 0;
 
     // Format remaining tokens in a human-readable way (KB)
     const remainingKB = Math.round(remainingTokens / 250); // ~250 tokens per KB of text
@@ -155,18 +143,10 @@ function getContextUsageInfo(tokenManager?: TokenManager, toolResultManager?: To
  */
 function getContextBudgetReminder(tokenManager?: TokenManager): string {
   try {
-    // Use provided instance or fall back to ServiceRegistry
-    let tm = tokenManager;
-
-    if (!tm) {
-      const serviceRegistry = ServiceRegistry.getInstance();
-      if (!serviceRegistry) return '';
-      tm = serviceRegistry.get<any>('token_manager');
-    }
-
-    if (!tm || typeof tm.getContextUsagePercentage !== 'function') {
-      return '';
-    }
+    // Injected by the owning Agent; see getContextUsageInfo for why the registry
+    // fallback that used to sit here was removed.
+    const tm = tokenManager;
+    if (!tm) return '';
 
     const contextPct = tm.getContextUsagePercentage();
 

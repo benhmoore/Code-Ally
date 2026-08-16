@@ -5,11 +5,12 @@
  * is tracked in installed_plugins.json with version, path, and enabled state.
  */
 
-import { readFile, writeFile, mkdir, rm, cp, access } from 'fs/promises';
+import { readFile, mkdir, rm, cp, access } from 'fs/promises';
 import { join } from 'path';
 import { constants } from 'fs';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 import {
   INSTALLED_PLUGINS_FILE,
   BLOCKLIST_FILE,
@@ -472,10 +473,9 @@ export class PluginManager implements IService {
 
   private async saveInstalledPlugins(): Promise<void> {
     await mkdir(MARKETPLACE_DIR, { recursive: true });
-    await writeFile(
+    await atomicWriteFile(
       INSTALLED_PLUGINS_FILE,
-      JSON.stringify(this.installedPlugins, null, 2),
-      'utf-8'
+      JSON.stringify(this.installedPlugins, null, 2)
     );
   }
 

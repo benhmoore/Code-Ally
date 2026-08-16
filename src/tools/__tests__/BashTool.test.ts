@@ -21,7 +21,7 @@ describe('BashTool', () => {
     });
 
     it('should require confirmation', () => {
-      expect(bashTool.requiresConfirmation).toBe(true);
+      expect(bashTool.requiresConfirmation({})).toBe(true);
     });
 
     it('should have function definition', () => {

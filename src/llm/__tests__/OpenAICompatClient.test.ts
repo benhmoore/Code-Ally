@@ -134,4 +134,75 @@ describe('OpenAICompatClient', () => {
     expect(res.tool_calls![0].function.name).toBe('read');
     expect(res.tool_calls![0].function.arguments).toEqual({ file_path: '/a' });
   });
+
+  it('keeps already-streamed content as a partial response when the stream fails mid-flight', async () => {
+    const encoder = new TextEncoder();
+    let call = 0;
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (call++ === 0) {
+              return { done: false, value: encoder.encode('data: {"choices":[{"delta":{"content":"Partial answer"}}]}\n') };
+            }
+            throw new Error('ECONNRESET');
+          },
+        }),
+      },
+    });
+
+    const res = await client.send([{ role: 'user', content: 'go' }], { stream: true, signal: signal() });
+
+    expect(res.partial).toBe(true);
+    expect(res.error).toBe(true);
+    expect(res.content).toBe('Partial answer');
+    expect(res.error_message).toContain('ECONNRESET');
+    // One attempt only: retrying would duplicate the chunks already in the UI.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows a mid-stream failure for retry when nothing has been streamed yet', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      body: { getReader: () => ({ read: async () => { throw new Error('ECONNRESET'); } }) },
+    });
+    mockFetch.mockResolvedValueOnce(sseResponse([
+      'data: {"choices":[{"delta":{"content":"retried ok"}}]}',
+      'data: [DONE]',
+    ]));
+
+    const res = await client.send([{ role: 'user', content: 'go' }], { stream: true, signal: signal() });
+
+    expect(res.content).toBe('retried ok');
+    expect(res.partial).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a malformed tool call to the model instead of silently dropping it', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [
+        { id: 'call_1', type: 'function', function: { name: 'read', arguments: '{"file_path":' } },
+      ] } }],
+    }));
+
+    const res = await client.send([{ role: 'user', content: 'read it' }], { stream: false, signal: signal() });
+
+    expect(res.error).toBe(true);
+    expect(res.tool_call_validation_failed).toBe(true);
+    expect(res.validation_errors?.[0]).toContain('Invalid JSON in arguments');
+    expect(res.tool_calls).toHaveLength(1);
+  });
+
+  it('accepts a streamed tool call that accumulated no arguments', async () => {
+    mockFetch.mockResolvedValueOnce(sseResponse([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"list_todos"}}]}}]}',
+      'data: [DONE]',
+    ]));
+
+    const res = await client.send([{ role: 'user', content: 'todos' }], { stream: true, signal: signal() });
+
+    expect(res.tool_call_validation_failed).toBeUndefined();
+    expect(res.tool_calls![0].function).toEqual({ name: 'list_todos', arguments: {} });
+  });
 });

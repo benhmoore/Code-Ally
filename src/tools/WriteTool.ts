@@ -5,6 +5,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { FocusManager } from '../services/FocusManager.js';
@@ -20,7 +21,7 @@ import * as path from 'path';
 export class WriteTool extends BaseTool {
   readonly name = 'write';
   readonly description = 'Create a new file with the specified content. By default FAILS if file already exists (use edit or line-edit instead). Set overwrite=true to replace existing files.';
-  readonly requiresConfirmation = true; // Destructive operation
+  readonly capabilities = [ToolCapability.FsWrite] as const;
   readonly hideOutput = true; // Hide output from result preview
 
   constructor(activityStream: ActivityStream) {
@@ -70,6 +71,7 @@ export class WriteTool extends BaseTool {
           properties: {
             file_path: {
               type: 'string',
+              format: 'local-path',
               description: 'Path to the file to write',
             },
             content: {

@@ -5,13 +5,30 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ToolManager } from '@tools/ToolManager.js';
 import { BaseTool } from '@tools/BaseTool.js';
-import { ToolResult } from '@shared/index.js';
+import { ToolResult, FunctionDefinition } from '@shared/index.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 
 class TestTool extends BaseTool {
   readonly name = 'test-tool';
   readonly description = 'A test tool';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [] as const;
+
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: {
+          type: 'object',
+          properties: {
+            required_param: { type: 'string', description: 'The value echoed back' },
+          },
+          required: ['required_param'],
+        },
+      },
+    };
+  }
 
   protected async executeImpl(args: any): Promise<ToolResult> {
     this.captureParams(args);
@@ -32,7 +49,28 @@ class TestTool extends BaseTool {
 class ReadTool extends BaseTool {
   readonly name = 'read';
   readonly description = 'Read files';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [] as const;
+
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: {
+          type: 'object',
+          properties: {
+            file_paths: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Paths the mock pretends to read',
+            },
+          },
+          required: ['file_paths'],
+        },
+      },
+    };
+  }
 
   protected async executeImpl(args: any): Promise<ToolResult> {
     return this.formatSuccessResponse({
@@ -45,7 +83,24 @@ class ReadTool extends BaseTool {
 class WriteTool extends BaseTool {
   readonly name = 'write';
   readonly description = 'Write files';
-  readonly requiresConfirmation = false;
+  readonly capabilities = [] as const;
+
+  getFunctionDefinition(): FunctionDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string', description: 'Path the mock pretends to write' },
+          },
+          required: ['file_path'],
+        },
+      },
+    };
+  }
 
   protected async executeImpl(args: any): Promise<ToolResult> {
     return this.formatSuccessResponse({
@@ -166,8 +221,18 @@ describe('ToolManager', () => {
     class MainOnlyTool extends BaseTool {
       readonly name = 'main-only';
       readonly description = 'Main agent only';
-      readonly requiresConfirmation = false;
+      readonly capabilities = [] as const;
       readonly mainAgentOnly = true;
+      getFunctionDefinition(): FunctionDefinition {
+        return {
+          type: 'function',
+          function: {
+            name: this.name,
+            description: this.description,
+            parameters: { type: 'object', properties: {} },
+          },
+        };
+      }
       protected async executeImpl(): Promise<ToolResult> {
         return this.formatSuccessResponse({ ok: true });
       }

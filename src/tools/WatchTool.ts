@@ -16,6 +16,7 @@
 import { spawn } from 'child_process';
 import { stat } from 'fs/promises';
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -30,7 +31,18 @@ type Condition = 'file_exists' | 'http_ok' | 'shell';
 export class WatchTool extends BaseTool {
   readonly name = 'watch';
   readonly description = 'Watch for a condition (file appears, HTTP 200, or shell command succeeds) and be notified when met';
-  readonly requiresConfirmation = false;
+  /**
+   * The maximum set across all conditions; `capabilitiesFor` narrows it to what
+   * a given invocation actually does. Watching for a file or a URL is harmless,
+   * but the `shell` condition runs a model-supplied command line on a poll loop,
+   * so it must be confirmed like any other shell execution.
+   */
+  readonly capabilities = [
+    ToolCapability.FsRead,
+    ToolCapability.Network,
+    ToolCapability.ShellExec,
+  ] as const;
+
   readonly hideOutput = false;
   readonly usageGuidance = `**When to use watch:**
 To monitor something that doesn't emit its own completion — a file appearing, a
@@ -40,6 +52,31 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
+  }
+
+  capabilitiesFor(args: Record<string, any>): readonly ToolCapability[] {
+    switch (args.condition as Condition) {
+      case 'file_exists':
+        return [ToolCapability.FsRead];
+      case 'http_ok':
+        return [ToolCapability.Network];
+      case 'shell':
+        return [ToolCapability.ShellExec];
+      default:
+        // Unrecognized condition is rejected in executeImpl; until then assume
+        // the most dangerous reading so an unknown value can never slip through
+        // unconfirmed.
+        return this.capabilities;
+    }
+  }
+
+  /**
+   * The shell command this invocation would run, or null. Lets the permission
+   * layer classify it with the same rules it applies to `bash` instead of
+   * treating it as an opaque `watch` argument.
+   */
+  getShellCommand(args: Record<string, any>): string | null {
+    return args.condition === 'shell' && typeof args.command === 'string' ? args.command : null;
   }
 
   getFunctionDefinition(): FunctionDefinition {
@@ -53,11 +90,25 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
           properties: {
             condition: {
               type: 'string',
+              enum: ['file_exists', 'http_ok', 'shell'],
               description: "What to watch for: 'file_exists' | 'http_ok' | 'shell'",
             },
-            target: {
+            // Split by condition rather than one polymorphic `target`: a single
+            // parameter cannot be both a path to authorize and a command to
+            // classify, so the schema could not describe what the value is.
+            file_path: {
               type: 'string',
-              description: "The thing to check: a file path (file_exists), a URL (http_ok), or a shell command (shell).",
+              format: 'local-path',
+              description: 'Required for file_exists: the file to wait for.',
+            },
+            url: {
+              type: 'string',
+              description: 'Required for http_ok: the URL to poll until it returns 200.',
+            },
+            command: {
+              type: 'string',
+              description:
+                'Required for shell: the command to run until it exits 0. Runs on every poll and requires confirmation.',
             },
             interval_seconds: {
               type: 'number',
@@ -72,7 +123,7 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
               description: 'Auto-notify (wake) when the condition is satisfied, even if you are idle. Default false.',
             },
           },
-          required: ['condition', 'target'],
+          required: ['condition'],
         },
       },
     };
@@ -82,7 +133,6 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
     this.captureParams(args);
 
     const condition = args.condition as Condition;
-    const target = args.target as string;
 
     if (!['file_exists', 'http_ok', 'shell'].includes(condition)) {
       return this.formatErrorResponse(
@@ -91,8 +141,21 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
         "condition must be 'file_exists', 'http_ok', or 'shell'"
       );
     }
+
+    const TARGET_PARAM: Record<Condition, 'file_path' | 'url' | 'command'> = {
+      file_exists: 'file_path',
+      http_ok: 'url',
+      shell: 'command',
+    };
+    const targetParam = TARGET_PARAM[condition];
+    const target = args[targetParam];
+
     if (!target || typeof target !== 'string') {
-      return this.formatErrorResponse('target is required', 'validation_error');
+      return this.formatErrorResponse(
+        `${targetParam} is required for condition '${condition}'`,
+        'validation_error',
+        `Pass the value as '${targetParam}'.`
+      );
     }
 
     const registry = ServiceRegistry.getInstance();
@@ -143,11 +206,12 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
   }
 
   formatSubtext(args: Record<string, any>): string | null {
-    if (!args.condition || !args.target) return null;
-    return `${args.condition}: ${args.target}`;
+    const target = args.file_path ?? args.url ?? args.command;
+    if (!args.condition || !target) return null;
+    return `${args.condition}: ${target}`;
   }
 
   getSubtextParameters(): string[] {
-    return ['condition', 'target', 'interval_seconds', 'wake'];
+    return ['condition', 'file_path', 'url', 'command', 'interval_seconds', 'wake'];
   }
 }

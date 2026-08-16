@@ -7,6 +7,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -72,7 +73,7 @@ export class TreeTool extends BaseTool {
   readonly name = 'tree';
   readonly description =
     'Display directory tree structure for one or more paths. Automatically filters out build artifacts, dependencies, and temporary files. More efficient than multiple ls calls.';
-  readonly requiresConfirmation = false; // Read-only operation
+  readonly capabilities = [ToolCapability.FsRead] as const;
   readonly hideOutput = true;
   readonly isExploratoryTool = true;
 
@@ -98,9 +99,11 @@ Prefer over multiple ls calls.`;
           properties: {
             paths: {
               type: 'array',
+              format: 'local-path',
               description: 'Array of directory paths to show as trees (default: ["."])',
               items: {
                 type: 'string',
+                format: 'local-path',
               },
             },
             depth: {

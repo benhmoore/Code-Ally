@@ -6,6 +6,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
+import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
@@ -30,7 +31,7 @@ export class WebFetchTool extends BaseTool {
   readonly displayName = 'Fetch URL';
   readonly description =
     'Fetch and extract text content from a URL. Supports HTML, plain text, and JSON. HTML is converted to readable text.';
-  readonly requiresConfirmation = false; // Read-only operation
+  readonly capabilities = [ToolCapability.Network] as const;
   readonly isExploratoryTool = true;
 
   constructor(activityStream: ActivityStream) {

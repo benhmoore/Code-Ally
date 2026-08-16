@@ -17,6 +17,7 @@ import type { IService } from '../types/index.js';
 import type { Profile, ProfileInfo, CreateProfileOptions, ProfileStats } from '../types/profile.js';
 import { logger } from './Logger.js';
 import { FORMATTING } from '../config/constants.js';
+import { atomicWriteFile } from '../utils/atomicFile.js';
 import { PROFILE_COLOR_PALETTE } from '../ui/constants/colors.js';
 
 /**
@@ -277,7 +278,7 @@ export class ProfileManager implements IService {
       profile.updated_at = new Date().toISOString();
 
       const content = JSON.stringify(profile, null, FORMATTING.JSON_INDENT_SPACES);
-      await fs.writeFile(metadataPath, content, 'utf-8');
+      await atomicWriteFile(metadataPath, content);
 
       logger.debug(`[PROFILE] Saved metadata for profile ${profile.name}`);
     } catch (error) {

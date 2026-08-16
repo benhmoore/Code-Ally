@@ -43,14 +43,6 @@ import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
 import { PlanModeManager } from '../services/PlanModeManager.js';
 
 /**
- * Maximum time (ms) for a concurrent tool batch to complete.
- * If any tool in the batch hasn't finished by this time, the batch is
- * aborted and partial results are returned. Prevents a single hanging
- * tool from blocking the entire conversation indefinitely.
- */
-const CONCURRENT_BATCH_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
-
-/**
  * Safe tools that can run concurrently
  */
 const SAFE_CONCURRENT_TOOLS = new Set([
@@ -347,26 +339,9 @@ export class ToolOrchestrator {
     }
 
     try {
-      // Execute all tools in parallel with a batch-level timeout.
-      // Each tool gets a child AbortController so we can cancel stragglers
-      // without affecting the parent signal.
-      const batchAbortController = new AbortController();
-      const parentSignal = this.agent.getToolAbortSignal();
-      if (parentSignal?.aborted) batchAbortController.abort();
-      const onParentAbort = () => batchAbortController.abort();
-      parentSignal?.addEventListener('abort', onParentAbort, { once: true });
-
-      const batchTimeout = setTimeout(() => {
-        logger.warn(`[TOOL_ORCHESTRATOR] Concurrent batch timeout (${CONCURRENT_BATCH_TIMEOUT_MS}ms) - aborting remaining tools`);
-        batchAbortController.abort();
-      }, CONCURRENT_BATCH_TIMEOUT_MS);
-
       const results = await Promise.allSettled(
         toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId))
       );
-
-      clearTimeout(batchTimeout);
-      parentSignal?.removeEventListener('abort', onParentAbort);
 
       // Check if any tool was denied permission
       const successfulResults: (ToolResult | null)[] = [];
@@ -662,9 +637,23 @@ export class ToolOrchestrator {
 
     // Plan mode enforcement: only allow read-only + plan-specific tools
     if (!this.config.isSpecializedAgent) {
-      try {
-        const planModeManager = ServiceRegistry.getInstance().get<PlanModeManager>('plan_mode_manager');
-        if (planModeManager?.isActive() && !planModeManager.isToolAllowed(toolName)) {
+      // `get` returns null when the manager is not registered, so absence needs
+      // no exception handling — and plan mode cannot be active if it is absent.
+      const planModeManager = ServiceRegistry.getInstance().get<PlanModeManager>('plan_mode_manager');
+
+      if (planModeManager) {
+        let blocked: boolean;
+        try {
+          blocked = planModeManager.isActive() && !planModeManager.isToolAllowed(toolName);
+        } catch (error) {
+          // This is an enforcement gate: if we cannot determine whether the tool
+          // is allowed, deny it. Swallowing the error here would let plan mode be
+          // bypassed by any fault in the manager.
+          logger.error('[TOOL_ORCHESTRATOR] Plan mode check failed; denying tool:', toolName, error);
+          blocked = true;
+        }
+
+        if (blocked) {
           return createStructuredError(
             `Tool '${toolName}' is not available in plan mode. Only read-only and plan tools are allowed. Use exit-plan-mode to leave plan mode first.`,
             'permission_error',
@@ -672,8 +661,6 @@ export class ToolOrchestrator {
             args
           );
         }
-      } catch {
-        // PlanModeManager not registered - skip enforcement
       }
     }
 
@@ -832,7 +819,7 @@ export class ToolOrchestrator {
       }
 
       // Validate before requesting permission (fail fast on invalid states)
-      if (tool && tool.requiresConfirmation) {
+      if (tool && tool.requiresConfirmation(args)) {
         const validationResult = await this.toolManager.validateBeforePermission(
           toolName,
           args,
@@ -911,7 +898,7 @@ export class ToolOrchestrator {
       }
 
       // Check permissions if PermissionManager is available
-      if (this.permissionManager && tool && tool.requiresConfirmation) {
+      if (this.permissionManager && tool && tool.requiresConfirmation(args)) {
         // Emit permission request event (user will deliberate, timer paused)
         this.emitEvent({
           id,

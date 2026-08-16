@@ -71,7 +71,8 @@ export class AgentTool extends BaseTool implements InjectableTool {
   readonly name = 'agent';
   readonly description =
     'Delegate task to specialized agent. Multiple calls can run in parallel';
-  readonly requiresConfirmation = false; // Non-destructive: task delegation
+  /** Delegates; the child agent's own tool calls are gated individually. */
+  readonly capabilities = [] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
   readonly shouldCollapse = true; // Collapse after completion
   readonly hideOutput = false; // Agents never hide their own output
@@ -167,6 +168,7 @@ Only set run_in_background=false when your very next step depends on the result.
               description: 'Optional files to load into agent context (limit: 40% of context). Use sparingly.',
               items: {
                 type: 'string',
+                format: 'local-path',
               },
             },
             context_images: {
@@ -174,6 +176,7 @@ Only set run_in_background=false when your very next step depends on the result.
               description: 'Optional image file paths to pass to the agent. Images are loaded and sent if the agent\'s model supports vision.',
               items: {
                 type: 'string',
+                format: 'local-path',
               },
             },
             run_in_background: {

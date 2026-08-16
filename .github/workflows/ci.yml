@@ -25,7 +25,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --omit=dev
-      - run: npm run type-check
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
+      # One gate, defined in package.json, so CI and `npm run check` locally can
+      # never drift apart — and adding a gate step means editing one file.
+      - run: npm run check
