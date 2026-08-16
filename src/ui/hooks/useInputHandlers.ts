@@ -711,7 +711,7 @@ export const useInputHandlers = (
       // - SessionTitleGenerator: Will retry when next new session is created (low priority)
       const services = [
         serviceRegistry.get('idle_message_generator'),
-        (serviceRegistry.get('session_manager') as any)?.titleGenerator,
+        serviceRegistry.get('session_title_generator'),
       ].filter(Boolean);
 
       for (const service of services) {

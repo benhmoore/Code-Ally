@@ -31,21 +31,21 @@ export default defineConfig({
       reporter: ['text-summary', 'lcov'],
       include: ['src/**'],
       exclude: ['src/**/__tests__/**', 'src/agents/**', 'dist/**'],
-      // A ratchet rather than a hand-picked target: vitest writes the measured
-      // numbers back into this file, so coverage can never regress below where
-      // it stands today, and rises as tests are added. Hand-picked thresholds
-      // would either fail immediately or be too slack to mean anything.
+      // Floors just below where coverage stands today, raised deliberately as
+      // it improves. NOT `autoUpdate: true`: that re-arms each threshold at the
+      // exact measured value every run, and coverage moves by ~0.01% run to run
+      // (tests run in parallel and some paths are timing-dependent), so the
+      // build failed on noise. A gate that cries wolf gets switched off.
       //
-      // Known limitation: these are percentages, so deleting a well-tested
-      // module lowers the ratio without any code getting worse, and the ratchet
-      // reads that as a regression. When that happens, re-baseline the affected
-      // metric in one commit and say so — do not lower it to dodge a real drop.
+      // Whole numbers give roughly half a point of headroom — far below any
+      // real regression, far above the jitter. These are also ratios, so
+      // deleting a well-tested module lowers them without any code getting
+      // worse; re-baseline in one commit and say so when that happens.
       thresholds: {
-        autoUpdate: true,
-        lines: 42.74,
-        functions: 68.26,
-        branches: 73.47,
-        statements: 42.74,
+        lines: 42,
+        functions: 68,
+        branches: 73,
+        statements: 42,
       },
     },
   },

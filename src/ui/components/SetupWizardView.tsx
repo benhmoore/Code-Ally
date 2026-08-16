@@ -15,8 +15,6 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { SetupWizard, SetupConfig } from '@services/SetupWizard.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { ConfigManager } from '@services/ConfigManager.js';
-import { IntegrationStore } from '@services/IntegrationStore.js';
 import { logger } from '@services/Logger.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
@@ -28,7 +26,6 @@ import { UI_COLORS } from '../constants/colors.js';
 import { SEARCH_PROVIDER_INFO, SearchProviderType } from '../../types/integration.js';
 import { MCP_PRESETS, MCP_PRESET_ORDER, buildConfigFromPreset } from '@mcp/MCPPresets.js';
 import { tokenizeCommand } from '@mcp/MCPServerSpec.js';
-import type { MCPServerManager } from '@mcp/MCPServerManager.js';
 
 enum SetupStep {
   WELCOME,
@@ -93,7 +90,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const [error, setError] = useState<string | null>(null);
   const [setupWizard] = useState(() => {
     const registry = ServiceRegistry.getInstance();
-    const configManager = registry.get('config_manager') as ConfigManager;
+    const configManager = registry.getRequired('config_manager');
     return new SetupWizard(configManager);
   });
 
@@ -476,7 +473,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       // Apply search configuration if user provided one
       if (selectedSearchProvider !== 'none' && searchApiKey) {
         const registry = ServiceRegistry.getInstance();
-        const integrationStore = registry.get('integration_store') as IntegrationStore | null;
+        const integrationStore = registry.get('integration_store');
         if (integrationStore) {
           await integrationStore.setSearchProvider(selectedSearchProvider);
           await integrationStore.setSearchAPIKey(searchApiKey);
@@ -493,7 +490,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
           const serverConfig = buildConfigFromPreset(preset, path, envValue);
 
           const registry = ServiceRegistry.getInstance();
-          const mcpManager = registry.get('mcp_server_manager') as MCPServerManager | null;
+          const mcpManager = registry.get('mcp_server_manager');
           if (mcpManager) {
             await mcpManager.addServerConfig(mcpPresetKey, serverConfig);
             logger.debug(`[SetupWizardView] MCP server '${mcpPresetKey}' configured`);
@@ -514,7 +511,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         };
 
         const registry = ServiceRegistry.getInstance();
-        const mcpManager = registry.get('mcp_server_manager') as MCPServerManager | null;
+        const mcpManager = registry.get('mcp_server_manager');
         if (mcpManager) {
           // addServerConfig validates and throws on a broken config (e.g. a
           // launcher command with no args) — surface that instead of saving junk.
