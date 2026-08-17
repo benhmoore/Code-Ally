@@ -1178,6 +1178,10 @@ async function main() {
     const { ContextBudgetService } = await import('./services/ContextBudgetService.js');
     registry.registerInstance('context_budget', new ContextBudgetService());
 
+    // Tracks which deferred tool schemas each agent has loaded on demand.
+    const { ToolActivationRegistry } = await import('./services/ToolActivationRegistry.js');
+    registry.registerInstance('tool_activation_registry', new ToolActivationRegistry());
+
     // Create file interaction tracker (for /open command)
     const { FileInteractionTracker } = await import('./services/FileInteractionTracker.js');
     const fileInteractionTracker = new FileInteractionTracker();
