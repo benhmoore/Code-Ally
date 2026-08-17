@@ -17,7 +17,7 @@
  */
 
 import { BackgroundAgentManager } from './BackgroundAgentManager.js';
-import { BashProcessManager } from './BashProcessManager.js';
+import { BashProcessManager, type ProcessInfo } from './BashProcessManager.js';
 import { ActivityStream } from './ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
 import { logger } from './Logger.js';
@@ -38,6 +38,8 @@ export interface BackgroundTask {
   error: string | null;
   /** Whether completion should auto-wake the idle main agent */
   watched: boolean;
+  /** Whether a running task is required before a durable objective can complete */
+  blocksCompletion: boolean;
 }
 
 interface WatcherTask {
@@ -48,6 +50,7 @@ interface WatcherTask {
   endTime: number | null;
   result: string | null;
   error: string | null;
+  blocksCompletion: boolean;
   cancel: () => void;
   settled: Promise<void>;
 }
@@ -76,9 +79,10 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function shellStatus(exitCode: number | null): BackgroundTaskStatus {
-  if (exitCode === null) return 'running';
-  return exitCode === 0 ? 'done' : 'error';
+function shellStatus(process: ProcessInfo): BackgroundTaskStatus {
+  if (process.status !== 'exited') return 'running';
+  if (process.exitSignal || process.terminationSignal) return 'cancelled';
+  return process.exitCode === 0 ? 'done' : 'error';
 }
 
 export class BackgroundTaskRegistry {
@@ -121,6 +125,7 @@ export class BackgroundTaskRegistry {
         result: t.result,
         error: t.error,
         watched: this.watchedIds.has(t.id),
+        blocksCompletion: true,
       });
     }
 
@@ -129,12 +134,13 @@ export class BackgroundTaskRegistry {
         id: p.id,
         kind: 'shell',
         label: p.command,
-        status: shellStatus(p.exitCode),
+        status: shellStatus(p),
         startTime: p.startTime,
         endTime: p.exitTime,
         result: null,
         error: null,
         watched: this.watchedIds.has(p.id),
+        blocksCompletion: p.blocksCompletion,
       });
     }
 
@@ -149,6 +155,7 @@ export class BackgroundTaskRegistry {
         result: w.result,
         error: w.error,
         watched: this.watchedIds.has(w.id),
+        blocksCompletion: w.blocksCompletion,
       });
     }
 
@@ -213,6 +220,7 @@ export class BackgroundTaskRegistry {
       endTime: null,
       result: null,
       error: null,
+      blocksCompletion: spec.watched,
       cancel: () => { cancelled = true; controller.abort(); },
       settled,
     };

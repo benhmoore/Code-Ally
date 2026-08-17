@@ -504,7 +504,7 @@ export class CompletionProvider {
       }
 
       const allProcesses = (processManager as any).listProcesses();
-      const runningProcesses = allProcesses.filter((p: any) => p.exitCode === null);
+      const runningProcesses = allProcesses.filter((p: any) => p.status === 'running');
 
       if (runningProcesses.length === 0) {
         return [];
@@ -945,7 +945,7 @@ export class CompletionProvider {
       'bash_timeout': 'Bash command timeout (seconds)',
       'auto_confirm': 'Skip permission prompts',
       'parallel_tools': 'Enable parallel tool execution',
-      'tool_call_activity_timeout': 'Sub-agent activity timeout (seconds)',
+      'tool_call_activity_timeout': 'Agent no-tool activity timeout (seconds)',
 
       // UI Preferences
       'theme': 'UI theme name',

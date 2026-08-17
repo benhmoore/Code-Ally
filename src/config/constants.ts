@@ -860,6 +860,9 @@ export const TOKEN_MANAGEMENT = {
  * Agent behavior and cycle detection configuration
  */
 export const AGENT_CONFIG = {
+  /** One clean retry for an internally detected stall/loop, then stop visibly. */
+  MAX_AUTOMATIC_RECOVERY_ATTEMPTS: 1,
+
   /** Maximum tool call history for cycle detection (sliding window) */
   MAX_TOOL_HISTORY: 15,
 

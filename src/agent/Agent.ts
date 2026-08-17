@@ -355,20 +355,21 @@ export class Agent {
       this.agentDepth
     );
 
-    // Create activity monitor for detecting agents stuck generating tokens
-    // Only enabled for specialized agents (subagents) to detect infinite loops
+    // Detect any agent stuck generating without taking a concrete tool action.
+    // Main-agent requests need this too: transport retries and hidden reasoning
+    // can otherwise keep an interactive or durable turn alive indefinitely.
     const activityTimeoutMs = this.appConfig.tool_call_activity_timeout * 1000;
     this.activityMonitor = new ActivityMonitor({
       timeoutMs: activityTimeoutMs,
       checkIntervalMs: POLLING_INTERVALS.AGENT_WATCHDOG,
-      enabled: config.isSpecializedAgent === true && activityTimeoutMs > 0,
+      enabled: activityTimeoutMs > 0,
       instanceId: this.instanceId,
       onTimeout: (elapsedMs: number) => {
         this.handleActivityTimeout(elapsedMs);
       },
     });
 
-    if (config.isSpecializedAgent && activityTimeoutMs > 0) {
+    if (activityTimeoutMs > 0) {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Activity monitor enabled:', activityTimeoutMs, 'ms');
     }
 
@@ -570,7 +571,7 @@ export class Agent {
       const timeoutMs = updates.tool_call_activity_timeout * 1000;
       this.activityMonitor.updateConfig({
         timeoutMs,
-        enabled: this.config.isSpecializedAgent === true && timeoutMs > 0,
+        enabled: timeoutMs > 0,
       });
     }
   }
@@ -1781,6 +1782,32 @@ export class Agent {
     cause: RecoverableInterruptionCause,
     executionContext: AgentExecutionContext
   ): Promise<string> {
+    if (this.invocationState.recoveryAttempts >= AGENT_CONFIG.MAX_AUTOMATIC_RECOVERY_ATTEMPTS) {
+      const message =
+        `I stopped because model generation repeatedly made no concrete progress after ` +
+        `${AGENT_CONFIG.MAX_AUTOMATIC_RECOVERY_ATTEMPTS} automatic recovery attempt. ` +
+        `The task may be incomplete. Last detected condition: ${cause.reason}`;
+      logger.warn('[AGENT_RECOVERY]', this.instanceId, message);
+
+      this.interruptionManager.reset();
+      this.stopActivityMonitoring();
+      this.loopDetector.resetTextDetectors();
+
+      if (this.config.isSpecializedAgent) {
+        throw new Error(message);
+      }
+
+      this.conversationManager.addMessage({
+        role: 'assistant',
+        content: message,
+        timestamp: Date.now(),
+        metadata: { agentName: this.agentName },
+      });
+
+      await ServiceRegistry.getInstance().get('run_supervisor')?.block(message);
+      return message;
+    }
+
     this.invocationState.recoveryAttempts++;
     logger.debug(
       '[AGENT_RECOVERY]',
@@ -1822,6 +1849,11 @@ export class Agent {
       autoSaveSession: () => this.autoSaveSession(),
       getLLMResponse: () => this.getLLMResponse(executionContext),
       executeToolCalls: async (toolCalls, cycles) => {
+        // The no-progress watchdog protects model generation, not legitimate
+        // long-running tools (builds, tests, foreground commands, permission
+        // waits). Pause it for the complete tool batch and resume afterward.
+        this.pauseActivityMonitoring();
+        let completed = false;
         // Execute tool calls via orchestrator
         // Permission denied errors need special handling by Agent.ts
         try {
@@ -1829,6 +1861,7 @@ export class Agent {
 
           // Note: Exploratory tool tracking is handled inside ToolOrchestrator
 
+          completed = true;
           return results;
         } catch (error) {
           // Check if this is a permission denied error that triggered interruption
@@ -1853,6 +1886,8 @@ export class Agent {
 
           // Re-throw to propagate to Agent.ts error handler
           throw error;
+        } finally {
+          this.resumeActivityMonitoring(completed);
         }
       },
       detectCycles: (toolCalls) => this.loopDetector.detectCycles(toolCalls),

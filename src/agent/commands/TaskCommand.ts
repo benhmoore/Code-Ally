@@ -106,7 +106,7 @@ ${lines.join('\n')}
     }
 
     const allProcesses = processManager.listProcesses();
-    const runningProcesses = allProcesses.filter(p => p.exitCode === null);
+    const runningProcesses = allProcesses.filter(p => p.status === 'running');
 
     if (runningProcesses.length === 0) {
       return {
@@ -169,10 +169,16 @@ ${lines.join('\n')}
     }
 
     // Check if already exited
-    if (processInfo.exitCode !== null) {
+    if (processInfo.status === 'exited') {
+      const outcome = processInfo.exitSignal ?? processInfo.exitCode ?? 'unknown';
       return this.createError(
-        `Process ${shellId} already exited with code ${processInfo.exitCode}.\n\n` +
+        `Process ${shellId} already exited (${outcome}).\n\n` +
         `Use bash-output(shell_id="${shellId}") to read final output.`
+      );
+    }
+    if (processInfo.status === 'stopping') {
+      return this.createError(
+        `Process ${shellId} is already stopping (${processInfo.terminationSignal ?? 'signal sent'}).`
       );
     }
 

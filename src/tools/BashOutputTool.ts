@@ -109,10 +109,13 @@ export class BashOutputTool extends BaseTool {
     const output = lines.join('\n');
 
     // Build status information
-    const isRunning = processInfo.exitCode === null;
-    const status = isRunning
+    const status = processInfo.status === 'running'
       ? 'running'
-      : `exited with code ${processInfo.exitCode}`;
+      : processInfo.status === 'stopping'
+        ? `stopping (${processInfo.terminationSignal ?? 'signal sent'})`
+        : processInfo.exitSignal
+          ? `exited from ${processInfo.exitSignal}`
+          : `exited with code ${processInfo.exitCode ?? 'unknown'}`;
 
     const returnedLineCount = lines.length;
     const totalBufferSize = processInfo.outputBuffer.size();

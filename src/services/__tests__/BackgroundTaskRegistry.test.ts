@@ -21,7 +21,7 @@ function fakeStream() {
 describe('BackgroundTaskRegistry', () => {
   it('presents a unified view across agents and shells', () => {
     const agents = [{ id: 'agent-1', agentType: 'explore', status: 'running', startTime: 1, endTime: null, result: null, error: null }];
-    const shells = [{ id: 'shell-1', command: 'npm run dev', exitCode: null, startTime: 2, exitTime: null }];
+    const shells = [{ id: 'shell-1', command: 'npm run dev', status: 'running', exitCode: null, exitSignal: null, terminationSignal: null, blocksCompletion: false, startTime: 2, exitTime: null }];
     const reg = new BackgroundTaskRegistry(fakeAgentManager(agents), fakeBashManager(shells), fakeStream());
 
     const list = reg.list();
@@ -34,9 +34,10 @@ describe('BackgroundTaskRegistry', () => {
     const reg = new BackgroundTaskRegistry(
       fakeAgentManager(),
       fakeBashManager([
-        { id: 's-run', command: 'x', exitCode: null, startTime: 1, exitTime: null },
-        { id: 's-ok', command: 'y', exitCode: 0, startTime: 1, exitTime: 5 },
-        { id: 's-fail', command: 'z', exitCode: 1, startTime: 1, exitTime: 5 },
+        { id: 's-run', command: 'x', status: 'running', exitCode: null, exitSignal: null, terminationSignal: null, blocksCompletion: false, startTime: 1, exitTime: null },
+        { id: 's-ok', command: 'y', status: 'exited', exitCode: 0, exitSignal: null, terminationSignal: null, blocksCompletion: false, startTime: 1, exitTime: 5 },
+        { id: 's-fail', command: 'z', status: 'exited', exitCode: 1, exitSignal: null, terminationSignal: null, blocksCompletion: false, startTime: 1, exitTime: 5 },
+        { id: 's-killed', command: 'q', status: 'exited', exitCode: null, exitSignal: 'SIGKILL', terminationSignal: 'SIGKILL', blocksCompletion: false, startTime: 1, exitTime: 5 },
       ]),
       fakeStream(),
     );
@@ -44,6 +45,7 @@ describe('BackgroundTaskRegistry', () => {
     expect(byId['s-run']).toBe('running');
     expect(byId['s-ok']).toBe('done');
     expect(byId['s-fail']).toBe('error');
+    expect(byId['s-killed']).toBe('cancelled');
   });
 
   it('tracks the watched set', () => {

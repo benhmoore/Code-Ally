@@ -127,8 +127,16 @@ export interface ProcessInfo {
   outputBuffer: CircularBuffer;
   /** Unix timestamp when process started */
   startTime: number;
-  /** Exit code (null while running) */
+  /** Explicit lifecycle state; exitCode is null both while running and after signal exit. */
+  status: 'running' | 'stopping' | 'exited';
+  /** Exit code (null while running or when terminated by a signal) */
   exitCode: number | null;
+  /** Signal reported by Node when the process exits because of a signal */
+  exitSignal: NodeJS.Signals | null;
+  /** Signal requested through killProcess while termination is in flight */
+  terminationSignal: NodeJS.Signals | null;
+  /** Whether this background process is an explicit durable-objective dependency */
+  blocksCompletion: boolean;
   /** Unix timestamp when process exited (null while running) */
   exitTime: number | null;
 }
@@ -203,7 +211,8 @@ export class BashProcessManager {
    * Remove a process from tracking
    *
    * Does not kill the process - only removes it from the manager's tracking.
-   * Use killProcess() to both kill and remove.
+   * Use killProcess() to request termination. Completed entries remain briefly
+   * available so callers can read their final output.
    *
    * @param id - Process identifier
    */
@@ -215,10 +224,11 @@ export class BashProcessManager {
   }
 
   /**
-   * Kill a process and remove it from tracking
+   * Request process termination and mark it as stopping
    *
-   * Sends the specified signal to the process. If successful, removes the
-   * process from tracking.
+   * Sends the specified signal to the process. Signal delivery is not process
+   * exit, so the entry remains tracked as `stopping` until the child's exit
+   * event records its final code/signal.
    *
    * @param id - Process identifier
    * @param signal - Signal to send (default: SIGTERM)
@@ -232,12 +242,34 @@ export class BashProcessManager {
       return false;
     }
 
+    if (info.status === 'exited') {
+      logger.debug(`[BashProcessManager] Process ${id} already exited`);
+      return false;
+    }
+
+    const previousStatus = info.status;
+    const previousSignal = info.terminationSignal;
+    info.status = 'stopping';
+    info.terminationSignal = signal;
+
     try {
-      this.signalProcessGroup(info, signal);
-      logger.debug(`[BashProcessManager] Sent ${signal} to process ${id} (pid: ${info.pid})`);
+      const signalDelivered = this.signalProcessGroup(info, signal);
+      if (!signalDelivered) {
+        // The OS/ChildProcess reports no live target. Treat that as settled even
+        // if Node's asynchronous exit event has not reached us yet.
+        info.status = 'exited';
+        info.exitCode = info.process.exitCode;
+        info.exitSignal = info.process.signalCode as NodeJS.Signals | null;
+        info.exitTime ??= Date.now();
+      }
+      logger.debug(
+        `[BashProcessManager] ${signalDelivered ? `Sent ${signal}` : 'Target already absent'} for process ${id} (pid: ${info.pid})`
+      );
 
       return true;
     } catch (error) {
+      info.status = previousStatus;
+      info.terminationSignal = previousSignal;
       logger.error(`[BashProcessManager] Failed to kill process ${id}:`, error);
       return false;
     }
@@ -264,16 +296,20 @@ export class BashProcessManager {
     for (const info of this.processes.values()) {
       const elapsed = formatDuration(now - info.startTime);
 
-      if (info.exitCode === null) {
+      if (info.status === 'running') {
         // Process is still running
+        const lifecycleGuidance = info.blocksCompletion
+          ? 'This is an explicit completion dependency; wait for it or stop it before completing the objective.'
+          : 'This process is non-blocking and does not prevent objective completion; leave long-running servers active unless the user asked to stop them.';
         reminders.push(
           `Background shell ${info.id} [running]: "${info.command}" (${elapsed}). ` +
-          `Use bash-output(shell_id="${info.id}") to read or kill-shell(shell_id="${info.id}") to stop.`
+          `${lifecycleGuidance} Use bash-output(shell_id="${info.id}") to inspect it.`
         );
-      } else if (info.exitTime && info.exitTime >= fiveMinutesAgo) {
+      } else if (info.status === 'exited' && info.exitTime && info.exitTime >= fiveMinutesAgo) {
         // Process exited within last 5 minutes
+        const outcome = info.exitSignal ?? info.exitCode ?? 'unknown';
         reminders.push(
-          `Background shell ${info.id} [exited(${info.exitCode})]: "${info.command}" completed (${elapsed}). ` +
+          `Background shell ${info.id} [exited(${outcome})]: "${info.command}" completed (${elapsed}). ` +
           `Use bash-output(shell_id="${info.id}") to read final output.`
         );
       }
@@ -302,7 +338,7 @@ export class BashProcessManager {
    */
   async shutdown(gracefulTimeout: number = 5000): Promise<void> {
     const runningProcesses = Array.from(this.processes.values()).filter(
-      info => info.exitCode === null
+      info => info.status !== 'exited'
     );
 
     if (runningProcesses.length === 0) {
@@ -325,7 +361,7 @@ export class BashProcessManager {
     // Wait for graceful shutdown
     const startTime = Date.now();
     while (Date.now() - startTime < gracefulTimeout) {
-      const stillRunning = runningProcesses.filter(info => info.exitCode === null);
+      const stillRunning = runningProcesses.filter(info => info.status !== 'exited');
       if (stillRunning.length === 0) {
         logger.info('[BashProcessManager] All processes exited gracefully');
         return;
@@ -335,7 +371,7 @@ export class BashProcessManager {
     }
 
     // Force kill any remaining processes
-    const remainingProcesses = runningProcesses.filter(info => info.exitCode === null);
+    const remainingProcesses = runningProcesses.filter(info => info.status !== 'exited');
     if (remainingProcesses.length > 0) {
       logger.warn(`[BashProcessManager] ${remainingProcesses.length} process(es) did not exit gracefully, sending SIGKILL`);
       for (const info of remainingProcesses) {
@@ -353,18 +389,20 @@ export class BashProcessManager {
     logger.info('[BashProcessManager] Shutdown complete');
   }
 
-  private signalProcessGroup(info: ProcessInfo, signal: NodeJS.Signals): void {
+  private signalProcessGroup(info: ProcessInfo, signal: NodeJS.Signals): boolean {
     if (process.platform !== 'win32' && info.pid > 0) {
       try {
         process.kill(-info.pid, signal);
-        return;
+        return true;
       } catch (error) {
-        // ESRCH means the process group has already exited. Fall through for
-        // platforms/spawn modes that did not create a group.
-        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
+        // Fall back to the direct child handle for spawn modes/platforms where
+        // no process group exists. A false return means there is no live target.
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+          logger.debug(`[BashProcessManager] Process-group signal failed for ${info.id}; trying child handle`);
+        }
       }
     }
-    info.process.kill(signal);
+    return info.process.kill(signal);
   }
 
   /**
@@ -378,7 +416,7 @@ export class BashProcessManager {
 
     // Find the oldest completed process
     for (const info of this.processes.values()) {
-      if (info.exitCode !== null && info.startTime < oldestTime) {
+      if (info.status === 'exited' && info.startTime < oldestTime) {
         oldestCompleted = info;
         oldestTime = info.startTime;
       }

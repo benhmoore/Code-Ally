@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RunSupervisor } from '../RunSupervisor.js';
+import { ServiceRegistry } from '../ServiceRegistry.js';
 
 describe('RunSupervisor', () => {
   let dir: string;
@@ -13,6 +14,9 @@ describe('RunSupervisor', () => {
   };
 
   beforeEach(async () => {
+    const registry = ServiceRegistry.getInstance() as any;
+    registry._services.clear();
+    registry._descriptors.clear();
     dir = join(tmpdir(), `ally-runs-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await fs.mkdir(dir, { recursive: true });
   });
@@ -47,6 +51,38 @@ describe('RunSupervisor', () => {
     expect(result.blockers.join(' ')).toContain('require reconciliation');
     expect(await supervisor.reconcileToolEffect('call-1', 'failed_not_applied', 'remote ref unchanged')).toBe(true);
     expect((await supervisor.claimComplete('done')).accepted).toBe(true);
+  });
+
+  it('does not let an ordinary long-running background server hold completion open', async () => {
+    ServiceRegistry.getInstance().registerInstance('background_task_registry', {
+      list: () => [{
+        id: 'shell-server', kind: 'shell', label: 'npm run dev', status: 'running',
+        startTime: 1, endTime: null, result: null, error: null, watched: false,
+        blocksCompletion: false,
+      }],
+    } as any);
+    const supervisor = new RunSupervisor(dir);
+    await supervisor.initialize();
+    await supervisor.startRun('start the development server', policy);
+
+    expect((await supervisor.claimComplete('server is ready')).accepted).toBe(true);
+  });
+
+  it('refuses completion for an explicitly blocking background dependency', async () => {
+    ServiceRegistry.getInstance().registerInstance('background_task_registry', {
+      list: () => [{
+        id: 'shell-build', kind: 'shell', label: 'npm run build', status: 'running',
+        startTime: 1, endTime: null, result: null, error: null, watched: false,
+        blocksCompletion: true,
+      }],
+    } as any);
+    const supervisor = new RunSupervisor(dir);
+    await supervisor.initialize();
+    await supervisor.startRun('finish the build', policy);
+
+    const completion = await supervisor.claimComplete('done');
+    expect(completion.accepted).toBe(false);
+    expect(completion.blockers.join(' ')).toContain('background dependency');
   });
 
   it('reconciles a crash-left running state without auto-resuming it', async () => {

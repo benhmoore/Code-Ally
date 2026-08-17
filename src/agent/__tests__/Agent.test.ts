@@ -34,6 +34,7 @@ describe('Agent - Interruption Handling', () => {
       tool_call_max_retries: 3,
       tool_call_repair_attempts: true,
       tool_call_verbose_errors: true,
+      tool_call_activity_timeout: 120,
       dir_tree_max_depth: 3,
       dir_tree_max_files: 50,
       dir_tree_enable: true,
@@ -101,6 +102,72 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('System Reminder Injection', () => {
+    it('applies the no-tool activity watchdog to the main agent and recovers once', async () => {
+      let requestCount = 0;
+      mockModelClient.send = vi.fn(async (_messages: Message[], options: any): Promise<LLMResponse> => {
+        requestCount++;
+        if (requestCount === 1) {
+          await new Promise<void>(resolve => {
+            options.signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          return { content: '', tool_calls: [], interrupted: true };
+        }
+        return { content: 'Recovered after timeout', tool_calls: [], interrupted: false };
+      });
+
+      const result = agent.sendMessage('Do the work.');
+      await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledTimes(1));
+
+      const monitor = (agent as any).activityMonitor;
+      expect(monitor.isActive()).toBe(true);
+      monitor.lastActivityTime = Date.now() - 121_000;
+      monitor.checkTimeout();
+
+      await expect(result).resolves.toBe('Recovered after timeout');
+      expect(mockModelClient.send).toHaveBeenCalledTimes(2);
+    });
+
+    it('ends cleanly after the bounded recovery also makes no concrete progress', async () => {
+      mockModelClient.send = vi.fn(async (_messages: Message[], options: any): Promise<LLMResponse> => {
+        await new Promise<void>(resolve => {
+          options.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return { content: '', tool_calls: [], interrupted: true };
+      });
+
+      const result = agent.sendMessage('Do not hang forever.');
+      const monitor = (agent as any).activityMonitor;
+
+      await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledTimes(1));
+      monitor.lastActivityTime = Date.now() - 121_000;
+      monitor.checkTimeout();
+
+      await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledTimes(2));
+      monitor.lastActivityTime = Date.now() - 121_000;
+      monitor.checkTimeout();
+
+      await expect(result).resolves.toMatch(/repeatedly made no concrete progress/i);
+      expect(mockModelClient.send).toHaveBeenCalledTimes(2);
+      expect(agent.isProcessing()).toBe(false);
+    });
+
+    it('pauses the generation watchdog while a tool batch is running', async () => {
+      let finishTools!: (results: any[]) => void;
+      const toolGate = new Promise<any[]>(resolve => { finishTools = resolve; });
+      (agent as any).toolOrchestrator.executeToolCalls = vi.fn(() => toolGate);
+      const monitor = (agent as any).activityMonitor;
+      monitor.start();
+      const context = (agent as any).buildResponseContext({});
+
+      const execution = context.executeToolCalls([], []);
+      expect(monitor.isActive()).toBe(false);
+
+      finishTools([]);
+      await expect(execution).resolves.toEqual([]);
+      expect(monitor.isActive()).toBe(true);
+      monitor.stop();
+    });
+
     it('recovers an internally stopped generation without ending the turn as interrupted', async () => {
       const events: any[] = [];
       activityStream.subscribe('*', event => events.push(event));

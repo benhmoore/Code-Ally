@@ -93,11 +93,19 @@ export class KillShellTool extends BaseTool {
     }
 
     // Check if already exited
-    if (processInfo.exitCode !== null) {
+    if (processInfo.status === 'exited') {
+      const outcome = processInfo.exitSignal ?? processInfo.exitCode ?? 'unknown';
       return this.formatErrorResponse(
-        `Background shell ${shellId} already exited with code ${processInfo.exitCode}`,
+        `Background shell ${shellId} already exited (${outcome})`,
         'user_error',
         'The process has already terminated. Use bash-output to read final output.'
+      );
+    }
+    if (processInfo.status === 'stopping') {
+      return this.formatErrorResponse(
+        `Background shell ${shellId} is already stopping (${processInfo.terminationSignal ?? 'signal sent'})`,
+        'user_error',
+        'Wait for process exit or use bash-output to inspect its current status.'
       );
     }
 

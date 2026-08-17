@@ -27,7 +27,7 @@ export function useBackgroundProcesses(): number {
 
       if (processManager) {
         const processes = processManager.listProcesses();
-        const runningCount = processes.filter(p => p.exitCode === null).length;
+        const runningCount = processes.filter(p => p.status === 'running').length;
         setProcessCount(runningCount);
       }
     };

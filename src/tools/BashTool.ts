@@ -183,6 +183,10 @@ export class BashTool extends BaseTool {
               type: 'boolean',
               description: 'Run command in background (returns shell_id for monitoring with bash-output). Use this for long-running servers (npm run dev, python -m http.server, etc), watchers, or any process that runs indefinitely. The timeout parameter is ignored for background processes.',
             },
+            blocks_completion: {
+              type: 'boolean',
+              description: 'For background commands only: treat this process as required unfinished work for a durable objective. Defaults to false; long-running servers should remain false.',
+            },
           },
           required: ['command'],
         },
@@ -197,6 +201,7 @@ export class BashTool extends BaseTool {
     // Extract and validate parameters
     const command = args.command as string;
     const runInBackground = args.run_in_background === true;
+    const blocksCompletion = runInBackground && args.blocks_completion === true;
     const timeout = runInBackground ? Infinity : this.validateTimeout(args.timeout);
     const outputMode = (args.output_mode as string) || 'full';
     const workingDir = (args.working_dir as string) || process.cwd();
@@ -230,7 +235,7 @@ export class BashTool extends BaseTool {
 
     // Branch on execution mode
     if (runInBackground) {
-      return this.spawnBackground(command, workingDir);
+      return this.spawnBackground(command, workingDir, blocksCompletion);
     } else {
       // Existing foreground execution
       try {
@@ -352,7 +357,11 @@ export class BashTool extends BaseTool {
    * @param workingDir - Working directory for command execution
    * @returns ToolResult with shell_id, pid, message, and command
    */
-  private async spawnBackground(command: string, workingDir: string): Promise<ToolResult> {
+  private async spawnBackground(
+    command: string,
+    workingDir: string,
+    blocksCompletion: boolean
+  ): Promise<ToolResult> {
     // Get process manager from registry
     const registry = ServiceRegistry.getInstance();
     const processManager = registry.get('bash_process_manager');
@@ -411,7 +420,11 @@ export class BashTool extends BaseTool {
       process: child,
       outputBuffer,
       startTime: Date.now(),
+      status: 'running' as const,
       exitCode: null,
+      exitSignal: null,
+      terminationSignal: null,
+      blocksCompletion,
       exitTime: null,
     };
 
@@ -427,10 +440,12 @@ export class BashTool extends BaseTool {
     }
 
     // Track when process exits
-    child.on('exit', (code: number | null) => {
+    child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
       const info = processManager.getProcess(shellId);
       if (info) {
+        info.status = 'exited';
         info.exitCode = code;
+        info.exitSignal = signal;
         info.exitTime = Date.now();
 
         // Emit event so UI can update
@@ -441,6 +456,7 @@ export class BashTool extends BaseTool {
           data: {
             shellId,
             exitCode: code,
+            exitSignal: signal,
             command,
           },
         });
@@ -453,6 +469,7 @@ export class BashTool extends BaseTool {
       pid: child.pid,
       message: `Background shell started: ${shellId}`,
       command,
+      blocks_completion: blocksCompletion,
     });
   }
 

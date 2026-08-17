@@ -2,7 +2,7 @@
  * ActivityMonitor - Detects agents stuck generating tokens without making tool calls
  *
  * Purpose:
- * Specialized agents (subagents) can sometimes get stuck in infinite loops where they
+ * Agents can sometimes get stuck in infinite loops where they
  * generate tokens continuously without making tool calls. This monitor detects such
  * scenarios by tracking the time since the last tool call and interrupting the agent
  * if it exceeds a configured timeout.
@@ -12,7 +12,7 @@
  * - Tracks time since last tool call
  * - Callback mechanism for timeout handling
  * - Clean start/stop interface for lifecycle management
- * - Only monitors specialized agents (disabled for main agent)
+ * - Applies to main and specialized agents when configured
  *
  * PARENT-CHILD AGENT COORDINATION
  * ================================
@@ -66,7 +66,7 @@ export interface ActivityMonitorConfig {
   /** Interval in milliseconds for checking activity (default: 10000ms / 10 seconds) */
   checkIntervalMs?: number;
 
-  /** Whether monitoring is enabled (typically disabled for main agent, enabled for specialized agents) */
+  /** Whether monitoring is enabled */
   enabled: boolean;
 
   /** Callback invoked when activity timeout is detected */
