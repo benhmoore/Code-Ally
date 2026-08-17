@@ -2354,6 +2354,7 @@ export class Agent {
     dynamicContext?: string
   ): Promise<void> {
     const lastRole = this.conversationManager.getLastMessage()?.role;
+    this.publishContextBudget(functions, dynamicContext);
     const compacted = await this.agentCompactor.checkAndPerformAutoCompaction({
       instanceId: this.instanceId,
       isSpecializedAgent: this.config.isSpecializedAgent || false,
@@ -2367,7 +2368,37 @@ export class Agent {
     });
 
     if (compacted) {
+      // Reclaim changed the conversation; republish so tools sizing their
+      // output this turn see the post-reclaim budget rather than the one that
+      // triggered it.
+      this.publishContextBudget(functions, dynamicContext);
       await this.autoSaveSession();
+    }
+  }
+
+  /**
+   * Publish this agent's input budget so tools can size their output against
+   * the space actually available for conversation. Only the agent knows its
+   * own fixed overhead (system prompt + tool schemas + dynamic context).
+   */
+  private publishContextBudget(
+    functions?: readonly FunctionDefinition[],
+    dynamicContext?: string
+  ): void {
+    try {
+      const budgets = ServiceRegistry.getInstance().get('context_budget');
+      if (!budgets) return;
+      budgets.publish(this.instanceId, this.agentCompactor.budget({
+        instanceId: this.instanceId,
+        isSpecializedAgent: this.config.isSpecializedAgent || false,
+        generateId: () => this.generateId(),
+        signal: new AbortController().signal,
+        functions,
+        dynamicContext,
+        modelMaxOutput: this.appConfig.max_tokens,
+      }));
+    } catch (error) {
+      logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Could not publish context budget:', error);
     }
   }
 

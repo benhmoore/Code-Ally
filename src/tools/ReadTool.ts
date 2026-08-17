@@ -72,6 +72,36 @@ For multi-file exploration, prefer explore() to preserve context.`;
   }
 
   /**
+   * The conversation space this read must fit inside.
+   *
+   * Prefer the owning agent's published budget: it accounts for the fixed
+   * request overhead (system prompt + tool schemas + dynamic context) that a
+   * raw context-window fraction ignores. On a 16k window that overhead can be
+   * ~45% of the window, so a "20% of context" cap exceeds half of the space
+   * actually available — a single legal read then cannot survive compaction,
+   * and the agent loops re-reading what it just lost.
+   *
+   * Falls back to the raw window when no agent has published a budget (direct
+   * tool invocation and tests), where there is no conversation to protect.
+   */
+  private getBudget(executionContext?: ToolExecutionContext): {
+    usable: number;
+    maxToolResult: number;
+  } {
+    const registry = this.getExecutionRegistry(executionContext);
+    const tokenManager = registry.get('token_manager');
+    const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
+    const published = registry.get('context_budget')?.get(this.getReadScopeId(executionContext));
+    if (published && published.usableBudget > 0) {
+      return { usable: published.usableBudget, maxToolResult: published.maxToolResultTokens };
+    }
+    return {
+      usable: contextSize,
+      maxToolResult: Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT),
+    };
+  }
+
+  /**
    * Get remaining context budget from TokenManager
    * Uses same calculation as ToolResultManager
    */
@@ -84,60 +114,35 @@ For multi-file exploration, prefer explore() to preserve context.`;
   }
 
   /**
-   * Get the maximum allowed tokens for a read operation
-   * Capped by both configured limit and context size
+   * Maximum tokens for an agent-initiated read: the largest result that is
+   * guaranteed to survive the next compaction.
    */
-  private getMaxTokens(): number {
-    // Get context size from TokenManager (authoritative source)
-    const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get('token_manager');
-    const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
-
-    // Cap at 20% of context size to leave room for conversation
-    const contextBasedMax = Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT);
-
-    return contextBasedMax;
+  private getMaxTokens(executionContext?: ToolExecutionContext): number {
+    return this.getBudget(executionContext).maxToolResult;
   }
 
   /**
-   * Get the maximum allowed tokens for ephemeral reads
-   * Allows up to 90% of context size for temporary large file reads
+   * Ephemeral reads are removed after one turn, so they may use most of the
+   * usable space — but never more, or the request cannot be sent at all.
    */
-  private getEphemeralMaxTokens(): number {
-    // Get context size from TokenManager (authoritative source)
-    const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get('token_manager');
-    const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
-
-    return Math.floor(contextSize * TOKEN_MANAGEMENT.EPHEMERAL_READ_MAX_PERCENT);
+  private getEphemeralMaxTokens(executionContext?: ToolExecutionContext): number {
+    return Math.floor(this.getBudget(executionContext).usable * TOKEN_MANAGEMENT.EPHEMERAL_READ_MAX_PERCENT);
   }
 
   /**
    * Get the maximum allowed tokens for user-initiated reads via file mentions
-   * Uses full context size since user is explicitly requesting the file
+   * The user explicitly asked for this file, so allow nearly all usable space.
    */
-  private getUserInitiatedMaxTokens(): number {
-    // Get context size from TokenManager (authoritative source)
-    const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get('token_manager');
-    const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
-
-    // Use 95% of context to leave room for user's message and response
-    return Math.floor(contextSize * TOKEN_MANAGEMENT.USER_INITIATED_READ_MAX_PERCENT);
+  private getUserInitiatedMaxTokens(executionContext?: ToolExecutionContext): number {
+    return Math.floor(this.getBudget(executionContext).usable * TOKEN_MANAGEMENT.USER_INITIATED_READ_MAX_PERCENT);
   }
 
   /**
    * Get the maximum allowed tokens for context file reads
-   * Middle ground between user (95%) and agent (20%) initiated reads
+   * Middle ground between user-initiated and agent-initiated reads.
    */
-  private getContextFileMaxTokens(): number {
-    // Get context size from TokenManager (authoritative source)
-    const registry = ServiceRegistry.getInstance();
-    const tokenManager = registry.get('token_manager');
-    const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
-
-    // Use 40% of context for context files
-    return Math.floor(contextSize * TOKEN_MANAGEMENT.CONTEXT_FILE_READ_MAX_PERCENT);
+  private getContextFileMaxTokens(executionContext?: ToolExecutionContext): number {
+    return Math.floor(this.getBudget(executionContext).usable * TOKEN_MANAGEMENT.CONTEXT_FILE_READ_MAX_PERCENT);
   }
 
   /**
@@ -229,11 +234,13 @@ For multi-file exploration, prefer explore() to preserve context.`;
     // Determine max tokens based on read type
     let maxTokens: number;
     if (isContextFile) {
-      maxTokens = this.getContextFileMaxTokens(); // 40% for context files
+      maxTokens = this.getContextFileMaxTokens(executionContext);
     } else if (isUserInitiated) {
-      maxTokens = this.getUserInitiatedMaxTokens(); // 95% for user mentions
+      maxTokens = this.getUserInitiatedMaxTokens(executionContext);
     } else {
-      maxTokens = ephemeral ? this.getEphemeralMaxTokens() : this.getMaxTokens(); // 20% or 90% for agents
+      maxTokens = ephemeral
+        ? this.getEphemeralMaxTokens(executionContext)
+        : this.getMaxTokens(executionContext);
     }
 
     if (estimatedTokens > maxTokens) {
@@ -245,21 +252,21 @@ For multi-file exploration, prefer explore() to preserve context.`;
         ? ' As a LAST RESORT for one-time inspection only: ephemeral=true (WARNING: content removed after one turn, you will lose access).'
         : '';
 
-      // Customize error message based on context
-      const limitDescription = isContextFile
-        ? '40% of context'
-        : isUserInitiated
-          ? '95% of context'
-          : ephemeral
-            ? '90% of context'
-            : '20% of context';
+      // Suggest a line budget that actually fits, rather than a fixed 100.
+      // Source averages roughly 12 tokens per line; leave headroom under the cap.
+      const suggestedLimit = Math.max(20, Math.floor((maxTokens * 0.85) / 12));
+      const chunked = filePaths.length === 1
+        ? `read(file_paths=["${filePaths[0]}"], offset=1, limit=${suggestedLimit}), then continue from offset=${suggestedLimit + 1}`
+        : `read one file at a time with limit=${suggestedLimit}`;
 
       return this.formatErrorResponse(
-        `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds limit of ${maxTokens} (${limitDescription}). ` +
-        `FIRST try: Use grep/glob to search for specific content, or use limit/offset for targeted reading. ` +
-        `Example: ${examples}.${ephemeralHint}`,
+        `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds the ${maxTokens}-token limit for this read. ` +
+        `This limit is the largest result that fits the conversation space still available, so a bigger read cannot be kept. ` +
+        `Read it in sequential chunks instead: ${chunked}. ` +
+        `To find something specific without reading the whole file, use grep/glob. ` +
+        `Alternative: ${examples}.${ephemeralHint}`,
         'validation_error',
-        `Prefer targeted reading with limit/offset or search with grep/glob over ephemeral reads`
+        `Read in sequential chunks with offset/limit, or search with grep/glob`
       );
     }
 

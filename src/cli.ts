@@ -1173,6 +1173,11 @@ async function main() {
     const readCache = new ReadCache();
     registry.registerInstance('read_cache', readCache);
 
+    // Live input-budget snapshots so tools size output against the space
+    // actually available for conversation, not the raw context window.
+    const { ContextBudgetService } = await import('./services/ContextBudgetService.js');
+    registry.registerInstance('context_budget', new ContextBudgetService());
+
     // Create file interaction tracker (for /open command)
     const { FileInteractionTracker } = await import('./services/FileInteractionTracker.js');
     const fileInteractionTracker = new FileInteractionTracker();

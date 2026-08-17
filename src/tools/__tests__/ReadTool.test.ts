@@ -249,6 +249,46 @@ describe('ReadTool', () => {
       expect(fifth.content).not.toContain('File unchanged since last read');
     });
 
+    it('sizes reads against usable space, not the raw context window', async () => {
+      const { ContextBudgetService } = await import('@services/ContextBudgetService.js');
+      const budgets = new ContextBudgetService();
+      registry.registerInstance('context_budget', budgets);
+      registry.registerInstance('token_manager', {
+        getContextSize: () => 16_384,
+        getCurrentTokenCount: () => 0,
+      } as any);
+
+      const bigFile = path.join(tempDir, 'big.txt');
+      // ~2500 tokens: under the legacy 20%-of-16k cap (3276), over the
+      // retained-tail ceiling (2054) that the real budget implies.
+      await fs.writeFile(bigFile, 'const value = compute(input, options);\n'.repeat(250));
+
+      // Without a published budget the legacy window fraction applies (20% of
+      // 16k = 3276 tokens), so this file is allowed.
+      const permissive = await readTool.execute(
+        { file_paths: [bigFile] }, 'call-1', undefined, false, false, { agentId: 'agent-a' },
+      );
+      expect(permissive.success).toBe(true);
+
+      // With a realistic 16k budget most of the window is fixed overhead, so
+      // the same read no longer fits the space that can actually be retained.
+      // Published per agent: agent-a above keeps the fallback, proving scoping.
+      budgets.publish('agent-b', {
+        contextWindow: 16_384, estimatedInput: 0, outputReserve: 2_048, safetyReserve: 819,
+        triggerBudget: 13_107, targetBudget: 10_800, fixedOverhead: 7_400, usableBudget: 5_707,
+        domainBudget: 3_424, retainedTailBudget: 2_054, checkpointBudget: 1_370,
+        maxToolResultTokens: 2_054, shouldCompact: false,
+      });
+
+      const restricted = await readTool.execute(
+        { file_paths: [bigFile] }, 'call-2', undefined, false, false, { agentId: 'agent-b' },
+      );
+      expect(restricted.success).toBe(false);
+      expect(restricted.error).toContain('2054-token limit');
+      // The guidance must be actionable: a concrete chunk size, not a generic retry.
+      expect(restricted.error).toMatch(/offset=1, limit=\d+/);
+    });
+
     it('should track read state in the reading agent scope only', async () => {
       const readStateManager = registry.get('read_state_manager')!;
 

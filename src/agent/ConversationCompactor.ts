@@ -5,7 +5,7 @@ import type { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, type FunctionDefinition, type Message } from '../types/index.js';
 import { logger } from '../services/Logger.js';
 import { findSafeSplitIndex } from '../utils/conversationRecovery.js';
-import { ContextBudgetPlanner } from './compaction/ContextBudgetPlanner.js';
+import { ContextBudgetPlanner, type ContextBudgetSnapshot } from './context/ContextBudget.js';
 import { evictStaleToolOutputs } from './compaction/ToolOutputEviction.js';
 import {
   checkpointSourceDigest,
@@ -19,7 +19,6 @@ import {
 import type {
   CompactionPhase,
   CompactionTrigger,
-  ContextBudgetSnapshot,
   ConversationCheckpointV1,
   ProviderCheckpointState,
   SemanticCheckpointStateV1,
@@ -545,29 +544,14 @@ export class ConversationCompactor {
 
     const previous = this.conversationManager.getCheckpoint();
 
-    // Adaptive tail (deterministic path only): the fixed tail share assumes a
-    // worst-case checkpoint, but the extractive checkpoint is usually far
-    // smaller. Measure it and hand the leftover domain budget to the raw tail
-    // so a just-completed read survives checkpointing whenever it can. The
-    // model-reducer path keeps the fixed share — probing it would double the
-    // reduction cost. Probing the full domain over-estimates the final
-    // checkpoint (the retained tail's messages drop out of it), which only
-    // errs toward a smaller, safer tail.
-    let tailBudgetOverride: number | undefined;
-    if (options.forceExtractive && options.forceNoRetainedTail !== true) {
-      const probe = extractSemanticCheckpoint(domain, previous?.semanticState);
-      const probeTokens = this.tokenManager.estimateTokens(renderCheckpointForModel(probe));
-      tailBudgetOverride = Math.max(
-        budget.retainedTailBudget,
-        budget.domainBudget - probeTokens - 128,
-      );
-    }
+    // The tail is selected first against its guaranteed share, then the
+    // checkpoint is fitted into whatever the tail left of the domain. Both
+    // halves therefore always fit, and recent work survives the reclaim.
     const split = this.retainedSplit(
       domain,
       budget,
       options.phase ?? context.phase ?? 'manual',
       options.forceNoRetainedTail === true,
-      tailBudgetOverride,
     );
     const delta = domain.slice(0, split);
     const retained = domain.slice(split);
@@ -633,6 +617,17 @@ export class ConversationCompactor {
       }
     }
 
+    // Fit the checkpoint into the domain space the tail did not claim, never
+    // below its guaranteed share. Unconditional: a checkpoint left to expand
+    // freely grows until it owns the whole domain, which is how the retained
+    // tail silently becomes empty on every generation.
+    const retainedTokens = this.tokenManager.estimateMessagesTokens(retained);
+    semanticState = fitSemanticCheckpointToTokenBudget(
+      semanticState,
+      Math.max(budget.checkpointBudget, budget.domainBudget - retainedTokens),
+      text => this.tokenManager.estimateTokens(text),
+    );
+
     const checkpointMessage: Message = {
       id: `checkpoint-message-${this.generation + 1}`,
       role: 'user',
@@ -691,13 +686,11 @@ export class ConversationCompactor {
     budget: ContextBudgetSnapshot,
     phase: CompactionPhase,
     forceNoRetainedTail: boolean,
-    tailBudgetOverride?: number,
   ): number {
     // The tail may occupy only its share of the post-compaction domain budget;
     // the remainder is guaranteed checkpoint room. (System-prompt tokens live in
-    // the fixed overhead, already excluded from the domain budget.) The caller
-    // may widen the tail when it has measured the actual checkpoint cost.
-    const retainedBudget = Math.max(1, tailBudgetOverride ?? budget.retainedTailBudget);
+    // the fixed overhead, already excluded from the domain budget.)
+    const retainedBudget = Math.max(1, budget.retainedTailBudget);
     if (forceNoRetainedTail) return messages.length;
 
     // Before the first model call for a new request, preserve that request

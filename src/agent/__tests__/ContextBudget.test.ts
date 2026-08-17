@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ContextBudgetPlanner } from '../compaction/ContextBudgetPlanner.js';
+import { ContextBudgetPlanner } from '../context/ContextBudget.js';
 import { TokenManager } from '../TokenManager.js';
 import type { Message } from '../../types/index.js';
 
@@ -15,8 +15,10 @@ describe('ContextBudgetPlanner', () => {
     // post-compaction target is the domain share of it.
     expect(budget.fixedOverhead).toBe(0);
     expect(budget.usableBudget).toBe(7_488);
-    expect(budget.targetBudget).toBe(Math.floor(7_488 * 0.35));
-    expect(budget.retainedTailBudget).toBe(Math.floor(budget.targetBudget * 0.6));
+    expect(budget.domainBudget).toBe(Math.floor(7_488 * 0.6));
+    expect(budget.targetBudget).toBe(budget.domainBudget);
+    // The domain is split exactly between the tail and the checkpoint.
+    expect(budget.retainedTailBudget + budget.checkpointBudget).toBe(budget.domainBudget);
   });
 
   it('uses exact provider input as the decision value near the boundary', () => {
@@ -77,10 +79,48 @@ describe('ContextBudgetPlanner', () => {
       // healthy share of the usable space, or the agent thrashes: it re-reads
       // one file and immediately compacts again.
       expect(budget.triggerBudget - budget.targetBudget)
-        .toBeGreaterThanOrEqual(Math.floor(budget.usableBudget * 0.5));
-      // The checkpoint always keeps a share of the domain budget after the tail.
-      expect(budget.targetBudget - budget.fixedOverhead - budget.retainedTailBudget)
-        .toBeGreaterThanOrEqual(Math.floor((budget.targetBudget - budget.fixedOverhead) * 0.35));
+        .toBeGreaterThanOrEqual(Math.floor(budget.usableBudget * 0.35));
+      // Both halves of the domain are guaranteed a share; neither can be zero.
+      expect(budget.retainedTailBudget).toBeGreaterThan(0);
+      expect(budget.checkpointBudget).toBeGreaterThan(0);
+      expect(budget.retainedTailBudget + budget.checkpointBudget).toBe(budget.domainBudget);
     }
+  });
+
+  it('caps a single tool result at what can survive the next compaction', () => {
+    // The invariant that keeps long tasks moving: any result the harness
+    // permits must fit in the retained tail, or the model loses it on every
+    // reclaim and loops re-fetching the same content.
+    for (const windowSize of [8_192, 16_384, 32_768, 128_000]) {
+      const tokens = new TokenManager(windowSize);
+      const system: Message = { role: 'system', content: 'prompt '.repeat(2_500) };
+      const functions = [{
+        type: 'function' as const,
+        function: { name: 'tools', description: 'x'.repeat(6_000), parameters: {} },
+      }];
+      const budget = new ContextBudgetPlanner(tokens).plan({ messages: [system], functions });
+
+      expect(budget.maxToolResultTokens).toBeLessThanOrEqual(budget.retainedTailBudget);
+      expect(budget.maxToolResultTokens).toBeLessThan(budget.usableBudget);
+      expect(budget.maxToolResultTokens).toBeGreaterThan(0);
+    }
+  });
+
+  it('stays internally consistent when overhead nearly exhausts the window', () => {
+    const tokens = new TokenManager(8_192);
+    const system: Message = { role: 'system', content: 'prompt '.repeat(3_000) };
+    const functions = [{
+      type: 'function' as const,
+      function: { name: 'tools', description: 'x'.repeat(12_000), parameters: {} },
+    }];
+
+    const budget = new ContextBudgetPlanner(tokens).plan({ messages: [system], functions });
+
+    // Degenerate configs must still produce coherent, non-negative budgets that
+    // never promise more than exists; the compactor refuses these separately.
+    expect(budget.usableBudget).toBeGreaterThanOrEqual(0);
+    expect(budget.domainBudget).toBeLessThanOrEqual(budget.usableBudget);
+    expect(budget.retainedTailBudget + budget.checkpointBudget).toBe(budget.domainBudget);
+    expect(budget.targetBudget).toBeLessThan(budget.triggerBudget);
   });
 });
