@@ -98,6 +98,86 @@ describe('InputPrompt controlled buffer', () => {
     instance.unmount();
   });
 
+  test('keeps the suggestion surface mounted while refreshed results are pending', async () => {
+    const stdout = new FakeStdout();
+    const stdin = new FakeStdin();
+    const completionProvider = {
+      getCompletions: vi.fn(async (input: string) => [{
+        value: input === '/co' ? 'config' : 'clear',
+        type: 'command' as const,
+        insertText: input === '/co' ? '/config' : '/clear',
+        replaceStart: 0,
+        replaceEnd: input.length,
+      }]),
+    } as unknown as CompletionProvider;
+    const instance = render(
+      <InputPrompt onSubmit={() => {}} completionProvider={completionProvider} />,
+      {
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        stdin: stdin as unknown as NodeJS.ReadStream,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      }
+    );
+
+    stdin.write('/c');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    expect(stripAnsi(stdout.frames.at(-1) ?? '')).toContain('clear');
+
+    stdin.write('o');
+    await settle();
+
+    const pendingFrame = stripAnsi(stdout.frames.at(-1) ?? '');
+    expect(pendingFrame).toContain('clear');
+
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const refreshedFrame = stripAnsi(stdout.frames.at(-1) ?? '');
+    expect(refreshedFrame).toContain('config');
+    instance.unmount();
+  });
+
+  test('refreshes a stale menu before accepting with Tab', async () => {
+    const stdout = new FakeStdout();
+    const stdin = new FakeStdin();
+    const onBufferChange = vi.fn();
+    const completionProvider = {
+      getCompletions: vi.fn(async (input: string) => [{
+        value: input === '/co' ? 'config' : 'clear',
+        type: 'command' as const,
+        insertText: input === '/co' ? '/config' : '/clear',
+        enterBehavior: 'submit' as const,
+        replaceStart: 0,
+        replaceEnd: input.length,
+      }]),
+    } as unknown as CompletionProvider;
+    const instance = render(
+      <InputPrompt
+        onSubmit={() => {}}
+        onBufferChange={onBufferChange}
+        completionProvider={completionProvider}
+      />,
+      {
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        stdin: stdin as unknown as NodeJS.ReadStream,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      }
+    );
+
+    stdin.write('/c');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    stdin.write('o');
+    await settle();
+    stdin.write('\t');
+    await settle();
+
+    expect(completionProvider.getCompletions).toHaveBeenLastCalledWith('/co', 3);
+    expect(onBufferChange).toHaveBeenLastCalledWith('/config ');
+    instance.unmount();
+  });
+
   test('history mode keeps Down assigned to newer history even at cursor start', async () => {
     const stdout = new FakeStdout();
     const stdin = new FakeStdin();

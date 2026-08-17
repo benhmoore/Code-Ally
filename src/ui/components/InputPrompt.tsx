@@ -300,9 +300,40 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [completionIndex, setCompletionIndex] = useState(0);
   const [showCompletions, setShowCompletions] = useState(false);
   const completionRequestIdRef = useRef(0);
+  const completionsRef = useRef<Completion[]>([]);
+  const completionIndexRef = useRef(0);
+  const completionSourceRef = useRef<{ input: string; cursorPosition: number } | null>(null);
+
+  const replaceCompletions = React.useCallback((nextCompletions: Completion[]) => {
+    const previousSelection = completionsRef.current[completionIndexRef.current];
+    const matchingIndex = previousSelection
+      ? nextCompletions.findIndex(completion =>
+          completion.type === previousSelection.type &&
+          completion.value === previousSelection.value &&
+          completion.insertText === previousSelection.insertText
+        )
+      : -1;
+    const nextIndex = matchingIndex >= 0 ? matchingIndex : 0;
+
+    completionsRef.current = nextCompletions;
+    completionIndexRef.current = nextIndex;
+    setCompletions(nextCompletions);
+    setCompletionIndex(nextIndex);
+  }, []);
+
+  const updateCompletionIndex = React.useCallback((update: (index: number) => number) => {
+    setCompletionIndex(index => {
+      const nextIndex = update(index);
+      completionIndexRef.current = nextIndex;
+      return nextIndex;
+    });
+  }, []);
 
   const dismissCompletions = React.useCallback((invalidatePending: boolean = true) => {
     if (invalidatePending) completionRequestIdRef.current++;
+    completionSourceRef.current = null;
+    completionsRef.current = [];
+    completionIndexRef.current = 0;
     setShowCompletions(false);
     setCompletions([]);
     setCompletionIndex(0);
@@ -333,26 +364,47 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   // Sync with external buffer value (when parent changes it)
   useEffect(() => {
     if (bufferValue !== undefined && bufferValue !== bufferRef.current) {
+      completionRequestIdRef.current++;
       bufferRef.current = bufferValue;
       setBuffer(bufferValue);
+      cursorPositionRef.current = bufferValue.length;
       setCursorPosition(bufferValue.length);
     }
   }, [bufferValue]);
 
-  const updateCompletions = React.useCallback(async () => {
+  const refreshCompletions = React.useCallback(async (
+    input: string,
+    cursor: number,
+    activeHistoryIndex: number
+  ): Promise<Completion[] | null> => {
     const requestId = ++completionRequestIdRef.current;
-    if (!completionProvider || !buffer.trim() || historyIndex !== -1) {
-      setCompletions([]);
+    if (!completionProvider || !input.trim() || activeHistoryIndex !== -1) {
+      completionSourceRef.current = null;
+      replaceCompletions([]);
       setShowCompletions(false);
-      return;
+      return [];
     }
 
-    const results = await completionProvider.getCompletions(buffer, cursorPosition);
-    if (requestId !== completionRequestIdRef.current) return;
-    setCompletions(results);
-    setCompletionIndex(0);
+    let results: Completion[];
+    try {
+      results = await completionProvider.getCompletions(input, cursor);
+    } catch (error) {
+      if (requestId === completionRequestIdRef.current) {
+        completionSourceRef.current = null;
+      }
+      logger.debug(`[COMPLETION] Refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+    if (requestId !== completionRequestIdRef.current) return null;
+    completionSourceRef.current = { input, cursorPosition: cursor };
+    replaceCompletions(results);
     setShowCompletions(results.length > 0);
-  }, [completionProvider, buffer, cursorPosition, historyIndex]);
+    return results;
+  }, [completionProvider, replaceCompletions]);
+
+  const updateCompletions = React.useCallback(() => (
+    refreshCompletions(buffer, cursorPosition, historyIndex)
+  ), [buffer, cursorPosition, historyIndex, refreshCompletions]);
 
   /**
    * Debounced completion update
@@ -372,31 +424,67 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   /**
    * Apply selected completion
    */
-  const getSelectedCompletion = (): Completion | null => {
-    if (!showCompletions || completions.length === 0 || !completions[completionIndex]) {
-      return null;
-    }
-
-    return completions[completionIndex];
-  };
-
-  const applyCompletion = (options: CompletionApplicationOptions = {}) => {
-    const completion = getSelectedCompletion();
-    if (!completion) return null;
-
+  const applyCompletion = (
+    completion: Completion,
+    input: string,
+    cursor: number,
+    options: CompletionApplicationOptions = {}
+  ) => {
     // Clear prompt prefill highlight if user modifies buffer
     if (promptPrefilled) {
       onPromptPrefilledClear?.();
     }
 
     completionRequestIdRef.current++;
-    const application = applyCompletionToInput(buffer, cursorPosition, completion, options);
+    const application = applyCompletionToInput(input, cursor, completion, options);
 
     updateBuffer(application.nextValue);
+    cursorPositionRef.current = application.nextCursorPosition;
     setCursorPosition(application.nextCursorPosition);
     dismissCompletions(false);
 
     return application;
+  };
+
+  const completionSourceIsCurrent = (): boolean => {
+    const source = completionSourceRef.current;
+    return Boolean(
+      source &&
+      source.input === bufferRef.current &&
+      source.cursorPosition === cursorPositionRef.current
+    );
+  };
+
+  const acceptCompletion = async (key: 'enter' | 'tab'): Promise<void> => {
+    const input = bufferRef.current;
+    const cursor = cursorPositionRef.current;
+    const previousSelection = completionsRef.current[completionIndexRef.current];
+    let available = completionsRef.current;
+
+    if (!completionSourceIsCurrent()) {
+      const refreshed = await refreshCompletions(input, cursor, -1);
+      if (!refreshed) return;
+      available = refreshed;
+    }
+
+    const completion = previousSelection
+      ? available.find(candidate =>
+          candidate.type === previousSelection.type &&
+          candidate.value === previousSelection.value &&
+          candidate.insertText === previousSelection.insertText
+        ) ?? available[0]
+      : available[completionIndexRef.current] ?? available[0];
+
+    if (!completion) {
+      if (key === 'enter') void handleSubmit(input);
+      return;
+    }
+
+    const decision = getCompletionAcceptDecision(completion, key);
+    const application = applyCompletion(completion, input, cursor, {
+      appendSpace: decision.appendSpace,
+    });
+    if (decision.submit) void handleSubmit(application.nextValue);
   };
 
   /**
@@ -535,7 +623,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       onPromptPrefilledClear?.();
     }
     completionRequestIdRef.current++;
-    dismissCompletions(false);
     updateBuffer(newValue);
     setHistoryIndex(-1); // Reset history when editing
   };
@@ -545,7 +632,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    */
   const handleCursorChange = (newPosition: number) => {
     completionRequestIdRef.current++;
-    dismissCompletions(false);
+    cursorPositionRef.current = newPosition;
     setCursorPosition(newPosition);
   };
 
@@ -714,27 +801,20 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const handleEditorKeyCapture = (_input: string, key: Key): boolean => {
     if (showCompletions) {
       if (key.upArrow) {
-        setCompletionIndex(index => moveCompletionSelection(index, completions.length, -1));
+        updateCompletionIndex(index => moveCompletionSelection(index, completions.length, -1));
         return true;
       }
       if (key.downArrow) {
-        setCompletionIndex(index => moveCompletionSelection(index, completions.length, 1));
+        updateCompletionIndex(index => moveCompletionSelection(index, completions.length, 1));
         return true;
       }
       if (key.pageUp || key.pageDown) {
         const delta = key.pageUp ? -8 : 8;
-        setCompletionIndex(index => Math.max(0, Math.min(completions.length - 1, index + delta)));
+        updateCompletionIndex(index => Math.max(0, Math.min(completions.length - 1, index + delta)));
         return true;
       }
       if (key.return && !key.shift) {
-        const completion = getSelectedCompletion();
-        if (!completion) {
-          dismissCompletions();
-          return false;
-        }
-        const decision = getCompletionAcceptDecision(completion, 'enter');
-        const application = applyCompletion({ appendSpace: decision.appendSpace });
-        if (application && decision.submit) void handleSubmit(application.nextValue);
+        void acceptCompletion('enter');
         return true;
       }
     }
@@ -772,11 +852,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return true;
       }
       if (showCompletions) {
-        const completion = getSelectedCompletion();
-        if (completion) {
-          const decision = getCompletionAcceptDecision(completion, 'tab');
-          applyCompletion({ appendSpace: decision.appendSpace });
-        }
+        void acceptCompletion('tab');
       } else {
         void updateCompletions();
       }
@@ -1619,7 +1695,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       {/* Completion dropdown */}
       {showCompletions && (
-        <CompletionDropdown completions={completions} selectedIndex={completionIndex} visible={showCompletions} />
+        <CompletionDropdown
+          completions={completions}
+          selectedIndex={completionIndex}
+          visible={showCompletions}
+        />
       )}
     </Box>
   );
