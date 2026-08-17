@@ -27,9 +27,16 @@ import type {
 const MAX_REDUCER_INPUT_RATIO = 0.6;
 const MAX_REDUCER_OUTPUT_TOKENS = 2048;
 const STRUCTURED_REDUCTION_DEADLINE_MS = 60_000;
-const RETAINED_TAIL_RATIO = 0.35;
+/** Reclaim floor as a fraction of the usable (post-overhead) budget. */
+const MIN_RECLAIMED_USABLE_RATIO = 0.05;
 const MIN_RECLAIMED_TOKENS = 256;
-const MIN_POST_COMPACTION_HEADROOM_RATIO = 0.15;
+/** Guaranteed free runway after compaction, as a fraction of the usable budget. */
+const MIN_POST_COMPACTION_HEADROOM_RATIO = 0.35;
+/**
+ * Below this much usable conversation budget, compaction is arithmetic-proof
+ * impossible to sustain: fail with configuration guidance instead of thrashing.
+ */
+const MIN_USABLE_CONTEXT_TOKENS = 1024;
 const CHECKPOINT_COMMIT_DELAYS_MS = [0, 50, 150] as const;
 
 export interface CompactionContext {
@@ -204,6 +211,15 @@ export class ConversationCompactor {
     }
 
     try {
+      if (budget.usableBudget < MIN_USABLE_CONTEXT_TOKENS) {
+        throw new Error(
+          `The context window cannot sustain this configuration: fixed request overhead `
+          + `(system prompt + tool schemas + reserves) consumes ${budget.fixedOverhead} of the `
+          + `${budget.triggerBudget}-token input budget, leaving ${budget.usableBudget} tokens for `
+          + `conversation (minimum ${MIN_USABLE_CONTEXT_TOKENS}). Reduce enabled tools, shorten the `
+          + `system prompt, or increase the model context window.`,
+        );
+      }
       this.debugState.stage = options.forceExtractive ? 'extracting' : 'reducing';
       let candidate = await this.buildCandidate(context, options, budget);
       this.debugState.stage = 'counting';
@@ -225,9 +241,12 @@ export class ConversationCompactor {
         candidateTokens = await this.countCandidate(candidate, context);
       }
 
+      // Headroom and reclaim floors scale with the usable budget, not the raw
+      // window: on a 16–32k local model the fixed overhead dominates the window
+      // and window-relative floors either pass trivially or fail always.
       const minimumHeadroom = Math.max(
         512,
-        Math.floor(budget.contextWindow * MIN_POST_COMPACTION_HEADROOM_RATIO),
+        Math.floor(budget.usableBudget * MIN_POST_COMPACTION_HEADROOM_RATIO),
       );
       const maximumPostCompactionBudget = Math.max(
         1,
@@ -236,8 +255,12 @@ export class ConversationCompactor {
           Math.max(budget.targetBudget, budget.triggerBudget - minimumHeadroom),
         ),
       );
+      const minimumReclaim = Math.max(
+        MIN_RECLAIMED_TOKENS,
+        Math.floor(budget.usableBudget * MIN_RECLAIMED_USABLE_RATIO),
+      );
       const insufficientReclaim = () => oldTokenCount >= budget.triggerBudget
-        && oldTokenCount - candidateTokens < MIN_RECLAIMED_TOKENS;
+        && oldTokenCount - candidateTokens < minimumReclaim;
       // If fitting the checkpoint is not enough, drop the raw tail as a bounded
       // fallback. This is allowed only when needed to preserve real headroom.
       if ((candidateTokens > maximumPostCompactionBudget || insufficientReclaim())
@@ -481,8 +504,7 @@ export class ConversationCompactor {
 
     const split = this.retainedSplit(
       domain,
-      budget.targetBudget,
-      system,
+      budget,
       options.phase ?? context.phase ?? 'manual',
       options.forceNoRetainedTail === true,
     );
@@ -606,16 +628,14 @@ export class ConversationCompactor {
 
   private retainedSplit(
     messages: readonly Message[],
-    targetBudget: number,
-    system: Message | null,
+    budget: ContextBudgetSnapshot,
     phase: CompactionPhase,
     forceNoRetainedTail: boolean,
   ): number {
-    const retainedBudget = Math.max(
-      1,
-      Math.min(Math.floor(this.tokenManager.getContextSize() * RETAINED_TAIL_RATIO), targetBudget)
-        - (system ? this.tokenManager.estimateMessageTokens(system) : 0),
-    );
+    // The tail may occupy only its share of the post-compaction domain budget;
+    // the remainder is guaranteed checkpoint room. (System-prompt tokens live in
+    // the fixed overhead, already excluded from the domain budget.)
+    const retainedBudget = Math.max(1, budget.retainedTailBudget);
     if (forceNoRetainedTail) return messages.length;
 
     // Before the first model call for a new request, preserve that request
@@ -624,7 +644,10 @@ export class ConversationCompactor {
     if (phase === 'pre-turn' && messages.at(-1)?.role === 'user') {
       const lastUser = messages.length - 1;
       const candidate = findSafeSplitIndex([...messages], lastUser);
-      if (this.tokenManager.estimateMessagesTokens(messages.slice(candidate)) > retainedBudget) {
+      // The pending request is sacred: allow it the full domain budget even
+      // when that squeezes the checkpoint down to its fitted minimum.
+      const pendingRequestBudget = Math.max(retainedBudget, budget.domainBudget);
+      if (this.tokenManager.estimateMessagesTokens(messages.slice(candidate)) > pendingRequestBudget) {
         throw new Error('The latest user message alone exceeds the safe retained-input budget; reduce the input or increase the model context window.');
       }
       return candidate;

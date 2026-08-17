@@ -18,6 +18,14 @@ export interface ReadCacheEntry {
   lineCount: number;
   totalLines: number;
   lastAccessTime: number;
+  /**
+   * The tool call whose result message carried the file content into the
+   * conversation. A cache hit is only truthful while that message is still in
+   * the model's active context — compaction can remove it, at which point the
+   * "content already in conversation" stub becomes a lie that strands the
+   * model without the file and without a way to re-read it.
+   */
+  toolCallId?: string;
 }
 
 const MAX_CACHE_SIZE = 200;

@@ -106,6 +106,18 @@ export interface ContextBudgetSnapshot {
   safetyReserve: number;
   triggerBudget: number;
   targetBudget: number;
+  /**
+   * Tokens every request pays regardless of conversation content: system
+   * prompt, tool schemas, dynamic context, and calibrated provider overhead.
+   * Compaction can never reclaim these.
+   */
+  fixedOverhead: number;
+  /** Input tokens actually available to conversation content (trigger − fixed). */
+  usableBudget: number;
+  /** Post-compaction budget for conversation content (checkpoint + retained tail). */
+  domainBudget: number;
+  /** Portion of the domain budget the raw retained tail may occupy. */
+  retainedTailBudget: number;
   shouldCompact: boolean;
 }
 
