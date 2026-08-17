@@ -94,6 +94,31 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('ensureCurrentSession', () => {
+    it('should create exactly one session for concurrent callers', async () => {
+      const results = await Promise.all([
+        sessionManager.ensureCurrentSession(),
+        sessionManager.ensureCurrentSession(),
+        sessionManager.ensureCurrentSession(),
+      ]);
+
+      const names = new Set(results.map(r => r.sessionName));
+      expect(names.size).toBe(1);
+      expect(results.filter(r => r.created)).toHaveLength(1);
+      expect(await sessionManager.listSessions()).toHaveLength(1);
+      expect(sessionManager.getCurrentSession()).toBe(results[0]!.sessionName);
+    });
+
+    it('should reuse the existing session without creating another', async () => {
+      await sessionManager.createSession('existing');
+
+      const result = await sessionManager.ensureCurrentSession();
+
+      expect(result).toEqual({ sessionName: 'existing', created: false });
+      expect(await sessionManager.listSessions()).toHaveLength(1);
+    });
+  });
+
   describe('loadSession', () => {
     it('should load existing session', async () => {
       const sessionName = await sessionManager.createSession('load-test');

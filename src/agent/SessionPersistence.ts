@@ -63,16 +63,19 @@ export class SessionPersistence {
     // Create a new session if none exists and we have user messages
     if (!currentSession) {
       const hasUserMessages = this.conversationManager.getMessages().some(m => m.role === 'user');
-      if (hasUserMessages && typeof (sessionManager as any).generateSessionName === 'function') {
-        const sessionName = (sessionManager as any).generateSessionName();
-        await (sessionManager as any).createSession(sessionName);
-        (sessionManager as any).setCurrentSession(sessionName);
-        logger.debug('[AGENT_SESSION]', this.instanceId, 'Created new session:', sessionName);
+      if (hasUserMessages && typeof (sessionManager as any).ensureCurrentSession === 'function') {
+        // Single-flighted in SessionManager: several auto-saves can reach here in
+        // the same tick (one per appended message, plus the turn-start commit),
+        // and minting a session per caller orphans all but the last one.
+        const { sessionName, created } = await (sessionManager as any).ensureCurrentSession();
+        if (created) {
+          logger.debug('[AGENT_SESSION]', this.instanceId, 'Created new session:', sessionName);
 
-        // Notify PatchManager about the new session
-        const patchManager = registry.get('patch_manager');
-        if (patchManager && typeof (patchManager as any).onSessionChange === 'function') {
-          await (patchManager as any).onSessionChange();
+          // Notify PatchManager about the new session
+          const patchManager = registry.get('patch_manager');
+          if (patchManager && typeof (patchManager as any).onSessionChange === 'function') {
+            await (patchManager as any).onSessionChange();
+          }
         }
       } else {
         return; // No user messages yet, don't create session

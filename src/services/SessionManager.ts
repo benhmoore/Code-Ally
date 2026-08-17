@@ -42,6 +42,8 @@ export interface SessionManagerConfig {
 export class SessionManager implements IService {
   private static readonly TRANSCRIPT_SEGMENT_MESSAGES = 64;
   private currentSession: string | null = null;
+  // In-flight implicit session creation, so concurrent auto-saves share one session
+  private sessionCreationInFlight: Promise<string> | null = null;
   private sessionsDir: string;
   private maxSessions: number;
 
@@ -391,6 +393,37 @@ export class SessionManager implements IService {
     await this.cleanupOldSessions();
 
     return name;
+  }
+
+  /**
+   * Return the current session, creating one only if there is none.
+   *
+   * Auto-save runs fire-and-forget from several places at once (every appended
+   * message, plus the awaited turn-start commit), so a plain
+   * `getCurrentSession() ?? createSession()` lets two callers in the same tick
+   * both observe null and each mint a session. The loser is orphaned on disk
+   * holding just the opening prompt, which is what filled the resume list with
+   * duplicates of the first message. Creation is single-flighted here so every
+   * concurrent caller lands on the same session.
+   *
+   * `created` is true only for the caller that actually performed the creation,
+   * so one-shot follow-up work (patch-manager rebinding) does not run per caller.
+   */
+  async ensureCurrentSession(): Promise<{ sessionName: string; created: boolean }> {
+    if (this.currentSession) {
+      return { sessionName: this.currentSession, created: false };
+    }
+
+    if (this.sessionCreationInFlight) {
+      return { sessionName: await this.sessionCreationInFlight, created: false };
+    }
+
+    const inFlight = this.createSession().finally(() => {
+      this.sessionCreationInFlight = null;
+    });
+    this.sessionCreationInFlight = inFlight;
+
+    return { sessionName: await inFlight, created: true };
   }
 
   /**
