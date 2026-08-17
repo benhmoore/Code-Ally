@@ -294,6 +294,14 @@ async function modelMetadata(options: EvalOptions, model: string): Promise<unkno
   };
 }
 
+async function unloadModel(endpoint: string, model: string): Promise<void> {
+  await endpointJson(endpoint, '/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, keep_alive: 0 }),
+  });
+}
+
 function gitRevision(): string | undefined {
   try {
     return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -319,30 +327,25 @@ async function main(): Promise<void> {
     throw new Error('--temperature must be between 0 and 2');
   }
 
-  const clients = new Map(options.models.map(model => [model, new OllamaClient({
-    endpoint: options.endpoint,
-    modelName: model,
-    temperature: options.temperature,
-    contextSize: options.contextSize,
-    maxTokens: options.maxTokens,
-    reasoningEffort: options.reasoningEffort,
-    keepAlive: 600,
-  })]));
-
   const metadata = await Promise.all(options.models.map(model => modelMetadata(options, model)));
   const ollama = await endpointJson(options.endpoint, '/api/version');
   const records: RunRecord[] = [];
 
-  try {
-    for (const [model, client] of clients) {
-      process.stdout.write(`Warming ${model}...\n`);
-      await timedSend(client, [{ role: 'user', content: 'Reply with OK.' }], options);
-    }
-
-    for (let repetition = 1; repetition <= options.runs; repetition++) {
-      const modelOrder = repetition % 2 === 1 ? options.models : [...options.models].reverse();
-      for (const model of modelOrder) {
-        const client = clients.get(model)!;
+  for (let repetition = 1; repetition <= options.runs; repetition++) {
+    const modelOrder = repetition % 2 === 1 ? options.models : [...options.models].reverse();
+    for (const model of modelOrder) {
+      const client = new OllamaClient({
+        endpoint: options.endpoint,
+        modelName: model,
+        temperature: options.temperature,
+        contextSize: options.contextSize,
+        maxTokens: options.maxTokens,
+        reasoningEffort: options.reasoningEffort,
+        keepAlive: 600,
+      });
+      try {
+        process.stdout.write(`Warming ${model}...\n`);
+        await timedSend(client, [{ role: 'user', content: 'Reply with OK.' }], options);
         const startedAt = new Date().toISOString();
         const started = performance.now();
         const scenarioRecords: ScenarioRecord[] = [];
@@ -361,10 +364,11 @@ async function main(): Promise<void> {
           maxScore: scenarioRecords.reduce((sum, record) => sum + record.maxScore, 0),
           scenarios: scenarioRecords,
         });
+      } finally {
+        await client.close();
+        await unloadModel(options.endpoint, model);
       }
     }
-  } finally {
-    await Promise.all([...clients.values()].map(client => client.close()));
   }
 
   const result = {

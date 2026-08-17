@@ -372,19 +372,9 @@ export class ToolManager {
    * Generate function definition for a single tool
    */
   private generateFunctionDefinition(tool: BaseTool): FunctionDefinition {
-    const functionDef: FunctionDefinition = tool.getFunctionDefinition();
-
-    // Dynamically inject description parameter for UI subtext
-    // Only inject if tool doesn't already define it
-    // Description is always optional - tools infer subtext from their arguments when not provided
-    if (functionDef.function.parameters?.properties && !functionDef.function.parameters.properties.description) {
-      functionDef.function.parameters.properties.description = {
-        type: 'string',
-        description: 'Brief description of what this operation does (5-10 words, shown in UI)',
-      };
-    }
-
-    return functionDef;
+    // Operational arguments only. UI labels come from formatSubtext(), which
+    // keeps display metadata from competing with parameters that affect work.
+    return tool.getFunctionDefinition();
   }
 
   /**

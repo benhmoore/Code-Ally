@@ -928,10 +928,10 @@ describe('OllamaClient', () => {
       });
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ message: { role: 'assistant', content: '{"ok":true}' } }),
+        json: async () => ({ message: { role: 'assistant', content: 'model to=user<|message|>```json\n{"ok":true}\n```' } }),
       });
 
-      await reasoningClient.send([{ role: 'user', content: 'Return JSON' }], {
+      const result = await reasoningClient.send([{ role: 'user', content: 'Return JSON' }], {
         stream: false,
         signal: new AbortController().signal,
         responseSchema: {
@@ -946,11 +946,15 @@ describe('OllamaClient', () => {
 
       const payload = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(payload.think).toBe(false);
+      expect(payload.messages[0].role).toBe('system');
+      expect(payload.messages[0].content).toContain('Use the exact property names');
+      expect(payload.messages[0].content).toContain('"required":["ok"]');
       expect(payload.format).toEqual({
         type: 'object',
         properties: { ok: { type: 'boolean' } },
         required: ['ok'],
       });
+      expect(result.content).toBe('{"ok":true}');
     });
 
     it('keeps boolean think for model templates without graded reasoning', async () => {

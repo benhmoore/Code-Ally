@@ -154,6 +154,12 @@ describe('ToolManager', () => {
       expect(defs[0].function.name).toBe('test-tool');
       expect(defs[0].function.description).toBe('A test tool');
     });
+
+    it('does not inject display-only description arguments into tool schemas', () => {
+      const definition = toolManager.getFunctionDefinitions()[0];
+      expect(definition.function.parameters.properties).not.toHaveProperty('description');
+    });
+
   });
 
   describe('executeTool', () => {

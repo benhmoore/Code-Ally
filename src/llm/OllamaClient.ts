@@ -95,6 +95,46 @@ function mergeStreamedToolCalls(current: ToolCall[] | undefined, incoming: ToolC
   return merged;
 }
 
+function messagesWithResponseSchema(
+  messages: readonly Message[],
+  schema: Record<string, unknown>,
+): Message[] {
+  const instruction = [
+    'Return only a JSON value conforming exactly to this schema.',
+    'Use the exact property names. Do not add Markdown fences or explanatory text.',
+    JSON.stringify(schema),
+  ].join('\n');
+  if (messages[0]?.role === 'system') {
+    return [
+      { ...messages[0], content: `${messages[0].content}\n\n${instruction}` },
+      ...messages.slice(1),
+    ];
+  }
+  return [{ role: 'system', content: instruction }, ...messages];
+}
+
+function normalizeStructuredJson(content: string): string {
+  const trimmed = content.trim();
+  const candidates = [trimmed];
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed)?.[1]?.trim();
+  if (fenced) candidates.push(fenced);
+  const objectStart = trimmed.indexOf('{');
+  const objectEnd = trimmed.lastIndexOf('}');
+  if (objectStart >= 0 && objectEnd > objectStart) candidates.push(trimmed.slice(objectStart, objectEnd + 1));
+  const arrayStart = trimmed.indexOf('[');
+  const arrayEnd = trimmed.lastIndexOf(']');
+  if (arrayStart >= 0 && arrayEnd > arrayStart) candidates.push(trimmed.slice(arrayStart, arrayEnd + 1));
+  for (const candidate of candidates) {
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // Try the next bounded candidate.
+    }
+  }
+  return content;
+}
+
 export class OllamaClient extends ModelClient {
   private _endpoint: string;
   private _modelName: string; // Not readonly - allows runtime model changes
@@ -289,6 +329,10 @@ export class OllamaClient extends ModelClient {
           // Execute request with cancellation support
           const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream);
 
+          if (responseSchema && result.content) {
+            result.content = normalizeStructuredJson(result.content);
+          }
+
           // Validate and repair tool calls (ALL responses, not just non-streaming).
           // A validation failure is a terminal (non-retried) outcome, so it is
           // returned from attempt() — not thrown.
@@ -315,7 +359,9 @@ export class OllamaClient extends ModelClient {
   ): OllamaPayload {
     const payload: OllamaPayload = {
       model: this._modelName,
-      messages: normalizeOllamaMessages(messages),
+      messages: normalizeOllamaMessages(
+        responseSchema ? messagesWithResponseSchema(messages, responseSchema) : messages
+      ),
       stream,
       options: {
         num_ctx: this._contextSize,

@@ -29,6 +29,7 @@ export class MemoryTool extends BaseTool {
     'Persist or recall durable facts about this project across sessions. ' +
     'Save things worth remembering autonomously (user preferences, feedback on how to work, ' +
     'project constraints not derivable from the code, external references). ' +
+    'Do not save repository facts, current-turn details, or facts already in project instructions. ' +
     'Memory is private and stored outside the repo. ' +
     'Actions: save/update (upsert a fact), delete (remove one), recall (fetch by name or relevance), list (all).';
   readonly capabilities = [ToolCapability.AppStateWrite] as const;
@@ -38,8 +39,6 @@ export class MemoryTool extends BaseTool {
   readonly hideOutput = true;
   // Only the main assistant curates long-term memory; sub-agents never see this tool.
   readonly mainAgentOnly = true;
-  // Behavioral policy (when to save, restraint, taxonomy) lives in one place:
-  // MEMORY_GUIDELINES in CORE_DIRECTIVES. Not duplicated here to save per-turn context.
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
