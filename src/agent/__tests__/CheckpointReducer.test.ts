@@ -93,6 +93,30 @@ describe('extractSemanticCheckpoint', () => {
     expect(state.blockers[1]!.exactError).toContain('exited with status 1');
   });
 
+  it('carries the assistant last stated intent into activeWork, and skips evicted stubs', () => {
+    const messages: Message[] = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        content: 'Chunk mesher done. Moving to input handling and the player controller next.',
+        timestamp: 1,
+      },
+      toolResult({
+        id: 't1',
+        content: '[Tool Call ID: call-t1]\n[Tool output evicted to reclaim context: ~800-token read result.]',
+        metadata: { contentEvicted: true },
+      }),
+    ];
+
+    const state = extractSemanticCheckpoint(messages);
+
+    expect(state.activeWork.some(entry =>
+      entry.text.includes('Moving to input handling'))).toBe(true);
+    // Evicted stubs are not "completed work" — their artifacts carry the record.
+    expect(state.completedWork).toHaveLength(0);
+    expect(state.blockers).toHaveLength(0);
+  });
+
   it('accumulates the artifact inventory across generations, newest kept on overflow', () => {
     const previous = emptySemanticCheckpoint();
     previous.artifacts = [{

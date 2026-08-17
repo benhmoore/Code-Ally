@@ -197,7 +197,12 @@ describe('ReadTool', () => {
     it('re-reads when the cached content is no longer in the active conversation', async () => {
       // Fake owning agent: the cache stub is only truthful while the tool
       // result message that carried the content remains in active context.
-      const activeMessages: Array<{ role: string; tool_call_id?: string; content: string }> = [];
+      const activeMessages: Array<{
+        role: string;
+        tool_call_id?: string;
+        content: string;
+        metadata?: { contentEvicted?: boolean };
+      }> = [];
       registry.registerInstance('agent', {
         getConversationManager: () => ({ getMessages: () => activeMessages }),
       } as any);
@@ -228,6 +233,20 @@ describe('ReadTool', () => {
         { file_paths: [testFile] }, 'call-4', undefined, false, false, { agentId: 'agent-a' },
       );
       expect(fourth.content).toContain('File unchanged since last read');
+
+      // Eviction stubs the carrying message in place: the content is gone even
+      // though the message still exists, so the stub must not be served.
+      activeMessages[0] = {
+        role: 'tool',
+        tool_call_id: 'call-3',
+        content: '[Tool output evicted to reclaim context]',
+        metadata: { contentEvicted: true },
+      };
+      const fifth = await readTool.execute(
+        { file_paths: [testFile] }, 'call-5', undefined, false, false, { agentId: 'agent-a' },
+      );
+      expect(fifth.content).toContain('Line 1');
+      expect(fifth.content).not.toContain('File unchanged since last read');
     });
 
     it('should track read state in the reading agent scope only', async () => {

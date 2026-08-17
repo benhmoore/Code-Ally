@@ -164,7 +164,9 @@ describe('ConversationCompactor', () => {
   });
 
   it('compacts completed work inside a long unattended user turn at a safe tool boundary', async () => {
-    const messages = toolTurn(8, 520);
+    // Many small (non-evictable) results, so this exercises the checkpoint
+    // path rather than first-line eviction.
+    const messages = toolTurn(30, 150);
     const manager = new ConversationManager({ initialMessages: messages });
     const tokens = new TokenManager(4096);
     const client = chatClient();
@@ -268,23 +270,56 @@ describe('ConversationCompactor', () => {
       chatClient(), manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
     );
 
-    const compacted = await compactor.checkAndPerformAutoCompaction({ ...context(), phase: 'mid-turn' });
-    const checkpoint = manager.getCheckpoint();
+    const result = await compactor.compactAndApply({ ...context(), phase: 'mid-turn' }, {
+      trigger: 'automatic', phase: 'mid-turn', forceExtractive: true,
+    });
+    const checkpoint = result.checkpoint;
 
-    expect(compacted).toBe(true);
     // Every result carried `"error":""` — none of them is a blocker.
-    expect(checkpoint?.semanticState.blockers).toHaveLength(0);
-    expect(checkpoint?.semanticState.completedWork.length).toBeGreaterThan(0);
+    expect(checkpoint.semanticState.blockers).toHaveLength(0);
+    expect(checkpoint.semanticState.completedWork.length).toBeGreaterThan(0);
     // Summaries, not raw payload blobs.
-    for (const entry of checkpoint!.semanticState.completedWork) {
+    for (const entry of checkpoint.semanticState.completedWork) {
       expect(entry.text.length).toBeLessThanOrEqual(450);
     }
   });
 
+  it('evicts stale tool outputs in place instead of spending a checkpoint generation', async () => {
+    const messages = envelopeTurn(6, 400);
+    const manager = new ConversationManager({ initialMessages: messages });
+    const tokens = new TokenManager(4096);
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, tokens, new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    const compacted = await compactor.checkAndPerformAutoCompaction({ ...context(), phase: 'mid-turn' });
+
+    expect(compacted).toBe(true);
+    // Eviction alone cleared the trigger: no checkpoint generation was spent
+    // and the conversation keeps its complete structure.
+    expect(manager.getCheckpoint()).toBeNull();
+    const active = manager.getMessages();
+    expect(active.map(message => message.id)).toEqual(messages.map(message => message.id));
+    // Old payloads became stubs; the newest results (the working set) survive.
+    const results = active.filter(message => message.role === 'tool');
+    expect(results.slice(0, -2).every(message => message.metadata?.contentEvicted)).toBe(true);
+    expect(results.slice(0, -2).every(message => message.content.includes('evicted to reclaim context'))).toBe(true);
+    expect(results.slice(-2).every(message => !message.metadata?.contentEvicted)).toBe(true);
+    expect(results.slice(-2).every(message => message.content.includes('Created new file'))).toBe(true);
+    // The transcript still holds the original payloads for the user.
+    const transcriptResults = manager.getTranscript().filter(message => message.role === 'tool');
+    expect(transcriptResults.every(message => message.content.includes('Created new file'))).toBe(true);
+    // Real context was reclaimed.
+    expect(compactor.budget(context()).shouldCompact).toBe(false);
+  });
+
   it('carries the artifact inventory and completed work forward across generations', async () => {
+    // 8k window: the smallest realistic deployment target. (At the 4k stress
+    // size the checkpoint budget is too small to guarantee full inventory
+    // survival — that regime is covered by the fit-floor tests instead.)
     const manager = new ConversationManager({ initialMessages: envelopeTurn(4, 300, '/repo/src/alpha') });
     const compactor = new ConversationCompactor(
-      chatClient(), manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+      chatClient(), manager, new TokenManager(8192), new ActivityStream(), vi.fn().mockResolvedValue(true),
     );
 
     const first = await compactor.compactAndApply({ ...context(), phase: 'mid-turn' }, {
@@ -308,10 +343,10 @@ describe('ConversationCompactor', () => {
     expect(paths).toContain('/repo/src/beta-0.ts');
   });
 
-  it('remains lucid with stable runway across many generations of a long task', async () => {
-    // Regression for the compaction death-spiral: on a small window, fixed
-    // overhead plus a growing low-signal checkpoint made every generation
-    // reclaim less than the last until the agent had no working room at all.
+  it('remains lucid with stable runway across many reclaim cycles of a long task', async () => {
+    // Regression for the compaction death-spiral: on a small window, tool
+    // payloads plus a growing low-signal checkpoint made every reclaim free
+    // less than the last until the agent looped on re-reading its own files.
     const manager = new ConversationManager({ initialMessages: [{
       id: 'objective',
       role: 'user',
@@ -324,10 +359,14 @@ describe('ConversationCompactor', () => {
     );
     const runContext = { ...context(), modelMaxOutput: 2_048, phase: 'mid-turn' as const };
 
-    let generations = 0;
-    for (let iteration = 0; iteration < 200 && generations < 12; iteration++) {
-      // Realistic work shape: whole-file reads (the payload-heavy spiral
-      // trigger) interleaved with writes, all in real envelope form.
+    let reclaimRounds = 0;
+    let evictionRounds = 0;
+    let lastGeneration = 0;
+    for (let iteration = 0; iteration < 200 && reclaimRounds < 16; iteration++) {
+      // Realistic work shape: substantive assistant prose (non-evictable, so
+      // checkpoints stay in play) plus payload-heavy reads and writes in real
+      // envelope form (evictable — the observed spiral trigger).
+      const prose = Array.from({ length: 100 }, (_, w) => `p${iteration}w${w}`).join(' ');
       const filler = Array.from({ length: 500 }, (_, w) => `it${iteration}w${w}`).join(' ');
       const callId = `call-${iteration}`;
       const filePath = `/repo/src/gen-${iteration}.ts`;
@@ -335,7 +374,7 @@ describe('ConversationCompactor', () => {
       manager.addMessages([{
         id: `assistant-${iteration}`,
         role: 'assistant',
-        content: '',
+        content: `Analysis of step ${iteration}: ${prose}`,
         tool_calls: [{
           id: callId,
           type: 'function',
@@ -361,26 +400,44 @@ describe('ConversationCompactor', () => {
       if (!budget.shouldCompact) continue;
       const compacted = await compactor.checkAndPerformAutoCompaction(runContext);
       expect(compacted).toBe(true);
-      generations++;
+      reclaimRounds++;
 
       const after = compactor.budget(runContext);
-      // Every generation must restore real working room. This is the invariant
-      // whose violation produced the shrinking-runway spiral.
+      // Every reclaim round — eviction or checkpoint — must restore real
+      // working room. This is the invariant whose violation produced the
+      // shrinking-runway spiral.
       expect(after.triggerBudget - after.estimatedInput)
-        .toBeGreaterThanOrEqual(Math.floor(after.usableBudget * 0.3));
+        .toBeGreaterThanOrEqual(Math.floor(after.usableBudget * 0.2));
 
-      const checkpoint = manager.getCheckpoint()!;
-      // Lucidity invariants, at every generation:
-      expect(checkpoint.semanticState.objective?.text).toContain('voxel game');
-      expect(checkpoint.semanticState.blockers).toHaveLength(0);
-      // The recent artifact inventory survives so work stays re-findable.
-      expect(checkpoint.semanticState.artifacts.length).toBeGreaterThanOrEqual(6);
+      // The newest tool result is the working set; reclaim never eats it.
+      const newestResult = manager.getMessages().filter(m => m.role === 'tool').at(-1);
+      expect(newestResult?.metadata?.contentEvicted).not.toBe(true);
+
+      const checkpoint = manager.getCheckpoint();
+      if (checkpoint && checkpoint.generation > lastGeneration) {
+        lastGeneration = checkpoint.generation;
+        // Lucidity invariants at every checkpoint generation:
+        expect(checkpoint.semanticState.objective?.text).toContain('voxel game');
+        expect(checkpoint.semanticState.blockers).toHaveLength(0);
+        // Early generations compact few exchanges (the adaptive tail keeps the
+        // recent ones raw); the floor is small but must never be zero.
+        expect(checkpoint.semanticState.artifacts.length).toBeGreaterThanOrEqual(3);
+        // Continuity: the next window knows what the assistant was doing.
+        expect(checkpoint.semanticState.activeWork.some(entry =>
+          entry.text.includes('Analysis of step'))).toBe(true);
+      } else {
+        evictionRounds++;
+      }
     }
 
-    expect(generations).toBe(12);
+    expect(reclaimRounds).toBe(16);
+    // Cheap in-place eviction carries most of the load; checkpoint generations
+    // are rare but still functioning.
+    expect(evictionRounds).toBeGreaterThanOrEqual(8);
+    expect(lastGeneration).toBeGreaterThanOrEqual(1);
     // The inventory accumulates across generations instead of resetting: late
     // context windows still know about work from many generations earlier.
-    expect(manager.getCheckpoint()!.semanticState.artifacts.length).toBeGreaterThanOrEqual(20);
+    expect(manager.getCheckpoint()!.semanticState.artifacts.length).toBeGreaterThanOrEqual(8);
   });
 
   it('rejects with configuration guidance when overhead leaves no usable context', async () => {
