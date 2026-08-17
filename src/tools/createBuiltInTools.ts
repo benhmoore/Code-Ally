@@ -24,6 +24,7 @@ import { LineEditTool } from './LineEditTool.js';
 import { LintTool } from './LintTool.js';
 import { ListAgentsTool } from './ListAgentsTool.js';
 import { LsTool } from './LsTool.js';
+import { ToolSearchTool } from './ToolSearchTool.js';
 import { ManageAgentsTool } from './ManageAgentsTool.js';
 import { MemoryTool } from './MemoryTool.js';
 import { PlanTool } from './PlanTool.js';
@@ -77,6 +78,7 @@ export function createBuiltInTools(
     new GlobTool(activityStream),
     new GrepTool(activityStream),
     new LsTool(activityStream),
+    new ToolSearchTool(activityStream),
     new TreeTool(activityStream),
     new AgentTool(activityStream),
     new ManageAgentsTool(activityStream),

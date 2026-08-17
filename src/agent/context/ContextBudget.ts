@@ -53,6 +53,47 @@ export interface ContextBudgetSnapshot {
   shouldCompact: boolean;
 }
 
+/**
+ * Share of the input budget that tool schemas may occupy.
+ *
+ * Schemas are paid on every request and cannot be reclaimed, so they compete
+ * directly with the conversation. A quarter is generous on a large window
+ * (where nothing needs deferring at all) and is the ceiling that keeps a small
+ * window workable.
+ */
+const TOOL_SCHEMA_SHARE_OF_TRIGGER = 0.25;
+
+/** The fixed reserves and reclaim ceiling, independent of conversation content. */
+export function requestCeilings(contextWindow: number, modelMaxOutput?: number): {
+  outputReserve: number;
+  safetyReserve: number;
+  triggerBudget: number;
+} {
+  const outputReserve = Math.min(
+    modelMaxOutput ?? Number.MAX_SAFE_INTEGER,
+    Math.max(2048, Math.floor(contextWindow * 0.12)),
+  );
+  const safetyReserve = Math.max(512, Math.floor(contextWindow * 0.05));
+  const triggerBudget = Math.max(
+    1,
+    Math.min(
+      Math.floor(contextWindow * 0.8),
+      contextWindow - outputReserve - safetyReserve,
+    ),
+  );
+  return { outputReserve, safetyReserve, triggerBudget };
+}
+
+/**
+ * Token ceiling for the tool schemas sent with a request. Computed without
+ * reference to the schemas themselves, so tool exposure can be decided before
+ * the request budget is planned.
+ */
+export function toolSchemaBudget(contextWindow: number, modelMaxOutput?: number): number {
+  const { triggerBudget } = requestCeilings(contextWindow, modelMaxOutput);
+  return Math.max(256, Math.floor(triggerBudget * TOOL_SCHEMA_SHARE_OF_TRIGGER));
+}
+
 export interface ContextBudgetInput {
   messages: readonly Message[];
   functions?: readonly FunctionDefinition[];
@@ -67,18 +108,8 @@ export class ContextBudgetPlanner {
 
   plan(input: ContextBudgetInput): ContextBudgetSnapshot {
     const contextWindow = this.tokenManager.getContextSize();
-    const outputReserve = Math.min(
-      input.modelMaxOutput ?? Number.MAX_SAFE_INTEGER,
-      Math.max(2048, Math.floor(contextWindow * 0.12)),
-    );
-    const safetyReserve = Math.max(512, Math.floor(contextWindow * 0.05));
-    const triggerBudget = Math.max(
-      1,
-      Math.min(
-        Math.floor(contextWindow * 0.8),
-        contextWindow - outputReserve - safetyReserve,
-      ),
-    );
+    const { outputReserve, safetyReserve, triggerBudget } =
+      requestCeilings(contextWindow, input.modelMaxOutput);
 
     const schemaTokens = input.functions
       ? this.tokenManager.estimateTokens(JSON.stringify(input.functions))

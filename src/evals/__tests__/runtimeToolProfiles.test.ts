@@ -11,8 +11,9 @@ describe('runtime tool profiles', () => {
     const definitions = createRuntimeCoreToolDefinitions();
     const profile = describeToolProfile(definitions);
 
-    expect(profile.count).toBe(20);
+    expect(profile.count).toBe(21);
     expect(profile.names).toContain('read');
+    expect(profile.names).toContain('tool-search');
     expect(profile.names).toContain('ask-user-question');
     expect(profile.names).not.toContain('write-agent');
     expect(profile.names).not.toContain('scheduled-tasks');
@@ -43,6 +44,6 @@ describe('runtime tool profiles', () => {
       latestUserText: 'Schedule the test suite daily at 9 AM',
     });
     expect(definitions.map(item => item.function.name)).toContain('scheduled-tasks');
-    expect(definitions).toHaveLength(21);
+    expect(definitions).toHaveLength(22);
   });
 });

@@ -12,7 +12,7 @@ describe('createBuiltInTools', () => {
       'bash', 'bash-output', 'kill-shell', 'cancel-agent', 'wait', 'watch',
       'complete-objective', 'block-objective', 'reconcile-effect', 'read', 'write',
       'write-agent', 'edit-agent', 'delete-agent', 'list-agents', 'write-temp',
-      'edit', 'line-edit', 'glob', 'grep', 'ls', 'tree', 'agent', 'manage-agents',
+      'edit', 'line-edit', 'glob', 'grep', 'ls', 'tool-search', 'tree', 'agent', 'manage-agents',
       'explore', 'plan', 'agent-ask', 'cleanup-call', 'todo-write', 'sessions',
       'lint', 'format', 'ask-user-question', 'web-fetch', 'web-search', 'research',
       'skill', 'memory', 'scheduled-tasks', 'enter-plan-mode', 'exit-plan-mode',
@@ -27,7 +27,7 @@ describe('createBuiltInTools', () => {
       'ally',
     );
 
-    expect(definitions).toHaveLength(33);
+    expect(definitions).toHaveLength(34);
     expect(definitions.map(definition => definition.function.name)).not.toContain('write-agent');
     expect(definitions.map(definition => definition.function.name)).toContain('memory');
   });

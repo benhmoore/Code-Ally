@@ -256,6 +256,8 @@ export class Agent {
   private turnAdmissionActive = false;
   private nativeCompactionPending = false;
   private lastRequestFunctions: FunctionDefinition[] = [];
+  /** Advertisement of tools whose schemas were withheld from the last request. */
+  private deferredToolCatalogue = '';
   private lastRequestPreview: ModelRequestPreview | null = null;
 
   // Checkpoint reminder tracking - monitors tool calls to inject progress reminders
@@ -1507,11 +1509,26 @@ export class Agent {
       hasToolResults: conversationMessages.some(message => message.role === 'tool'),
     }));
 
-    const functions = this.toolManager.getFunctionDefinitions(
+    const availableFunctions = this.toolManager.getFunctionDefinitions(
       excludeTools.length > 0 ? excludeTools : undefined,
       this.agentName,  // Pass agent name for visible_to filtering
       this.config.allowedTools  // Pass allowed tools list for restriction
     );
+
+    // Tool schemas are paid on every request and are never reclaimable, so on a
+    // small window they must not crowd out the conversation. Send the core loop
+    // plus whatever the agent has loaded on demand, and advertise the rest.
+    const { selectExposedTools, renderDeferredToolCatalogue } =
+      await import('../tools/ToolExposurePolicy.js');
+    const { toolSchemaBudget } = await import('./context/ContextBudget.js');
+    const exposure = selectExposedTools({
+      definitions: availableFunctions,
+      schemaBudget: toolSchemaBudget(this.tokenManager.getContextSize(), this.appConfig.max_tokens),
+      activated: runtimeRegistry.get('tool_activation_registry')?.get(this.instanceId),
+      estimateTokens: text => this.tokenManager.estimateTokens(text),
+    });
+    const functions = exposure.exposed;
+    this.deferredToolCatalogue = renderDeferredToolCatalogue(exposure.deferred);
     this.lastRequestFunctions = [...functions];
 
     // Generate or regenerate system prompt with current context (todos, etc.) before each LLM call
@@ -1575,13 +1592,19 @@ export class Agent {
     // Build volatile context before planning so the budget is the request the
     // model will actually receive, not a smaller approximation.
     const { getDynamicContextBlock } = await import('../prompts/systemMessages.js');
-    const dynamicContext = await getDynamicContextBlock({
+    const baseDynamicContext = await getDynamicContextBlock({
       tokenManager: this.tokenManager,
       toolResultManager: this.toolResultManager,
       includeTodos: !this.config.isSpecializedAgent,
       includePlanMode: !this.config.isSpecializedAgent,
       includeTime: Boolean(this.config.isScheduledRun) || needsTemporalContext(latestUserText),
     });
+
+    // The catalogue of withheld tools rides with the volatile context so it is
+    // refreshed as tools are loaded, and is counted in the request budget.
+    const dynamicContext = [baseDynamicContext, this.deferredToolCatalogue]
+      .filter(part => part && part.length > 0)
+      .join('\n\n');
 
     // Auto-compaction: the budget planner decides from absolute request budgets.
     await this.checkAutoCompaction(functions, dynamicContext);

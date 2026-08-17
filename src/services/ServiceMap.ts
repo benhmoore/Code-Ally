@@ -51,6 +51,7 @@ import type { ProjectContextDetector } from './ProjectContextDetector.js';
 import type { PromptLibraryManager } from './PromptLibraryManager.js';
 import type { ReadCache } from './ReadCache.js';
 import type { ContextBudgetService } from './ContextBudgetService.js';
+import type { ToolActivationRegistry } from './ToolActivationRegistry.js';
 import type { ReadStateManager } from './ReadStateManager.js';
 import type { RunPolicyManager } from './RunPolicyManager.js';
 import type { RunSupervisor } from './RunSupervisor.js';
@@ -122,6 +123,7 @@ export interface ServiceMap {
 
   // --- Tools, permissions, security ---
   tool_manager: ToolManager;
+  tool_activation_registry: ToolActivationRegistry;
   tool_call_history: ToolCallHistory;
   trust_manager: TrustManager;
   permission_manager: PermissionManager;

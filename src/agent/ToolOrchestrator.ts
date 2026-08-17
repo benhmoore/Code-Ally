@@ -603,6 +603,19 @@ export class ToolOrchestrator {
     // Get the tool to check properties
     const tool = this.toolManager.getTool(toolName);
 
+    // A tool whose schema was withheld still executes — deferral only governs
+    // what is transmitted. Record the use so its schema rides along next turn,
+    // which is what a model repeatedly driving one integration needs.
+    const activationScope = this.agent.getInstanceId?.();
+    if (tool && activationScope) {
+      try {
+        ServiceRegistry.getInstance().get('tool_activation_registry')
+          ?.activate(activationScope, [toolName]);
+      } catch {
+        // Activation is an optimisation; never fail a tool call over it.
+      }
+    }
+
     // Validate tool is allowed for this agent (prevents execution if restricted)
     const allowedTools = this.config.allowedTools;
     if (allowedTools !== undefined && !allowedTools.includes(toolName)) {
