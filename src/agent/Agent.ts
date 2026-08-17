@@ -699,6 +699,10 @@ export class Agent {
         usagePercent: this.tokenManager.getContextUsagePercentage(),
         checkpointId: checkpoint?.id ?? null,
         checkpointGeneration: checkpoint?.generation ?? 0,
+        // Where the input budget actually goes. Without this breakdown, a
+        // context-starved session is indistinguishable from a compaction bug:
+        // both look like "it keeps compacting and making no progress".
+        budget: this.describeContextBudget(),
         lastMessage: lastMessage ? {
           role: lastMessage.role,
           id: lastMessage.id ?? null,
@@ -2374,6 +2378,40 @@ export class Agent {
       this.publishContextBudget(functions, dynamicContext);
       await this.autoSaveSession();
     }
+  }
+
+  /**
+   * Itemise the input budget for diagnostics: what is fixed cost, what is left
+   * for conversation, and how the post-reclaim domain is divided.
+   */
+  private describeContextBudget(): Record<string, number | string> | null {
+    const snapshot = ServiceRegistry.getInstance()
+      .get('context_budget')?.get(this.instanceId);
+    if (!snapshot) return null;
+    const schemaTokens = this.lastRequestFunctions
+      ? this.tokenManager.estimateTokens(JSON.stringify(this.lastRequestFunctions))
+      : 0;
+    const systemTokens = this.tokenManager.estimateMessageTokens(
+      this.conversationManager.getSystemMessage() ?? { role: 'system', content: '' },
+    );
+    const calibration = this.tokenManager.getCalibrationOverhead();
+    return {
+      triggerBudget: snapshot.triggerBudget,
+      fixedOverhead: snapshot.fixedOverhead,
+      fixedOverheadPercent: Math.round((snapshot.fixedOverhead / Math.max(1, snapshot.triggerBudget)) * 100),
+      overheadSystemPrompt: systemTokens,
+      overheadToolSchemas: schemaTokens,
+      overheadCalibration: calibration,
+      overheadDynamicContext: Math.max(
+        0,
+        snapshot.fixedOverhead - systemTokens - schemaTokens - calibration,
+      ),
+      usableBudget: snapshot.usableBudget,
+      domainBudget: snapshot.domainBudget,
+      retainedTailBudget: snapshot.retainedTailBudget,
+      checkpointBudget: snapshot.checkpointBudget,
+      maxToolResultTokens: snapshot.maxToolResultTokens,
+    };
   }
 
   /**
