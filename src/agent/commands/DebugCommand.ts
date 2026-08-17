@@ -390,6 +390,17 @@ export class DebugCommand extends Command {
       content += `Current Log Level: ${LogLevel[logger.getLevel()]}\n`;
       content += '\n';
 
+      // A transcript alone cannot explain a stall between tool completion and
+      // the next assistant message. Capture payload-free live lifecycle state,
+      // including the exact compaction stage and elapsed time.
+      content += '━'.repeat(80) + '\n';
+      content += 'RUNTIME STATE\n';
+      content += '━'.repeat(80) + '\n';
+      const runtimeState = typeof (agent as any)?.getDebugState === 'function'
+        ? (agent as any).getDebugState()
+        : { available: false };
+      content += `${JSON.stringify(runtimeState, null, 2)}\n\n`;
+
       // Summary Statistics
       content += '━'.repeat(80) + '\n';
       content += 'SUMMARY\n';

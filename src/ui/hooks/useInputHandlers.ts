@@ -387,8 +387,14 @@ export const useInputHandlers = (
         logger.debug('[INPUT_HANDLER]', 'Received response (length:', response?.length || 0, ')');
 
         // Check if response is an error message that should be styled in red
+        // Some internal interruptions carry a specific reason (for example an
+        // activity-watchdog timeout) instead of the generic interruption text.
+        // They are not emitted as normal assistant message events, so filtering
+        // them here leaves the conversation visibly idle with no explanation.
+        const turnWasInterrupted = agent.getTurnSnapshot().terminationReason === 'interrupted';
         const isError = response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
                        response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION ||
+                       turnWasInterrupted ||
                        response.includes('Error communicating with Ollama');
 
         // Add assistant response for error messages only

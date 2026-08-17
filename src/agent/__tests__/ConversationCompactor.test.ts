@@ -129,8 +129,9 @@ describe('ConversationCompactor', () => {
     const messages = toolTurn(8, 520);
     const manager = new ConversationManager({ initialMessages: messages });
     const tokens = new TokenManager(4096);
+    const client = chatClient();
     const compactor = new ConversationCompactor(
-      chatClient(), manager, tokens, new ActivityStream(), vi.fn().mockResolvedValue(true),
+      client, manager, tokens, new ActivityStream(), vi.fn().mockResolvedValue(true),
     );
 
     const compacted = await compactor.checkAndPerformAutoCompaction({ ...context(), phase: 'mid-turn' });
@@ -146,10 +147,45 @@ describe('ConversationCompactor', () => {
     expect(retained[0]?.tool_calls?.length).toBeGreaterThan(0);
     expect(checkpoint?.trigger).toBe('automatic');
     expect(checkpoint?.phase).toBe('mid-turn');
+    expect(checkpoint?.portability).toBe('extractive');
+    expect(client.send).not.toHaveBeenCalled();
     expect(checkpoint?.source.messageIds).toContain('request');
     // 15% of a 4096-token window must remain between the compacted result and
     // the automatic trigger, preventing another compaction after a few small messages.
     expect(compactor.budget(context()).triggerBudget - tokens.getCurrentTokenCount()).toBeGreaterThanOrEqual(614);
+  });
+
+  it('bounds a stalled manual reducer and falls back without aborting the owner', async () => {
+    vi.useFakeTimers();
+    try {
+      const owner = new AbortController();
+      const client = chatClient();
+      client.send.mockImplementation((_messages: Message[], options: { signal: AbortSignal }) =>
+        new Promise(resolve => options.signal.addEventListener('abort', () => resolve({
+          role: 'assistant',
+          content: '',
+          interrupted: true,
+        }), { once: true }))
+      );
+      const manager = new ConversationManager({ initialMessages: history() });
+      const compactor = new ConversationCompactor(
+        client, manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+      );
+
+      const resultPromise = compactor.compactAndApply({ ...context(), signal: owner.signal });
+      await vi.advanceTimersByTimeAsync(60_000);
+      const result = await resultPromise;
+
+      expect(owner.signal.aborted).toBe(false);
+      expect(result.checkpoint.portability).toBe('extractive');
+      expect(result.checkpoint.degradedReason).toMatch(/deadline/i);
+      expect(compactor.getDebugState()).toMatchObject({
+        active: false,
+        stage: 'complete',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('checkpoints an oversized completed tool exchange with no raw tail', async () => {
