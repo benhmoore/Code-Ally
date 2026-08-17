@@ -217,8 +217,7 @@ export async function loadSessionData(
   // to clean up artifacts from interrupted sessions (orphaned tool_use blocks,
   // thinking-only messages, whitespace-only messages)
   const nonSystemMessages = sessionData.messages.filter((m: Message) => m.role !== 'system');
-  const { messages: userMessages, interruption } = recoverConversation(nonSystemMessages);
-  const recoveryChanged = JSON.stringify(userMessages) !== JSON.stringify(nonSystemMessages);
+  const { messages: userMessages, interruption, changed: recoveryChanged } = recoverConversation(nonSystemMessages);
   const transcriptMessages = (sessionData.transcript ?? sessionData.messages)
     .filter((m: Message) => m.role !== 'system' && !m.metadata?.ephemeral);
   const restoredCheckpoint = sessionData.checkpoint
@@ -278,9 +277,6 @@ export async function loadSessionData(
     (coordinator as any).initializeFromSession(sessionData);
   }
 
-  // Clear tool calls first
-  actions.clearToolCalls();
-
   // Bulk load messages into agent (doesn't trigger auto-save)
   agent.loadConversationState(
     userMessages,
@@ -305,33 +301,22 @@ export async function loadSessionData(
   // Clean up stale persistent reminders (defensive - removes persistent reminders older than 30 minutes)
   agent.cleanupStaleReminders();
 
-  // Atomically update UI with new messages AND increment remount key
-  // This prevents Static component from accumulating renders
-  actions.resetConversationView(transcriptMessages);
-
   // Reconstruct tool calls from message history
   // This populates activeToolCalls with completed tool calls so they appear in the timeline
   const reconstructedToolCalls = reconstructToolCallsFromMessages(transcriptMessages, serviceRegistry);
-  reconstructedToolCalls.forEach(toolCall => {
-    try {
-      actions.addToolCall(toolCall);
-    } catch (error) {
-      // Log but don't fail session resume if a tool call can't be added
-      // This could happen if there are duplicate IDs in the session data
-      console.warn(`Failed to add reconstructed tool call ${toolCall.id}:`, error);
-    }
-  });
+
+  // Restore the complete visible timeline in one state transaction. Enqueuing
+  // one React update per historical tool call scales quadratically and can make
+  // Ink repeatedly lay out a partially-restored conversation.
+  actions.resetConversationViewWithTools(transcriptMessages, reconstructedToolCalls);
 
   // Reconstruct interjection events from message history
   reconstructInterjectionsFromMessages(transcriptMessages, activityStream);
 
   // Update context usage
-  const tokenManager = serviceRegistry.get('token_manager');
-  if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
-    (tokenManager as any).updateTokenCount(agent.getContextMessages());
-    const contextUsage = (tokenManager as any).getContextUsagePercentage();
-    actions.setContextUsage(contextUsage);
-  }
+  // loadConversationState already refreshed the agent-owned TokenManager. Read
+  // that result directly instead of requesting a redundant full-history pass.
+  actions.setContextUsage(agent.getContextUsagePercentage());
 
   // Update terminal title with session title
   if (sessionData.metadata?.title) {
