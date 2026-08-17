@@ -66,6 +66,49 @@ describe('extractSemanticCheckpoint', () => {
     expect(summary.length).toBeLessThan(600);
   });
 
+  it('summarizes envelopes that carry a trailing system-reminder block', () => {
+    // Observed in a live 16k run: the harness appends turn guidance after the
+    // JSON envelope, so a whole-payload parse fails and both the raw envelope
+    // and the reminder text get embedded verbatim into checkpoint facts.
+    const messages: Message[] = [toolResult({
+      id: 't1',
+      name: 'write',
+      content: `[Tool Call ID: call-t1]\n${JSON.stringify({
+        success: true,
+        error: '',
+        content: 'Created new file /repo/src/config.js (903 bytes)',
+        file_path: '/repo/src/config.js',
+        file_check: { checker: 'javascript', passed: true },
+      })}\n\n<system-reminder>\nStay on task. Use todo-write to update status.\n</system-reminder>`,
+    })];
+
+    const state = extractSemanticCheckpoint(messages);
+
+    expect(state.blockers).toHaveLength(0);
+    const summary = state.completedWork[0]!.text;
+    expect(summary).toBe('write: Created new file /repo/src/config.js (903 bytes)');
+    expect(summary).not.toContain('system-reminder');
+    expect(summary).not.toContain('"success"');
+  });
+
+  it('detects envelope failure even when a system-reminder follows it', () => {
+    const messages: Message[] = [toolResult({
+      id: 't1',
+      name: 'bash',
+      content: `[Tool Call ID: call-t1]\n${JSON.stringify({
+        success: false,
+        error: 'command exited with status 1',
+        content: '',
+      })}\n\n<system-reminder>Stay on task.</system-reminder>`,
+    })];
+
+    const state = extractSemanticCheckpoint(messages);
+
+    expect(state.completedWork).toHaveLength(0);
+    expect(state.blockers).toHaveLength(1);
+    expect(state.blockers[0]!.exactError).toContain('exited with status 1');
+  });
+
   it('classifies structured tool failures as blockers with the exact error', () => {
     const messages: Message[] = [
       toolResult({
