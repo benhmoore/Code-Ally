@@ -42,7 +42,7 @@ export class OpenAIResponsesClient extends ModelClient {
   private client: OpenAI;
   private _endpoint: string;
   private _modelName: string;
-  private _temperature: number;
+  private _temperature?: number;
   private _maxTokens: number;
   private _reasoningEffort?: string;
   private readonly apiKey?: string;
@@ -78,7 +78,7 @@ export class OpenAIResponsesClient extends ModelClient {
     this._endpoint = endpoint;
     this.client = this.createClient();
   }
-  setTemperature(temperature: number): void { this._temperature = temperature; }
+  setTemperature(temperature: number | undefined): void { this._temperature = temperature; }
   setMaxTokens(maxTokens: number): void { this._maxTokens = maxTokens; }
   setContextSize(contextWindow: number): void { this.contextWindow = contextWindow; }
   setReasoningEffort(effort: string | undefined): void { this._reasoningEffort = effort; }
@@ -174,8 +174,11 @@ export class OpenAIResponsesClient extends ModelClient {
       ...(reasoningModel && this._reasoningEffort ? {
         reasoning: { effort: this._reasoningEffort, context: 'all_turns' },
       } : {}),
-      // Reasoning models reject temperature; conventional Responses models accept it.
-      ...(reasoningModel ? {} : { temperature: options.temperature ?? this._temperature }),
+      // Reasoning models reject temperature. Conventional models receive it
+      // only when explicitly configured, preserving the provider default.
+      ...(reasoningModel || options.temperature === undefined && this._temperature === undefined
+        ? {}
+        : { temperature: options.temperature ?? this._temperature }),
     };
   }
 

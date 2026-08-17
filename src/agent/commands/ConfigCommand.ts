@@ -110,6 +110,10 @@ export class ConfigCommand extends Command {
 
     // Pre-compute all values to find max value length
     const allValues: { key: string; currentStr: string; defaultStr: string; isModified: boolean }[] = [];
+    const displayValue = (key: string, value: unknown): string => {
+      if (key === 'temperature' && value === undefined) return '(model default)';
+      return JSON.stringify(value) ?? 'undefined';
+    };
     for (const keys of Object.values(categoryDefs)) {
       for (const key of keys) {
         let currentValue: any;
@@ -126,8 +130,8 @@ export class ConfigCommand extends Command {
           currentValue = (config as any)[key];
         }
 
-        const currentStr = JSON.stringify(currentValue);
-        const defaultStr = JSON.stringify(defaultValue);
+        const currentStr = displayValue(key, currentValue);
+        const defaultStr = displayValue(key, defaultValue);
         const isModified = currentStr !== defaultStr;
         allValues.push({ key, currentStr, defaultStr, isModified });
       }

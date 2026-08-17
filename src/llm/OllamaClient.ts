@@ -23,7 +23,7 @@ import { Message, FunctionDefinition, ActivityEventType } from '../types/index.j
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
-import { resolveModelProfile } from './modelProfile.js';
+import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
 import { createHttpResponseError, readWithTimeout, runWithRetries } from './httpTransport.js';
 import { normalizeOllamaMessages } from './ollamaMessages.js';
@@ -44,7 +44,7 @@ interface OllamaPayload {
    */
   keep_alive?: number;
   options: {
-    temperature: number;
+    temperature?: number;
     num_ctx: number;
     num_predict: number;
     top_p?: number;
@@ -57,8 +57,8 @@ interface OllamaPayload {
   tool_choice?: string;
   /** OpenAI-style reasoning knob — gpt-oss family only. */
   reasoning_effort?: string;
-  /** Ollama's generic reasoning toggle — GLM/DeepSeek-R1/QwQ/etc. */
-  think?: boolean;
+  /** Ollama reasoning control: boolean for older templates, effort for graded ones. */
+  think?: boolean | string;
 }
 
 /**
@@ -76,7 +76,7 @@ function extractOllamaUsage(obj: any): LLMResponse['usage'] | undefined {
 export class OllamaClient extends ModelClient {
   private _endpoint: string;
   private _modelName: string; // Not readonly - allows runtime model changes
-  private _temperature: number; // Not readonly - allows runtime changes
+  private _temperature?: number; // Not readonly - allows runtime changes
   private _contextSize: number; // Not readonly - allows runtime changes
   private _maxTokens: number; // Not readonly - allows runtime changes
   private _reasoningEffort?: string; // Not readonly - allows runtime changes
@@ -154,7 +154,7 @@ export class OllamaClient extends ModelClient {
    *
    * @param newTemperature - New temperature value (0.0-2.0)
    */
-  setTemperature(newTemperature: number): void {
+  setTemperature(newTemperature: number | undefined): void {
     logger.debug(`[OLLAMA_CLIENT] Changing temperature from ${this._temperature} to ${newTemperature}`);
     this._temperature = newTemperature;
   }
@@ -293,11 +293,14 @@ export class OllamaClient extends ModelClient {
       messages: normalizeOllamaMessages(messages),
       stream,
       options: {
-        temperature: temperature !== undefined ? temperature : this._temperature,
         num_ctx: this._contextSize,
         num_predict: dynamicMaxTokens ?? this._maxTokens,
       },
     };
+    const effectiveTemperature = temperature ?? this._temperature;
+    if (effectiveTemperature !== undefined) {
+      payload.options.temperature = effectiveTemperature;
+    }
     if (responseSchema) payload.format = responseSchema;
 
     // Apply explicit sampling overrides. Only set fields are copied through, so
@@ -316,18 +319,10 @@ export class OllamaClient extends ModelClient {
       payload.keep_alive = this.keepAlive;
     }
 
-    // Reasoning control is family-specific: gpt-oss uses `reasoning_effort`,
-    // the GLM/DeepSeek-R1/QwQ family uses the generic `think` boolean, and
-    // non-reasoning models get neither (sending either is at best ignored and
-    // at worst rejected by the backend).
+    // The profile owns the wire shape (boolean vs graded `think`, or
+    // `reasoning_effort`) so clients do not grow model-name conditionals.
     const profile = resolveModelProfile(this._modelName);
-    if (profile.reasoningControl === 'reasoning_effort') {
-      if (this._reasoningEffort) {
-        payload.reasoning_effort = this._reasoningEffort;
-      }
-    } else if (profile.reasoningControl === 'think') {
-      payload.think = true;
-    }
+    Object.assign(payload, reasoningRequestFields(profile, this._reasoningEffort));
 
     // Add function definitions if provided
     if (functions && functions.length > 0) {

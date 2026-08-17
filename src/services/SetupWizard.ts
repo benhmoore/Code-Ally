@@ -20,7 +20,7 @@ export interface SetupConfig {
   model: string;
   service_model: string | null;
   context_size: number;
-  temperature: number;
+  temperature?: number;
   auto_confirm: boolean;
   enable_idle_messages: boolean;
   enable_session_title_generation: boolean;
@@ -129,8 +129,8 @@ export class SetupWizard {
   /**
    * Get default temperature
    */
-  getDefaultTemperature(): number {
-    return 0.3;
+  getDefaultTemperature(): number | undefined {
+    return undefined;
   }
 
   /**

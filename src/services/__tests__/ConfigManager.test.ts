@@ -115,14 +115,16 @@ describe('ConfigManager', () => {
     });
 
     it('should return default value for missing keys', () => {
-      expect(configManager.getValue('temperature', 0.5)).toBe(0.3); // Uses actual value
+      // The key exists with an undefined default so model-tuned sampling wins.
+      expect(configManager.getValue('temperature', 0.5)).toBeUndefined();
+      expect(configManager.getDisplayValue('temperature')).toBe('(model default)');
     });
 
     it('should handle all config types correctly', () => {
       expect(typeof configManager.getValue('model')).toBe('string'); // empty string by default
       expect(typeof configManager.getValue('endpoint')).toBe('string');
       expect(typeof configManager.getValue('context_size')).toBe('number');
-      expect(typeof configManager.getValue('temperature')).toBe('number');
+      expect(configManager.getValue('temperature')).toBeUndefined();
       expect(typeof configManager.getValue('auto_confirm')).toBe('boolean');
     });
   });

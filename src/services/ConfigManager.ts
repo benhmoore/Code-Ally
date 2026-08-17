@@ -285,6 +285,7 @@ export class ConfigManager implements IService {
 
   getDisplayValue<K extends keyof Config>(key: K): Config[K] | string {
     const value = this.getValue(key);
+    if (key === 'temperature' && value === undefined) return '(model default)';
     return SECRET_CONFIG_KEYS.has(key) && value ? '[REDACTED]' : value;
   }
 

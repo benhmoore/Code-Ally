@@ -101,7 +101,7 @@ Use '/help' for complete interactive command reference.
       )
       .option(
         '--temperature <float>',
-        'Temperature for text generation (0.0-1.0)',
+        'Temperature override for text generation (0.0-2.0)',
         parseFloat
       )
       .option(

@@ -21,7 +21,7 @@ import { Message, FunctionDefinition, ActivityEventType } from '../types/index.j
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
-import { resolveModelProfile } from './modelProfile.js';
+import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
 import { createHttpResponseError, readWithTimeout, runWithRetries } from './httpTransport.js';
 import { validateToolCalls } from './toolCalls.js';
@@ -32,7 +32,7 @@ interface OpenAIPayload {
   messages: any[];
   stream: boolean;
   stream_options?: { include_usage: boolean };
-  temperature: number;
+  temperature?: number;
   max_tokens: number;
   top_p?: number;
   stop?: string[];
@@ -57,7 +57,7 @@ function openAIUsage(u: any): LLMResponse['usage'] | undefined {
 export class OpenAICompatClient extends ModelClient {
   private _endpoint: string;
   private _modelName: string;
-  private _temperature: number;
+  private _temperature?: number;
   private _maxTokens: number;
   private _reasoningEffort?: string;
   private readonly sampling?: SamplingParams;
@@ -105,7 +105,7 @@ export class OpenAICompatClient extends ModelClient {
     this._modelName = newModelName;
   }
 
-  setTemperature(newTemperature: number): void {
+  setTemperature(newTemperature: number | undefined): void {
     this._temperature = newTemperature;
   }
 
@@ -172,9 +172,12 @@ export class OpenAICompatClient extends ModelClient {
       model: this._modelName,
       messages: messages.map(m => this.toOpenAIMessage(m)),
       stream,
-      temperature: temperature !== undefined ? temperature : this._temperature,
       max_tokens: dynamicMaxTokens ?? this._maxTokens,
     };
+    const effectiveTemperature = temperature ?? this._temperature;
+    if (effectiveTemperature !== undefined) {
+      payload.temperature = effectiveTemperature;
+    }
 
     // Ask the server to emit a final usage chunk for token calibration.
     if (stream) {
@@ -192,10 +195,8 @@ export class OpenAICompatClient extends ModelClient {
 
     // Only gpt-oss-style backends take reasoning_effort over the /v1 API; the
     // `think` boolean is Ollama-native and has no /v1 equivalent, so it is omitted.
-    const profile = resolveModelProfile(this._modelName);
-    if (profile.reasoningControl === 'reasoning_effort' && this._reasoningEffort) {
-      payload.reasoning_effort = this._reasoningEffort;
-    }
+    const reasoning = reasoningRequestFields(resolveModelProfile(this._modelName), this._reasoningEffort);
+    if (reasoning.reasoning_effort) payload.reasoning_effort = reasoning.reasoning_effort;
 
     if (functions && functions.length > 0) {
       payload.tools = functions;

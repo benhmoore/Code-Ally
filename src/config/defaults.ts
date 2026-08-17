@@ -28,7 +28,9 @@ export const DEFAULT_CONFIG: Config = {
   endpoint: 'http://localhost:11434', // Ollama API endpoint
   api_key: null, // Bearer token for authenticated endpoints (encrypted at rest)
   context_size: 16384, // Context window size in tokens
-  temperature: 0.3, // Generation temperature (0.0-1.0)
+  // Leave temperature unset so the backend can use the model author's tuned
+  // default. Users can still configure a numeric override.
+  temperature: undefined,
   max_tokens: 16384, // Max tokens to generate per response (or 90% of context_size, whichever is lower)
   reasoning_effort: REASONING_EFFORT.LOW, // Reasoning level for gpt-oss and reasoning models
   // Sampling overrides are omitted by default so each model's own tuned defaults
@@ -214,6 +216,11 @@ export function validateConfigValue(
   value: any
 ): { valid: boolean; coercedValue?: any; error?: string } {
   const expectedType = getConfigType(key);
+
+  // An unset temperature means "use the backend/model default".
+  if (key === 'temperature' && (value === undefined || value === null)) {
+    return { valid: true, coercedValue: undefined };
+  }
 
   // Handle null model
   if (key === 'model' && value === null) {

@@ -78,4 +78,17 @@ describe('OpenAIResponsesClient stateless replay', () => {
     expect(conventional.payload(prepared, options)).toHaveProperty('temperature', 0.3);
     expect(conventional.payload(prepared, options)).not.toHaveProperty('reasoning');
   });
+
+  it('preserves the provider temperature default when no override is configured', () => {
+    const conventional = new OpenAIResponsesClient({
+      endpoint: 'https://api.openai.com',
+      modelName: 'gpt-4.1',
+      contextSize: 32_000,
+      maxTokens: 4_000,
+      apiKey: 'test-key',
+    }) as any;
+    const prepared = { input: [], baseItems: [], persistentInput: [], coveredMessageIds: [] };
+    expect(conventional.payload(prepared, { signal: new AbortController().signal }))
+      .not.toHaveProperty('temperature');
+  });
 });

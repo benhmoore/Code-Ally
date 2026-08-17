@@ -461,7 +461,6 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       model: selectedModel,
       service_model: null,
       context_size: selectedContextSize.value,
-      temperature: 0.3,
       auto_confirm: false,
       enable_idle_messages: !isLaptop,
       enable_session_title_generation: !isLaptop,

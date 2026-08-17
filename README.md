@@ -260,7 +260,7 @@ lives at `~/.ally/config.json`.
 | `endpoint` | `http://localhost:11434` | Provider base URL |
 | `api_key` | (none) | Bearer token for authenticated endpoints |
 | `context_size` | `16384` | Context window tokens |
-| `temperature` | `0.3` | Generation temperature |
+| `temperature` | (model default) | Optional generation temperature override |
 | `max_tokens` | `16384` | Max tokens per response |
 | `reasoning_effort` | `low` | Reasoning level (low/medium/high) |
 | `service_model` | (model) | Model for background services |

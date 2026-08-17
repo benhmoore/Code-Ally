@@ -1,69 +1,98 @@
 /**
- * Model profile — static, name-based capability hints for the served model.
- *
- * Open backends (Ollama, llama.cpp, vLLM) do not reliably advertise whether a
- * model emits a native reasoning trace, nor which request field controls it.
- * We infer that from the model name using a conservative allowlist: a model is
- * only treated as a reasoning model when its family is known, and the *kind* of
- * reasoning control differs by family:
- *
- *   - gpt-oss exposes the OpenAI-style top-level `reasoning_effort` knob.
- *   - GLM-4.5/4.6, DeepSeek-R1, QwQ, Magistral, Phi-4-reasoning use Ollama's
- *     generic `think` boolean.
- *
- * Everything else is treated as a plain chat/instruct model, so reasoning-only
- * request fields are omitted entirely (sending them to a non-reasoning model is
- * at best ignored and at worst rejected by the backend).
- *
- * This is the single source of truth for reasoning-model detection — keep the
- * patterns here rather than scattering name checks across the client.
+ * Static model capabilities that cannot yet be discovered reliably from every
+ * supported backend. Rules are declarative and ordered from most specific to
+ * least specific so adding a future family requires one entry, not client code.
  */
 
-/** Which request field, if any, controls reasoning for a model family. */
-export type ReasoningControl = 'reasoning_effort' | 'think' | 'none';
+/** Request field used by a backend to control native reasoning. */
+export type ReasoningField = 'reasoning_effort' | 'think';
 
-/** Families that use the OpenAI-style `reasoning_effort` field. */
-const REASONING_EFFORT_PATTERNS: RegExp[] = [/gpt-oss/];
+/**
+ * Shape accepted by the request field. `level` means low/medium/high; `boolean`
+ * means the backend only supports enabling or disabling native reasoning.
+ */
+export type ReasoningValueKind = 'level' | 'boolean';
 
-/** Families that use Ollama's generic `think` boolean. */
-const THINK_PATTERNS: RegExp[] = [
-  /glm-4\.6/,
-  /glm-4\.5/,
-  /deepseek-r1/,
-  /\bqwq\b/,
-  /magistral/,
-  /phi-?4.*reasoning/,
+export interface ReasoningControl {
+  field: ReasoningField;
+  valueKind: ReasoningValueKind;
+}
+
+interface ModelProfileRule {
+  patterns: readonly RegExp[];
+  reasoning: ReasoningControl;
+}
+
+const MODEL_PROFILE_RULES: readonly ModelProfileRule[] = [
+  {
+    patterns: [/gpt-oss/],
+    reasoning: { field: 'reasoning_effort', valueKind: 'level' },
+  },
+  {
+    // These Ollama templates accept `think` as an effort string, not merely a
+    // boolean. Registry prefixes and quantization suffixes are matched too.
+    patterns: [/qwen3\.8/, /(?:^|[/:_-])(?:muse[-_.]?)?glimmer(?:$|[/:_-])/],
+    reasoning: { field: 'think', valueKind: 'level' },
+  },
+  {
+    patterns: [
+      /glm-4\.6/,
+      /glm-4\.5/,
+      /deepseek-r1/,
+      /\bqwq\b/,
+      /magistral/,
+      /phi-?4.*reasoning/,
+    ],
+    reasoning: { field: 'think', valueKind: 'boolean' },
+  },
 ];
 
 export interface ModelProfile {
-  /** The model name this profile was resolved from (lowercased originals preserved). */
+  /** The original model name supplied by the caller. */
   modelName: string;
   /** True when the model emits a native reasoning trace. */
   supportsThinking: boolean;
-  /** The request field used to control reasoning for this model, or 'none'. */
-  reasoningControl: ReasoningControl;
+  /** How to encode reasoning for this model, or null for a conventional model. */
+  reasoningControl: ReasoningControl | null;
 }
 
-/**
- * Resolve the static profile for a model name. Matching is case-insensitive and
- * substring-based (so `gpt-oss:120b`, `gpt-oss:20b`, and registry-prefixed names
- * all resolve identically).
- */
+export interface ReasoningRequestFields {
+  reasoning_effort?: string;
+  think?: boolean | string;
+}
+
+/** Resolve a case-insensitive model name against the capability registry. */
 export function resolveModelProfile(modelName: string | null | undefined): ModelProfile {
   const name = (modelName ?? '').toLowerCase();
-
-  let reasoningControl: ReasoningControl = 'none';
-  if (name !== '') {
-    if (REASONING_EFFORT_PATTERNS.some(re => re.test(name))) {
-      reasoningControl = 'reasoning_effort';
-    } else if (THINK_PATTERNS.some(re => re.test(name))) {
-      reasoningControl = 'think';
-    }
-  }
+  const rule = name === ''
+    ? undefined
+    : MODEL_PROFILE_RULES.find(candidate => candidate.patterns.some(pattern => pattern.test(name)));
+  const reasoningControl = rule?.reasoning ?? null;
 
   return {
     modelName: modelName ?? '',
-    supportsThinking: reasoningControl !== 'none',
+    supportsThinking: reasoningControl !== null,
     reasoningControl,
   };
+}
+
+/**
+ * Encode the resolved capability into backend request fields. Ollama consumes
+ * both fields; OpenAI-compatible callers may select only the field their wire
+ * protocol supports.
+ */
+export function reasoningRequestFields(
+  profile: ModelProfile,
+  effort: string | undefined,
+): ReasoningRequestFields {
+  const control = profile.reasoningControl;
+  if (!control) return {};
+
+  if (control.field === 'reasoning_effort') {
+    return effort ? { reasoning_effort: effort } : {};
+  }
+
+  return control.valueKind === 'level'
+    ? { think: effort ?? true }
+    : { think: true };
 }

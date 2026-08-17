@@ -826,6 +826,74 @@ describe('OllamaClient', () => {
       });
     });
 
+    it('preserves the model temperature default when no override is configured', async () => {
+      const modelDefaultClient = new OllamaClient({
+        endpoint: 'http://localhost:11434',
+        modelName: 'llama3.2',
+        contextSize: 16384,
+        maxTokens: 5000,
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ message: { role: 'assistant', content: 'Test' } }),
+      });
+
+      await modelDefaultClient.send([{ role: 'user', content: 'Hello' }], {
+        stream: false,
+        signal: new AbortController().signal,
+      });
+
+      const payload = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(payload.options).not.toHaveProperty('temperature');
+    });
+
+    it.each(['qwen3.8:27b-mlx', 'muse-glimmer:30b-mlx'])(
+      'sends graded reasoning effort through think for %s',
+      async modelName => {
+        const reasoningClient = new OllamaClient({
+          endpoint: 'http://localhost:11434',
+          modelName,
+          contextSize: 16384,
+          maxTokens: 5000,
+          reasoningEffort: 'low',
+        });
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ message: { role: 'assistant', content: 'Test' } }),
+        });
+
+        await reasoningClient.send([{ role: 'user', content: 'Hello' }], {
+          stream: false,
+          signal: new AbortController().signal,
+        });
+
+        const payload = JSON.parse(mockFetch.mock.calls[0][1].body);
+        expect(payload.think).toBe('low');
+        expect(payload).not.toHaveProperty('reasoning_effort');
+      },
+    );
+
+    it('keeps boolean think for model templates without graded reasoning', async () => {
+      const reasoningClient = new OllamaClient({
+        endpoint: 'http://localhost:11434',
+        modelName: 'deepseek-r1:32b',
+        contextSize: 16384,
+        maxTokens: 5000,
+        reasoningEffort: 'high',
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ message: { role: 'assistant', content: 'Test' } }),
+      });
+
+      await reasoningClient.send([{ role: 'user', content: 'Hello' }], {
+        stream: false,
+        signal: new AbortController().signal,
+      });
+
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body).think).toBe(true);
+    });
+
     it('sends late system reminders as user continuations without mutating history', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

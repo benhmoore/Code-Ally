@@ -139,8 +139,8 @@ export interface ModelClientConfig {
   endpoint: string;
   /** Model identifier */
   modelName: string | null;
-  /** Sampling temperature (0.0 - 1.0) */
-  temperature: number;
+  /** Sampling temperature. Unset preserves the backend/model default. */
+  temperature?: number;
   /** Context window size in tokens */
   contextSize: number;
   /** Maximum tokens to generate */

@@ -394,7 +394,8 @@ export interface Config {
   endpoint: string;
   api_key?: string | null; // Bearer token for authenticated endpoints (cloud/remote). Stored separately with encryption like search_api_key.
   context_size: number;
-  temperature: number;
+  /** Explicit sampling temperature. Unset preserves the model/backend default. */
+  temperature?: number;
   max_tokens: number;
   reasoning_effort?: string; // Reasoning level for models that support it (e.g., "low", "medium", "high")
 

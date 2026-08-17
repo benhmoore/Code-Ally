@@ -27,6 +27,7 @@ build/
 coverage/
 .nyc_output/
 *.lcov
+model-eval-results/
 
 # Logs
 logs/

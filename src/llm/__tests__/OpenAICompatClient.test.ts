@@ -120,6 +120,15 @@ describe('OpenAICompatClient', () => {
     expect(JSON.parse(mockFetch.mock.calls[1][1].body).reasoning_effort).toBeUndefined();
   });
 
+  it('omits temperature when no override is configured', async () => {
+    const modelDefault = new OpenAICompatClient({
+      endpoint: 'http://host', modelName: 'llama3.2', contextSize: 8192, maxTokens: 100,
+    });
+    mockFetch.mockResolvedValueOnce(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
+    await modelDefault.send([{ role: 'user', content: 'hi' }], { stream: false, signal: signal() });
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).not.toHaveProperty('temperature');
+  });
+
   it('assembles streamed content and tool calls from SSE chunks', async () => {
     mockFetch.mockResolvedValueOnce(sseResponse([
       'data: {"choices":[{"delta":{"content":"Hel"}}]}',

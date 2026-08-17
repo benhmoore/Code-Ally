@@ -934,7 +934,7 @@ export class CompletionProvider {
       'agent_creation_model': 'Model for ManageAgents agent',
       'endpoint': 'Ollama API endpoint',
       'context_size': 'Context window size (tokens)',
-      'temperature': 'Generation temperature (0.0-1.0)',
+      'temperature': 'Generation temperature override (unset uses model default)',
       'max_tokens': 'Max tokens per response',
       'reasoning_effort': 'Reasoning effort level (low/medium/high)',
 
