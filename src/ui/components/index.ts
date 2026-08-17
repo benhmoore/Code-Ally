@@ -12,4 +12,5 @@ export { MarkdownText } from './MarkdownText.js';
 export { DiffDisplay, InlineDiff } from './DiffDisplay.js';
 export { ToolCallDisplay } from './ToolCallDisplay.js';
 export { ProgressIndicator } from './ProgressIndicator.js';
+export { FreshnessLabel } from './FreshnessLabel.js';
 export { ModelSelector, type ModelOption } from './ModelSelector.js';

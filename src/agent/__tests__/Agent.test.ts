@@ -102,6 +102,26 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('System Reminder Injection', () => {
+    /**
+     * Put the watchdog in its armed state: it stands down while a request is
+     * still in prefill (nothing on the wire), so a stalled generation is only
+     * detectable once the model has produced some output and then gone quiet.
+     */
+    const simulateFirstOutput = (): void => {
+      activityStream.emit({
+        id: 'chunk-1',
+        type: ActivityEventType.ASSISTANT_CHUNK,
+        timestamp: Date.now(),
+        data: { chunk: 'thinking out loud' },
+      });
+    };
+
+    const forceActivityTimeout = (): void => {
+      const monitor = (agent as any).activityMonitor;
+      monitor.lastActivityTime = Date.now() - 121_000;
+      monitor.checkTimeout();
+    };
+
     it('applies the no-tool activity watchdog to the main agent and recovers once', async () => {
       let requestCount = 0;
       mockModelClient.send = vi.fn(async (_messages: Message[], options: any): Promise<LLMResponse> => {
@@ -120,8 +140,8 @@ describe('Agent - Interruption Handling', () => {
 
       const monitor = (agent as any).activityMonitor;
       expect(monitor.isActive()).toBe(true);
-      monitor.lastActivityTime = Date.now() - 121_000;
-      monitor.checkTimeout();
+      simulateFirstOutput();
+      forceActivityTimeout();
 
       await expect(result).resolves.toBe('Recovered after timeout');
       expect(mockModelClient.send).toHaveBeenCalledTimes(2);
@@ -136,15 +156,14 @@ describe('Agent - Interruption Handling', () => {
       });
 
       const result = agent.sendMessage('Do not hang forever.');
-      const monitor = (agent as any).activityMonitor;
 
       await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledTimes(1));
-      monitor.lastActivityTime = Date.now() - 121_000;
-      monitor.checkTimeout();
+      simulateFirstOutput();
+      forceActivityTimeout();
 
       await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledTimes(2));
-      monitor.lastActivityTime = Date.now() - 121_000;
-      monitor.checkTimeout();
+      simulateFirstOutput();
+      forceActivityTimeout();
 
       await expect(result).resolves.toMatch(/repeatedly made no concrete progress/i);
       expect(mockModelClient.send).toHaveBeenCalledTimes(2);

@@ -94,6 +94,9 @@ export class ActivityMonitor {
   // Safety limit: prevents stuck monitors from pause/resume mismatches
   // If pause count exceeds this limit, reset to 0 to recover from corrupted state
   private maxPauseCount: number = 10;
+  // A model request is in flight and has produced no output yet (prefill).
+  // See awaitingFirstOutput handling in checkTimeout() for why this suspends the clock.
+  private awaitingFirstOutput: boolean = false;
 
   /**
    * Create a new ActivityMonitor
@@ -151,11 +154,21 @@ export class ActivityMonitor {
    * Safe to call multiple times - subsequent calls are ignored if already stopped.
    */
   stop(): void {
+    const wasRunning = this.watchdogInterval !== null;
+
     if (this.watchdogInterval) {
       clearInterval(this.watchdogInterval);
       this.watchdogInterval = null;
-      this.isRunning = false;
-      this.pauseCount = 0;
+    }
+
+    // Reset unconditionally: stopping while paused used to leave pauseCount
+    // above zero, and since start() only guards on isRunning, the next turn
+    // would arm a watchdog whose every check short-circuits on the stale pause.
+    this.isRunning = false;
+    this.pauseCount = 0;
+    this.awaitingFirstOutput = false;
+
+    if (wasRunning) {
       logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Stopped');
     }
   }
@@ -349,6 +362,62 @@ export class ActivityMonitor {
   }
 
   /**
+   * Mark the start of a model request that has not produced output yet.
+   *
+   * Prefill emits nothing on the wire, so a large prompt on a slow (typically
+   * local) backend looks identical to a stuck agent from this monitor's vantage
+   * point. Killing it here is worse than useless: the retry re-sends an even
+   * larger prompt and times out again, so the turn can never complete. That
+   * phase is bounded by the transport instead (`readWithTimeout` per read, plus
+   * the overall request budget), so the watchdog stands down until output
+   * actually starts.
+   */
+  beginModelRequest(): void {
+    this.awaitingFirstOutput = true;
+    this.lastActivityTime = Date.now();
+    logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Model request started - awaiting first output');
+  }
+
+  /**
+   * Mark the end of a model request (response returned, errored, or aborted).
+   *
+   * The clock restarts from here so the gaps this monitor still owns — response
+   * processing and the space between requests — remain covered.
+   */
+  endModelRequest(): void {
+    if (!this.awaitingFirstOutput) return;
+    this.awaitingFirstOutput = false;
+    this.lastActivityTime = Date.now();
+    logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Model request ended without output');
+  }
+
+  /**
+   * Record streamed model output (assistant or thinking chunks).
+   *
+   * Tool calls used to be the only accepted proof of life, which made this a
+   * wall-clock cap on a single generation rather than a stall detector: a model
+   * streaming steadily for longer than the timeout was interrupted mid-answer.
+   * Streamed tokens are progress, so they reset the clock; what remains detected
+   * is a generation that goes *silent* for the full timeout. Unbounded but
+   * non-repetitive output is bounded elsewhere (output token limit, per-turn
+   * round-trip budget), and repetition is the LoopDetector's job.
+   *
+   * Ignored while paused so a delegated agent's stream cannot credit the parent
+   * that is waiting on it (see resume's `delegationSucceeded` semantics).
+   */
+  recordStreamProgress(): void {
+    if (this.pauseCount > 0) return;
+
+    const wasAwaiting = this.awaitingFirstOutput;
+    this.awaitingFirstOutput = false;
+    this.lastActivityTime = Date.now();
+
+    if (wasAwaiting) {
+      logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'First model output received - watchdog armed');
+    }
+  }
+
+  /**
    * Check if timeout has occurred
    *
    * Called periodically by the watchdog timer. If elapsed time since last
@@ -360,6 +429,12 @@ export class ActivityMonitor {
   checkTimeout(): void {
     // Skip timeout checks when paused
     if (this.pauseCount > 0) {
+      return;
+    }
+
+    // Skip while a request is still in prefill (no output yet) - bounded by the
+    // transport's stream-read timeout, not by this watchdog.
+    if (this.awaitingFirstOutput) {
       return;
     }
 

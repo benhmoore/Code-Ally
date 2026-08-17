@@ -5,6 +5,7 @@ import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { TodoItem, getActiveForm } from '@services/TodoManager.js';
 import { ActivityEventType, ToolCallState } from '@shared/index.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
+import { FreshnessLabel } from './FreshnessLabel.js';
 import { formatElapsed } from '../utils/timeUtils.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import { setTerminalProgress, clearTerminalProgress } from '@utils/terminal.js';
@@ -54,11 +55,24 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
 }) => {
   const active = isProcessing || isCompacting || isCancelling;
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [awaitingModel, setAwaitingModel] = useState(false);
   const [startedAt, setStartedAt] = useState(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const toolCallsRef = useRef(activeToolCalls);
+  const lastOutputAtRef = useRef(Date.now());
+  const requestInFlightRef = useRef(false);
 
   toolCallsRef.current = activeToolCalls;
+
+  /**
+   * Milliseconds since the model last produced anything, or null when freshness
+   * says nothing useful — between requests, and while tools are running, where
+   * minutes of silence are entirely normal.
+   */
+  const getSilenceMs = React.useCallback(
+    () => (requestInFlightRef.current ? Date.now() - lastOutputAtRef.current : null),
+    []
+  );
 
   useEffect(() => {
     if (!active) return;
@@ -86,6 +100,59 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
       return undefined;
     }
   }, []);
+
+  // Distinguish "request is out, backend has sent nothing back" from "tokens are
+  // arriving". Prefill on a large prompt can run for minutes with an identical
+  // spinner otherwise, which reads as a hang. Events without a parentId are the
+  // main agent's; a delegated agent's request must not change this row, which is
+  // already describing the delegation.
+  useEffect(() => {
+    try {
+      const activityStream = ServiceRegistry.getInstance().get('activity_stream');
+      if (!activityStream) return undefined;
+
+      const unsubscribes = [
+        activityStream.subscribe(ActivityEventType.MODEL_REQUEST_START, (event) => {
+          if (event.parentId) return;
+          setAwaitingModel(true);
+          // Freshness is measured from the request going out, so the label
+          // starts fading during a long prefill too.
+          lastOutputAtRef.current = Date.now();
+          requestInFlightRef.current = true;
+        }),
+        activityStream.subscribe(ActivityEventType.MODEL_REQUEST_END, (event) => {
+          if (event.parentId) return;
+          setAwaitingModel(false);
+          requestInFlightRef.current = false;
+        }),
+        ...[ActivityEventType.ASSISTANT_CHUNK, ActivityEventType.THOUGHT_CHUNK].map(eventType =>
+          activityStream.subscribe(eventType, (event) => {
+            // Synthetic status events carry no chunk; only real output counts.
+            const chunk = (event.data as { chunk?: unknown } | undefined)?.chunk;
+            if (!event.parentId && typeof chunk === 'string' && chunk.length > 0) {
+              setAwaitingModel(false);
+              // Refs, not state: this fires per chunk, and the label reads it on
+              // the shared animation tick instead of re-rendering the whole row.
+              lastOutputAtRef.current = Date.now();
+            }
+          })
+        ),
+      ];
+
+      return () => unsubscribes.forEach(unsubscribe => unsubscribe?.());
+    } catch {
+      return undefined;
+    }
+  }, []);
+
+  // A turn that ends between a request start and its end (interrupt, error)
+  // must not leave the row pulsing or fading.
+  useEffect(() => {
+    if (!active) {
+      setAwaitingModel(false);
+      requestInFlightRef.current = false;
+    }
+  }, [active]);
 
   // Terminal-tab progress is external to the Ink frame. Polling here does not
   // cause React renders and only emits when the long-running state changes.
@@ -130,8 +197,15 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
 
   return (
     <Box paddingLeft={1}>
-      <ProgressIndicator type="arc" color={isCancelling ? UI_COLORS.ERROR : UI_COLORS.PRIMARY} />
-      <Text color={isCancelling ? UI_COLORS.ERROR : undefined}> {label}</Text>
+      <ProgressIndicator
+        type={awaitingModel && !isCancelling && !isCompacting ? 'pulse' : 'arc'}
+        color={isCancelling ? UI_COLORS.ERROR : UI_COLORS.PRIMARY}
+      />
+      <FreshnessLabel
+        text={label}
+        getSilenceMs={getSilenceMs}
+        color={isCancelling ? UI_COLORS.ERROR : undefined}
+      />
       {todoProgress && <Text dimColor> · {todoProgress}</Text>}
       <Text dimColor> · {formatElapsed(elapsedSeconds)} · esc interrupt</Text>
     </Box>

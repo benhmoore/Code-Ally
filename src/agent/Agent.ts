@@ -238,6 +238,9 @@ export class Agent {
   // Lifecycle handling - idle coordinator, auto-cleanup
   private lifecycleHandler: AgentLifecycleHandler;
 
+  // Stream-progress subscriptions feeding the activity watchdog
+  private streamProgressUnsubscribes: Array<() => void> = [];
+
   private readonly turnController = new TurnController({
     maxModelCalls: AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN,
     maxToolCalls: AGENT_CONFIG.MAX_TOOL_CALLS_PER_TURN,
@@ -371,6 +374,22 @@ export class Agent {
 
     if (activityTimeoutMs > 0) {
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Activity monitor enabled:', activityTimeoutMs, 'ms');
+    }
+
+    // Streamed tokens count as progress. Subscribing to this agent's own stream
+    // (the one handed to ModelClient.send) keeps the signal scoped: a delegated
+    // agent emits on its own scoped stream, so it can never mask a stalled parent.
+    for (const eventType of [ActivityEventType.ASSISTANT_CHUNK, ActivityEventType.THOUGHT_CHUNK] as const) {
+      this.streamProgressUnsubscribes.push(
+        this.activityStream.subscribe(eventType, (event) => {
+          // Synthetic status events (e.g. the "Thinking..." indicator emitted
+          // before a request) carry no chunk; only real model output counts.
+          const chunk = event.data?.chunk;
+          if (typeof chunk === 'string' && chunk.length > 0) {
+            this.activityMonitor.recordStreamProgress();
+          }
+        })
+      );
     }
 
     // Create unified loop detector
@@ -1550,6 +1569,19 @@ export class Agent {
         TOKEN_MANAGEMENT.MIN_OUTPUT_TOKENS,
         Math.floor(remainingTokens * TOKEN_MANAGEMENT.DYNAMIC_OUTPUT_PERCENT)
       );
+      // The watchdog stands down until the model produces its first output; a
+      // large prompt on a slow backend spends that whole time in prefill with
+      // nothing on the wire. The UI reads the same signal to show a pulse rather
+      // than a spinner while the request is out.
+      this.activityMonitor.beginModelRequest();
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.MODEL_REQUEST_START,
+        timestamp: Date.now(),
+        parentId: executionContext.parentCallId,
+        data: {},
+      });
+
       const response = await this.modelClient.send(sentMessages, {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
@@ -1610,6 +1642,18 @@ export class Agent {
       });
 
       throw error;
+    } finally {
+      // Whether the request returned, errored, or was aborted, the prefill wait
+      // is over: re-arm the watchdog for response processing and the gap before
+      // the next request.
+      this.activityMonitor.endModelRequest();
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.MODEL_REQUEST_END,
+        timestamp: Date.now(),
+        parentId: executionContext.parentCallId,
+        data: {},
+      });
     }
   }
 
@@ -2386,6 +2430,11 @@ export class Agent {
 
     // Stop activity monitoring
     this.stopActivityMonitoring();
+
+    for (const unsubscribe of this.streamProgressUnsubscribes) {
+      unsubscribe();
+    }
+    this.streamProgressUnsubscribes = [];
 
     // Clean up ActivityStream listeners to prevent memory leaks
     // This is critical for long-running sessions with many agents.

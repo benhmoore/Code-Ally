@@ -11,7 +11,7 @@ import { AnimationTicker } from '@services/AnimationTicker.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 
-export type SpinnerType = 'default' | 'dots' | 'line' | 'dots2' | 'arc' | 'bounce';
+export type SpinnerType = 'default' | 'dots' | 'line' | 'dots2' | 'arc' | 'bounce' | 'pulse';
 
 export interface ProgressIndicatorProps {
   /** Type of spinner to display */
@@ -34,6 +34,7 @@ export const SPINNER_FRAMES: Record<SpinnerType, readonly string[]> = {
   dots2: UI_SYMBOLS.SPINNER.DOTS2,
   arc: UI_SYMBOLS.SPINNER.ARC,
   bounce: UI_SYMBOLS.SPINNER.BOUNCE,
+  pulse: UI_SYMBOLS.SPINNER.PULSE,
 };
 
 /**
