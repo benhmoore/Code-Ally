@@ -24,7 +24,7 @@ import * as readline from 'readline';
 export class ReadTool extends BaseTool {
   readonly name = 'read';
   readonly description =
-    'Read multiple file contents at once. Use for reading related files together, checking code before editing';
+    'Read one or more files. file_paths is always an array, even for one file. Batch related files.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
   readonly hideOutput = true; // Hide file content from user, show summary in subtext

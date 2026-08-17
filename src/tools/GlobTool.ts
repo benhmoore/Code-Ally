@@ -28,7 +28,7 @@ export class GlobTool extends BaseTool {
   readonly name = 'glob';
   readonly displayName = 'Find Files';
   readonly description =
-    'Find files using glob patterns, sorted by modification time (newest first). Examples: \'*.ts\' (TypeScript files), \'**/*.test.js\' (test files recursively). Use * for wildcards, ** for recursive';
+    'Find files by name pattern, newest first. Use instead of ls/tree when the pattern is known.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
 
@@ -48,28 +48,27 @@ export class GlobTool extends BaseTool {
         parameters: {
           type: 'object',
           properties: {
-            pattern: {
-              type: 'string',
-              description:
-                'Glob pattern to match files (e.g., "*.ts", "**/*.js", "src/**/*test*")',
+            patterns: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Name globs; batch alternatives in one call.',
             },
             path: {
               type: 'string',
               format: 'local-path',
-              description: 'Search root directory (default: current directory)',
+              description: 'Search root (default: current directory).',
             },
             exclude: {
               type: 'array',
               items: { type: 'string' },
-              description:
-                'Patterns to exclude (default: node_modules, .git, dist, build)',
+              description: 'Additional excluded patterns.',
             },
             max_results: {
               type: 'integer',
-              description: `Maximum number of results (default: ${TOOL_LIMITS.MAX_SEARCH_RESULTS})`,
+              description: `Maximum results (default: ${TOOL_LIMITS.MAX_SEARCH_RESULTS}).`,
             },
           },
-          required: ['pattern'],
+          required: ['patterns'],
         },
       },
     };
@@ -80,7 +79,13 @@ export class GlobTool extends BaseTool {
     this.captureParams(args);
 
     // Extract and validate parameters
-    const pattern = args.pattern as string;
+    // `pattern` remains an execution-only legacy alias for saved sessions and
+    // older clients. The provider schema exposes batched `patterns` only.
+    const patterns: string[] = Array.isArray(args.patterns)
+      ? args.patterns
+      : typeof args.pattern === 'string'
+        ? [args.pattern]
+        : [];
     const searchPath = (args.path as string) || '.';
     const excludePatterns = (args.exclude as string[]) || [];
     const maxResults = Math.min(
@@ -88,16 +93,16 @@ export class GlobTool extends BaseTool {
       TOOL_LIMITS.MAX_SEARCH_RESULTS
     );
 
-    if (!pattern) {
+    if (patterns.length === 0 || patterns.some(pattern => typeof pattern !== 'string' || pattern.length === 0)) {
       return this.formatErrorResponse(
-        'pattern parameter is required',
+        'patterns must be a non-empty array of strings',
         'validation_error',
-        'Example: glob(pattern="**/*.ts")'
+        'Example: patterns=["**/*.ts"]'
       );
     }
 
     // Validate pattern (basic security check)
-    if (pattern.includes('..')) {
+    if (patterns.some(pattern => pattern.includes('..'))) {
       return this.formatErrorResponse(
         'Pattern contains invalid path traversal (..)',
         'security_error',
@@ -146,16 +151,17 @@ export class GlobTool extends BaseTool {
       // Combine default and user-provided exclude patterns
       const allExcludePatterns = [...FILE_EXCLUSIONS.DEFAULT, ...excludePatterns];
 
-      // Construct the full glob pattern
-      const globPattern = path.join(absolutePath, pattern);
+      // Construct absolute globs once; fast-glob evaluates them together and
+      // deduplicates files matched by more than one pattern.
+      const globPatterns = patterns.map(pattern => path.join(absolutePath, pattern));
 
       // Find matching files
-      const matchedFiles = await fg(globPattern, {
+      const matchedFiles = [...new Set(await fg(globPatterns, {
         dot: false,
         onlyFiles: true,
         ignore: allExcludePatterns,
         absolute: true,
-      });
+      }))];
 
       // Filter out excluded files if focus manager has exclusions
       let filteredFiles = matchedFiles;
@@ -234,17 +240,19 @@ export class GlobTool extends BaseTool {
     const description = args.description as string;
     if (description) return description;
 
-    const pattern = args.pattern as string;
-    if (!pattern) return null;
+    const patterns: string[] = Array.isArray(args.patterns)
+      ? args.patterns
+      : typeof args.pattern === 'string' ? [args.pattern] : [];
+    if (patterns.length === 0) return null;
 
-    return pattern;
+    return patterns.join(', ');
   }
 
   /**
    * Get parameters shown in subtext
    */
   getSubtextParameters(): string[] {
-    return ['description', 'pattern'];
+    return ['description', 'patterns', 'pattern'];
   }
 
   /**

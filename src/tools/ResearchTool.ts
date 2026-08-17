@@ -57,7 +57,7 @@ ${searchNote}
 export class ResearchTool extends BaseDelegationTool {
   readonly name = 'research';
   readonly description =
-    'Perform web research using search and fetch capabilities. Delegates to specialized research agent. Use when you need to find information from the web, verify facts, or gather current data. Returns synthesized findings with sources.';
+    'Delegate multi-source web research for current facts, verification, and sourced synthesis.';
   // Delegates to a research agent; the child's own tool calls are gated individually.
   readonly capabilities = [ToolCapability.Network] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display

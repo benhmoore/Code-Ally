@@ -28,7 +28,7 @@ import { UI_COLORS } from '../ui/constants/colors.js';
 export class CleanupCallTool extends BaseTool {
   readonly name = 'cleanup-call';
   readonly description =
-    'Remove tool result messages from conversation to free up context space. Useful for cleaning up large tool outputs after extracting the needed information.';
+    'Remove obsolete tool results from context after extracting their information.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly visibleInChat = true; // Show as a notice in chat
   readonly hideOutput = true; // Hide detailed output
@@ -79,7 +79,7 @@ export class CleanupCallTool extends BaseTool {
               items: {
                 type: 'string',
               },
-              description: 'Array of tool call IDs to remove results for. These are the IDs from previous tool calls whose results should be cleaned up.',
+              description: 'Tool call IDs whose results can be removed.',
             },
           },
           required: ['tool_call_ids'],

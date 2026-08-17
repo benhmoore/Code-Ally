@@ -150,19 +150,20 @@ Only set run_in_background=false when your very next step depends on the result.
           properties: {
             task_prompt: {
               type: 'string',
-              description: 'Complete task instructions: file paths, errors, requirements, and background.',
+              description: 'Self-contained task, including relevant paths, errors, and constraints.',
             },
             agent_type: {
               type: 'string',
-              description: `Agent type to use (e.g., '${AGENT_TYPES.TASK}'). Defaults to '${AGENT_TYPES.TASK}'.`,
+              description: `Agent type (default: ${AGENT_TYPES.TASK}).`,
             },
             thoroughness: {
               type: 'string',
-              description: 'Thoroughness: quick|medium|very thorough|uncapped (default)',
+              enum: ['quick', 'medium', 'very thorough', 'uncapped'],
+              description: 'Effort level (default: uncapped).',
             },
             context_files: {
               type: 'array',
-              description: 'Optional files to load into agent context (limit: 40% of context). Use sparingly.',
+              description: 'Files to preload (maximum 40% of context).',
               items: {
                 type: 'string',
                 format: 'local-path',
@@ -170,7 +171,7 @@ Only set run_in_background=false when your very next step depends on the result.
             },
             context_images: {
               type: 'array',
-              description: 'Optional image file paths to pass to the agent. Images are loaded and sent if the agent\'s model supports vision.',
+              description: 'Images to preload when the model supports vision.',
               items: {
                 type: 'string',
                 format: 'local-path',
@@ -178,18 +179,11 @@ Only set run_in_background=false when your very next step depends on the result.
             },
             run_in_background: {
               type: 'boolean',
-              description:
-                'Runs in the background (non-blocking, concurrent) by default. ' +
-                'Set to false (blocking) ONLY when your very next step depends on this agent\'s result. ' +
-                'Prefer background: spawn agents and keep working — their results are delivered to you ' +
-                'automatically when ready. Background returns a task id immediately.',
+              description: 'Default true. Set false only when the next step requires the result.',
             },
             notify_when_done: {
               type: 'boolean',
-              description:
-                'For background runs: auto-notify (wake) you the moment this agent finishes, even if you are ' +
-                'idle. Default false (its result is delivered passively on your next turn, or when you wait). ' +
-                'Set true for a long task whose completion should interrupt and resume you.',
+              description: 'Wake on background completion (default false).',
             },
           },
           required: ['task_prompt'],

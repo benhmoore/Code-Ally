@@ -26,30 +26,21 @@ import { getDefaultTimeZone } from '../services/ScheduledTaskManager.js';
 // --- Core Agent Identity and Directives ---
 
 // Core identity for main Ally assistant
-const ALLY_IDENTITY = `You are Ally, an AI coding assistant. Use tools to complete tasks efficiently.`;
+const ALLY_IDENTITY = 'You are Ally, a coding assistant. Complete the request with the fewest correct operations.';
 
 // Cache-stable rules shared by every main-agent request. Tool-specific details
 // belong in tool schemas/guidance so this prefix stays short and unambiguous.
-const BEHAVIORAL_DIRECTIVES = `Operational rules:
-- Complete exactly the requested task with the fewest correct operations. Avoid unrelated features, refactors, and files.
-- Make reasonable reversible assumptions. Ask only when ambiguity materially changes the result or authorizes a consequential action.
-- Read files before editing. Follow existing patterns and test or lint relevant changes.
-- Use available tools yourself. Emit separate native tool calls together for independent operations.
-- Read and act on system_reminder fields. After failures, adjust using the error; never repeat an identical invalid call.
-- For 3+ distinct steps, maintain todo-write with exactly one item in_progress.
-- After tool work, report what changed, verification, and caveats. Stop when the requested outcome is verified.
-- Respond to user interjections, then continue with their guidance.`;
-
-const GENERAL_GUIDELINES = `Files: Put related edit or line-edit changes in one atomic edits array. Use ephemeral reads only for large one-time content.
-Processes: Run servers, watchers, and other long-lived commands in background; monitor or stop them with the process tools.
-Do not commit unless requested.`;
+const BEHAVIORAL_DIRECTIVES = `Tool rules:
+- Choose the narrowest tool that directly matches the operation.
+- Read a file before editing it.
+- Use one read call with file_paths for multiple related files.
+- For different independent operations, emit separate native tool calls in one response.
+- Do not call unrelated tools or describe a tool call instead of making it.`;
 
 // Complete directives for main Ally assistant
 const CORE_DIRECTIVES = `${ALLY_IDENTITY}
 
-${BEHAVIORAL_DIRECTIVES}
-
-${GENERAL_GUIDELINES}`;
+${BEHAVIORAL_DIRECTIVES}`;
 
 /**
  * Get the cache-stable context for the system prompt (msg[0]).
@@ -264,11 +255,17 @@ export async function getDynamicContextBlock(options: {
   toolResultManager?: ToolResultManager;
   includeTodos?: boolean;
   includePlanMode?: boolean;
+  /** Injectable clock for deterministic request snapshots and evaluations. */
+  now?: Date;
+  /** Injectable IANA zone for deterministic request snapshots and evaluations. */
+  timeZone?: string;
+  /** Include volatile clock data; ordinary coding turns omit it. */
+  includeTime?: boolean;
 } = {}): Promise<string> {
   const { includeTodos = false, includePlanMode = false } = options;
 
-  const now = new Date();
-  const localTimeZone = getDefaultTimeZone();
+  const now = options.now ?? new Date();
+  const localTimeZone = options.timeZone ?? getDefaultTimeZone();
   const currentLocalTime = new Intl.DateTimeFormat('en-US', {
     timeZone: localTimeZone,
     weekday: 'long',
@@ -315,13 +312,8 @@ export async function getDynamicContextBlock(options: {
         if (planModeManager?.isActive()) {
           planModeSection = `
 
-**PLAN MODE ACTIVE**
-You are in read-only plan mode. Only exploratory tools and write-plan are available.
-- Explore the codebase to understand patterns and architecture
-- Ask clarifying questions with ask-user-question
-- Write your plan with write-plan when ready
-- Call exit-plan-mode to present the plan for user approval
-You CANNOT write, edit, or delete project files in this mode.`;
+**PLAN MODE ACTIVE — read-only.**
+Explore and ask questions as needed. Write the plan with write-plan, then call exit-plan-mode for approval. Do not modify project files.`;
         }
       }
     } catch (error) {
@@ -329,9 +321,10 @@ You CANNOT write, edit, or delete project files in this mode.`;
     }
   }
 
-  const body = `- Current Local Time: ${currentLocalTime}
+  const timeContext = options.includeTime === false ? '' : `- Current Local Time: ${currentLocalTime}
 - Current Time Zone: ${localTimeZone}
-- Current UTC Time: ${currentUtcTime}Z${todoContext}${planModeSection}`;
+- Current UTC Time: ${currentUtcTime}Z`;
+  const body = `${timeContext}${todoContext}${planModeSection}`.trim();
   if (!body.trim()) {
     return '';
   }
@@ -361,24 +354,23 @@ export async function getMainSystemPrompt(
   // Tool definitions are provided separately by the LLM client as function definitions
   const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager, reasoningEffort, conversationMessages });
 
-  // Add once-mode specific instructions
-  const onceModeInstructions = isOnceMode
+  // Scheduled runs are already single-response runs. Emit one unattended block
+  // instead of two overlapping copies of the same completion protocol.
+  const unattendedInstructions = isScheduledRun
     ? `
 
-**IMPORTANT - Single Response Mode:**
-This is a non-interactive automatic run. No user is available for questions, forms, approvals, or permission elevation. A policy denial is a recoverable tool result: choose a safe alternative and continue. Ordinary assistant prose is progress, not completion. After all required work, background dependencies, todos, and verification are finished, call \`complete-objective\` with concise evidence. If and only if no safe automatic path remains, call \`block-objective\` with the concrete blocker.`
-    : '';
+**Scheduled Task Run${scheduledTaskId ? ` — \`${scheduledTaskId}\`` : ''}:**
+Execute unattended. Do not ask follow-up questions. Use safe alternatives after recoverable failures. Prose does not finish the run: call \`complete-objective\` after the work and verification, or \`block-objective\` only when no safe automatic path remains. Saved as \`scheduled_<task-id>_<timestamp>\`.`
+    : isOnceMode
+      ? `
 
-  const scheduledRunInstructions = isScheduledRun
-    ? `
-
-**IMPORTANT - Scheduled Task Run:**
-This is an unattended scheduled task execution${scheduledTaskId ? ` for \`${scheduledTaskId}\`` : ''}. Execute the scheduled prompt automatically. Do not ask follow-up questions or request any other human input. Policy denials must be handled by choosing a safe alternative. Only \`complete-objective\` records success; use \`block-objective\` when no safe path remains. This run will be saved in session history as a \`scheduled_<task-id>_<timestamp>\` session.`
-    : '';
+**Single Response Run:**
+No user is available. Use safe alternatives after recoverable failures. Prose does not finish the run: call \`complete-objective\` after the work and verification, or \`block-objective\` only when no safe automatic path remains.`
+      : '';
 
   // Combine core directives with the cache-stable context. Volatile state (date,
   // usage, todos, plan-mode, budget) is appended separately per round-trip.
-  return `${CORE_DIRECTIVES}${onceModeInstructions}${scheduledRunInstructions}
+  return `${CORE_DIRECTIVES}${unattendedInstructions}
 
 **Context:**
 ${context}`;
@@ -414,9 +406,7 @@ export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt
   const promptWithDirectives = `**Primary Identity:**
 ${agentSystemPrompt}
 
-${BEHAVIORAL_DIRECTIVES}
-
-${GENERAL_GUIDELINES}`;
+${BEHAVIORAL_DIRECTIVES}`;
 
   // Apply thoroughness-specific adjustments if available
   // Thoroughness adjustments are inserted between base prompt and final execution guidelines
@@ -436,15 +426,8 @@ ${taskPrompt}
 **Context:**
 ${context}
 
-**Final Response Requirement**
-As a specialized agent, you must conclude with a comprehensive final response. Your final message will be returned as the tool result to the parent agent.
-
-- Monitor your context usage (shown in the Current Context block at the end of the prompt)
-- At 90%+ context, stop using tools and provide your final summary
-- Your final response should summarize: what you did, what you found, and any recommendations
-- If you run low on context, summarize what you've learned so far rather than making more tool calls
-
-Execute this task thoroughly using available tools, then provide your comprehensive final summary.`;
+**Return to parent**
+Execute with available tools. End with a self-contained summary of work, findings, evidence, and material caveats or recommendations. At 90% context, stop using tools and summarize.`;
 }
 
 // Dictionary of specific system messages

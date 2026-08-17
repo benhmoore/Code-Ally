@@ -28,7 +28,7 @@ interface EditOperation {
 
 export class EditTool extends BaseTool {
   readonly name = 'edit';
-  readonly description = 'Make edits to a file using find-and-replace. Always accepts an array of edits for atomic processing. Edits are applied sequentially - each edit sees the cumulative result of previous edits.';
+  readonly description = 'Apply sequential exact replacements to one file. Put related replacements in one edits array.';
   readonly capabilities = [ToolCapability.FsRead, ToolCapability.FsWrite] as const;
   readonly hideOutput = true; // Hide output from result preview
 
@@ -122,21 +122,21 @@ export class EditTool extends BaseTool {
             },
             edits: {
               type: 'array',
-              description: 'Array of edit operations applied sequentially. Each requires: old_string (text to find), new_string (replacement), optional replace_all (default: false).',
+              description: 'Sequential exact replacements.',
               items: {
                 type: 'object',
                 properties: {
                   old_string: {
                     type: 'string',
-                    description: 'Exact text to find and replace',
+                    description: 'Exact text to replace.',
                   },
                   new_string: {
                     type: 'string',
-                    description: 'Text to replace old_string with',
+                    description: 'Replacement text.',
                   },
                   replace_all: {
                     type: 'boolean',
-                    description: 'Replace all occurrences instead of just one (default: false)',
+                    description: 'Replace every occurrence (default false).',
                   },
                 },
                 required: ['old_string', 'new_string'],
@@ -144,7 +144,7 @@ export class EditTool extends BaseTool {
             },
             show_updated_context: {
               type: 'boolean',
-              description: 'Include the updated file content in the response (default: false). Useful for verifying changes or making follow-up edits without a separate Read call.',
+              description: 'Return updated context (default false).',
             },
           },
           required: ['file_path', 'edits'],

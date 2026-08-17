@@ -186,9 +186,9 @@ describe('ToolValidator', () => {
           type: 'object',
           properties: {
             pattern: { type: 'string' },
-            '-A': { type: 'number' },
-            '-B': { type: 'number' },
-            '-C': { type: 'number' },
+            after_context: { type: 'number' },
+            before_context: { type: 'number' },
+            context: { type: 'number' },
           },
           required: ['pattern'],
         },
@@ -208,28 +208,28 @@ describe('ToolValidator', () => {
     it('should reject negative context lines', () => {
       const result = validator.validateArguments(grepTool, grepFunctionDef, {
         pattern: 'test',
-        '-A': -1,
+        after_context: -1,
       });
 
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('-A must be a non-negative number');
+      expect(result.error).toContain('after_context must be a non-negative number');
     });
 
     it('should reject context lines > 20', () => {
       const result = validator.validateArguments(grepTool, grepFunctionDef, {
         pattern: 'test',
-        '-C': 25,
+        context: 25,
       });
 
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('-C cannot exceed 20');
+      expect(result.error).toContain('context cannot exceed 20');
     });
 
     it('should accept valid regex and context', () => {
       const result = validator.validateArguments(grepTool, grepFunctionDef, {
         pattern: 'class.*Test',
-        '-A': 3,
-        '-B': 3,
+        after_context: 3,
+        before_context: 3,
       });
 
       expect(result.valid).toBe(true);

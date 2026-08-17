@@ -78,6 +78,16 @@ export interface SendOptions {
   responseSchema?: { name: string; schema: Record<string, unknown> };
 }
 
+/** Provider-ready request captured before transport headers are applied. */
+export interface ModelRequestPreview {
+  /** Concrete wire protocol, independent of persisted checkpoint identifiers. */
+  provider: 'ollama' | 'openai-compat' | 'openai-responses';
+  /** Exact endpoint that would receive the payload. */
+  url: string;
+  /** JSON-serializable body after message/tool/provider normalization. */
+  payload: Record<string, unknown>;
+}
+
 /**
  * Response from the LLM
  */
@@ -200,6 +210,20 @@ export abstract class ModelClient {
    * ```
    */
   abstract send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse>;
+
+  /**
+   * Build the exact provider-ready request without sending it.
+   *
+   * Implementations override this when their request is JSON-serializable. The
+   * method is used by diagnostics and evaluations so request snapshots cannot
+   * drift from the production serialization path.
+   */
+  previewRequest(
+    _messages: readonly Message[],
+    _options: SendOptions,
+  ): ModelRequestPreview | null {
+    return null;
+  }
 
   /** Exact provider-side count of the request, when supported. */
   async countInput(_messages: readonly Message[], _options: SendOptions): Promise<number | null> {

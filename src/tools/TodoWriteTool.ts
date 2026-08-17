@@ -26,13 +26,12 @@ import { UI_COLORS } from '../ui/constants/colors.js';
 interface TodoInput {
   content: string;
   status: TodoStatus;
-  activeForm: string;
 }
 
 export class TodoWriteTool extends BaseTool {
   readonly name = 'todo-write';
   readonly description =
-    'Manage todo list. Each todo must have: content (imperative task), status (pending/in_progress/completed), activeForm (present continuous). Example: [{content: "Fix bug", status: "pending", activeForm: "Fixing bug"}]. Empty array clears list.';
+    'Replace the todo list. Each item needs content and status; [] clears it. Use at most one in_progress item.';
   readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly visibleInChat = false; // Todos shown in status bar, not as tool call entries
   readonly hideOutput = true; // Todo updates shown in status bar, not chat
@@ -65,25 +64,21 @@ export class TodoWriteTool extends BaseTool {
           properties: {
             todos: {
               type: 'array',
-              description: 'Array of todo items representing complete desired state. Pass empty array [] to clear all todos. Each item must include all three fields: content, status, and activeForm.',
+              description: 'Complete desired list; [] clears it.',
               items: {
                 type: 'object',
                 properties: {
                   content: {
                     type: 'string',
-                    description: 'Task description in imperative form. Examples: "Fix authentication bug", "Write unit tests", "Deploy to staging". This is what appears in the todo list.',
+                    description: 'Imperative task description.',
                   },
                   status: {
                     type: 'string',
                     enum: ['pending', 'in_progress', 'completed'],
-                    description: 'Current status of the task. Use "pending" for upcoming tasks, "in_progress" for active work (only ONE task should be in_progress at a time), "completed" for finished tasks.',
-                  },
-                  activeForm: {
-                    type: 'string',
-                    description: 'Present continuous form for progress display. Convert imperative to -ing form: "Fix bug" → "Fixing bug", "Write tests" → "Writing tests", "Deploy" → "Deploying". Shown in status bar during execution.',
+                    description: 'Task state; at most one item may be in_progress.',
                   },
                 },
-                required: ['content', 'status', 'activeForm'],
+                required: ['content', 'status'],
               },
             },
           },
@@ -121,7 +116,7 @@ export class TodoWriteTool extends BaseTool {
       return this.formatErrorResponse(
         'todos must be an array',
         'validation_error',
-        'Provide todos as an array of {content, status, activeForm} objects'
+        'Provide todos as an array of {content, status} objects'
       );
     }
 
@@ -202,20 +197,6 @@ export class TodoWriteTool extends BaseTool {
         );
       }
 
-      // Validate activeForm
-      if (!todo.activeForm || typeof todo.activeForm !== 'string') {
-        return this.formatErrorResponse(
-          `Task "${todo.content}": activeForm is required and must be a string`,
-          'validation_error'
-        );
-      }
-
-      if (todo.activeForm.trim().length === 0) {
-        return this.formatErrorResponse(
-          `Task "${todo.content}": activeForm cannot be empty`,
-          'validation_error'
-        );
-      }
     }
 
     // Generate IDs for todos (agent doesn't provide IDs)

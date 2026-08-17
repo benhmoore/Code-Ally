@@ -16,6 +16,7 @@ import {
   SendOptions,
   LLMResponse,
   SamplingParams,
+  type ModelRequestPreview,
 } from './ModelClient.js';
 import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
@@ -161,6 +162,21 @@ export class OpenAICompatClient extends ModelClient {
     } finally {
       this.activeRequests.delete(requestId);
     }
+  }
+
+  override previewRequest(messages: readonly Message[], options: SendOptions): ModelRequestPreview {
+    const { functions, stream = false, temperature, dynamicMaxTokens } = options;
+    return {
+      provider: 'openai-compat',
+      url: this.apiUrl,
+      payload: this.preparePayload(
+        messages,
+        functions,
+        stream,
+        temperature,
+        dynamicMaxTokens,
+      ) as unknown as Record<string, unknown>,
+    };
   }
 
   /** Build the OpenAI-shaped request payload from internal messages/functions. */

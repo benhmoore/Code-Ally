@@ -31,7 +31,7 @@ export class LsTool extends BaseTool {
   readonly name = 'ls';
   readonly displayName = 'List';
   readonly description =
-    'List files and directories with sizes, types, and modification times';
+    'List one directory with optional metadata and filters. Do not pair with tree/glob for the same discovery.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
 
@@ -54,28 +54,30 @@ export class LsTool extends BaseTool {
             path: {
               type: 'string',
               format: 'local-path',
-              description: 'Directory path to list (default: current directory)',
+              description: 'Directory (default: current).',
             },
             type: {
               type: 'string',
-              description: 'Filter by type: "files", "dirs", "all" (default: all)',
+              enum: ['files', 'dirs', 'all'],
+              description: 'Entry type (default: all).',
             },
             extensions: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Filter by file extensions (e.g., ["ts", "tsx", "js"])',
+              description: 'File extensions, e.g. ["ts", "tsx"].',
             },
             all: {
               type: 'boolean',
-              description: 'Include hidden files (starting with .)',
+              description: 'Include hidden entries.',
             },
             long: {
               type: 'boolean',
-              description: 'Show detailed information (size, permissions, modified time)',
+              description: 'Include size, permissions, and time.',
             },
             sort_by: {
               type: 'string',
-              description: 'Sort by: "name", "size", "time" (default: name)',
+              enum: ['name', 'size', 'time'],
+              description: 'Sort field (default: name).',
             },
           },
         },

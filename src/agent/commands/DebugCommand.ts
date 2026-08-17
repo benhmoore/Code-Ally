@@ -15,9 +15,11 @@ import { BUFFER_SIZES } from '@config/constants.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 import { redactSensitiveText } from '../../utils/redaction.js';
+import { tokenCounter } from '../../services/TokenCounter.js';
 
 /**
  * Timeline entry types for unified chronological display
@@ -39,6 +41,7 @@ export class DebugCommand extends Command {
       { name: 'calls', description: 'Show recent tool calls' },
       { name: 'errors', description: 'Show failed tool calls' },
       { name: 'dump', description: 'Generate debug dump file' },
+      { name: 'request', description: 'Export the last provider-ready model request' },
       { name: 'agent', description: 'Export agent prompts/responses to file', args: '[n]' },
     ],
   };
@@ -68,6 +71,7 @@ export class DebugCommand extends Command {
   /debug calls [n]     - Show last N tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
   /debug errors [n]    - Show last N failed tool calls (default: ${BUFFER_SIZES.DEBUG_HISTORY_DEFAULT})
   /debug dump [n]      - Dump debug info to file (last N entries, default: ${BUFFER_SIZES.MAX_LOG_BUFFER_SIZE})
+  /debug request       - Export the last provider-ready model request
   /debug agent [n]     - Export last N agent prompts/responses to file (default: 5)
 `,
       };
@@ -117,6 +121,9 @@ export class DebugCommand extends Command {
           parts.length > 1 ? parts[1] : undefined
         );
 
+      case 'request':
+        return this.handleDebugRequest(serviceRegistry);
+
       case 'agent':
         return this.handleDebugAgent(
           serviceRegistry,
@@ -125,8 +132,58 @@ export class DebugCommand extends Command {
 
       default:
         return this.createError(
-          `Unknown debug subcommand: ${subcommand}. Available: enable, disable, calls, errors, dump, agent`
+          `Unknown debug subcommand: ${subcommand}. Available: enable, disable, calls, errors, dump, request, agent`
         );
+    }
+  }
+
+  /** Export the exact JSON body captured immediately before the last model send. */
+  private handleDebugRequest(serviceRegistry: ServiceRegistry): CommandResult {
+    try {
+      const agent = serviceRegistry.get('agent');
+      const preview = agent?.getLastRequestPreview();
+      if (!preview) {
+        return this.createError('No model request has been captured in this session yet.');
+      }
+
+      const compactPayload = JSON.stringify(preview.payload);
+      const tools = Array.isArray((preview.payload as any).tools)
+        ? (preview.payload as any).tools.length
+        : 0;
+      const messages = Array.isArray((preview.payload as any).messages)
+        ? (preview.payload as any).messages.length
+        : Array.isArray((preview.payload as any).input)
+          ? (preview.payload as any).input.length
+          : 0;
+      const snapshot = {
+        capturedAt: new Date().toISOString(),
+        provider: preview.provider,
+        url: preview.url,
+        metrics: {
+          payloadSha256: createHash('sha256').update(compactPayload).digest('hex'),
+          payloadCharacters: compactPayload.length,
+          estimatedTokens: tokenCounter.count(compactPayload),
+          messages,
+          tools,
+        },
+        payload: preview.payload,
+      };
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filepath = path.join(os.homedir(), `codeally-request-${timestamp}.json`);
+      fs.writeFileSync(filepath, `${JSON.stringify(snapshot, null, 2)}\n`, {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+
+      return {
+        handled: true,
+        response: `Model request snapshot written to: ${filepath}\n\n${preview.provider}: ${messages} messages, ${tools} tools, approximately ${snapshot.metrics.estimatedTokens} tokens.`,
+      };
+    } catch (error) {
+      return this.createError(
+        `Failed to export model request: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

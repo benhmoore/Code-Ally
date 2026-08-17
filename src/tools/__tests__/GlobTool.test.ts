@@ -53,7 +53,8 @@ describe('GlobTool', () => {
     it('should have function definition', () => {
       const def = globTool.getFunctionDefinition();
       expect(def.function.name).toBe('glob');
-      expect(def.function.parameters.required).toContain('pattern');
+      expect(def.function.parameters.required).toContain('patterns');
+      expect(def.function.parameters.properties).not.toHaveProperty('pattern');
     });
   });
 
@@ -80,6 +81,17 @@ describe('GlobTool', () => {
       expect(result.success).toBe(true);
       expect(result.total_matches).toBeGreaterThan(1);
       expect(result.files.some((f: string) => f.includes('src'))).toBe(true);
+    });
+
+    it('should batch multiple patterns and deduplicate matches', async () => {
+      const result = await globTool.execute({
+        patterns: ['**/*.ts', '**/*.test.ts'],
+        path: tempDir,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.files.some((file: string) => file.endsWith('index.ts'))).toBe(true);
+      expect(new Set(result.files).size).toBe(result.files.length);
     });
 
     it('should find test files', async () => {

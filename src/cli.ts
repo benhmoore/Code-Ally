@@ -1283,94 +1283,9 @@ async function main() {
     await skillManager.initialize();
     registry.setSkillManager(skillManager);
 
-    // Import and create tools
-    const { BashTool } = await import('./tools/BashTool.js');
-    const { BashOutputTool } = await import('./tools/BashOutputTool.js');
-    const { KillShellTool } = await import('./tools/KillShellTool.js');
-    const { ReadTool } = await import('./tools/ReadTool.js');
-    const { WriteTool } = await import('./tools/WriteTool.js');
-    const { WriteAgentTool } = await import('./tools/WriteAgentTool.js');
-    const { EditAgentTool } = await import('./tools/EditAgentTool.js');
-    const { DeleteAgentTool } = await import('./tools/DeleteAgentTool.js');
-    const { ListAgentsTool } = await import('./tools/ListAgentsTool.js');
-    const { WriteTempTool } = await import('./tools/WriteTempTool.js');
-    const { EditTool } = await import('./tools/EditTool.js');
-    const { LineEditTool } = await import('./tools/LineEditTool.js');
-    const { GlobTool } = await import('./tools/GlobTool.js');
-    const { GrepTool } = await import('./tools/GrepTool.js');
-    const { LsTool } = await import('./tools/LsTool.js');
-    const { TreeTool } = await import('./tools/TreeTool.js');
-    const { AgentTool } = await import('./tools/AgentTool.js');
-    const { ManageAgentsTool } = await import('./tools/ManageAgentsTool.js');
-    const { ExploreTool } = await import('./tools/ExploreTool.js');
-    const { PlanTool } = await import('./tools/PlanTool.js');
-    const { AgentAskTool } = await import('./tools/AgentAskTool.js');
-    const { CleanupCallTool } = await import('./tools/CleanupCallTool.js');
-    const { TodoWriteTool } = await import('./tools/TodoWriteTool.js');
-    const { SessionsTool } = await import('./tools/SessionsTool.js');
-    const { LintTool } = await import('./tools/LintTool.js');
-    const { FormatTool } = await import('./tools/FormatTool.js');
-    const { AskUserQuestionTool } = await import('./tools/AskUserQuestionTool.js');
-    const { WebFetchTool } = await import('./tools/WebFetchTool.js');
-    const { WebSearchTool } = await import('./tools/WebSearchTool.js');
-    const { ResearchTool } = await import('./tools/ResearchTool.js');
-    const { SkillTool } = await import('./tools/SkillTool.js');
-    const { MemoryTool } = await import('./tools/MemoryTool.js');
-    const { ScheduledTasksTool } = await import('./tools/ScheduledTasksTool.js');
-    const { EnterPlanModeTool } = await import('./tools/EnterPlanModeTool.js');
-    const { ExitPlanModeTool } = await import('./tools/ExitPlanModeTool.js');
-    const { WritePlanTool } = await import('./tools/WritePlanTool.js');
-    const { CancelAgentTool } = await import('./tools/CancelAgentTool.js');
-    const { WaitTool } = await import('./tools/WaitTool.js');
-    const { WatchTool } = await import('./tools/WatchTool.js');
-    const { CompleteObjectiveTool } = await import('./tools/CompleteObjectiveTool.js');
-    const { BlockObjectiveTool } = await import('./tools/BlockObjectiveTool.js');
-    const { ReconcileEffectTool } = await import('./tools/ReconcileEffectTool.js');
-
-    const tools = [
-      new BashTool(activityStream, config),
-      new BashOutputTool(activityStream),
-      new KillShellTool(activityStream),
-      new CancelAgentTool(activityStream),
-      new WaitTool(activityStream),
-      new WatchTool(activityStream),
-      new CompleteObjectiveTool(activityStream),
-      new BlockObjectiveTool(activityStream),
-      new ReconcileEffectTool(activityStream),
-      new ReadTool(activityStream),
-      new WriteTool(activityStream),
-      new WriteAgentTool(activityStream), // Agent-specific write tool (only visible to manage-agents)
-      new EditAgentTool(activityStream), // Agent-specific edit tool (only visible to manage-agents)
-      new DeleteAgentTool(activityStream), // Agent-specific delete tool (only visible to manage-agents)
-      new ListAgentsTool(activityStream), // Agent listing tool (only visible to manage-agents)
-      new WriteTempTool(activityStream), // Internal tool for explore agents
-      new EditTool(activityStream),
-      new LineEditTool(activityStream),
-      new GlobTool(activityStream),
-      new GrepTool(activityStream),
-      new LsTool(activityStream),
-      new TreeTool(activityStream),
-      new AgentTool(activityStream),
-      new ManageAgentsTool(activityStream),
-      new ExploreTool(activityStream),
-      new PlanTool(activityStream),
-      new AgentAskTool(activityStream),
-      new CleanupCallTool(activityStream),
-      new TodoWriteTool(activityStream), // Unified todo management
-      new SessionsTool(activityStream),
-      new LintTool(activityStream),
-      new FormatTool(activityStream),
-      new AskUserQuestionTool(activityStream), // Interactive user questions
-      new WebFetchTool(activityStream), // Fetch and extract text from URLs
-      new WebSearchTool(activityStream), // Web search via configured provider (Brave/Serper)
-      new ResearchTool(activityStream), // Research agent delegation tool
-      new SkillTool(activityStream), // Load skill instructions into context
-      new MemoryTool(activityStream), // Autonomous project memory (save/recall facts)
-      new ScheduledTasksTool(activityStream), // Durable scheduled Ally tasks
-      new EnterPlanModeTool(activityStream), // Enter plan mode for structured exploration
-      new ExitPlanModeTool(activityStream), // Exit plan mode and present plan for approval
-      new WritePlanTool(activityStream), // Write plan file during plan mode
-    ];
+    // Construct the shared built-in catalog used by runtime and evaluations.
+    const { createBuiltInTools } = await import('./tools/createBuiltInTools.js');
+    const tools = createBuiltInTools(activityStream, config);
 
     // Initialize marketplace plugin system
     const { MarketplaceManager } = await import('./marketplace/MarketplaceManager.js');
