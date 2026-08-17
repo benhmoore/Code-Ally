@@ -75,20 +75,52 @@ function toolResultPayload(content: string): { payload: string; errorWrapped: bo
   const payload = withoutCallId
     .replace(/^<error[^>]*>\r?\n?/, '')
     .replace(/\r?\n?<\/error>\s*$/, '')
+    // System reminders are harness-injected turn guidance appended after the
+    // tool payload. They are not tool output: left in, they defeat envelope
+    // parsing and then get embedded verbatim into checkpoint facts.
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
     .trim();
   return { payload, errorWrapped };
 }
 
+/** Span of the balanced JSON object starting at index 0, or -1. */
+function leadingObjectEnd(text: string): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth++;
+    else if (char === '}' && --depth === 0) return index + 1;
+  }
+  return -1;
+}
+
 function parseToolEnvelope(payload: string): Record<string, unknown> | null {
   if (!payload.startsWith('{')) return null;
-  try {
-    const value = JSON.parse(payload) as unknown;
-    return value && typeof value === 'object' && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
+  const candidates = [payload];
+  // Tool results may carry trailing harness text after the envelope; parse the
+  // leading object rather than giving up on the whole payload.
+  const end = leadingObjectEnd(payload);
+  if (end > 0 && end < payload.length) candidates.push(payload.slice(0, end));
+  for (const candidate of candidates) {
+    try {
+      const value = JSON.parse(candidate) as unknown;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+      }
+    } catch {
+      // Try the next candidate.
+    }
   }
+  return null;
 }
 
 function oneLine(text: string): string {
