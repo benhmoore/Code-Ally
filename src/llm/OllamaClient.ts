@@ -18,6 +18,7 @@ import {
   SendOptions,
   LLMResponse,
   SamplingParams,
+  type ModelRequestPreview,
 } from './ModelClient.js';
 import { Message, FunctionDefinition, ActivityEventType, type ToolCall } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
@@ -344,6 +345,22 @@ export class OllamaClient extends ModelClient {
       logger.debug('[OLLAMA_CLIENT] Cleaning up request:', requestId);
       this.activeRequests.delete(requestId);
     }
+  }
+
+  override previewRequest(messages: readonly Message[], options: SendOptions): ModelRequestPreview {
+    const { functions, stream = false, temperature, dynamicMaxTokens, responseSchema } = options;
+    return {
+      provider: 'ollama',
+      url: this.apiUrl,
+      payload: this.preparePayload(
+        messages,
+        functions,
+        stream,
+        temperature,
+        dynamicMaxTokens,
+        responseSchema?.schema,
+      ) as unknown as Record<string, unknown>,
+    };
   }
 
   /**

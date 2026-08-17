@@ -36,7 +36,7 @@ export class GrepTool extends BaseTool {
   readonly name = 'grep';
   readonly displayName = 'Search';
   readonly description =
-    'Search files for text patterns using ripgrep. Use for finding code patterns, text search across files, regex matching. Supports files_with_matches (default), content (with context), and count modes. Supports multiline regex patterns.';
+    'Search files with a Rust regex. Returns matching file paths by default; use output_mode=content for matching lines.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
   readonly usageGuidance = `**When to use grep:**
@@ -60,10 +60,15 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
     // Invalid patterns will be caught and reported by ripgrep.
 
     // Validate context line parameters
-    const contextParams = ['-A', '-B', '-C'];
-    for (const param of contextParams) {
-      if (args[param] !== undefined && args[param] !== null) {
-        const value = Number(args[param]);
+    const contextParams = [
+      ['after_context', '-A'],
+      ['before_context', '-B'],
+      ['context', '-C'],
+    ] as const;
+    for (const [param, legacyParam] of contextParams) {
+      const raw = args[param] ?? args[legacyParam];
+      if (raw !== undefined && raw !== null) {
+        const value = Number(raw);
         if (isNaN(value) || value < 0) {
           return {
             valid: false,
@@ -113,25 +118,26 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
             },
             type: {
               type: 'string',
-              description: 'File type: js|py|rust|go|java|ts|tsx',
+              description: 'Ripgrep file type, e.g. ts, js, py, rust, or go.',
             },
-            '-i': {
+            case_insensitive: {
               type: 'boolean',
               description: 'Case insensitive search',
             },
             output_mode: {
               type: 'string',
-              description: 'Output: content|files_with_matches (default)|count',
+              enum: ['files_with_matches', 'content', 'count'],
+              description: 'Result shape (default: files_with_matches)',
             },
-            '-A': {
+            after_context: {
               type: 'number',
               description: 'Lines after match (content mode only)',
             },
-            '-B': {
+            before_context: {
               type: 'number',
               description: 'Lines before match (content mode only)',
             },
-            '-C': {
+            context: {
               type: 'number',
               description: 'Lines before+after match (content mode only)',
             },
@@ -169,21 +175,21 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
     const searchPath = (args.path as string) || '.';
     const fileType = args.type as string | undefined;
     const filePattern = args.glob as string | undefined;
-    const caseInsensitive = Boolean(args['-i']);
+    const caseInsensitive = Boolean(args.case_insensitive ?? args['-i']);
     const multiline = Boolean(args.multiline);
     const pcre2 = Boolean(args.pcre2);
     const outputMode = (args.output_mode as OutputMode) || 'files_with_matches';
 
     const linesAfter = Math.min(
-      Math.max(0, Number(args['-A']) || 0),
+      Math.max(0, Number(args.after_context ?? args['-A']) || 0),
       GrepTool.MAX_CONTEXT_LINES
     );
     const linesBefore = Math.min(
-      Math.max(0, Number(args['-B']) || 0),
+      Math.max(0, Number(args.before_context ?? args['-B']) || 0),
       GrepTool.MAX_CONTEXT_LINES
     );
     const linesContext = Math.min(
-      Math.max(0, Number(args['-C']) || 0),
+      Math.max(0, Number(args.context ?? args['-C']) || 0),
       GrepTool.MAX_CONTEXT_LINES
     );
 

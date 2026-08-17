@@ -164,28 +164,29 @@ export class BashTool extends BaseTool {
           properties: {
             command: {
               type: 'string',
-              description: `Shell command to execute. IMPORTANT: Use non-interactive flags: npm create -y ..., npm init -y, apt install -y, etc. Commands will be killed if idle for ${TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000}+ seconds.`,
+              description: `Shell command. Use non-interactive flags; killed after ${TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000}s idle.`,
             },
             timeout: {
               type: 'integer',
-              description: `Timeout in seconds (default: 60, max: 600, use -1 for no timeout)`,
+              description: 'Seconds (default 60, max 600, -1 disables).',
             },
             output_mode: {
               type: 'string',
-              description: 'Output mode: "full" (default), "last_line", "exit_code_only"',
+              enum: ['full', 'last_line', 'exit_code_only'],
+              description: 'Returned output (default: full).',
             },
             working_dir: {
               type: 'string',
               format: 'local-path',
-              description: 'Working directory for command execution (default: current directory)',
+              description: 'Working directory (default: current).',
             },
             run_in_background: {
               type: 'boolean',
-              description: 'Run command in background (returns shell_id for monitoring with bash-output). Use this for long-running servers (npm run dev, python -m http.server, etc), watchers, or any process that runs indefinitely. The timeout parameter is ignored for background processes.',
+              description: 'Run non-blocking; required for servers and watchers. Returns shell_id.',
             },
             blocks_completion: {
               type: 'boolean',
-              description: 'For background commands only: treat this process as required unfinished work for a durable objective. Defaults to false; long-running servers should remain false.',
+              description: 'Background task must finish before objective completion (default false).',
             },
           },
           required: ['command'],

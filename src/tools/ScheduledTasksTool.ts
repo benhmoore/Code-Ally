@@ -220,12 +220,7 @@ async function runViaSchedulerCli(taskId: string): Promise<{ exitCode: number | 
 export class ScheduledTasksTool extends BaseTool {
   readonly name = 'scheduled-tasks';
   readonly description =
-    'List, create, update, delete, enable, disable, and run durable scheduled Ally tasks. ' +
-    'Use this when the user asks to schedule recurring or one-off work, inspect scheduled tasks, or remove schedules. ' +
-    'This tool lists active schedules, not completed run history. Completed one-off runs are saved as sessions named scheduled_<task-id>_<timestamp>; use the sessions tool to inspect whether a completed scheduled run worked. ' +
-    'For one-offs with absolute clock times like "today at 2:10 PM", use type="once" with date="YYYY-MM-DD" and time="HH:mm" in the local timezone; do not calculate UTC offsets yourself. ' +
-    'For one-offs like "ten minutes from now", use type="once" with run_in_minutes=10. Do not use run_in_minutes for clock-time requests. ' +
-    'If the user says "every morning" without a time, ask for a time before creating the task.';
+    'Manage durable daily or one-off tasks. For absolute local times use once with date+time; for relative delays use run_in_minutes. Ask when a recurring time is missing. Completed runs are in sessions.';
   /**
    * Persists task definitions into Code-Ally's own state, and `run_now` spawns
    * `process.execPath` to execute a task. ShellExec makes this tool confirmable,
@@ -268,13 +263,13 @@ export class ScheduledTasksTool extends BaseTool {
             },
             schedule: {
               type: 'object',
-              description: 'Schedule object. Supports daily { type: "daily", time: "HH:mm", timezone?: "America/Chicago", grace_minutes?: 10 } or one-off { type: "once", date: "YYYY-MM-DD", time: "HH:mm", timezone?: "America/Chicago", grace_minutes?: 10 }, { type: "once", run_at: ISO datetime }, or { type: "once", run_in_minutes: number }. Use run_in_minutes only for relative delays.',
+              description: 'daily needs time; once needs date+time, run_at, or relative run_in_minutes.',
               properties: {
                 type: { type: 'string', enum: ['daily', 'once'] },
                 time: { type: 'string', description: '24-hour HH:mm time.' },
-                date: { type: 'string', description: 'YYYY-MM-DD date for one-off local wall-clock runs.' },
+                date: { type: 'string', description: 'Local YYYY-MM-DD date.' },
                 run_at: { type: 'string', description: 'ISO datetime for a one-off run.' },
-                run_in_minutes: { type: 'number', description: 'Relative one-off delay in minutes. Converted to run_at when created.' },
+                run_in_minutes: { type: 'number', description: 'Relative delay in minutes.' },
                 timezone: { type: 'string', description: 'IANA timezone; defaults to local timezone.' },
                 grace_minutes: { type: 'integer', description: 'Late-run grace window before the run is skipped.' },
               },
@@ -286,10 +281,7 @@ export class ScheduledTasksTool extends BaseTool {
             policy_preset: {
               type: 'string',
               enum: [...POLICY_PRESETS],
-              description:
-                'Permission preset the unattended run executes under. One of the presets defined in code: ' +
-                'none (no permissions), git_push_only, docker_tests. Defaults to none. ' +
-                'Presets cannot be described or extended here; a capability that no preset covers requires a new preset in code.',
+              description: 'Unattended permission preset (default: none).',
             },
             all_projects: {
               type: 'boolean',

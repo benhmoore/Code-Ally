@@ -58,6 +58,9 @@ describe('GrepTool', () => {
       const def = grepTool.getFunctionDefinition();
       expect(def.function.name).toBe('grep');
       expect(def.function.parameters.required).toContain('pattern');
+      expect(def.function.parameters.properties).toHaveProperty('case_insensitive');
+      expect(def.function.parameters.properties).toHaveProperty('after_context');
+      expect(def.function.parameters.properties).not.toHaveProperty('-i');
     });
   });
 
@@ -92,7 +95,7 @@ describe('GrepTool', () => {
       const result = await grepTool.execute({
         pattern: 'TEST',
         path: tempDir,
-        '-i': true,
+        case_insensitive: true,
         output_mode: 'content',
       });
 

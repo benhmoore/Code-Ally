@@ -65,7 +65,7 @@ export class AskUserQuestionTool extends BaseTool {
   readonly name = 'ask-user-question';
   readonly displayName = 'Questions';
   readonly description =
-    'Ask the user questions. Prefer structured choices (2-6 options, automatic "Other") over free-form. Only omit options for unpredictable answers like names or URLs. 1-10 questions per invocation.';
+    'Ask 1-10 user questions. Prefer 2-6 choices; omit choices only for unpredictable answers. "Other" is automatic.';
   /** Prompts the user; touches nothing requiring authorization. */
   readonly capabilities = [] as const;
   readonly supportsInteractiveForm = true;
@@ -90,31 +90,31 @@ export class AskUserQuestionTool extends BaseTool {
           properties: {
             questions: {
               type: 'array',
-              description: 'Array of 1-10 questions to ask the user',
+              description: 'Questions to present together.',
               items: {
                 type: 'object',
                 properties: {
                   question: {
                     type: 'string',
-                    description: 'The full question text, should end with "?"',
+                    description: 'Full question ending with "?".',
                   },
                   header: {
                     type: 'string',
-                    description: 'Short tag/label for quick identification (max 20 chars). Examples: "Auth method", "Library", "Approach"',
+                    description: 'Short label (max 20 characters).',
                   },
                   options: {
                     type: 'array',
-                    description: '2-6 predefined options (preferred). Do NOT include "Other"—it is added automatically. Omit array only for unpredictable answers.',
+                    description: '2-6 choices; do not include automatic "Other".',
                     items: {
                       type: 'object',
                       properties: {
                         label: {
                           type: 'string',
-                          description: 'Concise display text (1-5 words)',
+                          description: 'Choice label (1-5 words).',
                         },
                         description: {
                           type: 'string',
-                          description: 'Explanation of implications, trade-offs, or what this option means',
+                          description: 'Impact or trade-off.',
                         },
                       },
                       required: ['label', 'description'],
@@ -122,11 +122,11 @@ export class AskUserQuestionTool extends BaseTool {
                   },
                   multiSelect: {
                     type: 'boolean',
-                    description: 'If true, user can select multiple options (checkboxes). If false, single selection (radio buttons). Only relevant when options are provided.',
+                    description: 'Allow multiple choices (default false).',
                   },
                   context: {
                     type: 'string',
-                    description: 'Optional explanatory paragraph displayed before the question. Use to provide background or additional context.',
+                    description: 'Optional context shown before the question.',
                   },
                 },
                 required: ['question', 'header'],

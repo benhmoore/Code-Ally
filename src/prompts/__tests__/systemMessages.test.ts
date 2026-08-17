@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getMainSystemPrompt } from '../systemMessages.js';
+import { getDynamicContextBlock, getMainSystemPrompt } from '../systemMessages.js';
 
 describe('systemMessages', () => {
   it('adds unattended scheduled run guidance without task-specific behavior', async () => {
@@ -17,7 +17,37 @@ describe('systemMessages', () => {
     expect(prompt).toContain('sched-123');
     expect(prompt).toContain('Do not ask follow-up questions');
     expect(prompt).toContain('scheduled_<task-id>_<timestamp>');
+    expect(prompt).not.toContain('Single Response Run');
     expect(prompt).not.toContain('Hello World');
     expect(prompt).not.toContain('alert()');
+  });
+
+  it('uses the ablation-selected stable prompt prefix', async () => {
+    const prompt = await getMainSystemPrompt(undefined, undefined, false, 'low');
+
+    expect(prompt.startsWith(`You are Ally, a coding assistant. Complete the request with the fewest correct operations.
+
+Tool rules:
+- Choose the narrowest tool that directly matches the operation.
+- Read a file before editing it.
+- Use one read call with file_paths for multiple related files.
+- For different independent operations, emit separate native tool calls in one response.
+- Do not call unrelated tools or describe a tool call instead of making it.`)).toBe(true);
+  });
+
+  it('renders volatile context deterministically with an injected clock and zone', async () => {
+    const context = await getDynamicContextBlock({
+      now: new Date('2026-08-17T14:08:36.000Z'),
+      timeZone: 'America/Chicago',
+    });
+
+    expect(context).toBe(`**Current Context:**
+- Current Local Time: Monday, August 17, 2026 at 9:08:36 AM CDT
+- Current Time Zone: America/Chicago
+- Current UTC Time: 2026-08-17 14:08:36Z`);
+  });
+
+  it('omits an otherwise-empty volatile block on ordinary coding turns', async () => {
+    await expect(getDynamicContextBlock({ includeTime: false })).resolves.toBe('');
   });
 });

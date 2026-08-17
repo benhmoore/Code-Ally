@@ -45,7 +45,7 @@ function getExplorationBasePrompt(tempDir: string): string {
 export class ExploreTool extends BaseDelegationTool {
   readonly name = 'explore';
   readonly description =
-    'Explore codebase with read-only access. Delegates to specialized exploration agent. Use when you need to understand code structure, find implementations, or analyze architecture. Returns comprehensive findings.';
+    'Delegate broad read-only repository investigation when scope is unknown or multi-file synthesis is needed.';
   /** Delegates read-only exploration; the child's tool calls are gated individually. */
   readonly capabilities = [] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
@@ -109,7 +109,7 @@ Explore agents may create temp note files - read those paths for additional deta
           properties: {
             task_prompt: {
               type: 'string',
-              description: 'Complete exploration instructions: what to find, where to look, and why.',
+              description: 'What to find, where, and why.',
             },
             thoroughness: {
               type: 'string',

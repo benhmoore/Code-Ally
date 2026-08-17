@@ -71,7 +71,7 @@ interface TreeOutput {
 export class TreeTool extends BaseTool {
   readonly name = 'tree';
   readonly description =
-    'Display directory tree structure for one or more paths. Automatically filters out build artifacts, dependencies, and temporary files. More efficient than multiple ls calls.';
+    'Show directory hierarchy. Use instead of repeated ls; do not pair with ls/glob for the same discovery.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly hideOutput = true;
   readonly isExploratoryTool = true;
@@ -99,7 +99,7 @@ Prefer over multiple ls calls.`;
             paths: {
               type: 'array',
               format: 'local-path',
-              description: 'Array of directory paths to show as trees (default: ["."])',
+              description: 'Directories (default: ["."]).',
               items: {
                 type: 'string',
                 format: 'local-path',
@@ -107,19 +107,19 @@ Prefer over multiple ls calls.`;
             },
             depth: {
               type: 'integer',
-              description: 'Maximum depth to traverse (default: 3, prevents large output)',
+              description: 'Maximum depth (default: 3).',
             },
             dirs_only: {
               type: 'boolean',
-              description: 'Show only directories, not files (default: false)',
+              description: 'Show only directories.',
             },
             include_hidden: {
               type: 'boolean',
-              description: 'Include hidden files and directories (default: false)',
+              description: 'Include hidden entries.',
             },
             ignore_gitignore: {
               type: 'boolean',
-              description: 'Do not apply .gitignore patterns (default: false)',
+              description: 'Ignore .gitignore rules.',
             },
           },
         },

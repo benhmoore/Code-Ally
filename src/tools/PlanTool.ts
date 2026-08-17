@@ -69,7 +69,7 @@ List 3-5 files that are most critical to this implementation, with absolute path
 export class PlanTool extends BaseDelegationTool {
   readonly name = 'plan';
   readonly description =
-    'Software architect agent for designing implementation plans. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.';
+    'Delegate complex implementation planning and architectural trade-off analysis.';
   /** Delegates planning; the child's tool calls are gated individually. */
   readonly capabilities = [] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display

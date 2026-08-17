@@ -36,7 +36,7 @@ export class AgentAskTool extends BaseTool {
   private currentPooledAgent: PooledAgent | null = null;
   readonly displayName = 'Follow Up';
   readonly description =
-    'Continue conversation with a persistent agent created by explore/plan/agent. Send additional messages to the same agent instance. All agents automatically persist and can be queried later. Use when you need follow-up questions or iterative refinement.';
+    'Continue a persistent explore/plan/agent using its returned agent_id.';
   /** Delegates to an existing agent; its tool calls are gated individually. */
   readonly capabilities = [] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
@@ -66,15 +66,16 @@ Only start a NEW agent for completely unrelated areas.`;
           properties: {
             agent_id: {
               type: 'string',
-              description: 'Agent ID from previous explore/plan/agent call (agents automatically persist)',
+              description: 'ID returned by explore, plan, or agent.',
             },
             message: {
               type: 'string',
-              description: 'Question or request to send to the agent. Be specific about what you want.',
+              description: 'Follow-up request.',
             },
             thoroughness: {
               type: 'string',
-              description: 'Level of thoroughness for this interaction: "quick" (~1 min, 2-5 tool calls), "medium" (~5 min, 5-10 tool calls), "very thorough" (~10 min, 10-20 tool calls), "uncapped" (no time limit, default). Controls time budget and depth.',
+              enum: ['quick', 'medium', 'very thorough', 'uncapped'],
+              description: 'Effort level (default: uncapped).',
             },
           },
           required: ['agent_id', 'message'],

@@ -4,6 +4,7 @@ import {
   type LLMResponse,
   type ModelClientCapabilities,
   type ModelClientConfig,
+  type ModelRequestPreview,
   type SendOptions,
 } from './ModelClient.js';
 import type { FunctionDefinition, Message, ToolCall } from '../types/index.js';
@@ -122,6 +123,15 @@ export class OpenAIResponsesClient extends ModelClient {
         return this.toResult(response as any, prepared);
       },
     });
+  }
+
+  override previewRequest(messages: readonly Message[], options: SendOptions): ModelRequestPreview {
+    const prepared = this.prepareInput(messages, options.providerState);
+    return {
+      provider: 'openai-responses',
+      url: `${baseUrl(this._endpoint)}/responses`,
+      payload: this.payload(prepared, options),
+    };
   }
 
   override async countInput(messages: readonly Message[], options: SendOptions): Promise<number | null> {

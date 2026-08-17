@@ -26,12 +26,7 @@ type MemoryAction = (typeof ACTIONS)[number];
 export class MemoryTool extends BaseTool {
   readonly name = 'memory';
   readonly description =
-    'Persist or recall durable facts about this project across sessions. ' +
-    'Save things worth remembering autonomously (user preferences, feedback on how to work, ' +
-    'project constraints not derivable from the code, external references). ' +
-    'Do not save repository facts, current-turn details, or facts already in project instructions. ' +
-    'Memory is private and stored outside the repo. ' +
-    'Actions: save/update (upsert a fact), delete (remove one), recall (fetch by name or relevance), list (all).';
+    'Persist or recall cross-session preferences, feedback, non-obvious constraints, and references. Do not save facts derivable from the repository or current-turn details.';
   readonly capabilities = [ToolCapability.AppStateWrite] as const;
   readonly displayColor = 'cyan';
   // Hide the raw result preview; the one-line subtext carries the display.
@@ -110,28 +105,28 @@ export class MemoryTool extends BaseTool {
             action: {
               type: 'string',
               enum: [...ACTIONS],
-              description: 'save or update (upsert), delete, recall, or list.',
+              description: 'Memory operation.',
             },
             name: {
               type: 'string',
-              description: 'Kebab-case identifier (e.g. "use-npm-not-yarn"). Required for save/update/delete; optional for recall.',
+              description: 'Kebab-case id; required except for query recall and list.',
             },
             description: {
               type: 'string',
-              description: 'One-line summary used for the index and relevance matching. Required for save/update.',
+              description: 'One-line index summary; required for save/update.',
             },
             type: {
               type: 'string',
               enum: [...MEMORY_TYPES],
-              description: 'user (who the user is), feedback (how to work — include why), project (project facts), or reference (external pointers).',
+              description: 'Memory category; required for save/update.',
             },
             body: {
               type: 'string',
-              description: 'The fact itself (Markdown). Required for save/update.',
+              description: 'Markdown fact; required for save/update.',
             },
             query: {
               type: 'string',
-              description: 'Free-text query for recall by relevance.',
+              description: 'Relevance query for recall.',
             },
           },
           required: ['action'],

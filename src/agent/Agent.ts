@@ -12,8 +12,14 @@
  * Based on Python implementation patterns adapted for TypeScript/async.
  */
 
-import { ModelClient, LLMResponse } from '../llm/ModelClient.js';
+import {
+  ModelClient,
+  LLMResponse,
+  type ModelRequestPreview,
+  type SendOptions,
+} from '../llm/ModelClient.js';
 import { ToolManager } from '../tools/ToolManager.js';
+import { getRuntimeToolExclusions, needsTemporalContext } from '../tools/runtimeToolSelection.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
@@ -250,6 +256,7 @@ export class Agent {
   private turnAdmissionActive = false;
   private nativeCompactionPending = false;
   private lastRequestFunctions: FunctionDefinition[] = [];
+  private lastRequestPreview: ModelRequestPreview | null = null;
 
   // Checkpoint reminder tracking - monitors tool calls to inject progress reminders
   private checkpointTracker: CheckpointTracker;
@@ -660,6 +667,11 @@ export class Agent {
    */
   getConversationManager(): ConversationManager {
     return this.conversationManager;
+  }
+
+  /** Exact provider-ready body captured at the most recent send boundary. */
+  getLastRequestPreview(): ModelRequestPreview | null {
+    return this.lastRequestPreview ? structuredClone(this.lastRequestPreview) : null;
   }
 
   /**
@@ -1424,7 +1436,8 @@ export class Agent {
     // Human-input tools are unavailable in automatic runs. This is a schema
     // filter for model efficiency; FormManager/PlanModeManager enforce the same
     // invariant at runtime for defense in depth.
-    const runPolicyManager = ServiceRegistry.getInstance().get('run_policy_manager');
+    const runtimeRegistry = ServiceRegistry.getInstance();
+    const runPolicyManager = runtimeRegistry.get('run_policy_manager');
     if (runPolicyManager?.getPolicy().completion !== 'durable_objective') {
       excludeTools.push('complete-objective', 'block-objective', 'reconcile-effect');
     }
@@ -1436,6 +1449,19 @@ export class Agent {
         'exit-plan-mode'
       );
     }
+
+    const planModeManager = runtimeRegistry.get('plan_mode_manager');
+    const conversationMessages = this.conversationManager.getMessages();
+    const latestUserText = [...conversationMessages]
+      .reverse()
+      .find(message => message.role === 'user')?.content;
+    excludeTools.push(...getRuntimeToolExclusions({
+      planModeActive: planModeManager?.isActive() ?? false,
+      latestUserText,
+      backgroundTasks: runtimeRegistry.get('background_task_registry')?.list() ?? [],
+      hasPersistentAgent: (runtimeRegistry.get('agent_pool')?.getAgentIds().length ?? 0) > 0,
+      hasToolResults: conversationMessages.some(message => message.role === 'tool'),
+    }));
 
     const functions = this.toolManager.getFunctionDefinitions(
       excludeTools.length > 0 ? excludeTools : undefined,
@@ -1510,6 +1536,7 @@ export class Agent {
       toolResultManager: this.toolResultManager,
       includeTodos: !this.config.isSpecializedAgent,
       includePlanMode: !this.config.isSpecializedAgent,
+      includeTime: Boolean(this.config.isScheduledRun) || needsTemporalContext(latestUserText),
     });
 
     // Auto-compaction: the budget planner decides from absolute request budgets.
@@ -1582,7 +1609,7 @@ export class Agent {
         data: {},
       });
 
-      const response = await this.modelClient.send(sentMessages, {
+      const requestOptions: SendOptions = {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
         stream: !this.config.isSpecializedAgent && this.appConfig.stream_responses,
@@ -1597,7 +1624,16 @@ export class Agent {
         signal: this.interruptionManager.beginRequest(),
         retryPolicy: 'foreground',
         providerState: this.conversationManager.getProviderState(),
-      });
+      };
+      try {
+        this.lastRequestPreview = this.modelClient.previewRequest(sentMessages, requestOptions);
+      } catch (error) {
+        // Diagnostics must never make a valid model request fail.
+        this.lastRequestPreview = null;
+        logger.warn('[AGENT_CONTEXT]', this.instanceId, 'Could not capture request preview:', formatError(error));
+      }
+
+      const response = await this.modelClient.send(sentMessages, requestOptions);
 
       if (response.providerState) {
         this.conversationManager.setProviderState(response.providerState);
