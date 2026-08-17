@@ -60,7 +60,11 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const toolCallsRef = useRef(activeToolCalls);
   const lastOutputAtRef = useRef(Date.now());
-  const requestInFlightRef = useRef(false);
+  // "Waiting on the model", which starts at the turn, not at the request: prompt
+  // assembly sits between the two, and treating that gap as ordinary work
+  // flashed a full-strength row for a beat before the wait state took over.
+  const waitingForOutputRef = useRef(false);
+  const activeRef = useRef(false);
 
   toolCallsRef.current = activeToolCalls;
 
@@ -70,7 +74,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
    * minutes of silence are entirely normal.
    */
   const getSilenceMs = React.useCallback(
-    () => (requestInFlightRef.current ? Date.now() - lastOutputAtRef.current : null),
+    () => (waitingForOutputRef.current ? Date.now() - lastOutputAtRef.current : null),
     []
   );
 
@@ -115,15 +119,12 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
         activityStream.subscribe(ActivityEventType.MODEL_REQUEST_START, (event) => {
           if (event.parentId) return;
           setAwaitingModel(true);
-          // Freshness is measured from the request going out, so the label
-          // starts fading during a long prefill too.
-          lastOutputAtRef.current = Date.now();
-          requestInFlightRef.current = true;
+          waitingForOutputRef.current = true;
         }),
         activityStream.subscribe(ActivityEventType.MODEL_REQUEST_END, (event) => {
           if (event.parentId) return;
           setAwaitingModel(false);
-          requestInFlightRef.current = false;
+          waitingForOutputRef.current = false;
         }),
         ...[ActivityEventType.ASSISTANT_CHUNK, ActivityEventType.THOUGHT_CHUNK].map(eventType =>
           activityStream.subscribe(eventType, (event) => {
@@ -145,14 +146,23 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     }
   }, []);
 
-  // A turn that ends between a request start and its end (interrupt, error)
-  // must not leave the row pulsing or fading.
-  useEffect(() => {
-    if (!active) {
-      setAwaitingModel(false);
-      requestInFlightRef.current = false;
+  // A turn opens in the waiting state - nothing has been received yet - and a
+  // turn that ends between a request's start and its end (interrupt, error) must
+  // not leave the row blinking or fading.
+  //
+  // Adjusted during render rather than in an effect on purpose: an effect runs
+  // after the frame it belongs to has already been written, so the first frame
+  // of every turn was painted in the live state before the wait state replaced
+  // it - the full-white flash. React re-renders before committing instead.
+  if (activeRef.current !== active) {
+    activeRef.current = active;
+    waitingForOutputRef.current = active;
+    if (active) {
+      // Silence is measured from here, so a long prefill fades the label too.
+      lastOutputAtRef.current = Date.now();
     }
-  }, [active]);
+    setAwaitingModel(active);
+  }
 
   // Terminal-tab progress is external to the Ink frame. Polling here does not
   // cause React renders and only emits when the long-running state changes.

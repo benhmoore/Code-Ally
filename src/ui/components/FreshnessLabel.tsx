@@ -55,7 +55,12 @@ export interface FreshnessLabelProps {
 
 export const FreshnessLabel: React.FC<FreshnessLabelProps> = ({ text, getSilenceMs, color, dimmed = false }) => {
   const ticker = AnimationTicker.getInstance();
-  const [tone, setTone] = useState<FreshnessTone>('fresh');
+  // Seeded from the current silence rather than defaulting to 'fresh': the first
+  // render happens before effects run, and a hardcoded default painted one
+  // full-strength frame before the real tone took over.
+  const [tone, setTone] = useState<FreshnessTone>(() =>
+    freshnessTone(getSilenceMs(), ticker.getFrame(), dimmed)
+  );
 
   useEffect(() => {
     const sample = () => {
@@ -71,9 +76,14 @@ export const FreshnessLabel: React.FC<FreshnessLabelProps> = ({ text, getSilence
     return <Text color={color}> {text}</Text>;
   }
 
+  // The floor is applied here, not only where the tone is sampled: sampling runs
+  // in an effect, one frame behind the render where `dimmed` flipped, and that
+  // frame would show at full strength.
+  const shown = dimmed && tone === 'fresh' ? 'slowing' : tone;
+
   // Named colors plus dimColor rather than a hex ramp: this has to degrade
   // sanely on 16-color terminals, where a grey ramp collapses into one shade.
   // Three levels, and the breath swings between the lower two.
-  if (tone === 'fresh') return <Text> {text}</Text>;
-  return <Text color={UI_COLORS.TEXT_DIM} dimColor={tone === 'stale-out'}> {text}</Text>;
+  if (shown === 'fresh') return <Text> {text}</Text>;
+  return <Text color={UI_COLORS.TEXT_DIM} dimColor={shown === 'stale-out'}> {text}</Text>;
 };
