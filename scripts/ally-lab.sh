@@ -21,6 +21,8 @@
 #   ally-lab key escape                        # interrupt the turn
 #   ally-lab dump                              # write a /debug dump
 #   ally-lab stop                              # end the session
+#   ally-lab reset [--adopt]                   # wipe the experiment dir for a clean run
+#                                              #   (only dirs marked .ally-lab-experiment)
 
 set -euo pipefail
 
@@ -34,15 +36,19 @@ need_session() {
 }
 
 cmd_start() {
-  local dir="$PWD" fresh=0 extra=()
+  local dir="$PWD" fresh=0 manual=0 extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dir) dir="$2"; shift 2 ;;
       --fresh) fresh=1; shift ;;
+      --manual) manual=1; shift ;;
       --) shift; extra=("$@"); break ;;
       *) die "unknown start option: $1 (ally flags go after --)" ;;
     esac
   done
+  # Labs run unattended stretches; a permission prompt silently stalls the
+  # experiment. Auto-confirm by default; pass --manual to keep prompts.
+  [[ $manual -eq 0 ]] && extra=(--auto-confirm "${extra[@]}")
   dir="$(cd "$dir" && pwd)" || die "bad --dir"
   command -v ally >/dev/null || die "ally not on PATH"
   command -v tmux >/dev/null || die "tmux not installed"
@@ -58,6 +64,9 @@ cmd_start() {
   # A wide pane so the Ink UI renders the way it does in a real terminal.
   tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$dir" \
     "ally ${extra[*]:-}; echo; echo '[ally exited — press enter to close]'; read"
+  # Let whichever client attaches drive the pane size, so a human joining with
+  # a smaller terminal sees the whole UI instead of a cropped 200x50 region.
+  tmux set-option -t "$SESSION" window-size latest 2>/dev/null || true
   echo "started tmux session '$SESSION' running ally in $dir"
   [[ ${#extra[@]} -gt 0 ]] && echo "extra ally args: ${extra[*]}"
   echo "watch it live:  tmux attach -t $SESSION   (detach with C-b d)"
@@ -203,6 +212,28 @@ cmd_stop() {
   echo "stopped '$SESSION'"
 }
 
+# Wipe the lab project directory for a clean experiment run. Refuses unless the
+# directory carries the .ally-lab-experiment marker, so an agent with reset
+# authority can never clear a directory a human did not explicitly designate.
+# `reset --adopt` designates the current lab directory (writes the marker).
+cmd_reset() {
+  local adopt=0
+  [[ "${1:-}" == "--adopt" ]] && adopt=1
+  local dir
+  dir="$(cat "$DIR_FILE" 2>/dev/null || true)"
+  [[ -n "$dir" && -d "$dir" ]] || die "no recorded lab directory (run start/hook first)"
+  case "$dir" in
+    "$HOME"|"$HOME/"|/|/Users|/Users/) die "refusing to reset '$dir'" ;;
+  esac
+  if [[ ! -f "$dir/.ally-lab-experiment" ]]; then
+    [[ $adopt -eq 1 ]] || die "'$dir' is not marked as an experiment dir (use: $0 reset --adopt to designate it)"
+  fi
+  tmux kill-session -t "$SESSION" 2>/dev/null && echo "stopped '$SESSION'"
+  find "$dir" -mindepth 1 -maxdepth 1 ! -name '.ally-lab-experiment' -exec rm -rf {} +
+  touch "$dir/.ally-lab-experiment"
+  echo "reset experiment dir: $dir"
+}
+
 case "${1:-}" in
   start) shift; cmd_start "$@" ;;
   run) shift; cmd_run "$@" ;;
@@ -214,5 +245,6 @@ case "${1:-}" in
   transcript) shift; cmd_transcript "$@" ;;
   dump) cmd_dump ;;
   stop) cmd_stop ;;
+  reset) shift; cmd_reset "$@" ;;
   *) grep '^#' "$0" | sed 's/^# \{0,1\}//' | sed -n '2,24p'; exit 1 ;;
 esac
