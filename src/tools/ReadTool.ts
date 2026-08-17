@@ -22,6 +22,9 @@ import { createReadStream } from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 
+/** Tokens each rendered line costs beyond its text: padded line number + tab. */
+const LINE_NUMBER_TOKEN_OVERHEAD = 4;
+
 export class ReadTool extends BaseTool {
   readonly name = 'read';
   readonly description =
@@ -195,7 +198,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
     this.captureParams(args);
 
     const filePaths = args.file_paths;
-    const limit = args.limit !== undefined ? Number(args.limit) : 0;
+    let limit = args.limit !== undefined ? Number(args.limit) : 0;
     const offset = args.offset !== undefined ? Number(args.offset) : 0;
     const ephemeral = args.ephemeral === true;
 
@@ -207,7 +210,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
       );
     }
 
-    const estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
+    let estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
 
     // Check if we have enough remaining context for the non-truncatable result
     // Get remaining context from ServiceRegistry's TokenManager if available
@@ -241,6 +244,26 @@ For multi-file exploration, prefer explore() to preserve context.`;
       maxTokens = ephemeral
         ? this.getEphemeralMaxTokens(executionContext)
         : this.getMaxTokens(executionContext);
+    }
+
+    // A single oversized file is a chunking problem, not an error: serve the
+    // largest prefix that fits and say where to continue. Rejecting instead
+    // costs a round trip and, on a small window, the retry is often oversized
+    // too — which is exactly the loop observed in live 16k runs. Reads the
+    // caller sized explicitly, or that a human/context-file initiated, are left
+    // alone: the limit was a deliberate choice there.
+    let autoChunkedFrom: number | null = null;
+    if (estimatedTokens > maxTokens
+      && filePaths.length === 1
+      && limit <= 0
+      && !isUserInitiated
+      && !isContextFile) {
+      const fitted = await this.fitLimitToBudget(filePaths[0]!, offset, maxTokens);
+      if (fitted && fitted.limit > 0) {
+        limit = fitted.limit;
+        autoChunkedFrom = fitted.totalLines;
+        estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
+      }
     }
 
     if (estimatedTokens > maxTokens) {
@@ -299,7 +322,15 @@ For multi-file exploration, prefer explore() to preserve context.`;
       );
     }
 
-    const combinedContent = results.join('\n\n');
+    let combinedContent = results.join('\n\n');
+    if (autoChunkedFrom !== null) {
+      const shown = (offset > 0 ? offset - 1 : 0) + limit;
+      combinedContent += shown < autoChunkedFrom
+        ? `\n\n[Automatically limited to what fits the available context. `
+          + `Showing through line ${shown} of ${autoChunkedFrom}. `
+          + `Continue with offset=${shown + 1}, limit=${limit}.]`
+        : `\n\n[Automatically limited to what fits the available context; this is the end of the file.]`;
+    }
 
     // If some files failed, include warning in content but still succeed
     const result = this.formatSuccessResponse({
@@ -497,6 +528,46 @@ For multi-file exploration, prefer explore() to preserve context.`;
       lineIndex++;
     }
     return lines;
+  }
+
+  /**
+   * Largest number of lines from `offset` whose tokens fit `maxTokens`.
+   *
+   * Binary search over real token counts rather than a bytes-per-token guess,
+   * because the guess is what would put the result back over the ceiling and
+   * defeat the whole point.
+   */
+  private async fitLimitToBudget(
+    filePath: string,
+    offset: number,
+    maxTokens: number,
+  ): Promise<{ limit: number; totalLines: number } | null> {
+    try {
+      const raw = await fs.readFile(resolvePath(filePath), 'utf-8');
+      if (isBinaryContent(raw)) return null;
+      const lines = raw.split('\n');
+      const startLine = offset > 0 ? offset - 1 : offset < 0 ? Math.max(0, lines.length + offset) : 0;
+      const available = lines.length - startLine;
+      if (available <= 0) return null;
+
+      // The formatter prefixes every line with a padded number and a tab, and
+      // adds a header; charge for that here or the fitted result lands back
+      // over the ceiling it was fitted to.
+      const budget = Math.floor(maxTokens * 0.92);
+      const cost = (count: number): number =>
+        tokenCounter.count(lines.slice(startLine, startLine + count).join('\n'))
+        + count * LINE_NUMBER_TOKEN_OVERHEAD;
+      let low = 0;
+      let high = available;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        if (cost(mid) <= budget) low = mid;
+        else high = mid - 1;
+      }
+      return low > 0 ? { limit: low, totalLines: lines.length } : null;
+    } catch {
+      return null;
+    }
   }
 
   /**

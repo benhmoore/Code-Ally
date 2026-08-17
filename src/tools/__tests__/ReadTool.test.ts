@@ -280,13 +280,47 @@ describe('ReadTool', () => {
         maxToolResultTokens: 2_054, shouldCompact: false,
       });
 
+      // A multi-file read cannot be split fairly, so it is refused with
+      // actionable guidance rather than silently dropping a file.
+      const second = path.join(tempDir, 'big2.js');
+      await fs.writeFile(second, 'const other = compute(input, options);\n'.repeat(250));
       const restricted = await readTool.execute(
-        { file_paths: [bigFile] }, 'call-2', undefined, false, false, { agentId: 'agent-b' },
+        { file_paths: [bigFile, second] }, 'call-2', undefined, false, false, { agentId: 'agent-b' },
       );
       expect(restricted.success).toBe(false);
       expect(restricted.error).toContain('2054-token limit');
-      // The guidance must be actionable: a concrete chunk size, not a generic retry.
-      expect(restricted.error).toMatch(/offset=1, limit=\d+/);
+      expect(restricted.error).toContain('one file at a time');
+    });
+
+    it('auto-chunks an oversized single-file read instead of failing', async () => {
+      const { ContextBudgetService } = await import('@services/ContextBudgetService.js');
+      const budgets = new ContextBudgetService();
+      registry.registerInstance('context_budget', budgets);
+      registry.registerInstance('token_manager', {
+        getContextSize: () => 16_384,
+        getCurrentTokenCount: () => 0,
+      } as any);
+      budgets.publish('agent-a', {
+        contextWindow: 16_384, estimatedInput: 0, outputReserve: 2_048, safetyReserve: 819,
+        triggerBudget: 13_107, targetBudget: 10_800, fixedOverhead: 3_450, usableBudget: 9_657,
+        domainBudget: 5_794, retainedTailBudget: 3_476, checkpointBudget: 2_318,
+        maxToolResultTokens: 1_738, shouldCompact: false,
+      });
+
+      const bigFile = path.join(tempDir, 'big.js');
+      await fs.writeFile(bigFile, 'const value = compute(input, options);\n'.repeat(400));
+
+      const result = await readTool.execute(
+        { file_paths: [bigFile] }, 'call-1', undefined, false, false, { agentId: 'agent-a' },
+      );
+
+      // Useful content plus a pointer to continue, rather than a wasted turn.
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('const value = compute');
+      expect(result.content).toMatch(/Continue with offset=\d+, limit=\d+/);
+      // And it must actually respect the ceiling it was fitted to.
+      const { tokenCounter } = await import('@services/TokenCounter.js');
+      expect(tokenCounter.count(result.content as string)).toBeLessThanOrEqual(1_738);
     });
 
     it('should track read state in the reading agent scope only', async () => {
