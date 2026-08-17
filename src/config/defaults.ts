@@ -24,7 +24,7 @@ export const DEFAULT_CONFIG: Config = {
   explore_model: null, // Model for Explore agent (defaults to global model)
   plan_model: null, // Model for Plan agent (defaults to global model)
   agent_creation_model: null, // Model for ManageAgents agent (defaults to global model)
-  provider: 'ollama', // LLM backend protocol: 'ollama' (native) or 'openai-compat' (/v1/chat/completions)
+  provider: 'ollama', // LLM backend: Ollama, OpenAI-compatible chat, or OpenAI Responses
   endpoint: 'http://localhost:11434', // Ollama API endpoint
   api_key: null, // Bearer token for authenticated endpoints (encrypted at rest)
   context_size: 16384, // Context window size in tokens
@@ -53,8 +53,6 @@ export const DEFAULT_CONFIG: Config = {
   // UI PREFERENCES
   // ==========================================
   theme: 'default', // UI theme name
-  compact_threshold: 85, // Context % threshold for auto-compact (lowered from 95 to prevent retry loops)
-  show_context_in_prompt: false, // Show context % in input prompt
   show_thinking_in_chat: false, // Show model thinking content in chat conversation
   show_system_prompt_in_chat: false, // Show system prompts when agents are created
   show_full_tool_output: false, // Show full tool output without truncation in UI
@@ -156,8 +154,6 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
 
   // UI Preferences
   theme: 'string',
-  compact_threshold: 'number',
-  show_context_in_prompt: 'boolean',
   show_thinking_in_chat: 'boolean',
   show_system_prompt_in_chat: 'boolean',
   show_full_tool_output: 'boolean',
@@ -254,7 +250,7 @@ export function validateConfigValue(
   }
 
   // Validate provider values
-  const VALID_PROVIDERS = ['ollama', 'openai-compat'] as const;
+  const VALID_PROVIDERS = ['ollama', 'openai-compat', 'openai-responses'] as const;
   if (key === 'provider' && typeof value === 'string') {
     const lowerValue = value.toLowerCase();
     if (VALID_PROVIDERS.includes(lowerValue as any)) {

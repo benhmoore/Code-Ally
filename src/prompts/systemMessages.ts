@@ -20,7 +20,6 @@ import { getProfileInstructionsFile, resolveProjectInstructionFiles } from '../c
 import type { TokenManager } from '../agent/TokenManager.js';
 import type { ToolResultManager } from '../services/ToolResultManager.js';
 import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
-import { ContextFileLoader } from '../services/ContextFileLoader.js';
 import type { Message } from '../types/index.js';
 import { getDefaultTimeZone } from '../services/ScheduledTaskManager.js';
 
@@ -96,82 +95,6 @@ ${GENERAL_GUIDELINES}
 ${MEMORY_GUIDELINES}`;
 
 /**
- * Get context usage information with warnings
- */
-function getContextUsageInfo(tokenManager?: TokenManager, toolResultManager?: ToolResultManager): string {
-  try {
-    // Both managers are agent-scoped and injected by the owning Agent. A
-    // registry fallback used to sit here; it looked up 'tool_result_manager',
-    // a key registered nowhere in the repo, so it silently returned null and
-    // degraded the prompt. There is no global counterpart to fall back to, so
-    // absence simply means no usage line.
-    const tm = tokenManager;
-    const trm = toolResultManager;
-
-    if (!tm) return '';
-
-    const contextPct = tm.getContextUsagePercentage();
-    const remainingTokens = tm.getRemainingTokens ? tm.getRemainingTokens() : 0;
-    const remainingCalls = trm ? trm.estimateRemainingToolCalls() : 0;
-
-    // Format remaining tokens in a human-readable way (KB)
-    const remainingKB = Math.round(remainingTokens / 250); // ~250 tokens per KB of text
-
-    let contextLine = `- Context Usage: ${contextPct}% (~${remainingCalls} tool calls, ${remainingKB}KB remaining)`;
-
-    // Add graduated warnings based on usage level
-    if (contextPct >= CONTEXT_THRESHOLDS.CRITICAL) {
-      contextLine += `\n  CRITICAL: ${CONTEXT_THRESHOLDS.WARNINGS[95]}`;
-    } else if (contextPct >= CONTEXT_THRESHOLDS.WARNING) {
-      contextLine += `\n  WARNING: ${CONTEXT_THRESHOLDS.WARNINGS[85]}`;
-    } else if (contextPct >= CONTEXT_THRESHOLDS.NORMAL) {
-      contextLine += `\n  NOTE: ${CONTEXT_THRESHOLDS.WARNINGS[70]}`;
-    }
-
-    return contextLine;
-  } catch (error) {
-    // Context usage determination failed - continue without warning
-    logger.warn('Failed to determine context usage:', formatError(error));
-    return '';
-  }
-}
-
-/**
- * Get context budget reminder for system prompt
- * Returns a warning message to inject into the system prompt at 75% and 90% usage
- */
-function getContextBudgetReminder(tokenManager?: TokenManager): string {
-  try {
-    // Injected by the owning Agent; see getContextUsageInfo for why the registry
-    // fallback that used to sit here was removed.
-    const tm = tokenManager;
-    if (!tm) return '';
-
-    const contextPct = tm.getContextUsagePercentage();
-
-    // Don't add reminders below 75% (not overzealous)
-    if (contextPct < CONTEXT_THRESHOLDS.MODERATE_REMINDER) {
-      return '';
-    }
-
-    // Strong warning at 90%
-    if (contextPct >= CONTEXT_THRESHOLDS.STRONG_REMINDER) {
-      return `\n\n**CONTEXT BUDGET WARNING:**\n${CONTEXT_THRESHOLDS.SYSTEM_REMINDERS[90]}`;
-    }
-
-    // Moderate reminder at 75%
-    if (contextPct >= CONTEXT_THRESHOLDS.MODERATE_REMINDER) {
-      return `\n\n**Context Budget Notice:**\n${CONTEXT_THRESHOLDS.SYSTEM_REMINDERS[75]}`;
-    }
-
-    return '';
-  } catch (error) {
-    logger.warn('Failed to get context budget reminder:', formatError(error));
-    return '';
-  }
-}
-
-/**
  * Get the cache-stable context for the system prompt (msg[0]).
  *
  * This deliberately excludes anything that changes per round-trip — the current
@@ -194,7 +117,7 @@ export async function getContextInfo(options: {
 } = {}): Promise<string> {
   // toolResultManager is accepted for caller compatibility but no longer read
   // here — live tool-call estimates moved to getDynamicContextBlock.
-  const { includeAgents = true, includeProjectInstructions = true, tokenManager, reasoningEffort, callingAgentName, conversationMessages } = options;
+  const { includeAgents = true, includeProjectInstructions = true, tokenManager, reasoningEffort, callingAgentName } = options;
 
   const workingDir = process.cwd();
   const osInfo = `${os.platform()} ${os.release()}`;
@@ -361,44 +284,10 @@ ${skillsSection}`;
     logger.warn('Failed to load project context for system prompt:', formatError(error));
   }
 
-  // Load context files from most recent compaction summary (if any)
-  let contextFilesSection = '';
-  if (tokenManager) {
-    try {
-      let messages = conversationMessages;
-
-      if (!messages) {
-        const serviceRegistry = ServiceRegistry.getInstance();
-        const activeAgent = serviceRegistry.get('agent');
-        const conversationManager = activeAgent?.getConversationManager?.();
-        if (conversationManager && typeof conversationManager.getMessages === 'function') {
-          messages = conversationManager.getMessages();
-        }
-      }
-
-      if (messages) {
-        // Find the most recent summary message with context file references
-        const summaryMsg = [...messages]
-          .reverse()
-          .find(m => m.metadata?.isConversationSummary && m.metadata?.contextFileReferences?.length);
-
-        if (summaryMsg) {
-          const loader = new ContextFileLoader(tokenManager);
-          const filesContent = await loader.loadFromSummary(summaryMsg);
-          if (filesContent) {
-            contextFilesSection = `\n${filesContent}`;
-          }
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to load context files from compaction summary:', formatError(error));
-    }
-  }
-
   return `
 - Working Directory: ${workingDir}${gitInfo}${additionalDirsInfo}
 - Operating System: ${osInfo}
-- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${profileInstructionsContent}${allyMdContent}${memoryIndexContent}${agentsInfo}${skillsInfo}${contextFilesSection}`;
+- Node Version: ${nodeVersion}${reasoningInfo}${projectInfo}${profileInstructionsContent}${allyMdContent}${memoryIndexContent}${agentsInfo}${skillsInfo}`;
 }
 
 /**
@@ -419,7 +308,7 @@ export async function getDynamicContextBlock(options: {
   includeTodos?: boolean;
   includePlanMode?: boolean;
 } = {}): Promise<string> {
-  const { tokenManager, toolResultManager, includeTodos = false, includePlanMode = false } = options;
+  const { includeTodos = false, includePlanMode = false } = options;
 
   const now = new Date();
   const localTimeZone = getDefaultTimeZone();
@@ -435,10 +324,6 @@ export async function getDynamicContextBlock(options: {
     timeZoneName: 'short',
   }).format(now);
   const currentUtcTime = now.toISOString().replace('T', ' ').slice(0, TEXT_LIMITS.ISO_DATETIME_LENGTH);
-
-  // Live context usage with graduated warnings
-  const contextUsage = getContextUsageInfo(tokenManager, toolResultManager);
-  const contextUsageSection = contextUsage ? `\n${contextUsage}` : '';
 
   // Todo state (main agent only) — surfaced every round-trip so the model keeps
   // the plan in view, not just on the turn that the turn-start reminder fires.
@@ -487,12 +372,9 @@ You CANNOT write, edit, or delete project files in this mode.`;
     }
   }
 
-  // Budget reminder (only present at 75%+)
-  const contextBudgetReminder = getContextBudgetReminder(tokenManager);
-
   const body = `- Current Local Time: ${currentLocalTime}
 - Current Time Zone: ${localTimeZone}
-- Current UTC Time: ${currentUtcTime}Z${contextUsageSection}${todoContext}${planModeSection}${contextBudgetReminder}`;
+- Current UTC Time: ${currentUtcTime}Z${todoContext}${planModeSection}`;
   if (!body.trim()) {
     return '';
   }

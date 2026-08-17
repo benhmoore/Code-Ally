@@ -12,6 +12,7 @@
  */
 
 import { Message, FunctionDefinition } from '../types/index.js';
+import type { ProviderCheckpointState } from '../agent/compaction/types.js';
 
 /**
  * Sampling parameters beyond temperature. Every field is optional: when a field
@@ -69,6 +70,10 @@ export interface SendOptions {
    * Every caller must supply one — there is no global "cancel everything" path.
    */
   signal: AbortSignal;
+  /** Provider-owned stateless conversation items from the active checkpoint. */
+  providerState?: ProviderCheckpointState;
+  /** Strict structured-output contract for providers that support JSON Schema. */
+  responseSchema?: { name: string; schema: Record<string, unknown> };
 }
 
 /**
@@ -120,6 +125,10 @@ export interface LLMResponse {
     /** Tokens the model generated. */
     completionTokens?: number;
   };
+  /** Canonical provider state to persist for the next turn. */
+  providerState?: ProviderCheckpointState;
+  /** True when the provider emitted a native compaction item in this response. */
+  nativeCompaction?: boolean;
 }
 
 /**
@@ -161,6 +170,18 @@ export interface ModelClientConfig {
  * - Cancellation/interruption
  */
 export abstract class ModelClient {
+  /** Stable transport identifier used in persisted checkpoints. */
+  get providerId(): string {
+    return 'chat';
+  }
+
+  get capabilities(): ModelClientCapabilities {
+    return {
+      nativeCompaction: false,
+      exactInputTokens: false,
+      opaqueReasoningReplay: false,
+    };
+  }
   /**
    * Send messages to the LLM and receive a response
    *
@@ -177,6 +198,19 @@ export abstract class ModelClient {
    * ```
    */
   abstract send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse>;
+
+  /** Exact provider-side count of the request, when supported. */
+  async countInput(_messages: readonly Message[], _options: SendOptions): Promise<number | null> {
+    return null;
+  }
+
+  /** Provider-native stateless compaction, when supported. */
+  async compactProviderState(
+    _messages: readonly Message[],
+    _options: SendOptions,
+  ): Promise<ProviderCheckpointState | null> {
+    return null;
+  }
 
   /**
    * Get the current model name
@@ -209,4 +243,10 @@ export abstract class ModelClient {
    * `signal` passed to `send()`, not here.
    */
   abstract close?(): Promise<void>;
+}
+
+export interface ModelClientCapabilities {
+  nativeCompaction: boolean;
+  exactInputTokens: boolean;
+  opaqueReasoningReplay: boolean;
 }

@@ -17,6 +17,7 @@ import { ScheduledTaskManager } from '../ScheduledTaskManager.js';
 import { PromptLibraryManager } from '../PromptLibraryManager.js';
 import { ConfigManager } from '../ConfigManager.js';
 import { SchemaTooNewError, SCHEMA_VERSION_KEY } from '../../utils/versionedStore.js';
+import { CONFIG_SCHEMA, SESSION_SCHEMA } from '../../config/schemas.js';
 
 vi.mock('@config/paths.js', async () => {
   const actual = await vi.importActual('@config/paths.js');
@@ -67,7 +68,7 @@ describe('SessionManager schema versioning', () => {
     expect(session!.messages[0]!.content).toBe('hello');
     expect(session!.metadata).toEqual({ model: 'legacy-model' });
     expect(session!.working_dir).toBe('/tmp/project');
-    expect(session!.schema_version).toBe(1);
+    expect(session!.schema_version).toBe(SESSION_SCHEMA.current);
     // Reading must not rewrite or quarantine the file.
     expect(JSON.parse(await snapshot(join(dir, 'legacy.json')))).toEqual(legacySession);
   });
@@ -93,13 +94,13 @@ describe('SessionManager schema versioning', () => {
     await manager.saveSession(name, [{ role: 'user', content: 'ping' }] as never);
 
     const onDisk = JSON.parse(await snapshot(join(dir, 'roundtrip.json')));
-    expect(onDisk[SCHEMA_VERSION_KEY]).toBe(1);
+    expect(onDisk[SCHEMA_VERSION_KEY]).toBe(SESSION_SCHEMA.current);
 
     const reloaded = new SessionManager({ sessionsDir: dir });
     const session = await reloaded.loadSession('roundtrip');
     expect(session!.messages).toHaveLength(1);
     expect(session!.messages[0]!.content).toBe('ping');
-    expect(session!.schema_version).toBe(1);
+    expect(session!.schema_version).toBe(SESSION_SCHEMA.current);
   });
 
   it('skips a too-new session when listing rather than failing the whole listing', async () => {
@@ -322,7 +323,7 @@ describe('ConfigManager schema versioning', () => {
     const persisted = JSON.parse(await snapshot(configPath));
     expect(persisted.temperature).toBe(0.9);
     expect(persisted.a_key_from_the_future).toEqual({ nested: true });
-    expect(persisted[SCHEMA_VERSION_KEY]).toBe(1);
+    expect(persisted[SCHEMA_VERSION_KEY]).toBe(CONFIG_SCHEMA.current);
 
     // And it is still there after another full load/save cycle.
     const reloaded = new ConfigManager(configPath);

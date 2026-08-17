@@ -310,21 +310,6 @@ export function createLowHitRateWarning(hitRate: number, searchCount: number): s
 }
 
 // ===========================================
-// CONTEXT USAGE REMINDERS
-// ===========================================
-
-/**
- * Create context usage warning for specialized agents
- */
-export function createContextUsageWarning(contextUsage: number): Message {
-  const config = SYSTEM_REMINDERS.CONTEXT.USAGE_WARNING;
-  return createSystemReminder(
-    resolveReminderText(config, contextUsage),
-    config.persist
-  );
-}
-
-// ===========================================
 // TOOL-SPECIFIC REMINDERS
 // ===========================================
 

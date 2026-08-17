@@ -7,7 +7,7 @@
  */
 
 import { useRef, useEffect, useState, useMemo } from 'react';
-import { ActivityEventType, Message, ToolCallState, FormRequest } from '@shared/index.js';
+import { ActivityEventType, ToolCallState, FormRequest } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
@@ -23,6 +23,7 @@ import { logger } from '@services/Logger.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
 import { resolveDisplayContent } from '../../utils/toolResultContent.js';
+import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
 
 /**
  * Activity subscriptions state
@@ -98,8 +99,20 @@ export const useActivitySubscriptions = (
         getConfigManager: () => ServiceRegistry.getInstance().get('config_manager'),
         applyRuntimeConfig: (updates) =>
           applyRuntimeConfigUpdates(ServiceRegistry.getInstance(), updates),
+        validatePrimaryModelSwitch: (modelName) =>
+          agent.getModelIdentityChangeBlock({ model: modelName }),
+        testModelCapabilities: async (_endpoint, modelName) => {
+          const config = ServiceRegistry.getInstance().get('config_manager')?.getConfig();
+          if (!config) return { supportsTools: true, supportsImages: true, fromCache: false };
+          const capabilities = await probeModelCapabilities(config, modelName);
+          return {
+            supportsTools: capabilities.tools !== 'unsupported',
+            supportsImages: capabilities.images !== 'unsupported',
+            fromCache: capabilities.fromCache ?? false,
+          };
+        },
       }),
-    []
+    [agent]
   );
 
   // Session listing/restoration likewise; the hook keeps only the modal plumbing.
@@ -960,7 +973,7 @@ export const useActivitySubscriptions = (
 
   // Compaction complete (success or error)
   useActivityEvent(ActivityEventType.COMPACTION_COMPLETE, (event) => {
-    const { oldContextUsage, newContextUsage, threshold, compactedMessages, parentId, error, errorMessage } = event.data;
+    const { oldContextUsage, newContextUsage, threshold, parentId, error, errorMessage } = event.data;
 
     // Handle error case - just clear compacting state without resetting conversation
     if (error) {
@@ -988,21 +1001,8 @@ export const useActivitySubscriptions = (
       return;
     }
 
-    // Main agent compaction - full reset
-    // Clear tool calls first
-    actions.clearToolCalls();
-
-    if (compactedMessages) {
-      // Filter out system messages EXCEPT for conversation summaries
-      const uiMessages = compactedMessages.filter((m: Message) => {
-        if (m.role !== 'system') return true;
-        // Keep system messages that are conversation summaries
-        return m.metadata?.isConversationSummary === true;
-      });
-      // Atomically reset conversation view (sets messages + increments remount key)
-      actions.resetConversationView(uiMessages);
-    }
-
+    // The visible transcript is append-only. Compaction replaces only the
+    // model-facing window, so the UI needs a marker rather than a reset.
     actions.addCompactionNotice({
       id: event.id,
       timestamp: event.timestamp,

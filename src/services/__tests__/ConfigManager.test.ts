@@ -10,6 +10,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { ConfigManager } from '../ConfigManager.js';
 import { DEFAULT_CONFIG } from '@config/defaults.js';
+import { CONFIG_SCHEMA } from '@config/schemas.js';
 import * as paths from '@config/paths.js';
 
 // Mock getBaseConfigFile to prevent loading user's actual base config during tests
@@ -362,7 +363,7 @@ describe('ConfigManager', () => {
       expect(savedConfig.temperature).toBe(0.4);
       expect(savedConfig.auto_confirm).toBe(true);
       expect(savedConfig.future_only_field).toBe('must-survive');
-      expect(savedConfig.schema_version).toBe(1);
+      expect(savedConfig.schema_version).toBe(CONFIG_SCHEMA.current);
     });
 
     it('should not reset config when defaults change', async () => {

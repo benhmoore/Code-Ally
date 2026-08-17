@@ -867,8 +867,6 @@ export class CompletionProvider {
             suggestions.push(8192, 16384, 32768, 65536, 131072, 262144);
           } else if (key === 'max_tokens') {
             suggestions.push(2000, 4000, 7000, 10000, 16000);
-          } else if (key === 'compact_threshold') {
-            suggestions.push(80, 85, 90, 95, 99);
           }
 
           // Remove duplicates and filter by prefix
@@ -951,8 +949,6 @@ export class CompletionProvider {
 
       // UI Preferences
       'theme': 'UI theme name',
-      'compact_threshold': 'Auto-compact threshold (%)',
-      'show_context_in_prompt': 'Show context % in prompt',
       'show_thinking_in_chat': 'Show model thinking in chat',
       'show_system_prompt_in_chat': 'Show system prompts in chat',
       'show_full_tool_output': 'Show full tool output without truncation',

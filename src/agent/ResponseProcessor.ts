@@ -27,7 +27,6 @@ import {
   createHttpErrorReminder,
   createEmptyResponseReminder,
   createEmptyAfterToolsReminder,
-  createContextUsageWarning,
   createRequirementsNotMetReminder,
 } from '../utils/messageUtils.js';
 
@@ -99,10 +98,6 @@ export interface ResponseContext {
   clearCurrentTurn: () => void;
   /** Callback to start tool execution (creates abort controller) */
   startToolExecution: () => void;
-  /** Callback to check context usage for specialized agents */
-  getContextUsagePercentage: () => number;
-  /** Context usage warning threshold */
-  contextWarningThreshold: number;
   /** Callback to clean up ephemeral messages */
   cleanupEphemeralMessages: () => void;
   /** Callback to ensure context room before adding retry/continuation messages */
@@ -477,38 +472,6 @@ export class ResponseProcessor {
 
     logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Assistant message with tool calls added. Total messages:', this.conversationManager.getMessageCount());
 
-    // Check context usage for specialized agents (subagents)
-    // Enforce stricter limit (WARNING threshold) to ensure room for final summary
-    const contextUsage = context.getContextUsagePercentage();
-    if (context.isSpecializedAgent && contextUsage >= context.contextWarningThreshold) {
-      logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Specialized agent at', contextUsage + '% context - blocking tool execution to preserve space for summary');
-
-      // Remove the assistant message with tool calls we just added
-      this.conversationManager.setMessages(this.conversationManager.getMessagesCopy().slice(0, -1));
-
-      // Add a system reminder instructing the agent to provide final summary
-      // PERSIST: true - Persistent, explains why specialized agent stopped (constraint on result)
-      const systemReminder = createContextUsageWarning(contextUsage);
-      this.conversationManager.addMessage(systemReminder);
-
-      // Check for interruption before requesting final summary
-      const interruptMessage = this.checkForInterruption();
-      if (interruptMessage !== null) {
-        logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Agent interrupted before final summary - stopping');
-        return interruptMessage;
-      }
-
-      // Get final response from LLM (without executing tools)
-      logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Requesting final summary from specialized agent...');
-      const finalResponse = await context.getLLMResponse();
-
-      // Clear delegations before early return to prevent delegation leaks
-      const completedCallIds = unwrappedToolCalls.map(tc => tc.id);
-      this.clearInjectableToolDelegations(completedCallIds);
-
-      return await this.processLLMResponse(finalResponse, context);
-    }
-
     // Detect cycles BEFORE executing tools
     const cycles = context.detectCycles(unwrappedToolCalls);
     if (cycles.size > 0) {
@@ -656,7 +619,7 @@ export class ResponseProcessor {
           if (warningMessage && warningMessage.role === 'system' && warningMessage.content.includes('must call the following required tool')) {
             logger.debug(`[REQUIRED_TOOLS_DEBUG] Removing satisfied warning from conversation history at index ${warningIndex}`);
             messages.splice(warningIndex, 1);
-            this.conversationManager.setMessages(messages);
+            this.conversationManager.replaceActiveMessages(messages);
             this.requiredToolTracker.clearWarningMessageIndex();
           }
         }

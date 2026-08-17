@@ -14,6 +14,8 @@
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ConversationManager } from './ConversationManager.js';
 import { logger } from '../services/Logger.js';
+import type { Message } from '../types/index.js';
+import type { ConversationCheckpointV1 } from './compaction/types.js';
 
 /**
  * Coordinates automatic session saving with multiple data sources
@@ -105,8 +107,35 @@ export class SessionPersistence {
     }
 
     // Auto-save (non-blocking, fire and forget)
-    (sessionManager as any).autoSave(this.conversationManager.getMessages(), todos, idleMessages, projectContext, additionalDirectories).catch((error: Error) => {
+    (sessionManager as any).autoSave(
+      this.conversationManager.getMessages(),
+      todos,
+      idleMessages,
+      projectContext,
+      additionalDirectories,
+      this.conversationManager.getTranscript(),
+      this.conversationManager.getCheckpoint() ?? undefined,
+      this.conversationManager.getProviderState(),
+    ).catch((error: Error) => {
       logger.error('[AGENT_SESSION]', this.instanceId, 'Failed to auto-save session:', error);
     });
+  }
+
+  /** Critical checkpoint commit; returns only after the session manifest is durable. */
+  async commitCheckpoint(
+    messages: readonly Message[],
+    checkpoint: ConversationCheckpointV1,
+  ): Promise<boolean> {
+    if (this.agentDepth > 0) return true;
+    await this.autoSave();
+    const sessionManager = ServiceRegistry.getInstance().get('session_manager');
+    if (!sessionManager || typeof (sessionManager as any).commitConversationCheckpoint !== 'function') {
+      return false;
+    }
+    return (sessionManager as any).commitConversationCheckpoint(
+      messages,
+      this.conversationManager.getTranscript(),
+      checkpoint,
+    );
   }
 }

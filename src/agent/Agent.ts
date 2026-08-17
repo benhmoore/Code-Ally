@@ -37,7 +37,7 @@ import { PermissionManager } from '../security/PermissionManager.js';
 import { isPermissionDeniedError } from '../security/PathSecurity.js';
 import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
 import { SessionPersistence } from './SessionPersistence.js';
-import { AgentCompactor, type AppliedCompactionResult, type CompactionOptions } from './AgentCompactor.js';
+import { ConversationCompactor, type AppliedCompactionResult, type CompactionOptions } from './ConversationCompactor.js';
 import { AgentLifecycleHandler } from './AgentLifecycleHandler.js';
 import { LoopDetector } from './LoopDetector.js';
 import { FocusScope } from './FocusScope.js';
@@ -48,7 +48,7 @@ import {
   PhraseRepetitionPattern,
   SentenceRepetitionPattern,
 } from './patterns/loopPatterns.js';
-import { Message, ActivityEventType, Config } from '../types/index.js';
+import { Message, ActivityEventType, Config, type FunctionDefinition } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
 import { unwrapBatchToolCalls } from '../utils/toolCallUtils.js';
 import { logger } from '../services/Logger.js';
@@ -231,8 +231,8 @@ export class Agent {
   // Session persistence - delegated to SessionPersistence
   private sessionPersistence: SessionPersistence;
 
-  // Compaction - delegated to AgentCompactor
-  private agentCompactor: AgentCompactor;
+  // Transactional context checkpointing
+  private agentCompactor: ConversationCompactor;
 
   // Lifecycle handling - idle coordinator, auto-cleanup
   private lifecycleHandler: AgentLifecycleHandler;
@@ -242,6 +242,8 @@ export class Agent {
     maxToolCalls: AGENT_CONFIG.MAX_TOOL_CALLS_PER_TURN,
   });
   private activeExecutionContext: AgentExecutionContext = {};
+  private nativeCompactionPending = false;
+  private lastRequestFunctions: FunctionDefinition[] = [];
 
   // Checkpoint reminder tracking - monitors tool calls to inject progress reminders
   private checkpointTracker: CheckpointTracker;
@@ -420,12 +422,13 @@ export class Agent {
       this.toolResultManager.setPersistence(toolResultPersistence);
     }
 
-    // Create agent compactor for conversation compaction
-    this.agentCompactor = new AgentCompactor(
+    // Create the transactional context checkpoint coordinator.
+    this.agentCompactor = new ConversationCompactor(
       modelClient,
       this.conversationManager,
       this.tokenManager,
-      activityStream
+      activityStream,
+      (messages, checkpoint) => this.sessionPersistence.commitCheckpoint(messages, checkpoint),
     );
 
     // Create tool orchestrator
@@ -512,6 +515,20 @@ export class Agent {
    */
   getTokenManager(): TokenManager {
     return this.tokenManager;
+  }
+
+  /** Guard live transport changes and provider-native replay identity. */
+  getModelIdentityChangeBlock(next: { provider?: Config['provider']; model?: string | null }): string | null {
+    const providerChanged = next.provider !== undefined
+      && next.provider !== (this.appConfig.provider ?? this.modelClient.providerId);
+    if (providerChanged) {
+      return 'Changing provider transports requires a restart. Start a new process/session with the desired provider so the live client and conversation state cannot diverge.';
+    }
+    if (this.conversationManager.getProviderState().kind === 'chat') return null;
+    const modelChanged = next.model !== undefined
+      && next.model !== (this.appConfig.model ?? this.modelClient.modelName);
+    if (!modelChanged) return null;
+    return 'This conversation has provider-native compacted state tied to its current model. Start a new session or rewind before switching the primary provider/model.';
   }
 
   /**
@@ -1037,6 +1054,8 @@ export class Agent {
         thoroughness,
       });
 
+      await this.adoptPendingNativeCompaction();
+
       // Execute any pending cleanups before returning
       this.executePendingCleanups();
 
@@ -1279,6 +1298,7 @@ export class Agent {
       this.agentName,  // Pass agent name for visible_to filtering
       this.config.allowedTools  // Pass allowed tools list for restriction
     );
+    this.lastRequestFunctions = [...functions];
 
     // Generate or regenerate system prompt with current context (todos, etc.) before each LLM call
     // Works for both main agent and specialized agents
@@ -1330,17 +1350,16 @@ export class Agent {
       };
       // Prepend system message to the beginning of conversation
       const currentMessages = this.conversationManager.getMessages();
-      this.conversationManager.setMessages([systemMessage, ...currentMessages]);
+      this.conversationManager.replaceActiveMessages([systemMessage, ...currentMessages]);
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Created new system prompt (missing after session resume)');
     }
 
-    // Dynamic prompt generation can materially change the system message
-    // (for example by injecting context files from a compaction summary), so
+    // Dynamic prompt generation can materially change the system message, so
     // refresh accounting before deciding whether auto-compaction is needed.
     this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
 
-    // Auto-compaction: check if context usage exceeds threshold
-    await this.checkAutoCompaction();
+    // Auto-compaction: the budget planner decides from absolute request budgets.
+    await this.checkAutoCompaction(functions);
 
     // Log conversation state before sending to LLM
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Sending', this.conversationManager.getMessageCount(), 'messages to LLM');
@@ -1363,15 +1382,8 @@ export class Agent {
     });
 
     try {
-      // Calculate dynamic max output tokens based on remaining context
-      const remainingTokens = this.tokenManager.getRemainingTokens();
-      const dynamicMaxTokens = Math.max(
-        TOKEN_MANAGEMENT.MIN_OUTPUT_TOKENS,
-        Math.floor(remainingTokens * TOKEN_MANAGEMENT.DYNAMIC_OUTPUT_PERCENT)
-      );
-
       // Append the volatile context as a trailing ephemeral system-reminder.
-      // Keeping the date, live usage, todos, plan-mode banner, and budget warnings
+      // Keeping the date, todos, and plan-mode banner
       // OUT of msg[0] and at the END of the prompt is what lets the backend reuse
       // its KV cache for the stable system prefix + the entire conversation; only
       // this small trailing block is recomputed each round-trip. It is stripped
@@ -1402,6 +1414,14 @@ export class Agent {
       this.conversationManager.reconcileToolCalls();
 
       const sentMessages = this.conversationManager.getMessages();
+      const estimatedRequestTokens = this.tokenManager.estimateMessagesTokens(sentMessages)
+        + this.tokenManager.estimateTokens(JSON.stringify(functions))
+        + this.tokenManager.getCalibrationOverhead();
+      const remainingTokens = Math.max(0, this.tokenManager.getContextSize() - estimatedRequestTokens);
+      const dynamicMaxTokens = Math.max(
+        TOKEN_MANAGEMENT.MIN_OUTPUT_TOKENS,
+        Math.floor(remainingTokens * TOKEN_MANAGEMENT.DYNAMIC_OUTPUT_PERCENT)
+      );
       const response = await this.modelClient.send(sentMessages, {
         functions,
         // Disable streaming for subagents - only main agent should stream responses
@@ -1415,14 +1435,27 @@ export class Agent {
         // Dynamic output token limit based on remaining context
         dynamicMaxTokens,
         signal: this.interruptionManager.beginRequest(),
+        providerState: this.conversationManager.getProviderState(),
       });
+
+      if (response.providerState) {
+        this.conversationManager.setProviderState(response.providerState);
+        const checkpoint = this.conversationManager.getCheckpoint();
+        if (checkpoint) {
+          checkpoint.providerState = structuredClone(response.providerState);
+          if (response.nativeCompaction) checkpoint.strategy = 'openai-native';
+          this.conversationManager.setCheckpoint(checkpoint);
+        }
+      }
+      if (response.nativeCompaction) this.nativeCompactionPending = true;
 
       // Calibrate the token estimator against the backend's actual prompt-token
       // count. The gap (tool schemas, chat template, the model's own tokenizer)
       // is what the message-only estimate misses; feeding it back keeps budget
       // decisions accurate for whatever open model is running.
       if (response.usage?.promptTokens) {
-        const estimated = this.tokenManager.estimateMessagesTokens(sentMessages);
+        const estimated = this.tokenManager.estimateMessagesTokens(sentMessages)
+          + this.tokenManager.estimateTokens(JSON.stringify(functions));
         this.tokenManager.calibrate(estimated, response.usage.promptTokens);
       }
 
@@ -1606,10 +1639,7 @@ export class Agent {
       `${cause.kind}: ${cause.reason} (attempt ${this.invocationState.recoveryAttempts})`
     );
 
-    const contextUsage = this.tokenManager.getContextUsagePercentage();
-    if (contextUsage >= this.appConfig.compact_threshold) {
-      await this.checkAutoCompaction();
-    }
+    await this.checkAutoCompaction();
 
     const continuationPrompt = cause.kind === 'activity_timeout'
       ? createActivityTimeoutContinuationReminder()
@@ -1690,18 +1720,9 @@ export class Agent {
       clearCyclesIfBroken: () => this.loopDetector.clearCyclesIfBroken(),
       clearCurrentTurn: () => this.toolManager.clearCurrentTurn(this.instanceId),
       startToolExecution: () => this.startToolExecution(),
-      getContextUsagePercentage: () => this.tokenManager.getContextUsagePercentage(),
-      contextWarningThreshold: CONTEXT_THRESHOLDS.WARNING,
       cleanupEphemeralMessages: () => this.cleanupEphemeralMessages(),
       ensureContextRoom: async () => {
-        // Check if context usage is at or above compact threshold before adding retry messages
-        // This prevents infinite loops where retry messages fill up context
-        const contextUsage = this.tokenManager.getContextUsagePercentage();
-        if (contextUsage >= this.appConfig.compact_threshold) {
-          logger.debug('[AGENT_RETRY]', this.instanceId,
-            `Context at ${contextUsage}% (>= ${this.appConfig.compact_threshold}%), triggering auto-compaction before retry`);
-          await this.checkAutoCompaction();
-        }
+        await this.checkAutoCompaction();
       },
     };
   }
@@ -1790,6 +1811,11 @@ export class Agent {
    * @returns Readonly reference to message array
    */
   getMessages(): readonly Message[] {
+    return this.conversationManager.getTranscript();
+  }
+
+  /** Model-facing active window; unlike getMessages(), this may be compacted. */
+  getContextMessages(): readonly Message[] {
     return this.conversationManager.getMessages();
   }
 
@@ -1799,7 +1825,7 @@ export class Agent {
    * @returns Copy of message array
    */
   getMessagesCopy(): Message[] {
-    return this.conversationManager.getMessagesCopy();
+    return this.conversationManager.getTranscriptCopy();
   }
 
   /**
@@ -1818,6 +1844,39 @@ export class Agent {
     // Checkpoint tracking is per-turn only, not based on historical messages
 
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages set, count:', this.conversationManager.getMessageCount());
+  }
+
+  /** Restore independently persisted transcript, active window, and checkpoint. */
+  loadConversationState(
+    messages: Message[],
+    transcript: Message[],
+    checkpoint: import('./compaction/types.js').ConversationCheckpointV1 | null,
+    providerState: import('./compaction/types.js').ProviderCheckpointState = checkpoint?.providerState ?? { kind: 'chat' },
+  ): void {
+    const safeCheckpoint = checkpoint ? structuredClone(checkpoint) : null;
+    let safeProviderState = structuredClone(providerState);
+    const replayProvider = safeProviderState.kind === 'chat'
+      ? undefined
+      : safeProviderState.provider ?? safeCheckpoint?.provider;
+    const replayModel = safeProviderState.kind === 'chat'
+      ? undefined
+      : safeProviderState.model ?? safeCheckpoint?.model;
+    if (safeProviderState.kind !== 'chat'
+      && (replayProvider !== this.modelClient.providerId
+        || replayModel !== this.modelClient.modelName)) {
+      logger.warn(
+        '[COMPACTION] Ignoring provider-native replay state because the resumed provider/model differs; using the portable semantic checkpoint.',
+      );
+      safeProviderState = { kind: 'chat' };
+      if (safeCheckpoint) {
+        safeCheckpoint.providerState = { kind: 'chat' };
+        safeCheckpoint.strategy = safeCheckpoint.portability === 'extractive'
+          ? 'local-extractive'
+          : 'local-structured';
+      }
+    }
+    this.conversationManager.loadConversation(messages, transcript, safeCheckpoint, safeProviderState);
+    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
   }
 
   /**
@@ -1883,22 +1942,6 @@ export class Agent {
   }
 
   /**
-   * Update messages after compaction
-   * Used by manual /compact command
-   * @param compactedMessages - Compacted message array
-   */
-  updateMessagesAfterCompaction(compactedMessages: Message[]): void {
-    // Ensure all messages have IDs
-    this.conversationManager.setMessages(compactedMessages.map(msg => ({
-      ...msg,
-      id: msg.id || generateMessageId(),
-    })));
-    // Recalculate token count after compaction
-    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
-    logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages updated after compaction, count:', this.conversationManager.getMessageCount());
-  }
-
-  /**
    * Compact, apply, verify, emit UI events, and persist the active conversation.
    * Used by manual /compact so it shares the same mutation path as auto-compaction.
    */
@@ -1906,17 +1949,49 @@ export class Agent {
     const result = await this.agentCompactor.compactAndApply({
       instanceId: this.instanceId,
       isSpecializedAgent: this.config.isSpecializedAgent || false,
-      compactThreshold: this.appConfig.compact_threshold,
       generateId: () => this.generateId(),
       parentCallId: this.activeExecutionContext.parentCallId,
       signal: this.interruptionManager.beginRequest(),
+      modelMaxOutput: this.appConfig.max_tokens,
+      phase: 'manual',
     }, {
       ...options,
-      verification: 'reduced',
+      trigger: 'manual',
+      phase: 'manual',
     });
 
     await this.autoSaveSession();
     return result;
+  }
+
+  /** Mirror provider-triggered same-response compaction into the durable local window. */
+  private async adoptPendingNativeCompaction(): Promise<void> {
+    if (!this.nativeCompactionPending) return;
+    const providerState = this.conversationManager.getProviderState();
+    if (providerState.kind !== 'openai-responses') {
+      this.nativeCompactionPending = false;
+      return;
+    }
+    try {
+      await this.agentCompactor.compactAndApply({
+        instanceId: this.instanceId,
+        isSpecializedAgent: this.config.isSpecializedAgent || false,
+        generateId: () => this.generateId(),
+        parentCallId: this.activeExecutionContext.parentCallId,
+        signal: this.interruptionManager.beginRequest(),
+        functions: this.lastRequestFunctions,
+        modelMaxOutput: this.appConfig.max_tokens,
+        phase: 'post-turn',
+      }, {
+        trigger: 'automatic',
+        phase: 'post-turn',
+        providerStateOverride: providerState,
+      });
+      this.nativeCompactionPending = false;
+    } catch (error) {
+      // The provider state remains valid and will be retried after a later turn.
+      logger.warn('[COMPACTION] Could not mirror provider compaction into the local checkpoint yet:', error);
+    }
   }
 
   /**
@@ -1929,8 +2004,8 @@ export class Agent {
    * @returns The content of the target message for pre-filling the input
    */
   async rewindToMessage(userMessageIndex: number): Promise<string> {
-    // Filter to user messages only
-    const userMessages = this.conversationManager.getMessages().filter(m => m.role === 'user');
+    const transcript = this.conversationManager.getTranscript();
+    const userMessages = transcript.filter(m => m.role === 'user');
 
     if (userMessageIndex < 0 || userMessageIndex >= userMessages.length) {
       throw new Error(`Invalid message index: ${userMessageIndex}. Must be between 0 and ${userMessages.length - 1}`);
@@ -1942,21 +2017,18 @@ export class Agent {
       throw new Error(`Target message at index ${userMessageIndex} not found`);
     }
 
-    // Find its position in the full messages array
-    const cutoffIndex = this.conversationManager.getMessages().findIndex(
-      m => m.role === 'user' && m.timestamp === targetMessage.timestamp && m.content === targetMessage.content
-    );
+    const cutoffIndex = transcript.findIndex(m => m.id === targetMessage.id);
 
     if (cutoffIndex === -1) {
       throw new Error('Target message not found in conversation history');
     }
 
-    // Preserve system message and truncate to just before the target message
     const systemMessage = this.conversationManager.getSystemMessage()?.role === 'system' ? this.conversationManager.getSystemMessage() : null;
-    const truncatedMessages = this.conversationManager.getMessages().slice(systemMessage ? 1 : 0, cutoffIndex);
+    const truncatedMessages = transcript.slice(0, cutoffIndex);
 
-    // Update messages to the truncated version
     this.conversationManager.setMessages(systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages);
+    this.conversationManager.setCheckpoint(null);
+    this.conversationManager.setProviderState({ kind: 'chat' });
 
     // Recalculate token count after rewind
     this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
@@ -1975,44 +2047,24 @@ export class Agent {
   }
 
   /**
-   * Check if auto-compaction should trigger based on context usage
-   * Delegates to AgentCompactor
+   * Check whether the current complete request exceeds its safe input budget.
    */
-  private async checkAutoCompaction(): Promise<void> {
+  private async checkAutoCompaction(functions?: readonly FunctionDefinition[]): Promise<void> {
+    const lastRole = this.conversationManager.getLastMessage()?.role;
     const compacted = await this.agentCompactor.checkAndPerformAutoCompaction({
       instanceId: this.instanceId,
       isSpecializedAgent: this.config.isSpecializedAgent || false,
-      compactThreshold: this.appConfig.compact_threshold,
       generateId: () => this.generateId(),
       parentCallId: this.activeExecutionContext.parentCallId,
       signal: this.interruptionManager.beginRequest(),
+      functions,
+      modelMaxOutput: this.appConfig.max_tokens,
+      phase: lastRole === 'tool' ? 'mid-turn' : 'pre-turn',
     });
 
     if (compacted) {
       await this.autoSaveSession();
     }
-  }
-
-  /**
-   * Compact conversation messages with summarization
-   *
-   * This is the single source of truth for compaction logic, used by both:
-   * - Auto-compaction (when context reaches threshold)
-   * - Manual /compact command (with optional custom instructions)
-   *
-   * Delegates to AgentCompactor.
-   *
-   * @param messages - Messages to compact (defaults to this.messages)
-   * @param options - Compaction options
-   * @param options.customInstructions - Optional additional instructions for summarization
-   * @param options.timestampLabel - Label for the summary timestamp (e.g., "auto-compacted" or none for manual)
-   * @returns Compacted message array
-   */
-  async compactConversation(
-    messages: readonly Message[] = this.conversationManager.getMessages(),
-    options: CompactionOptions = {}
-  ): Promise<Message[]> {
-    return this.agentCompactor.compactConversation(messages, options, this.interruptionManager.beginRequest());
   }
 
   /**

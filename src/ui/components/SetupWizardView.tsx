@@ -71,6 +71,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const [providerIndex, setProviderIndex] = useState(0);
   const providers = [
     { value: 'ollama' as const, label: 'Ollama', endpoint: 'http://localhost:11434' },
+    { value: 'openai-responses' as const, label: 'OpenAI Responses', endpoint: 'https://api.openai.com' },
     { value: 'openai-compat' as const, label: 'OpenAI-compatible', endpoint: 'http://localhost:8000' },
   ];
   const selectedProvider = providers[providerIndex]?.value ?? 'ollama';
@@ -178,7 +179,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
         setEndpoint(defaultEndpoint);
         setEndpointBuffer(defaultEndpoint);
         setEndpointCursor(defaultEndpoint.length);
-        if (selectedProvider === 'openai-compat') {
+        if (selectedProvider !== 'ollama') {
           setProviderApiKeyBuffer('');
           setProviderApiKeyCursor(0);
           setStep(SetupStep.PROVIDER_API_KEY);

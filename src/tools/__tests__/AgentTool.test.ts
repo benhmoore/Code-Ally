@@ -66,8 +66,6 @@ describe('AgentTool', () => {
       auto_confirm: false,
       parallel_tools: false,
       theme: 'default',
-      compact_threshold: 10,
-      show_context_in_prompt: false,
       show_thinking_in_chat: false,
       show_full_tool_output: false,
       show_tool_parameters_in_chat: false,

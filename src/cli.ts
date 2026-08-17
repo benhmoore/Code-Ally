@@ -494,7 +494,7 @@ async function handleOnceMode(
 
     // Save session only if explicitly requested
     if (sessionName) {
-      await sessionManager.saveSession(sessionName, agent.getMessages());
+      await sessionManager.saveSession(sessionName, agent.getContextMessages(), agent.getMessages());
       console.log(`\n[Session: ${sessionName}]`);
     }
   } catch (error) {
@@ -1563,7 +1563,14 @@ async function main() {
           const projectContext = projectContextDetector?.getCached() ?? undefined;
           const additionalDirectories = additionalDirsManager?.getAdditionalDirectories() ?? undefined;
 
-          sessionManager.autoSave(agent.getMessages(), todos, idleMessages, projectContext, additionalDirectories).catch((error: Error) => {
+          sessionManager.autoSave(
+            agent.getContextMessages(),
+            todos,
+            idleMessages,
+            projectContext,
+            additionalDirectories,
+            agent.getMessages(),
+          ).catch((error: Error) => {
             logger.debug('[IDLE_MSG] Failed to auto-save after queue update:', error);
           });
         }

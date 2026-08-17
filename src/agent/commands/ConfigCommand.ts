@@ -89,7 +89,7 @@ export class ConfigCommand extends Command {
       'Agent Settings': ['default_agent'],
       'Execution Settings': ['bash_timeout', 'auto_confirm', 'parallel_tools', 'tool_call_activity_timeout'],
       'File System Settings': ['temp_directory'],
-      'UI Preferences': ['theme', 'compact_threshold', 'show_context_in_prompt', 'show_thinking_in_chat', 'show_system_prompt_in_chat', 'show_full_tool_output', 'show_tool_parameters_in_chat', 'enable_idle_messages', 'enable_session_title_generation'],
+      'UI Preferences': ['theme', 'show_thinking_in_chat', 'show_system_prompt_in_chat', 'show_full_tool_output', 'show_tool_parameters_in_chat', 'enable_idle_messages', 'enable_session_title_generation'],
       'Tool Call Retry': ['tool_call_retry_enabled', 'tool_call_max_retries', 'tool_call_repair_attempts', 'tool_call_verbose_errors'],
       'Directory Tree': ['dir_tree_enable', 'dir_tree_max_depth', 'dir_tree_max_files'],
       'Diff Display': ['diff_display_enabled', 'diff_display_max_file_size', 'diff_display_context_lines', 'diff_display_theme', 'diff_display_color_removed', 'diff_display_color_added', 'diff_display_color_modified'],
@@ -225,6 +225,19 @@ export class ConfigCommand extends Command {
         parsed.valueString,
         serviceRegistry
       );
+    }
+
+    if (parsed && (parsed.key === 'provider' || parsed.key === 'model')) {
+      let parsedValue: unknown = parsed.valueString;
+      try { parsedValue = JSON.parse(parsed.valueString); } catch { /* plain string */ }
+      const validation = validateConfigValue(parsed.key, parsedValue);
+      if (validation.valid) {
+        const activeAgent = serviceRegistry.get('agent');
+        const block = activeAgent?.getModelIdentityChangeBlock?.({
+          [parsed.key]: validation.coercedValue,
+        });
+        if (block) return this.createError(block);
+      }
     }
 
     try {
@@ -405,6 +418,11 @@ export class ConfigCommand extends Command {
     }
 
     try {
+      const block = serviceRegistry.get('agent')?.getModelIdentityChangeBlock?.({
+        provider: DEFAULT_CONFIG.provider,
+        model: DEFAULT_CONFIG.model,
+      });
+      if (block) return this.createError(block);
       const changes = await configManager.reset();
       const changedKeys = Object.keys(changes);
 

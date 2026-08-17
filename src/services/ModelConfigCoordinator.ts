@@ -50,6 +50,8 @@ export interface ModelConfigCoordinatorDeps {
    * overridable so tests need no network or model index.
    */
   testModelCapabilities?: ModelCapabilityProbe;
+  /** Returns a user-facing reason when the active conversation cannot switch safely. */
+  validatePrimaryModelSwitch?: (modelName: string) => string | null;
 }
 
 /**
@@ -113,6 +115,10 @@ export class ModelConfigCoordinator {
     }
 
     try {
+      if (slot === 'ally') {
+        const block = this.deps.validatePrimaryModelSwitch?.(modelName);
+        if (block) return { status: 'error', messages: [block] };
+      }
       const config = configManager.getConfig();
       const endpoint = config.endpoint || DEFAULT_ENDPOINT;
 

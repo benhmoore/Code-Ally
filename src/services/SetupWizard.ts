@@ -14,7 +14,7 @@ import { API_TIMEOUTS, CONTEXT_SIZES, VALID_CONTEXT_SIZES } from '../config/cons
 import { listProviderModels } from '../llm/ProviderAdapter.js';
 
 export interface SetupConfig {
-  provider: 'ollama' | 'openai-compat';
+  provider: 'ollama' | 'openai-compat' | 'openai-responses';
   endpoint: string;
   api_key: string | null;
   model: string;

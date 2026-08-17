@@ -266,55 +266,6 @@ export class ToolResultManager {
   }
 
   /**
-   * Generate context status message with guidance for the model
-   *
-   * @returns Formatted context status message
-   */
-  getContextStatusMessage(): string {
-    const contextPct = this.tokenManager.getContextUsagePercentage();
-    const remainingCalls = this.estimateRemainingToolCalls();
-    const truncationLevel = this.getTruncationLevel(contextPct);
-
-    // Calculate current max tokens per tool result
-    const remainingTokens = this.getRemainingContextBudget();
-    const currentMaxTokens = Math.max(
-      Math.floor(remainingTokens * this.maxContextPercent),
-      this.minTokens
-    );
-
-    // Provide forceful, actionable guidance based on context level
-    if (truncationLevel === 'critical') {
-      return (
-        `🚨 CRITICAL: ${contextPct}% context used | ${remainingCalls} tools remaining\n` +
-        `⛔ STOP TOOL USE NOW. You MUST:\n` +
-        `   1. Summarize work completed so far\n` +
-        `   2. Conclude your response immediately\n` +
-        `   3. Do NOT make additional tool calls\n` +
-        `Further tool calls will likely be BLOCKED due to context overflow.`
-      );
-    } else if (truncationLevel === 'aggressive') {
-      return (
-        `⚠️ WARNING: ${contextPct}% context used | ~${remainingCalls} tools remaining\n` +
-        `⚠️ Context approaching limits. You should:\n` +
-        `   1. Complete ONLY your current task\n` +
-        `   2. Avoid starting new investigations\n` +
-        `   3. Provide a summary soon\n` +
-        `Tool results are heavily truncated (~${currentMaxTokens} tokens max per result).`
-      );
-    } else if (truncationLevel === 'moderate') {
-      return (
-        `💡 Notice: ${contextPct}% context used | ~${remainingCalls} tools remaining\n` +
-        `💡 Context filling up. Consider:\n` +
-        `   1. Prioritizing essential operations\n` +
-        `   2. Wrapping up non-critical work\n` +
-        `Tool results limited to ~${currentMaxTokens} tokens per result.`
-      );
-    } else {
-      return `✅ ${contextPct}% context used | ~${remainingCalls} tools available | Normal operation`;
-    }
-  }
-
-  /**
    * Get truncation level based on context percentage
    *
    * @param contextPct Current context usage percentage

@@ -159,7 +159,7 @@ describe('versionedStore', () => {
         PROMPT_LIBRARY_SCHEMA,
       ]) {
         expect(schema.migrations.length).toBe(schema.current);
-        expect(schema.current).toBe(1);
+        expect(schema.current).toBeGreaterThanOrEqual(1);
       }
     });
 

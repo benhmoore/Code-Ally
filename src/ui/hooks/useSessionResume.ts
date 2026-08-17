@@ -218,6 +218,27 @@ export async function loadSessionData(
   // thinking-only messages, whitespace-only messages)
   const nonSystemMessages = sessionData.messages.filter((m: Message) => m.role !== 'system');
   const { messages: userMessages, interruption } = recoverConversation(nonSystemMessages);
+  const recoveryChanged = JSON.stringify(userMessages) !== JSON.stringify(nonSystemMessages);
+  const transcriptMessages = (sessionData.transcript ?? sessionData.messages)
+    .filter((m: Message) => m.role !== 'system' && !m.metadata?.ephemeral);
+  const restoredCheckpoint = sessionData.checkpoint
+    ? structuredClone(sessionData.checkpoint)
+    : null;
+  let restoredProviderState = sessionData.providerState
+    ?? restoredCheckpoint?.providerState
+    ?? { kind: 'chat' as const };
+  // Recovery rewrites the wire sequence. Opaque replay state can only be reused
+  // with the exact sequence that produced it, so fall back to the portable
+  // semantic checkpoint whenever interrupted-turn repair changed that sequence.
+  if (recoveryChanged && restoredProviderState.kind !== 'chat') {
+    restoredProviderState = { kind: 'chat' };
+    if (restoredCheckpoint) {
+      restoredCheckpoint.providerState = { kind: 'chat' };
+      restoredCheckpoint.strategy = restoredCheckpoint.portability === 'extractive'
+        ? 'local-extractive'
+        : 'local-structured';
+    }
+  }
 
   // Load todos if present
   const todoManager = serviceRegistry.get('todo_manager');
@@ -261,7 +282,12 @@ export async function loadSessionData(
   actions.clearToolCalls();
 
   // Bulk load messages into agent (doesn't trigger auto-save)
-  agent.setMessages(userMessages);
+  agent.loadConversationState(
+    userMessages,
+    transcriptMessages,
+    restoredCheckpoint,
+    restoredProviderState,
+  );
 
   // If the session was interrupted mid-turn, inject a continuation prompt
   // so the model picks up where it left off on the next user message
@@ -281,11 +307,11 @@ export async function loadSessionData(
 
   // Atomically update UI with new messages AND increment remount key
   // This prevents Static component from accumulating renders
-  actions.resetConversationView(userMessages);
+  actions.resetConversationView(transcriptMessages);
 
   // Reconstruct tool calls from message history
   // This populates activeToolCalls with completed tool calls so they appear in the timeline
-  const reconstructedToolCalls = reconstructToolCallsFromMessages(userMessages, serviceRegistry);
+  const reconstructedToolCalls = reconstructToolCallsFromMessages(transcriptMessages, serviceRegistry);
   reconstructedToolCalls.forEach(toolCall => {
     try {
       actions.addToolCall(toolCall);
@@ -297,12 +323,12 @@ export async function loadSessionData(
   });
 
   // Reconstruct interjection events from message history
-  reconstructInterjectionsFromMessages(userMessages, activityStream);
+  reconstructInterjectionsFromMessages(transcriptMessages, activityStream);
 
   // Update context usage
   const tokenManager = serviceRegistry.get('token_manager');
   if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
-    (tokenManager as any).updateTokenCount(agent.getMessages());
+    (tokenManager as any).updateTokenCount(agent.getContextMessages());
     const contextUsage = (tokenManager as any).getContextUsagePercentage();
     actions.setContextUsage(contextUsage);
   }

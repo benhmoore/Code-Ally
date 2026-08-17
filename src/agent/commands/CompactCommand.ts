@@ -8,7 +8,6 @@ import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
-import { BUFFER_SIZES } from '../../config/constants.js';
 
 export class CompactCommand extends Command {
   static readonly metadata: CommandMetadata = {
@@ -42,18 +41,6 @@ export class CompactCommand extends Command {
       };
     }
 
-    const agentMessages: readonly Message[] = typeof (agent as any).getMessages === 'function'
-      ? (agent as any).getMessages()
-      : _messages;
-
-    // Check the agent's internal history, not the visible UI transcript.
-    if (agentMessages.length < BUFFER_SIZES.MIN_MESSAGES_TO_ATTEMPT_COMPACTION) {
-      return {
-        handled: true,
-        response: `Not enough messages to compact (only ${agentMessages.length} messages). Need at least ${BUFFER_SIZES.MIN_MESSAGES_TO_ATTEMPT_COMPACTION} messages.`,
-      };
-    }
-
     // Extract custom instructions if provided
     const customInstructions = args.join(' ').trim() || undefined;
 
@@ -64,7 +51,6 @@ export class CompactCommand extends Command {
 
       await (agent as any).compactCurrentConversation({
         customInstructions,
-        timestampLabel: undefined,
       });
 
       return {

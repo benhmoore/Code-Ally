@@ -17,6 +17,7 @@ import { logger } from '../services/Logger.js';
 import { SYSTEM_REMINDER } from '../config/constants.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
 import { reconcileToolCallPairs } from '../utils/conversationRecovery.js';
+import type { ConversationCheckpointV1, ProviderCheckpointState } from './compaction/types.js';
 
 /**
  * Configuration for ConversationManager
@@ -26,6 +27,10 @@ export interface ConversationManagerConfig {
   instanceId?: string;
   /** Initial messages to populate (optional) */
   initialMessages?: Message[];
+  /** Full visible transcript when it differs from the active model window. */
+  initialTranscript?: Message[];
+  initialCheckpoint?: ConversationCheckpointV1;
+  initialProviderState?: ProviderCheckpointState;
 }
 
 /**
@@ -44,8 +49,14 @@ export interface ToolRemovalResult {
  * Manages conversation message history
  */
 export class ConversationManager {
-  /** Conversation message array */
+  /** Compactable model-facing message window. */
   private messages: Message[] = [];
+
+  /** Complete user-visible history. Internal system/ephemeral messages never enter it. */
+  private transcript: Message[] = [];
+
+  private checkpoint: ConversationCheckpointV1 | null = null;
+  private providerState: ProviderCheckpointState = { kind: 'chat' };
 
   /** Index mapping tool_call_id to tool result message for O(1) lookup */
   private toolResultIndex: Map<string, Message> = new Map();
@@ -63,6 +74,8 @@ export class ConversationManager {
    */
   constructor(config: ConversationManagerConfig = {}) {
     this.instanceId = config.instanceId ?? 'unknown';
+    this.checkpoint = config.initialCheckpoint ? structuredClone(config.initialCheckpoint) : null;
+    this.providerState = structuredClone(config.initialProviderState ?? config.initialCheckpoint?.providerState ?? { kind: 'chat' });
 
     // Initialize with initial messages if provided
     if (config.initialMessages && config.initialMessages.length > 0) {
@@ -73,7 +86,14 @@ export class ConversationManager {
       }));
       // Build tool result index from initial messages
       this.rebuildToolResultIndex();
+      this.transcript = (config.initialTranscript ?? this.messages)
+        .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+        .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
       logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Initialized with', this.messages.length, 'messages');
+    } else if (config.initialTranscript?.length) {
+      this.transcript = config.initialTranscript
+        .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+        .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     }
   }
 
@@ -92,6 +112,10 @@ export class ConversationManager {
       timestamp: message.timestamp || Date.now(),
     };
     this.messages.push(messageWithMetadata);
+
+    if (messageWithMetadata.role !== 'system' && !messageWithMetadata.metadata?.ephemeral) {
+      this.transcript.push(messageWithMetadata);
+    }
 
     // Update tool result index if this is a tool result message
     if (messageWithMetadata.role === 'tool' && messageWithMetadata.tool_call_id) {
@@ -172,10 +196,35 @@ export class ConversationManager {
     return [...this.messages];
   }
 
+  /** Complete user-visible history, independent from the compacted model window. */
+  getTranscript(): readonly Message[] {
+    return this.transcript;
+  }
+
+  getTranscriptCopy(): Message[] {
+    return [...this.transcript];
+  }
+
+  getCheckpoint(): ConversationCheckpointV1 | null {
+    return this.checkpoint ? structuredClone(this.checkpoint) : null;
+  }
+
+  setCheckpoint(checkpoint: ConversationCheckpointV1 | null): void {
+    this.checkpoint = checkpoint ? structuredClone(checkpoint) : null;
+  }
+
+  getProviderState(): ProviderCheckpointState {
+    return structuredClone(this.providerState);
+  }
+
+  setProviderState(state: ProviderCheckpointState): void {
+    this.providerState = structuredClone(state);
+  }
+
   /**
    * Set messages (replaces entire conversation)
    *
-   * Used for compaction, rewind, and session loading.
+   * Used when replacing the entire conversation branch (clear, rewind, legacy load).
    * Ensures all messages have IDs.
    *
    * @param messages - New message array to replace current messages
@@ -186,9 +235,38 @@ export class ConversationManager {
       ...msg,
       id: msg.id || generateMessageId(),
     }));
+    this.transcript = this.messages
+      .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+      .map(msg => ({ ...msg }));
     // Rebuild tool result index from scratch
     this.rebuildToolResultIndex();
     logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Messages set, count:', this.messages.length);
+  }
+
+  /** Replace only the model-facing window; compaction must not rewrite the transcript. */
+  replaceActiveMessages(messages: readonly Message[]): void {
+    this.messages = messages.map(msg => ({
+      ...msg,
+      id: msg.id || generateMessageId(),
+    }));
+    this.rebuildToolResultIndex();
+    logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Active window replaced, count:', this.messages.length);
+  }
+
+  /** Restore the independently persisted active window and visible transcript. */
+  loadConversation(
+    activeMessages: readonly Message[],
+    transcript: readonly Message[],
+    checkpoint: ConversationCheckpointV1 | null = null,
+    providerState: ProviderCheckpointState = checkpoint?.providerState ?? { kind: 'chat' },
+  ): void {
+    this.messages = activeMessages.map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
+    this.transcript = transcript
+      .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+      .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
+    this.checkpoint = checkpoint ? structuredClone(checkpoint) : null;
+    this.providerState = structuredClone(providerState);
+    this.rebuildToolResultIndex();
   }
 
   /**
@@ -205,6 +283,9 @@ export class ConversationManager {
    */
   clearMessages(): void {
     this.messages = [];
+    this.transcript = [];
+    this.checkpoint = null;
+    this.providerState = { kind: 'chat' };
     this.toolResultIndex.clear();
     logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Messages cleared');
   }
@@ -474,7 +555,7 @@ export class ConversationManager {
     if (unchanged) return false;
 
     // Route through setMessages so toolResultIndex is rebuilt by the existing path.
-    this.setMessages(reconciled);
+    this.replaceActiveMessages(reconciled);
     return true;
   }
 
@@ -679,8 +760,7 @@ export class ConversationManager {
    * @returns The content of the target message for pre-filling the input
    */
   rewindToMessage(userMessageIndex: number): string {
-    // Filter to user messages only
-    const userMessages = this.messages.filter(m => m.role === 'user');
+    const userMessages = this.transcript.filter(m => m.role === 'user');
 
     if (userMessageIndex < 0 || userMessageIndex >= userMessages.length) {
       throw new Error(`Invalid message index: ${userMessageIndex}. Must be between 0 and ${userMessages.length - 1}`);
@@ -692,29 +772,17 @@ export class ConversationManager {
       throw new Error(`Target message at index ${userMessageIndex} not found`);
     }
 
-    // Find its position in the full messages array
-    const cutoffIndex = this.messages.findIndex(
-      m => m.role === 'user' && m.timestamp === targetMessage.timestamp && m.content === targetMessage.content
-    );
+    const cutoffIndex = this.transcript.findIndex(m => m.id === targetMessage.id);
 
     if (cutoffIndex === -1) {
       throw new Error('Target message not found in conversation history');
     }
 
-    // Remove tool results from index for messages being removed
-    for (let i = cutoffIndex; i < this.messages.length; i++) {
-      const msg = this.messages[i];
-      if (msg && msg.role === 'tool' && msg.tool_call_id) {
-        this.toolResultIndex.delete(msg.tool_call_id);
-      }
-    }
-
-    // Preserve system message and truncate to just before the target message
     const systemMessage = this.messages[0]?.role === 'system' ? this.messages[0] : null;
-    const truncatedMessages = this.messages.slice(systemMessage ? 1 : 0, cutoffIndex);
-
-    // Update messages to the truncated version
-    this.messages = systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages;
+    const truncatedMessages = this.transcript.slice(0, cutoffIndex);
+    this.setMessages(systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages);
+    this.checkpoint = null;
+    this.providerState = { kind: 'chat' };
 
     logger.debug(
       '[CONVERSATION_MANAGER]',
@@ -826,22 +894,6 @@ export class ConversationManager {
    */
   hasUserMessages(): boolean {
     return this.messages.some(m => m.role === 'user');
-  }
-
-  /**
-   * Get messages for compaction (exclude ephemeral, prepare for summarization)
-   *
-   * @returns Messages suitable for compaction
-   */
-  getMessagesForCompaction(): Message[] {
-    // Get system message and other messages
-    const systemMessage = this.getSystemMessage();
-    let otherMessages = systemMessage ? this.messages.slice(1) : this.messages;
-
-    // Filter out ephemeral messages before compaction
-    otherMessages = otherMessages.filter(msg => !msg.metadata?.ephemeral);
-
-    return systemMessage ? [systemMessage, ...otherMessages] : otherMessages;
   }
 
   /**

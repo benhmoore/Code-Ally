@@ -75,6 +75,10 @@ export class ModelCommand extends Command {
     // Direct model name provided - set it immediately
     if (modelName) {
       try {
+        if (modelType === 'ally') {
+          const block = serviceRegistry.get('agent')?.getModelIdentityChangeBlock?.({ model: modelName });
+          if (block) return this.createError(block);
+        }
         // Get endpoint from config
         const config = configManager.getConfig();
         const capabilities = await probeModelCapabilities(config, modelName);

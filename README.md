@@ -55,7 +55,7 @@ ally --profile work         # Use profile
 | `/help [topic]` | Show help, optionally filtered by topic |
 | `/config` | View configuration; `/config set key=value` to modify |
 | `/model <name>` | Switch LLM model |
-| `/compact [instructions]` | Summarize conversation to free context |
+| `/compact [instructions]` | Create a durable semantic checkpoint and free model context |
 | `/undo` | Revert file changes (interactive selector) |
 | `/rewind` | Go back to earlier message |
 | `/resume [session]` | Resume previous session |
@@ -233,8 +233,9 @@ Add directories beyond cwd:
 
 ## Sessions
 
-Sessions auto-save to `./.ally-sessions/` and include:
-- Conversation history
+Sessions auto-save under `~/.ally/projects/` and include:
+- The full visible transcript in integrity-checked, content-addressed segments
+- The compact model window and its durable semantic checkpoint
 - Todo list
 - Active plugins
 - Project context
@@ -255,7 +256,7 @@ lives at `~/.ally/config.json`.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `model` | (auto) | Primary model |
-| `provider` | `ollama` | `ollama` or `openai-compat` |
+| `provider` | `ollama` | `ollama`, `openai-compat`, or `openai-responses` (stateless Responses API with native compaction) |
 | `endpoint` | `http://localhost:11434` | Provider base URL |
 | `api_key` | (none) | Bearer token for authenticated endpoints |
 | `context_size` | `16384` | Context window tokens |
@@ -281,8 +282,6 @@ lives at `~/.ally/config.json`.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `theme` | `default` | UI theme |
-| `compact_threshold` | `85` | Auto-compact at context % |
-| `show_context_in_prompt` | `false` | Show context % in prompt |
 | `show_thinking_in_chat` | `true` | Show model reasoning |
 | `enable_idle_messages` | `true` | Auto idle status messages |
 
@@ -310,6 +309,11 @@ OpenAI-compatible servers use `/v1/chat/completions` and, when available,
 `/v1/models`. Servers without model discovery can be configured with a model
 name manually. API keys are encrypted in profile files and redacted from config
 and debug output.
+
+For OpenAI's Responses API, select `openai-responses` in `ally --init` (or set
+`provider=openai-responses` and `endpoint=https://api.openai.com`). This transport
+uses `store: false`, exact provider token counting, encrypted reasoning replay,
+and automatic native compaction. The complete transcript remains local.
 
 ### Project instructions
 

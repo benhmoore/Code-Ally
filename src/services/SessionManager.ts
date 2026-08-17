@@ -13,6 +13,7 @@
 
 import { promises as fs } from 'fs';
 import { join } from 'path';
+import { createHash } from 'crypto';
 import { getProjectSessionsDir } from '../config/paths.js';
 import { Session, SessionInfo, Message, IService } from '../types/index.js';
 import { generateShortId } from '../utils/id.js';
@@ -22,6 +23,7 @@ import { TEXT_LIMITS, BUFFER_SIZES } from '../config/constants.js';
 import { atomicWriteFile } from '../utils/atomicFile.js';
 import { migrateRecord, stampVersion, SchemaTooNewError } from '../utils/versionedStore.js';
 import { SESSION_SCHEMA } from '../config/schemas.js';
+import type { ConversationCheckpointV1, ProviderCheckpointState } from '../agent/compaction/types.js';
 
 /**
  * Configuration for SessionManager
@@ -37,6 +39,7 @@ export interface SessionManagerConfig {
  * SessionManager handles all session persistence operations
  */
 export class SessionManager implements IService {
+  private static readonly TRANSCRIPT_SEGMENT_MESSAGES = 64;
   private currentSession: string | null = null;
   private sessionsDir: string;
   private maxSessions: number;
@@ -234,9 +237,88 @@ export class SessionManager implements IService {
       updated_at: now,
       working_dir: process.cwd(),
       messages: [],
+      transcript: [],
       metadata: {},
       active_plugins: [],
     };
+  }
+
+  private transcriptHash(messages: readonly Message[]): string {
+    return createHash('sha256').update(JSON.stringify(messages)).digest('hex');
+  }
+
+  private async hydrateTranscript(sessionName: string, session: Session): Promise<Session> {
+    const refs = session.transcript_segments ?? [];
+    if (refs.length === 0) {
+      if (!session.transcript && session.transcript_tail) {
+        session.transcript = structuredClone(session.transcript_tail);
+      }
+      return session;
+    }
+
+    const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
+    const chunks = await Promise.all(refs.map(async (ref) => {
+      const raw = await fs.readFile(join(segmentDir, `${ref.hash}.json`), 'utf-8');
+      const parsed = JSON.parse(raw) as { hash?: string; messages?: Message[] };
+      if (parsed.hash !== ref.hash || !Array.isArray(parsed.messages)
+        || parsed.messages.length !== ref.message_count
+        || this.transcriptHash(parsed.messages) !== ref.hash) {
+        throw new Error(`Transcript segment failed integrity validation: ${ref.hash}`);
+      }
+      return parsed.messages;
+    }));
+    session.transcript = [
+      ...chunks.flat(),
+      ...structuredClone(session.transcript_tail ?? []),
+    ];
+    return session;
+  }
+
+  /** Write immutable full chunks before the manifest that references them. */
+  private async externalizeTranscript(sessionName: string, session: Session): Promise<Session> {
+    const transcript = session.transcript ?? session.messages;
+    const chunkSize = SessionManager.TRANSCRIPT_SEGMENT_MESSAGES;
+    const fullChunkCount = Math.floor(transcript.length / chunkSize);
+    const refs: NonNullable<Session['transcript_segments']> = [];
+    const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
+
+    if (fullChunkCount > 0) await fs.mkdir(segmentDir, { recursive: true });
+    for (let index = 0; index < fullChunkCount; index++) {
+      const messages = transcript.slice(index * chunkSize, (index + 1) * chunkSize);
+      const hash = this.transcriptHash(messages);
+      const segmentPath = join(segmentDir, `${hash}.json`);
+      refs.push({ hash, message_count: messages.length });
+      try {
+        await fs.access(segmentPath);
+      } catch {
+        await atomicWriteFile(segmentPath, JSON.stringify({ schema_version: 1, hash, messages }));
+      }
+    }
+
+    const { transcript: _transcript, ...manifest } = session;
+    return {
+      ...manifest,
+      transcript_segments: refs,
+      transcript_tail: structuredClone(transcript.slice(fullChunkCount * chunkSize)),
+    };
+  }
+
+  private async pruneTranscriptSegments(
+    sessionName: string,
+    refs: readonly { hash: string }[],
+  ): Promise<void> {
+    const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
+    let files: string[];
+    try {
+      files = await fs.readdir(segmentDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    const retained = new Set(refs.map(ref => `${ref.hash}.json`));
+    await Promise.all(files
+      .filter(file => file.endsWith('.json') && !retained.has(file))
+      .map(file => fs.unlink(join(segmentDir, file))));
   }
 
   /**
@@ -303,6 +385,7 @@ export class SessionManager implements IService {
       updated_at: new Date().toISOString(),
       working_dir: process.cwd(),
       messages: [],
+      transcript: [],
       metadata: {},
       active_plugins: [], // Initialize with empty array
     };
@@ -359,7 +442,8 @@ export class SessionManager implements IService {
       // Pre-versioning session files carry no schema_version and read as v0.
       // A file from a NEWER build throws SchemaTooNewError below and is left
       // exactly where it is - never quarantined, never rewritten.
-      const session = migrateRecord<Session>(JSON.parse(content), SESSION_SCHEMA);
+      const migrated = migrateRecord<Session>(JSON.parse(content), SESSION_SCHEMA);
+      const session = await this.hydrateTranscript(sessionName, migrated);
 
       // Update cache with loaded session
       this.sessionCache.set(sessionName, {
@@ -466,9 +550,21 @@ export class SessionManager implements IService {
 
   private async writeSessionFile(sessionName: string, session: Session): Promise<void> {
     const sessionPath = this.getSessionPath(sessionName);
-    // Cache exactly what lands on disk so a cache hit and a disk read agree.
-    const versioned = stampVersion(session, SESSION_SCHEMA);
-    await atomicWriteFile(sessionPath, JSON.stringify(versioned, null, 2));
+    const manifest = await this.externalizeTranscript(sessionName, session);
+    const versionedManifest = stampVersion(manifest, SESSION_SCHEMA);
+    await atomicWriteFile(sessionPath, JSON.stringify(versionedManifest, null, 2));
+    // Only collect old chunks after the new manifest is durable.
+    try {
+      await this.pruneTranscriptSegments(sessionName, manifest.transcript_segments ?? []);
+    } catch (error) {
+      // Garbage collection is never part of the commit's success condition.
+      logger.warn(`[SESSION] Could not prune old transcript segments for ${sessionName}:`, error);
+    }
+    // Callers always see the hydrated shape, regardless of cache vs disk path.
+    const versioned = stampVersion({
+      ...manifest,
+      transcript: structuredClone(session.transcript ?? session.messages),
+    }, SESSION_SCHEMA);
     this.sessionCache.set(sessionName, {
       session: structuredClone(versioned),
       loadedAt: Date.now(),
@@ -484,11 +580,18 @@ export class SessionManager implements IService {
    * @param messages - Messages to save
    * @returns True if saved successfully
    */
-  async saveSession(sessionName: string, messages: readonly Message[]): Promise<boolean> {
+  async saveSession(
+    sessionName: string,
+    messages: readonly Message[],
+    transcript: readonly Message[] = messages,
+    checkpoint?: ConversationCheckpointV1,
+  ): Promise<boolean> {
     try {
       await this.flushPendingAutoSave(sessionName);
       await this.mutateSession(sessionName, true, (session) => {
         session.messages = this.filterMessagesForPersistence(messages);
+        session.transcript = this.filterMessagesForPersistence(transcript);
+        if (checkpoint) session.conversation_checkpoint = structuredClone(checkpoint);
       });
       await this.cleanupOldSessions();
 
@@ -615,6 +718,9 @@ export class SessionManager implements IService {
    */
   async getSessionData(sessionName: string): Promise<{
     messages: Message[];
+    transcript: Message[];
+    checkpoint: ConversationCheckpointV1 | null;
+    providerState: ProviderCheckpointState;
     todos: TodoItem[];
     idleMessages: string[];
     projectContext: Session['project_context'] | null;
@@ -626,6 +732,9 @@ export class SessionManager implements IService {
     if (!session) {
       return {
         messages: [],
+        transcript: [],
+        checkpoint: null,
+        providerState: { kind: 'chat' },
         todos: [],
         idleMessages: [],
         projectContext: null,
@@ -636,6 +745,9 @@ export class SessionManager implements IService {
 
     return {
       messages: session.messages ?? [],
+      transcript: session.transcript ?? session.messages ?? [],
+      checkpoint: session.conversation_checkpoint ?? null,
+      providerState: session.provider_state ?? session.conversation_checkpoint?.providerState ?? { kind: 'chat' },
       todos: session.todos ?? [],
       idleMessages: session.idle_messages ?? [],
       projectContext: session.project_context ?? null,
@@ -671,8 +783,8 @@ export class SessionManager implements IService {
     for (const session of sessions) {
       if (!session) continue;
 
-      // Ensure backward compatibility - initialize messages array if undefined
-      const messages = session.messages ?? [];
+      // Session lists describe what the user sees, not the compacted wire window.
+      const messages = session.transcript ?? session.messages ?? [];
 
       // Find the last user message for preview
       let lastUserMessage: string | undefined;
@@ -951,6 +1063,32 @@ export class SessionManager implements IService {
   }
 
   /**
+   * Durably commit a new model window and its checkpoint before the agent
+   * installs either in memory. Unlike ordinary autosave this is never debounced.
+   */
+  async commitConversationCheckpoint(
+    messages: readonly Message[],
+    transcript: readonly Message[],
+    checkpoint: ConversationCheckpointV1,
+  ): Promise<boolean> {
+    const name = this.currentSession;
+    if (!name || this.isShuttingDown) return false;
+
+    try {
+      await this.flushPendingAutoSave(name);
+      return await this.mutateSession(name, true, (session) => {
+        session.messages = this.filterMessagesForPersistence(messages);
+        session.transcript = this.filterMessagesForPersistence(transcript);
+        session.conversation_checkpoint = structuredClone(checkpoint);
+        session.provider_state = structuredClone(checkpoint.providerState);
+      });
+    } catch (error) {
+      logger.error(`[SESSION] Failed to commit conversation checkpoint ${checkpoint.id}:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Auto-save current session (messages and todos)
    *
    * Now debounced to reduce I/O - batches rapid saves with 2-second delay.
@@ -969,7 +1107,10 @@ export class SessionManager implements IService {
     todos?: TodoItem[],
     idleMessages?: string[],
     projectContext?: Session['project_context'],
-    additionalDirectories?: string[]
+    additionalDirectories?: string[],
+    transcript: readonly Message[] = messages,
+    checkpoint?: ConversationCheckpointV1,
+    providerState?: ProviderCheckpointState,
   ): Promise<boolean> {
     const name = this.currentSession;
     if (!name || this.isShuttingDown) {
@@ -992,7 +1133,14 @@ export class SessionManager implements IService {
       const updates: Partial<Session> = {
         ...(this.pendingAutoSave?.sessionName === name ? this.pendingAutoSave.updates : {}),
         messages: filteredMessages,
+        transcript: this.filterMessagesForPersistence(transcript),
       };
+      if (checkpoint !== undefined) {
+        updates.conversation_checkpoint = structuredClone(checkpoint);
+      }
+      if (providerState !== undefined) {
+        updates.provider_state = structuredClone(providerState);
+      }
       if (todos !== undefined) {
         updates.todos = todos;
       }

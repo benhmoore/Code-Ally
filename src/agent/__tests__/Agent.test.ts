@@ -28,8 +28,6 @@ describe('Agent - Interruption Handling', () => {
       auto_confirm: false,
       parallel_tools: false,
       theme: 'default',
-      compact_threshold: 95,
-      show_context_in_prompt: true,
       show_thinking_in_chat: false,
       show_full_tool_output: false,
       tool_call_retry_enabled: true,

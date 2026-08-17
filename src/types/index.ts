@@ -2,6 +2,8 @@
  * Core type definitions for Code Ally
  */
 
+import type { ConversationCheckpointV1, ProviderCheckpointState } from '../agent/compaction/types.js';
+
 // Agent definition types (data shapes for stored/loaded agents)
 export type { AgentData, AgentInfo, BaseAgentConfig } from './agents.js';
 
@@ -60,8 +62,8 @@ export interface MessageMetadata {
   parentId?: string;
   /** Whether this is a partial assistant response (interrupted mid-stream) */
   partial?: boolean;
-  /** Whether this is a conversation summary that should be displayed in UI */
-  isConversationSummary?: boolean;
+  /** Internal, model-facing checkpoint handoff. Never shown in the transcript. */
+  isConversationCheckpoint?: boolean;
   /** File paths, images, and directories that were mentioned using '@' completion in this message */
   mentions?: {
     files?: string[];
@@ -84,23 +86,6 @@ export interface MessageMetadata {
   /** Agent that generated this message (for displaying agent name prefix) */
   agentName?: string;
 
-  // === Context File References (populated during compaction) ===
-
-  /** File paths extracted from compacted messages for post-compaction context loading */
-  contextFileReferences?: string[];
-
-  /** Categorized sources of file references by operation type */
-  contextFileSources?: {
-    /** Files that were read (via read tool) */
-    read?: string[];
-    /** Files that were modified (via edit tool) */
-    edited?: string[];
-    /** Files that were created (via write tool) */
-    written?: string[];
-  };
-
-  /** Timestamp when compaction occurred (for staleness detection) */
-  contextCompactionTimestamp?: number;
 }
 
 // ===========================
@@ -405,7 +390,7 @@ export interface Config {
   explore_model?: string | null; // Model for Explore agent. Defaults to global model.
   plan_model?: string | null; // Model for Plan agent. Defaults to global model.
   agent_creation_model?: string | null; // Model for ManageAgents agent. Defaults to global model.
-  provider?: 'ollama' | 'openai-compat'; // LLM backend protocol. Defaults to 'ollama' (native /api/chat). 'openai-compat' targets /v1/chat/completions (vLLM, llama.cpp, LM Studio, cloud hosts).
+  provider?: 'ollama' | 'openai-compat' | 'openai-responses'; // LLM backend protocol. 'openai-responses' uses OpenAI's stateless Responses API with native compaction.
   endpoint: string;
   api_key?: string | null; // Bearer token for authenticated endpoints (cloud/remote). Stored separately with encryption like search_api_key.
   context_size: number;
@@ -432,8 +417,6 @@ export interface Config {
 
   // UI Preferences
   theme: string;
-  compact_threshold: number;
-  show_context_in_prompt: boolean;
   show_thinking_in_chat: boolean;
   show_system_prompt_in_chat: boolean;
   show_full_tool_output: boolean;
@@ -525,6 +508,16 @@ export interface Session {
   updated_at: string;
   working_dir: string;
   messages: Message[];
+  /** Full display history. `messages` is the compactable active model window. */
+  transcript?: Message[];
+  /** Immutable content-addressed chunks backing the older visible transcript. */
+  transcript_segments?: Array<{ hash: string; message_count: number }>;
+  /** Bounded mutable suffix; older complete chunks live in transcript_segments. */
+  transcript_tail?: Message[];
+  /** Latest committed context checkpoint, persisted independently of messages. */
+  conversation_checkpoint?: ConversationCheckpointV1;
+  /** Latest provider-native stateless cursor (for example Responses output items). */
+  provider_state?: ProviderCheckpointState;
   todos?: Array<{
     id: string;
     task: string;

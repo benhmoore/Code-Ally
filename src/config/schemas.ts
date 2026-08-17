@@ -5,11 +5,9 @@
  * through `migrateRecord(parsed, SCHEMA)`, writes through
  * `stampVersion(value, SCHEMA)`; see `src/utils/versionedStore.ts`.
  *
- * Every store is at v1. Files written before versioning existed carry no
- * `schema_version` key, are read as v0, and are upgraded by `migrations[0]`.
- * For the stores whose v0 and v1 shapes are identical that step is the identity
- * function -- it is declared explicitly rather than left out so the
- * `migrations.length === current` invariant keeps holding on the next bump.
+ * Files written before versioning existed carry no `schema_version` key, are
+ * read as v0, and are upgraded sequentially. Identity migrations are declared
+ * explicitly so `migrations.length === current` remains a hard invariant.
  */
 
 import {
@@ -24,15 +22,36 @@ const identity = (data: StoreRecord): StoreRecord => data;
 /** ~/.ally/projects/<key>/sessions/<name>.json */
 export const SESSION_SCHEMA: StoreSchema = defineStoreSchema({
   kind: 'session',
-  current: 1,
-  migrations: [identity],
+  current: 3,
+  migrations: [
+    identity,
+    (data: StoreRecord): StoreRecord => {
+      const messages = Array.isArray(data.messages) ? data.messages : [];
+      const persisted = messages.filter((message) => {
+        if (!message || typeof message !== 'object') return false;
+        return (message as { role?: unknown }).role !== 'system';
+      });
+      return {
+        ...data,
+        messages: persisted,
+        transcript: Array.isArray(data.transcript) ? data.transcript : persisted,
+      };
+    },
+    identity,
+  ],
 });
 
 /** ~/.ally/profiles/<profile>/config.json */
 export const CONFIG_SCHEMA: StoreSchema = defineStoreSchema({
   kind: 'config',
-  current: 1,
-  migrations: [identity],
+  current: 2,
+  migrations: [
+    identity,
+    (data: StoreRecord): StoreRecord => {
+      const { compact_threshold: _threshold, show_context_in_prompt: _showContext, ...rest } = data;
+      return rest;
+    },
+  ],
 });
 
 /**

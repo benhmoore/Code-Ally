@@ -71,6 +71,11 @@ export async function createModelClient(opts: CreateModelClientOptions): Promise
     return new OpenAICompatClient(clientConfig);
   }
 
+  if (provider === 'openai-responses') {
+    const { OpenAIResponsesClient } = await import('./OpenAIResponsesClient.js');
+    return new OpenAIResponsesClient(clientConfig);
+  }
+
   const { OllamaClient } = await import('./OllamaClient.js');
   return new OllamaClient(clientConfig);
 }

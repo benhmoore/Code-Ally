@@ -36,6 +36,7 @@ interface OllamaPayload {
   model: string;
   messages: readonly Message[];
   stream: boolean;
+  format?: Record<string, unknown>;
   /**
    * Model unload timing. Ollama reads keep_alive as a TOP-LEVEL field of
    * /api/chat — placing it under `options` (as earlier versions did) silently
@@ -216,7 +217,7 @@ export class OllamaClient extends ModelClient {
    * @returns Promise resolving to the LLM's response
    */
   async send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse> {
-    const { functions, stream = false, temperature, parentId, suppressThinking = false, dynamicMaxTokens, signal } = options;
+    const { functions, stream = false, temperature, parentId, suppressThinking = false, dynamicMaxTokens, signal, responseSchema } = options;
 
     // Per-request stream override: a sub-agent supplies its scoped stream so its
     // thinking/assistant events route to its own stream instead of the shared root.
@@ -228,7 +229,7 @@ export class OllamaClient extends ModelClient {
     logger.debug('[OLLAMA_CLIENT] Starting request:', requestId);
 
     // Prepare payload
-    const payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
+    const payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens, responseSchema?.schema);
 
     try {
       // Shared retry policy (capped backoff + failure ceiling + time budget).
@@ -284,7 +285,8 @@ export class OllamaClient extends ModelClient {
     functions?: FunctionDefinition[],
     stream: boolean = false,
     temperature?: number,
-    dynamicMaxTokens?: number
+    dynamicMaxTokens?: number,
+    responseSchema?: Record<string, unknown>,
   ): OllamaPayload {
     const payload: OllamaPayload = {
       model: this._modelName,
@@ -296,6 +298,7 @@ export class OllamaClient extends ModelClient {
         num_predict: dynamicMaxTokens ?? this._maxTokens,
       },
     };
+    if (responseSchema) payload.format = responseSchema;
 
     // Apply explicit sampling overrides. Only set fields are copied through, so
     // an unset field preserves the model's own Modelfile default.
