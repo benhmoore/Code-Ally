@@ -221,7 +221,7 @@ export interface AppActions {
   /** Atomically reset conversation view with new messages (for resume/compact/rewind) */
   resetConversationView: (messages: Message[]) => void;
 
-  /** Atomically reset the view with messages AND reconstructed tool calls together (agent enter/exit). */
+  /** Atomically restore a historical view with messages and reconstructed tool calls. */
   resetConversationViewWithTools: (messages: Message[], toolCalls: ToolCallState[]) => void;
 
   /** Set the current active agent and its model */

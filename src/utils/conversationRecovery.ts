@@ -212,6 +212,7 @@ export function detectTurnInterruption(
 export function recoverConversation(messages: Message[]): {
   messages: Message[];
   interruption: 'interrupted_turn' | 'interrupted_prompt' | null;
+  changed: boolean;
 } {
   // Detect interruption BEFORE filtering (so we can see the raw state)
   const interruption = detectTurnInterruption(messages);
@@ -220,6 +221,12 @@ export function recoverConversation(messages: Message[]): {
   let cleaned = reconcileToolCallPairs(messages);
   cleaned = filterOrphanedThinkingMessages(cleaned);
   cleaned = filterWhitespaceOnlyAssistantMessages(cleaned);
+
+  // Every unchanged stage preserves the original message object references.
+  // Identity/order comparison therefore detects repairs without serializing the
+  // complete conversation (including large tool outputs) a second time.
+  const changed = cleaned.length !== messages.length
+    || cleaned.some((message, index) => message !== messages[index]);
 
   const removed = messages.length - cleaned.length;
   if (removed > 0) {
@@ -230,5 +237,5 @@ export function recoverConversation(messages: Message[]): {
     logger.info(`[CONVERSATION_RECOVERY] Detected ${interruption} — model will be prompted to continue`);
   }
 
-  return { messages: cleaned, interruption };
+  return { messages: cleaned, interruption, changed };
 }

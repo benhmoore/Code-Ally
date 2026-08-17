@@ -990,15 +990,17 @@ export class PatchManager implements IService {
 
       // Get all .diff files in the patches directory
       const files = await fs.readdir(patchesDir);
+      const filesOnDisk = new Set(files);
       const diffFiles = files.filter(f => f.startsWith('patch_') && f.endsWith('.diff'));
 
       const corruptedPatches: PatchMetadata[] = [];
       const orphanedFiles: string[] = [];
 
       // Validation 1: Check that all patches in index have corresponding .diff files
+      // The directory snapshot above is authoritative for this validation pass;
+      // avoid issuing one additional filesystem operation per historical patch.
       for (const patch of allPatches) {
-        const patchExists = await this.fileManager.patchExists(patch.patch_file);
-        if (!patchExists) {
+        if (!filesOnDisk.has(patch.patch_file)) {
           logger.warn(
             `[Patch Integrity] Missing patch file for patch #${patch.patch_number}: ${patch.patch_file} (${patch.operation_type} on ${patch.file_path})`
           );

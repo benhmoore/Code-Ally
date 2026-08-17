@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { reconcileToolCallPairs } from '../conversationRecovery.js';
+import { reconcileToolCallPairs, recoverConversation } from '../conversationRecovery.js';
 import { Message } from '../../types/index.js';
 
 const assistantCalling = (...ids: string[]): Message => ({
@@ -128,5 +128,29 @@ describe('reconcileToolCallPairs', () => {
 
   it('handles an empty conversation', () => {
     expect(reconcileToolCallPairs([])).toEqual([]);
+  });
+});
+
+describe('recoverConversation change tracking', () => {
+  it('reports an unchanged conversation and preserves its message references', () => {
+    const messages = [
+      user('hello'),
+      { id: 'a', role: 'assistant', content: 'done', timestamp: 1 } as Message,
+    ];
+
+    const result = recoverConversation(messages);
+
+    expect(result.changed).toBe(false);
+    expect(result.messages.every((message, index) => message === messages[index])).toBe(true);
+  });
+
+  it('detects a same-length drop and synthesis', () => {
+    const messages = [assistantCalling('c1'), toolResult('orphan')];
+
+    const result = recoverConversation(messages);
+
+    expect(result.messages).toHaveLength(messages.length);
+    expect(result.changed).toBe(true);
+    expect(result.messages.find(message => message.role === 'tool')?.tool_call_id).toBe('c1');
   });
 });
