@@ -330,15 +330,19 @@ describe('UndoCoordinator', () => {
 
   describe('resolveRewindSelection', () => {
     it('selects the most recent user message from the agent history', () => {
-      const agent = makeAgent([
+      const history = [
         userMessage('one', 1),
         { role: 'assistant', content: 'hi' } as Message,
         userMessage('two', 2),
-      ]);
+      ];
+      const agent = makeAgent(history);
 
       const selection = makeCoordinator(null, agent).resolveRewindSelection();
 
-      expect(selection).toEqual({ userMessagesCount: 2, selectedIndex: 1 });
+      expect(selection).toEqual({
+        targets: [history[0], history[2]],
+        selectedIndex: 1,
+      });
     });
 
     it('returns null when there is nothing to rewind to', () => {

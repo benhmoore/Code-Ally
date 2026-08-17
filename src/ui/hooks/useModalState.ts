@@ -67,7 +67,8 @@ export interface AgentWizardData {
  */
 export interface RewindRequest {
   requestId: string;
-  userMessagesCount: number;
+  /** Canonical agent-transcript snapshot used by display, preview, and apply. */
+  targets: Message[] | null;
   selectedIndex: number;
 }
 

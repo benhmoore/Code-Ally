@@ -904,19 +904,23 @@ const AppContentComponent: React.FC<{
       ) : modal.rewindRequest ? (
         /* Rewind Selector (replaces input when active) */
         (() => {
-          const userMessages = state.messages.filter(m => m.role === 'user');
+          const rewindTargets = modal.rewindRequest.targets ?? [];
           return (
             <Box marginTop={1} flexDirection="column">
               {statusIndicator}
 
               <RewindSelector
-                messages={userMessages}
+                messages={rewindTargets}
                 selectedIndex={modal.rewindRequest.selectedIndex}
                 visible={true}
                 patches={patches}
               />
               {renderKeyboardInput({
-                  rewindRequest: modal.rewindRequest,
+                  rewindRequest: {
+                    requestId: modal.rewindRequest.requestId,
+                    userMessagesCount: rewindTargets.length,
+                    selectedIndex: modal.rewindRequest.selectedIndex,
+                  },
                   onRewindNavigate: newIndex => {
                     if (modal.rewindRequest) {
                       modal.setRewindRequest({ ...modal.rewindRequest, selectedIndex: newIndex });
@@ -924,8 +928,7 @@ const AppContentComponent: React.FC<{
                   },
                   onRewindEnter: selectedIndex => {
                     // Show options selector when Enter is pressed
-                    const userMessages = state.messages.filter(m => m.role === 'user');
-                    const targetMessage = userMessages[selectedIndex];
+                    const targetMessage = rewindTargets[selectedIndex];
 
                     if (targetMessage) {
                       // Calculate file changes for this message

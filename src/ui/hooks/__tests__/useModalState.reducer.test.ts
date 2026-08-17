@@ -57,7 +57,7 @@ describe('modalReducer — mutual exclusion', () => {
 describe('modalReducer — layered pairs', () => {
   it('rewindOptions layers on rewind; both resolve; closing options keeps rewind', () => {
     const opened = run(
-      { type: 'upsert', entry: { kind: 'rewind', request: { requestId: 'r1', userMessagesCount: 3, selectedIndex: 2 } } },
+      { type: 'upsert', entry: { kind: 'rewind', request: { requestId: 'r1', targets: [], selectedIndex: 2 } } },
       {
         type: 'pushLayer',
         entry: {
@@ -171,7 +171,7 @@ describe('modalReducer — tool-form queue', () => {
 describe('modalReducer — clearTransient', () => {
   it('removes permission/toolForm/planApproval, resets model loading, keeps user-driven modals', () => {
     let stack = run(
-      { type: 'upsert', entry: { kind: 'rewind', request: { requestId: 'r1', userMessagesCount: 1, selectedIndex: 0 } } },
+      { type: 'upsert', entry: { kind: 'rewind', request: { requestId: 'r1', targets: [], selectedIndex: 0 } } },
       { type: 'openExclusive', entry: { kind: 'model', request: modelReq(), selectedIndex: 0, loading: true } }
     );
     // model open replaced rewind (exclusive) — re-add rewind as a layered base for the assertion via a fresh build:

@@ -128,8 +128,9 @@ describe('ConversationCompactor', () => {
   it('compacts completed work inside a long unattended user turn at a safe tool boundary', async () => {
     const messages = toolTurn(8, 520);
     const manager = new ConversationManager({ initialMessages: messages });
+    const tokens = new TokenManager(4096);
     const compactor = new ConversationCompactor(
-      chatClient(), manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+      chatClient(), manager, tokens, new ActivityStream(), vi.fn().mockResolvedValue(true),
     );
 
     const compacted = await compactor.checkAndPerformAutoCompaction({ ...context(), phase: 'mid-turn' });
@@ -146,6 +147,9 @@ describe('ConversationCompactor', () => {
     expect(checkpoint?.trigger).toBe('automatic');
     expect(checkpoint?.phase).toBe('mid-turn');
     expect(checkpoint?.source.messageIds).toContain('request');
+    // 15% of a 4096-token window must remain between the compacted result and
+    // the automatic trigger, preventing another compaction after a few small messages.
+    expect(compactor.budget(context()).triggerBudget - tokens.getCurrentTokenCount()).toBeGreaterThanOrEqual(614);
   });
 
   it('checkpoints an oversized completed tool exchange with no raw tail', async () => {

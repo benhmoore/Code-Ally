@@ -240,6 +240,84 @@ export function renderCheckpointForModel(state: SemanticCheckpointStateV1): stri
   ].join('\n');
 }
 
+/**
+ * Deterministically reduce a semantic checkpoint to a model-message token
+ * budget. Entry-count schema limits alone are insufficient: a valid checkpoint
+ * can still contain many multi-thousand-character facts and leave no useful
+ * headroom after compaction.
+ */
+export function fitSemanticCheckpointToTokenBudget(
+  state: SemanticCheckpointStateV1,
+  maxTokens: number,
+  estimateTokens: (text: string) => number,
+): SemanticCheckpointStateV1 {
+  const fitted = structuredClone(state);
+  const measure = () => estimateTokens(renderCheckpointForModel(fitted));
+  if (measure() <= maxTokens) return fitted;
+
+  const removalOrder: Array<keyof Pick<SemanticCheckpointStateV1,
+    'completedWork' | 'durableFacts' | 'decisions' | 'userConstraints' |
+    'unresolvedQuestions' | 'blockers' | 'activeWork' | 'nextActions'>> = [
+      'completedWork',
+      'durableFacts',
+      'decisions',
+      'userConstraints',
+      'unresolvedQuestions',
+      'blockers',
+      'activeWork',
+      'nextActions',
+    ];
+  const minimumEntries: Record<(typeof removalOrder)[number], number> = {
+    completedWork: 2,
+    durableFacts: 2,
+    decisions: 1,
+    userConstraints: 1,
+    unresolvedQuestions: 1,
+    blockers: 1,
+    activeWork: 1,
+    nextActions: 1,
+  };
+
+  // Artifacts are useful references but cheap to recover from the repository.
+  while (measure() > maxTokens && fitted.artifacts.length > 8) fitted.artifacts.shift();
+
+  let removed = true;
+  while (measure() > maxTokens && removed) {
+    removed = false;
+    for (const key of removalOrder) {
+      if (fitted[key].length > minimumEntries[key]) {
+        fitted[key].shift();
+        removed = true;
+        if (measure() <= maxTokens) break;
+      }
+    }
+  }
+
+  const truncate = (limit: number) => {
+    const trimFact = (item: SemanticFact) => {
+      item.text = item.text.slice(0, limit);
+      if ('rationale' in item && typeof item.rationale === 'string') item.rationale = item.rationale.slice(0, limit / 2);
+      if ('exactError' in item && typeof item.exactError === 'string') item.exactError = item.exactError.slice(0, limit);
+    };
+    if (fitted.objective) trimFact(fitted.objective);
+    if (fitted.currentRequest) trimFact(fitted.currentRequest);
+    for (const key of STATE_ARRAY_KEYS) fitted[key].forEach(trimFact as any);
+    fitted.artifacts.forEach(artifact => { artifact.reason = artifact.reason.slice(0, Math.max(80, limit / 2)); });
+  };
+
+  truncate(800);
+  if (measure() > maxTokens) truncate(400);
+
+  // Last resort: keep only the newest fact in each operational category.
+  if (measure() > maxTokens) {
+    for (const key of removalOrder) fitted[key] = fitted[key].slice(-1) as any;
+    fitted.artifacts = fitted.artifacts.slice(-3);
+    truncate(240);
+  }
+
+  return fitted;
+}
+
 export const CHECKPOINT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,

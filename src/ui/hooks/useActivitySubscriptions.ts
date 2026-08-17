@@ -1079,7 +1079,7 @@ export const useActivitySubscriptions = (
 
     modal.setRewindRequest({
       requestId,
-      userMessagesCount: -1,
+      targets: null,
       selectedIndex: -1
     });
   });
@@ -1087,7 +1087,7 @@ export const useActivitySubscriptions = (
   // Update rewind request with current state when it's first set
   const setRewindRequest = modal.setRewindRequest;
   useEffect(() => {
-    if (modal.rewindRequest && modal.rewindRequest.userMessagesCount === -1) {
+    if (modal.rewindRequest && modal.rewindRequest.targets === null) {
       // Derived from the agent's history (the array the rewind truncates), not
       // from the React transcript — the two can disagree, and acting on the
       // wrong one reverts the user's files to the wrong point.
@@ -1104,7 +1104,7 @@ export const useActivitySubscriptions = (
 
       setRewindRequest({
         ...modal.rewindRequest,
-        userMessagesCount: selection.userMessagesCount,
+        targets: selection.targets,
         selectedIndex: selection.selectedIndex
       });
     }

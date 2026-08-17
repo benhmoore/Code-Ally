@@ -243,6 +243,8 @@ export class Agent {
     maxToolCalls: AGENT_CONFIG.MAX_TOOL_CALLS_PER_TURN,
   });
   private activeExecutionContext: AgentExecutionContext = {};
+  /** Synchronous, whole-turn admission guard; broader than an in-flight model request. */
+  private turnAdmissionActive = false;
   private nativeCompactionPending = false;
   private lastRequestFunctions: FunctionDefinition[] = [];
 
@@ -753,6 +755,7 @@ export class Agent {
 
     // Reset every per-invocation field (counters, cleanup queue, request flags)
     this.invocationState.reset();
+    this.turnAdmissionActive = false;
     this.toolOrchestrator.resetExploratoryStreak();
 
     // Reset ALL loop detection (text patterns + tool cycle history)
@@ -873,6 +876,35 @@ export class Agent {
    * @returns Promise resolving to the assistant's final response
    */
   async sendMessage(
+    message: string,
+    executionContext?: AgentExecutionContext,
+    images?: string[]
+  ): Promise<string> {
+    if (this.turnAdmissionActive) {
+      throw new Error('Agent is already processing a turn; submit this message as an interjection instead.');
+    }
+
+    // Claim the agent before the first await. Preparation and finalization are
+    // part of the turn too; allowing another sendMessage during either phase
+    // corrupts the shared interruption, context, and lifecycle state.
+    this.turnAdmissionActive = true;
+    this.interruptionManager.reset();
+    this.invocationState.requestInProgress = true;
+    this.invocationState.agentEndEmitted = false;
+
+    try {
+      return await this.executeMessageTurn(message, executionContext, images);
+    } finally {
+      // executeMessageTurn owns normal cleanup. This covers failures during its
+      // preparation phase, before the existing lifecycle try/finally begins.
+      if (this.invocationState.requestInProgress) {
+        this.cleanupRequestState();
+      }
+      this.turnAdmissionActive = false;
+    }
+  }
+
+  private async executeMessageTurn(
     message: string,
     executionContext?: AgentExecutionContext,
     images?: string[]
@@ -1046,11 +1078,6 @@ export class Agent {
     let delegationSucceeded = true;
 
     try {
-      // Reset interrupted flag and mark request in progress
-      this.interruptionManager.reset();
-      this.invocationState.requestInProgress = true;
-      this.invocationState.agentEndEmitted = false;
-
       // Send to LLM and process response
       const response = await this.getLLMResponse({
         parentCallId,
@@ -1060,22 +1087,53 @@ export class Agent {
 
       // Process response (handles both tool calls and text responses)
       // Note: processLLMResponse handles interruptions internally (both cancel and interjection types)
-      const finalResponse = await this.processLLMResponse(response, {
+      const responseContext = {
         parentCallId,
         maxDuration,
         thoroughness,
-      });
+      };
+      let finalResponse = await this.processLLMResponse(response, responseContext);
 
-      await this.adoptPendingNativeCompaction();
+      // Finalization contains awaits (native checkpoint adoption and lifecycle
+      // services). An interjection can arrive during either one. Re-enter the
+      // model loop before ending the turn so that message is never orphaned.
+      const continuePendingInterruption = async (): Promise<boolean> => {
+        if (!this.interruptionManager.isInterrupted()) return false;
+        const cause = this.interruptionManager.getCause();
+        if (cause?.kind === 'user_interjection') {
+          this.interruptionManager.reset();
+          this.loopDetector.resetTextDetectors();
+          const continuation = await this.getLLMResponse(responseContext);
+          finalResponse = await this.processLLMResponse(continuation, responseContext);
+          return true;
+        }
+        if (isRecoverableInterruption(cause)) {
+          finalResponse = await this.continueAfterRecovery(cause, responseContext);
+          return true;
+        }
+        return false;
+      };
 
-      // Execute any pending cleanups before returning
-      this.executePendingCleanups();
+      while (true) {
+        await this.adoptPendingNativeCompaction();
+        if (await continuePendingInterruption()) continue;
+        if (this.interruptionManager.isInterrupted()) {
+          this.turnController.finish('interrupted');
+          return await this.handleInterruption();
+        }
 
-      // Handle post-response lifecycle tasks (idle coordinator, queued cleanups)
-      await this.lifecycleHandler.handlePostResponse(
-        this.conversationManager.getMessages(),
-        (ids) => this.queueCleanup(ids)
-      );
+        this.executePendingCleanups();
+        await this.lifecycleHandler.handlePostResponse(
+          this.conversationManager.getMessages(),
+          (ids) => this.queueCleanup(ids)
+        );
+        if (await continuePendingInterruption()) continue;
+        if (this.interruptionManager.isInterrupted()) {
+          this.turnController.finish('interrupted');
+          return await this.handleInterruption();
+        }
+        break;
+      }
 
       this.emitAgentEnd(false, undefined, finalResponse);
       this.turnController.finish('completed');
@@ -1193,7 +1251,7 @@ export class Agent {
    * @param cause - User action that stopped generation
    */
   interrupt(cause: UserInterruptionCause = { kind: 'user_cancel' }): void {
-    if (this.invocationState.requestInProgress) {
+    if (this.turnAdmissionActive) {
       // Set interruption state and abort this agent's request signal. Because the
       // signal handed to ModelClient.send() is owned by this agent's
       // InterruptionManager, this cancels the in-flight LLM request immediately
@@ -1210,7 +1268,7 @@ export class Agent {
    * Check if a request is currently in progress
    */
   isProcessing(): boolean {
-    return this.invocationState.requestInProgress;
+    return this.turnAdmissionActive;
   }
 
   /**
@@ -2130,7 +2188,7 @@ export class Agent {
    * Check if a request is currently in progress
    */
   isRequestInProgress(): boolean {
-    return this.invocationState.requestInProgress;
+    return this.turnAdmissionActive;
   }
 
   /**

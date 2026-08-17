@@ -96,7 +96,8 @@ export interface RewindReadiness {
 
 /** Initial selection state for the rewind selector */
 export interface RewindSelection {
-  userMessagesCount: number;
+  /** Exact agent-transcript messages presented to the user, in display order. */
+  targets: Message[];
   selectedIndex: number;
 }
 
@@ -325,7 +326,7 @@ export class UndoCoordinator {
     }
     this.pendingRewindTargets = identifyTargets(userMessages);
     return {
-      userMessagesCount: userMessages.length,
+      targets: [...userMessages],
       selectedIndex: Math.max(0, userMessages.length - 1),
     };
   }

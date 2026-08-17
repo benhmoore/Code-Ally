@@ -13,6 +13,7 @@ import {
   parseSemanticCheckpoint,
   mergeSemanticCheckpoint,
   renderCheckpointForModel,
+  fitSemanticCheckpointToTokenBudget,
 } from './compaction/CheckpointReducer.js';
 import type {
   CompactionPhase,
@@ -26,6 +27,7 @@ import type {
 const MAX_REDUCER_INPUT_RATIO = 0.6;
 const RETAINED_TAIL_RATIO = 0.35;
 const MIN_RECLAIMED_TOKENS = 256;
+const MIN_POST_COMPACTION_HEADROOM_RATIO = 0.15;
 const CHECKPOINT_COMMIT_DELAYS_MS = [0, 50, 150] as const;
 
 export interface CompactionContext {
@@ -165,11 +167,31 @@ export class ConversationCompactor {
         }, budget);
         candidateTokens = await this.countCandidate(candidate, context);
       }
-      const insufficientReclaim = () => oldTokenCount >= budget.triggerBudget
-        && oldTokenCount - candidateTokens < MIN_RECLAIMED_TOKENS;
+      // Entry-count schema limits do not guarantee a small checkpoint. Token-fit
+      // the semantic state before sacrificing a useful recent raw tail.
       const hasRetainedTail = () => candidate.replacement.some(message =>
         message.role !== 'system' && !message.metadata?.isConversationCheckpoint);
-      if ((candidateTokens >= budget.triggerBudget || insufficientReclaim())
+      if (candidateTokens > budget.targetBudget) {
+        candidate = this.fitCandidateCheckpoint(candidate, context, budget.targetBudget);
+        candidateTokens = await this.countCandidate(candidate, context);
+      }
+
+      const minimumHeadroom = Math.max(
+        512,
+        Math.floor(budget.contextWindow * MIN_POST_COMPACTION_HEADROOM_RATIO),
+      );
+      const maximumPostCompactionBudget = Math.max(
+        1,
+        Math.min(
+          budget.triggerBudget - 1,
+          Math.max(budget.targetBudget, budget.triggerBudget - minimumHeadroom),
+        ),
+      );
+      const insufficientReclaim = () => oldTokenCount >= budget.triggerBudget
+        && oldTokenCount - candidateTokens < MIN_RECLAIMED_TOKENS;
+      // If fitting the checkpoint is not enough, drop the raw tail as a bounded
+      // fallback. This is allowed only when needed to preserve real headroom.
+      if ((candidateTokens > maximumPostCompactionBudget || insufficientReclaim())
         && hasRetainedTail()) {
         candidate = await this.buildCandidate(context, {
           ...options,
@@ -177,12 +199,13 @@ export class ConversationCompactor {
           forceNoRetainedTail: true,
           providerStateOverride: candidate.checkpoint.providerState,
         }, budget);
+        candidate = this.fitCandidateCheckpoint(candidate, context, budget.targetBudget);
         candidateTokens = await this.countCandidate(candidate, context);
       }
       candidate.checkpoint.budget.after = candidateTokens;
-      if (candidateTokens >= budget.triggerBudget) {
+      if (candidateTokens > maximumPostCompactionBudget) {
         throw new Error(
-          `Compaction candidate is still unsafe (${candidateTokens} tokens; safe input budget ${budget.triggerBudget}).`,
+          `Compaction candidate left insufficient headroom (${candidateTokens} tokens; maximum post-compaction budget ${maximumPostCompactionBudget}).`,
         );
       }
       if (insufficientReclaim()) {
@@ -325,6 +348,37 @@ export class ConversationCompactor {
     }
     return this.tokenManager.estimateMessagesTokens(candidate.replacement)
       + this.estimateRequestOverhead(context);
+  }
+
+  private fitCandidateCheckpoint(
+    candidate: Candidate,
+    context: CompactionContext,
+    totalTargetBudget: number,
+  ): Candidate {
+    const checkpointIndex = candidate.replacement.findIndex(message => message.metadata?.isConversationCheckpoint);
+    if (checkpointIndex < 0) return candidate;
+
+    const withoutCheckpoint = candidate.replacement.filter((_, index) => index !== checkpointIndex);
+    const fixedTokens = this.tokenManager.estimateMessagesTokens(withoutCheckpoint)
+      + this.estimateRequestOverhead(context);
+    const checkpointBudget = Math.max(128, totalTargetBudget - fixedTokens);
+    const semanticState = fitSemanticCheckpointToTokenBudget(
+      candidate.checkpoint.semanticState,
+      checkpointBudget,
+      text => this.tokenManager.estimateTokens(text),
+    );
+    const checkpointMessage: Message = {
+      ...candidate.replacement[checkpointIndex]!,
+      content: renderCheckpointForModel(semanticState),
+    };
+    const replacement = [...candidate.replacement];
+    replacement[checkpointIndex] = checkpointMessage;
+    const checkpoint: ConversationCheckpointV1 = {
+      ...candidate.checkpoint,
+      semanticState,
+      replacementMessages: replacement.filter(message => message.role !== 'system'),
+    };
+    return { checkpoint, replacement };
   }
 
   private async commitWithRetry(

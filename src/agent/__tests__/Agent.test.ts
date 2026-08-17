@@ -250,6 +250,51 @@ describe('Agent - Interruption Handling', () => {
     });
   });
 
+  describe('Turn admission', () => {
+    it('claims the whole turn synchronously and rejects concurrent sendMessage calls', async () => {
+      let release!: (response: LLMResponse) => void;
+      mockModelClient.send = vi.fn(() => new Promise<LLMResponse>(resolve => {
+        release = resolve;
+      }));
+
+      const first = agent.sendMessage('first');
+
+      expect(agent.isProcessing()).toBe(true);
+      await expect(agent.sendMessage('second')).rejects.toThrow(/already processing a turn/i);
+
+      await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledOnce());
+      release({ content: 'done', tool_calls: [], interrupted: false });
+      await expect(first).resolves.toBe('done');
+      expect(agent.isProcessing()).toBe(false);
+    });
+
+    it('continues a user interjection that arrives during finalization', async () => {
+      let releaseFinalization!: () => void;
+      const finalizationGate = new Promise<void>(resolve => {
+        releaseFinalization = resolve;
+      });
+      (agent as any).lifecycleHandler.handlePostResponse = vi.fn()
+        .mockImplementationOnce(() => finalizationGate)
+        .mockResolvedValue(undefined);
+      mockModelClient.send = vi.fn()
+        .mockResolvedValueOnce({ content: 'initial', tool_calls: [], interrupted: false })
+        .mockResolvedValueOnce({ content: 'after interjection', tool_calls: [], interrupted: false });
+
+      const result = agent.sendMessage('start');
+      await vi.waitFor(() => {
+        expect((agent as any).lifecycleHandler.handlePostResponse).toHaveBeenCalledOnce();
+      });
+
+      agent.addUserInterjection('change direction');
+      agent.interrupt({ kind: 'user_interjection' });
+      releaseFinalization();
+
+      await expect(result).resolves.toBe('after interjection');
+      expect(mockModelClient.send).toHaveBeenCalledTimes(2);
+      expect(agent.isProcessing()).toBe(false);
+    });
+  });
+
   describe('Isolated Context Tracking', () => {
     it('should have its own TokenManager instance', () => {
       const tokenManager = agent.getTokenManager();

@@ -294,6 +294,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [completions, setCompletions] = useState<Completion[]>([]);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [showCompletions, setShowCompletions] = useState(false);
+  const completionRequestIdRef = useRef(0);
 
   // Debounce timer for completions
 
@@ -330,17 +331,19 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   }, [bufferValue]);
 
   const updateCompletions = React.useCallback(async () => {
-    if (!completionProvider || !buffer.trim()) {
+    const requestId = ++completionRequestIdRef.current;
+    if (!completionProvider || !buffer.trim() || historyIndex !== -1) {
       setCompletions([]);
       setShowCompletions(false);
       return;
     }
 
     const results = await completionProvider.getCompletions(buffer, cursorPosition);
+    if (requestId !== completionRequestIdRef.current) return;
     setCompletions(results);
     setCompletionIndex(0);
     setShowCompletions(results.length > 0);
-  }, [completionProvider, buffer, cursorPosition]);
+  }, [completionProvider, buffer, cursorPosition, historyIndex]);
 
   /**
    * Debounced completion update
@@ -383,6 +386,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       onPromptPrefilledClear?.();
     }
 
+    completionRequestIdRef.current++;
     const application = applyCompletionToInput(buffer, cursorPosition, completion, options);
 
     updateBuffer(application.nextValue);
@@ -409,6 +413,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const navigateHistoryPrevious = () => {
     if (!commandHistory) return;
 
+    completionRequestIdRef.current++;
+
     // First time navigating - save current buffer and cursor position
     if (historyIndex === -1) {
       setHistoryBuffer(buffer);
@@ -432,6 +438,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    */
   const navigateHistoryNext = () => {
     if (!commandHistory || historyIndex === -1) return;
+
+    completionRequestIdRef.current++;
 
     const result = commandHistory.getNext(historyIndex);
     if (result) {
@@ -488,6 +496,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    * Submit input
    */
   const resetInputState = () => {
+    completionRequestIdRef.current++;
     updateBuffer('');
     setCursorPosition(0);
     setHistoryIndex(-1);
@@ -590,6 +599,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     if (promptPrefilled) {
       onPromptPrefilledClear?.();
     }
+    completionRequestIdRef.current++;
     updateBuffer(newValue);
     setHistoryIndex(-1); // Reset history when editing
   };
@@ -598,6 +608,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    * Handle cursor changes from TextInput
    */
   const handleCursorChange = (newPosition: number) => {
+    completionRequestIdRef.current++;
     setCursorPosition(newPosition);
   };
 
@@ -1491,6 +1502,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       if (key.upArrow && !showCompletions && textInputActive) {
+        if (historyIndex !== -1) {
+          navigateHistoryPrevious();
+          return;
+        }
         // Check if we're at the start of the first line - then navigate history
         const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
         if (cursorInfo.line === 0 && cursorPosition === 0) {
@@ -1506,6 +1521,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       if (key.downArrow && !showCompletions && textInputActive) {
+        if (historyIndex !== -1) {
+          navigateHistoryNext();
+          return;
+        }
         // Check if we're at the end of the last line - then navigate history
         const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
         const lines = buffer.split('\n');
@@ -1553,6 +1572,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         // First priority: dismiss completions if showing
         if (showCompletions) {
           processingEscapeRef.current = true;
+          completionRequestIdRef.current++;
           setShowCompletions(false);
           setCompletions([]);
           // Reset after a microtask to allow state updates to complete
@@ -1681,6 +1701,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         onDirectoriesPasted={handleDirectoriesPasted}
         onCtrlC={handleCtrlC}
         isActive={textInputActive}
+        suppressVerticalNavigation={showCompletions || historyIndex !== -1}
         multiline={true}
         placeholder={placeholder}
         bordered={false}

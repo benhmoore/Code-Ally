@@ -46,6 +46,11 @@ export interface TextInputProps {
   onCtrlC?: () => void;
   /** Whether input is currently active/enabled */
   isActive?: boolean;
+  /**
+   * Disable Up/Down cursor movement when a parent surface owns vertical keys
+   * (for example command history or a completion menu).
+   */
+  suppressVerticalNavigation?: boolean;
   /** Enable multiline mode (Shift+Enter for newline, Enter submits) */
   multiline?: boolean;
   /** Placeholder text when empty */
@@ -101,6 +106,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   onDirectoriesPasted,
   onCtrlC,
   isActive = true,
+  suppressVerticalNavigation = false,
   multiline = false,
   placeholder = 'Type here...',
   bordered = false,
@@ -532,7 +538,7 @@ export const TextInput: React.FC<TextInputProps> = ({
 
       // ===== Arrow Keys (Up/Down) for visual line navigation =====
       // Navigate between visual lines (wrapped text), not just logical lines
-      if (multiline && key.upArrow) {
+      if (multiline && key.upArrow && !suppressVerticalNavigation) {
         const firstLineWidth = hasPrompt ? contentWidth - promptWidth : contentWidth;
         const newPos = navigateVisualLine(currentValue, currentCursor, -1, contentWidth, firstLineWidth);
         if (newPos !== null) {
@@ -541,7 +547,7 @@ export const TextInput: React.FC<TextInputProps> = ({
         return;
       }
 
-      if (multiline && key.downArrow) {
+      if (multiline && key.downArrow && !suppressVerticalNavigation) {
         const firstLineWidth = hasPrompt ? contentWidth - promptWidth : contentWidth;
         const newPos = navigateVisualLine(currentValue, currentCursor, 1, contentWidth, firstLineWidth);
         if (newPos !== null) {
