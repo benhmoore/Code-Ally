@@ -6,6 +6,7 @@ import { ActivityEventType, type FunctionDefinition, type Message } from '../typ
 import { logger } from '../services/Logger.js';
 import { findSafeSplitIndex } from '../utils/conversationRecovery.js';
 import { ContextBudgetPlanner } from './compaction/ContextBudgetPlanner.js';
+import { evictStaleToolOutputs } from './compaction/ToolOutputEviction.js';
 import {
   checkpointSourceDigest,
   CHECKPOINT_JSON_SCHEMA,
@@ -32,6 +33,12 @@ const MIN_RECLAIMED_USABLE_RATIO = 0.05;
 const MIN_RECLAIMED_TOKENS = 256;
 /** Guaranteed free runway after compaction, as a fraction of the usable budget. */
 const MIN_POST_COMPACTION_HEADROOM_RATIO = 0.35;
+/**
+ * Runway eviction must restore to skip checkpointing this round. Lower than the
+ * checkpoint guarantee because eviction is free (no model calls, no generation),
+ * so a shorter runway between eviction rounds costs little.
+ */
+const EVICTION_SKIP_HEADROOM_RATIO = 0.25;
 /**
  * Below this much usable conversation budget, compaction is arithmetic-proof
  * impossible to sustain: fail with configuration guidance instead of thrashing.
@@ -94,6 +101,7 @@ export interface CompactionDebugState {
   reducerInputTokens?: number;
   degradedReason?: string;
   error?: string;
+  lastEviction?: { at: number; evictedCount: number; reclaimedTokens: number };
 }
 
 export type CheckpointCommitter = (
@@ -109,6 +117,7 @@ export class ConversationCompactor {
   private operation: Promise<AppliedCompactionResult> | null = null;
   private generation = 0;
   private lastCheckpointSourceCount = 0;
+  private lastEviction?: { at: number; evictedCount: number; reclaimedTokens: number };
   private readonly planner: ContextBudgetPlanner;
   private debugState: Omit<CompactionDebugState, 'elapsedMs'> = {
     active: false,
@@ -145,6 +154,7 @@ export class ConversationCompactor {
     return {
       ...state,
       elapsedMs: state.startedAt ? Math.max(0, end - state.startedAt) : 0,
+      ...(this.lastEviction ? { lastEviction: { ...this.lastEviction } } : {}),
     };
   }
 
@@ -155,6 +165,37 @@ export class ConversationCompactor {
     // Hysteresis: a committed checkpoint cannot immediately compact itself.
     const sourceCount = this.conversationManager.getTranscript().length;
     if (sourceCount === this.lastCheckpointSourceCount) return false;
+
+    // First-line reclaim: evict stale bulky tool outputs in place before
+    // spending a checkpoint generation. On small windows this is what breaks
+    // the read → compact → re-read loop: old payloads (re-runnable) go, the
+    // recent working set and the conversation's structure stay. Only when
+    // eviction cannot clear the trigger does full checkpointing run.
+    const eviction = evictStaleToolOutputs(
+      this.conversationManager.getMessages(),
+      message => this.tokenManager.estimateMessageTokens(message),
+    );
+    if (eviction.evictedCount > 0) {
+      this.conversationManager.replaceActiveMessages(eviction.messages);
+      this.tokenManager.resetContextTracking(eviction.messages);
+      this.lastEviction = {
+        at: Date.now(),
+        evictedCount: eviction.evictedCount,
+        reclaimedTokens: eviction.reclaimedTokens,
+      };
+      logger.info(
+        `[COMPACTION] Evicted ${eviction.evictedCount} stale tool output(s) `
+        + `(~${eviction.reclaimedTokens} tokens) before checkpointing`,
+      );
+      const budgetAfterEviction = await this.resolveBudget(context);
+      const runway = budgetAfterEviction.triggerBudget
+        - (budgetAfterEviction.exactInput ?? budgetAfterEviction.estimatedInput);
+      // Barely clearing the trigger just reschedules the thrash for the next
+      // message; skip checkpointing only when eviction restored real runway.
+      if (runway >= Math.floor(budgetAfterEviction.usableBudget * EVICTION_SKIP_HEADROOM_RATIO)) {
+        return true;
+      }
+    }
 
     await this.compactAndApply(context, {
       trigger: 'automatic',
@@ -502,17 +543,36 @@ export class ConversationCompactor {
       .filter(message => !message.metadata?.isConversationCheckpoint);
     if (domain.length < 2) throw new Error('There is not enough completed conversation state to checkpoint.');
 
+    const previous = this.conversationManager.getCheckpoint();
+
+    // Adaptive tail (deterministic path only): the fixed tail share assumes a
+    // worst-case checkpoint, but the extractive checkpoint is usually far
+    // smaller. Measure it and hand the leftover domain budget to the raw tail
+    // so a just-completed read survives checkpointing whenever it can. The
+    // model-reducer path keeps the fixed share — probing it would double the
+    // reduction cost. Probing the full domain over-estimates the final
+    // checkpoint (the retained tail's messages drop out of it), which only
+    // errs toward a smaller, safer tail.
+    let tailBudgetOverride: number | undefined;
+    if (options.forceExtractive && options.forceNoRetainedTail !== true) {
+      const probe = extractSemanticCheckpoint(domain, previous?.semanticState);
+      const probeTokens = this.tokenManager.estimateTokens(renderCheckpointForModel(probe));
+      tailBudgetOverride = Math.max(
+        budget.retainedTailBudget,
+        budget.domainBudget - probeTokens - 128,
+      );
+    }
     const split = this.retainedSplit(
       domain,
       budget,
       options.phase ?? context.phase ?? 'manual',
       options.forceNoRetainedTail === true,
+      tailBudgetOverride,
     );
     const delta = domain.slice(0, split);
     const retained = domain.slice(split);
     if (delta.length === 0) throw new Error('The current turn occupies the entire safe context window; nothing can be compacted.');
 
-    const previous = this.conversationManager.getCheckpoint();
     const deltaIds = delta.map(message => message.id).filter((id): id is string => Boolean(id));
     const previousSemanticIds = previous
       ? this.collectSemanticSourceIds(previous.semanticState)
@@ -631,11 +691,13 @@ export class ConversationCompactor {
     budget: ContextBudgetSnapshot,
     phase: CompactionPhase,
     forceNoRetainedTail: boolean,
+    tailBudgetOverride?: number,
   ): number {
     // The tail may occupy only its share of the post-compaction domain budget;
     // the remainder is guaranteed checkpoint room. (System-prompt tokens live in
-    // the fixed overhead, already excluded from the domain budget.)
-    const retainedBudget = Math.max(1, budget.retainedTailBudget);
+    // the fixed overhead, already excluded from the domain budget.) The caller
+    // may widen the tail when it has measured the actual checkpoint cost.
+    const retainedBudget = Math.max(1, tailBudgetOverride ?? budget.retainedTailBudget);
     if (forceNoRetainedTail) return messages.length;
 
     // Before the first model call for a new request, preserve that request

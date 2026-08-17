@@ -64,6 +64,13 @@ export interface MessageMetadata {
   partial?: boolean;
   /** Internal, model-facing checkpoint handoff. Never shown in the transcript. */
   isConversationCheckpoint?: boolean;
+  /**
+   * The bulky payload of this tool result was replaced with a stub in the
+   * active window to reclaim context (the transcript keeps the original).
+   * Consumers that promise "content is still in context" (read deduplication)
+   * must treat an evicted message as absent.
+   */
+  contentEvicted?: boolean;
   /** File paths, images, and directories that were mentioned using '@' completion in this message */
   mentions?: {
     files?: string[];

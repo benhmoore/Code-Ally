@@ -513,7 +513,9 @@ For multi-file exploration, prefer explore() to preserve context.`;
     if (!conversation) return true;
     if (!cached.toolCallId) return false;
     return conversation.getMessages().some(message =>
-      message.role === 'tool' && message.tool_call_id === cached.toolCallId);
+      message.role === 'tool'
+      && message.tool_call_id === cached.toolCallId
+      && !message.metadata?.contentEvicted);
   }
 
   /**
