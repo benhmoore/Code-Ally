@@ -90,6 +90,10 @@ export function extractSemanticCheckpoint(
     if (message.role === 'assistant' && content && !message.tool_calls?.length) {
       state.completedWork.push(fact(content.slice(0, 1200), id));
     }
+    if (message.role === 'tool' && content) {
+      const label = message.name ? `Tool result (${message.name})` : 'Tool result';
+      state.activeWork.push(fact(`${label}: ${content.slice(0, 1800)}`, id));
+    }
     if (message.tool_calls) {
       for (const call of message.tool_calls) {
         state.artifacts.push(...artifactFromCall(call, id));

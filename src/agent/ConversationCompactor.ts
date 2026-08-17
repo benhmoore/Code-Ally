@@ -25,6 +25,7 @@ import type {
 const MAX_REDUCER_INPUT_RATIO = 0.6;
 const RETAINED_TAIL_RATIO = 0.35;
 const MIN_RECLAIMED_TOKENS = 256;
+const CHECKPOINT_COMMIT_DELAYS_MS = [0, 50, 150] as const;
 
 export interface CompactionContext {
   instanceId: string;
@@ -47,6 +48,8 @@ export interface CompactionOptions {
   providerStateOverride?: ProviderCheckpointState;
   /** Internal bounded fallback when a model-authored checkpoint misses target. */
   forceExtractive?: boolean;
+  /** Internal last resort: checkpoint the complete domain and retain no raw tail. */
+  forceNoRetainedTail?: boolean;
 }
 
 export interface AppliedCompactionResult {
@@ -158,17 +161,35 @@ export class ConversationCompactor {
         }, budget);
         candidateTokens = await this.countCandidate(candidate, context);
       }
+      const insufficientReclaim = () => oldTokenCount >= budget.triggerBudget
+        && oldTokenCount - candidateTokens < MIN_RECLAIMED_TOKENS;
+      const hasRetainedTail = () => candidate.replacement.some(message =>
+        message.role !== 'system' && !message.metadata?.isConversationCheckpoint);
+      if ((candidateTokens >= budget.triggerBudget || insufficientReclaim())
+        && hasRetainedTail()) {
+        candidate = await this.buildCandidate(context, {
+          ...options,
+          forceExtractive: true,
+          forceNoRetainedTail: true,
+          providerStateOverride: candidate.checkpoint.providerState,
+        }, budget);
+        candidateTokens = await this.countCandidate(candidate, context);
+      }
       candidate.checkpoint.budget.after = candidateTokens;
       if (candidateTokens >= budget.triggerBudget) {
         throw new Error(
           `Compaction candidate is still unsafe (${candidateTokens} tokens; safe input budget ${budget.triggerBudget}).`,
         );
       }
-      if (oldTokenCount - candidateTokens < MIN_RECLAIMED_TOKENS && oldTokenCount >= budget.triggerBudget) {
+      if (insufficientReclaim()) {
         throw new Error('Compaction candidate did not reclaim enough context to continue safely.');
       }
 
-      const committed = await this.commitCheckpoint(candidate.replacement, candidate.checkpoint);
+      const committed = await this.commitWithRetry(
+        candidate.replacement,
+        candidate.checkpoint,
+        context.signal,
+      );
       if (!committed) throw new Error('Checkpoint persistence failed; active context was left unchanged.');
 
       this.conversationManager.replaceActiveMessages(candidate.replacement);
@@ -302,6 +323,25 @@ export class ConversationCompactor {
       + this.estimateRequestOverhead(context);
   }
 
+  private async commitWithRetry(
+    messages: readonly Message[],
+    checkpoint: ConversationCheckpointV1,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < CHECKPOINT_COMMIT_DELAYS_MS.length; attempt++) {
+      if (signal.aborted) throw new Error('Compaction interrupted before checkpoint commit');
+      const delay = CHECKPOINT_COMMIT_DELAYS_MS[attempt] ?? 0;
+      if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+      try {
+        if (await this.commitCheckpoint(messages, checkpoint)) return true;
+      } catch (error) {
+        if (attempt === CHECKPOINT_COMMIT_DELAYS_MS.length - 1) throw error;
+        logger.warn(`[COMPACTION] Checkpoint commit attempt ${attempt + 1} failed; retrying:`, error);
+      }
+    }
+    return false;
+  }
+
   private async buildCandidate(
     context: CompactionContext,
     options: CompactionOptions,
@@ -314,7 +354,13 @@ export class ConversationCompactor {
       .filter(message => !message.metadata?.isConversationCheckpoint);
     if (domain.length < 2) throw new Error('There is not enough completed conversation state to checkpoint.');
 
-    const split = this.retainedSplit(domain, budget.targetBudget, system);
+    const split = this.retainedSplit(
+      domain,
+      budget.targetBudget,
+      system,
+      options.phase ?? context.phase ?? 'manual',
+      options.forceNoRetainedTail === true,
+    );
     const delta = domain.slice(0, split);
     const retained = domain.slice(split);
     if (delta.length === 0) throw new Error('The current turn occupies the entire safe context window; nothing can be compacted.');
@@ -328,7 +374,11 @@ export class ConversationCompactor {
     let degradedReason: string | undefined;
 
     try {
-      if (options.forceExtractive) throw new Error('Structured checkpoint exceeded target budget');
+      if (options.forceExtractive) {
+        throw new Error(options.forceNoRetainedTail
+          ? 'Checkpoint required a fully reduced retained tail'
+          : 'Structured checkpoint exceeded target budget');
+      }
       semanticState = await this.reduceStructured(
         delta,
         previous?.semanticState ?? null,
@@ -387,7 +437,7 @@ export class ConversationCompactor {
       generation,
       createdAt: new Date().toISOString(),
       trigger: options.trigger ?? 'manual',
-      phase: options.phase ?? 'manual',
+      phase: options.phase ?? context.phase ?? 'manual',
       strategy,
       portability,
       provider: this.modelClient.providerId,
@@ -422,19 +472,42 @@ export class ConversationCompactor {
     messages: readonly Message[],
     targetBudget: number,
     system: Message | null,
+    phase: CompactionPhase,
+    forceNoRetainedTail: boolean,
   ): number {
-    const lastUser = messages.map(message => message.role).lastIndexOf('user');
-    const candidate = findSafeSplitIndex([...messages], lastUser >= 0 ? lastUser : messages.length);
     const retainedBudget = Math.max(
       1,
       Math.min(Math.floor(this.tokenManager.getContextSize() * RETAINED_TAIL_RATIO), targetBudget)
         - (system ? this.tokenManager.estimateMessageTokens(system) : 0),
     );
-    const tail = messages.slice(candidate);
-    if (this.tokenManager.estimateMessagesTokens(tail) > retainedBudget) {
-      throw new Error('The current user turn is too large to retain safely; reduce the input or increase the model context window.');
+    if (forceNoRetainedTail) return messages.length;
+
+    // Before the first model call for a new request, preserve that request
+    // verbatim. At every other phase, completed work inside the active request
+    // is compactable and we retain only the largest recent legal suffix.
+    if (phase === 'pre-turn' && messages.at(-1)?.role === 'user') {
+      const lastUser = messages.length - 1;
+      const candidate = findSafeSplitIndex([...messages], lastUser);
+      if (this.tokenManager.estimateMessagesTokens(messages.slice(candidate)) > retainedBudget) {
+        throw new Error('The latest user message alone exceeds the safe retained-input budget; reduce the input or increase the model context window.');
+      }
+      return candidate;
     }
-    return candidate;
+
+    let best = messages.length;
+    let probe = messages.length - 1;
+    while (probe > 0) {
+      const candidate = findSafeSplitIndex([...messages], probe);
+      if (candidate <= 0) break;
+      if (candidate >= best) {
+        probe--;
+        continue;
+      }
+      if (this.tokenManager.estimateMessagesTokens(messages.slice(candidate)) > retainedBudget) break;
+      best = candidate;
+      probe = candidate - 1;
+    }
+    return best;
   }
 
   private async reduceStructured(
@@ -450,6 +523,9 @@ export class ConversationCompactor {
     let used = 0;
     for (const message of delta) {
       const tokens = this.tokenManager.estimateMessageTokens(message);
+      if (tokens > maxTokens) {
+        throw new Error('A checkpoint source message exceeds the reducer input budget');
+      }
       if (chunk.length > 0 && used + tokens > maxTokens) {
         chunks.push(chunk);
         chunk = [];

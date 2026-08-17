@@ -2059,7 +2059,7 @@ export class Agent {
       signal: this.interruptionManager.beginRequest(),
       functions,
       modelMaxOutput: this.appConfig.max_tokens,
-      phase: lastRole === 'tool' ? 'mid-turn' : 'pre-turn',
+      phase: lastRole === 'user' ? 'pre-turn' : 'mid-turn',
     });
 
     if (compacted) {
