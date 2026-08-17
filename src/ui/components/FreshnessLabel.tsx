@@ -28,9 +28,15 @@ const BREATH_FRAMES = 8;
 
 export type FreshnessTone = 'fresh' | 'slowing' | 'stale-in' | 'stale-out';
 
-/** Exported for tests: the tone this silence and animation frame produce. */
-export function freshnessTone(silenceMs: number | null, frame: number): FreshnessTone {
-  if (silenceMs === null || silenceMs < FRESH_MS) return 'fresh';
+/**
+ * Exported for tests: the tone this silence and animation frame produce.
+ *
+ * `dimmed` floors the ramp one step below full strength, for the phase where the
+ * request is out and nothing has come back: no output has been produced, so
+ * rendering the label at full strength would overstate what is happening.
+ */
+export function freshnessTone(silenceMs: number | null, frame: number, dimmed = false): FreshnessTone {
+  if (silenceMs === null || silenceMs < FRESH_MS) return dimmed ? 'slowing' : 'fresh';
   if (silenceMs < SLOWING_MS) return 'slowing';
   if (silenceMs < STALE_MS) return 'stale-in';
   return Math.floor(frame / BREATH_FRAMES) % 2 === 0 ? 'stale-in' : 'stale-out';
@@ -43,21 +49,23 @@ export interface FreshnessLabelProps {
   getSilenceMs: () => number | null;
   /** Overrides the ramp entirely (e.g. the error color while cancelling). */
   color?: string;
+  /** Hold the label at the dimmed level even when the silence is short. */
+  dimmed?: boolean;
 }
 
-export const FreshnessLabel: React.FC<FreshnessLabelProps> = ({ text, getSilenceMs, color }) => {
+export const FreshnessLabel: React.FC<FreshnessLabelProps> = ({ text, getSilenceMs, color, dimmed = false }) => {
   const ticker = AnimationTicker.getInstance();
   const [tone, setTone] = useState<FreshnessTone>('fresh');
 
   useEffect(() => {
     const sample = () => {
-      const next = freshnessTone(getSilenceMs(), ticker.getFrame());
+      const next = freshnessTone(getSilenceMs(), ticker.getFrame(), dimmed);
       // Only a tone change re-renders; the tick itself is not a render trigger.
       setTone(prev => (prev === next ? prev : next));
     };
     sample();
     return ticker.subscribe(sample);
-  }, [ticker, getSilenceMs]);
+  }, [ticker, getSilenceMs, dimmed]);
 
   if (color) {
     return <Text color={color}> {text}</Text>;

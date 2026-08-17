@@ -31,6 +31,15 @@ describe('freshnessTone', () => {
     expect(tones).toEqual(['stale-in', 'stale-out', 'stale-in', 'stale-out']);
   });
 
+  test('never reads as fresh while nothing has come back', () => {
+    // The waiting phase: no output produced, so full strength would overstate it.
+    expect(freshnessTone(0, 0, true)).toBe('slowing');
+    expect(freshnessTone(null, 0, true)).toBe('slowing');
+    // Past the first threshold the ramp is unchanged.
+    expect(freshnessTone(20_000, 0, true)).toBe('stale-in');
+    expect(freshnessTone(60_000, 8, true)).toBe('stale-out');
+  });
+
   test('holds a steady tone within one breath phase', () => {
     const phase = [0, 3, 7].map(frame => freshnessTone(60_000, frame));
     expect(new Set(phase).size).toBe(1);
