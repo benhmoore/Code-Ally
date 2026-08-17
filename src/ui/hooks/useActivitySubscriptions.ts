@@ -24,6 +24,7 @@ import { UI_DELAYS } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
 import { resolveDisplayContent } from '../../utils/toolResultContent.js';
 import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
+import { ThinkingClock } from '../utils/thinkingClock.js';
 
 /**
  * Activity subscriptions state
@@ -76,8 +77,8 @@ export const useActivitySubscriptions = (
   // (e.g. setImmediate) can bail out instead of updating unmounted state.
   const isMountedRef = useRef(true);
 
-  // Track thinking start times (keyed by parentId or 'root' for main agent)
-  const thinkingStartTimes = useRef<Map<string, number>>(new Map());
+  // Tracks what "Thought for Ns" measures (keyed by parentId, 'root' for main)
+  const thinkingClock = useRef<ThinkingClock>(new ThinkingClock());
 
   // Track cancellation state for immediate visual feedback
   const [isCancelling, setIsCancelling] = useState(false);
@@ -396,18 +397,26 @@ export const useActivitySubscriptions = (
     }
   });
 
-  // Thinking start (track start time for duration calculation)
+  /**
+   * Thinking start (tracked for the "Thought for Ns" duration).
+   *
+   * Timed from the first reasoning token, NOT from the "Thinking..." indicator
+   * the agent emits before the request goes out. On a slow local backend the gap
+   * between those two is prefill - dead air where the model has produced nothing
+   * - and charging it to thinking time reported 44s of "thought" for a few
+   * seconds of actual reasoning.
+   */
   useActivityEvent(ActivityEventType.THOUGHT_CHUNK, (event) => {
-    // Track start time when we see the "Thinking..." indicator
+    const key = event.parentId || 'root';
+
     if (event.data?.thinking === true) {
-      const key = event.parentId || 'root';
-      // Only set if not already tracking (to capture first chunk time)
-      if (!thinkingStartTimes.current.has(key)) {
-        thinkingStartTimes.current.set(key, event.timestamp);
-        if (thinkingStartTimes.current.size > 1000) {
-          thinkingStartTimes.current.delete(thinkingStartTimes.current.keys().next().value!);
-        }
-      }
+      thinkingClock.current.markRequestSent(key, event.timestamp);
+      return;
+    }
+
+    const chunk = event.data?.chunk;
+    if (typeof chunk === 'string' && chunk.length > 0) {
+      thinkingClock.current.markReasoningToken(key, event.timestamp);
     }
   });
 
@@ -415,7 +424,7 @@ export const useActivitySubscriptions = (
   useActivityEvent(ActivityEventType.THOUGHT_COMPLETE, (event) => {
     const thinking = event.data?.thinking || '';
     const key = event.parentId || 'root';
-    const startTime = thinkingStartTimes.current.get(key);
+    const startTime = thinkingClock.current.resolveStart(key);
     const endTime = event.timestamp;
 
     // Always track thinking (not just when show_thinking_in_chat is true)
@@ -442,8 +451,7 @@ export const useActivitySubscriptions = (
         });
       }
 
-      // Clear the tracked start time
-      thinkingStartTimes.current.delete(key);
+      thinkingClock.current.clear(key);
     }
   });
 
@@ -565,7 +573,7 @@ export const useActivitySubscriptions = (
       }
 
       // Clear per-turn tracking maps to prevent unbounded growth across turns.
-      thinkingStartTimes.current.clear();
+      thinkingClock.current.clearAll();
       pendingChunks.current.clear();
     }
 
@@ -614,7 +622,7 @@ export const useActivitySubscriptions = (
 
     // Clear per-turn tracking maps; interrupted tools/sub-agents never emit
     // their completion events, so their entries would otherwise leak.
-    thinkingStartTimes.current.clear();
+    thinkingClock.current.clearAll();
     pendingChunks.current.clear();
   });
 
