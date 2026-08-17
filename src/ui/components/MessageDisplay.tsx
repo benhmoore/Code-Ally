@@ -94,7 +94,7 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
               {showThinking ? (
                 `∴ ${thinking}`
               ) : (
-                // Show truncated version when show_thinking_in_chat is false
+                // Hide generated reasoning while retaining a compact activity indicator.
                 message.thinkingStartTime && message.thinkingEndTime
                   ? `∴ Thought for ${formatDuration(message.thinkingEndTime - message.thinkingStartTime)}`
                   : '∴ Thought'

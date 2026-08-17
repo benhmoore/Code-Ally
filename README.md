@@ -282,7 +282,7 @@ lives at `~/.ally/config.json`.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `theme` | `default` | UI theme |
-| `show_thinking_in_chat` | `true` | Show model reasoning |
+| `show_thinking_in_chat` | `false` | Show full model reasoning text instead of only a thought indicator |
 | `enable_idle_messages` | `true` | Auto idle status messages |
 
 ### Tool Behavior

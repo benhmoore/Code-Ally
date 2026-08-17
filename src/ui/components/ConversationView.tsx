@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text } from 'ink';
+import { Box, Static, Text } from 'ink';
 import { Message, ToolCallState, ToolCallTreeNode } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
@@ -13,7 +13,11 @@ import { useContentWidth } from '../hooks/useContentWidth.js';
 import { createDivider } from '../utils/uiHelpers.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { groupToolCallTimeline } from '../utils/toolCallSummaries.js';
-import type { ToolCallSummary, ToolCallTimelineItem } from '../utils/toolCallSummaries.js';
+import type {
+  ToolCallSummary,
+  ToolCallSummaryTimelineItem,
+  ToolCallTimelineItem,
+} from '../utils/toolCallSummaries.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
@@ -173,6 +177,22 @@ type TimelineItem =
  * Timeline items other than tool calls, which groupToolCallTimeline passes through untouched
  */
 type NonToolCallTimelineItem = Exclude<TimelineItem, { type: 'toolCall' }>;
+type CompletedTimelineItem = NonToolCallTimelineItem | ToolCallTimelineItem | ToolCallSummaryTimelineItem;
+
+type StaticTimelineEntry = {
+  item: CompletedTimelineItem;
+  key: string;
+  spacingBefore: boolean;
+};
+
+function timelineItemKey(item: CompletedTimelineItem): string {
+  if (item.type === 'message') return `msg-${item.message.id || item.index}`;
+  if (item.type === 'toolCall') return `tool-${item.toolCall.id}`;
+  if (item.type === 'toolCallSummary') return `tool-summary-${item.summary.id}`;
+  if (item.type === 'compactionNotice') return `compaction-${item.notice.id}`;
+  if (item.type === 'rewindNotice') return `rewind-${item.notice.id}`;
+  return `status-${item.statusMessage.id}`;
+}
 
 /**
  * Renders a collapsed group of context-gathering tool calls as a single line,
@@ -448,12 +468,62 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     return { completedTimeline: grouped.items, pendingContextSummary: grouped.pendingSummary };
   }, [messages, completedToolCalls, compactionNotices, rewindNotices, statusMessages, config?.show_full_tool_output]);
 
-  const completedJSXItems = React.useMemo(() => {
-    const divider = createDivider(terminalWidth);
-    return completedTimeline.map((item, timelineIndex) => {
-      const spacing = { marginTop: timelineIndex === 0 ? 0 : 1 };
+  // Commit only newly-finalized timeline items to Ink's static output. Static
+  // content lives in the terminal scrollback and is excluded from Ink's live
+  // layout, so streaming updates never redraw a terminalful of history. Keep
+  // only the latest commit batch in React; retaining one JSX element per item
+  // would recreate the long-session memory leak this viewport replaced.
+  const committedKeysRef = useRef<Set<string>>(new Set());
+  const hadCommittedItemsRef = useRef(false);
+  const lastStaticRemountKeyRef = useRef(staticRemountKey);
+  const staticGenerationRef = useRef(0);
+  const staticBatchRef = useRef<{ generation: number; entries: StaticTimelineEntry[] }>({
+    generation: 0,
+    entries: [],
+  });
 
-      if (item.type === 'message') {
+  const staticBatch = React.useMemo(() => {
+    if (lastStaticRemountKeyRef.current !== staticRemountKey) {
+      committedKeysRef.current.clear();
+      hadCommittedItemsRef.current = false;
+      lastStaticRemountKeyRef.current = staticRemountKey;
+    }
+
+    const currentKeys = new Set<string>();
+    const entries: StaticTimelineEntry[] = [];
+    for (const item of completedTimeline) {
+      const key = timelineItemKey(item);
+      currentKeys.add(key);
+      if (!committedKeysRef.current.has(key)) {
+        entries.push({
+          item,
+          key,
+          spacingBefore: hadCommittedItemsRef.current || entries.length > 0,
+        });
+      }
+    }
+
+    // Only currently visible identifiers are needed for duplicate detection.
+    // Dropped history cannot reappear without a reset/remount, keeping this set
+    // bounded with the live transcript window.
+    committedKeysRef.current = currentKeys;
+    if (entries.length > 0) {
+      hadCommittedItemsRef.current = true;
+      staticGenerationRef.current += 1;
+      staticBatchRef.current = {
+        generation: staticGenerationRef.current,
+        entries,
+      };
+    }
+    return staticBatchRef.current;
+  }, [completedTimeline, staticRemountKey]);
+
+  const renderCompletedItem = React.useCallback((entry: StaticTimelineEntry) => {
+    const divider = createDivider(terminalWidth);
+    const item = entry.item;
+    const spacing = { marginTop: entry.spacingBefore ? 1 : 0 };
+
+    if (item.type === 'message') {
         const isUser = item.message.role === 'user';
         const indent = isUser ? 0 : LAYOUT.MESSAGE_INDENT;
         const messagePadding = isUser ? {} : { paddingLeft: indent };
@@ -469,7 +539,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
             </ErrorBoundary>
           </Box>
         );
-      } else if (item.type === 'toolCall') {
+    } else if (item.type === 'toolCall') {
         return (
           <Box key={`tool-${item.toolCall.id}`} {...spacing} paddingLeft={2}>
             <ErrorBoundary label={`tool-${item.toolCall.id}`}>
@@ -477,7 +547,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
             </ErrorBoundary>
           </Box>
         );
-      } else if (item.type === 'toolCallSummary') {
+    } else if (item.type === 'toolCallSummary') {
         return (
           <Box key={`tool-summary-${item.summary.id}`} {...spacing} paddingLeft={2}>
             <ErrorBoundary label={`tool-summary-${item.summary.id}`}>
@@ -485,7 +555,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
             </ErrorBoundary>
           </Box>
         );
-      } else if (item.type === 'compactionNotice') {
+    } else if (item.type === 'compactionNotice') {
         return (
           <Box key={`compaction-${item.notice.id}`} flexDirection="column" {...spacing} paddingLeft={2}>
             <Box><Text dimColor>{divider}</Text></Box>
@@ -496,7 +566,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
             <Box><Text dimColor>{divider}</Text></Box>
           </Box>
         );
-      } else if (item.type === 'rewindNotice') {
+    } else if (item.type === 'rewindNotice') {
         const hasRestoredFiles = item.notice.restoredFiles && item.notice.restoredFiles.length > 0;
         const hasFailedRestorations = item.notice.failedRestorations && item.notice.failedRestorations.length > 0;
 
@@ -530,16 +600,15 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
             <Box><Text dimColor>{divider}</Text></Box>
           </Box>
         );
-      } else if (item.type === 'statusMessage') {
+    } else if (item.type === 'statusMessage') {
         return (
           <Box key={`status-${item.statusMessage.id}`} {...spacing} paddingLeft={2}>
             <Text color={UI_COLORS.ERROR}>{item.statusMessage.message}</Text>
           </Box>
         );
-      }
-      return null;
-    });
-  }, [completedTimeline, terminalWidth, config, currentAgent]);
+    }
+    return null;
+  }, [terminalWidth, config, currentAgent]);
 
   return (
     <Box flexDirection="column">
@@ -564,10 +633,17 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         </Box>
       )}
 
-      {/* Bounded live viewport. Older history is loaded from transcript pages. */}
-      <Box key={`timeline-${staticRemountKey}`} flexDirection="column">
-        {completedJSXItems}
-      </Box>
+      {/* Incremental committed history remains in native terminal scrollback. */}
+      <Static
+        key={`static-${staticRemountKey}-${staticBatch.generation}`}
+        items={staticBatch.entries}
+      >
+        {(entry) => (
+          <React.Fragment key={entry.key}>
+            {renderCompletedItem(entry)}
+          </React.Fragment>
+        )}
+      </Static>
 
       {/* Active content - only re-renders when active tools change */}
       <ActiveContent
