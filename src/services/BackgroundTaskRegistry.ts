@@ -49,6 +49,7 @@ interface WatcherTask {
   result: string | null;
   error: string | null;
   cancel: () => void;
+  settled: Promise<void>;
 }
 
 export interface WatcherSpec {
@@ -59,7 +60,20 @@ export interface WatcherSpec {
   /** Auto-wake the idle main agent when satisfied */
   watched: boolean;
   /** Predicate evaluated each interval; true === condition satisfied */
-  check: () => Promise<boolean>;
+  check: (signal: AbortSignal) => Promise<boolean>;
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    }
+    signal?.addEventListener('abort', finish, { once: true });
+  });
 }
 
 function shellStatus(exitCode: number | null): BackgroundTaskStatus {
@@ -155,7 +169,10 @@ export class BackgroundTaskRegistry {
     target: string[] | 'all',
     opts: { timeoutMs: number; pollMs?: number; signal?: AbortSignal },
   ): Promise<BackgroundTask[]> {
-    const pollMs = opts.pollMs ?? 500;
+    // Completion events wake the UI immediately; this low-frequency fallback
+    // covers adapters whose state changes without an event while avoiding
+    // hundreds of thousands of polls during multi-day waits.
+    const pollMs = opts.pollMs ?? 5000;
     const deadline = Date.now() + opts.timeoutMs;
 
     const targetIds = (): string[] =>
@@ -185,6 +202,9 @@ export class BackgroundTaskRegistry {
   createWatcher(spec: WatcherSpec): BackgroundTask {
     const id = `watch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let cancelled = false;
+    const controller = new AbortController();
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
     const task: WatcherTask = {
       id,
       label: spec.description,
@@ -193,7 +213,8 @@ export class BackgroundTaskRegistry {
       endTime: null,
       result: null,
       error: null,
-      cancel: () => { cancelled = true; },
+      cancel: () => { cancelled = true; controller.abort(); },
+      settled,
     };
     this.watchers.set(id, task);
     if (spec.watched) this.watchedIds.add(id);
@@ -201,8 +222,14 @@ export class BackgroundTaskRegistry {
     void (async () => {
       const deadline = Date.now() + spec.timeoutMs;
       while (!cancelled && Date.now() < deadline) {
+        const remaining = Math.max(1, deadline - Date.now());
+        const checkTimeoutMs = Math.max(1_000, Math.min(30_000, spec.intervalMs, remaining));
+        const checkController = new AbortController();
+        const forwardAbort = () => checkController.abort();
+        controller.signal.addEventListener('abort', forwardAbort, { once: true });
+        const checkTimer = setTimeout(() => checkController.abort(), checkTimeoutMs);
         try {
-          if (await spec.check()) {
+          if (await spec.check(checkController.signal)) {
             task.status = 'done';
             task.result = `Condition satisfied: ${spec.description}`;
             break;
@@ -210,8 +237,11 @@ export class BackgroundTaskRegistry {
         } catch (error) {
           // Transient check failures are non-fatal; keep polling until timeout.
           logger.debug(`[BackgroundTaskRegistry] watcher ${id} check error:`, error);
+        } finally {
+          clearTimeout(checkTimer);
+          controller.signal.removeEventListener('abort', forwardAbort);
         }
-        await new Promise((resolve) => setTimeout(resolve, spec.intervalMs));
+        await abortableDelay(Math.min(spec.intervalMs, Math.max(0, deadline - Date.now())), controller.signal);
       }
       if (task.status === 'running') {
         if (cancelled) {
@@ -223,12 +253,16 @@ export class BackgroundTaskRegistry {
         }
       }
       task.endTime = Date.now();
-      this.activityStream.emit({
-        id,
-        type: ActivityEventType.BACKGROUND_TASK_COMPLETE,
-        timestamp: Date.now(),
-        data: { taskId: id, kind: 'watcher', status: task.status, result: task.result, error: task.error, watched: spec.watched },
-      });
+      try {
+        this.activityStream.emit({
+          id,
+          type: ActivityEventType.BACKGROUND_TASK_COMPLETE,
+          timestamp: Date.now(),
+          data: { taskId: id, kind: 'watcher', status: task.status, result: task.result, error: task.error, watched: spec.watched },
+        });
+      } finally {
+        settle();
+      }
     })();
 
     return this.get(id)!;
@@ -250,5 +284,14 @@ export class BackgroundTaskRegistry {
         this.watchers.delete(id);
       }
     }
+  }
+
+  /** Cancel all owned watchers and await their poll/check cleanup. */
+  async shutdown(): Promise<void> {
+    const running = Array.from(this.watchers.values()).filter((w) => w.status === 'running');
+    for (const watcher of running) watcher.cancel();
+    await Promise.allSettled(running.map((watcher) => watcher.settled));
+    this.watchers.clear();
+    this.watchedIds.clear();
   }
 }

@@ -648,4 +648,49 @@ describe('SessionManager', () => {
     expect(saved?.idle_messages).toEqual(['queued']);
     expect(saved?.additional_directories).toEqual(['/extra']);
   });
+
+  it('appends a bounded live tail to immutable transcript segments without duplication', async () => {
+    const sessionName = await sessionManager.createSession('paged-transcript');
+    const initial: Message[] = Array.from({ length: 150 }, (_, i) => ({
+      id: `m-${i}`, role: i % 2 ? 'assistant' : 'user', content: `message ${i}`, timestamp: i + 1,
+    }));
+    await sessionManager.saveSession(sessionName, initial.slice(-20), initial);
+    sessionManager.setCurrentSession(sessionName);
+    const additions: Message[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `m-${150 + i}`, role: 'assistant', content: `message ${150 + i}`, timestamp: 151 + i,
+    }));
+    await sessionManager.autoSave(additions, undefined, undefined, undefined, undefined,
+      [...initial.slice(-100), ...additions]);
+    await sessionManager.forceSave();
+
+    const all: Message[] = [];
+    let cursor: number | undefined;
+    do {
+      const page = await sessionManager.getTranscriptPage(sessionName, cursor, 37, 1024 * 1024);
+      all.unshift(...page.messages);
+      cursor = page.nextCursor ?? undefined;
+      if (page.nextCursor === null) break;
+    } while (true);
+    expect(all.map((message) => message.id)).toEqual(Array.from({ length: 160 }, (_, i) => `m-${i}`));
+
+    const manifest = JSON.parse(await fs.readFile(join(tempDir, `${sessionName}.json`), 'utf8'));
+    expect(manifest.transcript).toBeUndefined();
+    expect(manifest.transcript_segments.length).toBeGreaterThan(1);
+    expect(manifest.transcript_tail.length).toBeLessThan(64);
+  });
+
+  it('uses byte-bounded backward cursors without skipping newer messages', async () => {
+    const sessionName = await sessionManager.createSession('byte-pages');
+    const transcript: Message[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `b-${i}`, role: 'assistant', content: `${i}:${'x'.repeat(120)}`, timestamp: i + 1,
+    }));
+    await sessionManager.saveSession(sessionName, transcript, transcript);
+    const latest = await sessionManager.getTranscriptPage(sessionName, undefined, 10, 400);
+    expect(latest.messages.at(-1)?.id).toBe('b-9');
+    expect(latest.nextCursor).not.toBeNull();
+    const older = await sessionManager.getTranscriptPage(sessionName, latest.nextCursor!, 10, 400);
+    const latestFirst = Number(latest.messages[0]!.id!.slice(2));
+    const olderLast = Number(older.messages.at(-1)!.id!.slice(2));
+    expect(olderLast).toBe(latestFirst - 1);
+  });
 });

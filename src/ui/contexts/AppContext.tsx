@@ -11,6 +11,64 @@ import type { Message, Config, ToolCallState } from '@shared/index.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { generateMessageId } from '@utils/id.js';
 
+const LIVE_MESSAGE_LIMIT = 500;
+const LIVE_MESSAGE_BYTES = 4 * 1024 * 1024;
+const COMPLETED_TOOL_LIMIT = 500;
+const NOTICE_LIMIT = 100;
+const STATUS_LIMIT = 50;
+const TOOL_TEXT_LIMIT = 64 * 1024;
+
+function truncateMiddle(value: string | undefined, max = TOOL_TEXT_LIMIT): string | undefined {
+  if (!value || value.length <= max) return value;
+  const half = Math.floor((max - 80) / 2);
+  return `${value.slice(0, half)}\n… ${value.length - half * 2} characters omitted …\n${value.slice(-half)}`;
+}
+
+function boundVisibleMessages(messages: Message[]): Message[] {
+  const visible = messages
+    .filter(message => message.role !== 'system' && message.role !== 'tool')
+    .map(message => ({ ...message, content: truncateMiddle(message.content, 1024 * 1024) ?? '' }));
+  const result: Message[] = [];
+  let bytes = 0;
+  for (let index = visible.length - 1; index >= 0 && result.length < LIVE_MESSAGE_LIMIT; index--) {
+    const message = visible[index]!;
+    const size = Buffer.byteLength(JSON.stringify(message));
+    if (result.length > 0 && bytes + size > LIVE_MESSAGE_BYTES) break;
+    result.push(message);
+    bytes += size;
+  }
+  return result.reverse();
+}
+
+function compactSettledTool(call: ToolCallState): ToolCallState {
+  if (!['success', 'error', 'cancelled'].includes(call.status)) return call;
+  return {
+    ...call,
+    output: truncateMiddle(call.output),
+    error: truncateMiddle(call.error),
+    thinking: truncateMiddle(call.thinking),
+    result: call.result ? {
+      ...call.result,
+      content: truncateMiddle(call.result.content),
+      error: truncateMiddle(call.result.error) ?? '',
+    } : undefined,
+    diffPreview: call.diffPreview ? {
+      ...call.diffPreview,
+      oldContent: truncateMiddle(call.diffPreview.oldContent) ?? '',
+      newContent: truncateMiddle(call.diffPreview.newContent) ?? '',
+    } : undefined,
+  };
+}
+
+function boundToolCalls(calls: ToolCallState[]): ToolCallState[] {
+  const running = calls.filter(call => !['success', 'error', 'cancelled'].includes(call.status));
+  const completed = calls.filter(call => ['success', 'error', 'cancelled'].includes(call.status))
+    .slice(-COMPLETED_TOOL_LIMIT)
+    .map(compactSettledTool);
+  const ids = new Set(running.map(call => call.id));
+  return [...completed.filter(call => !ids.has(call.id)), ...running];
+}
+
 /**
  * Compaction notice for UI display
  */
@@ -274,7 +332,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       if (prev.some(m => m.id === messageWithMetadata.id)) {
         return prev;
       }
-      return [...prev, messageWithMetadata];
+      return boundVisibleMessages([...prev, messageWithMetadata]);
     });
   }, []);
 
@@ -296,7 +354,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       return true;
     });
 
-    setMessages(deduplicated);
+    setMessages(boundVisibleMessages(deduplicated));
   }, []);
 
   const updateConfig = useCallback((updates: Partial<Config>) => {
@@ -319,7 +377,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         throw new Error(`Duplicate tool call detected. ID ${toolCall.id} already exists. Tool: ${toolCall.toolName}`);
       }
 
-      return [...prev, toolCall];
+      return boundToolCalls([...prev, toolCall]);
     });
   }, []);
 
@@ -341,7 +399,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         }
         return call;
       });
-      return hasChanges ? newArray : prev;
+      return hasChanges ? boundToolCalls(newArray) : prev;
     });
   }, []);
 
@@ -403,7 +461,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   }, []);
 
   const addCompactionNotice = useCallback((notice: CompactionNotice) => {
-    setCompactionNotices((prev) => [...prev, notice]);
+    setCompactionNotices((prev) => [...prev, notice].slice(-NOTICE_LIMIT));
   }, []);
 
   const clearCompactionNotices = useCallback(() => {
@@ -411,7 +469,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   }, []);
 
   const addRewindNotice = useCallback((notice: RewindNotice) => {
-    setRewindNotices((prev) => [...prev, notice]);
+    setRewindNotices((prev) => [...prev, notice].slice(-NOTICE_LIMIT));
   }, []);
 
   const clearRewindNotices = useCallback(() => {
@@ -419,7 +477,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   }, []);
 
   const addStatusMessage = useCallback((message: StatusMessage) => {
-    setStatusMessages((prev) => [...prev, message]);
+    setStatusMessages((prev) => {
+      const existing = prev.findIndex(item => item.id === message.id);
+      const next = existing >= 0
+        ? prev.map((item, index) => index === existing ? message : item)
+        : [...prev, message];
+      return next.slice(-STATUS_LIMIT);
+    });
   }, []);
 
   const clearStatusMessages = useCallback(() => {
@@ -461,7 +525,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
 
       // Now set the new messages
-      setMessages(deduplicated);
+      setMessages(boundVisibleMessages(deduplicated));
     });
   }, []);
 
@@ -494,8 +558,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setStaticRemountKey((prev) => prev + 1);
     setImmediate(() => {
       process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
-      setMessages(deduplicated);
-      setActiveToolCalls(toolCalls);
+      setMessages(boundVisibleMessages(deduplicated));
+      setActiveToolCalls(boundToolCalls(toolCalls));
     });
   }, []);
 

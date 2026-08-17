@@ -84,6 +84,15 @@ export class TurnController {
     this.state = 'recovering';
   }
 
+  /** Begin a fresh safety-budget epoch without ending the durable objective. */
+  rollover(): void {
+    this.modelCalls = 0;
+    this.toolCalls = 0;
+    this.terminationReason = undefined;
+    this.budgetNoticeEmitted = false;
+    this.state = 'preparing';
+  }
+
   finish(reason: TurnTerminationReason = 'completed'): void {
     this.terminationReason = reason;
     this.state = reason === 'completed' ? 'completed' : reason === 'interrupted' ? 'interrupted' : reason === 'failed' ? 'failed' : 'finalizing';

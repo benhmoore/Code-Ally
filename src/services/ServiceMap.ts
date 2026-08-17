@@ -51,6 +51,8 @@ import type { ProjectContextDetector } from './ProjectContextDetector.js';
 import type { PromptLibraryManager } from './PromptLibraryManager.js';
 import type { ReadCache } from './ReadCache.js';
 import type { ReadStateManager } from './ReadStateManager.js';
+import type { RunPolicyManager } from './RunPolicyManager.js';
+import type { RunSupervisor } from './RunSupervisor.js';
 import type { ScheduledTaskManager } from './ScheduledTaskManager.js';
 import type { SessionManager } from './SessionManager.js';
 import type { SessionTitleGenerator } from './SessionTitleGenerator.js';
@@ -92,6 +94,8 @@ export interface ServiceMap {
   // --- UI / event plumbing ---
   activity_stream: ActivityStream;
   form_manager: FormManager;
+  run_policy_manager: RunPolicyManager;
+  run_supervisor: RunSupervisor;
 
   // --- Workspace state ---
   path_resolver: PathResolver;

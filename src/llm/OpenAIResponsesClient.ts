@@ -11,6 +11,8 @@ import { ActivityEventType } from '../types/index.js';
 import type { ActivityStream } from '../services/ActivityStream.js';
 import type { ProviderCheckpointState } from '../agent/compaction/types.js';
 import { parseToolCallArguments } from './FunctionCalling.js';
+import { runWithRetries } from './httpTransport.js';
+import { RETRY_CONFIG } from '../config/constants.js';
 
 interface PreparedInput {
   input: any[];
@@ -91,30 +93,45 @@ export class OpenAIResponsesClient extends ModelClient {
     return new OpenAI({
       ...(this.apiKey ? { apiKey: this.apiKey } : {}),
       baseURL: baseUrl(this._endpoint),
+      maxRetries: 0,
+      timeout: RETRY_CONFIG.MAX_LLM_TIMEOUT,
     });
   }
 
   async send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse> {
     const prepared = this.prepareInput(messages, options.providerState);
     const payload = this.payload(prepared, options);
-    try {
-      const response = options.stream
-        ? await this.streamResponse(payload, options)
-        : await this.client.responses.create(payload as any, { signal: options.signal });
-      return this.toResult(response as any, prepared);
-    } catch (error) {
-      if (options.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
-        return { role: 'assistant', content: '', interrupted: true };
-      }
-      throw error;
-    }
+    return runWithRetries<LLMResponse>({
+      signal: options.signal,
+      maxFailures: options.retryPolicy === 'foreground' ? Infinity : 3,
+      maxTotalMs: options.retryPolicy === 'foreground' ? Infinity : 30 * 60 * 1000,
+      onInterrupted: () => ({ role: 'assistant', content: '', interrupted: true }),
+      onError: (error) => { throw error; },
+      onRetry: (label, delaySeconds) => {
+        this.activityStream?.emit({
+          id: 'status-openai-responses-retry',
+          type: ActivityEventType.STATUS_MESSAGE,
+          timestamp: Date.now(),
+          data: { message: `${label}, retrying in ${delaySeconds}s...` },
+        });
+      },
+      attempt: async () => {
+        const response = options.stream
+          ? await this.streamResponse(payload, options)
+          : await this.client.responses.create(payload as any, { signal: options.signal });
+        return this.toResult(response as any, prepared);
+      },
+    });
   }
 
   override async countInput(messages: readonly Message[], options: SendOptions): Promise<number | null> {
     const prepared = this.prepareInput(messages, options.providerState);
     const payload = this.payload(prepared, { ...options, stream: false });
     const { stream: _stream, store: _store, context_management: _context, max_output_tokens: _max, ...countable } = payload as any;
-    const response = await this.client.responses.inputTokens.count(countable, { signal: options.signal });
+    const response = await this.runAuxiliary(
+      () => this.client.responses.inputTokens.count(countable, { signal: options.signal }),
+      options.signal,
+    );
     return response.input_tokens;
   }
 
@@ -124,12 +141,12 @@ export class OpenAIResponsesClient extends ModelClient {
   ): Promise<ProviderCheckpointState | null> {
     const prepared = this.prepareInput(messages, options.providerState);
     const tools = this.tools(options.functions);
-    const compacted = await this.client.responses.compact({
-      model: this._modelName,
-      input: prepared.input as any,
-      ...(prepared.instructions ? { instructions: prepared.instructions } : {}),
-      ...(tools.length ? { tools: tools as any } : {}),
-    } as any, { signal: options.signal });
+    const compacted = await this.runAuxiliary(() => this.client.responses.compact({
+        model: this._modelName,
+        input: prepared.input as any,
+        ...(prepared.instructions ? { instructions: prepared.instructions } : {}),
+        ...(tools.length ? { tools: tools as any } : {}),
+      } as any, { signal: options.signal }), options.signal);
 
     return {
       kind: 'openai-responses',
@@ -140,6 +157,21 @@ export class OpenAIResponsesClient extends ModelClient {
       coveredMessageIds: prepared.coveredMessageIds,
       ...(prepared.pendingAssistant ? { pendingAssistant: prepared.pendingAssistant } : {}),
     };
+  }
+
+  private runAuxiliary<T>(attempt: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    return runWithRetries<T>({
+      attempt,
+      signal,
+      maxFailures: 3,
+      maxTotalMs: 30 * 60 * 1000,
+      onInterrupted: () => {
+        const error = new Error('Request aborted');
+        error.name = 'AbortError';
+        throw error;
+      },
+      onError: (error) => { throw error; },
+    });
   }
 
   private payload(prepared: PreparedInput, options: SendOptions): Record<string, unknown> {
@@ -198,7 +230,11 @@ export class OpenAIResponsesClient extends ModelClient {
     const state = providerState?.kind === 'openai-responses'
       ? providerState
       : { kind: 'openai-responses' as const, items: [], coveredMessageIds: [] };
-    const covered = new Set(state.coveredMessageIds);
+    // Only IDs in the current active window are needed for de-duplication. The
+    // provider items already contain older history, so retaining every historic
+    // message ID would grow state without bound.
+    const activeIds = new Set(messages.map(message => message.id).filter((id): id is string => Boolean(id)));
+    const covered = new Set(state.coveredMessageIds.filter(id => activeIds.has(id)));
     let pending = state.pendingAssistant;
     const persistentInput: any[] = [];
     const ephemeralInput: any[] = [];

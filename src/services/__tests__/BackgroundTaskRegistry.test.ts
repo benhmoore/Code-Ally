@@ -115,4 +115,16 @@ describe('BackgroundTaskRegistry', () => {
     const out = await reg.waitFor([task.id], { timeoutMs: 1000, pollMs: 10 });
     expect(out[0].status).toBe('error');
   });
+
+  it('shutdown aborts a hung predicate and awaits watcher settlement', async () => {
+    const reg = new BackgroundTaskRegistry(fakeAgentManager(), fakeBashManager(), fakeStream());
+    const task = reg.createWatcher({
+      description: 'hung', intervalMs: 10_000, timeoutMs: 60_000, watched: false,
+      check: (signal) => new Promise<boolean>((resolve) => {
+        signal.addEventListener('abort', () => resolve(false), { once: true });
+      }),
+    });
+    await reg.shutdown();
+    expect(reg.get(task.id)).toBeUndefined();
+  });
 });

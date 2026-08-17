@@ -257,13 +257,22 @@ export class ServiceRegistry {
    */
   async shutdown(): Promise<void> {
     const withTimeout = (label: string, fn: () => Promise<void>): Promise<void> =>
-      Promise.race([
-        fn().catch(error => { logger.error(`Error cleaning up ${label}:`, error); }),
-        new Promise<void>(resolve => setTimeout(() => {
-          logger.warn(`Cleanup timed out for ${label} (${CLEANUP_TIMEOUT_MS}ms)`);
+      new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           resolve();
-        }, CLEANUP_TIMEOUT_MS)),
-      ]);
+        };
+        const timer = setTimeout(() => {
+          logger.warn(`Cleanup timed out for ${label} (${CLEANUP_TIMEOUT_MS}ms)`);
+          finish();
+        }, CLEANUP_TIMEOUT_MS);
+        void fn()
+          .catch(error => { logger.error(`Error cleaning up ${label}:`, error); })
+          .finally(finish);
+      });
 
     const cleanupPromises: Promise<void>[] = [];
 

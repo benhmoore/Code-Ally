@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BashTool } from '@tools/BashTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
+import { CircularBuffer } from '@services/BashProcessManager.js';
 
 describe('BashTool', () => {
   let activityStream: ActivityStream;
@@ -78,7 +79,19 @@ describe('BashTool', () => {
       // Should timeout and fail
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
+      expect(result.transitioned).not.toBe(true);
     }, 10000); // Increase test timeout
+
+    it('accepts an explicit infinite timeout without scheduling Infinity', async () => {
+      const result = await bashTool.execute({ command: 'printf ok', timeout: -1 });
+      expect(result.success).toBe(true);
+      expect(result.content).toBe('ok');
+    });
+
+    it('uses a noninteractive environment', async () => {
+      const result = await bashTool.execute({ command: 'printf "%s:%s:%s" "$CI" "$GIT_TERMINAL_PROMPT" "$PAGER"' });
+      expect(result.content).toBe('1:0:cat');
+    });
 
     it('should block dangerous commands', async () => {
       const result = await bashTool.execute({
@@ -89,6 +102,12 @@ describe('BashTool', () => {
       expect(result.error).toContain('disallowed');
       expect(result.error_type).toBe('security_error');
     });
+  });
+
+  it('bounds giant no-newline background output by bytes', () => {
+    const buffer = new CircularBuffer(10_000, 1024);
+    buffer.append('x'.repeat(10_000));
+    expect(Buffer.byteLength(buffer.getLines().join('\n'))).toBeLessThanOrEqual(1024);
   });
 
   describe('getResultPreview', () => {

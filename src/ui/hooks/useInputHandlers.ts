@@ -430,8 +430,9 @@ export const useInputHandlers = (
         // Update TokenManager and context usage
         const tokenManager = serviceRegistry.get('token_manager');
         if (tokenManager) {
-          // Recalculate tokens from agent's messages
-          const agentMessages = agent.getMessages();
+          // Recalculate from the model's compacted window. The complete
+          // transcript is UI history and must not re-inflate context usage.
+          const agentMessages = agent.getContextMessages();
           if (typeof (tokenManager as any).updateTokenCount === 'function') {
             (tokenManager as any).updateTokenCount(agentMessages);
           }

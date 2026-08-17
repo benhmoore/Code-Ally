@@ -87,12 +87,15 @@ export function extractSemanticCheckpoint(
     if ((message.is_error || message.metadata?.isError || /\b(error|failed|failure|exception)\b/i.test(content)) && content) {
       state.blockers.push({ ...fact(content.slice(0, 2000), id), exactError: content.slice(0, 2000) });
     }
-    if (message.role === 'assistant' && content && !message.tool_calls?.length) {
-      state.completedWork.push(fact(content.slice(0, 1200), id));
-    }
+    // Assistant prose is a claim, not evidence that work completed. Completion
+    // is derived from durable tool outcomes and verification records instead.
     if (message.role === 'tool' && content) {
       const label = message.name ? `Tool result (${message.name})` : 'Tool result';
-      state.activeWork.push(fact(`${label}: ${content.slice(0, 1800)}`, id));
+      if (message.is_error || message.metadata?.isError) {
+        state.blockers.push({ ...fact(`${label}: ${content.slice(0, 1800)}`, id), exactError: content.slice(0, 1800) });
+      } else {
+        state.completedWork.push(fact(`${label}: ${content.slice(0, 1800)}`, id));
+      }
     }
     if (message.tool_calls) {
       for (const call of message.tool_calls) {
@@ -112,6 +115,28 @@ export function extractSemanticCheckpoint(
     return true;
   }).slice(0, 100);
   return state;
+}
+
+/** Preserve durable prior trajectory even when a model reducer omits it. */
+export function mergeSemanticCheckpoint(
+  previous: SemanticCheckpointStateV1 | null | undefined,
+  proposed: SemanticCheckpointStateV1,
+): SemanticCheckpointStateV1 {
+  if (!previous) return proposed;
+  const merged = structuredClone(proposed);
+  merged.objective = proposed.objective ?? previous.objective;
+  const durableKeys = ['userConstraints', 'decisions', 'completedWork', 'durableFacts'] as const;
+  for (const key of durableKeys) {
+    merged[key] = uniqueFacts([...(previous[key] as any), ...(proposed[key] as any)], 25) as any;
+  }
+  const artifactSeen = new Set<string>();
+  merged.artifacts = [...previous.artifacts, ...proposed.artifacts].filter(item => {
+    const key = `${item.path}\0${item.operation}`;
+    if (artifactSeen.has(key)) return false;
+    artifactSeen.add(key);
+    return true;
+  }).slice(-100);
+  return merged;
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {

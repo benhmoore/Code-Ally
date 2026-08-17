@@ -23,7 +23,7 @@ import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
-import { createHttpResponseError, readWithTimeout, runWithRetries } from './httpTransport.js';
+import { createHttpResponseError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries } from './httpTransport.js';
 import { validateToolCalls } from './toolCalls.js';
 
 /** OpenAI chat-completions request payload (the subset we send). */
@@ -140,6 +140,9 @@ export class OpenAICompatClient extends ModelClient {
 
     try {
       return await runWithRetries<LLMResponse>({
+        signal,
+        maxFailures: options.retryPolicy === 'foreground' ? Infinity : 3,
+        maxTotalMs: options.retryPolicy === 'foreground' ? Infinity : RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
         onRetry: (label, delaySec, attemptNum) => {
           logger.debug(`[OPENAI_COMPAT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attemptNum})...`);
           this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
@@ -293,13 +296,19 @@ export class OpenAICompatClient extends ModelClient {
       clearTimeout(timeoutHandle);
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw createHttpResponseError(response.status, errorText);
+        const errorText = await readResponseTextWithTimeout(response, timeout, abortController);
+        throw createHttpResponseError(response.status, errorText, response.headers?.get?.('retry-after') ?? null);
       }
 
       return stream
         ? await this.parseStreamingResponse(requestId, response, callerSignal, parentId, suppressThinking, eventStream)
-        : this.parseNonStreamingResponse(await response.json(), requestId, parentId, suppressThinking, eventStream);
+        : this.parseNonStreamingResponse(
+            await readResponseJsonWithTimeout(response, timeout, abortController),
+            requestId,
+            parentId,
+            suppressThinking,
+            eventStream,
+          );
     } catch (error: any) {
       if (responseTimedOut && error?.name === 'AbortError') {
         throw new Error('Request timeout');
@@ -530,7 +539,7 @@ export class OpenAICompatClient extends ModelClient {
 
   private emitStatusMessage(message: string): void {
     this.activityStream?.emit({
-      id: `status-${Date.now()}`,
+      id: 'status-openai-compat-connection',
       type: ActivityEventType.STATUS_MESSAGE,
       timestamp: Date.now(),
       data: { message },

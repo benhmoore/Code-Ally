@@ -40,6 +40,7 @@ import { getAgentDisplayName } from './utils/agentTypeUtils.js';
 import { ScheduledTaskManager, ScheduledTask, presetPolicy } from './services/ScheduledTaskManager.js';
 import { SchedulerInstaller } from './services/SchedulerInstaller.js';
 import { generateShortId } from './utils/id.js';
+import { formatError } from './utils/errorUtils.js';
 
 /**
  * Comprehensive terminal state reset
@@ -98,7 +99,17 @@ function reassertTerminalState(): void {
  * Ensures all escape sequences are processed before the application exits.
  * This prevents the terminal from getting stuck waiting for input.
  */
+let cleanExitPromise: Promise<void> | undefined;
+let requestedExitCode = 0;
+
 async function cleanExit(code: number = 0): Promise<void> {
+  if (code !== 0) requestedExitCode = code;
+  if (cleanExitPromise) return cleanExitPromise;
+  cleanExitPromise = performCleanExit();
+  return cleanExitPromise;
+}
+
+async function performCleanExit(): Promise<void> {
   if (inkUIStarted) {
     resetTerminalState();
   }
@@ -107,6 +118,15 @@ async function cleanExit(code: number = 0): Promise<void> {
   const ServiceRegistry = (await import('./services/ServiceRegistry.js')).ServiceRegistry;
   const registry = ServiceRegistry.getInstance();
   try {
+    const runSupervisor = registry.get('run_supervisor');
+    await runSupervisor?.interruptForShutdown('Owning Code-Ally process closed');
+
+    const agent = registry.get('agent');
+    agent?.interrupt({ kind: 'user_cancel' });
+
+    const backgroundTaskRegistry = registry.get('background_task_registry');
+    await backgroundTaskRegistry?.shutdown();
+
     // Shutdown background bash processes if manager exists
     const bashProcessManager = registry.get('bash_process_manager');
     if (bashProcessManager && typeof bashProcessManager.shutdown === 'function') {
@@ -127,16 +147,16 @@ async function cleanExit(code: number = 0): Promise<void> {
   // Wait for stdout to drain before exiting
   if (process.stdout.write('')) {
     // Buffer is empty, exit immediately
-    process.exit(code);
+    process.exit(requestedExitCode);
   } else {
     // Buffer has pending data, wait for drain
     process.stdout.once('drain', () => {
-      process.exit(code);
+      process.exit(requestedExitCode);
     });
 
     // Fallback timeout to prevent hanging
     setTimeout(() => {
-      process.exit(code);
+      process.exit(requestedExitCode);
     }, 100);
   }
 }
@@ -396,6 +416,10 @@ async function handleResumeCommand(
     } else {
       console.log(`\n✗ Session "${sessionId}" not found.\n`);
 
+      if (options.once) {
+        throw new Error(`Cannot resume missing session '${sessionId}' in noninteractive mode; pass --session to create one explicitly`);
+      }
+
       const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,
@@ -423,6 +447,10 @@ async function handleResumeCommand(
 
       return null;
     }
+  }
+
+  if (options.once) {
+    throw new Error('--resume requires an explicit session ID in noninteractive mode');
   }
 
   // --resume without session ID - show interactive selector
@@ -463,7 +491,7 @@ async function handleOnceMode(
   options: CLIOptions,
   agent: Agent,
   sessionManager: SessionManager
-): Promise<void> {
+): Promise<import('./services/RunSupervisor.js').RunOutcome> {
   // Once mode never creates sessions (single message, non-interactive)
   // If user explicitly wants a session with --once, they can use --session
   let sessionName: string | null = null;
@@ -497,9 +525,21 @@ async function handleOnceMode(
       await sessionManager.saveSession(sessionName, agent.getContextMessages(), agent.getMessages());
       console.log(`\n[Session: ${sessionName}]`);
     }
+    const outcome = ServiceRegistry.getInstance().get('run_supervisor')?.getOutcome();
+    return outcome ?? { kind: 'failed', error: 'Automatic run ended without a typed outcome' };
   } catch (error) {
     console.error('Error:', error);
-    cleanExit(1);
+    return { kind: 'failed', error: formatError(error) };
+  }
+}
+
+function exitCodeForRunOutcome(outcome: import('./services/RunSupervisor.js').RunOutcome): number {
+  switch (outcome.kind) {
+    case 'completed': return 0;
+    case 'retryable_failure': return 75;
+    case 'blocked': return 2;
+    case 'cancelled': return 130;
+    case 'failed': return 1;
   }
 }
 
@@ -584,6 +624,7 @@ async function runScheduledTask(manager: ScheduledTaskManager, task: ScheduledTa
       ALLY_SCHEDULED_RUN_ID: runId,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
   });
 
   let stdout = '';
@@ -591,13 +632,41 @@ async function runScheduledTask(manager: ScheduledTaskManager, task: ScheduledTa
   child.stdout?.on('data', (chunk) => { stdout = appendBounded(stdout, chunk); });
   child.stderr?.on('data', (chunk) => { stderr = appendBounded(stderr, chunk); });
 
+  let forcedBySignal: NodeJS.Signals | undefined;
+  const signalChild = (signal: NodeJS.Signals) => {
+    forcedBySignal = signal;
+    if (!child.pid) return;
+    try {
+      if (process.platform !== 'win32') process.kill(-child.pid, 'SIGTERM');
+      else child.kill('SIGTERM');
+    } catch { /* worker already exited */ }
+    const killTimer = setTimeout(() => {
+      if (child.exitCode !== null) return;
+      try {
+        if (process.platform !== 'win32') process.kill(-child.pid!, 'SIGKILL');
+        else child.kill('SIGKILL');
+      } catch { /* worker already exited */ }
+    }, 5000);
+    killTimer.unref?.();
+  };
+  const onSigint = () => signalChild('SIGINT');
+  const onSigterm = () => signalChild('SIGTERM');
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
+
   const exitCode = await new Promise<number | null>((resolve) => {
     child.on('close', (code) => resolve(code));
     child.on('error', () => resolve(1));
   });
+  process.removeListener('SIGINT', onSigint);
+  process.removeListener('SIGTERM', onSigterm);
 
   const status = exitCode === 0 ? 'success' : 'error';
-  const summary = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n\n');
+  const summary = [
+    stdout.trim(),
+    stderr.trim(),
+    forcedBySignal ? `Scheduler stopped worker after ${forcedBySignal}` : '',
+  ].filter(Boolean).join('\n\n');
   await manager.recordRunFinish(task.id, task.project_dir, runId, {
     status,
     sessionId,
@@ -993,6 +1062,9 @@ async function main() {
 
     // Check if critical config is missing - force setup wizard if so
     const forceSetup = needsSetup(config);
+    if (options.once && forceSetup) {
+      throw new Error('Noninteractive mode requires a configured provider and model; run `ally --init` first');
+    }
 
     // Validate the configured provider and model (skip in setup/non-interactive paths).
     let forceModelSelector = false;
@@ -1024,6 +1096,28 @@ async function main() {
     const activityStream = new ActivityStream();
     registry.registerInstance('activity_stream', activityStream);
 
+    // One process-local policy authority for every interaction surface. Once
+    // and scheduled modes are headless by construction and can never prompt.
+    const { RunPolicyManager } = await import('./services/RunPolicyManager.js');
+    const isHeadlessRun = Boolean(options.once || options.scheduledTask);
+    const runPolicyManager = new RunPolicyManager({
+      interaction: isHeadlessRun ? 'none' : 'human',
+      execution: isHeadlessRun ? 'headless' : 'terminal',
+      completion: isHeadlessRun ? 'durable_objective' : 'chat',
+      authorizationPresetId: options.scheduledTask
+        ? 'scheduled'
+        : config.auto_confirm
+          ? 'auto-confirm'
+          : isHeadlessRun
+            ? 'deny-by-default'
+            : 'interactive',
+    });
+    registry.registerInstance('run_policy_manager', runPolicyManager);
+    const { RunSupervisor } = await import('./services/RunSupervisor.js');
+    const runSupervisor = new RunSupervisor();
+    await runSupervisor.initialize();
+    registry.registerInstance('run_supervisor', runSupervisor);
+
     // Create scheduled task manager (durable, project-scoped scheduler state)
     const scheduledTaskManager = new ScheduledTaskManager(activityStream);
     await scheduledTaskManager.initialize();
@@ -1041,7 +1135,7 @@ async function main() {
 
     // Create plan mode manager
     const { PlanModeManager } = await import('./services/PlanModeManager.js');
-    const planModeManager = new PlanModeManager(activityStream);
+    const planModeManager = new PlanModeManager(activityStream, runPolicyManager);
     registry.registerInstance('plan_mode_manager', planModeManager);
 
     // Create prompt library manager
@@ -1169,6 +1263,7 @@ async function main() {
     const { BackgroundTaskRegistry } = await import('./services/BackgroundTaskRegistry.js');
     const backgroundTaskRegistry = new BackgroundTaskRegistry(backgroundAgentManager, bashProcessManager, activityStream);
     registry.registerInstance('background_task_registry', backgroundTaskRegistry);
+    registry.registerCleanup('background-task-registry', () => backgroundTaskRegistry.shutdown());
 
     // Create project context detector
     const { ProjectContextDetector } = await import('./services/ProjectContextDetector.js');
@@ -1210,7 +1305,6 @@ async function main() {
     const { ExploreTool } = await import('./tools/ExploreTool.js');
     const { PlanTool } = await import('./tools/PlanTool.js');
     const { AgentAskTool } = await import('./tools/AgentAskTool.js');
-    const { BatchTool } = await import('./tools/BatchTool.js');
     const { CleanupCallTool } = await import('./tools/CleanupCallTool.js');
     const { TodoWriteTool } = await import('./tools/TodoWriteTool.js');
     const { SessionsTool } = await import('./tools/SessionsTool.js');
@@ -1229,6 +1323,9 @@ async function main() {
     const { CancelAgentTool } = await import('./tools/CancelAgentTool.js');
     const { WaitTool } = await import('./tools/WaitTool.js');
     const { WatchTool } = await import('./tools/WatchTool.js');
+    const { CompleteObjectiveTool } = await import('./tools/CompleteObjectiveTool.js');
+    const { BlockObjectiveTool } = await import('./tools/BlockObjectiveTool.js');
+    const { ReconcileEffectTool } = await import('./tools/ReconcileEffectTool.js');
 
     const tools = [
       new BashTool(activityStream, config),
@@ -1237,6 +1334,9 @@ async function main() {
       new CancelAgentTool(activityStream),
       new WaitTool(activityStream),
       new WatchTool(activityStream),
+      new CompleteObjectiveTool(activityStream),
+      new BlockObjectiveTool(activityStream),
+      new ReconcileEffectTool(activityStream),
       new ReadTool(activityStream),
       new WriteTool(activityStream),
       new WriteAgentTool(activityStream), // Agent-specific write tool (only visible to manage-agents)
@@ -1255,7 +1355,6 @@ async function main() {
       new ExploreTool(activityStream),
       new PlanTool(activityStream),
       new AgentAskTool(activityStream),
-      new BatchTool(activityStream),
       new CleanupCallTool(activityStream),
       new TodoWriteTool(activityStream), // Unified todo management
       new SessionsTool(activityStream),
@@ -1291,22 +1390,7 @@ async function main() {
     // Add graceful shutdown handler
     const shutdownHandler = async (signal: string) => {
       logger.info(`[CLI] Received ${signal}, shutting down...`);
-      try {
-        // Shutdown background bash processes first (before registry shutdown)
-        await bashProcessManager.shutdown();
-        logger.debug('[CLI] Background bash processes terminated');
-
-        // Shutdown background agents (before registry shutdown)
-        await backgroundAgentManager.shutdown();
-        logger.debug('[CLI] Background agents terminated');
-
-        // Flush pending session saves before exit
-        await registry.shutdown();
-        logger.debug('[CLI] Registry shutdown complete');
-      } catch (error) {
-        logger.error(`[CLI] Error during shutdown: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      process.exit(0);
+      await cleanExit(signal === 'SIGINT' ? 130 : 143);
     };
 
     // Load standalone MCP servers (user's mcp-config.json)
@@ -1364,7 +1448,7 @@ async function main() {
     registry.registerInstance('tool_manager', toolManager);
 
     // Create form manager for interactive tool forms
-    const formManager = new FormManager(activityStream);
+    const formManager = new FormManager(activityStream, runPolicyManager);
     registry.registerInstance('form_manager', formManager);
 
     // Inject FormManager into all tools for interactive form support
@@ -1374,6 +1458,7 @@ async function main() {
     // Create trust manager for permission tracking
     // Note: autoAllowModeGetter will be set after UI initialization
     const trustManager = new TrustManager(config.auto_confirm, activityStream);
+    trustManager.setRunPolicyManager(runPolicyManager);
     if (scheduledTaskForRun) {
       // Grants are re-derived from current code on every run, so a hand-edited
       // store or a record written by an older build cannot broaden them.
@@ -1482,6 +1567,7 @@ async function main() {
         agentDepth: 0,
         agentCallStack: [],
         isScheduledRun: Boolean(options.scheduledTask),
+        isOnceMode: Boolean(options.once),
         scheduledTaskId: options.scheduledTask,
       };
 
@@ -1504,6 +1590,7 @@ async function main() {
         config,
         agentType,
         isScheduledRun: Boolean(options.scheduledTask),
+        isOnceMode: Boolean(options.once),
         scheduledTaskId: options.scheduledTask,
       };
     }
@@ -1579,9 +1666,9 @@ async function main() {
 
     // Handle --once mode (single message, non-interactive)
     if (options.once) {
-      await handleOnceMode(options.once, options, agent, sessionManager);
-      await registry.shutdown();
-      cleanExit(0);
+      const outcome = await handleOnceMode(options.once, options, agent, sessionManager);
+      await cleanExit(exitCodeForRunOutcome(outcome));
+      return;
     }
 
     // Interactive mode - Render the Ink UI
@@ -1619,15 +1706,13 @@ async function main() {
     // A final save here would just overwrite good data with potentially stale data
 
     // Cleanup
-    await registry.shutdown();
-
     // Exit cleanly with terminal reset and stdout flush
-    cleanExit(0);
+    await cleanExit(0);
   } catch (error) {
     // Critical: Reset terminal even on fatal errors (only if UI was started)
     console.error('Fatal error:', error);
     if (inkUIStarted) {
-      cleanExit(1);
+      await cleanExit(1);
     } else {
       process.exit(1);
     }
@@ -1668,7 +1753,7 @@ process.on('SIGCONT', () => {
 process.on('uncaughtException', (error) => {
   console.error('Uncaught exception:', error);
   if (inkUIStarted) {
-    cleanExit(1);
+    void cleanExit(1);
   } else {
     process.exit(1);
   }
@@ -1677,7 +1762,7 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason);
   if (inkUIStarted) {
-    cleanExit(1);
+    void cleanExit(1);
   } else {
     process.exit(1);
   }

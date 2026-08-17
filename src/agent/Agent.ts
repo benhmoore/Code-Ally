@@ -50,7 +50,6 @@ import {
 } from './patterns/loopPatterns.js';
 import { Message, ActivityEventType, Config, type FunctionDefinition } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
-import { unwrapBatchToolCalls } from '../utils/toolCallUtils.js';
 import { logger } from '../services/Logger.js';
 import { formatError } from '../utils/errorUtils.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOKEN_MANAGEMENT, THINKING_LOOP_DETECTOR, RESPONSE_LOOP_DETECTOR } from '../config/constants.js';
@@ -159,6 +158,8 @@ export interface AgentConfig {
   _scopedRegistry?: any; // ScopedServiceRegistryProxy - typed as 'any' to avoid circular dependency
   /** Internal: this root agent is executing an unattended scheduled task. */
   isScheduledRun?: boolean;
+  /** Internal: this root agent is executing a single noninteractive request. */
+  isOnceMode?: boolean;
   /** Internal: scheduled task id for unattended scheduled task runs. */
   scheduledTaskId?: string;
 }
@@ -714,8 +715,8 @@ export class Agent {
   clearConversationHistory(): void {
     this.conversationManager.clearMessages();
     this.checkpointTracker.reset();
-    // Reset token count after clearing
-    this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
+    // Reset all active-window references, not only the numeric token count.
+    this.tokenManager.resetContextTracking(this.conversationManager.getMessages());
     logger.debug(`[AGENT] Cleared conversation history for agent ${this.instanceId}`);
   }
 
@@ -879,6 +880,16 @@ export class Agent {
     const { parentCallId, maxDuration, thoroughness } = executionContext ?? {};
     this.activeExecutionContext = { parentCallId, maxDuration, thoroughness };
 
+    if (!this.config.isSpecializedAgent) {
+      const registry = ServiceRegistry.getInstance();
+      const policyManager = registry.get('run_policy_manager');
+      const supervisor = registry.get('run_supervisor');
+      const policy = policyManager?.getPolicy();
+      if (policy?.completion === 'durable_objective' && supervisor && !supervisor.isRunning()) {
+        await supervisor.startRun(message, policy);
+      }
+    }
+
     // Reset all invocation-scoped state when a pooled agent is reused.
     this.toolOrchestrator.setParentCallId(parentCallId);
     this.turnManager.setMaxDuration(maxDuration);
@@ -970,8 +981,9 @@ export class Agent {
       this.interruptionManager.clearWasInterrupted();
     }
 
-    // Auto-save after user message
-    this.autoSaveSession();
+    // The initiating user message is a durable run boundary. Commit it before
+    // making an endpoint request so a crash cannot strand an unrecorded prompt.
+    await this.sessionPersistence.commitTurnStart();
 
     // Inject system reminder about todos (main agent only, and only if TodoWrite is available)
     // This nudges the model to consider updating the todo list without blocking
@@ -1136,11 +1148,15 @@ export class Agent {
    * For timeouts on specialized agents, throws an error (tool failure).
    * For user interruptions or main agent, returns a message.
    */
-  private handleInterruption(): string {
+  private async handleInterruption(): Promise<string> {
     this.interruptionManager.markRequestAsInterrupted();
 
     const cause = this.interruptionManager.getCause();
     const message = cause && 'reason' in cause ? cause.reason : PERMISSION_MESSAGES.USER_FACING_INTERRUPTION;
+
+    if (!this.config.isSpecializedAgent) {
+      await ServiceRegistry.getInstance().get('run_supervisor')?.cancel(message);
+    }
 
     this.emitAgentEnd(true, cause?.kind);
 
@@ -1263,18 +1279,52 @@ export class Agent {
     if (!this.turnController.beginModelCall()) {
       const snapshot = this.turnController.snapshot();
 
-      // Explain once. Any of the turn's many continuation/retry paths can
-      // re-enter here after the budget trips; without this guard each one
-      // appends another copy of the same notice.
-      if (!this.turnController.claimBudgetNotice()) {
-        return { role: 'assistant', content: '' };
-      }
+      const registry = ServiceRegistry.getInstance();
+      const runPolicy = registry.get('run_policy_manager')?.getPolicy();
+      const runSupervisor = registry.get('run_supervisor');
+      if (!this.config.isSpecializedAgent && runPolicy?.completion === 'durable_objective' && runSupervisor?.isRunning()) {
+        this.turnController.rollover();
+        await runSupervisor.rolloverEpoch(snapshot.terminationReason ?? 'round_trip_budget');
+        await this.checkAutoCompaction();
+        if (this.turnController.beginModelCall()) {
+          logger.info('[AGENT]', this.instanceId, 'Rolled durable objective into a new safety-budget epoch');
+        } else {
+          await runSupervisor.block('Unable to begin a new safety-budget epoch');
+          return { role: 'assistant', content: 'The durable objective could not start a new execution epoch.', error: true };
+        }
+      } else {
 
-      logger.warn('[AGENT]', this.instanceId, `Reached per-turn round-trip limit (${AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN}); stopping to avoid an unbounded loop`);
-      return {
-        role: 'assistant',
-        content: `I stopped because this turn reached its ${snapshot.terminationReason === 'tool_budget' ? 'tool-call' : 'model-call'} safety budget. The task may be incomplete; review the completed work before continuing.`,
-      };
+        // Explain once. Any of the turn's many continuation/retry paths can
+        // re-enter here after the budget trips; without this guard each one
+        // appends another copy of the same notice.
+        if (!this.turnController.claimBudgetNotice()) {
+          return { role: 'assistant', content: '' };
+        }
+
+        logger.warn('[AGENT]', this.instanceId, `Reached per-turn round-trip limit (${AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN}); stopping to avoid an unbounded loop`);
+        return {
+          role: 'assistant',
+          content: `I stopped because this turn reached its ${snapshot.terminationReason === 'tool_budget' ? 'tool-call' : 'model-call'} safety budget. The task may be incomplete; review the completed work before continuing.`,
+        };
+      }
+    }
+
+    // Headless runs do not have the React wake hook. Drain completed delegated
+    // work before every model request so results are delivered exactly once even
+    // when the parent is otherwise idle or only producing progress prose.
+    if (!this.config.isSpecializedAgent) {
+      const completed = ServiceRegistry.getInstance()
+        .get('background_agent_manager')
+        ?.drainCompletedResults() ?? [];
+      if (completed.length > 0) {
+        const report = completed.map((task) => {
+          const body = task.status === 'done'
+            ? task.result ?? '(no output)'
+            : `[${task.status}] ${task.error ?? task.result ?? 'no output'}`;
+          return `Background agent ${task.id} (${task.agentType}) ${task.status}. Result:\n${body}`;
+        }).join('\n\n');
+        this.conversationManager.addMessage(createSystemReminder(report.slice(-200_000), false));
+      }
     }
 
     // Get function definitions from tool manager
@@ -1291,6 +1341,22 @@ export class Agent {
     // named, typically 'ally'), which is why this keys off the same signal as todo tools.
     if (this.config.isSpecializedAgent) {
       excludeTools.push(...this.toolManager.getMainAgentOnlyToolNames());
+    }
+
+    // Human-input tools are unavailable in automatic runs. This is a schema
+    // filter for model efficiency; FormManager/PlanModeManager enforce the same
+    // invariant at runtime for defense in depth.
+    const runPolicyManager = ServiceRegistry.getInstance().get('run_policy_manager');
+    if (runPolicyManager?.getPolicy().completion !== 'durable_objective') {
+      excludeTools.push('complete-objective', 'block-objective', 'reconcile-effect');
+    }
+    if (runPolicyManager && !runPolicyManager.isInteractionAvailable()) {
+      excludeTools.push(
+        ...this.toolManager.getInteractiveToolNames(),
+        'enter-plan-mode',
+        'write-plan',
+        'exit-plan-mode'
+      );
     }
 
     const functions = this.toolManager.getFunctionDefinitions(
@@ -1328,7 +1394,7 @@ export class Agent {
       updatedSystemPrompt = await getMainSystemPrompt(
         this.tokenManager,
         this.toolResultManager,
-        this.config.isScheduledRun ?? false,
+        this.config.isOnceMode ?? this.config.isScheduledRun ?? false,
         this.appConfig.reasoning_effort,
         this.conversationManager.getMessages(),
         this.config.isScheduledRun ?? false,
@@ -1358,8 +1424,18 @@ export class Agent {
     // refresh accounting before deciding whether auto-compaction is needed.
     this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
 
+    // Build volatile context before planning so the budget is the request the
+    // model will actually receive, not a smaller approximation.
+    const { getDynamicContextBlock } = await import('../prompts/systemMessages.js');
+    const dynamicContext = await getDynamicContextBlock({
+      tokenManager: this.tokenManager,
+      toolResultManager: this.toolResultManager,
+      includeTodos: !this.config.isSpecializedAgent,
+      includePlanMode: !this.config.isSpecializedAgent,
+    });
+
     // Auto-compaction: the budget planner decides from absolute request budgets.
-    await this.checkAutoCompaction(functions);
+    await this.checkAutoCompaction(functions, dynamicContext);
 
     // Log conversation state before sending to LLM
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Sending', this.conversationManager.getMessageCount(), 'messages to LLM');
@@ -1390,13 +1466,6 @@ export class Agent {
       // immediately after the response by removeEphemeralSystemReminders(). The
       // native Ollama transport preserves this position while mapping late
       // system reminders to user continuations for strict model templates.
-      const { getDynamicContextBlock } = await import('../prompts/systemMessages.js');
-      const dynamicContext = await getDynamicContextBlock({
-        tokenManager: this.tokenManager,
-        toolResultManager: this.toolResultManager,
-        includeTodos: !this.config.isSpecializedAgent,
-        includePlanMode: !this.config.isSpecializedAgent,
-      });
       if (dynamicContext) {
         const dynamicReminder = createSystemReminder(dynamicContext, false);
         dynamicReminder.metadata = { ...(dynamicReminder.metadata ?? {}), ephemeral: true };
@@ -1435,6 +1504,7 @@ export class Agent {
         // Dynamic output token limit based on remaining context
         dynamicMaxTokens,
         signal: this.interruptionManager.beginRequest(),
+        retryPolicy: 'foreground',
         providerState: this.conversationManager.getProviderState(),
       });
 
@@ -1499,6 +1569,12 @@ export class Agent {
   ): Promise<string> {
     if (response.interrupted && !this.interruptionManager.isInterrupted()) {
       throw new Error('Model generation stopped without an agent interruption cause');
+    }
+
+    if (response.error && !this.config.isSpecializedAgent) {
+      await ServiceRegistry.getInstance().get('run_supervisor')?.block(
+        response.content || response.error_message || 'Non-retryable model endpoint error'
+      );
     }
 
     // Check for interruption
@@ -1625,6 +1701,21 @@ export class Agent {
       }
     }
 
+    if (!this.config.isSpecializedAgent && result.trim()) {
+      const registry = ServiceRegistry.getInstance();
+      const supervisor = registry.get('run_supervisor');
+      const policy = registry.get('run_policy_manager')?.getPolicy();
+      if (policy?.completion === 'durable_objective' && supervisor?.isRunning()) {
+        await supervisor.recordProgress(result);
+        this.conversationManager.addMessage(createSystemReminder(
+          'The durable objective is still active. Continue working automatically. Do not ask the user. When all todos, required background work, and verification are complete, call complete-objective with concise evidence. If no safe automatic path remains, call block-objective with the concrete blocker.',
+          false
+        ));
+        const continuation = await this.getLLMResponse(executionContext);
+        return await this.processLLMResponse(continuation, executionContext);
+      }
+    }
+
     return result;
   }
 
@@ -1672,7 +1763,6 @@ export class Agent {
       generateId: () => this.generateId(),
       autoSaveSession: () => this.autoSaveSession(),
       getLLMResponse: () => this.getLLMResponse(executionContext),
-      unwrapBatchToolCalls: (toolCalls) => unwrapBatchToolCalls(toolCalls),
       executeToolCalls: async (toolCalls, cycles) => {
         // Execute tool calls via orchestrator
         // Permission denied errors need special handling by Agent.ts
@@ -1685,9 +1775,6 @@ export class Agent {
         } catch (error) {
           // Check if this is a permission denied error that triggered interruption
           if (isPermissionDeniedError(error)) {
-            // Get unwrapped tool calls for adding permission denial results
-            const unwrappedToolCalls = unwrapBatchToolCalls(toolCalls);
-
             logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Permission denied during tool execution - adding tool results before interruption');
 
             // Answer only the calls still unanswered. Sequential execution
@@ -1695,7 +1782,7 @@ export class Agent {
             // batch may already have one; appending a second result for the same
             // id would corrupt tool_call/result pairing.
             const added = this.conversationManager.addMissingToolResults(
-              unwrappedToolCalls,
+              toolCalls,
               PERMISSION_DENIED_TOOL_RESULT,
               'permission_denied'
             );
@@ -2049,7 +2136,10 @@ export class Agent {
   /**
    * Check whether the current complete request exceeds its safe input budget.
    */
-  private async checkAutoCompaction(functions?: readonly FunctionDefinition[]): Promise<void> {
+  private async checkAutoCompaction(
+    functions?: readonly FunctionDefinition[],
+    dynamicContext?: string
+  ): Promise<void> {
     const lastRole = this.conversationManager.getLastMessage()?.role;
     const compacted = await this.agentCompactor.checkAndPerformAutoCompaction({
       instanceId: this.instanceId,
@@ -2058,6 +2148,7 @@ export class Agent {
       parentCallId: this.activeExecutionContext.parentCallId,
       signal: this.interruptionManager.beginRequest(),
       functions,
+      dynamicContext,
       modelMaxOutput: this.appConfig.max_tokens,
       phase: lastRole === 'user' ? 'pre-turn' : 'mid-turn',
     });

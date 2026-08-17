@@ -11,6 +11,7 @@
 import { ActivityStream } from './ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
 import { logger } from './Logger.js';
+import { InteractionUnavailableError, type RunPolicyManager } from './RunPolicyManager.js';
 
 /**
  * Plan approval options
@@ -44,7 +45,6 @@ export const PLAN_MODE_ALLOWED_TOOLS = new Set([
   'grep',
   'ls',
   'tree',
-  'batch',
   'explore',
   'ask-user-question',
   'write-plan',
@@ -59,7 +59,10 @@ export class PlanModeManager {
     reject: (error: Error) => void;
   } | null = null;
 
-  constructor(activityStream: ActivityStream) {
+  constructor(
+    activityStream: ActivityStream,
+    private readonly runPolicyManager?: RunPolicyManager
+  ) {
     this.activityStream = activityStream;
     this.state = {
       active: false,
@@ -162,6 +165,10 @@ export class PlanModeManager {
   async requestApproval(): Promise<PlanApprovalResponse> {
     if (!this.state.planContent || !this.state.planFilePath) {
       throw new Error('No plan to approve - write a plan first with write-plan');
+    }
+
+    if (this.runPolicyManager && !this.runPolicyManager.isInteractionAvailable()) {
+      throw new InteractionUnavailableError('plan approval');
     }
 
     // Emit approval request to UI

@@ -36,7 +36,7 @@ import {
  * Callbacks are organized into functional groups:
  * - Identity & Persistence: generateId, autoSaveSession
  * - LLM Communication: getLLMResponse
- * - Tool Execution: unwrapBatchToolCalls, executeToolCalls, recordToolCalls
+ * - Tool Execution: executeToolCalls, recordToolCalls
  * - Cycle Detection: detectCycles, clearCyclesIfBroken
  * - Context Management: getContextUsagePercentage, ensureContextRoom, cleanupEphemeralMessages
  * - Turn Management: clearCurrentTurn, startToolExecution
@@ -58,16 +58,6 @@ export interface ResponseContext {
   autoSaveSession: () => void;
   /** Callback to get LLM response for continuations/retries */
   getLLMResponse: () => Promise<LLMResponse>;
-  /** Callback to unwrap batch tool calls */
-  unwrapBatchToolCalls: (toolCalls: Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: Record<string, any> };
-  }>) => Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: Record<string, any> };
-  }>;
   /** Callback to process tool execution (delegates to ToolOrchestrator) */
   executeToolCalls: (
     toolCalls: Array<{
@@ -382,13 +372,8 @@ export class ResponseProcessor {
   ): Promise<string> {
     logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Processing tool response with', toolCalls.length, 'tool calls');
 
-    // Unwrap batch calls before adding to conversation
-    // This ensures the conversation history matches what was actually executed
-    const unwrappedToolCalls = context.unwrapBatchToolCalls(toolCalls);
-    logger.debug('[AGENT_CONTEXT]', context.instanceId, 'After unwrapping:', unwrappedToolCalls.length, 'tool calls');
-
-    // Add assistant message with unwrapped tool calls to history
-    const toolCallsForMessage = unwrappedToolCalls.map(tc => ({
+    // Add the model's native tool calls to history.
+    const toolCallsForMessage = toolCalls.map(tc => ({
       id: tc.id,
       type: 'function' as const,
       function: {
@@ -404,7 +389,7 @@ export class ResponseProcessor {
     const toolManager = serviceRegistry.get('tool_manager');
 
     if (toolManager) {
-      for (const tc of unwrappedToolCalls) {
+      for (const tc of toolCalls) {
         const tool = (toolManager as any).getTool?.(tc.function.name);
         if (tool) {
           tool_visibility[tc.id] = tool.visibleInChat ?? true;
@@ -414,7 +399,7 @@ export class ResponseProcessor {
 
     // Store context data in tool_context for each tool call
     // This enables reconstructing the tool call hierarchy and state on session resume
-    for (const tc of unwrappedToolCalls) {
+    for (const tc of toolCalls) {
       const context_data: ToolCallContext = {};
 
       // Store parentId if this is a nested/delegated call
@@ -473,12 +458,12 @@ export class ResponseProcessor {
     logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Assistant message with tool calls added. Total messages:', this.conversationManager.getMessageCount());
 
     // Detect cycles BEFORE executing tools
-    const cycles = context.detectCycles(unwrappedToolCalls);
+    const cycles = context.detectCycles(toolCalls);
     if (cycles.size > 0) {
       logger.debug('[AGENT_CYCLE_DETECTION]', context.instanceId, `Detected ${cycles.size} potential cycles`);
     }
 
-    // Execute tool calls via orchestrator (pass original calls for unwrapping)
+    // Execute the native tool calls via the orchestrator.
     logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Executing tool calls via orchestrator...');
 
     // Start tool execution and create abort controller
@@ -494,7 +479,7 @@ export class ResponseProcessor {
       // ALWAYS clear delegation context, even on error/interruption
       // This ensures interjections don't route to stale/dead agents
       // Pass the specific call IDs that just completed to avoid clearing concurrent delegations
-      const completedCallIds = unwrappedToolCalls.map(tc => tc.id);
+      const completedCallIds = toolCalls.map(tc => tc.id);
       this.clearInjectableToolDelegations(completedCallIds);
     }
 
@@ -507,15 +492,15 @@ export class ResponseProcessor {
 
     // Add tool calls to history for cycle detection (AFTER execution)
     // Pass results to enable search hit rate tracking
-    context.recordToolCalls(unwrappedToolCalls, toolResults);
+    context.recordToolCalls(toolCalls, toolResults);
 
     // Check if cycle pattern is broken (3 consecutive different calls)
     context.clearCyclesIfBroken();
 
     // Track required tool calls (legacy requiredToolCalls config)
     if (this.requiredToolTracker.hasRequiredTools()) {
-      logger.debug(`[REQUIRED_TOOLS_DEBUG] Checking ${unwrappedToolCalls.length} tool calls for required tools`);
-      unwrappedToolCalls.forEach(tc => {
+      logger.debug(`[REQUIRED_TOOLS_DEBUG] Checking ${toolCalls.length} tool calls for required tools`);
+      toolCalls.forEach(tc => {
         logger.debug(`[REQUIRED_TOOLS_DEBUG] Tool executed: ${tc.function.name}`);
         if (this.requiredToolTracker.markCalled(tc.function.name)) {
           logger.debug(`[REQUIRED_TOOLS_DEBUG] ✓ Tracked required tool call: ${tc.function.name}`);
@@ -527,7 +512,7 @@ export class ResponseProcessor {
     // Track requirements (new requirements system)
     if (this.requirementValidator.hasRequirements()) {
       logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId, 'Recording tool call results for requirements');
-      unwrappedToolCalls.forEach((tc, index) => {
+      toolCalls.forEach((tc, index) => {
         const result = toolResults[index];
         const success = result ? result.success === true : false;
         this.requirementValidator.recordToolCall(tc.function.name, success);

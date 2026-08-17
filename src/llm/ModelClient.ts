@@ -70,6 +70,8 @@ export interface SendOptions {
    * Every caller must supply one — there is no global "cancel everything" path.
    */
   signal: AbortSignal;
+  /** Foreground objectives retry transient transport failures until cancelled. */
+  retryPolicy?: 'foreground' | 'auxiliary';
   /** Provider-owned stateless conversation items from the active checkpoint. */
   providerState?: ProviderCheckpointState;
   /** Strict structured-output contract for providers that support JSON Schema. */

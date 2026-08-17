@@ -342,6 +342,20 @@ export class PermissionDeniedError extends Error {
   }
 }
 
+/** A non-interactive policy decision, distinct from a human denying a prompt. */
+export class PolicyDeniedError extends PermissionDeniedError {
+  readonly code = 'policy_denied';
+
+  constructor(
+    message: string,
+    public readonly rule: string,
+    public readonly alternatives: readonly string[] = []
+  ) {
+    super(message);
+    this.name = 'PolicyDeniedError';
+  }
+}
+
 /**
  * Type guard to check if an error is a PermissionDeniedError
  *
@@ -350,4 +364,8 @@ export class PermissionDeniedError extends Error {
  */
 export function isPermissionDeniedError(error: unknown): error is PermissionDeniedError {
   return error instanceof PermissionDeniedError;
+}
+
+export function isPolicyDeniedError(error: unknown): error is PolicyDeniedError {
+  return error instanceof PolicyDeniedError;
 }

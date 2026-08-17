@@ -18,7 +18,7 @@ import { BackgroundTask } from '../services/BackgroundTaskRegistry.js';
 import { formatDuration } from '../ui/utils/timeUtils.js';
 
 const DEFAULT_TIMEOUT_SECONDS = 300; // 5 minutes
-const MAX_TIMEOUT_SECONDS = 1800;    // 30 minutes
+const MAX_TIMEOUT_SECONDS = 30 * 24 * 60 * 60; // 30 days while this process owns the work
 
 export class WaitTool extends BaseTool {
   readonly name = 'wait';

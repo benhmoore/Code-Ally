@@ -48,6 +48,8 @@ import { ListDirsCommand } from './commands/ListDirsCommand.js';
 import { OpenCommand } from './commands/OpenCommand.js';
 import { SkillCommand } from './commands/SkillCommand.js';
 import { ScheduleCommand } from './commands/ScheduleCommand.js';
+import { HistoryCommand } from './commands/HistoryCommand.js';
+import { RunCommand } from './commands/RunCommand.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -75,6 +77,8 @@ export class CommandHandler {
     this.registerCommand(new ExitCommand());
     this.registerCommand(new FocusCommand());
     this.registerCommand(new HelpCommand());
+    this.registerCommand(new HistoryCommand());
+    this.registerCommand(new RunCommand());
     this.registerCommand(new InitCommand());
     this.registerCommand(new ListDirsCommand());
     this.registerCommand(new MCPCommand());

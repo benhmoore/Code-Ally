@@ -18,9 +18,10 @@
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ActivityEvent } from '../types/index.js';
 import { API_TIMEOUTS, TEXT_LIMITS, PERMISSION_MESSAGES } from '../config/constants.js';
-import { PermissionDeniedError } from '../security/PathSecurity.js';
+import { PermissionDeniedError, PolicyDeniedError } from '../security/PathSecurity.js';
 import { logger } from '../services/Logger.js';
 import type { ScheduledTaskPermissionPolicy, ScheduledCommandRule } from '../services/ScheduledTaskManager.js';
+import type { RunPolicyManager } from '../services/RunPolicyManager.js';
 
 /**
  * Trust scope levels for permission management
@@ -102,6 +103,9 @@ export class TrustManager {
    */
   private autoAllowModeGetter?: () => boolean;
 
+  /** Central interaction policy. When absent, behavior remains interactive. */
+  private runPolicyManager?: RunPolicyManager;
+
   /**
    * Optional deny-by-default policy used for unattended scheduled task runs.
    * When present, interactive prompts are disabled; matching operations are
@@ -182,33 +186,46 @@ export class TrustManager {
     this.scheduledPermissionPolicy = policy;
   }
 
+  setRunPolicyManager(manager: RunPolicyManager): void {
+    this.runPolicyManager = manager;
+  }
+
   private checkScheduledPermission(toolName: string, args: any, path?: CommandPath): boolean {
     const policy = this.scheduledPermissionPolicy;
     if (!policy) return false;
 
-    if (toolName === 'bash') {
-      const command = typeof path === 'object' && path?.command
+    const command = typeof path === 'object' && path?.command
         ? path.command
         : typeof args?.command === 'string'
           ? args.command
           : '';
-      if (!command) {
-        throw new PermissionDeniedError('Scheduled task denied bash: missing command');
-      }
+    if (command) {
       if (this.matchesAnyPattern(command, policy.denied_bash_patterns ?? [])) {
-        throw new PermissionDeniedError(`Scheduled task denied bash command: ${command}`);
+        throw new PolicyDeniedError(
+          `Scheduled task denied shell command: ${command}`,
+          'scheduled.denied_bash_patterns',
+          ['Use a non-shell tool', 'Choose a command allowed by the scheduled-task preset']
+        );
       }
       if (this.matchesCommandRules(command, policy.allowed_bash_commands ?? [])) {
         return true;
       }
-      throw new PermissionDeniedError(`Scheduled task is not allowed to run bash command: ${command}`);
+      throw new PolicyDeniedError(
+        `Scheduled task is not allowed to run shell command: ${command}`,
+        'scheduled.allowed_bash_commands',
+        ['Use a non-shell tool', 'Choose a command allowed by the scheduled-task preset']
+      );
     }
 
     if ((policy.allowed_tools ?? []).includes(toolName)) {
       return true;
     }
 
-    throw new PermissionDeniedError(`Scheduled task is not allowed to use ${toolName}`);
+    throw new PolicyDeniedError(
+      `Scheduled task is not allowed to use ${toolName}`,
+      'scheduled.allowed_tools',
+      ['Use an allowed read-only tool', 'Choose a policy-compliant alternative']
+    );
   }
 
   /**
@@ -253,20 +270,37 @@ export class TrustManager {
    * @returns True if allowed, throws PermissionDeniedError if denied
    */
   async promptForPermission(toolName: string, args: any, path?: CommandPath): Promise<boolean> {
-    // Require ActivityStream for permission prompts
-    if (!this.activityStream) {
-      throw new Error('ActivityStream is required for permission prompts');
-    }
-
     // Detect command sensitivity tier
     const tier = this.getCommandSensitivity(toolName, path);
 
     // Auto-allow mode: automatically approve non-EXTREMELY_SENSITIVE commands
     // Security constraint: EXTREMELY_SENSITIVE commands ALWAYS require explicit user approval
     // Note: Auto-allow is ephemeral - it bypasses prompts but doesn't create permanent trust
-    if (this.autoAllowModeGetter?.() && tier !== SensitivityTier.EXTREMELY_SENSITIVE) {
-      logger.debug(`[TrustManager] Auto-allowing ${toolName} (auto-allow mode enabled, ephemeral approval)`);
-      return true;
+    if (this.autoAllowModeGetter?.()) {
+      if (tier !== SensitivityTier.EXTREMELY_SENSITIVE) {
+        logger.debug(`[TrustManager] Auto-allowing ${toolName} (auto mode enabled, ephemeral approval)`);
+        return true;
+      }
+      throw new PolicyDeniedError(
+        `Auto mode denied extremely sensitive operation: ${toolName}`,
+        'auto.extremely_sensitive',
+        ['Use a less destructive operation', 'Narrow the target or command']
+      );
+    }
+
+    if (this.runPolicyManager && !this.runPolicyManager.isInteractionAvailable()) {
+      throw new PolicyDeniedError(
+        `Automatic run cannot request permission for ${toolName}`,
+        'interaction.none',
+        ['Use a tool that does not require confirmation', 'Choose a policy-allowed operation']
+      );
+    }
+
+    // Require ActivityStream only after noninteractive policy decisions have
+    // been resolved; headless runs must receive a structured denial, not a
+    // missing-UI implementation error.
+    if (!this.activityStream) {
+      throw new Error('ActivityStream is required for permission prompts');
     }
 
     // Determine available options based on sensitivity
@@ -325,6 +359,22 @@ export class TrustManager {
         this.markOperationAsApproved(call.function.name, null);
       }
       return true;
+    }
+
+    if (this.autoAllowModeGetter?.()) {
+      throw new PolicyDeniedError(
+        'Auto mode cannot approve an opaque batch of sensitive operations',
+        'auto.batch_requires_individual_policy',
+        ['Execute operations individually so each can be evaluated']
+      );
+    }
+
+    if (this.runPolicyManager && !this.runPolicyManager.isInteractionAvailable()) {
+      throw new PolicyDeniedError(
+        'Automatic run cannot request batch permission',
+        'interaction.none',
+        ['Execute policy-allowed operations individually']
+      );
     }
 
     // Show appropriate menu based on sensitivity and delegation state
@@ -494,14 +544,14 @@ export class TrustManager {
    * @param path - Context-specific path/command
    * @returns Sensitivity tier
    */
-  getCommandSensitivity(toolName: string, path?: CommandPath): SensitivityTier {
+  getCommandSensitivity(_toolName: string, path?: CommandPath): SensitivityTier {
     // Filesystem escape takes precedence over command-text classification.
     if (path && typeof path === 'object' && path.outside_cwd) {
       return SensitivityTier.EXTREMELY_SENSITIVE;
     }
 
     // Bash tool uses command content analysis
-    if (toolName === 'bash' && path && typeof path === 'object') {
+    if (path && typeof path === 'object') {
       const command = path.command;
       if (command) {
         return this.getCommandSensitivityForBash(command);
@@ -596,7 +646,7 @@ export class TrustManager {
 
       // Extract command string for display if this is a bash operation
       let command: string | undefined;
-      if (toolName === 'bash' && path && typeof path === 'object') {
+      if (path && typeof path === 'object') {
         command = path.command;
       }
 

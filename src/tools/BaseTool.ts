@@ -75,6 +75,19 @@ export abstract class BaseTool {
     return this.capabilities;
   }
 
+  /** Recovery contract used by the durable run journal. */
+  effectFor(args: Record<string, any>): 'read_only' | 'idempotent' | 'non_idempotent' | 'reconcilable' {
+    const capabilities = this.capabilitiesFor(args);
+    if (capabilities.includes(ToolCapability.ShellExec)
+      || capabilities.includes(ToolCapability.RemoteEffect)
+      || capabilities.includes(ToolCapability.ProcessControl)) {
+      return 'non_idempotent';
+    }
+    if (capabilities.includes(ToolCapability.FsWrite)) return 'reconcilable';
+    if (capabilities.includes(ToolCapability.AppStateWrite)) return 'idempotent';
+    return 'read_only';
+  }
+
   /**
    * Whether an invocation must be confirmed by the user.
    *
@@ -136,14 +149,12 @@ export abstract class BaseTool {
   /**
    * Whether this tool should appear in the conversation UI
    * Set to false for tools that should be hidden from chat
-   * (e.g., batch, todo)
+   * (e.g., todo/status tools)
    */
   readonly visibleInChat: boolean = true;
 
   /**
-   * Whether this tool is a transparent wrapper
-   * Set to true for tools that should not appear in the conversation
-   * (only their children should appear)
+   * Whether this tool is a transparent wrapper in the UI.
    */
   readonly isTransparentWrapper: boolean = false;
 

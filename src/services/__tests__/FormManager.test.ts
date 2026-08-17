@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { FormManager, FormCancelledError } from '../FormManager.js';
 import { ActivityStream } from '../ActivityStream.js';
 import { ActivityEventType, FormSchema } from '../../types/index.js';
+import { InteractionUnavailableError, RunPolicyManager } from '../RunPolicyManager.js';
 
 // ============================================================================
 // TEST UTILITIES
@@ -106,6 +107,22 @@ describe('FormManager', () => {
   });
 
   describe('Form Request', () => {
+    it('fails immediately without emitting a request in automatic runs', async () => {
+      const policy = new RunPolicyManager({
+        interaction: 'none',
+        execution: 'headless',
+        completion: 'durable_objective',
+        authorizationPresetId: 'test',
+      });
+      const automaticForms = new FormManager(activityStream, policy);
+      const listener = vi.fn();
+      activityStream.subscribe(ActivityEventType.TOOL_FORM_REQUEST, listener);
+
+      await expect(automaticForms.requestForm('TestTool', createFormSchema()))
+        .rejects.toBeInstanceOf(InteractionUnavailableError);
+      expect(listener).not.toHaveBeenCalled();
+    });
+
     it('should emit TOOL_FORM_REQUEST event when requesting form', async () => {
       const schema = createFormSchema();
       const emittedEvents: any[] = [];

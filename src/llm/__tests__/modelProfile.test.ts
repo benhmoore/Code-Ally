@@ -18,7 +18,7 @@ describe('resolveModelProfile', () => {
       'registry.example/meta/glimmer:30b',
     ]) {
       const profile = resolveModelProfile(name);
-      expect(profile.reasoningControl).toEqual({ field: 'think', valueKind: 'level' });
+      expect(profile.reasoningControl).toEqual({ field: 'think', valueKind: 'level', disabledValue: false });
       expect(reasoningRequestFields(profile, 'medium')).toEqual({ think: 'medium' });
     }
   });
@@ -26,7 +26,7 @@ describe('resolveModelProfile', () => {
   it('maps older thinking families to boolean Ollama think', () => {
     for (const name of ['glm-4.6:cloud', 'deepseek-r1:32b', 'qwq', 'magistral:24b']) {
       const profile = resolveModelProfile(name);
-      expect(profile.reasoningControl).toEqual({ field: 'think', valueKind: 'boolean' });
+      expect(profile.reasoningControl).toEqual({ field: 'think', valueKind: 'boolean', disabledValue: false });
       expect(reasoningRequestFields(profile, 'high')).toEqual({ think: true });
     }
   });
@@ -42,5 +42,11 @@ describe('resolveModelProfile', () => {
 
   it('enables graded think with the model default when effort is unset', () => {
     expect(reasoningRequestFields(resolveModelProfile('qwen3.8:27b'), undefined)).toEqual({ think: true });
+  });
+
+  it('uses the model-declared disabled value for constrained output', () => {
+    expect(reasoningRequestFields(resolveModelProfile('qwen3.8:27b'), 'high', false)).toEqual({ think: false });
+    expect(reasoningRequestFields(resolveModelProfile('deepseek-r1:32b'), 'high', false)).toEqual({ think: false });
+    expect(reasoningRequestFields(resolveModelProfile('gpt-oss:20b'), 'high', false)).toEqual({});
   });
 });

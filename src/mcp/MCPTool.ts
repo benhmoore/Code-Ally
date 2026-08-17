@@ -103,11 +103,18 @@ export class MCPTool extends BaseTool {
       await this.serverManager.ensureConnected(this.serverName);
 
       // Call the tool
-      const result = await this.serverManager.callTool(
-        this.serverName,
-        this.originalToolName,
-        callArgs
-      );
+      const result = this.currentAbortSignal
+        ? await this.serverManager.callTool(
+            this.serverName,
+            this.originalToolName,
+            callArgs,
+            this.currentAbortSignal,
+          )
+        : await this.serverManager.callTool(
+            this.serverName,
+            this.originalToolName,
+            callArgs,
+          );
 
       // Convert MCP result to ToolResult
       if (result.isError) {

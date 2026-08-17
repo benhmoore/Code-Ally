@@ -26,6 +26,7 @@ const MAX_CACHE_SIZE = 1000;
 
 /** Target cache size after cleanup (keeps most recent entries) */
 const CACHE_CLEANUP_TARGET = 500;
+const MAX_CONTEXT_DEDUPE_ENTRIES = 1000;
 
 /** EMA weight applied to each new calibration sample after the first. */
 const CALIBRATION_ALPHA = 0.4;
@@ -305,6 +306,7 @@ export class TokenManager {
 
     // Update stored hash
     this.seenFiles.set(path, hash);
+    this.trimOldest(this.seenFiles, MAX_CONTEXT_DEDUPE_ENTRIES);
 
     // Return true if content changed or is new
     return previousHash !== hash;
@@ -351,6 +353,7 @@ export class TokenManager {
     // No duplicate found - store this as the first occurrence for this hash
     if (existingId === undefined) {
       this.toolResultHashes.set(hash, toolCallId);
+      this.trimOldest(this.toolResultHashes, MAX_CONTEXT_DEDUPE_ENTRIES);
     }
 
     return null;
@@ -379,6 +382,23 @@ export class TokenManager {
     this.seenFiles.clear();
     this.toolResultHashes.clear();
     this.messageTokenCache.clear();
+  }
+
+  /** Reset state whose references are valid only inside the active model window. */
+  resetContextTracking(messages: readonly Message[]): void {
+    this.currentTokenCount = 0;
+    this.seenFiles.clear();
+    this.toolResultHashes.clear();
+    this.messageTokenCache.clear();
+    this.updateTokenCount(messages);
+  }
+
+  private trimOldest<K, V>(map: Map<K, V>, maxEntries: number): void {
+    while (map.size > maxEntries) {
+      const oldest = map.keys().next();
+      if (oldest.done) return;
+      map.delete(oldest.value);
+    }
   }
 
   /**

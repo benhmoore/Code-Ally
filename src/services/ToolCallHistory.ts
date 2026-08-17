@@ -24,7 +24,37 @@ export class ToolCallHistory {
       return;
     }
 
-    this.history.push(toolCall);
+    const bound = (value: string | undefined, max = 64 * 1024) =>
+      value && value.length > max ? `${value.slice(0, max)}\n… [history truncated]` : value;
+    let result = toolCall.result;
+    if (result !== undefined) {
+      try {
+        const serialized = JSON.stringify(result);
+        if (serialized.length > 64 * 1024) {
+          result = {
+            success: toolCall.result?.success ?? false,
+            error: bound(toolCall.result?.error) ?? '',
+            error_type: toolCall.result?.error_type,
+            _truncated: true,
+            preview: serialized.slice(0, 64 * 1024),
+          };
+        }
+      } catch {
+        result = {
+          success: toolCall.result?.success ?? false,
+          error: bound(toolCall.result?.error) ?? '',
+          _truncated: true,
+          preview: '[unserializable result]',
+        };
+      }
+    }
+    this.history.push({
+      ...toolCall,
+      output: bound(toolCall.output),
+      error: bound(toolCall.error),
+      thinking: bound(toolCall.thinking),
+      result,
+    });
 
     // Maintain circular buffer
     if (this.history.length > this.maxSize) {

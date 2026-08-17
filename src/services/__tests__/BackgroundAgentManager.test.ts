@@ -95,12 +95,15 @@ describe('BackgroundAgentManager', () => {
     expect(reminders.some((r) => r.includes('[done]'))).toBe(true);
   });
 
-  it('cancel signals the sub-agent and marks it cancelled (no release)', () => {
+  it('cancel signals the sub-agent but leaves it running until unwind completes', () => {
     const t = makeTask('t1');
     manager.addTask(t);
     expect(manager.cancelTask('t1')).toBe(true);
     expect(t.subAgent.interrupt).toHaveBeenCalledWith({ kind: 'user_cancel' });
-    expect(t.status).toBe('cancelled');
+    // The detached run owns the terminal state transition. Keeping the task
+    // running prevents it from being drained or evicted while cleanup is active.
+    expect(t.status).toBe('running');
+    expect(manager.drainCompletedResults()).toHaveLength(0);
     // Cancellation only signals; the detached run owns pooled-agent release.
     expect(t.pooledAgent).toBeNull();
   });

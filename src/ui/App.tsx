@@ -146,8 +146,23 @@ const AppContentComponent: React.FC<{
   useEffect(() => {
     const registry = ServiceRegistry.getInstance();
     const trustManager = registry.get('trust_manager');
+    const runPolicyManager = registry.get('run_policy_manager');
     if (trustManager && trustManager.setAutoAllowModeGetter) {
       trustManager.setAutoAllowModeGetter(() => modal.autoAllowMode);
+    }
+    if (runPolicyManager) {
+      const current = runPolicyManager.getPolicy();
+      runPolicyManager.updatePolicy({
+        ...current,
+        interaction: modal.autoAllowMode ? 'none' : 'human',
+        completion: modal.autoAllowMode ? 'durable_objective' : 'chat',
+        authorizationPresetId: modal.autoAllowMode ? 'ui-auto' : 'interactive',
+      });
+      if (modal.autoAllowMode) {
+        registry.get('form_manager')?.cancelAllPending();
+        registry.get('plan_mode_manager')?.cancelPendingApproval();
+      }
+      registry.get('tool_manager')?.clearDefinitionsCache();
     }
   }, [modal.autoAllowMode]);
 

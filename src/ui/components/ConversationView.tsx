@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text, Static } from 'ink';
+import { Box, Text } from 'ink';
 import { Message, ToolCallState, ToolCallTreeNode } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
@@ -448,33 +448,16 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
     return { completedTimeline: grouped.items, pendingContextSummary: grouped.pendingSummary };
   }, [messages, completedToolCalls, compactionNotices, rewindNotices, statusMessages, config?.show_full_tool_output]);
 
-  // Append-only JSX accumulator for Static component.
-  // Only renders JSX for NEW timeline items, avoiding O(n) re-creation of the full array.
-  // Resets when staticRemountKey changes (compaction/rewind).
-  const jsxItemsRef = useRef<React.ReactNode[]>([]);
-  const renderedCountRef = useRef(0);
-  const lastRemountKeyRef = useRef(staticRemountKey);
-
   const completedJSXItems = React.useMemo(() => {
-    // Reset accumulator on remount (compaction/rewind)
-    if (lastRemountKeyRef.current !== staticRemountKey) {
-      jsxItemsRef.current = [];
-      renderedCountRef.current = 0;
-      lastRemountKeyRef.current = staticRemountKey;
-    }
-
     const divider = createDivider(terminalWidth);
-
-    // Only process new items since last render
-    const newItems = completedTimeline.slice(renderedCountRef.current);
-    newItems.forEach((item) => {
-      const spacing = { marginTop: jsxItemsRef.current.length === 0 ? 0 : 1 };
+    return completedTimeline.map((item, timelineIndex) => {
+      const spacing = { marginTop: timelineIndex === 0 ? 0 : 1 };
 
       if (item.type === 'message') {
         const isUser = item.message.role === 'user';
         const indent = isUser ? 0 : LAYOUT.MESSAGE_INDENT;
         const messagePadding = isUser ? {} : { paddingLeft: indent };
-        jsxItemsRef.current.push(
+        return (
           <Box key={`msg-${item.message.id || item.index}`} {...spacing} {...messagePadding}>
             <ErrorBoundary label={`message-${item.message.id || item.index}`}>
               <MessageDisplay
@@ -487,7 +470,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           </Box>
         );
       } else if (item.type === 'toolCall') {
-        jsxItemsRef.current.push(
+        return (
           <Box key={`tool-${item.toolCall.id}`} {...spacing} paddingLeft={2}>
             <ErrorBoundary label={`tool-${item.toolCall.id}`}>
               {renderToolCallTree(item.toolCall, 0, config, compactionNoticesRef.current)}
@@ -495,7 +478,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           </Box>
         );
       } else if (item.type === 'toolCallSummary') {
-        jsxItemsRef.current.push(
+        return (
           <Box key={`tool-summary-${item.summary.id}`} {...spacing} paddingLeft={2}>
             <ErrorBoundary label={`tool-summary-${item.summary.id}`}>
               <ToolCallSummaryDisplay summary={item.summary} />
@@ -503,7 +486,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           </Box>
         );
       } else if (item.type === 'compactionNotice') {
-        jsxItemsRef.current.push(
+        return (
           <Box key={`compaction-${item.notice.id}`} flexDirection="column" {...spacing} paddingLeft={2}>
             <Box><Text dimColor>{divider}</Text></Box>
             <Box>
@@ -517,7 +500,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         const hasRestoredFiles = item.notice.restoredFiles && item.notice.restoredFiles.length > 0;
         const hasFailedRestorations = item.notice.failedRestorations && item.notice.failedRestorations.length > 0;
 
-        jsxItemsRef.current.push(
+        return (
           <Box key={`rewind-${item.notice.id}`} flexDirection="column" {...spacing} paddingLeft={2}>
             <Box><Text dimColor>{divider}</Text></Box>
             <Box>
@@ -548,20 +531,14 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
           </Box>
         );
       } else if (item.type === 'statusMessage') {
-        jsxItemsRef.current.push(
+        return (
           <Box key={`status-${item.statusMessage.id}`} {...spacing} paddingLeft={2}>
             <Text color={UI_COLORS.ERROR}>{item.statusMessage.message}</Text>
           </Box>
         );
       }
+      return null;
     });
-
-    renderedCountRef.current = completedTimeline.length;
-
-    // Return a new array reference so Static detects the change, but only when new items were added
-    return newItems.length > 0 ? [...jsxItemsRef.current] : jsxItemsRef.current;
-    // Note: compactionNotices is accessed via ref to avoid unnecessary recalculation
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [completedTimeline, terminalWidth, config, currentAgent]);
 
   return (
@@ -587,10 +564,10 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         </Box>
       )}
 
-      {/* Completed content in Static - prevents thrashing */}
-      <Static key={`static-${staticRemountKey}`} items={completedJSXItems}>
-        {(item) => item}
-      </Static>
+      {/* Bounded live viewport. Older history is loaded from transcript pages. */}
+      <Box key={`timeline-${staticRemountKey}`} flexDirection="column">
+        {completedJSXItems}
+      </Box>
 
       {/* Active content - only re-renders when active tools change */}
       <ActiveContent

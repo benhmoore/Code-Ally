@@ -32,6 +32,8 @@ import { MCPToolFactory } from './MCPToolFactory.js';
 import type { BaseTool } from '@tools/BaseTool.js';
 
 const CONNECTION_TIMEOUT_MS = 30_000;
+const DISCOVERY_TIMEOUT_MS = 30_000;
+const TOOL_CALL_TIMEOUT_MS = 120_000;
 
 export class MCPServerManager implements IService {
   private clients: Map<string, Client> = new Map();
@@ -40,6 +42,8 @@ export class MCPServerManager implements IService {
   private discoveredTools: Map<string, MCPToolDefinition[]> = new Map();
   private serverConfigs: Map<string, MCPServerConfig> = new Map();
   private activityStream: ActivityStream;
+  private connecting: Map<string, Promise<BaseTool[]>> = new Map();
+  private shuttingDown = false;
 
   /** Tracks which servers belong to which marketplace plugin (serverKey -> pluginName) */
   private pluginServerOwnership: Map<string, string> = new Map();
@@ -114,6 +118,17 @@ export class MCPServerManager implements IService {
    * Returns BaseTool instances for all discovered tools.
    */
   async startServer(name: string): Promise<BaseTool[]> {
+    const pending = this.connecting.get(name);
+    if (pending) return pending;
+    const attempt = this.startServerInternal(name).finally(() => {
+      if (this.connecting.get(name) === attempt) this.connecting.delete(name);
+    });
+    this.connecting.set(name, attempt);
+    return attempt;
+  }
+
+  private async startServerInternal(name: string): Promise<BaseTool[]> {
+    if (this.shuttingDown) throw new MCPError('CONNECTION_FAILED', 'MCP manager is shutting down', name);
     const rawConfig = this.serverConfigs.get(name);
     if (!rawConfig) {
       throw new MCPError('SERVER_NOT_FOUND', `No configuration found for server '${name}'`, name);
@@ -134,21 +149,36 @@ export class MCPServerManager implements IService {
         { name: 'code-ally', version: '0.3.0' },
         { capabilities: {} }
       );
+      client.onclose = () => this.invalidateConnection(name, client, 'transport closed');
+      client.onerror = (error) => {
+        logger.warn(`[MCP] Transport error for '${name}':`, error);
+        this.invalidateConnection(name, client, error.message);
+      };
 
       // Connect with timeout
-      await Promise.race([
-        client.connect(transport),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new MCPError('TIMEOUT', `Connection to '${name}' timed out after ${CONNECTION_TIMEOUT_MS}ms`, name)), CONNECTION_TIMEOUT_MS)
-        ),
-      ]);
+      let connectionTimer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          client.connect(transport),
+          new Promise<never>((_, reject) => {
+            connectionTimer = setTimeout(() => reject(new MCPError('TIMEOUT', `Connection to '${name}' timed out after ${CONNECTION_TIMEOUT_MS}ms`, name)), CONNECTION_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        if (connectionTimer) clearTimeout(connectionTimer);
+      }
 
+      if (this.shuttingDown) {
+        await transport.close().catch(() => {});
+        throw new MCPError('CONNECTION_FAILED', 'MCP manager shut down during connection', name);
+      }
       this.clients.set(name, client);
 
       // Discover tools
       const toolsResult = await client.request(
         { method: 'tools/list' },
-        ListToolsResultSchema
+        ListToolsResultSchema,
+        { timeout: DISCOVERY_TIMEOUT_MS, maxTotalTimeout: DISCOVERY_TIMEOUT_MS }
       );
 
       const definitions: MCPToolDefinition[] = (toolsResult.tools ?? []).map(t => ({
@@ -219,7 +249,12 @@ export class MCPServerManager implements IService {
   /**
    * Call a tool on a connected server
    */
-  async callTool(serverName: string, toolName: string, args: Record<string, unknown>): Promise<MCPToolResult> {
+  async callTool(
+    serverName: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<MCPToolResult> {
     const client = this.clients.get(serverName);
     if (!client) {
       throw new MCPError('SERVER_NOT_FOUND', `Server '${serverName}' is not connected`, serverName);
@@ -231,7 +266,8 @@ export class MCPServerManager implements IService {
           method: 'tools/call',
           params: { name: toolName, arguments: args },
         },
-        CallToolResultSchema
+        CallToolResultSchema,
+        { signal, timeout: TOOL_CALL_TIMEOUT_MS, maxTotalTimeout: TOOL_CALL_TIMEOUT_MS }
       );
 
       return {
@@ -240,6 +276,8 @@ export class MCPServerManager implements IService {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.statuses.set(serverName, { status: MCPServerStatus.ERROR, error: message });
+      await this.cleanupServer(serverName);
       throw new MCPError('TOOL_CALL_FAILED', `Tool '${toolName}' on '${serverName}' failed: ${message}`, serverName);
     }
   }
@@ -380,7 +418,7 @@ export class MCPServerManager implements IService {
       const transport = new StdioClientTransport({
         command: config.command,
         args: config.args,
-        env: config.env ? { ...process.env, ...config.env } as Record<string, string> : undefined,
+        env: this.createHeadlessEnvironment(config.env),
         stderr: 'pipe',
       });
 
@@ -442,10 +480,41 @@ export class MCPServerManager implements IService {
   }
 
   private async stopAllServers(): Promise<void> {
-    const names = Array.from(this.clients.keys());
+    this.shuttingDown = true;
+    const pending = Array.from(this.connecting.values());
+    const names = Array.from(new Set([...this.clients.keys(), ...this.transports.keys()]));
     await Promise.allSettled(
-      names.map(name => this.stopServer(name))
+      names.map(name => this.cleanupServer(name))
     );
+    await Promise.allSettled(pending);
+  }
+
+  private invalidateConnection(name: string, client: Client, reason: string): void {
+    if (this.clients.get(name) !== client) return;
+    this.clients.delete(name);
+    this.discoveredTools.delete(name);
+    this.statuses.set(name, { status: MCPServerStatus.ERROR, error: reason });
+  }
+
+  private createHeadlessEnvironment(configEnv?: Record<string, string>): Record<string, string> {
+    const inherited = ['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'TMP', 'TEMP', 'NODE_ENV', 'TZ'];
+    const env: Record<string, string> = {};
+    for (const key of inherited) {
+      const value = process.env[key];
+      if (value !== undefined) env[key] = value;
+    }
+    return {
+      ...env,
+      CI: '1',
+      GIT_TERMINAL_PROMPT: '0',
+      GCM_INTERACTIVE: 'Never',
+      SSH_ASKPASS_REQUIRE: 'never',
+      PAGER: 'cat',
+      GIT_PAGER: 'cat',
+      EDITOR: 'false',
+      VISUAL: 'false',
+      ...configEnv,
+    };
   }
 
   private async readConfigFile(path: string): Promise<MCPConfig | null> {

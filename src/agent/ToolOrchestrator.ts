@@ -17,10 +17,10 @@ import { ToolManager } from '../tools/ToolManager.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ToolExecutionContext, ToolResult } from '../types/index.js';
 import { AgentConfig } from './Agent.js';
-import { unwrapBatchToolCalls, ToolCall } from '../utils/toolCallUtils.js';
+import type { ToolCall } from '../types/index.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
-import { DirectoryTraversalError, isPermissionDeniedError } from '../security/PathSecurity.js';
+import { DirectoryTraversalError, isPermissionDeniedError, isPolicyDeniedError } from '../security/PathSecurity.js';
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError, createStructuredError, classifyToolError } from '../utils/errorUtils.js';
@@ -37,6 +37,7 @@ import { createToolResultMessage } from '../llm/FunctionCalling.js';
 import { resolveDisplayContent, stripDisplayOnlyFields } from '../utils/toolResultContent.js';
 import { FormCancelledError } from '../services/FormManager.js';
 import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
+import type { BaseTool } from '../tools/BaseTool.js';
 
 /**
  * Safe tools that can run concurrently
@@ -251,23 +252,19 @@ export class ToolOrchestrator {
     // Store cycles for later use in result formatting
     this.cycleDetectionResults = cycles || new Map();
 
-    // Unwrap batch tool calls into individual tool calls
-    const unwrappedCalls = unwrapBatchToolCalls(toolCalls);
-    logger.debug('[TOOL_ORCHESTRATOR] After unwrapping batch calls:', unwrappedCalls.length, 'tool calls');
-
     // Determine execution mode
     // IMPORTANT: Single tools always use sequential execution
     // Concurrent execution is only beneficial for multiple tools running in parallel
-    if (unwrappedCalls.length === 1) {
-      return await this.executeSequential(unwrappedCalls);
+    if (toolCalls.length === 1) {
+      return await this.executeSequential(toolCalls);
     }
 
-    const canRunConcurrently = this.canRunConcurrently(unwrappedCalls);
+    const canRunConcurrently = this.canRunConcurrently(toolCalls);
 
     if (canRunConcurrently && this.config.config.parallel_tools) {
-      return await this.executeConcurrent(unwrappedCalls);
+      return await this.executeConcurrent(toolCalls);
     } else {
-      return await this.executeSequential(unwrappedCalls);
+      return await this.executeSequential(toolCalls);
     }
   }
 
@@ -305,7 +302,7 @@ export class ToolOrchestrator {
     });
 
     // IMPORTANT: Emit START events for all tools BEFORE execution begins
-    // This ensures batch tool calls are visible in UI immediately, not when they start executing
+    // This ensures native parallel tool calls are visible before execution begins.
     const effectiveParentId = this.parentCallId || groupId;
 
     for (const toolCall of toolCalls) {
@@ -797,6 +794,7 @@ export class ToolOrchestrator {
     let permissionDenied = false; // Track if permission was denied to skip TOOL_CALL_END
     let validationFailed = false; // Track if validation failed (already emitted TOOL_CALL_END)
     let executionStartTime: number | undefined; // Track execution start time for session persistence
+    let journaledEffect: ReturnType<BaseTool['effectFor']> | undefined;
     const scopedRegistry = this.agent.getScopedRegistry?.();
     const executionContext: ToolExecutionContext = {
       ...(scopedRegistry ? { registryScope: scopedRegistry } : {}),
@@ -895,23 +893,26 @@ export class ToolOrchestrator {
 
       // Check permissions if PermissionManager is available
       if (this.permissionManager && tool && tool.requiresConfirmation(args)) {
-        // Emit permission request event (user will deliberate, timer paused)
-        this.emitEvent({
-          id,
-          type: ActivityEventType.TOOL_PERMISSION_REQUEST,
-          timestamp: Date.now(),
-          parentId: effectiveParentId,
-          data: {
-            toolName,
-          },
-        });
+        // TrustManager emits PERMISSION_REQUEST only when it actually needs a
+        // human. Automatic policy decisions must not emit prompt-like events.
+        await this.permissionManager.checkPermission(toolName, args, tool);
+      }
 
-        // Wait for user permission (this can take 0-30 seconds)
-        await this.permissionManager.checkPermission(toolName, args);
+      if (tool) {
+        journaledEffect = tool.effectFor(args);
+        await ServiceRegistry.getInstance().get('run_supervisor')?.toolPrepared(
+          id,
+          toolName,
+          journaledEffect,
+          args,
+        );
       }
 
       // Emit execution start event (timer starts NOW, after permission granted or if no permission needed)
       executionStartTime = Date.now();
+      if (journaledEffect) {
+        await ServiceRegistry.getInstance().get('run_supervisor')?.toolStarted(id, toolName, journaledEffect);
+      }
       this.emitEvent({
         id,
         type: ActivityEventType.TOOL_EXECUTION_START,
@@ -935,6 +936,16 @@ export class ToolOrchestrator {
         this.agent.getAgentName(), // currentAgentName for tool-agent binding validation
         executionContext
       );
+
+      if (journaledEffect) {
+        await ServiceRegistry.getInstance().get('run_supervisor')?.toolFinished(
+          id,
+          toolName,
+          journaledEffect,
+          result.success,
+          result.error
+        );
+      }
 
       // Store execution start time for session persistence
       (result as any)._executionStartTime = executionStartTime;
@@ -973,9 +984,27 @@ export class ToolOrchestrator {
         }
       }
     } catch (error) {
+      // Automatic policy denials are ordinary model-visible tool results. They
+      // do not interrupt the turn: the next model response can choose a safe
+      // alternative without waiting for a user.
+      if (isPolicyDeniedError(error)) {
+        result = createStructuredError(
+          error.message,
+          'policy_denied',
+          toolName,
+          {
+            args,
+            code: error.code,
+            rule: error.rule,
+            alternatives: [...error.alternatives],
+          }
+        );
+        result.system_reminder =
+          'This operation was denied by the automatic run policy. Do not ask the user; choose a safe alternative and continue.';
+      }
       // Permission denied errors should propagate to Agent for handling
       // Emit TOOL_CALL_END before re-throwing so UI shows the failed tool call
-      if (isPermissionDeniedError(error)) {
+      else if (isPermissionDeniedError(error)) {
         permissionDenied = true;
 
         // Emit TOOL_CALL_END event for this failed tool call
@@ -1032,6 +1061,17 @@ export class ToolOrchestrator {
           'system_error',
           toolName,
           args
+        );
+      }
+
+
+      if (journaledEffect) {
+        await ServiceRegistry.getInstance().get('run_supervisor')?.toolFinished(
+          id,
+          toolName,
+          journaledEffect,
+          false,
+          formatError(error)
         );
       }
 

@@ -15,7 +15,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import { getProjectSessionsDir } from '../config/paths.js';
-import { Session, SessionInfo, Message, IService } from '../types/index.js';
+import { Session, SessionInfo, Message, IService, type TranscriptPage } from '../types/index.js';
 import { generateShortId } from '../utils/id.js';
 import type { TodoItem } from './TodoManager.js';
 import { logger } from './Logger.js';
@@ -24,6 +24,7 @@ import { atomicWriteFile } from '../utils/atomicFile.js';
 import { migrateRecord, stampVersion, SchemaTooNewError } from '../utils/versionedStore.js';
 import { SESSION_SCHEMA } from '../config/schemas.js';
 import type { ConversationCheckpointV1, ProviderCheckpointState } from '../agent/compaction/types.js';
+import { checkpointSourceDigest } from '../agent/compaction/CheckpointReducer.js';
 
 /**
  * Configuration for SessionManager
@@ -60,7 +61,7 @@ export class SessionManager implements IService {
   // Cache is invalidated after CACHE_TTL_MS or on operations that might change the file
   private sessionCache: Map<string, { session: Session; loadedAt: number }> = new Map();
   private readonly CACHE_TTL_MS = 1000; // 1 second - cache is fresh for this duration
-  private readonly MAX_CACHE_ENTRIES = 50; // FIFO eviction limit to prevent unbounded memory growth
+  private readonly MAX_CACHE_ENTRIES = 4; // Hydrated sessions are potentially huge; keep only a tiny hot set.
 
   constructor(config: SessionManagerConfig = {}) {
     // Sessions are stored globally under ~/.ally/projects/<key>/sessions, keyed
@@ -324,21 +325,11 @@ export class SessionManager implements IService {
   /**
    * Filter messages for persistence:
    * - Remove system messages (regenerated on resume)
-   * - Remove assistant messages with incomplete tool calls (interrupted execution)
+   * - Preserve prepared tool-call messages so crash recovery can reconcile them
    */
   private filterMessagesForPersistence(messages: readonly Message[]): Message[] {
-    const completedToolCalls = new Set<string>();
-    for (const msg of messages) {
-      if (msg.role === 'tool' && msg.tool_call_id) {
-        completedToolCalls.add(msg.tool_call_id);
-      }
-    }
-
     return messages.filter(msg => {
       if (msg.role === 'system') return false;
-      if (msg.role === 'assistant' && msg.tool_calls?.length) {
-        return msg.tool_calls.every(tc => completedToolCalls.has(tc.id));
-      }
       return true;
     });
   }
@@ -477,6 +468,124 @@ export class SessionManager implements IService {
     }
   }
 
+  /** Read a manifest without hydrating immutable transcript segments. */
+  private async loadSessionManifest(sessionName: string): Promise<Session | null> {
+    try {
+      const raw = await fs.readFile(this.getSessionPath(sessionName), 'utf8');
+      if (!raw.trim()) return null;
+      return migrateRecord<Session>(JSON.parse(raw), SESSION_SCHEMA);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      if (error instanceof SchemaTooNewError) throw error;
+      logger.warn(`[SESSION] Could not read manifest for ${sessionName}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Load an older transcript page without hydrating the complete conversation.
+   * Cursor is an exclusive absolute index; omitted means "from the end".
+   */
+  async getTranscriptPage(
+    sessionName: string,
+    beforeCursor?: number,
+    count: number = 200,
+    byteBudget: number = 1024 * 1024,
+  ): Promise<TranscriptPage> {
+    const manifest = await this.loadSessionManifest(sessionName);
+    if (!manifest) return { messages: [], nextCursor: null, totalMessages: 0 };
+    const refs = manifest.transcript_segments ?? [];
+    const tail = manifest.transcript_tail ?? manifest.transcript ?? manifest.messages ?? [];
+    const segmentCount = refs.reduce((sum, ref) => sum + ref.message_count, 0);
+    const totalMessages = segmentCount + tail.length;
+    const end = Math.max(0, Math.min(beforeCursor ?? totalMessages, totalMessages));
+    const start = Math.max(0, end - Math.max(1, count));
+    const selected: Array<{ index: number; message: Message }> = [];
+    let usedBytes = 0;
+    let limitReached = false;
+
+    // Traverse newest-to-oldest so a byte ceiling never skips unseen newer
+    // messages. Reverse once at the end for chronological rendering.
+    if (end > segmentCount) {
+      const from = Math.max(0, start - segmentCount);
+      const to = Math.min(tail.length, end - segmentCount);
+      for (let i = to - 1; i >= from; i -= 1) {
+        const message = tail[i]!;
+        const bytes = Buffer.byteLength(JSON.stringify(message));
+        if (selected.length > 0 && usedBytes + bytes > byteBudget) {
+          limitReached = true;
+          break;
+        }
+        selected.push({ index: segmentCount + i, message: structuredClone(message) });
+        usedBytes += bytes;
+      }
+    }
+
+    const offsets: number[] = [];
+    let offset = 0;
+    for (const ref of refs) {
+      offsets.push(offset);
+      offset += ref.message_count;
+    }
+    for (let refIndex = refs.length - 1; refIndex >= 0 && usedBytes < byteBudget && !limitReached; refIndex -= 1) {
+      const ref = refs[refIndex]!;
+      const segmentStart = offsets[refIndex]!;
+      const segmentEnd = segmentStart + ref.message_count;
+      if (segmentEnd <= start || segmentStart >= end) continue;
+      const raw = await fs.readFile(join(this.sessionsDir, sessionName, 'transcript-segments', `${ref.hash}.json`), 'utf8');
+      const parsed = JSON.parse(raw) as { hash?: string; messages?: Message[] };
+      if (parsed.hash !== ref.hash || !Array.isArray(parsed.messages)
+        || this.transcriptHash(parsed.messages) !== ref.hash) {
+        throw new Error(`Transcript segment failed integrity validation: ${ref.hash}`);
+      }
+      const from = Math.max(0, start - segmentStart);
+      const to = Math.min(ref.message_count, end - segmentStart);
+      for (let i = to - 1; i >= from; i -= 1) {
+        const message = parsed.messages[i]!;
+        const bytes = Buffer.byteLength(JSON.stringify(message));
+        if (selected.length > 0 && usedBytes + bytes > byteBudget) {
+          limitReached = true;
+          break;
+        }
+        selected.push({ index: segmentStart + i, message });
+        usedBytes += bytes;
+      }
+    }
+
+    selected.reverse();
+    const messages = selected.map(({ message }) => message);
+    const earliestIndex = selected[0]?.index ?? end;
+
+    return {
+      messages,
+      nextCursor: earliestIndex > 0 ? earliestIndex : null,
+      totalMessages,
+    };
+  }
+
+  private async validateCheckpointSource(
+    sessionName: string,
+    checkpoint: ConversationCheckpointV1,
+  ): Promise<boolean> {
+    const wanted = new Set(checkpoint.source.messageIds);
+    const found = new Map<string, Message>();
+    let cursor: number | undefined;
+    do {
+      const page = await this.getTranscriptPage(sessionName, cursor, 200, 2 * 1024 * 1024);
+      for (const message of page.messages) {
+        if (message.id && wanted.has(message.id)) found.set(message.id, message);
+      }
+      if (found.size === wanted.size) break;
+      cursor = page.nextCursor ?? undefined;
+      if (page.nextCursor === null) break;
+    } while (true);
+    const source = checkpoint.source.messageIds
+      .map((id) => found.get(id))
+      .filter((message): message is Message => Boolean(message));
+    return source.length === checkpoint.source.messageIds.length
+      && checkpointSourceDigest(source) === checkpoint.source.digest;
+  }
+
   /**
    * Save session data to disk atomically with write serialization
    *
@@ -509,6 +618,77 @@ export class SessionManager implements IService {
       update(session);
       session.updated_at = new Date().toISOString();
       await this.writeSessionFile(sessionName, session);
+      return true;
+    });
+  }
+
+  /** Update a manifest and append a bounded live tail without hydrating history. */
+  private async mutateSessionIncremental(
+    sessionName: string,
+    createIfMissing: boolean,
+    updates: Partial<Session>,
+    transcriptTail: readonly Message[],
+  ): Promise<boolean> {
+    return this.enqueueSessionOperation(sessionName, async () => {
+      let manifest = await this.loadSessionManifest(sessionName) ??
+        (createIfMissing ? this.createEmptySession(sessionName) : null);
+      if (!manifest) return false;
+      if (manifest.transcript && !manifest.transcript_segments) {
+        manifest = await this.externalizeTranscript(sessionName, manifest);
+      }
+
+      const { transcript: _ignoredTranscript, transcript_segments: _ignoredSegments,
+        transcript_tail: _ignoredTail, ...safeUpdates } = updates;
+      Object.assign(manifest, safeUpdates);
+      const incoming = this.filterMessagesForPersistence(transcriptTail);
+      const existingTail = structuredClone(manifest.transcript_tail ?? []);
+      let recent = existingTail;
+      const refs = [...(manifest.transcript_segments ?? [])];
+      if (refs.length > 0) {
+        const last = refs[refs.length - 1]!;
+        try {
+          const raw = await fs.readFile(join(this.sessionsDir, sessionName, 'transcript-segments', `${last.hash}.json`), 'utf8');
+          const parsed = JSON.parse(raw) as { hash?: string; messages?: Message[] };
+          if (parsed.hash === last.hash && Array.isArray(parsed.messages)
+            && this.transcriptHash(parsed.messages) === last.hash) {
+            recent = [...parsed.messages, ...existingTail];
+          }
+        } catch {
+          // Page reads perform strict integrity validation. If overlap cannot be
+          // inspected here, append conservatively rather than hydrating history.
+        }
+      }
+      const recentIds = new Set(recent.map((message) => message.id).filter(Boolean));
+      let overlap = -1;
+      for (let index = incoming.length - 1; index >= 0; index -= 1) {
+        const id = incoming[index]?.id;
+        if (id && recentIds.has(id)) {
+          overlap = index;
+          break;
+        }
+      }
+      const combinedTail = [...existingTail, ...incoming.slice(overlap + 1)];
+      const chunkSize = SessionManager.TRANSCRIPT_SEGMENT_MESSAGES;
+      const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
+      while (combinedTail.length >= chunkSize) {
+        const messages = combinedTail.splice(0, chunkSize);
+        const hash = this.transcriptHash(messages);
+        await fs.mkdir(segmentDir, { recursive: true });
+        const segmentPath = join(segmentDir, `${hash}.json`);
+        try { await fs.access(segmentPath); }
+        catch { await atomicWriteFile(segmentPath, JSON.stringify({ schema_version: 1, hash, messages })); }
+        refs.push({ hash, message_count: messages.length });
+      }
+
+      const { transcript: _legacy, ...withoutTranscript } = manifest;
+      const next = stampVersion({
+        ...withoutTranscript,
+        transcript_segments: refs,
+        transcript_tail: combinedTail,
+        updated_at: new Date().toISOString(),
+      }, SESSION_SCHEMA);
+      await atomicWriteFile(this.getSessionPath(sessionName), JSON.stringify(next, null, 2));
+      this.sessionCache.delete(sessionName);
       return true;
     });
   }
@@ -703,7 +883,7 @@ export class SessionManager implements IService {
    * @returns Array of messages or empty array if not found
    */
   async getSessionMessages(sessionName: string): Promise<Message[]> {
-    const session = await this.loadSession(sessionName);
+    const session = await this.loadSessionManifest(sessionName);
     return session?.messages ?? [];
   }
 
@@ -727,7 +907,7 @@ export class SessionManager implements IService {
     metadata: Session['metadata'] | null;
     additional_directories: string[];
   }> {
-    const session = await this.loadSession(sessionName);
+    const session = await this.loadSessionManifest(sessionName);
 
     if (!session) {
       return {
@@ -743,11 +923,19 @@ export class SessionManager implements IService {
       };
     }
 
+    const recent = await this.getTranscriptPage(sessionName, undefined, 500, 4 * 1024 * 1024);
+    let checkpoint = session.conversation_checkpoint ?? null;
+    if (checkpoint && !(await this.validateCheckpointSource(sessionName, checkpoint))) {
+      logger.error(`[SESSION] Checkpoint ${checkpoint.id} failed source integrity validation; falling back to portable active messages`);
+      checkpoint = null;
+    }
     return {
       messages: session.messages ?? [],
-      transcript: session.transcript ?? session.messages ?? [],
-      checkpoint: session.conversation_checkpoint ?? null,
-      providerState: session.provider_state ?? session.conversation_checkpoint?.providerState ?? { kind: 'chat' },
+      transcript: recent.messages,
+      checkpoint,
+      providerState: checkpoint
+        ? session.provider_state ?? checkpoint.providerState
+        : { kind: 'chat' },
       todos: session.todos ?? [],
       idleMessages: session.idle_messages ?? [],
       projectContext: session.project_context ?? null,
@@ -764,27 +952,35 @@ export class SessionManager implements IService {
   async getSessionsInfo(): Promise<SessionInfo[]> {
     const sessionNames = await this.listSessions();
 
-    // Load all sessions in parallel
+    // Read only manifests plus a bounded recent page. Session selection must
+    // not hydrate every immutable transcript segment in every session.
     const sessions = await Promise.all(
       // A session written by a newer build cannot be summarized; it is skipped
       // (and left untouched on disk) rather than failing the whole listing.
-      sessionNames.map(name => this.loadSession(name).catch(error => {
+      sessionNames.map(async name => {
+        try {
+          const session = await this.loadSessionManifest(name);
+          const recent = session ? await this.getTranscriptPage(name, undefined, 20, 64 * 1024) : null;
+          return session ? { session, recent } : null;
+        } catch (error) {
         if (error instanceof SchemaTooNewError) {
           logger.warn(`Skipping session ${name} in listing: ${error.message}`);
           return null;
         }
         throw error;
-      }))
+        }
+      })
     );
 
     // Filter out null results and process sessions
     const infos: Array<SessionInfo & { timestamp: number }> = [];
 
-    for (const session of sessions) {
-      if (!session) continue;
+    for (const entry of sessions) {
+      if (!entry) continue;
+      const { session, recent } = entry;
 
       // Session lists describe what the user sees, not the compacted wire window.
-      const messages = session.transcript ?? session.messages ?? [];
+      const messages = recent?.messages ?? session.transcript_tail ?? session.messages ?? [];
 
       // Find the last user message for preview
       let lastUserMessage: string | undefined;
@@ -812,7 +1008,7 @@ export class SessionManager implements IService {
             ? cleanContent.slice(0, TEXT_LIMITS.COMMAND_DISPLAY_MAX) + '...'
             : cleanContent;
         } else {
-          displayName = '(no messages)';
+          displayName = recent?.totalMessages ? '(conversation)' : '(no messages)';
         }
       }
 
@@ -822,7 +1018,7 @@ export class SessionManager implements IService {
         session_id: session.id,
         display_name: displayName,
         last_modified_timestamp: updatedAt.getTime(),
-        message_count: messages.length,
+        message_count: recent?.totalMessages ?? messages.length,
         working_dir: session.working_dir,
         lastUserMessage,
         timestamp: updatedAt.getTime(),
@@ -1045,10 +1241,13 @@ export class SessionManager implements IService {
 
     this.pendingAutoSave = null;
     logger.debug('[SESSION] Flushing pending debounced save');
-    await this.mutateSession(pending.sessionName, true, (session) => {
-      Object.assign(session, pending.updates);
-      if (session.active_plugins === undefined) session.active_plugins = [];
-    });
+    const transcript = pending.updates.transcript ?? pending.updates.messages ?? [];
+    await this.mutateSessionIncremental(
+      pending.sessionName,
+      true,
+      { ...pending.updates, active_plugins: pending.updates.active_plugins ?? [] },
+      transcript,
+    );
   }
 
   /**
@@ -1076,12 +1275,11 @@ export class SessionManager implements IService {
 
     try {
       await this.flushPendingAutoSave(name);
-      return await this.mutateSession(name, true, (session) => {
-        session.messages = this.filterMessagesForPersistence(messages);
-        session.transcript = this.filterMessagesForPersistence(transcript);
-        session.conversation_checkpoint = structuredClone(checkpoint);
-        session.provider_state = structuredClone(checkpoint.providerState);
-      });
+      return await this.mutateSessionIncremental(name, true, {
+        messages: this.filterMessagesForPersistence(messages),
+        conversation_checkpoint: structuredClone(checkpoint),
+        provider_state: structuredClone(checkpoint.providerState),
+      }, transcript);
     } catch (error) {
       logger.error(`[SESSION] Failed to commit conversation checkpoint ${checkpoint.id}:`, error);
       return false;

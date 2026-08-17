@@ -49,6 +49,7 @@ export interface ToolRemovalResult {
  * Manages conversation message history
  */
 export class ConversationManager {
+  private static readonly MAX_TRANSCRIPT_TAIL = 500;
   /** Compactable model-facing message window. */
   private messages: Message[] = [];
 
@@ -88,11 +89,13 @@ export class ConversationManager {
       this.rebuildToolResultIndex();
       this.transcript = (config.initialTranscript ?? this.messages)
         .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+        .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
         .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
       logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Initialized with', this.messages.length, 'messages');
     } else if (config.initialTranscript?.length) {
       this.transcript = config.initialTranscript
         .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+        .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
         .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     }
   }
@@ -115,6 +118,9 @@ export class ConversationManager {
 
     if (messageWithMetadata.role !== 'system' && !messageWithMetadata.metadata?.ephemeral) {
       this.transcript.push(messageWithMetadata);
+      if (this.transcript.length > ConversationManager.MAX_TRANSCRIPT_TAIL) {
+        this.transcript.splice(0, this.transcript.length - ConversationManager.MAX_TRANSCRIPT_TAIL);
+      }
     }
 
     // Update tool result index if this is a tool result message
@@ -237,6 +243,7 @@ export class ConversationManager {
     }));
     this.transcript = this.messages
       .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+      .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
       .map(msg => ({ ...msg }));
     // Rebuild tool result index from scratch
     this.rebuildToolResultIndex();
@@ -263,6 +270,7 @@ export class ConversationManager {
     this.messages = activeMessages.map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     this.transcript = transcript
       .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+      .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
       .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     this.checkpoint = checkpoint ? structuredClone(checkpoint) : null;
     this.providerState = structuredClone(providerState);

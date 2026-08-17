@@ -23,7 +23,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 
 const DEFAULT_INTERVAL_SECONDS = 10;
 const DEFAULT_TIMEOUT_SECONDS = 1800; // 30 minutes
-const MAX_TIMEOUT_SECONDS = 24 * 60 * 60;
+const MAX_TIMEOUT_SECONDS = 30 * 24 * 60 * 60;
 
 type Condition = 'file_exists' | 'http_ok' | 'shell';
 
@@ -182,24 +182,59 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
   }
 
   /** Build the polled predicate for a condition. Returns true when satisfied. */
-  private buildCheck(condition: Condition, target: string): () => Promise<boolean> {
+  private buildCheck(condition: Condition, target: string): (signal: AbortSignal) => Promise<boolean> {
     switch (condition) {
       case 'file_exists':
         return async () => {
           try { await stat(target); return true; } catch { return false; }
         };
       case 'http_ok':
-        return async () => {
+        return async (signal) => {
           try {
-            const res = await fetch(target, { method: 'GET' });
+            const res = await fetch(target, { method: 'GET', signal });
+            await res.body?.cancel().catch(() => {});
             return res.ok;
           } catch { return false; }
         };
       case 'shell':
-        return () => new Promise<boolean>((resolve) => {
-          const child = spawn(target, { shell: true, stdio: 'ignore' });
-          child.on('close', (code) => resolve(code === 0));
-          child.on('error', () => resolve(false));
+        return (signal) => new Promise<boolean>((resolve) => {
+          const child = spawn(target, {
+            shell: true,
+            stdio: 'ignore',
+            detached: process.platform !== 'win32',
+            env: {
+              PATH: process.env.PATH,
+              HOME: process.env.HOME,
+              LANG: process.env.LANG,
+              CI: '1',
+              GIT_TERMINAL_PROMPT: '0',
+              GCM_INTERACTIVE: 'Never',
+              SSH_ASKPASS_REQUIRE: 'never',
+              PAGER: 'cat',
+              GIT_PAGER: 'cat',
+              EDITOR: 'false',
+              VISUAL: 'false',
+            },
+          });
+          let done = false;
+          const finish = (value: boolean) => {
+            if (done) return;
+            done = true;
+            signal.removeEventListener('abort', abort);
+            resolve(value);
+          };
+          const abort = () => {
+            if (child.pid && process.platform !== 'win32') {
+              try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
+            } else {
+              child.kill('SIGTERM');
+            }
+            finish(false);
+          };
+          if (signal.aborted) abort();
+          else signal.addEventListener('abort', abort, { once: true });
+          child.on('close', (code) => finish(code === 0));
+          child.on('error', () => finish(false));
         });
     }
   }

@@ -455,14 +455,14 @@ ${guidances.join('\n\n')}`;
     ? `
 
 **IMPORTANT - Single Response Mode:**
-This is a non-interactive, single-turn conversation. Your response will be final and the conversation will end immediately after you respond. There is no opportunity for follow-up questions or clarification. Make your response complete, clear, and self-contained.`
+This is a non-interactive automatic run. No user is available for questions, forms, approvals, or permission elevation. A policy denial is a recoverable tool result: choose a safe alternative and continue. Ordinary assistant prose is progress, not completion. After all required work, background dependencies, todos, and verification are finished, call \`complete-objective\` with concise evidence. If and only if no safe automatic path remains, call \`block-objective\` with the concrete blocker.`
     : '';
 
   const scheduledRunInstructions = isScheduledRun
     ? `
 
 **IMPORTANT - Scheduled Task Run:**
-This is an unattended scheduled task execution${scheduledTaskId ? ` for \`${scheduledTaskId}\`` : ''}. Execute the scheduled user prompt using available tools when possible. Do not ask follow-up questions; no user is available in this run. If blocked by missing capability, denied permission, or an unavailable external dependency, report exactly what was attempted and what blocked completion. This run will be saved in session history as a \`scheduled_<task-id>_<timestamp>\` session.`
+This is an unattended scheduled task execution${scheduledTaskId ? ` for \`${scheduledTaskId}\`` : ''}. Execute the scheduled prompt automatically. Do not ask follow-up questions or request any other human input. Policy denials must be handled by choosing a safe alternative. Only \`complete-objective\` records success; use \`block-objective\` when no safe path remains. This run will be saved in session history as a \`scheduled_<task-id>_<timestamp>\` session.`
     : '';
 
   // Combine core directives with the cache-stable context. Volatile state (date,

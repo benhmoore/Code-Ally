@@ -161,7 +161,7 @@ describe('ConversationCompactor', () => {
     expect(manager.getMessages()[0]?.metadata?.isConversationCheckpoint).toBe(true);
     expect(result.checkpoint.retainedMessageIds).toEqual([]);
     expect(result.checkpoint.portability).toBe('extractive');
-    expect(result.checkpoint.semanticState.activeWork.some(fact =>
+    expect(result.checkpoint.semanticState.completedWork.some(fact =>
       fact.text.includes('Wrote src/file-0.ts successfully'))).toBe(true);
   });
 

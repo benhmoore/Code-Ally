@@ -22,6 +22,7 @@ import {
   FormSchema,
 } from '../types/index.js';
 import { logger } from './Logger.js';
+import { InteractionUnavailableError, type RunPolicyManager } from './RunPolicyManager.js';
 
 /**
  * Error thrown when user cancels a form
@@ -61,7 +62,10 @@ export class FormManager {
     }
   > = new Map();
 
-  constructor(activityStream: ActivityStream) {
+  constructor(
+    activityStream: ActivityStream,
+    private readonly runPolicyManager?: RunPolicyManager
+  ) {
     this.activityStream = activityStream;
 
     // Subscribe to form response events
@@ -98,6 +102,9 @@ export class FormManager {
     initialValues?: Record<string, any>,
     callId?: string
   ): Promise<Record<string, any>> {
+    if (this.runPolicyManager && !this.runPolicyManager.isInteractionAvailable()) {
+      throw new InteractionUnavailableError(`form requested by ${toolName}`);
+    }
     return new Promise((resolve, reject) => {
       // Generate unique ID for form request: form_{timestamp}_{7-char-random} (base-36, skip '0.' prefix)
       const requestId = `form_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;

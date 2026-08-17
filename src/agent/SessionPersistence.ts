@@ -121,6 +121,13 @@ export class SessionPersistence {
     });
   }
 
+  /** Persist a turn boundary before any model/tool side effect is attempted. */
+  async commitTurnStart(): Promise<void> {
+    if (this.agentDepth > 0) return;
+    await this.autoSave();
+    await ServiceRegistry.getInstance().get('session_manager')?.forceSave();
+  }
+
   /** Critical checkpoint commit; returns only after the session manifest is durable. */
   async commitCheckpoint(
     messages: readonly Message[],

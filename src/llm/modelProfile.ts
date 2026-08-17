@@ -16,6 +16,8 @@ export type ReasoningValueKind = 'level' | 'boolean';
 export interface ReasoningControl {
   field: ReasoningField;
   valueKind: ReasoningValueKind;
+  /** Wire value that explicitly disables reasoning, when the backend supports it. */
+  disabledValue?: boolean | string;
 }
 
 interface ModelProfileRule {
@@ -32,7 +34,7 @@ const MODEL_PROFILE_RULES: readonly ModelProfileRule[] = [
     // These Ollama templates accept `think` as an effort string, not merely a
     // boolean. Registry prefixes and quantization suffixes are matched too.
     patterns: [/qwen3\.8/, /(?:^|[/:_-])(?:muse[-_.]?)?glimmer(?:$|[/:_-])/],
-    reasoning: { field: 'think', valueKind: 'level' },
+    reasoning: { field: 'think', valueKind: 'level', disabledValue: false },
   },
   {
     patterns: [
@@ -43,7 +45,7 @@ const MODEL_PROFILE_RULES: readonly ModelProfileRule[] = [
       /magistral/,
       /phi-?4.*reasoning/,
     ],
-    reasoning: { field: 'think', valueKind: 'boolean' },
+    reasoning: { field: 'think', valueKind: 'boolean', disabledValue: false },
   },
 ];
 
@@ -84,9 +86,16 @@ export function resolveModelProfile(modelName: string | null | undefined): Model
 export function reasoningRequestFields(
   profile: ModelProfile,
   effort: string | undefined,
+  enabled: boolean = true,
 ): ReasoningRequestFields {
   const control = profile.reasoningControl;
   if (!control) return {};
+
+  if (!enabled) {
+    return control.disabledValue === undefined
+      ? {}
+      : { [control.field]: control.disabledValue };
+  }
 
   if (control.field === 'reasoning_effort') {
     return effort ? { reasoning_effort: effort } : {};

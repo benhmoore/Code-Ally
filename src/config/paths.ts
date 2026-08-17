@@ -141,6 +141,11 @@ export function getProjectPlansDir(projectDir: string = process.cwd()): string {
   return join(getProjectDataDir(projectDir), 'plans');
 }
 
+/** Durable execution journals for project-scoped objectives. */
+export function getProjectRunsDir(projectDir: string = process.cwd()): string {
+  return join(getProjectDataDir(projectDir), 'runs');
+}
+
 /**
  * Get the scheduled task store for a project. The file is project-scoped while
  * each task records its profile so the scheduler can run it with the same

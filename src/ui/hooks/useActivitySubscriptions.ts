@@ -65,6 +65,10 @@ export const useActivitySubscriptions = (
   agent: Agent,
   activityStream: ActivityStream
 ): ActivitySubscriptionsState => {
+  const appendBounded = (current: string, chunk: string, maxChars: number): string => {
+    const next = current + chunk;
+    return next.length <= maxChars ? next : next.slice(-maxChars);
+  };
   // Streaming content accumulator (use ref to avoid stale closure in event handlers)
   const streamingContentRef = useRef<string>('');
 
@@ -137,8 +141,9 @@ export const useActivitySubscriptions = (
   }, [state.isThinking, isCancelling]);
 
   // Chunk batching: Accumulate tool output chunks to reduce render frequency
-  // Maps tool call ID -> array of pending chunks
-  const pendingChunks = useRef<Map<string, string[]>>(new Map());
+  // Maps tool call ID -> byte-bounded pending text. Keeping one bounded string
+  // avoids O(n²) repeated reduce/shift work for millions of tiny chunks.
+  const pendingChunks = useRef<Map<string, string>>(new Map());
 
   // Timer reference for debounced flush
   const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -166,19 +171,14 @@ export const useActivitySubscriptions = (
       // Flush specific tool
       const chunks = pendingChunks.current.get(toolId);
       if (chunks && chunks.length > 0) {
-        // Combine all chunks into single output update
-        const combinedOutput = chunks.join('');
-        scheduleToolUpdate.current(toolId, { output: combinedOutput });
+        scheduleToolUpdate.current(toolId, { output: chunks });
         // Clear this tool's chunks
         pendingChunks.current.delete(toolId);
       }
     } else {
       // Flush all tools
       pendingChunks.current.forEach((chunks, id) => {
-        if (chunks.length > 0) {
-          const combinedOutput = chunks.join('');
-          scheduleToolUpdate.current(id, { output: combinedOutput });
-        }
+        if (chunks.length > 0) scheduleToolUpdate.current(id, { output: chunks });
       });
       pendingChunks.current.clear();
     }
@@ -350,14 +350,11 @@ export const useActivitySubscriptions = (
     if (!chunk) return;
 
     // Get or create chunk array for this tool
-    let chunks = pendingChunks.current.get(event.id);
-    if (!chunks) {
-      chunks = [];
-      pendingChunks.current.set(event.id, chunks);
-    }
-
-    // Accumulate chunk
-    chunks.push(chunk);
+    const boundedChunk = chunk.length > 64 * 1024 ? chunk.slice(-64 * 1024) : chunk;
+    pendingChunks.current.set(
+      event.id,
+      appendBounded(pendingChunks.current.get(event.id) ?? '', boundedChunk, 256 * 1024),
+    );
 
     // Schedule debounced flush (batches chunks over 100ms window)
     scheduleDebouncedFlush.current();
@@ -368,9 +365,9 @@ export const useActivitySubscriptions = (
     const chunk = event.data?.chunk || '';
     if (chunk) {
       // Update the source of truth immediately
-      streamingContentRef.current += chunk;
+      streamingContentRef.current = appendBounded(streamingContentRef.current, chunk, 4 * 1024 * 1024);
       // Accumulate chunk for batched state update
-      pendingStreamingChunks.current += chunk;
+      pendingStreamingChunks.current = appendBounded(pendingStreamingChunks.current, chunk, 512 * 1024);
       // Schedule batched flush (100ms throttle window)
       scheduleStreamingFlush.current();
     }
@@ -407,6 +404,9 @@ export const useActivitySubscriptions = (
       // Only set if not already tracking (to capture first chunk time)
       if (!thinkingStartTimes.current.has(key)) {
         thinkingStartTimes.current.set(key, event.timestamp);
+        if (thinkingStartTimes.current.size > 1000) {
+          thinkingStartTimes.current.delete(thinkingStartTimes.current.keys().next().value!);
+        }
       }
     }
   });
@@ -626,8 +626,8 @@ export const useActivitySubscriptions = (
 
     scheduleToolUpdate.current(event.id, {
       diffPreview: {
-        oldContent: event.data?.oldContent || '',
-        newContent: event.data?.newContent || '',
+        oldContent: String(event.data?.oldContent || '').slice(-64 * 1024),
+        newContent: String(event.data?.newContent || '').slice(-64 * 1024),
         filePath: event.data?.filePath || '',
         operationType: event.data?.operationType || 'edit',
         editsCount: event.data?.editsCount,

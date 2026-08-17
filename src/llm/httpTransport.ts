@@ -25,15 +25,26 @@ export class HttpResponseError extends Error {
   readonly httpStatus: number;
   readonly responseBody: string;
   readonly retryable: boolean;
+  readonly retryAfterMs?: number;
 
-  constructor(httpStatus: number, responseBody: string) {
+  constructor(httpStatus: number, responseBody: string, retryAfter?: string | null) {
     const detail = extractHttpErrorDetail(responseBody);
     super(detail ? `HTTP ${httpStatus}: ${detail}` : `HTTP ${httpStatus}`);
     this.name = 'HttpResponseError';
     this.httpStatus = httpStatus;
     this.responseBody = responseBody;
     this.retryable = isRetryableHttpResponse(httpStatus, responseBody);
+    this.retryAfterMs = parseRetryAfter(retryAfter);
   }
+}
+
+function parseRetryAfter(value?: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  return undefined;
 }
 
 function extractHttpErrorDetail(responseBody: string): string {
@@ -52,15 +63,19 @@ function extractHttpErrorDetail(responseBody: string): string {
 }
 
 function isRetryableHttpResponse(httpStatus: number, responseBody: string): boolean {
-  if (httpStatus === 429) return true;
+  if ([408, 425, 429, 502, 504].includes(httpStatus)) return true;
   if (httpStatus !== 500 && httpStatus !== 503) return false;
 
   return !NON_RETRYABLE_SERVER_ERROR_PATTERNS.some(pattern => pattern.test(responseBody));
 }
 
 /** Build a response-aware error for the shared retry policy. */
-export function createHttpResponseError(httpStatus: number, responseBody: string): HttpResponseError {
-  return new HttpResponseError(httpStatus, responseBody);
+export function createHttpResponseError(
+  httpStatus: number,
+  responseBody: string,
+  retryAfter?: string | null
+): HttpResponseError {
+  return new HttpResponseError(httpStatus, responseBody, retryAfter);
 }
 
 /**
@@ -72,7 +87,8 @@ export function classifyHttpError(error: any): ErrorClass {
 
   if (error?.retryable === false) return 'non_retryable';
 
-  if (error?.httpStatus === 429) return 'rate_limit';
+  const status = error?.httpStatus ?? error?.status ?? error?.statusCode;
+  if (status === 429) return 'rate_limit';
 
   if (
     error?.name === 'TypeError' ||
@@ -81,14 +97,17 @@ export function classifyHttpError(error: any): ErrorClass {
     error?.message?.includes('ECONNREFUSED') ||
     error?.message?.includes('ECONNRESET') ||
     error?.message?.includes('EPIPE') ||
-    error?.message?.includes('ETIMEDOUT')
+    error?.message?.includes('ETIMEDOUT') ||
+    error?.message?.includes('Request timeout')
   ) return 'network';
 
-  if (error?.httpStatus === 500 || error?.httpStatus === 503) return 'server';
+  if ([408, 425, 500, 502, 503, 504].includes(status)) return 'server';
 
   if (error instanceof SyntaxError) return 'json';
 
   if (error?.message?.includes('Stream read timeout')) return 'stream_timeout';
+
+  if (error?.cause && error.cause !== error) return classifyHttpError(error.cause);
 
   return 'non_retryable';
 }
@@ -145,8 +164,65 @@ export async function readWithTimeout<T>(
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+/** Bound non-stream response bodies after headers have arrived. */
+export async function readResponseTextWithTimeout(
+  response: Pick<Response, 'text'>,
+  timeoutMs: number,
+  controller?: AbortController,
+): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort();
+      reject(new Error('Request timeout'));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([response.text(), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function readResponseJsonWithTimeout<T = unknown>(
+  response: Pick<Response, 'json'>,
+  timeoutMs: number,
+  controller?: AbortController,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort();
+      reject(new Error('Request timeout'));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([response.json() as Promise<T>, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(abortError());
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function abortError(): Error {
+  const error = new Error('Request aborted');
+  error.name = 'AbortError';
+  return error;
 }
 
 /**
@@ -175,15 +251,23 @@ export async function runWithRetries<T>(params: {
   onError: (error: any) => T;
   /** Notified before each backoff sleep, for user-visible status. */
   onRetry?: (label: string, delaySeconds: string, attemptNum: number) => void;
+  /** Owner signal also cancels an in-progress backoff. */
+  signal?: AbortSignal;
+  /** Infinity is valid for a foreground objective owned by a live process. */
+  maxFailures?: number;
+  maxTotalMs?: number;
 }): Promise<T> {
-  const { attempt, onInterrupted, onError, onRetry } = params;
+  const { attempt, onInterrupted, onError, onRetry, signal } = params;
+  const maxFailures = params.maxFailures ?? RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES;
+  const maxTotalMs = params.maxTotalMs ?? RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME;
 
   let attemptNum = 0;
   let failures = 0;
   const startTime = Date.now();
 
   while (true) {
-    if (Date.now() - startTime > RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME) {
+    if (signal?.aborted) return onInterrupted();
+    if (Number.isFinite(maxTotalMs) && Date.now() - startTime > maxTotalMs) {
       return onError(new Error('Request timeout after 30 minutes'));
     }
 
@@ -197,12 +281,20 @@ export async function runWithRetries<T>(params: {
       const errorClass = classifyHttpError(error);
       if (errorClass !== 'non_retryable') {
         failures++;
-        if (failures >= RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES) {
+        if (Number.isFinite(maxFailures) && failures >= maxFailures) {
           return onError(new Error('Too many consecutive failures'));
         }
-        const delayMs = getRetryDelayMs(attemptNum);
+        const delayMs = Math.max(
+          getRetryDelayMs(attemptNum),
+          Number.isFinite(error?.retryAfterMs) ? error.retryAfterMs : 0
+        );
         onRetry?.(retryLabel(errorClass, error?.httpStatus), (delayMs / 1000).toFixed(1), attemptNum + 1);
-        await sleep(delayMs);
+        try {
+          await sleep(delayMs, signal);
+        } catch (sleepError: any) {
+          if (sleepError?.name === 'AbortError') return onInterrupted();
+          throw sleepError;
+        }
         attemptNum++;
         continue;
       }

@@ -217,7 +217,8 @@ export class BackgroundAgentManager {
    * Cancel a specific background agent.
    *
    * Signals the sub-agent to stop (graceful cancel via InterruptionManager +
-   * tool abort signal) and optimistically marks it cancelled. Pooled-agent
+   * tool abort signal). The task remains running until its promise actually
+   * settles so it cannot be drained or evicted while cleanup is still active. Pooled-agent
    * release and the completion events are owned by the detached run itself,
    * which unwinds once the interrupt takes effect — so this never double-frees.
    *
@@ -236,7 +237,6 @@ export class BackgroundAgentManager {
       } catch (error) {
         logger.warn(`[BackgroundAgentManager] Failed to interrupt agent ${id}:`, error);
       }
-      task.status = 'cancelled';
     }
 
     return true;
@@ -305,10 +305,15 @@ export class BackgroundAgentManager {
       } catch (error) {
         logger.warn(`[BackgroundAgentManager] Failed to interrupt ${task.id} on shutdown:`, error);
       }
-      task.status = 'cancelled';
-      task.endTime = Date.now();
     }
-
+    await Promise.race([
+      Promise.allSettled(running.map((task) => task.promise)),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ]);
+    for (const task of running) {
+      if (task.status === 'running') task.status = 'cancelled';
+      task.endTime ??= Date.now();
+    }
     this.tasks.clear();
     logger.info('[BackgroundAgentManager] Shutdown complete');
   }
@@ -323,7 +328,7 @@ export class BackgroundAgentManager {
     let oldestTime = Infinity;
 
     for (const task of this.tasks.values()) {
-      if (task.status !== 'running' && task.startTime < oldestTime) {
+      if (task.status !== 'running' && task.consumed && task.startTime < oldestTime) {
         oldest = task;
         oldestTime = task.startTime;
       }

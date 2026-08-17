@@ -16,11 +16,15 @@ import { formatDuration } from '../ui/utils/timeUtils.js';
  * when capacity is reached. Memory-safe for long-running processes.
  */
 export class CircularBuffer {
-  private readonly lines: string[] = [];
+  private lines: string[] = [];
+  private head = 0;
+  private bytes = 0;
   private readonly maxLines: number;
+  private readonly maxBytes: number;
 
-  constructor(maxLines: number = 10000) {
+  constructor(maxLines: number = 10000, maxBytes: number = 4 * 1024 * 1024) {
     this.maxLines = maxLines;
+    this.maxBytes = maxBytes;
   }
 
   /**
@@ -47,11 +51,23 @@ export class CircularBuffer {
         continue;
       }
 
-      // Remove oldest line if at capacity
-      if (this.lines.length >= this.maxLines) {
-        this.lines.shift();
+      let boundedLine = line;
+      let lineBytes = Buffer.byteLength(boundedLine);
+      if (lineBytes > this.maxBytes) {
+        boundedLine = Buffer.from(boundedLine).subarray(lineBytes - this.maxBytes).toString('utf8');
+        lineBytes = Buffer.byteLength(boundedLine);
       }
-      this.lines.push(line);
+      this.lines.push(boundedLine);
+      this.bytes += lineBytes;
+      while ((this.lines.length - this.head > this.maxLines || this.bytes > this.maxBytes)
+        && this.head < this.lines.length) {
+        this.bytes -= Buffer.byteLength(this.lines[this.head]!);
+        this.head += 1;
+      }
+      if (this.head > 1024 && this.head * 2 > this.lines.length) {
+        this.lines = this.lines.slice(this.head);
+        this.head = 0;
+      }
     }
   }
 
@@ -63,7 +79,7 @@ export class CircularBuffer {
    * @returns Array of lines matching criteria
    */
   getLines(count?: number, filter?: RegExp): string[] {
-    let result = this.lines;
+    let result = this.lines.slice(this.head);
 
     // Apply regex filter if provided
     if (filter) {
@@ -83,13 +99,15 @@ export class CircularBuffer {
    */
   clear(): void {
     this.lines.length = 0;
+    this.head = 0;
+    this.bytes = 0;
   }
 
   /**
    * Get the current number of lines in the buffer
    */
   size(): number {
-    return this.lines.length;
+    return this.lines.length - this.head;
   }
 }
 
@@ -215,11 +233,9 @@ export class BashProcessManager {
     }
 
     try {
-      info.process.kill(signal);
+      this.signalProcessGroup(info, signal);
       logger.debug(`[BashProcessManager] Sent ${signal} to process ${id} (pid: ${info.pid})`);
 
-      // Remove from tracking after successful kill
-      this.removeProcess(id);
       return true;
     } catch (error) {
       logger.error(`[BashProcessManager] Failed to kill process ${id}:`, error);
@@ -300,7 +316,7 @@ export class BashProcessManager {
     for (const info of runningProcesses) {
       try {
         logger.debug(`[BashProcessManager] Sending SIGTERM to process ${info.id} (pid: ${info.pid})`);
-        info.process.kill('SIGTERM');
+        this.signalProcessGroup(info, 'SIGTERM');
       } catch (error) {
         logger.warn(`[BashProcessManager] Failed to send SIGTERM to ${info.id}:`, error);
       }
@@ -325,7 +341,7 @@ export class BashProcessManager {
       for (const info of remainingProcesses) {
         try {
           logger.debug(`[BashProcessManager] Sending SIGKILL to process ${info.id} (pid: ${info.pid})`);
-          info.process.kill('SIGKILL');
+          this.signalProcessGroup(info, 'SIGKILL');
         } catch (error) {
           logger.warn(`[BashProcessManager] Failed to send SIGKILL to ${info.id}:`, error);
         }
@@ -335,6 +351,20 @@ export class BashProcessManager {
     // Clear all processes from tracking
     this.processes.clear();
     logger.info('[BashProcessManager] Shutdown complete');
+  }
+
+  private signalProcessGroup(info: ProcessInfo, signal: NodeJS.Signals): void {
+    if (process.platform !== 'win32' && info.pid > 0) {
+      try {
+        process.kill(-info.pid, signal);
+        return;
+      } catch (error) {
+        // ESRCH means the process group has already exited. Fall through for
+        // platforms/spawn modes that did not create a group.
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
+      }
+    }
+    info.process.kill(signal);
   }
 
   /**
@@ -362,4 +392,3 @@ export class BashProcessManager {
     return false;
   }
 }
-

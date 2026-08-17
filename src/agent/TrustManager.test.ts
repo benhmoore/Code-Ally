@@ -6,7 +6,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { TrustManager, TrustScope, SensitivityTier } from './TrustManager';
-import { PermissionDeniedError } from '../security/PathSecurity.js';
+import { PermissionDeniedError, PolicyDeniedError } from '../security/PathSecurity.js';
+import { RunPolicyManager } from '../services/RunPolicyManager.js';
 
 describe('TrustManager', () => {
   describe('Auto-confirm mode', () => {
@@ -16,6 +17,38 @@ describe('TrustManager', () => {
       // Should always return true without prompting
       const result = await tm.checkPermission('write', { file_path: 'test.txt' });
       expect(result).toBe(true);
+    });
+  });
+
+  describe('Noninteractive run policy', () => {
+    it('denies instead of attempting to prompt', async () => {
+      const tm = new TrustManager(false);
+      tm.setRunPolicyManager(new RunPolicyManager({
+        interaction: 'none',
+        execution: 'headless',
+        completion: 'durable_objective',
+        authorizationPresetId: 'test',
+      }));
+
+      await expect(tm.checkPermission('write', { file_path: 'test.txt' }))
+        .rejects.toBeInstanceOf(PolicyDeniedError);
+    });
+
+    it('auto mode denies extremely sensitive commands without prompting', async () => {
+      const tm = new TrustManager(false);
+      tm.setAutoAllowModeGetter(() => true);
+
+      await expect(tm.checkPermission(
+        'watch',
+        { condition: 'shell', command: 'rm -rf *' },
+        { command: 'rm -rf *' }
+      )).rejects.toBeInstanceOf(PolicyDeniedError);
+    });
+
+    it('classifies shell wrappers using their command path', () => {
+      const tm = new TrustManager(false);
+      expect(tm.getCommandSensitivity('watch', { command: 'rm -rf *' }))
+        .toBe(SensitivityTier.EXTREMELY_SENSITIVE);
     });
   });
 

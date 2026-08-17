@@ -223,6 +223,7 @@ export interface ScheduledTaskManagerConfig {
 const DEFAULT_GRACE_MINUTES = 10;
 const MAX_HISTORY = 20;
 const LOCK_STALE_MS = 15 * 60 * 1000;
+const LOCK_HEARTBEAT_MS = 30 * 1000;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -597,6 +598,12 @@ export class ScheduledTaskManager implements IService {
     const started = nowIso();
     return this.replaceTask(projectDir, {
       ...task,
+      // Claim this generation before spawning the worker so an overlapping
+      // scheduler tick cannot launch the same due occurrence again.
+      enabled: task.schedule.type === 'once' ? false : task.enabled,
+      next_run_at: task.schedule.type === 'once'
+        ? task.next_run_at
+        : computeNextRunAt(task.schedule, new Date(started)),
       last_run_at: started,
       last_status: 'running',
       last_session_id: sessionId,
@@ -676,11 +683,12 @@ export class ScheduledTaskManager implements IService {
     const lockPath = getSchedulerLockFile();
     const effectiveLockPath = this.config.lockFile ?? lockPath;
     await fs.mkdir(dirname(effectiveLockPath), { recursive: true });
-    let handle: fs.FileHandle | null = null;
+    const owner = `${process.pid}-${Date.now()}-${generateShortId()}`;
 
     try {
-      handle = await fs.open(effectiveLockPath, 'wx');
-      await handle.writeFile(JSON.stringify({ pid: process.pid, created_at: nowIso() }));
+      const handle = await fs.open(effectiveLockPath, 'wx');
+      await handle.writeFile(JSON.stringify({ owner, pid: process.pid, created_at: nowIso(), heartbeat_at: nowIso() }));
+      await handle.close();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const stale = await this.isLockStale(effectiveLockPath);
@@ -688,24 +696,61 @@ export class ScheduledTaskManager implements IService {
         throw new Error('Scheduler is already running');
       }
       await fs.unlink(effectiveLockPath).catch(() => {});
-      handle = await fs.open(effectiveLockPath, 'wx');
-      await handle.writeFile(JSON.stringify({ pid: process.pid, created_at: nowIso(), recovered_stale: true }));
+      const handle = await fs.open(effectiveLockPath, 'wx');
+      await handle.writeFile(JSON.stringify({ owner, pid: process.pid, created_at: nowIso(), heartbeat_at: nowIso(), recovered_stale: true }));
+      await handle.close();
     }
+
+    const heartbeat = setInterval(() => {
+      void this.refreshLock(effectiveLockPath, owner);
+    }, LOCK_HEARTBEAT_MS);
+    heartbeat.unref?.();
 
     try {
       return await fn();
     } finally {
-      await handle?.close().catch(() => {});
-      await fs.unlink(effectiveLockPath).catch(() => {});
+      clearInterval(heartbeat);
+      await this.releaseLock(effectiveLockPath, owner);
     }
   }
 
   private async isLockStale(lockPath: string): Promise<boolean> {
     try {
+      const contents = await fs.readFile(lockPath, 'utf8').catch(() => '');
+      const lock = contents ? JSON.parse(contents) as { pid?: number } : {};
+      if (typeof lock.pid === 'number' && this.isProcessAlive(lock.pid)) return false;
       const stat = await fs.stat(lockPath);
       return Date.now() - stat.mtimeMs > LOCK_STALE_MS;
     } catch {
       return true;
+    }
+  }
+
+  private isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+  }
+
+  private async refreshLock(lockPath: string, owner: string): Promise<void> {
+    try {
+      const lock = JSON.parse(await fs.readFile(lockPath, 'utf8')) as Record<string, unknown>;
+      if (lock.owner !== owner) return;
+      await fs.writeFile(lockPath, JSON.stringify({ ...lock, heartbeat_at: nowIso() }), { mode: 0o600 });
+    } catch (error) {
+      logger.warn('[SCHEDULER] Failed to refresh scheduler lease:', error);
+    }
+  }
+
+  private async releaseLock(lockPath: string, owner: string): Promise<void> {
+    try {
+      const lock = JSON.parse(await fs.readFile(lockPath, 'utf8')) as { owner?: string };
+      if (lock.owner === owner) await fs.unlink(lockPath);
+    } catch {
+      // Missing/replaced lock belongs to nobody or another owner; never unlink it.
     }
   }
 

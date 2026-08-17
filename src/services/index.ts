@@ -7,6 +7,10 @@
 // Core services
 export { ServiceRegistry, ServiceDescriptor, ScopedServiceRegistryProxy } from './ServiceRegistry.js';
 export { ActivityStream, globalActivityStream } from './ActivityStream.js';
+export { RunPolicyManager, InteractionUnavailableError } from './RunPolicyManager.js';
+export type { RunPolicy, InteractionMode, ExecutionMode, CompletionMode } from './RunPolicyManager.js';
+export { RunSupervisor } from './RunSupervisor.js';
+export type { RunOutcome, RunSnapshot, RunStatus, RunJournalEvent } from './RunSupervisor.js';
 export { ConfigManager } from './ConfigManager.js';
 export { PathResolver, getPathResolver, resolvePath, resolvePaths } from './PathResolver.js';
 

@@ -17,7 +17,7 @@ import { REASONING_EFFORT, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS 
 import { createPlanAcceptedReminder } from '../utils/messageUtils.js';
 import type { Config } from '../types/index.js';
 
-const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'batch', 'todo-write', 'ask-user-question'];
+const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'todo-write', 'ask-user-question'];
 
 // Base prompt for planning (without thoroughness-specific guidelines)
 const PLANNING_BASE_PROMPT = `You are a software architect and planning specialist for Ally.
@@ -27,7 +27,7 @@ You have READ-ONLY access to the codebase. You CANNOT:
 - Write, edit, or delete any project files
 - Execute commands that modify state
 - Create or modify code
-You CAN use: read, glob, grep, ls, tree, batch, ask-user-question, todo-write
+You CAN use: read, glob, grep, ls, tree, ask-user-question, todo-write
 
 ## Process
 

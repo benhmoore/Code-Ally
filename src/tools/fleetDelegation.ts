@@ -22,6 +22,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
 import { formatError } from '../utils/errorUtils.js';
+import { logger } from '../services/Logger.js';
 
 export interface FleetDelegationParams {
   manager: BackgroundAgentManager;
@@ -77,27 +78,31 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
 
   // Sole owner of cleanup + events for a DETACHED run (background or Ctrl+B).
   const finishDetached = () => {
-    void task.promise.finally(async () => {
-      task.endTime = task.endTime ?? Date.now();
-      await p.cleanup();
-      const duration = (task.endTime - task.startTime) / 1000;
-      p.activityStream.emit({
-        id: p.callId,
-        type: ActivityEventType.AGENT_END,
-        timestamp: Date.now(),
-        data: {
-          agentName: p.agentType,
-          result: task.result ?? task.error ?? '',
-          duration,
-          ...(p.buildEndData?.(task.result ?? '', duration) ?? {}),
-        },
-      });
-      p.activityStream.emit({
-        id: task.id,
-        type: ActivityEventType.AGENT_BACKGROUND_COMPLETE,
-        timestamp: Date.now(),
-        data: { taskId: task.id, agentType: p.agentType, status: task.status, result: task.result, error: task.error },
-      });
+    void task.promise.then(async () => {
+      try {
+        task.endTime = task.endTime ?? Date.now();
+        await p.cleanup();
+        const duration = (task.endTime - task.startTime) / 1000;
+        p.activityStream.emit({
+          id: p.callId,
+          type: ActivityEventType.AGENT_END,
+          timestamp: Date.now(),
+          data: {
+            agentName: p.agentType,
+            result: task.result ?? task.error ?? '',
+            duration,
+            ...(p.buildEndData?.(task.result ?? '', duration) ?? {}),
+          },
+        });
+        p.activityStream.emit({
+          id: task.id,
+          type: ActivityEventType.AGENT_BACKGROUND_COMPLETE,
+          timestamp: Date.now(),
+          data: { taskId: task.id, agentType: p.agentType, status: task.status, result: task.result, error: task.error },
+        });
+      } catch (error) {
+        logger.error(`[fleetDelegation] Detached cleanup failed for ${task.id}:`, error);
+      }
     });
   };
 

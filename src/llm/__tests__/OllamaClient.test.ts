@@ -405,6 +405,51 @@ describe('OllamaClient', () => {
   });
 
   describe('Tool call validation', () => {
+    it('accumulates distinct tool calls emitted in separate stream chunks', async () => {
+      const chunks = [
+        {
+          message: {
+            role: 'assistant',
+            content: '',
+            tool_calls: [{
+              type: 'function',
+              function: { index: 0, name: 'grep', arguments: { pattern: 'reasoningRequestFields' } },
+            }],
+          },
+          done: false,
+        },
+        {
+          message: {
+            role: 'assistant',
+            content: '',
+            tool_calls: [{
+              type: 'function',
+              function: { index: 1, name: 'bash', arguments: { command: 'npm test' } },
+            }],
+          },
+          done: true,
+        },
+      ].map(chunk => JSON.stringify(chunk)).join('\n');
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: vi.fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(`${chunks}\n`) })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+          }),
+        },
+      });
+
+      const result = await client.send(
+        [{ role: 'user', content: 'Run both operations' }],
+        { stream: true, signal: new AbortController().signal }
+      );
+
+      expect(result.tool_calls?.map(call => call.function.name)).toEqual(['grep', 'bash']);
+    });
+
     it('should validate and repair tool calls', async () => {
       const mockResponse = {
         message: {
@@ -872,6 +917,41 @@ describe('OllamaClient', () => {
         expect(payload).not.toHaveProperty('reasoning_effort');
       },
     );
+
+    it('disables model-declared reasoning for constrained schema output', async () => {
+      const reasoningClient = new OllamaClient({
+        endpoint: 'http://localhost:11434',
+        modelName: 'qwen3.8:27b-mlx',
+        contextSize: 16384,
+        maxTokens: 5000,
+        reasoningEffort: 'high',
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ message: { role: 'assistant', content: '{"ok":true}' } }),
+      });
+
+      await reasoningClient.send([{ role: 'user', content: 'Return JSON' }], {
+        stream: false,
+        signal: new AbortController().signal,
+        responseSchema: {
+          name: 'result',
+          schema: {
+            type: 'object',
+            properties: { ok: { type: 'boolean' } },
+            required: ['ok'],
+          },
+        },
+      });
+
+      const payload = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(payload.think).toBe(false);
+      expect(payload.format).toEqual({
+        type: 'object',
+        properties: { ok: { type: 'boolean' } },
+        required: ['ok'],
+      });
+    });
 
     it('keeps boolean think for model templates without graded reasoning', async () => {
       const reasoningClient = new OllamaClient({

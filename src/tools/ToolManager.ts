@@ -79,6 +79,13 @@ export class ToolManager {
     return Array.from(this.tools.values());
   }
 
+  /** Tools that can open a human-input form and must be hidden in auto runs. */
+  getInteractiveToolNames(): string[] {
+    return Array.from(this.tools.values())
+      .filter(tool => tool.supportsInteractiveForm)
+      .map(tool => tool.name);
+  }
+
   /**
    * Names of tools restricted to the main assistant. Delegated agents
    * (isSpecializedAgent) exclude these from their function definitions.

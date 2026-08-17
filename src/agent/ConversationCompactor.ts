@@ -11,6 +11,7 @@ import {
   CHECKPOINT_JSON_SCHEMA,
   extractSemanticCheckpoint,
   parseSemanticCheckpoint,
+  mergeSemanticCheckpoint,
   renderCheckpointForModel,
 } from './compaction/CheckpointReducer.js';
 import type {
@@ -92,6 +93,9 @@ export class ConversationCompactor {
   ) {
     this.planner = new ContextBudgetPlanner(tokenManager);
     this.generation = conversationManager.getCheckpoint()?.generation ?? 0;
+    this.lastCheckpointSourceCount = conversationManager.getCheckpoint()
+      ? conversationManager.getTranscript().length
+      : 0;
   }
 
   budget(context: CompactionContext): ContextBudgetSnapshot {
@@ -195,7 +199,7 @@ export class ConversationCompactor {
       this.conversationManager.replaceActiveMessages(candidate.replacement);
       this.conversationManager.setCheckpoint(candidate.checkpoint);
       this.conversationManager.setProviderState(candidate.checkpoint.providerState);
-      this.tokenManager.updateTokenCount(candidate.replacement);
+      this.tokenManager.resetContextTracking(candidate.replacement);
       this.lastCheckpointSourceCount = this.conversationManager.getTranscript().length;
       this.generation = candidate.checkpoint.generation;
 
@@ -366,9 +370,11 @@ export class ConversationCompactor {
     if (delta.length === 0) throw new Error('The current turn occupies the entire safe context window; nothing can be compacted.');
 
     const previous = this.conversationManager.getCheckpoint();
-    const previousIds = previous?.source.messageIds ?? [];
     const deltaIds = delta.map(message => message.id).filter((id): id is string => Boolean(id));
-    const sourceIds = [...new Set([...previousIds, ...deltaIds])];
+    const previousSemanticIds = previous
+      ? this.collectSemanticSourceIds(previous.semanticState)
+      : [];
+    const validSourceIds = [...new Set([...previousSemanticIds, ...deltaIds])];
     let portability: ConversationCheckpointV1['portability'] = 'model-validated';
     let semanticState: SemanticCheckpointStateV1;
     let degradedReason: string | undefined;
@@ -382,7 +388,7 @@ export class ConversationCompactor {
       semanticState = await this.reduceStructured(
         delta,
         previous?.semanticState ?? null,
-        sourceIds,
+        validSourceIds,
         options.customInstructions,
         context.signal,
       );
@@ -443,9 +449,12 @@ export class ConversationCompactor {
       provider: this.modelClient.providerId,
       model: this.modelClient.modelName,
       source: {
-        firstMessageId: sourceIds[0] ?? deltaIds[0]!,
-        lastMessageId: sourceIds.at(-1) ?? deltaIds.at(-1)!,
-        messageIds: sourceIds,
+        firstMessageId: previous?.source.firstMessageId ?? deltaIds[0]!,
+        lastMessageId: deltaIds.at(-1)!,
+        // This field is retained for schema compatibility but is deliberately
+        // per-generation, not cumulative. Semantic provenance is carried by the
+        // checkpoint itself and validated separately.
+        messageIds: deltaIds,
         digest: checkpointSourceDigest(delta),
       },
       retainedMessageIds: retained.map(message => message.id).filter((id): id is string => Boolean(id)),
@@ -578,9 +587,31 @@ export class ConversationCompactor {
       if (response.error || !response.content?.trim()) {
         throw new Error(response.error_message || 'Structured checkpoint reducer returned no content');
       }
-      state = parseSemanticCheckpoint(response.content, validSourceIds);
+      state = mergeSemanticCheckpoint(
+        state,
+        parseSemanticCheckpoint(response.content, validSourceIds)
+      );
     }
     if (!state) throw new Error('Structured checkpoint reducer produced no state');
     return state;
+  }
+
+  private collectSemanticSourceIds(state: SemanticCheckpointStateV1): string[] {
+    const ids = new Set<string>();
+    const add = (items: readonly { sourceMessageIds: string[] }[]) => {
+      for (const item of items) for (const id of item.sourceMessageIds) ids.add(id);
+    };
+    if (state.objective) add([state.objective]);
+    if (state.currentRequest) add([state.currentRequest]);
+    add(state.userConstraints);
+    add(state.decisions);
+    add(state.completedWork);
+    add(state.activeWork);
+    add(state.blockers);
+    add(state.nextActions);
+    add(state.unresolvedQuestions);
+    add(state.durableFacts);
+    add(state.artifacts);
+    return [...ids];
   }
 }

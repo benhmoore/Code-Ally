@@ -24,7 +24,6 @@ const SAFE_ENV_VARS = [
   'HOME',
   'USER',
   'SHELL',
-  'TERM',
   'LANG',
   'LC_ALL',
   'LC_CTYPE',
@@ -35,9 +34,45 @@ const SAFE_ENV_VARS = [
   'TZ',
   'PWD',
   'OLDPWD',
-  'COLORTERM',
-  'TERM_PROGRAM',
 ];
+
+const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
+const MAX_STREAM_CHUNK_BYTES = 64 * 1024;
+
+class BoundedOutputBuffer {
+  private chunks: string[] = [];
+  private head = 0;
+  private bytes = 0;
+
+  constructor(private readonly maxBytes: number = MAX_CAPTURE_BYTES) {}
+
+  append(value: string): void {
+    if (!value) return;
+    let chunk = value;
+    let byteLength = Buffer.byteLength(chunk);
+    if (byteLength > this.maxBytes) {
+      chunk = Buffer.from(chunk).subarray(byteLength - this.maxBytes).toString('utf8');
+      byteLength = Buffer.byteLength(chunk);
+      this.chunks = [];
+      this.head = 0;
+      this.bytes = 0;
+    }
+    this.chunks.push(chunk);
+    this.bytes += byteLength;
+    while (this.bytes > this.maxBytes && this.head < this.chunks.length) {
+      this.bytes -= Buffer.byteLength(this.chunks[this.head]!);
+      this.head += 1;
+    }
+    if (this.head > 1024 && this.head * 2 > this.chunks.length) {
+      this.chunks = this.chunks.slice(this.head);
+      this.head = 0;
+    }
+  }
+
+  toString(): string {
+    return this.chunks.slice(this.head).join('');
+  }
+}
 
 export class BashTool extends BaseTool {
   readonly name = 'bash';
@@ -74,7 +109,7 @@ export class BashTool extends BaseTool {
     // Validate timeout parameter (only for foreground processes)
     if (!runInBackground && args.timeout !== undefined && args.timeout !== null) {
       const timeout = Number(args.timeout);
-      if (isNaN(timeout) || timeout <= 0) {
+      if (isNaN(timeout) || (timeout <= 0 && timeout !== -1)) {
         return {
           valid: false,
           error: 'timeout must be a positive number (in seconds)',
@@ -221,6 +256,20 @@ export class BashTool extends BaseTool {
         safeEnv[key] = process.env[key];
       }
     }
+    // Tool-launched commands never receive an interactive terminal. These
+    // conventional switches make common CLIs fail or choose defaults instead
+    // of opening an askpass helper, editor, pager, or credential prompt.
+    Object.assign(safeEnv, {
+      CI: '1',
+      GIT_TERMINAL_PROMPT: '0',
+      GCM_INTERACTIVE: 'Never',
+      SSH_ASKPASS_REQUIRE: 'never',
+      PAGER: 'cat',
+      GIT_PAGER: 'cat',
+      SYSTEMD_PAGER: 'cat',
+      EDITOR: 'false',
+      VISUAL: 'false',
+    });
     return safeEnv;
   }
 
@@ -320,7 +369,7 @@ export class BashTool extends BaseTool {
     const shellId = `shell-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
     // Create circular buffer for output
-    const outputBuffer = new CircularBuffer(10000); // 10k lines max
+    const outputBuffer = new CircularBuffer(10000, MAX_CAPTURE_BYTES);
 
     // Spawn detached process
     // Note: env is filtered to prevent leaking sensitive environment variables
@@ -408,149 +457,6 @@ export class BashTool extends BaseTool {
   }
 
   /**
-   * Transition a running foreground process to background
-   *
-   * Called when a foreground command exceeds its timeout. Instead of killing
-   * the process, we preserve it by registering with BashProcessManager and
-   * continuing to capture output in a CircularBuffer.
-   *
-   * @param child - Running ChildProcess to transition
-   * @param command - Original command string
-   * @param existingStdout - Output already captured before transition
-   * @param existingStderr - Error output already captured before transition
-   * @param timeout - Original timeout value (for message)
-   * @returns ToolResult with shell_id and transition message
-   */
-  private transitionToBackground(
-    child: ChildProcess,
-    command: string,
-    existingStdout: string,
-    existingStderr: string,
-    timeout: number
-  ): ToolResult {
-    // Get process manager from registry
-    const registry = ServiceRegistry.getInstance();
-    const processManager = registry.get('bash_process_manager');
-
-    if (!processManager) {
-      logger.warn('[BashTool] Cannot transition to background - BashProcessManager not available');
-      // Fall back to returning timeout error (process will be killed by caller)
-      return this.formatErrorResponse(
-        `Command timed out after ${timeout / 1000} seconds`,
-        'timeout_error',
-        'BashProcessManager not available for background transition'
-      );
-    }
-
-    // Check if process already exited
-    if (child.exitCode !== null) {
-      logger.debug('[BashTool] Process already exited, cannot transition to background');
-      // Return the output we have
-      const output = existingStdout + existingStderr;
-      return this.formatSuccessResponse({
-        output: output || '(no output)',
-        exit_code: child.exitCode,
-        message: 'Process completed during timeout handling',
-      });
-    }
-
-    // Generate unique shell ID
-    const shellId = `shell-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-    // Create circular buffer and transfer existing output
-    const outputBuffer = new CircularBuffer(10000);
-    if (existingStdout) {
-      outputBuffer.append(existingStdout);
-    }
-    if (existingStderr) {
-      outputBuffer.append(existingStderr);
-    }
-
-    // Continue capturing future output
-    // Remove foreground listeners before adding background ones to prevent duplicate handling
-    if (child.stdout) child.stdout.removeAllListeners('data');
-    if (child.stderr) child.stderr.removeAllListeners('data');
-
-    if (child.stdout) {
-      child.stdout.on('data', (data: Buffer) => {
-        outputBuffer.append(data.toString());
-      });
-    }
-    if (child.stderr) {
-      child.stderr.on('data', (data: Buffer) => {
-        outputBuffer.append(data.toString());
-      });
-    }
-
-    // Register process with manager
-    const processInfo = {
-      id: shellId,
-      pid: child.pid!,
-      command,
-      process: child,
-      outputBuffer,
-      startTime: Date.now(),
-      exitCode: null,
-      exitTime: null,
-    };
-
-    try {
-      processManager.addProcess(processInfo);
-    } catch (error) {
-      // Failed to add (probably hit limit) — kill the process to prevent orphaning
-      logger.warn('[BashTool] Failed to transition to background, killing process:', formatError(error));
-      try {
-        this.killProcessGroup(child, 'SIGTERM');
-        setTimeout(() => {
-          try { this.killProcessGroup(child, 'SIGKILL'); } catch { /* already dead */ }
-        }, 500);
-      } catch { /* process may already be dead */ }
-      return this.formatErrorResponse(
-        `Command timed out after ${timeout / 1000} seconds`,
-        'timeout_error',
-        formatError(error)
-      );
-    }
-
-    // Track when process exits
-    child.on('exit', (code: number | null) => {
-      const info = processManager.getProcess(shellId);
-      if (info) {
-        info.exitCode = code;
-        info.exitTime = Date.now();
-
-        // Emit event so UI can update
-        this.activityStream.emit({
-          id: `bg-exit-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-          type: 'background_process_exit' as any, // Cast needed until types are rebuilt
-          timestamp: Date.now(),
-          data: {
-            shellId,
-            exitCode: code,
-            command,
-          },
-        });
-      }
-    });
-
-    const timeoutSecs = timeout / 1000;
-    const outputPreview = (existingStdout + existingStderr).trim().split('\n').slice(-5).join('\n');
-
-    // Return success with transition info
-    return this.formatSuccessResponse({
-      shell_id: shellId,
-      pid: child.pid,
-      command,
-      transitioned: true,
-      reason: 'timeout',
-      timeout_seconds: timeoutSecs,
-      message: `Command exceeded ${timeoutSecs}s timeout and was moved to background. Process continues running as ${shellId}.`,
-      output_preview: outputPreview || '(no output yet)',
-      instructions: `Use bash-output(shell_id="${shellId}") to monitor output, or /task list to see all background processes.`,
-    });
-  }
-
-  /**
    * Check if command is likely interactive (pre-execution)
    */
   private checkInteractiveCommand(command: string): { isInteractive: boolean; suggestion?: string } {
@@ -581,11 +487,12 @@ export class BashTool extends BaseTool {
     outputMode: string = 'full',
     abortSignal?: AbortSignal
   ): Promise<ToolResult> {
-    const stdoutChunks: string[] = [];
-    const stderrChunks: string[] = [];
+    const stdoutBuffer = new BoundedOutputBuffer();
+    const stderrBuffer = new BoundedOutputBuffer();
     let returnCode: number | null = null;
     let lastOutputTime = Date.now();
     let idleKilled = false;
+    let timedOut = false;
 
     // Check for known interactive patterns
     const interactiveCheck = this.checkInteractiveCommand(command);
@@ -646,20 +553,17 @@ export class BashTool extends BaseTool {
         }
       }
 
-      // Set up timeout - transition to background instead of killing
-      const timeoutHandle = setTimeout(() => {
-        // Transition to background instead of killing
-        const transitionResult = this.transitionToBackground(child, command, stdoutChunks.join(''), stderrChunks.join(''), timeout);
-
-        // Clean up listeners and intervals
-        clearInterval(idleCheckInterval);
-        if (abortSignal) {
-          abortSignal.removeEventListener('abort', abortHandler);
-        }
-
-        // Resolve immediately with transition result
-        resolve(transitionResult);
-      }, timeout);
+      // A foreground timeout is terminal. Background execution must be an
+      // explicit, supervised choice; a timeout must never silently detach work.
+      const timeoutHandle: NodeJS.Timeout | null = Number.isFinite(timeout)
+        ? setTimeout(() => {
+            timedOut = true;
+            this.killProcessGroup(child, 'SIGTERM');
+            setTimeout(() => {
+              if (child.exitCode === null) this.killProcessGroup(child, 'SIGKILL');
+            }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+          }, timeout)
+        : null;
 
       // Idle detection: kill process if no output for configured idle timeout
       const idleCheckInterval = setInterval(() => {
@@ -683,9 +587,11 @@ export class BashTool extends BaseTool {
       if (child.stdout) {
         child.stdout.on('data', (data: Buffer) => {
           const chunk = data.toString();
-          stdoutChunks.push(chunk);
+          stdoutBuffer.append(chunk);
           lastOutputTime = Date.now(); // Update last output time
-          this.emitOutputChunk(chunk);
+          this.emitOutputChunk(Buffer.byteLength(chunk) > MAX_STREAM_CHUNK_BYTES
+            ? Buffer.from(chunk).subarray(-MAX_STREAM_CHUNK_BYTES).toString('utf8')
+            : chunk);
         });
       }
 
@@ -693,15 +599,17 @@ export class BashTool extends BaseTool {
       if (child.stderr) {
         child.stderr.on('data', (data: Buffer) => {
           const chunk = data.toString();
-          stderrChunks.push(chunk);
+          stderrBuffer.append(chunk);
           lastOutputTime = Date.now(); // Update last output time
-          this.emitOutputChunk(chunk);
+          this.emitOutputChunk(Buffer.byteLength(chunk) > MAX_STREAM_CHUNK_BYTES
+            ? Buffer.from(chunk).subarray(-MAX_STREAM_CHUNK_BYTES).toString('utf8')
+            : chunk);
         });
       }
 
       // Handle process exit
       child.on('close', (code: number | null) => {
-        clearTimeout(timeoutHandle);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         clearInterval(idleCheckInterval);
         if (abortTimeoutHandle) {
           clearTimeout(abortTimeoutHandle);
@@ -727,8 +635,8 @@ export class BashTool extends BaseTool {
 
         // Check if killed due to idle (likely interactive prompt)
         if (idleKilled) {
-          const stdout = stdoutChunks.join('');
-          const stderr = stderrChunks.join('');
+          const stdout = stdoutBuffer.toString();
+          const stderr = stderrBuffer.toString();
           const combined = stdout + stderr;
           const lastOutput = combined.trim().split('\n').slice(-3).join('\n');
           const idleSeconds = TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000;
@@ -742,12 +650,19 @@ export class BashTool extends BaseTool {
           return;
         }
 
-        // Note: Timeout handling removed - timeouts now trigger immediate transition to background
-        // See timeout handler above which resolves the promise with transitionToBackground() result
+        if (timedOut) {
+          const output = (stdoutBuffer.toString() + stderrBuffer.toString()).trim();
+          resolve(this.formatErrorResponse(
+            `Command timed out after ${timeout / 1000} seconds${output ? `\n\nLast output:\n${output.slice(-4000)}` : ''}`,
+            'timeout_error',
+            'Increase timeout or explicitly use run_in_background for a supervised long-lived process'
+          ));
+          return;
+        }
 
         // Join chunks once for final output (O(n) vs O(n²) string concatenation)
-        const stdout = stdoutChunks.join('');
-        const stderr = stderrChunks.join('');
+        const stdout = stdoutBuffer.toString();
+        const stderr = stderrBuffer.toString();
 
         // Non-zero exit code = failure (except for special cases)
         if (returnCode !== 0 && returnCode !== null) {
@@ -785,7 +700,10 @@ export class BashTool extends BaseTool {
 
       // Handle process error
       child.on('error', (error: Error) => {
-        clearTimeout(timeoutHandle);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        clearInterval(idleCheckInterval);
+        if (abortTimeoutHandle) clearTimeout(abortTimeoutHandle);
+        if (abortSignal) abortSignal.removeEventListener('abort', abortHandler);
         resolve(
           this.formatErrorResponse(
             `Failed to execute command: ${error.message}`,

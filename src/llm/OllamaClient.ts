@@ -19,13 +19,13 @@ import {
   LLMResponse,
   SamplingParams,
 } from './ModelClient.js';
-import { Message, FunctionDefinition, ActivityEventType } from '../types/index.js';
+import { Message, FunctionDefinition, ActivityEventType, type ToolCall } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
-import { createHttpResponseError, readWithTimeout, runWithRetries } from './httpTransport.js';
+import { createHttpResponseError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries } from './httpTransport.js';
 import { normalizeOllamaMessages } from './ollamaMessages.js';
 import { validateToolCalls } from './toolCalls.js';
 
@@ -71,6 +71,28 @@ function extractOllamaUsage(obj: any): LLMResponse['usage'] | undefined {
   const completionTokens = typeof obj.eval_count === 'number' ? obj.eval_count : undefined;
   if (promptTokens === undefined && completionTokens === undefined) return undefined;
   return { promptTokens, completionTokens };
+}
+
+/**
+ * Ollama may stream one complete native tool call per chunk. Other versions
+ * resend the accumulated array, so append-only handling creates duplicates.
+ * Merge by the provider id or function index and retain distinct calls.
+ */
+function mergeStreamedToolCalls(current: ToolCall[] | undefined, incoming: ToolCall[]): ToolCall[] {
+  const merged = current ? [...current] : [];
+  for (const call of incoming) {
+    const callWithIndex = call as ToolCall & { index?: number; function: ToolCall['function'] & { index?: number } };
+    const index = callWithIndex.function.index ?? callWithIndex.index;
+    const match = merged.findIndex(existing => {
+      if (call.id && existing.id === call.id) return true;
+      const existingWithIndex = existing as ToolCall & { index?: number; function: ToolCall['function'] & { index?: number } };
+      const existingIndex = existingWithIndex.function.index ?? existingWithIndex.index;
+      return index !== undefined && existingIndex === index;
+    });
+    if (match >= 0) merged[match] = call;
+    else if (!merged.some(existing => JSON.stringify(existing) === JSON.stringify(call))) merged.push(call);
+  }
+  return merged;
 }
 
 export class OllamaClient extends ModelClient {
@@ -235,6 +257,9 @@ export class OllamaClient extends ModelClient {
       // Shared retry policy (capped backoff + failure ceiling + time budget).
       // The per-attempt work below is Ollama-specific; the loop is not.
       return await runWithRetries<LLMResponse>({
+        signal,
+        maxFailures: options.retryPolicy === 'foreground' ? Infinity : 3,
+        maxTotalMs: options.retryPolicy === 'foreground' ? Infinity : RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
         onRetry: (label, delaySec, attemptNum) => {
           logger.debug(`[OLLAMA_CLIENT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attemptNum})...`);
           this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
@@ -322,7 +347,7 @@ export class OllamaClient extends ModelClient {
     // The profile owns the wire shape (boolean vs graded `think`, or
     // `reasoning_effort`) so clients do not grow model-name conditionals.
     const profile = resolveModelProfile(this._modelName);
-    Object.assign(payload, reasoningRequestFields(profile, this._reasoningEffort));
+    Object.assign(payload, reasoningRequestFields(profile, this._reasoningEffort, !responseSchema));
 
     // Add function definitions if provided
     if (functions && functions.length > 0) {
@@ -397,8 +422,8 @@ export class OllamaClient extends ModelClient {
 
       // Check response status
       if (!response.ok) {
-        const errorText = await response.text();
-        throw createHttpResponseError(response.status, errorText);
+        const errorText = await readResponseTextWithTimeout(response, timeout, abortController);
+        throw createHttpResponseError(response.status, errorText, response.headers?.get?.('retry-after') ?? null);
       }
 
       // Process response
@@ -411,7 +436,7 @@ export class OllamaClient extends ModelClient {
         // consistency with streaming error handling.
         let data;
         try {
-          data = await response.json();
+          data = await readResponseJsonWithTimeout(response, timeout, abortController);
         } catch (parseError) {
           logger.debug(`[OllamaClient] Failed to parse non-streaming response JSON:`, parseError);
           throw parseError;
@@ -555,9 +580,12 @@ export class OllamaClient extends ModelClient {
               }
             }
 
-            // Handle tool calls (replace, not accumulate)
+            // Preserve distinct native calls emitted in separate stream chunks.
             if (message.tool_calls) {
-              aggregatedMessage.tool_calls = message.tool_calls;
+              aggregatedMessage.tool_calls = mergeStreamedToolCalls(
+                aggregatedMessage.tool_calls,
+                message.tool_calls
+              );
             }
 
             // Check for completion
@@ -609,7 +637,10 @@ export class OllamaClient extends ModelClient {
 
           // Process final tool calls
           if (message.tool_calls) {
-            aggregatedMessage.tool_calls = message.tool_calls;
+            aggregatedMessage.tool_calls = mergeStreamedToolCalls(
+              aggregatedMessage.tool_calls,
+              message.tool_calls
+            );
           }
 
           // Capture server-reported token usage from the final chunk
@@ -808,7 +839,7 @@ export class OllamaClient extends ModelClient {
   private emitStatusMessage(message: string): void {
     if (this.activityStream) {
       this.activityStream.emit({
-        id: `status-${Date.now()}`,
+        id: 'status-ollama-connection',
         type: ActivityEventType.STATUS_MESSAGE,
         timestamp: Date.now(),
         data: { message },

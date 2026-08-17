@@ -18,6 +18,7 @@ import {
   isPathWithinAllowedDirectories,
 } from './PathSecurity.js';
 import { logger } from '../services/Logger.js';
+import type { BaseTool } from '../tools/BaseTool.js';
 
 /**
  * PermissionManager class
@@ -51,10 +52,11 @@ export class PermissionManager {
    */
   async checkPermission(
     toolName: string,
-    args: Record<string, any>
+    args: Record<string, any>,
+    tool?: BaseTool
   ): Promise<boolean> {
     // Get permission path based on the tool and arguments
-    const permissionPath = await this.getPermissionPath(toolName, args);
+    const permissionPath = await this.getPermissionPath(toolName, args, tool);
 
     // Path authorization is NOT done here. Every tool's path arguments are
     // authorized against the allowed roots by BaseTool from its declared schema,
@@ -82,11 +84,14 @@ export class PermissionManager {
    */
   private async getPermissionPath(
     toolName: string,
-    args: Record<string, any>
+    args: Record<string, any>,
+    tool?: BaseTool
   ): Promise<CommandPath> {
-    // Bash tool uses command content
-    if (toolName === 'bash' && 'command' in args) {
-      const command = args.command as string;
+    // Any tool declaring model-supplied shell execution uses command content.
+    const shellCommand = tool?.getShellCommand(args)
+      ?? (toolName === 'bash' && typeof args.command === 'string' ? args.command : null);
+    if (shellCommand) {
+      const command = shellCommand;
       const workingDir = typeof args.working_dir === 'string' ? args.working_dir : this.startDirectory;
       const outsideCwd = this.isCommandOutsideCwd(command) || !await isPathWithinAllowedDirectories(workingDir);
       return {

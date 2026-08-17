@@ -3,6 +3,7 @@ import {
   classifyHttpError,
   createHttpResponseError,
   HttpResponseError,
+  readResponseTextWithTimeout,
   readWithTimeout,
   runWithRetries,
 } from '../httpTransport.js';
@@ -24,6 +25,14 @@ describe('HTTP response errors', () => {
 
     expect(error.retryable).toBe(true);
     expect(classifyHttpError(error)).toBe('server');
+  });
+
+  it.each([408, 425, 502, 504])('retries transient HTTP %s responses', (status) => {
+    expect(classifyHttpError(createHttpResponseError(status, 'temporary'))).toBe('server');
+  });
+
+  it('classifies the clients own request timeout as retryable', () => {
+    expect(classifyHttpError(new Error('Request timeout'))).toBe('network');
   });
 
   it('does not retry ordinary client errors', () => {
@@ -83,6 +92,41 @@ describe('runWithRetries failure budget', () => {
     expect(result).toBe('error:HTTP 400: bad request');
     expect(attempts).toBe(1);
   });
+
+  it('lets a foreground owner recover after more than the auxiliary failure ceiling', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const promise = runWithRetries({
+      attempt: async () => {
+        attempts += 1;
+        if (attempts < RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES + 3) throw new Error('ECONNREFUSED');
+        return 'recovered';
+      },
+      onInterrupted: () => 'interrupted',
+      onError: (error) => `error:${error.message}`,
+      maxFailures: Infinity,
+      maxTotalMs: Infinity,
+    });
+    await vi.runAllTimersAsync();
+    expect(await promise).toBe('recovered');
+    expect(attempts).toBe(RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES + 3);
+  });
+
+  it('cancels an in-progress backoff immediately', async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+    const result = await runWithRetries({
+      attempt: async () => { attempts += 1; throw new Error('ECONNREFUSED'); },
+      onInterrupted: () => 'interrupted',
+      onError: () => 'error',
+      onRetry: () => controller.abort(),
+      signal: controller.signal,
+      maxFailures: Infinity,
+      maxTotalMs: Infinity,
+    });
+    expect(result).toBe('interrupted');
+    expect(attempts).toBe(1);
+  });
 });
 
 describe('readWithTimeout', () => {
@@ -113,5 +157,14 @@ describe('readWithTimeout', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('readResponseTextWithTimeout', () => {
+  it('aborts a response whose body never arrives after headers', async () => {
+    const controller = new AbortController();
+    const response = { text: () => new Promise<string>(() => {}) };
+    await expect(readResponseTextWithTimeout(response, 5, controller)).rejects.toThrow('Request timeout');
+    expect(controller.signal.aborted).toBe(true);
   });
 });

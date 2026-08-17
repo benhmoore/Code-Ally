@@ -14,6 +14,7 @@ export class ActivityStream {
   private readonly state: {
     sequence: number;
     recentEvents: ActivityEvent[];
+    recentEventBytes: number;
   };
 
   /**
@@ -22,14 +23,16 @@ export class ActivityStream {
    */
   private readonly MAX_LISTENERS_PER_TYPE = 50;
   private readonly MAX_RECENT_EVENTS = 500;
+  private readonly MAX_RECENT_EVENT_BYTES = 4 * 1024 * 1024;
+  private readonly MAX_RETAINED_EVENT_BYTES = 256 * 1024;
 
   constructor(
     parentId?: string,
-    state?: { sequence: number; recentEvents: ActivityEvent[] }
+    state?: { sequence: number; recentEvents: ActivityEvent[]; recentEventBytes: number }
   ) {
     this.listeners = new Map();
     this.parentId = parentId;
-    this.state = state ?? { sequence: 0, recentEvents: [] };
+    this.state = state ?? { sequence: 0, recentEvents: [], recentEventBytes: 0 };
   }
 
   /**
@@ -57,11 +60,30 @@ export class ActivityStream {
     } else {
       this.state.sequence = Math.max(this.state.sequence, event.sequence);
     }
-    this.state.recentEvents.push(event as unknown as ActivityEvent);
-    if (this.state.recentEvents.length > this.MAX_RECENT_EVENTS) {
-      this.state.recentEvents.splice(
+    const serialized = JSON.stringify(event);
+    const eventBytes = Buffer.byteLength(serialized);
+    const retainedEvent = eventBytes <= this.MAX_RETAINED_EVENT_BYTES
+      ? event as unknown as ActivityEvent
+      : {
+          id: event.id,
+          type: event.type,
+          timestamp: event.timestamp,
+          sequence: event.sequence,
+          parentId: event.parentId,
+          data: { retentionOmitted: true, originalBytes: eventBytes },
+        } as ActivityEvent;
+    const retainedBytes = eventBytes <= this.MAX_RETAINED_EVENT_BYTES
+      ? eventBytes
+      : Buffer.byteLength(JSON.stringify(retainedEvent));
+    this.state.recentEvents.push(retainedEvent);
+    this.state.recentEventBytes += retainedBytes;
+    while (this.state.recentEvents.length > this.MAX_RECENT_EVENTS
+      || this.state.recentEventBytes > this.MAX_RECENT_EVENT_BYTES) {
+      const removed = this.state.recentEvents.shift();
+      if (!removed) break;
+      this.state.recentEventBytes = Math.max(
         0,
-        this.state.recentEvents.length - this.MAX_RECENT_EVENTS
+        this.state.recentEventBytes - Buffer.byteLength(JSON.stringify(removed))
       );
     }
 

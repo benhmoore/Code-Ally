@@ -965,7 +965,7 @@ Only set run_in_background=false when your very next step depends on the result.
     });
 
     // 3. Map thoroughness to max duration
-    const maxDuration = getThoroughnessDuration(thoroughness as any) ?? 0;
+    const maxDuration = getThoroughnessDuration(thoroughness as any);
     logger.debug('[AGENT_TOOL] Set maxDuration to', maxDuration, 'minutes for thoroughness:', thoroughness);
 
     // 4. Build base config from agent data (computes allowed tools internally)

@@ -135,6 +135,7 @@ export type ErrorType =
   | 'system_error'
   | 'permission_error'
   | 'permission_denied'
+  | 'policy_denied'
   | 'security_error'
   | 'timeout_error'
   | 'command_failed'
@@ -549,6 +550,13 @@ export interface SessionInfo {
   message_count: number;
   working_dir: string;
   lastUserMessage?: string;
+}
+
+export interface TranscriptPage {
+  messages: Message[];
+  /** Exclusive absolute message index for the next older page. */
+  nextCursor: number | null;
+  totalMessages: number;
 }
 
 // ===========================
