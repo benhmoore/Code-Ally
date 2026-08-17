@@ -497,6 +497,60 @@ describe('ConversationCompactor', () => {
     expect(manager.getCheckpoint()!.retainedMessageIds).toContain('tool-max');
   });
 
+  it('retains a parallel tool-call group of maximum-permitted results', async () => {
+    // Observed live: an assistant turn issuing two reads produced two results
+    // that had to be retained together with their assistant message. Sizing a
+    // single result to the whole tail made that group overflow, so the tail was
+    // dropped and the model re-read the same files on the next window.
+    const tokens = new TokenManager(16_384);
+    const system: Message = { id: 'sys', role: 'system', content: `prompt ${'word '.repeat(1_500)}` };
+    const functions = [{
+      type: 'function' as const,
+      function: { name: 'tools', description: 'x'.repeat(6_000), parameters: {} },
+    }];
+    const manager = new ConversationManager({ initialMessages: [system, ...envelopeTurn(6, 300)] });
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, tokens, new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+    const runContext = { ...context(), functions, phase: 'mid-turn' as const };
+    const budget = compactor.budget(runContext);
+
+    let filler = '';
+    while (tokens.estimateTokens(filler) < budget.maxToolResultTokens * 0.85) {
+      filler += ` line ${filler.length} of source code;`;
+    }
+    const result = (id: string) => ({
+      id: `tool-${id}`,
+      role: 'tool' as const,
+      name: 'read',
+      tool_call_id: `call-${id}`,
+      content: `[Tool Call ID: call-${id}]\n${JSON.stringify({
+        success: true, error: '', content: `=== /repo/src/${id}.ts ===\n${filler}`,
+      })}`,
+      timestamp: 900,
+    });
+    manager.addMessages([{
+      id: 'assistant-parallel',
+      role: 'assistant',
+      content: '',
+      tool_calls: ['a', 'b'].map(id => ({
+        id: `call-${id}`,
+        type: 'function' as const,
+        function: { name: 'read', arguments: JSON.stringify({ file_path: `/repo/src/${id}.ts` }) },
+      })),
+      timestamp: 899,
+    }, result('a'), result('b')]);
+
+    await compactor.compactAndApply(runContext, {
+      trigger: 'automatic', phase: 'mid-turn', forceExtractive: true,
+    });
+
+    const retained = manager.getCheckpoint()!.retainedMessageIds;
+    expect(retained).toContain('assistant-parallel');
+    expect(retained).toContain('tool-a');
+    expect(retained).toContain('tool-b');
+  });
+
   it('rejects with configuration guidance when overhead leaves no usable context', async () => {
     const manager = new ConversationManager({ initialMessages: history() });
     const compactor = new ConversationCompactor(

@@ -16,6 +16,12 @@ import type { TokenManager } from '../TokenManager.js';
 const DOMAIN_SHARE_OF_USABLE = 0.6;
 const TAIL_SHARE_OF_DOMAIN = 0.6;
 const MIN_DOMAIN_BUDGET = 768;
+/**
+ * Share of the retained tail a single tool result may occupy. Parallel tool
+ * calls are retained as one unit with their assistant message, so a result
+ * sized to the entire tail cannot actually be kept.
+ */
+const SINGLE_RESULT_SHARE_OF_TAIL = 0.5;
 
 export interface ContextBudgetSnapshot {
   contextWindow: number;
@@ -44,10 +50,12 @@ export interface ContextBudgetSnapshot {
   /**
    * Ceiling for a single tool result.
    *
-   * Equal to the retained-tail budget by construction, which is the invariant
-   * that keeps a long task moving: a legally-sized result can always survive
-   * the next compaction. When a single result may exceed the tail, the model
-   * loses its work on every reclaim and loops re-fetching it.
+   * A fraction of the retained-tail budget rather than all of it, because the
+   * unit that must survive a reclaim is not one result: a safe split keeps an
+   * assistant message together with every result of its parallel tool calls.
+   * Sizing one result to the whole tail therefore guarantees the group
+   * overflows and the tail is dropped — the model then loses its work on every
+   * reclaim and loops re-fetching it.
    */
   maxToolResultTokens: number;
   shouldCompact: boolean;
@@ -159,7 +167,7 @@ export class ContextBudgetPlanner {
       domainBudget,
       retainedTailBudget,
       checkpointBudget,
-      maxToolResultTokens: retainedTailBudget,
+      maxToolResultTokens: Math.max(1, Math.floor(retainedTailBudget * SINGLE_RESULT_SHARE_OF_TAIL)),
       shouldCompact: effectiveInput >= triggerBudget,
     };
   }

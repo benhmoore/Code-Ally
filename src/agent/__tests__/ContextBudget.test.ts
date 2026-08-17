@@ -87,10 +87,12 @@ describe('ContextBudgetPlanner', () => {
     }
   });
 
-  it('caps a single tool result at what can survive the next compaction', () => {
-    // The invariant that keeps long tasks moving: any result the harness
-    // permits must fit in the retained tail, or the model loses it on every
-    // reclaim and loops re-fetching the same content.
+  it('caps a single tool result so a parallel-call group still fits the tail', () => {
+    // The invariant that keeps long tasks moving. A safe split retains an
+    // assistant message together with every result of its parallel tool calls,
+    // so the unit that must fit the tail is the group. Two maximum-size results
+    // plus their assistant message must still be retainable, or the model loses
+    // its work on every reclaim and loops re-fetching the same content.
     for (const windowSize of [8_192, 16_384, 32_768, 128_000]) {
       const tokens = new TokenManager(windowSize);
       const system: Message = { role: 'system', content: 'prompt '.repeat(2_500) };
@@ -100,7 +102,7 @@ describe('ContextBudgetPlanner', () => {
       }];
       const budget = new ContextBudgetPlanner(tokens).plan({ messages: [system], functions });
 
-      expect(budget.maxToolResultTokens).toBeLessThanOrEqual(budget.retainedTailBudget);
+      expect(budget.maxToolResultTokens * 2).toBeLessThanOrEqual(budget.retainedTailBudget);
       expect(budget.maxToolResultTokens).toBeLessThan(budget.usableBudget);
       expect(budget.maxToolResultTokens).toBeGreaterThan(0);
     }
