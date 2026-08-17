@@ -15,6 +15,13 @@ import { validateIsFile } from '../utils/pathValidator.js';
 import { formatError } from '../utils/errorUtils.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
+
+/**
+ * Allowance for quoting a file's exact text back to the caller. Generous
+ * because the caller is expected to copy it verbatim; a clipped quote cannot
+ * be used and leaves it guessing at whitespace exactly as before.
+ */
+const EXACT_MATCH_QUOTE_MAX = 1_200;
 import * as fs from 'fs/promises';
 
 /**
@@ -310,7 +317,12 @@ export class EditTool extends BaseTool {
           if (suggestions.length > 0) {
             suggestionText += '. Similar strings found:';
             for (const [match, reason] of suggestions) {
-              suggestionText += `\n  - "${this.truncate(match, TEXT_LIMITS.EDIT_TARGET_PREVIEW_MAX)}" (${reason})`;
+              // A suggestion the caller is meant to copy verbatim is useless
+              // truncated, so quotable matches get a much larger allowance.
+              const limit = reason.startsWith('exact text')
+                ? EXACT_MATCH_QUOTE_MAX
+                : TEXT_LIMITS.EDIT_TARGET_PREVIEW_MAX;
+              suggestionText += `\n  - "${this.truncate(match, limit)}" (${reason})`;
             }
           }
 
@@ -460,6 +472,46 @@ export class EditTool extends BaseTool {
   }
 
   /**
+   * Locate the span of `text` that equals `target` once runs of whitespace are
+   * collapsed, and return it exactly as it appears in the file.
+   *
+   * Returns null when there is no such span, or when there is more than one —
+   * an ambiguous suggestion would send the caller somewhere it did not intend.
+   */
+  private findWhitespaceInsensitiveSpan(text: string, target: string): string | null {
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+    const needle = normalize(target);
+    if (needle.length === 0) return null;
+
+    // Map each character of the normalized haystack back to its source offset.
+    const offsets: number[] = [];
+    let normalized = '';
+    let pendingSpace = false;
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index]!;
+      if (/\s/.test(char)) {
+        pendingSpace = normalized.length > 0;
+        continue;
+      }
+      if (pendingSpace) {
+        normalized += ' ';
+        offsets.push(index);
+        pendingSpace = false;
+      }
+      normalized += char;
+      offsets.push(index);
+    }
+
+    const first = normalized.indexOf(needle);
+    if (first < 0) return null;
+    if (normalized.indexOf(needle, first + 1) >= 0) return null;
+
+    const start = offsets[first]!;
+    const end = offsets[first + needle.length - 1]!;
+    return text.slice(start, end + 1);
+  }
+
+  /**
    * Find similar strings in text
    */
   private findSimilarStrings(
@@ -471,14 +523,12 @@ export class EditTool extends BaseTool {
 
     // Handle multi-line targets
     if (target.includes('\n')) {
-      const targetNormalized = target.split(/\s+/).join(' ');
-      const textNormalized = text.split(/\s+/).join(' ');
-
-      if (textNormalized.includes(targetNormalized)) {
-        matches.push([
-          target.substring(0, TEXT_LIMITS.EDIT_TARGET_PREVIEW_MAX),
-          'Multi-line string with whitespace differences',
-        ]);
+      const actual = this.findWhitespaceInsensitiveSpan(text, target);
+      if (actual !== null) {
+        // Quote the file's real text, not the caller's input. Echoing back what
+        // the model already sent tells it nothing; the exact span is what lets
+        // it retry successfully instead of guessing at whitespace repeatedly.
+        matches.push([actual, 'exact text from file — copy this verbatim as old_string']);
       }
       return matches;
     }
