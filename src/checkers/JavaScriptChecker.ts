@@ -11,6 +11,7 @@ import { FileChecker, CheckResult, CheckIssue } from './types.js';
 import { API_TIMEOUTS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
 import { runCommand } from './utils.js';
+import { collectImportIssues } from './moduleImports.js';
 
 export class JavaScriptChecker implements FileChecker {
   readonly name = 'javascript';
@@ -68,6 +69,16 @@ export class JavaScriptChecker implements FileChecker {
       await fs.rm(tmpDir, { recursive: true, force: true }).catch((error) => {
         logger.debug(`Failed to clean up temporary directory ${tmpDir}:`, error);
       });
+    }
+
+    // Syntax is per-file; module-graph drift is not. Only meaningful once the
+    // file parses, since a parse failure makes import extraction unreliable.
+    if (errors.length === 0) {
+      try {
+        errors.push(...collectImportIssues(filePath, content));
+      } catch (error) {
+        logger.debug(`[JavaScriptChecker] Import check skipped for ${filePath}:`, error);
+      }
     }
 
     const elapsed = performance.now() - start;
