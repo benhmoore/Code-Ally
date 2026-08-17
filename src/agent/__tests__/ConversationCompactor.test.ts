@@ -440,6 +440,63 @@ describe('ConversationCompactor', () => {
     expect(manager.getCheckpoint()!.semanticState.artifacts.length).toBeGreaterThanOrEqual(8);
   });
 
+  it('retains a maximum-permitted tool result through compaction', async () => {
+    // The load-bearing invariant: the largest result the harness allows a tool
+    // to return must survive the next reclaim. If it cannot, the model loses
+    // its work every time and loops re-fetching the same content — the exact
+    // failure observed on a live 16k run.
+    const tokens = new TokenManager(16_384);
+    const system: Message = { id: 'sys', role: 'system', content: `prompt ${'word '.repeat(1_500)}` };
+    const functions = [{
+      type: 'function' as const,
+      function: { name: 'tools', description: 'x'.repeat(6_000), parameters: {} },
+    }];
+    const manager = new ConversationManager({ initialMessages: [system, ...envelopeTurn(6, 300)] });
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, tokens, new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+    const runContext = { ...context(), functions, phase: 'mid-turn' as const };
+    const budget = compactor.budget(runContext);
+
+    // A result just under the permitted ceiling, as a tool would return it.
+    const callId = 'call-max';
+    let filler = '';
+    while (tokens.estimateTokens(filler) < budget.maxToolResultTokens * 0.85) {
+      filler += ` line ${filler.length} of source code;`;
+    }
+    manager.addMessages([{
+      id: 'assistant-max',
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: callId,
+        type: 'function',
+        function: { name: 'read', arguments: JSON.stringify({ file_path: '/repo/src/big.ts' }) },
+      }],
+      timestamp: 900,
+    }, {
+      id: 'tool-max',
+      role: 'tool',
+      name: 'read',
+      tool_call_id: callId,
+      content: `[Tool Call ID: ${callId}]\n${JSON.stringify({
+        success: true, error: '', content: `=== /repo/src/big.ts ===\n${filler}`,
+      })}`,
+      timestamp: 901,
+    }]);
+    const resultTokens = tokens.estimateMessageTokens(manager.getMessages().at(-1)!);
+    expect(resultTokens).toBeLessThanOrEqual(budget.maxToolResultTokens);
+
+    await compactor.compactAndApply(runContext, {
+      trigger: 'automatic', phase: 'mid-turn', forceExtractive: true,
+    });
+
+    const active = manager.getMessages();
+    expect(active.some(message => message.id === 'tool-max')).toBe(true);
+    // And the checkpoint still fits alongside it.
+    expect(manager.getCheckpoint()!.retainedMessageIds).toContain('tool-max');
+  });
+
   it('rejects with configuration guidance when overhead leaves no usable context', async () => {
     const manager = new ConversationManager({ initialMessages: history() });
     const compactor = new ConversationCompactor(

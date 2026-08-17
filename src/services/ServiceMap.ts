@@ -50,6 +50,7 @@ import type { PlanModeManager } from './PlanModeManager.js';
 import type { ProjectContextDetector } from './ProjectContextDetector.js';
 import type { PromptLibraryManager } from './PromptLibraryManager.js';
 import type { ReadCache } from './ReadCache.js';
+import type { ContextBudgetService } from './ContextBudgetService.js';
 import type { ReadStateManager } from './ReadStateManager.js';
 import type { RunPolicyManager } from './RunPolicyManager.js';
 import type { RunSupervisor } from './RunSupervisor.js';
@@ -103,6 +104,7 @@ export interface ServiceMap {
   additional_dirs_manager: AdditionalDirectoriesManager;
   read_state_manager: ReadStateManager;
   read_cache: ReadCache;
+  context_budget: ContextBudgetService;
   file_interaction_tracker: FileInteractionTracker;
   project_context_detector: ProjectContextDetector;
 

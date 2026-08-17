@@ -15,6 +15,7 @@ import { TokenManager } from '../agent/TokenManager.js';
 import { ConfigManager } from './ConfigManager.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { ToolResultPersistence } from './ToolResultPersistence.js';
+import { ServiceRegistry } from './ServiceRegistry.js';
 import { CONTEXT_THRESHOLDS, TOOL_OUTPUT_ESTIMATES, TOOL_RESULT_PERSISTENCE } from '../config/toolDefaults.js';
 import { BUFFER_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
@@ -291,8 +292,25 @@ export class ToolResultManager {
     const totalContext = this.tokenManager.getContextSize();
     const usedTokens = this.tokenManager.getCurrentTokenCount();
     const bufferTokens = Math.floor(totalContext * TOKEN_MANAGEMENT.SAFETY_BUFFER_PERCENT); // 10% buffer for safety
+    // The token count covers messages only. Fixed request overhead (system
+    // prompt + tool schemas + dynamic context) is charged on every request and
+    // must come off the top, or "remaining" overstates the truth by thousands
+    // of tokens on a small window.
+    const overhead = this.getFixedOverhead();
 
-    return Math.max(0, totalContext - usedTokens - bufferTokens);
+    return Math.max(0, totalContext - usedTokens - bufferTokens - overhead);
+  }
+
+  /** Fixed per-request overhead published by the owning agent, if known. */
+  private getFixedOverhead(): number {
+    try {
+      const registry = ServiceRegistry.getInstance();
+      const agentId = registry.get('agent')?.getInstanceId?.();
+      if (!agentId) return 0;
+      return registry.get('context_budget')?.get(agentId)?.fixedOverhead ?? 0;
+    } catch {
+      return 0;
+    }
   }
 
   /**
