@@ -15,7 +15,7 @@
  */
 
 import React, { useRef, useEffect, useMemo } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useInput, type Key } from 'ink';
 import stringWidth from 'string-width';
 import { detectFilesAndImages } from '@utils/pathUtils.js';
 import { useInnerWidth } from '../hooks/useInnerWidth.js';
@@ -34,6 +34,12 @@ export interface TextInputProps {
   onSubmit: (value: string) => void;
   /** Called before onSubmit; return true to mark Enter as handled */
   onSubmitCapture?: (value: string) => boolean;
+  /**
+   * First and exclusive chance to consume a key before editor behavior runs.
+   * This prevents a parent menu/history controller and the editor from both
+   * mutating state in response to the same terminal event.
+   */
+  onKeyPressCapture?: (input: string, key: Key) => boolean;
   /** Callback when user presses Escape key */
   onEscape?: () => void;
   /** Callback when file paths are pasted */
@@ -100,6 +106,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   onCursorChange,
   onSubmit,
   onSubmitCapture,
+  onKeyPressCapture,
   onEscape,
   onFilesPasted,
   onImagesPasted,
@@ -424,6 +431,10 @@ export const TextInput: React.FC<TextInputProps> = ({
 
       const currentValue = valueRef.current;
       const currentCursor = cursorRef.current;
+
+      if (onKeyPressCapture?.(input, key)) {
+        return;
+      }
 
       // ===== Submit (Enter) =====
       if (key.return) {

@@ -12,7 +12,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, useInput, useApp } from 'ink';
+import { Box, useInput, useApp, type Key } from 'ink';
 import { TextInput } from './TextInput.js';
 import { CommandHistory } from '@services/CommandHistory.js';
 import { CompletionProvider, Completion } from '@services/CompletionProvider.js';
@@ -28,6 +28,13 @@ import { UI_DELAYS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { classifyPaths } from '@utils/pathUtils.js';
 import { applyCompletionToInput, type CompletionApplicationOptions } from '../utils/completionUtils.js';
+import {
+  getCompletionAcceptDecision,
+  moveCompletionSelection,
+  shouldConsumeHistoryNextAtDraft,
+  shouldNavigateHistoryNext,
+  shouldNavigateHistoryPrevious,
+} from '../utils/inputInteraction.js';
 
 interface InputPromptProps {
   /** Callback when user submits input */
@@ -235,7 +242,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [mentionedFiles, setMentionedFiles] = useState<string[]>([]);
   const [mentionedImages, setMentionedImages] = useState<string[]>([]);
   const [mentionedDirectories, setMentionedDirectories] = useState<string[]>([]);
-  const [mentionedPlugins, setMentionedPlugins] = useState<string[]>([]);
   const bufferRef = useRef(buffer);
   const onPrefillConsumedRef = useRef(onPrefillConsumed);
 
@@ -288,13 +294,19 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [historyBuffer, setHistoryBuffer] = useState(''); // Store current input when navigating history
   const [historyBufferCursor, setHistoryBufferCursor] = useState(0); // Store cursor position when entering history
-  const isNavigatingHistory = useRef(false); // Track if buffer change is from history navigation
 
   // Completion state
   const [completions, setCompletions] = useState<Completion[]>([]);
   const [completionIndex, setCompletionIndex] = useState(0);
   const [showCompletions, setShowCompletions] = useState(false);
   const completionRequestIdRef = useRef(0);
+
+  const dismissCompletions = React.useCallback((invalidatePending: boolean = true) => {
+    if (invalidatePending) completionRequestIdRef.current++;
+    setShowCompletions(false);
+    setCompletions([]);
+    setCompletionIndex(0);
+  }, []);
 
   // Debounce timer for completions
 
@@ -303,7 +315,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const ctrlCTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Double-escape mechanism for rewind (2x Esc within 500ms)
-  const [escCount, setEscCount] = useState(0);
+  const escCountRef = useRef(0);
   const escTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Exit confirmation mechanism (Ctrl+C on empty buffer - 1s to confirm)
@@ -312,9 +324,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
   // Track last cancelled request IDs to prevent duplicates
   const lastCancelledIdRef = useRef<string | null>(null);
-
-  // Prevent re-entry during escape key processing
-  const processingEscapeRef = useRef(false);
 
   // Notify parent when exit confirmation state changes
   useEffect(() => {
@@ -349,12 +358,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    * Debounced completion update
    */
   useEffect(() => {
-    // Skip completion updates when navigating history
-    if (isNavigatingHistory.current) {
-      isNavigatingHistory.current = false; // Reset flag
-      return;
-    }
-
     const timer = setTimeout(() => {
       void updateCompletions();
     }, UI_DELAYS.COMPLETION_DEBOUNCE);
@@ -391,18 +394,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
     updateBuffer(application.nextValue);
     setCursorPosition(application.nextCursorPosition);
-    setShowCompletions(false);
-    setCompletions([]);
-
-    // Track file mentions (avoid duplicates)
-    if (completion.type === 'file' && !mentionedFiles.includes(application.insertText)) {
-      setMentionedFiles([...mentionedFiles, application.insertText]);
-    }
-
-    // Track plugin mentions (avoid duplicates) - plugin names include the +/- prefix in insertText
-    if (completion.type === 'plugin' && !mentionedPlugins.includes(application.insertText)) {
-      setMentionedPlugins([...mentionedPlugins, application.insertText]);
-    }
+    dismissCompletions(false);
 
     return application;
   };
@@ -410,8 +402,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   /**
    * Navigate history backward (older)
    */
-  const navigateHistoryPrevious = () => {
-    if (!commandHistory) return;
+  const navigateHistoryPrevious = (): boolean => {
+    if (!commandHistory) return false;
 
     completionRequestIdRef.current++;
 
@@ -423,73 +415,37 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
     const result = commandHistory.getPrevious(historyIndex);
     if (result) {
-      isNavigatingHistory.current = true; // Prevent completion updates
       updateBuffer(result.command);
-      // Preserve column position, clamped to command length
-      const savedColumn = historyIndex === -1 ? cursorPosition : historyBufferCursor;
-      setCursorPosition(Math.min(savedColumn, result.command.length));
+      // Shell-style history recall places editing at the end of the entry.
+      setCursorPosition(result.command.length);
       setHistoryIndex(result.index);
-      setShowCompletions(false);
+      dismissCompletions(false);
+      return true;
     }
+    return false;
   };
 
   /**
    * Navigate history forward (newer)
    */
-  const navigateHistoryNext = () => {
-    if (!commandHistory || historyIndex === -1) return;
+  const navigateHistoryNext = (): boolean => {
+    if (!commandHistory || historyIndex === -1) return false;
 
     completionRequestIdRef.current++;
 
     const result = commandHistory.getNext(historyIndex);
     if (result) {
-      isNavigatingHistory.current = true; // Prevent completion updates
       updateBuffer(result.command);
-      // Preserve column position, clamped to command length
-      setCursorPosition(Math.min(historyBufferCursor, result.command.length));
+      setCursorPosition(result.command.length);
       setHistoryIndex(result.index);
     } else {
       // Reached end - restore original buffer and cursor position
-      isNavigatingHistory.current = true; // Prevent completion updates
       updateBuffer(historyBuffer);
       setCursorPosition(historyBufferCursor);
       setHistoryIndex(-1);
     }
-    setShowCompletions(false);
-  };
-
-  /**
-   * Helper to calculate cursor line info (reused from TextInput logic)
-   */
-  const getCursorLineInfo = (
-    text: string,
-    cursor: number
-  ): { line: number; posInLine: number; charsBeforeLine: number } => {
-    const clampedCursor = Math.max(0, Math.min(cursor, text.length));
-    const lines = text.split('\n');
-    let charCount = 0;
-
-    for (let i = 0; i < lines.length; i++) {
-      const lineLength = (lines[i] || '').length;
-      if (charCount + lineLength >= clampedCursor) {
-        return {
-          line: i,
-          posInLine: Math.min(clampedCursor - charCount, lineLength),
-          charsBeforeLine: charCount,
-        };
-      }
-      charCount += lineLength + 1;
-    }
-
-    const lastLineIndex = Math.max(0, lines.length - 1);
-    const lastLineLength = (lines[lastLineIndex] || '').length;
-    const charsBeforeLastLine = Math.max(0, text.length - lastLineLength);
-
-    return {
-      line: lastLineIndex,
-      posInLine: lastLineLength,
-      charsBeforeLine: charsBeforeLastLine,
-    };
+    dismissCompletions(false);
+    return true;
   };
 
   /**
@@ -502,12 +458,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     setHistoryIndex(-1);
     setHistoryBuffer('');
     setHistoryBufferCursor(0);
-    setShowCompletions(false);
-    setCompletions([]);
+    dismissCompletions(false);
     setMentionedFiles([]);
     setMentionedImages([]);
     setMentionedDirectories([]);
-    setMentionedPlugins([]);
   };
 
   const handleSubmit = async (inputValue = buffer) => {
@@ -557,29 +511,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     resetInputState();
   };
 
-  /**
-   * Accept slash-command completions before TextInput submits.
-   */
-  const handleSubmitCapture = (): boolean => {
-    const completion = getSelectedCompletion();
-    if (!completion || completion.type !== 'command' || !buffer.trimStart().startsWith('/')) {
-      return false;
-    }
-
-    const shouldSubmit = completion.enterBehavior !== 'insert';
-    const application = applyCompletion({ appendSpace: !shouldSubmit });
-    if (!application) return false;
-
-    if (shouldSubmit) {
-      void handleSubmit(application.nextValue);
-    }
-
-    return true;
-  };
-
   // Track whether TextInput is active (inactive when modals are open)
   const textInputActive =
     isActive &&
+    !fleetFocused &&
     !permissionRequest &&
     !planApprovalRequest &&
     !modelSelectRequest &&
@@ -600,6 +535,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       onPromptPrefilledClear?.();
     }
     completionRequestIdRef.current++;
+    dismissCompletions(false);
     updateBuffer(newValue);
     setHistoryIndex(-1); // Reset history when editing
   };
@@ -609,6 +545,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    */
   const handleCursorChange = (newPosition: number) => {
     completionRequestIdRef.current++;
+    dismissCompletions(false);
     setCursorPosition(newPosition);
   };
 
@@ -696,6 +633,162 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       setIsWaitingForExitConfirmation(false);
       exitConfirmationTimerRef.current = null;
     }, 1000);
+  };
+
+  useEffect(() => () => {
+    completionRequestIdRef.current++;
+    if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
+    if (escTimerRef.current) clearTimeout(escTimerRef.current);
+    if (exitConfirmationTimerRef.current) clearTimeout(exitConfirmationTimerRef.current);
+  }, []);
+
+  const handlePromptEscape = () => {
+    // Dismissal is local and non-destructive. It never interrupts a running
+    // agent on the same keypress.
+    if (showCompletions) {
+      dismissCompletions();
+      return;
+    }
+
+    const currentAgentRef = agentRef.current;
+    const currentActivityStream = activityStreamRef.current;
+
+    if (
+      isViewingAgent &&
+      buffer.length === 0 &&
+      onExitAgent &&
+      !currentAgentRef?.isProcessing?.()
+    ) {
+      onExitAgent();
+      return;
+    }
+
+    if (currentAgentRef?.isProcessing()) {
+      logger.debug('[INPUT] Escape - interrupting main agent');
+      currentActivityStream?.emit({
+        id: `user-interrupt-${Date.now()}`,
+        type: ActivityEventType.USER_INTERRUPT_INITIATED,
+        timestamp: Date.now(),
+        data: {},
+      });
+      currentAgentRef.interrupt();
+      currentActivityStream?.emit({
+        id: `interrupt-${Date.now()}`,
+        type: ActivityEventType.INTERRUPT_ALL,
+        timestamp: Date.now(),
+        data: {},
+      });
+      return;
+    }
+
+    if (currentAgent && currentAgent !== defaultAgent && onSwitchToDefault) {
+      logger.debug('[INPUT] Escape - returning to default agent:', defaultAgent);
+      onSwitchToDefault();
+      return;
+    }
+
+    if (currentActivityStream) {
+      escCountRef.current += 1;
+      if (escTimerRef.current) clearTimeout(escTimerRef.current);
+      escTimerRef.current = setTimeout(() => {
+        escCountRef.current = 0;
+      }, UI_DELAYS.ESC_RESET);
+
+      if (escCountRef.current >= 2) {
+        const requestId = `rewind_${Date.now()}`;
+        currentActivityStream.emit({
+          id: requestId,
+          type: ActivityEventType.REWIND_REQUEST,
+          timestamp: Date.now(),
+          data: { requestId },
+        });
+        escCountRef.current = 0;
+      }
+    }
+  };
+
+  /**
+   * Synchronous key arbitration for the live editor. Returning true guarantees
+   * TextInput will not also move its cursor or mutate its buffer for this key.
+   */
+  const handleEditorKeyCapture = (_input: string, key: Key): boolean => {
+    if (showCompletions) {
+      if (key.upArrow) {
+        setCompletionIndex(index => moveCompletionSelection(index, completions.length, -1));
+        return true;
+      }
+      if (key.downArrow) {
+        setCompletionIndex(index => moveCompletionSelection(index, completions.length, 1));
+        return true;
+      }
+      if (key.pageUp || key.pageDown) {
+        const delta = key.pageUp ? -8 : 8;
+        setCompletionIndex(index => Math.max(0, Math.min(completions.length - 1, index + delta)));
+        return true;
+      }
+      if (key.return && !key.shift) {
+        const completion = getSelectedCompletion();
+        if (!completion) {
+          dismissCompletions();
+          return false;
+        }
+        const decision = getCompletionAcceptDecision(completion, 'enter');
+        const application = applyCompletion({ appendSpace: decision.appendSpace });
+        if (application && decision.submit) void handleSubmit(application.nextValue);
+        return true;
+      }
+    }
+
+    if (
+      key.downArrow &&
+      fleetCount > 0 &&
+      buffer.length === 0 &&
+      onEnterFleet
+    ) {
+      onEnterFleet();
+      return true;
+    }
+
+    if (key.upArrow) {
+      if (shouldNavigateHistoryPrevious(buffer, cursorPosition, historyIndex !== -1)) {
+        navigateHistoryPrevious();
+        return true;
+      }
+      return false;
+    }
+
+    if (key.downArrow) {
+      if (historyIndex !== -1 || shouldNavigateHistoryNext(buffer, cursorPosition, false)) {
+        navigateHistoryNext();
+        return true;
+      }
+      if (shouldConsumeHistoryNextAtDraft(buffer, false)) return true;
+      return false;
+    }
+
+    if (key.tab) {
+      if (key.shift && onAutoAllowToggle) {
+        onAutoAllowToggle();
+        return true;
+      }
+      if (showCompletions) {
+        const completion = getSelectedCompletion();
+        if (completion) {
+          const decision = getCompletionAcceptDecision(completion, 'tab');
+          applyCompletion({ appendSpace: decision.appendSpace });
+        }
+      } else {
+        void updateCompletions();
+      }
+      return true;
+    }
+
+    if (key.escape) {
+      handlePromptEscape();
+      return true;
+    }
+
+    return false;
   };
 
   // Handle keyboard input for special features (history, completion, modals, etc.)
@@ -1465,192 +1558,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // Enter the fleet: ↓ from an empty prompt when background agents exist.
-      if (
-        key.downArrow &&
-        !fleetFocused &&
-        textInputActive &&
-        !showCompletions &&
-        fleetCount > 0 &&
-        buffer.length === 0 &&
-        onEnterFleet
-      ) {
-        onEnterFleet();
-        return;
-      }
-
-      // Exit an entered background agent back to main: Esc on an empty prompt
-      // while the agent is idle. If it's processing, fall through to the normal
-      // interrupt path (so entering behaves like the main loop).
-      if (
-        key.escape &&
-        !fleetFocused &&
-        isViewingAgent &&
-        buffer.length === 0 &&
-        onExitAgent &&
-        !agent?.isProcessing?.()
-      ) {
-        onExitAgent();
-        return;
-      }
-
-      // ===== History Navigation (override TextInput's arrow keys at boundaries) =====
-      // Only intercept when NOT showing completions and at text boundaries
-      if (key.upArrow && !showCompletions && !textInputActive) {
-        // TextInput is inactive (modal open) - let modal handle it
-        return;
-      }
-
-      if (key.upArrow && !showCompletions && textInputActive) {
-        if (historyIndex !== -1) {
-          navigateHistoryPrevious();
-          return;
-        }
-        // Check if we're at the start of the first line - then navigate history
-        const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
-        if (cursorInfo.line === 0 && cursorPosition === 0) {
-          navigateHistoryPrevious();
-          return;
-        }
-        // Otherwise let TextInput handle it (multiline navigation)
-      }
-
-      if (key.downArrow && !showCompletions && !textInputActive) {
-        // TextInput is inactive (modal open) - let modal handle it
-        return;
-      }
-
-      if (key.downArrow && !showCompletions && textInputActive) {
-        if (historyIndex !== -1) {
-          navigateHistoryNext();
-          return;
-        }
-        // Check if we're at the end of the last line - then navigate history
-        const cursorInfo = getCursorLineInfo(buffer, cursorPosition);
-        const lines = buffer.split('\n');
-        if (cursorInfo.line === lines.length - 1 && cursorPosition === buffer.length) {
-          navigateHistoryNext();
-          return;
-        }
-        // Otherwise let TextInput handle it (multiline navigation)
-      }
-
-      // ===== Completion Navigation =====
-      if (key.upArrow && showCompletions) {
-        setCompletionIndex(Math.max(0, completionIndex - 1));
-        return;
-      }
-
-      if (key.downArrow && showCompletions) {
-        setCompletionIndex(Math.min(completions.length - 1, completionIndex + 1));
-        return;
-      }
-
-      // ===== Tab - Completion or Auto-Allow Toggle =====
-      if (key.tab) {
-        // Shift+Tab: Toggle auto-allow mode (global shortcut)
-        if (key.shift && onAutoAllowToggle) {
-          onAutoAllowToggle();
-          return;
-        }
-
-        // Tab alone: Completion (existing behavior)
-        if (showCompletions && completions.length > 0) {
-          applyCompletion();
-        } else {
-          // Trigger completions
-          updateCompletions();
-        }
-        return;
-      }
-
-      // ===== Escape - Dismiss Completions, Interrupt Agent, Return to Ally, or Double-Escape for Rewind =====
-      if (key.escape) {
-        // Prevent infinite loop from re-entry during state updates
-        if (processingEscapeRef.current) return;
-
-        // First priority: dismiss completions if showing
-        if (showCompletions) {
-          processingEscapeRef.current = true;
-          completionRequestIdRef.current++;
-          setShowCompletions(false);
-          setCompletions([]);
-          // Reset after a microtask to allow state updates to complete
-          queueMicrotask(() => {
-            processingEscapeRef.current = false;
-          });
-          return;
-        }
-
-        // Second priority: Interrupt agent if processing (single escape)
-        // Use refs to get fresh values and avoid stale closure issues
-        const currentAgentRef = agentRef.current;
-        const currentActivityStream = activityStreamRef.current;
-        if (currentAgentRef && currentAgentRef.isProcessing()) {
-          logger.debug('[INPUT] Escape - interrupting main agent');
-
-          // Emit immediate visual feedback before interrupting
-          if (currentActivityStream) {
-            currentActivityStream.emit({
-              id: `user-interrupt-${Date.now()}`,
-              type: ActivityEventType.USER_INTERRUPT_INITIATED,
-              timestamp: Date.now(),
-              data: {},
-            });
-          }
-
-          // Interrupt the agent (will cancel LLM request immediately)
-          currentAgentRef.interrupt();
-
-          // Also interrupt all subagents through AgentTool
-          if (currentActivityStream) {
-            currentActivityStream.emit({
-              id: `interrupt-${Date.now()}`,
-              type: ActivityEventType.INTERRUPT_ALL,
-              timestamp: Date.now(),
-              data: {},
-            });
-          }
-          return;
-        }
-
-        // Third priority: Return to default agent if on a different agent
-        // (Only if current agent is not the configured default)
-        if (currentAgent && currentAgent !== defaultAgent && onSwitchToDefault) {
-          logger.debug('[INPUT] Escape - returning to default agent:', defaultAgent);
-          onSwitchToDefault();
-          return;
-        }
-
-        // Fourth priority: Double-escape to open rewind (only when no modal active)
-        // currentActivityStream is already fetched from ref above
-        if (!modelSelectRequest && !sessionSelectRequest && !rewindRequest && !permissionRequest && currentActivityStream) {
-          const newCount = escCount + 1;
-          setEscCount(newCount);
-
-          // Reset counter after configured delay
-          if (escTimerRef.current) clearTimeout(escTimerRef.current);
-          escTimerRef.current = setTimeout(() => setEscCount(0), UI_DELAYS.ESC_RESET);
-
-          // Open rewind on 2nd escape
-          if (newCount >= 2) {
-            const requestId = `rewind_${Date.now()}`;
-            try {
-              currentActivityStream.emit({
-                id: requestId,
-                type: ActivityEventType.REWIND_REQUEST,
-                timestamp: Date.now(),
-                data: { requestId },
-              });
-            } catch (error) {
-              console.error('[InputPrompt] Failed to emit rewind request:', error);
-            }
-            setEscCount(0); // Reset counter
-          }
-        }
-        return;
-      }
-
       // Note: Exit confirmation (Ctrl+C on empty buffer) is now handled
       // via TextInput's onCtrlC callback -> handleCtrlC
     },
@@ -1694,7 +1601,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         onValueChange={handleValueChange}
         cursorPosition={cursorPosition}
         onCursorChange={handleCursorChange}
-        onSubmitCapture={handleSubmitCapture}
+        onKeyPressCapture={handleEditorKeyCapture}
         onSubmit={handleTextInputSubmit}
         onFilesPasted={handleFilesPasted}
         onImagesPasted={handleImagesPasted}

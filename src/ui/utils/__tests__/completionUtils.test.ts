@@ -56,4 +56,36 @@ describe('completionUtils', () => {
 
     expect(result.nextValue).toBe('/open src/CompletionProvider.ts');
   });
+
+  it('uses the provider edit range instead of guessing token boundaries', () => {
+    const input = '/open src/Com';
+    const completion: Completion = {
+      value: 'CompletionProvider.ts',
+      type: 'file',
+      insertText: 'CompletionProvider.ts',
+      replaceStart: '/open src/'.length,
+      replaceEnd: input.length,
+    };
+
+    const result = applyCompletionToInput(input, input.length, completion);
+
+    expect(result.nextValue).toBe('/open src/CompletionProvider.ts');
+    expect(result.nextCursorPosition).toBe(result.nextValue.length);
+  });
+
+  it('preserves mention syntax while replacing a fuzzy @ token', () => {
+    const input = 'review @Comp please';
+    const completion: Completion = {
+      value: 'CompletionProvider.ts',
+      type: 'file',
+      insertText: '@src/CompletionProvider.ts',
+      replaceStart: 'review '.length,
+      replaceEnd: 'review @Comp'.length,
+    };
+
+    const result = applyCompletionToInput(input, 'review @Comp'.length, completion, { appendSpace: true });
+
+    expect(result.nextValue).toBe('review @src/CompletionProvider.ts please');
+    expect(result.nextCursorPosition).toBe('review @src/CompletionProvider.ts'.length);
+  });
 });

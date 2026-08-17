@@ -232,11 +232,22 @@ describe('CompletionProvider', () => {
         expect(completion).toBeDefined();
         // Value should be just the filename
         expect(completion?.value).toBe('MyComponent.tsx');
-        // insertText should have the full relative path
-        expect(completion?.insertText).toBe('src/MyComponent.tsx');
+        // insertText should preserve valid mention syntax and replace the @ token
+        expect(completion?.insertText).toBe('@src/MyComponent.tsx');
+        expect(completion?.replaceStart).toBe(0);
+        expect(completion?.replaceEnd).toBe('@MyComp'.length);
         // Description should be the directory
         expect(completion?.description).toBe('src');
       }
+    });
+
+    it('should quote fuzzy mention paths containing whitespace', async () => {
+      await fs.writeFile(join(tempDir, 'My Component.tsx'), 'content', 'utf-8');
+
+      const completions = await provider.getCompletions('@Component', 10);
+      const completion = completions.find(c => c.value === 'My Component.tsx');
+
+      expect(completion?.insertText).toBe('@"My Component.tsx"');
     });
 
     it('should handle empty query after @', async () => {
@@ -308,6 +319,20 @@ describe('CompletionProvider', () => {
   });
 
   describe('file path completions', () => {
+    it('replaces only the final path segment', async () => {
+      const testSubdir = join(tempDir, 'testfiles');
+      await fs.mkdir(testSubdir, { recursive: true });
+      await fs.writeFile(join(testSubdir, 'target.txt'), 'content', 'utf-8');
+
+      const input = `/open ${testSubdir}/tar`;
+      const completions = await provider.getCompletions(input, input.length);
+      const target = completions.find(completion => completion.value === 'target.txt');
+
+      expect(target?.replaceStart).toBe(input.lastIndexOf('/') + 1);
+      expect(target?.replaceEnd).toBe(input.length);
+      expect(target?.insertText).toBe('target.txt');
+    });
+
     it('should complete files with paths', async () => {
       // Create test files in subdirectory
       const testSubdir = join(tempDir, 'testfiles');

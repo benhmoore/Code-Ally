@@ -15,6 +15,7 @@ import { UI_COLORS } from '../constants/colors.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
 import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
+import { getCompletionAcceptDecision } from '../utils/inputInteraction.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 
 export interface CompletionDropdownProps {
@@ -80,6 +81,9 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
   }
 
   const selectedCompletion = completions[selectedIndex];
+  const enterDecision = selectedCompletion
+    ? getCompletionAcceptDecision(selectedCompletion, 'enter')
+    : null;
 
   const visibleCount = Math.min(
     maxHeight,
@@ -157,9 +161,12 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
 
         {/* Footer hint */}
         <KeyboardHintFooter
-          hints={selectedCompletion?.type === 'command'
-            ? [{ key: '↑↓', label: 'move' }, { key: 'enter', label: 'accept' }, { key: 'tab', label: 'insert' }, { key: 'esc', label: 'dismiss' }]
-            : [{ key: '↑↓', label: 'move' }, { key: 'tab', label: 'insert' }, { key: 'esc', label: 'dismiss' }]}
+          hints={[
+            { key: '↑↓', label: 'move' },
+            { key: 'enter', label: enterDecision?.submit ? 'run' : 'accept' },
+            { key: 'tab', label: 'complete' },
+            { key: 'esc', label: 'dismiss' },
+          ]}
         />
     </Box>
   );

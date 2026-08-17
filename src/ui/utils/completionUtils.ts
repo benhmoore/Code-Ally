@@ -21,8 +21,7 @@ export function applyCompletionToInput(
   options: CompletionApplicationOptions = {}
 ): CompletionApplication {
   const insertText = completion.insertText || completion.value;
-  const wordStart = getCompletionWordStart(value, cursorPosition, completion);
-  const wordEnd = getCompletionWordEnd(value, cursorPosition);
+  const { wordStart, wordEnd } = getReplacementRange(value, cursorPosition, completion);
   const before = value.slice(0, wordStart);
   const after = value.slice(wordEnd);
   const acceptedText = shouldAppendSpace(insertText, after, options)
@@ -34,6 +33,31 @@ export function applyCompletionToInput(
     insertText,
     nextValue: before + acceptedText + after,
     nextCursorPosition: wordStart + acceptedText.length,
+  };
+}
+
+function getReplacementRange(
+  value: string,
+  cursorPosition: number,
+  completion: Completion
+): { wordStart: number; wordEnd: number } {
+  const { replaceStart, replaceEnd } = completion;
+  const hasValidExplicitRange =
+    Number.isInteger(replaceStart) &&
+    Number.isInteger(replaceEnd) &&
+    replaceStart! >= 0 &&
+    replaceStart! <= replaceEnd! &&
+    replaceEnd! <= value.length &&
+    replaceStart! <= cursorPosition &&
+    cursorPosition <= replaceEnd!;
+
+  if (hasValidExplicitRange) {
+    return { wordStart: replaceStart!, wordEnd: replaceEnd! };
+  }
+
+  return {
+    wordStart: getCompletionWordStart(value, cursorPosition, completion),
+    wordEnd: getCompletionWordEnd(value, cursorPosition),
   };
 }
 

@@ -47,6 +47,11 @@ export interface Completion {
   insertText?: string; // Text to insert (if different from value)
   currentValue?: string; // Current value for config options (displayed dimly)
   enterBehavior?: CompletionEnterBehavior; // Slash-command behavior when accepted with Enter
+  /** Exact input span replaced when this completion is accepted. */
+  replaceStart?: number;
+  replaceEnd?: number;
+  /** The inserted value is an unfinished prefix (for example a directory or `key=`). */
+  continueInput?: boolean;
 }
 
 export interface CompletionContext {
@@ -82,6 +87,14 @@ const METADATA_SUBCOMMAND_COMMANDS = new Set([
   '/project',
   '/plugin',
 ]);
+
+function formatMentionPath(relativePath: string, isDirectory: boolean): string {
+  const pathWithSuffix = isDirectory && !relativePath.endsWith('/')
+    ? `${relativePath}/`
+    : relativePath;
+
+  return /\s/.test(pathWithSuffix) ? `@"${pathWithSuffix}"` : `@${pathWithSuffix}`;
+}
 
 /**
  * CompletionProvider service
@@ -132,18 +145,26 @@ export class CompletionProvider {
    */
   async getCompletions(input: string, cursorPosition: number): Promise<Completion[]> {
     const context = this.parseContext(input, cursorPosition);
+    let completions: Completion[];
 
     // Determine what kind of completion to provide
     if (context.lineStart.startsWith('/')) {
-      return await this.getCommandCompletions(context);
+      completions = await this.getCommandCompletions(context);
     } else if (context.lineStart.startsWith('!')) {
-      return await this.getBashCompletions(context);
+      completions = await this.getBashCompletions(context);
     } else if (context.currentWord.startsWith('@')) {
-      return await this.getFuzzyFilePathCompletions(context);
+      completions = await this.getFuzzyFilePathCompletions(context);
+    } else {
+      completions = [];
     }
 
-    // No completions
-    return [];
+    // Every completion carries an explicit edit range. Providers with a more
+    // precise span (such as path basename completion) override these defaults.
+    return completions.map(completion => ({
+      replaceStart: context.wordStart,
+      replaceEnd: context.wordEnd,
+      ...completion,
+    }));
   }
 
   /**
@@ -230,6 +251,7 @@ export class CompletionProvider {
       const allCommands = CommandRegistry.getAll();
       return allCommands
         .filter(meta => meta.name.startsWith(context.currentWord))
+        .sort((a, b) => a.name.localeCompare(b.name))
         .map(meta => ({
           value: meta.name.slice(1), // Remove leading / for display (icon already shows it)
           description: meta.description,
@@ -430,6 +452,7 @@ export class CompletionProvider {
   private getSubcommandCompletions(commandName: string, prefix: string): Completion[] {
     return CommandRegistry.getSubcommands(commandName)
       .filter(sub => sub.name.startsWith(prefix))
+      .sort((a, b) => a.name.localeCompare(b.name))
       .map(sub => this.toSubcommandCompletion(sub));
   }
 
@@ -1013,6 +1036,7 @@ export class CompletionProvider {
           type: 'option' as const,
           currentValue,
           insertText: `${key}=`, // Add = suffix for immediate value entry
+          continueInput: true,
         };
       });
   }
@@ -1085,7 +1109,8 @@ export class CompletionProvider {
         value: result.filename, // Show just the filename in left label
         description: dirname(result.relativePath), // Show directory in right label
         type: result.isDirectory ? ('directory' as const) : ('file' as const),
-        insertText: result.relativePath, // Insert full path when selected
+        insertText: formatMentionPath(result.relativePath, result.isDirectory),
+        continueInput: false,
       }));
     } catch (error) {
       logger.debug(`Fuzzy file path completion failed: ${formatError(error)}`);
@@ -1150,6 +1175,11 @@ export class CompletionProvider {
 
       // Filter and map to completions
       const completions: Completion[] = [];
+      const lastSeparator = Math.max(
+        context.currentWord.lastIndexOf('/'),
+        context.currentWord.lastIndexOf('\\')
+      );
+      const replaceStart = context.wordStart + lastSeparator + 1;
 
       for (const entry of entries) {
         if (entry.name.startsWith(searchPattern) || searchPattern === '') {
@@ -1158,8 +1188,11 @@ export class CompletionProvider {
           completions.push({
             value: isDir ? `${entry.name}/` : entry.name,
             description: isDir ? 'Directory' : 'File',
-            type: 'file',
+            type: isDir ? 'directory' : 'file',
             insertText: isDir ? `${entry.name}/` : entry.name,
+            replaceStart,
+            replaceEnd: context.wordEnd,
+            continueInput: isDir,
           });
         }
       }
