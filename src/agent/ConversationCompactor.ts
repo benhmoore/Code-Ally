@@ -25,6 +25,8 @@ import type {
 } from './compaction/types.js';
 
 const MAX_REDUCER_INPUT_RATIO = 0.6;
+const MAX_REDUCER_OUTPUT_TOKENS = 2048;
+const STRUCTURED_REDUCTION_DEADLINE_MS = 60_000;
 const RETAINED_TAIL_RATIO = 0.35;
 const MIN_RECLAIMED_TOKENS = 256;
 const MIN_POST_COMPACTION_HEADROOM_RATIO = 0.15;
@@ -71,6 +73,22 @@ interface Candidate {
   replacement: Message[];
 }
 
+export interface CompactionDebugState {
+  active: boolean;
+  stage: 'idle' | 'planning' | 'reducing' | 'extracting' | 'counting' | 'committing' | 'complete' | 'failed';
+  startedAt?: number;
+  finishedAt?: number;
+  elapsedMs: number;
+  trigger?: CompactionTrigger;
+  phase?: CompactionPhase;
+  sourceMessages?: number;
+  reducerChunk?: number;
+  reducerChunks?: number;
+  reducerInputTokens?: number;
+  degradedReason?: string;
+  error?: string;
+}
+
 export type CheckpointCommitter = (
   messages: readonly Message[],
   checkpoint: ConversationCheckpointV1,
@@ -85,6 +103,10 @@ export class ConversationCompactor {
   private generation = 0;
   private lastCheckpointSourceCount = 0;
   private readonly planner: ContextBudgetPlanner;
+  private debugState: Omit<CompactionDebugState, 'elapsedMs'> = {
+    active: false,
+    stage: 'idle',
+  };
 
   constructor(
     private readonly modelClient: ModelClient,
@@ -109,6 +131,16 @@ export class ConversationCompactor {
     });
   }
 
+  /** Bounded, payload-free state for /debug dump and live-stall diagnosis. */
+  getDebugState(): CompactionDebugState {
+    const state = structuredClone(this.debugState);
+    const end = state.active ? Date.now() : state.finishedAt ?? state.startedAt ?? Date.now();
+    return {
+      ...state,
+      elapsedMs: state.startedAt ? Math.max(0, end - state.startedAt) : 0,
+    };
+  }
+
   async checkAndPerformAutoCompaction(context: CompactionContext): Promise<boolean> {
     const budget = await this.resolveBudget(context);
     if (!budget.shouldCompact) return false;
@@ -120,6 +152,12 @@ export class ConversationCompactor {
     await this.compactAndApply(context, {
       trigger: 'automatic',
       phase: context.phase ?? 'pre-turn',
+      // Automatic compaction is on the foreground continuation path. A second
+      // model generation here can take minutes on a large local model and gives
+      // the user no streamed progress. The deterministic reducer is immediate,
+      // provenance-preserving, and keeps unattended turns moving. Manual
+      // /compact may still request the richer model-validated checkpoint.
+      forceExtractive: true,
     });
     return true;
   }
@@ -141,6 +179,15 @@ export class ConversationCompactor {
     context: CompactionContext,
     options: CompactionOptions,
   ): Promise<AppliedCompactionResult> {
+    const startedAt = Date.now();
+    this.debugState = {
+      active: true,
+      stage: 'planning',
+      startedAt,
+      trigger: options.trigger ?? 'manual',
+      phase: options.phase ?? context.phase ?? 'manual',
+      sourceMessages: this.conversationManager.getMessages().length,
+    };
     const emitEvents = options.emitEvents !== false;
     const eventId = context.generateId();
     const oldTokenCount = this.countActive();
@@ -157,7 +204,9 @@ export class ConversationCompactor {
     }
 
     try {
+      this.debugState.stage = options.forceExtractive ? 'extracting' : 'reducing';
       let candidate = await this.buildCandidate(context, options, budget);
+      this.debugState.stage = 'counting';
       let candidateTokens = await this.countCandidate(candidate, context);
       if (candidateTokens > budget.targetBudget && candidate.checkpoint.portability === 'model-validated') {
         candidate = await this.buildCandidate(context, {
@@ -212,6 +261,7 @@ export class ConversationCompactor {
         throw new Error('Compaction candidate did not reclaim enough context to continue safely.');
       }
 
+      this.debugState.stage = 'committing';
       const committed = await this.commitWithRetry(
         candidate.replacement,
         candidate.checkpoint,
@@ -254,6 +304,16 @@ export class ConversationCompactor {
         });
       }
 
+      this.debugState = {
+        ...this.debugState,
+        active: false,
+        stage: 'complete',
+        finishedAt: Date.now(),
+        ...(candidate.checkpoint.degradedReason
+          ? { degradedReason: candidate.checkpoint.degradedReason }
+          : {}),
+      };
+
       return {
         checkpoint: candidate.checkpoint,
         compactedMessages: [...candidate.replacement],
@@ -265,6 +325,13 @@ export class ConversationCompactor {
         noticeTimestamp,
       };
     } catch (error) {
+      this.debugState = {
+        ...this.debugState,
+        active: false,
+        stage: 'failed',
+        finishedAt: Date.now(),
+        error: error instanceof Error ? error.message : String(error),
+      };
       if (emitEvents) {
         this.activityStream.emit({
           id: eventId,
@@ -435,9 +502,13 @@ export class ConversationCompactor {
 
     try {
       if (options.forceExtractive) {
-        throw new Error(options.forceNoRetainedTail
-          ? 'Checkpoint required a fully reduced retained tail'
-          : 'Structured checkpoint exceeded target budget');
+        throw new Error(
+          options.forceNoRetainedTail
+            ? 'Checkpoint required a fully reduced retained tail'
+            : options.trigger === 'automatic'
+              ? 'Automatic compaction selected deterministic extraction'
+              : 'Structured checkpoint exceeded target budget'
+        );
       }
       semanticState = await this.reduceStructured(
         delta,
@@ -449,6 +520,8 @@ export class ConversationCompactor {
     } catch (error) {
       portability = 'extractive';
       degradedReason = error instanceof Error ? error.message : String(error);
+      this.debugState.stage = 'extracting';
+      this.debugState.degradedReason = degradedReason;
       if (!options.forceExtractive) {
         logger.warn('[COMPACTION] Structured reduction failed; using deterministic extraction:', error);
       }
@@ -580,6 +653,7 @@ export class ConversationCompactor {
     focus: string | undefined,
     signal: AbortSignal,
   ): Promise<SemanticCheckpointStateV1> {
+    const deadline = Date.now() + STRUCTURED_REDUCTION_DEADLINE_MS;
     const maxTokens = Math.max(1000, Math.floor(this.tokenManager.getContextSize() * MAX_REDUCER_INPUT_RATIO));
     const chunks: Message[][] = [];
     let chunk: Message[] = [];
@@ -600,7 +674,12 @@ export class ConversationCompactor {
     if (chunk.length) chunks.push(chunk);
 
     let state = previous;
-    for (const currentChunk of chunks) {
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const currentChunk = chunks[chunkIndex]!;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(`Structured checkpoint reducer exceeded its ${STRUCTURED_REDUCTION_DEADLINE_MS}ms deadline`);
+      }
       const transcript = currentChunk.map(message => JSON.stringify({
         id: message.id,
         role: message.role,
@@ -628,16 +707,46 @@ export class ConversationCompactor {
           }),
         },
       ];
-      const response = await this.modelClient.send(request, {
-        stream: false,
-        temperature: 0,
-        suppressThinking: true,
-        responseSchema: {
-          name: 'conversation_checkpoint_v1',
-          schema: CHECKPOINT_JSON_SCHEMA as unknown as Record<string, unknown>,
-        },
-        signal,
-      });
+      this.debugState.stage = 'reducing';
+      this.debugState.reducerChunk = chunkIndex + 1;
+      this.debugState.reducerChunks = chunks.length;
+      this.debugState.reducerInputTokens = this.tokenManager.estimateMessagesTokens(request);
+
+      // A compaction reducer is auxiliary work on the foreground turn. Give the
+      // complete reduction one deadline and a child signal so timeout cancels
+      // only this reducer request; the owning agent remains healthy and falls
+      // back to deterministic extraction immediately.
+      const reducerController = new AbortController();
+      let deadlineExpired = false;
+      const onOwnerAbort = () => reducerController.abort();
+      signal.addEventListener('abort', onOwnerAbort, { once: true });
+      const deadlineTimer = setTimeout(() => {
+        deadlineExpired = true;
+        reducerController.abort();
+      }, remainingMs);
+
+      let response: Awaited<ReturnType<ModelClient['send']>>;
+      try {
+        response = await this.modelClient.send(request, {
+          stream: false,
+          temperature: 0,
+          suppressThinking: true,
+          dynamicMaxTokens: MAX_REDUCER_OUTPUT_TOKENS,
+          retryPolicy: 'auxiliary',
+          responseSchema: {
+            name: 'conversation_checkpoint_v1',
+            schema: CHECKPOINT_JSON_SCHEMA as unknown as Record<string, unknown>,
+          },
+          signal: reducerController.signal,
+        });
+      } finally {
+        clearTimeout(deadlineTimer);
+        signal.removeEventListener('abort', onOwnerAbort);
+      }
+      if (signal.aborted) throw new Error('Compaction interrupted during checkpoint reduction');
+      if (deadlineExpired) {
+        throw new Error(`Structured checkpoint reducer exceeded its ${STRUCTURED_REDUCTION_DEADLINE_MS}ms deadline`);
+      }
       if (response.error || !response.content?.trim()) {
         throw new Error(response.error_message || 'Structured checkpoint reducer returned no content');
       }

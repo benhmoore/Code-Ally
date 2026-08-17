@@ -674,6 +674,46 @@ export class Agent {
     return this.lastRequestPreview ? structuredClone(this.lastRequestPreview) : null;
   }
 
+  /** Payload-free runtime snapshot used by /debug dump while a turn is stuck. */
+  getDebugState(): Record<string, unknown> {
+    const activeMessages = this.conversationManager.getMessages();
+    const transcript = this.conversationManager.getTranscript();
+    const lastMessage = activeMessages.at(-1);
+    const checkpoint = this.conversationManager.getCheckpoint();
+    return {
+      instanceId: this.instanceId,
+      agentName: this.agentName,
+      turnAdmissionActive: this.turnAdmissionActive,
+      requestInProgress: this.invocationState.requestInProgress,
+      turn: this.turnController.snapshot(),
+      interruption: {
+        interrupted: this.interruptionManager.isInterrupted(),
+        cause: this.interruptionManager.getCause(),
+      },
+      compaction: this.agentCompactor.getDebugState(),
+      context: {
+        activeMessages: activeMessages.length,
+        transcriptMessages: transcript.length,
+        currentTokens: this.tokenManager.getCurrentTokenCount(),
+        contextSize: this.tokenManager.getContextSize(),
+        usagePercent: this.tokenManager.getContextUsagePercentage(),
+        checkpointId: checkpoint?.id ?? null,
+        checkpointGeneration: checkpoint?.generation ?? 0,
+        lastMessage: lastMessage ? {
+          role: lastMessage.role,
+          id: lastMessage.id ?? null,
+          timestamp: lastMessage.timestamp ?? null,
+          toolCalls: lastMessage.tool_calls?.length ?? 0,
+          toolCallId: lastMessage.tool_call_id ?? null,
+        } : null,
+      },
+      lastForegroundRequest: this.lastRequestPreview ? {
+        provider: this.lastRequestPreview.provider,
+        url: this.lastRequestPreview.url,
+      } : null,
+    };
+  }
+
   /**
    * Get the conversation history (used by AgentSwitcher for history transfer)
    */
