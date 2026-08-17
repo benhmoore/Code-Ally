@@ -44,11 +44,18 @@ describe('StatusIndicator layout invariant', () => {
   });
 });
 
-const PULSE_GLYPHS = UI_SYMBOLS.SPINNER.PULSE;
+const BLINK_GLYPHS = UI_SYMBOLS.SPINNER.BLINK;
 const ARC_GLYPHS = UI_SYMBOLS.SPINNER.ARC;
-// The indicator is the row's first glyph. Matching anywhere in the row would be
-// meaningless: '·' is also the separator between the row's segments.
-const indicatorOf = (frame: string): string => frame.trim().charAt(0);
+// The indicator sits at a fixed column (the row has one space of padding).
+// Trimming would lose it entirely on the blink's blank frames, and matching
+// anywhere in the row would be meaningless: '·' is also the row's separator.
+const indicatorOf = (frame: string): string => frame.charAt(1);
+// The blink's "off" frame is a blank, so a missing indicator would satisfy
+// BLINK_GLYPHS on its own; pair it with proof the spinner is not there.
+const expectBlinking = (frame: string): void => {
+  expect(BLINK_GLYPHS).toContain(indicatorOf(frame));
+  expect(ARC_GLYPHS).not.toContain(indicatorOf(frame));
+};
 
 /**
  * A request that has been sent but has produced nothing yet is a different state
@@ -89,10 +96,10 @@ describe('StatusIndicator request phase', () => {
     activityStream.emit({ id: `evt-${type}`, type, timestamp: Date.now(), data } as never);
   };
 
-  test('pulses while the request is out with no output yet', async () => {
+  test('blinks while the request is out with no output yet', async () => {
     emit(ActivityEventType.MODEL_REQUEST_START, {});
 
-    expect(PULSE_GLYPHS).toContain(indicatorOf(await lastFrame()));
+    expectBlinking(await lastFrame());
   });
 
   test('switches to the spinner once real output arrives', async () => {
@@ -104,15 +111,15 @@ describe('StatusIndicator request phase', () => {
     expect(ARC_GLYPHS).toContain(indicatorOf(await lastFrame()));
   });
 
-  test('keeps pulsing for synthetic status events that carry no output', async () => {
+  test('keeps blinking for synthetic status events that carry no output', async () => {
     emit(ActivityEventType.MODEL_REQUEST_START, {});
     // The "Thinking..." indicator is emitted by the agent itself, not the model.
     emit(ActivityEventType.THOUGHT_CHUNK, { text: 'Thinking...', thinking: true });
 
-    expect(PULSE_GLYPHS).toContain(indicatorOf(await lastFrame()));
+    expectBlinking(await lastFrame());
   });
 
-  test('stops pulsing when the request settles without output', async () => {
+  test('stops blinking when the request settles without output', async () => {
     emit(ActivityEventType.MODEL_REQUEST_START, {});
     await lastFrame();
 

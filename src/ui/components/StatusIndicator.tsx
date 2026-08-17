@@ -193,13 +193,19 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     return 'Thinking';
   }, [isCancelling, isCompacting, currentTodo, activeAgent, activeSubAgents]);
 
+  // A white dot flashing on and off while the request is out with nothing back;
+  // the yellow arc means output is actually arriving.
+  const showBlink = awaitingModel && !isCancelling && !isCompacting;
+
   if (!active) return null;
 
   return (
     <Box paddingLeft={1}>
       <ProgressIndicator
-        type={awaitingModel && !isCancelling && !isCompacting ? 'pulse' : 'arc'}
-        color={isCancelling ? UI_COLORS.ERROR : UI_COLORS.PRIMARY}
+        type={showBlink ? 'blink' : 'arc'}
+        color={
+          isCancelling ? UI_COLORS.ERROR : showBlink ? UI_COLORS.TEXT_DEFAULT : UI_COLORS.PRIMARY
+        }
       />
       <FreshnessLabel
         text={label}

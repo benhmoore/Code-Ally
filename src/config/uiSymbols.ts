@@ -133,11 +133,11 @@ export const UI_SYMBOLS = {
     /** Bounce spinner - bouncing Braille */
     BOUNCE: ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
     /**
-     * Pulse - a dot swelling and shrinking in place, for waiting on a backend
-     * that has not answered yet. Deliberately not a spinner: nothing is moving
-     * on the wire. Six frames matches the arc's cycle length at the shared 5fps.
+     * Blink - a dot flashing on and off, for waiting on a backend that has not
+     * answered yet. Deliberately not a spinner: nothing is moving on the wire.
+     * Six frames matches the arc's cycle length at the shared 5fps.
      */
-    PULSE: ['·', '•', '●', '●', '•', '·'],
+    BLINK: ['●', '●', '●', ' ', ' ', ' '],
   },
 
   // ========================================
