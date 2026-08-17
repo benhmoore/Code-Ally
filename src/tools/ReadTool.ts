@@ -6,7 +6,8 @@
 
 import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
-import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
+import { Message, ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
+import type { ReadCacheEntry } from '../services/ReadCache.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { tokenCounter } from '../services/TokenCounter.js';
@@ -492,6 +493,30 @@ For multi-file exploration, prefer explore() to preserve context.`;
   }
 
   /**
+   * A cached read may be served as a dedup stub only while the tool-result
+   * message that carried the content is still in the owning agent's active
+   * context. Compaction (and ephemeral-read cleanup) can remove it; after that
+   * the stub would falsely claim the content is available.
+   *
+   * When no owning conversation can be resolved (direct invocation, tests),
+   * legacy mtime-only dedup applies — without a model conversation there is no
+   * context the stub can lie about.
+   */
+  private isCachedReadStillVisible(
+    cached: ReadCacheEntry,
+    registry: Pick<ServiceRegistry, 'get'>,
+  ): boolean {
+    const agent = registry.get('agent') as
+      | { getConversationManager?: () => { getMessages(): readonly Message[] } }
+      | undefined;
+    const conversation = agent?.getConversationManager?.();
+    if (!conversation) return true;
+    if (!cached.toolCallId) return false;
+    return conversation.getMessages().some(message =>
+      message.role === 'tool' && message.tool_call_id === cached.toolCallId);
+  }
+
+  /**
    * Read a single file with line numbers
    */
   private async readFile(
@@ -541,10 +566,17 @@ For multi-file exploration, prefer explore() to preserve context.`;
     }
 
     // Check read deduplication cache — return stub if file unchanged since last read
+    // AND the earlier read's content is still present in the active conversation.
+    // Compaction can remove the message that carried the content; serving the
+    // "already in conversation context" stub after that strands the model with
+    // no way to recover the file. Correctness beats token savings: fall through
+    // to a fresh read whenever visibility cannot be confirmed.
     const readCache = registry.get('read_cache');
     if (readCache) {
       const cached = readCache.check(absolutePath, stat.mtimeMs, offset, limit, readScopeId);
-      if (cached) {
+      if (cached && !this.isCachedReadStillVisible(cached, registry)) {
+        readCache.invalidate(absolutePath, readScopeId);
+      } else if (cached) {
         // Still track read state so edit validation works
         const readStateManager = registry.get('read_state_manager');
         if (readStateManager) {
@@ -595,6 +627,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
           lineCount: streamedLines.length,
           totalLines: streamedTotal,
           lastAccessTime: Date.now(),
+          toolCallId: this.currentCallId,
         });
       }
 
@@ -675,6 +708,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
         lineCount: selectedLines.length,
         totalLines,
         lastAccessTime: Date.now(),
+        toolCallId: this.currentCallId,
       });
     }
 

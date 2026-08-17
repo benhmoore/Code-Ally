@@ -194,6 +194,42 @@ describe('ReadTool', () => {
       expect(sameAgentRead.content).toContain('File unchanged since last read');
     });
 
+    it('re-reads when the cached content is no longer in the active conversation', async () => {
+      // Fake owning agent: the cache stub is only truthful while the tool
+      // result message that carried the content remains in active context.
+      const activeMessages: Array<{ role: string; tool_call_id?: string; content: string }> = [];
+      registry.registerInstance('agent', {
+        getConversationManager: () => ({ getMessages: () => activeMessages }),
+      } as any);
+
+      const first = await readTool.execute(
+        { file_paths: [testFile] }, 'call-1', undefined, false, false, { agentId: 'agent-a' },
+      );
+      expect(first.content).toContain('Line 1');
+      activeMessages.push({ role: 'tool', tool_call_id: 'call-1', content: 'carried content' });
+
+      const second = await readTool.execute(
+        { file_paths: [testFile] }, 'call-2', undefined, false, false, { agentId: 'agent-a' },
+      );
+      expect(second.content).toContain('File unchanged since last read');
+
+      // Compaction removes the carrying message from active context: the stub
+      // would now lie, so the tool must serve the full content again.
+      activeMessages.length = 0;
+      const third = await readTool.execute(
+        { file_paths: [testFile] }, 'call-3', undefined, false, false, { agentId: 'agent-a' },
+      );
+      expect(third.content).toContain('Line 1');
+      expect(third.content).not.toContain('File unchanged since last read');
+
+      // The fresh read re-primes deduplication under its own tool call.
+      activeMessages.push({ role: 'tool', tool_call_id: 'call-3', content: 'carried content' });
+      const fourth = await readTool.execute(
+        { file_paths: [testFile] }, 'call-4', undefined, false, false, { agentId: 'agent-a' },
+      );
+      expect(fourth.content).toContain('File unchanged since last read');
+    });
+
     it('should track read state in the reading agent scope only', async () => {
       const readStateManager = registry.get('read_state_manager')!;
 

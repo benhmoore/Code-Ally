@@ -70,6 +70,44 @@ function toolTurn(pairCount: number, resultWords: number): Message[] {
   return messages;
 }
 
+/** Tool exchanges whose results use the real harness envelope shape. */
+function envelopeTurn(pairCount: number, resultWords: number, pathPrefix = '/repo/src/file'): Message[] {
+  const messages: Message[] = [{
+    id: 'request',
+    role: 'user',
+    content: 'Build the complete feature autonomously and verify it.',
+    timestamp: 1,
+  }];
+  for (let index = 0; index < pairCount; index++) {
+    const callId = `call-${index}`;
+    const filePath = `${pathPrefix}-${index}.ts`;
+    const filler = Array.from({ length: resultWords }, (_, word) => `w${word}`).join(' ');
+    messages.push({
+      id: `assistant-${pathPrefix}-${index}`,
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: callId,
+        type: 'function',
+        function: { name: 'write', arguments: JSON.stringify({ file_path: filePath }) },
+      }],
+      timestamp: index * 2 + 2,
+    }, {
+      id: `tool-${pathPrefix}-${index}`,
+      role: 'tool',
+      name: 'write',
+      tool_call_id: callId,
+      content: `[Tool Call ID: ${callId}]\n${JSON.stringify({
+        success: true,
+        error: '',
+        content: `Created new file ${filePath} (${filler})`,
+      }, null, 2)}`,
+      timestamp: index * 2 + 3,
+    });
+  }
+  return messages;
+}
+
 describe('ConversationCompactor', () => {
   it('commits atomically while preserving the complete visible transcript', async () => {
     const messages = history();
@@ -221,6 +259,138 @@ describe('ConversationCompactor', () => {
 
     expect(manager.getMessages().at(-1)).toMatchObject(latest);
     expect(result.checkpoint.retainedMessageIds).toEqual(['latest-request']);
+  });
+
+  it('keeps successful tool envelopes out of blockers and bounds checkpoint entries', async () => {
+    const messages = envelopeTurn(6, 400);
+    const manager = new ConversationManager({ initialMessages: messages });
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    const compacted = await compactor.checkAndPerformAutoCompaction({ ...context(), phase: 'mid-turn' });
+    const checkpoint = manager.getCheckpoint();
+
+    expect(compacted).toBe(true);
+    // Every result carried `"error":""` — none of them is a blocker.
+    expect(checkpoint?.semanticState.blockers).toHaveLength(0);
+    expect(checkpoint?.semanticState.completedWork.length).toBeGreaterThan(0);
+    // Summaries, not raw payload blobs.
+    for (const entry of checkpoint!.semanticState.completedWork) {
+      expect(entry.text.length).toBeLessThanOrEqual(450);
+    }
+  });
+
+  it('carries the artifact inventory and completed work forward across generations', async () => {
+    const manager = new ConversationManager({ initialMessages: envelopeTurn(4, 300, '/repo/src/alpha') });
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    const first = await compactor.compactAndApply({ ...context(), phase: 'mid-turn' }, {
+      trigger: 'automatic', phase: 'mid-turn', forceExtractive: true,
+    });
+    expect(first.checkpoint.semanticState.artifacts.some(a => a.path === '/repo/src/alpha-0.ts')).toBe(true);
+
+    manager.addMessages(envelopeTurn(4, 300, '/repo/src/beta').slice(1));
+    const second = await compactor.compactAndApply({ ...context(), phase: 'mid-turn' }, {
+      trigger: 'automatic', phase: 'mid-turn', forceExtractive: true,
+    });
+
+    expect(second.checkpoint.generation).toBe(2);
+    const paths = second.checkpoint.semanticState.artifacts.map(artifact => artifact.path);
+    // Generation-1 work stays recoverable in generation 2 via the artifact
+    // inventory: this is what lets a long task remain lucid across many
+    // compactions. (completedWork intentionally keeps only recent summaries,
+    // and the newest exchanges live raw in the retained tail, not the
+    // checkpoint.)
+    expect(paths).toContain('/repo/src/alpha-0.ts');
+    expect(paths).toContain('/repo/src/beta-0.ts');
+  });
+
+  it('remains lucid with stable runway across many generations of a long task', async () => {
+    // Regression for the compaction death-spiral: on a small window, fixed
+    // overhead plus a growing low-signal checkpoint made every generation
+    // reclaim less than the last until the agent had no working room at all.
+    const manager = new ConversationManager({ initialMessages: [{
+      id: 'objective',
+      role: 'user',
+      content: 'Build a complete voxel game. Keep modules separate. Test in the browser.',
+      timestamp: 1,
+    }] });
+    const tokens = new TokenManager(16_384);
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, tokens, new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+    const runContext = { ...context(), modelMaxOutput: 2_048, phase: 'mid-turn' as const };
+
+    let generations = 0;
+    for (let iteration = 0; iteration < 200 && generations < 12; iteration++) {
+      // Realistic work shape: whole-file reads (the payload-heavy spiral
+      // trigger) interleaved with writes, all in real envelope form.
+      const filler = Array.from({ length: 500 }, (_, w) => `it${iteration}w${w}`).join(' ');
+      const callId = `call-${iteration}`;
+      const filePath = `/repo/src/gen-${iteration}.ts`;
+      const toolName = iteration % 2 === 0 ? 'write' : 'read';
+      manager.addMessages([{
+        id: `assistant-${iteration}`,
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: callId,
+          type: 'function',
+          function: { name: toolName, arguments: JSON.stringify({ file_path: filePath }) },
+        }],
+        timestamp: iteration * 2 + 10,
+      }, {
+        id: `tool-${iteration}`,
+        role: 'tool',
+        name: toolName,
+        tool_call_id: callId,
+        content: `[Tool Call ID: ${callId}]\n${JSON.stringify({
+          success: true,
+          error: '',
+          content: toolName === 'write'
+            ? `Created new file ${filePath} (${filler})`
+            : `=== ${filePath} ===\n[500 lines]\n${filler}`,
+        }, null, 2)}`,
+        timestamp: iteration * 2 + 11,
+      }]);
+
+      const budget = compactor.budget(runContext);
+      if (!budget.shouldCompact) continue;
+      const compacted = await compactor.checkAndPerformAutoCompaction(runContext);
+      expect(compacted).toBe(true);
+      generations++;
+
+      const after = compactor.budget(runContext);
+      // Every generation must restore real working room. This is the invariant
+      // whose violation produced the shrinking-runway spiral.
+      expect(after.triggerBudget - after.estimatedInput)
+        .toBeGreaterThanOrEqual(Math.floor(after.usableBudget * 0.3));
+
+      const checkpoint = manager.getCheckpoint()!;
+      // Lucidity invariants, at every generation:
+      expect(checkpoint.semanticState.objective?.text).toContain('voxel game');
+      expect(checkpoint.semanticState.blockers).toHaveLength(0);
+      // The recent artifact inventory survives so work stays re-findable.
+      expect(checkpoint.semanticState.artifacts.length).toBeGreaterThanOrEqual(6);
+    }
+
+    expect(generations).toBe(12);
+    // The inventory accumulates across generations instead of resetting: late
+    // context windows still know about work from many generations earlier.
+    expect(manager.getCheckpoint()!.semanticState.artifacts.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it('rejects with configuration guidance when overhead leaves no usable context', async () => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, new TokenManager(1024), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    await expect(compactor.compactAndApply(context()))
+      .rejects.toThrow(/cannot sustain this configuration/i);
   });
 
   it('uses provider-native compaction as canonical replay state and exact post-counting', async () => {

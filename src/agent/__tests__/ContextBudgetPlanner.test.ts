@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ContextBudgetPlanner } from '../compaction/ContextBudgetPlanner.js';
 import { TokenManager } from '../TokenManager.js';
+import type { Message } from '../../types/index.js';
 
 describe('ContextBudgetPlanner', () => {
   it('derives deterministic absolute trigger and target budgets', () => {
@@ -10,7 +11,12 @@ describe('ContextBudgetPlanner', () => {
     expect(budget.outputReserve).toBe(2_000);
     expect(budget.safetyReserve).toBe(512);
     expect(budget.triggerBudget).toBe(7_488);
-    expect(budget.targetBudget).toBe(5_000);
+    // With no fixed overhead, the whole trigger budget is usable and the
+    // post-compaction target is the domain share of it.
+    expect(budget.fixedOverhead).toBe(0);
+    expect(budget.usableBudget).toBe(7_488);
+    expect(budget.targetBudget).toBe(Math.floor(7_488 * 0.35));
+    expect(budget.retainedTailBudget).toBe(Math.floor(budget.targetBudget * 0.6));
   });
 
   it('uses exact provider input as the decision value near the boundary', () => {
@@ -29,5 +35,52 @@ describe('ContextBudgetPlanner', () => {
     const budget = new ContextBudgetPlanner(tokens).plan({ messages: [] });
 
     expect(budget.estimatedInput).toBe(500);
+  });
+
+  it('anchors the post-compaction target on usable space, not the raw window', () => {
+    const tokens = new TokenManager(32_768);
+    const planner = new ContextBudgetPlanner(tokens);
+    const system: Message = { role: 'system', content: 'prompt '.repeat(4_000) };
+    const functions = [{
+      type: 'function' as const,
+      function: { name: 'noise', description: 'x'.repeat(8_000), parameters: {} },
+    }];
+
+    const bare = planner.plan({ messages: [] });
+    const loaded = planner.plan({ messages: [system], functions });
+
+    expect(loaded.fixedOverhead).toBeGreaterThan(0);
+    expect(loaded.usableBudget).toBe(loaded.triggerBudget - loaded.fixedOverhead);
+    // The fixed overhead passes straight through to the target: compaction can
+    // never reclaim it, so it must not eat the conversation's share.
+    expect(loaded.targetBudget - loaded.fixedOverhead)
+      .toBeLessThanOrEqual(bare.targetBudget - bare.fixedOverhead);
+    expect(loaded.targetBudget - loaded.fixedOverhead).toBeGreaterThanOrEqual(768);
+  });
+
+  it('guarantees post-compaction runway on small context windows', () => {
+    for (const windowSize of [16_384, 32_768]) {
+      const tokens = new TokenManager(windowSize);
+      const planner = new ContextBudgetPlanner(tokens);
+      const system: Message = { role: 'system', content: 'prompt '.repeat(2_500) };
+      const functions = [{
+        type: 'function' as const,
+        function: { name: 'tools', description: 'x'.repeat(6_000), parameters: {} },
+      }];
+
+      const budget = planner.plan({ messages: [system], functions });
+
+      // Fixture sanity: overhead is meaningful but does not swallow the window.
+      expect(budget.fixedOverhead).toBeGreaterThan(1_000);
+      expect(budget.usableBudget).toBeGreaterThan(4_000);
+      // Runway between the compacted target and the next trigger must be a
+      // healthy share of the usable space, or the agent thrashes: it re-reads
+      // one file and immediately compacts again.
+      expect(budget.triggerBudget - budget.targetBudget)
+        .toBeGreaterThanOrEqual(Math.floor(budget.usableBudget * 0.5));
+      // The checkpoint always keeps a share of the domain budget after the tail.
+      expect(budget.targetBudget - budget.fixedOverhead - budget.retainedTailBudget)
+        .toBeGreaterThanOrEqual(Math.floor((budget.targetBudget - budget.fixedOverhead) * 0.35));
+    }
   });
 });
