@@ -8,10 +8,12 @@
   },
   "type": "module",
   "bin": {
-    "ally": "./dist/cli.js"
+    "ally": "./dist/cli.js",
+    "ally-lab": "./scripts/ally-lab.sh"
   },
   "files": [
-    "dist"
+    "dist",
+    "scripts/ally-lab.sh"
   ],
   "scripts": {
     "build": "tsc && tsc-alias && node scripts/copy-agents.js && chmod +x dist/cli.js",
