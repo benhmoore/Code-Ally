@@ -241,8 +241,18 @@ export class TokenManager {
    *
    * @param estimatedPromptTokens Our raw estimate for the messages that were sent
    * @param actualPromptTokens The backend's reported prompt token count
+   * @param options Sample metadata for costs the local estimator cannot compare
    */
-  calibrate(estimatedPromptTokens: number, actualPromptTokens: number): void {
+  calibrate(
+    estimatedPromptTokens: number,
+    actualPromptTokens: number,
+    options: { containsUnestimatedMedia?: boolean } = {},
+  ): void {
+    // Image accounting is provider-, model-, and resolution-dependent. It is a
+    // variable request cost, not the fixed tokenizer/template gap this value is
+    // meant to learn. Preserve the last comparable calibration until another
+    // text-only request arrives.
+    if (options.containsUnestimatedMedia) return;
     if (!Number.isFinite(estimatedPromptTokens) || !Number.isFinite(actualPromptTokens)) return;
     if (estimatedPromptTokens <= 0 || actualPromptTokens <= 0) return;
 

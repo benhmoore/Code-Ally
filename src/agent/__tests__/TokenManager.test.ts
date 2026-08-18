@@ -281,6 +281,17 @@ describe('TokenManager', () => {
       expect(tokenManager.getCalibrationOverhead()).toBe(0);
     });
 
+    it('ignores multimodal samples whose image cost is not locally estimated', () => {
+      tokenManager.calibrate(1000, 1400);
+      tokenManager.calibrate(1000, 9000, { containsUnestimatedMedia: true });
+
+      expect(tokenManager.getCalibrationOverhead()).toBe(400);
+
+      // Comparable text-only samples continue updating calibration afterward.
+      tokenManager.calibrate(1000, 1500);
+      expect(tokenManager.getCalibrationOverhead()).toBe(440);
+    });
+
     it('never reports a negative count even with a large negative gap', () => {
       tokenManager.updateTokenCount([message]);
       const estimated = tokenManager.estimateMessagesTokens([message]);
