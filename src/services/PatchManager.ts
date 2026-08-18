@@ -2,7 +2,7 @@
  * PatchManager - Manages patch storage and undo operations
  *
  * This service provides patch-based undo functionality for file operations,
- * allowing users to revert changes made through write, edit, and line-edit tools.
+ * allowing users to revert changes made through write and apply-patch tools.
  */
 
 import { promises as fs } from 'fs';
@@ -199,7 +199,7 @@ export class PatchManager implements IService {
   /**
    * Capture a file operation and create a patch
    *
-   * @param operationType - Type of operation (write, edit, line-edit, delete)
+   * @param operationType - Type of operation (write, apply-patch, delete)
    * @param filePath - Path to the file being modified
    * @param originalContent - Original content before modification
    * @param newContent - New content after modification (undefined for delete)

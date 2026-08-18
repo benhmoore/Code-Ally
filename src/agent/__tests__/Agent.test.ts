@@ -8,6 +8,8 @@ import { ToolManager } from '@tools/ToolManager.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import type { ModelClient, LLMResponse } from '@llm/ModelClient.js';
 import { ActivityEventType, type Message, type Config } from '@shared/index.js';
+import { AGENT_CONFIG } from '../../config/constants.js';
+import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 
 describe('Agent - Interruption Handling', () => {
   let agent: Agent;
@@ -185,6 +187,66 @@ describe('Agent - Interruption Handling', () => {
       await expect(execution).resolves.toEqual([]);
       expect(monitor.isActive()).toBe(true);
       monitor.stop();
+    });
+
+    it('pauses the foreground watchdog during semantic compaction', async () => {
+      let finishCompaction!: (compacted: boolean) => void;
+      const compactionGate = new Promise<boolean>(resolve => { finishCompaction = resolve; });
+      (agent as any).agentCompactor.checkAndPerformAutoCompaction = vi.fn(() => compactionGate);
+      const monitor = (agent as any).activityMonitor;
+      monitor.start();
+      monitor.lastActivityTime = Date.now() - 60_000;
+
+      const checking = (agent as any).checkAutoCompaction();
+      await vi.waitFor(() => expect(monitor.isActive()).toBe(false));
+
+      finishCompaction(true);
+      await checking;
+
+      expect(monitor.isActive()).toBe(true);
+      expect(monitor.getElapsedTime()).toBeLessThan(1_000);
+      monitor.stop();
+    });
+
+    it('replenishes internal recovery only after concrete tool progress', () => {
+      const context = (agent as any).buildResponseContext({});
+      const call = {
+        id: 'call-1',
+        type: 'function',
+        function: { name: 'read', arguments: { file_path: '/repo/file.ts' } },
+      };
+
+      (agent as any).invocationState.recoveryAttempts = 1;
+      context.recordToolCalls([call], [{ success: false, error: 'not found' }]);
+      expect((agent as any).invocationState.recoveryAttempts).toBe(1);
+
+      context.recordToolCalls([call], [{ success: true, error: '', content: 'source' }]);
+      expect((agent as any).invocationState.recoveryAttempts).toBe(0);
+    });
+
+    it('treats a user interjection as a fresh recovery opportunity', () => {
+      const resetTextDetectors = vi.spyOn((agent as any).loopDetector, 'resetTextDetectors');
+      (agent as any).invocationState.recoveryAttempts = 1;
+
+      agent.addUserInterjection('also use port 5174');
+
+      expect((agent as any).invocationState.recoveryAttempts).toBe(0);
+      expect(resetTextDetectors).toHaveBeenCalledOnce();
+    });
+
+    it('publishes recovery exhaustion as a visible assistant completion', async () => {
+      const events: any[] = [];
+      activityStream.subscribe('*', event => events.push(event));
+      (agent as any).invocationState.recoveryAttempts = AGENT_CONFIG.MAX_AUTOMATIC_RECOVERY_ATTEMPTS;
+
+      const result = await (agent as any).continueAfterRecovery(
+        { kind: 'thinking_loop', reason: 'confirmed mechanical repetition' },
+        {},
+      );
+
+      expect(result).toContain('I stopped because model generation repeatedly made no concrete progress');
+      const completion = events.find(event => event.type === ActivityEventType.ASSISTANT_MESSAGE_COMPLETE);
+      expect(completion?.data.content).toBe(result);
     });
 
     it('recovers an internally stopped generation without ending the turn as interrupted', async () => {
@@ -379,6 +441,38 @@ describe('Agent - Interruption Handling', () => {
       expect(mockModelClient.send).toHaveBeenCalledTimes(2);
       expect(agent.isProcessing()).toBe(false);
     });
+
+    it('queues an interjection through compaction and continues the same turn', async () => {
+      const compactor = (agent as any).agentCompactor;
+      compactor.checkAndPerformAutoCompaction = vi.fn()
+        .mockImplementationOnce(({ signal }: { signal: AbortSignal }) => new Promise((_, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('Compaction interrupted during checkpoint reduction')), {
+            once: true,
+          });
+        }))
+        .mockResolvedValueOnce(false);
+      mockModelClient.send = vi.fn()
+        .mockResolvedValue({ content: 'continued after queued input', tool_calls: [], interrupted: false });
+
+      const result = agent.sendMessage('start');
+      await vi.waitFor(() => expect(compactor.checkAndPerformAutoCompaction).toHaveBeenCalledOnce());
+
+      agent.addUserInterjection('use a different endpoint');
+      agent.interrupt({ kind: 'user_interjection' });
+
+      await expect(result).resolves.toBe('continued after queued input');
+      expect(compactor.checkAndPerformAutoCompaction).toHaveBeenCalledTimes(2);
+      expect(mockModelClient.send).toHaveBeenCalledOnce();
+      expect((mockModelClient.send as any).mock.calls[0][0]).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: 'use a different endpoint',
+          metadata: expect.objectContaining({ isInterjection: true }),
+        }),
+      ]));
+      expect(agent.getTurnSnapshot().terminationReason).toBe('completed');
+      expect(agent.isProcessing()).toBe(false);
+    });
   });
 
   describe('Isolated Context Tracking', () => {
@@ -459,6 +553,66 @@ describe('Agent - Interruption Handling', () => {
       // Both should be low and close to each other (within 5%)
       expect(mainUsage).toBeLessThan(10);
       expect(specializedUsage).toBeLessThan(10);
+    });
+  });
+
+  describe('unfinished work completion gate', () => {
+    it('continues once when a main agent returns progress prose with unfinished todos', async () => {
+      const registrySpy = vi
+        .spyOn(ServiceRegistry, 'getInstance')
+        .mockReturnValue({
+          get: (name: string) => name === 'todo_manager'
+            ? { getTodos: () => [{ id: 'todo-1', task: 'Implement feature', status: 'in_progress' }] }
+            : null,
+        } as any);
+      let continuationMessages: Message[] = [];
+      const continuation = vi
+        .spyOn(agent as any, 'getLLMResponse')
+        .mockImplementation(async () => {
+          continuationMessages = (agent as any).conversationManager.getMessagesCopy();
+          return { content: 'I need a user decision to proceed.', tool_calls: [] };
+        });
+
+      try {
+        const result = await (agent as any).processLLMResponse(
+          { content: 'Next I will implement the feature.', tool_calls: [] },
+          {}
+        );
+
+        expect(result).toBe('I need a user decision to proceed.');
+        expect(continuation).toHaveBeenCalledTimes(1);
+        expect(continuationMessages).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              role: 'system',
+              content: expect.stringContaining('unfinished todos'),
+            }),
+          ])
+        );
+      } finally {
+        registrySpy.mockRestore();
+      }
+    });
+
+    it('accepts a text response when every todo is complete', async () => {
+      const registrySpy = vi
+        .spyOn(ServiceRegistry, 'getInstance')
+        .mockReturnValue({
+          get: (name: string) => name === 'todo_manager'
+            ? { getTodos: () => [{ id: 'todo-1', task: 'Done', status: 'completed' }] }
+            : null,
+        } as any);
+      const continuation = vi.spyOn(agent as any, 'getLLMResponse');
+
+      try {
+        await expect((agent as any).processLLMResponse(
+          { content: 'All work is complete.', tool_calls: [] },
+          {}
+        )).resolves.toBe('All work is complete.');
+        expect(continuation).not.toHaveBeenCalled();
+      } finally {
+        registrySpy.mockRestore();
+      }
     });
   });
 });

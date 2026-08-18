@@ -10,7 +10,7 @@
  *
  * Security Model:
  * - Non-destructive tools (read, glob, grep) never require confirmation
- * - Sensitive tools (write, edit, bash) require user permission
+ * - Sensitive tools (write, apply-patch, bash) require user permission
  * - Extremely sensitive commands (rm with wildcards, system commands) disable "Always Allow"
  * - Session-based trust (cleared on exit, no persistence)
  */

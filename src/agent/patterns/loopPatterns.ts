@@ -99,6 +99,27 @@ export class CharacterRepetitionPattern implements LoopPattern {
  */
 const PHRASE_MIN_LENGTH = 15; // Minimum phrase length to consider
 const PHRASE_MAX_LENGTH = 100; // Maximum phrase length to consider
+const PHRASE_MIN_PROSE_RATIO = 0.55;
+const PHRASE_MIN_DISTINCT_WORDS = 3;
+
+/**
+ * Phrase similarity is meaningful for prose, but not for equations, tables, or
+ * code where a deliberately repeated template can have near-perfect token
+ * overlap. Those streams remain protected by character and sentence loop
+ * detection; excluding them here prevents case-by-case technical analysis from
+ * being mistaken for a stalled generation.
+ */
+function isProseLikePhrase(text: string): boolean {
+  const compact = text.replace(/\s/g, '');
+  if (compact.length === 0) return false;
+
+  const letters = compact.match(/[A-Za-z]/g)?.length ?? 0;
+  const distinctWords = new Set(
+    (text.match(/[A-Za-z]{3,}/g) ?? []).map(word => word.toLowerCase())
+  );
+  return letters / compact.length >= PHRASE_MIN_PROSE_RATIO
+    && distinctWords.size >= PHRASE_MIN_DISTINCT_WORDS;
+}
 
 /**
  * PhraseRepetitionPattern - Detects repeated phrases
@@ -165,7 +186,11 @@ export class PhraseRepetitionPattern implements LoopPattern {
 
     for (const phrase of rawPhrases) {
       const trimmed = phrase.trim();
-      if (trimmed.length >= PHRASE_MIN_LENGTH && trimmed.length <= PHRASE_MAX_LENGTH) {
+      if (
+        trimmed.length >= PHRASE_MIN_LENGTH
+        && trimmed.length <= PHRASE_MAX_LENGTH
+        && isProseLikePhrase(trimmed)
+      ) {
         phrases.push(trimmed);
       }
     }

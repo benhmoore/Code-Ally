@@ -3,6 +3,7 @@ import {
   extractSemanticCheckpoint,
   fitSemanticCheckpointToTokenBudget,
   mergeSemanticCheckpoint,
+  parseSemanticCheckpoint,
 } from '../compaction/CheckpointReducer.js';
 import { emptySemanticCheckpoint, type SemanticCheckpointStateV1 } from '../compaction/types.js';
 import type { Message } from '../../types/index.js';
@@ -113,9 +114,9 @@ describe('extractSemanticCheckpoint', () => {
     const messages: Message[] = [
       toolResult({
         id: 't1',
-        name: 'edit',
+        name: 'apply-patch',
         is_error: true,
-        content: `[Tool Call ID: call-t1]\n<error type="validation_error">\nold_string not found in file\n</error>`,
+        content: `[Tool Call ID: call-t1]\n<error type="validation_error">\nPatch context does not match the current file\n</error>`,
       }),
       toolResult({
         id: 't2',
@@ -132,7 +133,7 @@ describe('extractSemanticCheckpoint', () => {
 
     expect(state.completedWork).toHaveLength(0);
     expect(state.blockers).toHaveLength(2);
-    expect(state.blockers[0]!.exactError).toContain('old_string not found');
+    expect(state.blockers[0]!.exactError).toContain('Patch context does not match');
     expect(state.blockers[1]!.exactError).toContain('exited with status 1');
   });
 
@@ -158,6 +159,68 @@ describe('extractSemanticCheckpoint', () => {
     // Evicted stubs are not "completed work" — their artifacts carry the record.
     expect(state.completedWork).toHaveLength(0);
     expect(state.blockers).toHaveLength(0);
+    expect(state.nextActions).toHaveLength(1);
+    expect(state.nextActions[0]!.text).toContain('reconciling it with the newest tool evidence');
+  });
+
+  it('separates a planned action from an unverified diagnosis', () => {
+    const state = extractSemanticCheckpoint([{
+      id: 'a1',
+      role: 'assistant',
+      content: 'The server is definitely on port 5173. The page may be an overlay. Let me inspect the loaded scripts and title.',
+      timestamp: 1,
+    }]);
+
+    expect(state.activeWork[0]!.text).toContain('Let me inspect the loaded scripts and title');
+    expect(state.activeWork[0]!.text).not.toContain('definitely on port 5173');
+    expect(state.nextActions[0]!.text).toContain('newest tool evidence');
+  });
+
+  it('replaces stale handoffs with the newest executable intent across generations', () => {
+    const previous = emptySemanticCheckpoint();
+    previous.activeWork = [{ text: 'Inspect all existing files.', sourceMessageIds: ['old'] }];
+    previous.nextActions = [{ text: 'Read the repository.', sourceMessageIds: ['old'] }];
+
+    const state = extractSemanticCheckpoint([{
+      id: 'a-new',
+      role: 'assistant',
+      content: 'The API review is complete. Implement the player controller next.',
+      timestamp: 2,
+    }], previous);
+
+    expect(state.activeWork).toHaveLength(1);
+    expect(state.activeWork[0]!.text).toContain('Implement the player controller next');
+    expect(state.nextActions).toHaveLength(1);
+    expect(state.nextActions[0]!.text).toContain('Implement the player controller next');
+    expect(state.activeWork[0]!.text).not.toContain('Inspect all existing files');
+  });
+
+  it('records cross-language declaration outlines on written artifacts', () => {
+    const messages: Message[] = [{
+      id: 'a1',
+      role: 'assistant',
+      content: 'Creating modules.',
+      timestamp: 1,
+      tool_calls: [{
+        id: 'call-js', type: 'function', function: { name: 'write', arguments: {
+          file_path: '/repo/world.ts',
+          content: 'export class World {\n  getBlock(x: number) { return x; }\n}\nexport function createWorld() {}',
+        } },
+      }, {
+        id: 'call-py', type: 'function', function: { name: 'write', arguments: {
+          file_path: '/repo/service.py',
+          content: 'class Service:\n    def run(self):\n        pass',
+        } },
+      }],
+    }];
+
+    const state = extractSemanticCheckpoint(messages);
+    const world = state.artifacts.find(artifact => artifact.path === '/repo/world.ts')!;
+    const service = state.artifacts.find(artifact => artifact.path === '/repo/service.py')!;
+    expect(world.reason).toContain('export class World');
+    expect(world.reason).toContain('getBlock(x: number)');
+    expect(service.reason).toContain('class Service');
+    expect(service.reason).toContain('def run(self)');
   });
 
   it('accumulates the artifact inventory across generations, newest kept on overflow', () => {
@@ -182,6 +245,35 @@ describe('extractSemanticCheckpoint', () => {
     const paths = state.artifacts.map(artifact => artifact.path);
     expect(paths).toContain('/repo/src/World.js');
     expect(paths).toContain('/repo/src/Chunk.js');
+  });
+});
+
+describe('parseSemanticCheckpoint', () => {
+  it('salvages valid evidence when an independent array bucket is malformed', () => {
+    const raw = JSON.stringify({
+      schemaVersion: 1,
+      objective: { text: 'Build the project.', sourceMessageIds: ['u1'] },
+      currentRequest: { text: 'Continue implementation.', sourceMessageIds: ['u1'] },
+      userConstraints: [],
+      decisions: [{ text: 'invalid provenance', sourceMessageIds: ['invented'] }],
+      completedWork: [{ text: 'Scaffolding created.', sourceMessageIds: ['t1'] }],
+      activeWork: [],
+      blockers: [],
+      nextActions: [{ text: 'Implement the next module.', sourceMessageIds: ['a1'] }],
+      unresolvedQuestions: [],
+      durableFacts: [],
+      artifacts: [
+        { path: 'relative/file.js', reason: 'invalid', operation: 'created', sourceMessageIds: ['t1'] },
+        { path: '/repo/file.js', reason: 'write tool', operation: 'created', sourceMessageIds: ['t1'] },
+      ],
+    });
+
+    const state = parseSemanticCheckpoint(raw, ['u1', 't1', 'a1']);
+
+    expect(state.decisions).toEqual([]);
+    expect(state.completedWork[0]?.text).toBe('Scaffolding created.');
+    expect(state.nextActions[0]?.text).toBe('Implement the next module.');
+    expect(state.artifacts.map(item => item.path)).toEqual(['/repo/file.js']);
   });
 });
 

@@ -14,6 +14,7 @@ import type { ProviderCheckpointState } from '../agent/compaction/types.js';
 import { parseToolCallArguments } from './FunctionCalling.js';
 import { runWithRetries } from './httpTransport.js';
 import { RETRY_CONFIG } from '../config/constants.js';
+import { materializeToolImageMessages } from './messageImages.js';
 
 interface PreparedInput {
   input: any[];
@@ -237,6 +238,7 @@ export class OpenAIResponsesClient extends ModelClient {
     messages: readonly Message[],
     providerState?: ProviderCheckpointState,
   ): PreparedInput {
+    messages = materializeToolImageMessages(messages);
     const state = providerState?.kind === 'openai-responses'
       ? providerState
       : { kind: 'openai-responses' as const, items: [], coveredMessageIds: [] };

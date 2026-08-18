@@ -315,6 +315,12 @@ class ToolCycleDetector {
     return signature;
   }
 
+  private getReadFilePaths(args: Record<string, any>): string[] {
+    const value = args.file_path ?? args.file_paths;
+    if (Array.isArray(value)) return value.filter((path): path is string => typeof path === 'string');
+    return typeof value === 'string' ? [value] : [];
+  }
+
   private getFileHash(filePath: string): string | null {
     try {
       // Get file stats to check mtime
@@ -348,7 +354,7 @@ class ToolCycleDetector {
       return false;
     }
 
-    const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
+    const filePath = this.getReadFilePaths(toolCall.function.arguments)[0];
     if (!filePath) return false;
 
     const currentHash = this.getFileHash(filePath);
@@ -373,7 +379,7 @@ class ToolCycleDetector {
       return null;
     }
 
-    const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
+    const filePath = this.getReadFilePaths(toolCall.function.arguments)[0];
     if (!filePath) return null;
 
     const count = this.fileAccessCount.get(filePath) || 0;
@@ -566,7 +572,7 @@ class ToolCycleDetector {
 
     // Track file access counts
     if (toolName === 'Read' || toolName === 'read') {
-      const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
+      const filePath = this.getReadFilePaths(toolCall.function.arguments)[0];
       if (filePath) {
         const currentCount = this.fileAccessCount.get(filePath) || 0;
         this.fileAccessCount.set(filePath, currentCount + 1);
@@ -617,21 +623,11 @@ class ToolCycleDetector {
       // Capture file hashes for read operations
       if (toolCall.function.name === 'Read' || toolCall.function.name === 'read') {
         fileHashes = new Map();
-        const filePath = toolCall.function.arguments.file_path || toolCall.function.arguments.file_paths?.[0];
-
-        if (filePath) {
+        const filePaths = this.getReadFilePaths(toolCall.function.arguments);
+        for (const filePath of filePaths) {
           const hash = this.getFileHash(filePath);
           if (hash) {
             fileHashes.set(filePath, hash);
-          }
-        }
-
-        if (toolCall.function.arguments.file_paths && Array.isArray(toolCall.function.arguments.file_paths)) {
-          for (const path of toolCall.function.arguments.file_paths) {
-            const hash = this.getFileHash(path);
-            if (hash) {
-              fileHashes.set(path, hash);
-            }
           }
         }
       }

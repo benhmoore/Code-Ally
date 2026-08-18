@@ -207,6 +207,21 @@ describe('ToolResultManager', () => {
       expect(result).not.toContain('truncated');
     });
 
+    it('keeps the original when truncation metadata would make the result larger', async () => {
+      const persistence = {
+        persistResult: vi.fn().mockResolvedValue('/tmp/a-very-long-persisted-result-path/call-todo.txt'),
+        getResultPath: vi.fn().mockReturnValue('/tmp/a-very-long-persisted-result-path/call-todo.txt'),
+      } as unknown as ToolResultPersistence;
+      toolResultManager.setPersistence(persistence);
+      toolResultManager.setLimits({ maxContextPercent: 0.01, minTokens: 10 });
+      const compactResult = 'Set 3 todos: 2 pending, 1 in progress. ' + 'next '.repeat(20);
+
+      const result = await toolResultManager.processToolResult('todo-write', compactResult, 'call-todo');
+
+      expect(result).toBe(compactResult);
+      expect(result).not.toContain('truncated');
+    });
+
     it('should persist plain bash output instead of the serialized tool result wrapper', async () => {
       const stdout = 'build line\n'.repeat(1000);
       const stderr = 'warning from stderr\n';
@@ -237,6 +252,18 @@ describe('ToolResultManager', () => {
       expect(result).toContain('[Full output saved to: /tmp/call-bash.txt]');
       expect(result).toContain('build line');
       expect(result).not.toContain('{"success":true');
+    });
+
+    it('honors a hard per-call ceiling assigned by a shared batch budget', async () => {
+      const result = await toolResultManager.processToolResult(
+        'grep',
+        'matching line\n'.repeat(2_000),
+        'call-grep',
+        120,
+      );
+
+      expect(tokenManager.estimateTokens(result)).toBeLessThanOrEqual(120);
+      expect(result).toContain('truncated');
     });
   });
 });

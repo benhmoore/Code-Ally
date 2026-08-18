@@ -142,7 +142,7 @@ description: "One-line description"
 model: "sonnet"                              # Optional
 temperature: 0.7                             # Optional
 reasoning_effort: "medium"                   # Optional
-tools: ["read", "write", "edit", "bash"]     # Optional (omit for all tools)
+tools: ["read", "write", "apply-patch", "bash"] # Optional (omit for all tools)
 usage_guidelines: |                          # Optional
   **When to use:** Specific use cases
   **When NOT to use:** Cases to avoid
@@ -183,7 +183,7 @@ You have access to:
 
 2. **Tool Names**:
    - All tools in "tools" array MUST exist
-   - Common tools: read, write, edit, bash, glob, grep, ls, tree, explore, plan, agent
+   - Common tools: read, write, apply-patch, bash, glob, grep, ls, tree, explore, plan, agent
    - Note: write-agent is only for internal use during agent creation
    - Omit "tools" field for access to all tools
 

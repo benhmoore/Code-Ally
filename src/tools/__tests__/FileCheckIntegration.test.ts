@@ -1,7 +1,7 @@
 /**
  * Integration tests for automatic file checking after modifications
  *
- * Verifies that WriteTool, EditTool, and LineEditTool automatically
+ * Verifies that WriteTool and ApplyPatchTool automatically
  * check files after modification, matching Python CodeAlly pattern.
  */
 
@@ -10,16 +10,14 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { WriteTool } from '../WriteTool.js';
-import { EditTool } from '../EditTool.js';
-import { LineEditTool } from '../LineEditTool.js';
+import { ApplyPatchTool } from '../ApplyPatchTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { ReadStateManager } from '@services/ReadStateManager.js';
 
 describe('Automatic File Checking After Modification', () => {
   let writeTool: WriteTool;
-  let editTool: EditTool;
-  let lineEditTool: LineEditTool;
+  let applyPatchTool: ApplyPatchTool;
   let activityStream: ActivityStream;
   let readStateManager: ReadStateManager;
   let registry: ServiceRegistry;
@@ -45,8 +43,7 @@ describe('Automatic File Checking After Modification', () => {
     registry.registerInstance('read_state_manager', readStateManager);
 
     writeTool = new WriteTool(activityStream);
-    editTool = new EditTool(activityStream);
-    lineEditTool = new LineEditTool(activityStream);
+    applyPatchTool = new ApplyPatchTool(activityStream);
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'file-check-test-'));
   });
 
@@ -104,8 +101,8 @@ describe('Automatic File Checking After Modification', () => {
     });
   });
 
-  describe('EditTool', () => {
-    it('should include file_check after editing JSON', async () => {
+  describe('ApplyPatchTool', () => {
+    it('should include file_check after patching JSON', async () => {
       const jsonPath = path.join(tmpDir, 'test.json');
 
       // First write a valid JSON file
@@ -114,10 +111,9 @@ describe('Automatic File Checking After Modification', () => {
       // Track the file as read
       await trackFullFile(jsonPath);
 
-      // Edit it using batch API
-      const result = await editTool.execute({
+      const result = await applyPatchTool.execute({
         file_path: jsonPath,
-        edits: [{ old_string: '"original"', new_string: '"modified"' }],
+        patch: '@@ -1,1 +1,1 @@\n-{"name": "original"}\n+{"name": "modified"}',
       });
 
       expect(result.success).toBe(true);
@@ -126,7 +122,7 @@ describe('Automatic File Checking After Modification', () => {
       expect(result.file_check.passed).toBe(true);
     });
 
-    it('should detect errors introduced by edit', async () => {
+    it('should detect errors introduced by a patch', async () => {
       const jsonPath = path.join(tmpDir, 'test.json');
 
       // Write a valid JSON file
@@ -135,10 +131,9 @@ describe('Automatic File Checking After Modification', () => {
       // Track the file as read
       await trackFullFile(jsonPath);
 
-      // Edit it to make it invalid
-      const result = await editTool.execute({
+      const result = await applyPatchTool.execute({
         file_path: jsonPath,
-        edits: [{ old_string: '"test"', new_string: '"test",' }],
+        patch: '@@ -1,1 +1,1 @@\n-{"name": "test"}\n+{"name": "test",}',
       });
 
       expect(result.success).toBe(true);
@@ -148,8 +143,7 @@ describe('Automatic File Checking After Modification', () => {
     });
   });
 
-  describe('LineEditTool', () => {
-    it('should include file_check after line edit', async () => {
+    it('should handle a contextual line replacement', async () => {
       const jsonPath = path.join(tmpDir, 'test.json');
 
       // Write a multi-line JSON file
@@ -162,10 +156,9 @@ describe('Automatic File Checking After Modification', () => {
       // Track the file as read
       await trackFullFile(jsonPath);
 
-      // Replace a line using batch API
-      const result = await lineEditTool.execute({
+      const result = await applyPatchTool.execute({
         file_path: jsonPath,
-        edits: [{ operation: 'replace', line_number: 2, content: '  "name": "modified",' }],
+        patch: '@@ -1,4 +1,4 @@\n {\n-  "name": "test",\n+  "name": "modified",\n   "version": "1.0.0"\n }',
       });
 
       expect(result.success).toBe(true);
@@ -174,7 +167,7 @@ describe('Automatic File Checking After Modification', () => {
       expect(result.file_check.passed).toBe(true);
     });
 
-    it('should detect errors introduced by line edit', async () => {
+    it('should detect errors introduced by an insertion hunk', async () => {
       const jsonPath = path.join(tmpDir, 'test.json');
 
       // Write a valid JSON file
@@ -187,10 +180,9 @@ describe('Automatic File Checking After Modification', () => {
       // Track the file as read
       await trackFullFile(jsonPath);
 
-      // Insert an invalid line using batch API
-      const result = await lineEditTool.execute({
+      const result = await applyPatchTool.execute({
         file_path: jsonPath,
-        edits: [{ operation: 'insert', line_number: 2, content: '  invalid syntax here,' }],
+        patch: '@@ -1,3 +1,4 @@\n {\n+  invalid syntax here,\n   "name": "test"\n }',
       });
 
       expect(result.success).toBe(true);
@@ -198,8 +190,6 @@ describe('Automatic File Checking After Modification', () => {
       expect(result.file_check.passed).toBe(false);
       expect(result.file_check.errors.length).toBeGreaterThan(0);
     });
-  });
-
   describe('Error Context', () => {
     it('should include source code context in errors', async () => {
       const jsonPath = path.join(tmpDir, 'test.json');

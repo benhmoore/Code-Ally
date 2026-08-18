@@ -1,10 +1,10 @@
 /**
- * ToolSearchTool - Load the full definition of a deferred tool
+ * ToolSearchTool - Activate deferred tool definitions
  *
  * On a small context window most tool schemas are advertised by name rather
  * than transmitted in full. This tool turns an advertised name into a loaded,
- * callable definition: it returns the matching schemas and marks them active
- * so subsequent requests include them.
+ * callable definition: it marks matches active so subsequent requests include
+ * their native schemas, without duplicating those schemas in conversation text.
  */
 
 import { BaseTool } from './BaseTool.js';
@@ -17,7 +17,7 @@ const MAX_RESULTS_CEILING = 15;
 export class ToolSearchTool extends BaseTool {
   readonly name = 'tool-search';
   readonly description =
-    'Load the full definition of a tool that is available but not currently loaded. '
+    'Activate a tool that is available but not currently loaded. '
     + 'Use "select:name" for an exact tool, or keywords to find one. After loading, call the tool normally.';
   readonly capabilities = [] as const;
   readonly isExploratoryTool = true;
@@ -113,11 +113,10 @@ export class ToolSearchTool extends BaseTool {
     registry.get('tool_activation_registry')
       ?.activate(this.getReadScopeId(executionContext), activated);
 
-    const content = [
-      `Loaded ${activated.length} tool(s): ${activated.join(', ')}. They are callable now.`,
-      '',
-      ...matches.map(definition => JSON.stringify(definition)),
-    ].join('\n');
+    // The full definitions are transmitted natively on the next model request.
+    // Repeating them in conversation content pays for every schema twice and
+    // can make the activation result itself larger than the remaining context.
+    const content = `Loaded ${activated.length} tool(s): ${activated.join(', ')}. They are callable now.`;
 
     return {
       success: true,

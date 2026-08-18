@@ -1,7 +1,7 @@
 /**
  * WriteTool - Write content to files
  *
- * Creates new files or overwrites existing ones with optional backup creation.
+ * Creates new files. Existing text files are changed with apply-patch.
  */
 
 import { BaseTool } from './BaseTool.js';
@@ -18,7 +18,8 @@ import * as path from 'path';
 
 export class WriteTool extends BaseTool {
   readonly name = 'write';
-  readonly description = 'Create a new file with the specified content. By default FAILS if file already exists (use edit or line-edit instead). Set overwrite=true to replace existing files.';
+  readonly description =
+    'Create a new file with its complete content. Fails if the path already exists; use apply-patch for existing text files. Keep each write small enough for one model response; decompose large implementations into cohesive modules or extend a created file with bounded patches.';
   readonly capabilities = [ToolCapability.FsWrite] as const;
   readonly hideOutput = true; // Hide output from result preview
 
@@ -28,17 +29,11 @@ export class WriteTool extends BaseTool {
 
   /**
    * Validate before permission request
-   * Checks if file already exists (unless overwrite=true)
+   * Checks if the target path already exists.
    */
   async validateBeforePermission(args: any): Promise<ToolResult | null> {
     const filePath = args.file_path as string;
-    const overwrite = args.overwrite === true;
     const absolutePath = resolvePath(filePath);
-
-    // If overwrite is true, allow existing files
-    if (overwrite) {
-      return null;
-    }
 
     try {
       // Check if file exists
@@ -47,7 +42,7 @@ export class WriteTool extends BaseTool {
       return this.formatErrorResponse(
         `File already exists: ${absolutePath}`,
         'file_error',
-        'Use edit or line-edit to modify existing files, or set overwrite=true to replace the file.'
+        'Use apply-patch to modify an existing text file.'
       );
     } catch {
       // File doesn't exist - validation passed
@@ -74,11 +69,7 @@ export class WriteTool extends BaseTool {
             },
             content: {
               type: 'string',
-              description: 'Complete file content for the new file.',
-            },
-            overwrite: {
-              type: 'boolean',
-              description: 'If true, overwrite existing file. If false (default), fail if file exists.',
+              description: 'Complete file content for the new file. This argument must fit in one response; split large implementations across modules or bounded follow-up patches.',
             },
           },
           required: ['file_path', 'content'],
@@ -92,7 +83,6 @@ export class WriteTool extends BaseTool {
 
     const filePath = args.file_path as string;
     const content = args.content as string;
-    const overwrite = args.overwrite === true;
 
     if (!filePath || content === undefined) {
       return; // Skip preview if invalid args
@@ -106,19 +96,7 @@ export class WriteTool extends BaseTool {
         // Check if file exists
         try {
           await fs.access(absolutePath);
-          // File exists
-          if (overwrite) {
-            // Overwrite mode - show existing content vs new content
-            try {
-              const existingContent = await fs.readFile(absolutePath, 'utf-8');
-              return { oldContent: existingContent, newContent: content };
-            } catch {
-              return { oldContent: '[Could not read existing file]', newContent: content };
-            }
-          } else {
-            // No overwrite - write will fail
-            return { oldContent: '[File exists - write will fail]', newContent: content };
-          }
+          return { oldContent: '[File exists - write will fail]', newContent: content };
         } catch {
           // File doesn't exist - show as new file creation
           return { oldContent: '', newContent: content };
@@ -141,7 +119,6 @@ export class WriteTool extends BaseTool {
     // Extract and validate parameters
     const filePath = args.file_path as string;
     const content = args.content as string;
-    const overwrite = args.overwrite === true;
 
     if (!filePath) {
       return this.formatErrorResponse(
@@ -179,32 +156,20 @@ export class WriteTool extends BaseTool {
 
     try {
       return await fileMutationCoordinator.run(absolutePath, async () => {
-      // Check if file exists and read existing content if overwriting
+      // Check if the path already exists. Write is intentionally creation-only.
       let fileExists = false;
-      let existingContent = '';
       try {
         await fs.access(absolutePath);
         fileExists = true;
-
-        // If overwriting, read existing content for patch creation
-        if (overwrite) {
-          try {
-            existingContent = await fs.readFile(absolutePath, 'utf-8');
-          } catch {
-            // If we can't read the file, proceed with empty existing content
-            existingContent = '';
-          }
-        }
       } catch {
         fileExists = false;
       }
 
-      // Fail if file already exists and overwrite=false (default behavior)
-      if (fileExists && !overwrite) {
+      if (fileExists) {
         return this.formatErrorResponse(
           `File already exists: ${absolutePath}`,
           'file_error',
-          'Use edit or line-edit to modify existing files, or set overwrite=true to replace the file.'
+          'Keep the existing file intact. Use apply-patch with a smaller contextual hunk; do not delete and recreate the file to bypass patch validation.'
         );
       }
 
@@ -236,15 +201,13 @@ export class WriteTool extends BaseTool {
       const patchNumber = await this.captureOperationPatch(
         'write',
         absolutePath,
-        existingContent, // Use existing content if overwriting, empty string if new file
+        '',
         content
       );
 
       const stats = await fs.stat(absolutePath);
 
-      const successMessage = fileExists
-        ? `Overwrote file ${absolutePath} (${stats.size} bytes)`
-        : `Created new file ${absolutePath} (${stats.size} bytes)`;
+      const successMessage = `Created new file ${absolutePath} (${stats.size} bytes)`;
 
       const response = this.formatSuccessResponse({
         content: successMessage, // Human-readable output for LLM

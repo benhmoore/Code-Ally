@@ -16,6 +16,8 @@
 export interface AgentInvocationStateValues {
   /** Number of internal generation recoveries in the current turn. */
   recoveryAttempts: number;
+  /** Consecutive text-only responses while structured work remains unfinished. */
+  unfinishedWorkContinuations: number;
   /** Tool call IDs queued by cleanup-call, removed once the model responds. */
   pendingCleanupIds: string[];
   /** Whether a request is currently being processed. */
@@ -27,6 +29,7 @@ export interface AgentInvocationStateValues {
 function defaults(): AgentInvocationStateValues {
   return {
     recoveryAttempts: 0,
+    unfinishedWorkContinuations: 0,
     pendingCleanupIds: [],
     requestInProgress: false,
     agentEndEmitted: false,
@@ -35,6 +38,7 @@ function defaults(): AgentInvocationStateValues {
 
 export class AgentInvocationState implements AgentInvocationStateValues {
   recoveryAttempts!: number;
+  unfinishedWorkContinuations!: number;
   pendingCleanupIds!: string[];
   requestInProgress!: boolean;
   agentEndEmitted!: boolean;

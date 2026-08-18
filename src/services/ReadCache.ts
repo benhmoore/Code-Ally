@@ -89,7 +89,7 @@ export class ReadCache {
   }
 
   /**
-   * Invalidate cache entries for a given file path (e.g., after a write/edit).
+   * Invalidate cache entries for a given file path after a mutation.
    * If no scope is provided, all scoped entries for that file are invalidated.
    */
   invalidate(filePath: string, scopeId?: string): void {

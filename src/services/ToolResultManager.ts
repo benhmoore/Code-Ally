@@ -109,9 +109,15 @@ export class ToolResultManager {
    * @param toolName Name of the tool that generated the result
    * @param rawResult The raw tool result string or ToolResult object
    * @param toolCallId Optional tool call ID for persisting large outputs
+   * @param maxTokensOverride Optional hard ceiling assigned by a shared batch budget
    * @returns Processed (potentially truncated) tool result
    */
-  async processToolResult(toolName: string, rawResult: string | any, toolCallId?: string): Promise<string> {
+  async processToolResult(
+    toolName: string,
+    rawResult: string | any,
+    toolCallId?: string,
+    maxTokensOverride?: number,
+  ): Promise<string> {
     if (!rawResult) {
       return '';
     }
@@ -138,7 +144,10 @@ export class ToolResultManager {
     // Calculate dynamic max tokens based on remaining context
     const remainingTokens = this.getRemainingContextBudget();
     const dynamicMaxTokens = Math.floor(remainingTokens * this.maxContextPercent);
-    const maxTokens = Math.max(dynamicMaxTokens, this.minTokens);
+    const contextAwareMaxTokens = Math.max(dynamicMaxTokens, this.minTokens);
+    const maxTokens = maxTokensOverride === undefined
+      ? contextAwareMaxTokens
+      : Math.max(1, Math.min(contextAwareMaxTokens, Math.floor(maxTokensOverride)));
 
     // Get current context level for warning severity
     const contextPct = this.tokenManager.getContextUsagePercentage();
@@ -164,7 +173,7 @@ export class ToolResultManager {
     // Generate tool-specific truncation notice with percentage
     const notice = this.getTruncationNotice(toolName, truncationLevel, percentageKept);
     const persistenceNote = persistedPath
-      ? `\n[Full output saved to: ${persistedPath}]\n[Use read(file_paths=["${persistedPath}"]) to access the complete output]`
+      ? `\n[Full output saved to: ${persistedPath}]\n[Use read(file_path="${persistedPath}") to access the complete output]`
       : '';
     const fullNotice = notice + persistenceNote;
     const noticeTokens = this.tokenManager.estimateTokens(fullNotice);
@@ -182,14 +191,32 @@ export class ToolResultManager {
       const truncatedResult = persistedPath
         ? persistedContent.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
         : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
-      return minimalNotice + '\n' + truncatedResult;
+      return this.preferSmallerResult(
+        resultString,
+        minimalNotice + '\n' + truncatedResult,
+        maxTokensOverride === undefined ? undefined : maxTokens,
+      );
     }
 
     // When persisting, show a preview instead of token-truncated content
     const truncatedResult = persistedPath
       ? persistedContent.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
       : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
-    return fullNotice + '\n' + truncatedResult;
+    return this.preferSmallerResult(
+      resultString,
+      fullNotice + '\n' + truncatedResult,
+      maxTokensOverride === undefined ? undefined : maxTokens,
+    );
+  }
+
+  /** Truncation is useful only when its complete representation is smaller. */
+  private preferSmallerResult(original: string, candidate: string, hardMaxTokens?: number): string {
+    const preferred = this.tokenManager.estimateTokens(candidate) < this.tokenManager.estimateTokens(original)
+      ? candidate
+      : original;
+    return hardMaxTokens === undefined
+      ? preferred
+      : this.tokenManager.truncateContentToTokens(preferred, hardMaxTokens);
   }
 
   private getPersistableOutput(toolName: string, rawResult: string | any, fallback: string): string {

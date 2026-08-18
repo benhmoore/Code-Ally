@@ -863,6 +863,14 @@ export const AGENT_CONFIG = {
   /** One clean retry for an internally detected stall/loop, then stop visibly. */
   MAX_AUTOMATIC_RECOVERY_ATTEMPTS: 1,
 
+  /**
+   * A text-only progress update is not a terminal result while the agent still
+   * owns unfinished todos. Give the model one immediate chance to either resume
+   * concrete work or explain a real blocker. Successful tool use resets this
+   * allowance, so productive long-running turns are unaffected.
+   */
+  MAX_UNFINISHED_WORK_CONTINUATIONS: 1,
+
   /** Maximum tool call history for cycle detection (sliding window) */
   MAX_TOOL_HISTORY: 15,
 

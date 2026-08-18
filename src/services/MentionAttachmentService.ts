@@ -126,8 +126,8 @@ export class MentionAttachmentService {
     return this.attach(agent, addUiMessage, {
       toolName: 'read',
       missingToolMessage: 'Error: Read tool not available',
-      displayArguments: { file_paths: filePaths },
-      executeArguments: { file_paths: filePaths, description: 'Read mentioned files' },
+      displayArguments: { file_path: filePaths },
+      executeArguments: { file_path: filePaths, description: 'Read mentioned files' },
       beforeExecute: () => this.promoteNextTodo(),
       throwMessagePrefix: 'Error reading mentioned files',
     });

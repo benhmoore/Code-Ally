@@ -185,6 +185,12 @@ export abstract class BaseTool {
   readonly alwaysShowFullOutput: boolean = false;
 
   /**
+   * Whether this tool's result must fit in conversation without truncation.
+   * The orchestrator reserves a shared batch allowance for tools that opt in.
+   */
+  readonly requiresReservedContext: boolean = false;
+
+  /**
    * Whether this tool should collapse its children when complete
    * Set to true for tools that should hide their output/children after completion
    * (e.g., subagents that should show only their summary line)
@@ -386,6 +392,17 @@ export abstract class BaseTool {
             throw new Error('AbortError: Tool execution was interrupted');
           }
 
+          const outputBudget = executionContext?.outputBudget;
+          if (this.requiresReservedContext && callId && outputBudget?.rejectedCallIds.has(callId)) {
+            return this.formatErrorResponse(
+              `The combined non-truncatable outputs requested in this tool batch reserve `
+              + `${outputBudget.estimatedTokens} tokens, exceeding the safe batch budget of `
+              + `${outputBudget.limitTokens} tokens.`,
+              'validation_error',
+              'Combine related paths into one targeted call, reduce limit/range, or split the reads across model turns.'
+            );
+          }
+
           return await this.executeImpl(args, callId, isUserInitiated, isContextFile, executionContext);
         } catch (error) {
           if (error instanceof DirectoryTraversalError) {
@@ -562,7 +579,7 @@ export abstract class BaseTool {
    * Emit a diff preview for file changes
    * Shows user what will change before applying modifications
    */
-  protected emitDiffPreview(oldContent: string, newContent: string, filePath: string, operationType: 'edit' | 'write' | 'line-edit' = 'edit', editsCount?: number): void {
+  protected emitDiffPreview(oldContent: string, newContent: string, filePath: string, operationType: 'apply-patch' | 'write' | 'format' = 'apply-patch', editsCount?: number): void {
     if (!this.currentCallId) {
       logger.warn(`[${this.name}] Cannot emit diff preview: no currentCallId set`);
       return;
@@ -595,7 +612,7 @@ export abstract class BaseTool {
   protected async safelyEmitDiffPreview(
     filePath: string,
     generatePreview: () => Promise<{ oldContent: string; newContent: string }>,
-    operationType: 'edit' | 'write' | 'line-edit' = 'edit',
+    operationType: 'apply-patch' | 'write' | 'format' = 'apply-patch',
     editsCount?: number
   ): Promise<void> {
     try {
@@ -891,7 +908,7 @@ export abstract class BaseTool {
    *
    * Call this after successfully performing a file modification to enable undo.
    *
-   * @param operationType - Type of operation (write, edit, line-edit, delete)
+   * @param operationType - Type of operation (write, apply-patch, delete)
    * @param filePath - Path to the file being modified
    * @param originalContent - Original content before modification
    * @param newContent - New content after modification (undefined for delete)
@@ -932,7 +949,7 @@ export abstract class BaseTool {
   }
 
   /**
-   * Finalize an edit operation - common workflow for EditTool and LineEditTool
+   * Finalize an existing-file mutation.
    *
    * Handles: write file, clear read state, capture patch, generate diff, track updated content
    */
@@ -942,6 +959,7 @@ export abstract class BaseTool {
     modifiedContent: string;
     operationType: string;
     showUpdatedContext: boolean;
+    knownUpdatedRanges?: Array<{ start: number; end: number }>;
     readStateManager: ReadStateManager | null;
     executionContext?: ToolExecutionContext;
   }): Promise<{
@@ -949,7 +967,7 @@ export abstract class BaseTool {
     diff: string;
     updatedContentTracked: boolean;
   }> {
-    const { absolutePath, originalContent, modifiedContent, operationType, showUpdatedContext, readStateManager, executionContext } = options;
+    const { absolutePath, originalContent, modifiedContent, operationType, showUpdatedContext, knownUpdatedRanges, readStateManager, executionContext } = options;
     const readScopeId = this.getReadScopeId(executionContext);
 
     const patchNumber = await fileMutationCoordinator.run(absolutePath, async () => {
@@ -980,6 +998,11 @@ export abstract class BaseTool {
       const lines = modifiedContent.split('\n');
       readStateManager.trackRead(absolutePath, 1, lines.length, readScopeId);
       updatedContentTracked = true;
+    } else if (readStateManager && knownUpdatedRanges) {
+      for (const range of knownUpdatedRanges) {
+        readStateManager.trackRead(absolutePath, range.start, range.end, readScopeId);
+        updatedContentTracked = true;
+      }
     }
 
     return { patchNumber, diff, updatedContentTracked };

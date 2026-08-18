@@ -18,12 +18,12 @@ import type { FunctionDefinition } from '../types/index.js';
  * nothing is deferred and behaviour is identical to sending every tool.
  */
 
-/** The tools the ordinary edit/inspect/run loop cannot proceed without. */
+/** The tools the ordinary patch/inspect/run loop cannot proceed without. */
 export const CORE_TOOL_NAMES: readonly string[] = [
   'bash',
   'read',
   'write',
-  'edit',
+  'apply-patch',
   'ls',
   'grep',
   'glob',

@@ -3,10 +3,123 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { applyUnifiedDiff, simulatePatchApplication } from '../patchApplier.js';
+import { applyModelPatch, applyUnifiedDiff, simulatePatchApplication } from '../patchApplier.js';
 import { createUnifiedDiff } from '../diffUtils.js';
 
 describe('patchApplier', () => {
+describe('applyModelPatch', () => {
+  it('reports surviving unique anchors when a hunk context is stale', () => {
+    const source = [
+      'export function buildAtlas() {',
+      '  const canvas = document.createElement("canvas");',
+      '  return canvas;',
+      '}',
+    ].join('\n');
+    const result = applyModelPatch(
+      '@@ -90,3 +90,3 @@\n export function buildAtlas() {\n-  stale line\n+  replacement\n   return canvas;',
+      source
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('current file lines 1, 3');
+    expect(result.error).toContain('retry only this hunk');
+  });
+
+    it('applies headerless unified hunks and reports their actual source ranges', () => {
+      const result = applyModelPatch(
+        '@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma',
+        'alpha\nbeta\ngamma\n'
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        content: 'alpha\nBETA\ngamma\n',
+        readRanges: [{ start: 1, end: 3 }],
+        updatedReadRanges: [{ start: 1, end: 3 }],
+        hunkCount: 1,
+      });
+    });
+
+    it('locates uniquely matching context when a hunk line hint has drifted', () => {
+      const result = applyModelPatch(
+        '@@ -1,2 +1,2 @@\n target\n-old\n+new',
+        'prefix\nprefix2\ntarget\nold\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe('prefix\nprefix2\ntarget\nnew\n');
+      expect(result.readRanges).toEqual([{ start: 3, end: 4 }]);
+    });
+
+    it('reconciles a consistent indentation drift at a unique target', () => {
+      const result = applyModelPatch(
+        '@@ -40,1 +40,2 @@\n-            block = 11;\n+            block = 10;\n+            frozen = true;',
+        'function generate() {\n             if (snowy) {\n             block = 11;\n}\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe(
+        'function generate() {\n             if (snowy) {\n             block = 10;\n             frozen = true;\n}\n'
+      );
+      expect(result.readRanges).toEqual([{ start: 3, end: 3 }]);
+    });
+
+    it('rejects whitespace-only matching when indentation drift is inconsistent', () => {
+      const result = applyModelPatch(
+        '@@ -1,2 +1,2 @@\n one\n-  two\n+  changed',
+        ' one\n    two\n'
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('original lines were not found');
+    });
+
+    it('derives hunk counts from the body when the model miscounts them', () => {
+      const result = applyModelPatch(
+        '@@ -8,7 +8,7 @@\n const ATLAS_ROWS = 3;\n\n-function createTextureAtlas() {\n+export function createTextureAtlas() {\n const canvas = document.createElement(\'canvas\');\n canvas.width = 256;',
+        'prefix\nconst ATLAS_ROWS = 3;\n\nfunction createTextureAtlas() {\nconst canvas = document.createElement(\'canvas\');\ncanvas.width = 256;\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('export function createTextureAtlas()');
+      expect(result.readRanges).toEqual([{ start: 2, end: 6 }]);
+    });
+
+    it('rejects ambiguous context unless the hunk line hint identifies a match', () => {
+      const ambiguous = applyModelPatch(
+        '@@ -2,1 +2,1 @@\n-same\n+changed',
+        'same\nother\nsame\n'
+      );
+      expect(ambiguous.success).toBe(false);
+      expect(ambiguous.error).toContain('match 2 locations');
+
+      const disambiguated = applyModelPatch(
+        '@@ -3,1 +3,1 @@\n-same\n+changed',
+        'same\nother\nsame\n'
+      );
+      expect(disambiguated.success).toBe(true);
+      expect(disambiguated.content).toBe('same\nother\nchanged\n');
+    });
+
+    it('rejects context-free insertion into a non-empty file', () => {
+      const result = applyModelPatch('@@ -1,0 +1,1 @@\n+surprise', 'existing\n');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('no original-file context');
+    });
+
+    it('rejects creation, deletion, multiple file patches, and no-op patches', () => {
+      expect(applyModelPatch(
+        '--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1,1 @@\n+new',
+        ''
+      ).success).toBe(false);
+      expect(applyModelPatch(
+        '--- a/a\n+++ b/a\n@@ -1,1 +1,1 @@\n-a\n+A\n--- a/b\n+++ b/b\n@@ -1,1 +1,1 @@\n-b\n+B',
+        'a\n'
+      ).success).toBe(false);
+      expect(applyModelPatch('@@ -1,1 +1,1 @@\n same', 'same\n').error).toContain('no changes');
+    });
+  });
+
   describe('applyUnifiedDiff - forward', () => {
     it('should apply a simple diff forward', () => {
       const original = 'Hello\nWorld\n';

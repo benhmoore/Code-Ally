@@ -4,6 +4,7 @@ import type { Message } from '../../types/index.js';
 
 // Deterministic estimator for tests: ~4 chars per token.
 const estimate = (message: Message) => Math.ceil(message.content.length / 4);
+const estimateFull = (message: Message) => Math.ceil(JSON.stringify(message).length / 4);
 
 function result(id: string, content: string, overrides: Partial<Message> = {}): Message {
   return {
@@ -79,5 +80,78 @@ describe('evictStaleToolOutputs', () => {
 
     expect(evictedCount).toBe(0);
     expect(reclaimedTokens).toBe(0);
+  });
+
+  it('evicts bulky arguments from old successful writes while preserving an API outline', () => {
+    const source = [
+      'export class World {',
+      '  getBlock(x, y, z) { return 0; }',
+      '  setBlock(x, y, z, value) { return value; }',
+      '}',
+      'export function createWorld() { return new World(); }',
+      'const filler = "' + 'x'.repeat(2_000) + '";',
+    ].join('\n');
+    const messages: Message[] = [{
+      id: 'assistant-old', role: 'assistant', content: '', timestamp: 1,
+      tool_calls: [{ id: 'call-old', type: 'function', function: {
+        name: 'write', arguments: { file_path: '/repo/world.js', content: source },
+      } }],
+    }, result('old', 'Created new file /repo/world.js (2200 bytes)', {
+      name: 'write', tool_call_id: 'call-old',
+    }), result('new-1', bigPayload), result('new-2', bigPayload)];
+
+    const reclaimed = evictStaleToolOutputs(messages, estimateFull);
+    const call = reclaimed.messages[0]!.tool_calls![0]!;
+    const args = call.function.arguments;
+
+    expect(reclaimed.evictedCount).toBeGreaterThanOrEqual(1);
+    expect(reclaimed.reclaimedTokens).toBeGreaterThan(300);
+    expect(args.file_path).toBe('/repo/world.js');
+    expect(args.content).not.toContain('x'.repeat(100));
+    expect(args.content).toContain('export class World');
+    expect(args.content).toContain('getBlock(x, y, z)');
+    expect(reclaimed.messages[0]!.metadata?.toolArgumentsEvicted).toBe(true);
+    // The durable input array remains untouched.
+    expect(messages[0]!.tool_calls![0]!.function.arguments.content).toBe(source);
+  });
+
+  it('prioritizes exported callables over long runs of exported constants', () => {
+    const constants = Array.from({ length: 20 }, (_, index) => `export const VALUE_${index} = ${index};`).join('\n');
+    const source = `${constants}\nexport function isSolid(id) { return id > 0; }\nexport class Registry {}`;
+    const messages: Message[] = [{
+      id: 'assistant-old', role: 'assistant', content: '', timestamp: 1,
+      tool_calls: [{ id: 'call-old', type: 'function', function: {
+        name: 'write', arguments: { file_path: '/repo/blocks.js', content: source },
+      } }],
+    }, result('old', 'created', { name: 'write', tool_call_id: 'call-old' }), result('new-1', bigPayload), result('new-2', bigPayload)];
+
+    const compacted = evictStaleToolOutputs(messages, estimateFull);
+    const outline = compacted.messages[0]!.tool_calls![0]!.function.arguments.content as string;
+
+    expect(outline).toContain('export function isSolid(id)');
+    expect(outline).toContain('export class Registry');
+  });
+
+  it('does not evict arguments for failed or recent mutations', () => {
+    const source = 'export const value = 1;\n' + 'x'.repeat(2_000);
+    const assistant = (id: string): Message => ({
+      id: `assistant-${id}`, role: 'assistant', content: '', timestamp: 1,
+      tool_calls: [{ id: `call-${id}`, type: 'function', function: {
+        name: 'write', arguments: { file_path: `/repo/${id}.js`, content: source },
+      } }],
+    });
+    const messages = [
+      assistant('failed'), result('failed', 'permission denied', {
+        name: 'write', tool_call_id: 'call-failed', is_error: true,
+      }),
+      assistant('recent-1'), result('recent-1', 'ok', { name: 'write', tool_call_id: 'call-recent-1' }),
+      assistant('recent-2'), result('recent-2', 'ok', { name: 'write', tool_call_id: 'call-recent-2' }),
+    ];
+
+    const reclaimed = evictStaleToolOutputs(messages, estimateFull);
+    expect(reclaimed.messages.find(message => message.id === 'assistant-failed')!
+      .tool_calls![0]!.function.arguments.content).toBe(source);
+    expect(reclaimed.messages.find(message => message.id === 'assistant-recent-1')!
+      .tool_calls![0]!.function.arguments.content).toBe(source);
   });
 });

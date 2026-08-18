@@ -1312,9 +1312,10 @@ async function main() {
     logger.debug('[CLI] Marketplace plugin system initialized');
 
     // Add graceful shutdown handler
-    const shutdownHandler = async (signal: string) => {
+    const shutdownHandler = async (signal: NodeJS.Signals) => {
       logger.info(`[CLI] Received ${signal}, shutting down...`);
-      await cleanExit(signal === 'SIGINT' ? 130 : 143);
+      const exitCode = signal === 'SIGINT' ? 130 : signal === 'SIGHUP' ? 129 : 143;
+      await cleanExit(exitCode);
     };
 
     // Load standalone MCP servers (user's mcp-config.json)
@@ -1551,6 +1552,7 @@ async function main() {
     // Override the global handlers with plugin-aware versions
     process.removeAllListeners('SIGINT');
     process.removeAllListeners('SIGTERM');
+    process.removeAllListeners('SIGHUP');
 
     process.on('SIGINT', async () => {
       await shutdownHandler('SIGINT');
@@ -1558,6 +1560,13 @@ async function main() {
 
     process.on('SIGTERM', async () => {
       await shutdownHandler('SIGTERM');
+    });
+
+    // Terminal/session owners (including tmux and SSH) commonly close by
+    // sending SIGHUP. Treat it like every other orderly shutdown so managed
+    // background process groups cannot outlive their owning Ally process.
+    process.on('SIGHUP', async () => {
+      await shutdownHandler('SIGHUP');
     });
 
     // Set up callback to save session when idle messages are generated

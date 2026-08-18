@@ -232,6 +232,38 @@ export class ToolOrchestrator {
     }
   }
 
+  /** Attach volatile runtime status once per tool batch, never once per result. */
+  private injectRuntimeStatusReminder(result: ToolResult): void {
+    const registry = ServiceRegistry.getInstance();
+    const reminderParts: string[] = [];
+    const processManager = registry.get('bash_process_manager');
+    if (processManager) reminderParts.push(...processManager.getStatusReminders());
+
+    // Only the main agent consumes background-agent state. Completed results
+    // are drained exactly once here; running status is a one-hop reminder.
+    if (!this.config.isSpecializedAgent) {
+      const bgManager = registry.get('background_agent_manager');
+      if (bgManager) {
+        for (const task of bgManager.drainCompletedResults()) {
+          const body = task.status === 'done'
+            ? (task.result ?? '(no output)')
+            : `[${task.status}] ${task.error ?? task.result ?? 'no output'}`;
+          reminderParts.push(
+            `Background agent ${task.id} (${task.agentType}) ${task.status}. Result:\n${body}`
+          );
+        }
+        reminderParts.push(...bgManager.getStatusReminders());
+      }
+    }
+
+    if (reminderParts.length === 0) return;
+    const reminderText = [...new Set(reminderParts)].join('\n\n');
+    result.system_reminder = result.system_reminder
+      ? `${result.system_reminder}\n\n${reminderText}`
+      : reminderText;
+    result.system_reminder_persist = false;
+  }
+
   /**
    * Execute tool calls (concurrent or sequential based on tool types)
    *
@@ -252,20 +284,72 @@ export class ToolOrchestrator {
     // Store cycles for later use in result formatting
     this.cycleDetectionResults = cycles || new Map();
 
+    const outputBudget = this.createBatchOutputBudget(toolCalls);
+
     // Determine execution mode
     // IMPORTANT: Single tools always use sequential execution
     // Concurrent execution is only beneficial for multiple tools running in parallel
     if (toolCalls.length === 1) {
-      return await this.executeSequential(toolCalls);
+      return await this.executeSequential(toolCalls, outputBudget);
     }
 
     const canRunConcurrently = this.canRunConcurrently(toolCalls);
 
     if (canRunConcurrently && this.config.config.parallel_tools) {
-      return await this.executeConcurrent(toolCalls);
+      return await this.executeConcurrent(toolCalls, outputBudget);
     } else {
-      return await this.executeSequential(toolCalls);
+      return await this.executeSequential(toolCalls, outputBudget);
     }
+  }
+
+  /**
+   * Allocate retained-tail space across an entire assistant tool-call group.
+   * Non-truncatable calls reserve their full published ceiling in assistant
+   * order; calls that cannot fit are rejected before execution. Truncatable
+   * calls share what remains so parallel results cannot each independently
+   * consume the whole context allowance.
+   */
+  private createBatchOutputBudget(toolCalls: readonly ToolCall[]): ToolExecutionContext['outputBudget'] | undefined {
+    if (toolCalls.length < 2) return undefined;
+    const agentId = this.agent.getInstanceId?.();
+    if (!agentId) return undefined;
+    const snapshot = ServiceRegistry.getInstance().get('context_budget')?.get(agentId);
+    if (!snapshot) return undefined;
+
+    // Reserve the published per-result ceiling, not a hopeful average. A
+    // non-truncatable tool is allowed to return anything up to that ceiling;
+    // reserving less recreates the exact overcommit this guard prevents.
+    const estimates = toolCalls.map(call => {
+      const tool = this.toolManager.getTool(call.function.name);
+      return tool?.requiresReservedContext ? snapshot.maxToolResultTokens : 0;
+    });
+    const estimatedTokens = estimates.reduce((sum, estimate) => sum + estimate, 0);
+
+    let reserved = 0;
+    const rejectedCallIds = new Set<string>();
+    for (let index = 0; index < toolCalls.length; index++) {
+      const estimate = estimates[index] ?? 0;
+      if (estimate === 0) continue;
+      if (reserved + estimate <= snapshot.maxToolBatchTokens) reserved += estimate;
+      else rejectedCallIds.add(toolCalls[index]!.id);
+    }
+
+    const truncatableCalls = toolCalls.filter((call, index) =>
+      (estimates[index] ?? 0) === 0 && !rejectedCallIds.has(call.id)
+    );
+    const remaining = Math.max(0, snapshot.maxToolBatchTokens - reserved);
+    const sharedLimit = truncatableCalls.length > 0
+      ? Math.max(1, Math.min(snapshot.maxToolResultTokens, Math.floor(remaining / truncatableCalls.length)))
+      : 0;
+    const maxResultTokensByCallId = new Map<string, number>();
+    for (const call of truncatableCalls) maxResultTokensByCallId.set(call.id, sharedLimit);
+
+    return {
+      limitTokens: snapshot.maxToolBatchTokens,
+      estimatedTokens,
+      rejectedCallIds,
+      maxResultTokensByCallId,
+    };
   }
 
   /**
@@ -283,7 +367,10 @@ export class ToolOrchestrator {
    * @param toolCalls - Array of tool calls
    * @returns Array of tool results
    */
-  private async executeConcurrent(toolCalls: ToolCall[]): Promise<ToolResult[]> {
+  private async executeConcurrent(
+    toolCalls: ToolCall[],
+    outputBudget?: ToolExecutionContext['outputBudget'],
+  ): Promise<ToolResult[]> {
     // Emit group start event (with parent context if nested)
     const groupId = this.generateId('tool-group');
     logger.debug('[TOOL_ORCHESTRATOR] executeConcurrent - groupId:', groupId, 'parentCallId:', this.parentCallId, 'toolCount:', toolCalls.length);
@@ -333,7 +420,7 @@ export class ToolOrchestrator {
 
     try {
       const results = await Promise.allSettled(
-        toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId))
+        toolCalls.map(tc => this.executeSingleToolAfterStart(tc, groupId, outputBudget))
       );
 
       // Check if any tool was denied permission
@@ -469,8 +556,11 @@ export class ToolOrchestrator {
       // If we got here, no permission was denied - process all results
 
       // Generate checkpoint reminder once per batch (not per tool)
-      // NOTE: Checkpoint reminders are ephemeral (cleaned up after turn)
+      // Checkpoint reminders are ephemeral (removed after the next model response).
       const checkpointReminder = this.agent.generateCheckpointReminder();
+
+      const firstResult = successfulResults.find((result): result is ToolResult => result !== null);
+      if (firstResult) this.injectRuntimeStatusReminder(firstResult);
 
       for (let i = 0; i < toolCalls.length; i++) {
         const toolCall = toolCalls[i];
@@ -491,7 +581,7 @@ export class ToolOrchestrator {
             }
           }
 
-          await this.processToolResult(toolCall, result);
+          await this.processToolResult(toolCall, result, outputBudget);
         }
       }
 
@@ -535,16 +625,21 @@ export class ToolOrchestrator {
    * @param toolCalls - Array of tool calls
    * @returns Array of tool results
    */
-  private async executeSequential(toolCalls: ToolCall[]): Promise<ToolResult[]> {
+  private async executeSequential(
+    toolCalls: ToolCall[],
+    outputBudget?: ToolExecutionContext['outputBudget'],
+  ): Promise<ToolResult[]> {
     const results: ToolResult[] = [];
 
     // Generate checkpoint reminder once per batch (not per tool)
-    // NOTE: Checkpoint reminders are ephemeral (cleaned up after turn)
+    // Checkpoint reminders are ephemeral (removed after the next model response).
     const checkpointReminder = this.agent.generateCheckpointReminder();
 
     let isFirstTool = true;
     for (const toolCall of toolCalls) {
-      const result = await this.executeSingleTool(toolCall, undefined, true);
+      const result = await this.executeSingleTool(toolCall, undefined, true, outputBudget);
+
+      if (isFirstTool) this.injectRuntimeStatusReminder(result);
 
       // Inject exploratory tool reminder before processing result
       // This ensures the system_reminder is present when formatToolResult() runs
@@ -559,10 +654,11 @@ export class ToolOrchestrator {
         } else {
           result.system_reminder = checkpointReminder;
         }
-        isFirstTool = false;
       }
 
-      await this.processToolResult(toolCall, result);
+      isFirstTool = false;
+
+      await this.processToolResult(toolCall, result, outputBudget);
       results.push(result);
     }
     return results;
@@ -578,9 +674,10 @@ export class ToolOrchestrator {
    */
   private async executeSingleToolAfterStart(
     toolCall: ToolCall,
-    parentId?: string
+    parentId?: string,
+    outputBudget?: ToolExecutionContext['outputBudget'],
   ): Promise<ToolResult> {
-    return this.executeSingleTool(toolCall, parentId, false);
+    return this.executeSingleTool(toolCall, parentId, false, outputBudget);
   }
 
   /**
@@ -594,7 +691,8 @@ export class ToolOrchestrator {
   private async executeSingleTool(
     toolCall: ToolCall,
     parentId?: string,
-    emitStartEvent: boolean = true
+    emitStartEvent: boolean = true,
+    outputBudget?: ToolExecutionContext['outputBudget'],
   ): Promise<ToolResult> {
     const { id, function: func } = toolCall;
     const { name: toolName } = func;
@@ -786,7 +884,7 @@ export class ToolOrchestrator {
           isTransparent: tool?.isTransparentWrapper || false,
           collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
           shouldCollapse, // Collapse after completion (for AgentTool)
-          hideOutput, // Never show output (for tools like edit)
+          hideOutput, // Never show output for mutations already represented by a diff
           alwaysShowFullOutput, // Always show full output without truncation
           isLinkedPlugin: tool?.isLinkedPlugin || false,
           displayColor: tool?.displayColor,
@@ -816,6 +914,7 @@ export class ToolOrchestrator {
       // Route tool-emitted events to this agent's (possibly scoped) stream so a
       // sub-agent's streaming output stays isolated from the main conversation.
       activityStream: this.activityStream,
+      ...(outputBudget ? { outputBudget } : {}),
     };
 
     try {
@@ -1104,58 +1203,6 @@ export class ToolOrchestrator {
       // Skip TOOL_CALL_END when validation failed since we already emitted it
       // Don't return here - let the exception propagate!
       if (!permissionDenied && !validationFailed) {
-        // Inject background bash process reminders into every tool result
-        // This ensures the agent is always aware of running background processes
-        const registry = ServiceRegistry.getInstance();
-        const processManager = registry.get('bash_process_manager');
-        if (processManager) {
-          const statusReminders = processManager.getStatusReminders();
-          if (statusReminders.length > 0) {
-            const reminderText = statusReminders.join('\n');
-            // Append to existing system_reminder if present, otherwise create new one
-            if (result.system_reminder) {
-              result.system_reminder += '\n\n' + reminderText;
-            } else {
-              result.system_reminder = reminderText;
-            }
-            // Reminders are ephemeral by default (cleaned up after each turn)
-            result.system_reminder_persist = false;
-          }
-        }
-
-        // Drain completed background-agent results + running-agent reminders.
-        // Only the main agent consumes these (background agents are spawned by
-        // and report back to the main conversation, not to sub-agents).
-        if (!this.config.isSpecializedAgent) {
-          const bgManager = registry.get('background_agent_manager');
-          if (bgManager) {
-            const reminderParts: string[] = [];
-
-            // Full results of completed runs, delivered exactly once.
-            for (const task of bgManager.drainCompletedResults()) {
-              const body = task.status === 'done'
-                ? (task.result ?? '(no output)')
-                : `[${task.status}] ${task.error ?? task.result ?? 'no output'}`;
-              reminderParts.push(
-                `Background agent ${task.id} (${task.agentType}) ${task.status}. Result:\n${body}`
-              );
-            }
-
-            // Status of still-running / recently-finished agents.
-            reminderParts.push(...bgManager.getStatusReminders());
-
-            if (reminderParts.length > 0) {
-              const reminderText = reminderParts.join('\n\n');
-              if (result.system_reminder) {
-                result.system_reminder += '\n\n' + reminderText;
-              } else {
-                result.system_reminder = reminderText;
-              }
-              result.system_reminder_persist = false;
-            }
-          }
-        }
-
         // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START (except permission denial or validation failure)
         // Show silent tools in chat if they error (for debugging)
         const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
@@ -1192,10 +1239,16 @@ export class ToolOrchestrator {
    */
   private async processToolResult(
     toolCall: ToolCall,
-    result: ToolResult
+    result: ToolResult,
+    outputBudget?: ToolExecutionContext['outputBudget'],
   ): Promise<void> {
     // Format result as natural language (pass toolCallId for cycle detection)
-    const formattedResult = await this.formatToolResult(toolCall.function.name, result, toolCall.id);
+    const formattedResult = await this.formatToolResult(
+      toolCall.function.name,
+      result,
+      toolCall.id,
+      outputBudget?.maxResultTokensByCallId.get(toolCall.id),
+    );
 
     logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool:', toolCall.function.name, 'id:', toolCall.id, 'success:', result.success, 'resultLength:', formattedResult.length);
 
@@ -1204,8 +1257,8 @@ export class ToolOrchestrator {
       const tracker = ServiceRegistry.getInstance().get('file_interaction_tracker');
       if (tracker) {
         const args = toolCall.function.arguments;
-        // Extract file path from tool arguments (file_path for write/edit, file_paths[0] for read)
-        const filePath = args.file_path || args.file_paths?.[0];
+        const pathValue = args.file_path ?? args.file_paths;
+        const filePath = Array.isArray(pathValue) ? pathValue[0] : pathValue;
         if (filePath) {
           tracker.recordInteraction(toolCall.function.name, filePath);
         }
@@ -1244,6 +1297,9 @@ export class ToolOrchestrator {
       isError,
       isError ? result.error_type : undefined
     );
+    if (Array.isArray(result.images) && result.images.length > 0) {
+      toolResultMessage.images = result.images;
+    }
 
     // Add ephemeral metadata and tool status
     const metadata: any = {};
@@ -1304,7 +1360,12 @@ export class ToolOrchestrator {
    * @param toolCallId - Tool call ID for cycle detection
    * @returns Formatted result string
    */
-  private async formatToolResult(toolName: string, result: ToolResult, toolCallId?: string): Promise<string> {
+  private async formatToolResult(
+    toolName: string,
+    result: ToolResult,
+    toolCallId?: string,
+    maxResultTokens?: number,
+  ): Promise<string> {
     // Handle internal-only tool results (for special tools like delegate_task)
     if ((result as any)._internal_only) {
       return (result as any).result || 'Internal operation completed';
@@ -1318,6 +1379,9 @@ export class ToolOrchestrator {
     // Strip display-only fields (e.g. display_content) so the model never sees the
     // user-facing rendering — the single gateway for the model side of the split.
     const resultWithoutExtras = stripDisplayOnlyFields({ ...result });
+    // Binary attachments travel through Message.images. Serializing base64 into
+    // the textual tool result would waste context and defeat output truncation.
+    delete resultWithoutExtras.images;
     delete resultWithoutExtras.warning;
     delete (resultWithoutExtras as any).system_reminder;
     delete (resultWithoutExtras as any).total_turn_duration;
@@ -1335,7 +1399,12 @@ export class ToolOrchestrator {
     // Apply context-aware truncation if ToolResultManager is available
     // Pass the full result object so it can check for _non_truncatable flag
     if (this.toolResultManager) {
-      resultStr = await this.toolResultManager.processToolResult(toolName, resultWithoutExtras, toolCallId);
+      resultStr = await this.toolResultManager.processToolResult(
+        toolName,
+        resultWithoutExtras,
+        toolCallId,
+        maxResultTokens,
+      );
     }
 
     // Append warning after truncation to ensure it's always visible

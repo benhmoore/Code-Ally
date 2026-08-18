@@ -90,9 +90,9 @@ describe('schema-declared path authorization', () => {
     expect(collectLocalPaths({ paths: ['/etc'] }, parameters)).toEqual(expect.arrayContaining(['/etc']));
   });
 
-  it('collects read file_paths', () => {
+  it('collects read file_path arrays', () => {
     const { parameters } = new ReadTool(stream()).getFunctionDefinition().function;
-    expect(collectLocalPaths({ file_paths: ['/a.ts'] }, parameters)).toEqual(
+    expect(collectLocalPaths({ file_path: ['/a.ts'] }, parameters)).toEqual(
       expect.arrayContaining(['/a.ts'])
     );
   });

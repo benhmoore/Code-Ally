@@ -96,6 +96,14 @@ describe('BaseDelegationTool (via ExploreTool)', () => {
       expect(props.task_prompt.type).toBe('string');
       expect(props.thoroughness.type).toBe('string');
     });
+
+    it('instructs known-target explorations to skip discovery and preserve findings', () => {
+      const prompt = (tool as any).getSystemPrompt({ temp_directory: '/tmp' });
+      expect(prompt).toContain('When exact files or symbols are named, skip tree/glob discovery');
+      expect(prompt).toContain('Parallel reads share one output budget');
+      expect(prompt).toContain('save compact accumulated findings with write-temp');
+      expect(prompt).toContain('Do not reread evicted output');
+    });
   });
 
   describe('validation', () => {

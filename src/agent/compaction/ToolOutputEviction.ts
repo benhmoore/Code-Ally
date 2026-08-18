@@ -1,4 +1,8 @@
 import type { Message } from '../../types/index.js';
+import {
+  compactCompletedToolCall,
+  toolCallHasDurablePayload,
+} from './ToolCallArgumentCompaction.js';
 
 /**
  * First-line context reclaim: replace the payloads of stale, bulky, successful
@@ -22,6 +26,16 @@ const MIN_EVICTABLE_TOKENS = 256;
 /** The newest tool results are the model's working set; never evict them. */
 const PROTECTED_RECENT_RESULTS = 2;
 
+/**
+ * Completed source mutations often cost more in their tool-call arguments than
+ * in their results: a `write` call repeats the complete file in the assistant
+ * message, while its result is only "created file". Once an older mutation has
+ * succeeded, the repository and durable transcript are the canonical copies.
+ * Keep paths and a small structural outline in the active window, not another
+ * full source-file copy.
+ */
+const MIN_EVICTABLE_ARGUMENT_TOKENS = 256;
+
 export interface EvictionResult {
   /** New active-window array; shares unchanged message objects with the input. */
   messages: Message[];
@@ -43,6 +57,7 @@ export function evictStaleToolOutputs(
   estimateMessageTokens: (message: Message) => number,
 ): EvictionResult {
   const evictableIndexes: number[] = [];
+  const successfulOldCallIds = new Set<string>();
   let recentResultsSeen = 0;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]!;
@@ -51,26 +66,40 @@ export function evictStaleToolOutputs(
     recentResultsSeen++;
     if (recentResultsSeen <= PROTECTED_RECENT_RESULTS) continue;
     if (message.is_error || message.metadata?.isError) continue;
+    if (message.tool_call_id) successfulOldCallIds.add(message.tool_call_id);
     if (message.metadata?.contentEvicted) continue;
     if (estimateMessageTokens(message) < MIN_EVICTABLE_TOKENS) continue;
     evictableIndexes.push(index);
   }
-  if (evictableIndexes.length === 0) {
-    return { messages: [...messages], evictedCount: 0, reclaimedTokens: 0 };
-  }
-
   const evictable = new Set(evictableIndexes);
   let reclaimedTokens = 0;
+  let evictedCount = evictable.size;
   const replaced = messages.map((message, index) => {
-    if (!evictable.has(index)) return message;
+    if (evictable.has(index)) {
+      const before = estimateMessageTokens(message);
+      const evicted: Message = {
+        ...message,
+        content: evictionStub(message, before),
+        metadata: { ...message.metadata, contentEvicted: true },
+      };
+      reclaimedTokens += Math.max(0, before - estimateMessageTokens(evicted));
+      return evicted;
+    }
+    if (message.role !== 'assistant' || !message.tool_calls?.some(call =>
+      successfulOldCallIds.has(call.id) && toolCallHasDurablePayload(call))) return message;
     const before = estimateMessageTokens(message);
-    const evicted: Message = {
+    if (before < MIN_EVICTABLE_ARGUMENT_TOKENS) return message;
+    const compacted: Message = {
       ...message,
-      content: evictionStub(message, before),
-      metadata: { ...message.metadata, contentEvicted: true },
+      tool_calls: message.tool_calls.map(call =>
+        successfulOldCallIds.has(call.id) ? compactCompletedToolCall(call) : call),
+      metadata: { ...message.metadata, toolArgumentsEvicted: true },
     };
-    reclaimedTokens += Math.max(0, before - estimateMessageTokens(evicted));
-    return evicted;
+    const reclaimed = Math.max(0, before - estimateMessageTokens(compacted));
+    if (reclaimed === 0) return message;
+    reclaimedTokens += reclaimed;
+    evictedCount++;
+    return compacted;
   });
-  return { messages: replaced, evictedCount: evictable.size, reclaimedTokens };
+  return { messages: replaced, evictedCount, reclaimedTokens };
 }

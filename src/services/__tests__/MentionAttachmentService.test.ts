@@ -91,7 +91,7 @@ describe('MentionAttachmentService - file mentions', () => {
     expect(assistant.tool_calls).toHaveLength(1);
     expect(assistant.tool_calls[0].type).toBe('function');
     expect(assistant.tool_calls[0].function.name).toBe('read');
-    expect(assistant.tool_calls[0].function.arguments).toEqual({ file_paths: ['a.ts', 'b.ts'] });
+    expect(assistant.tool_calls[0].function.arguments).toEqual({ file_path: ['a.ts', 'b.ts'] });
 
     const toolResult = rec.agentMessages[1] as any;
     expect(toolResult.role).toBe('tool');
@@ -113,7 +113,7 @@ describe('MentionAttachmentService - file mentions', () => {
     expect(executeTool).toHaveBeenCalledTimes(1);
     const call = executeTool.mock.calls[0];
     expect(call[0]).toBe('read');
-    expect(call[1]).toEqual({ file_paths: ['a.ts'], description: 'Read mentioned files' });
+    expect(call[1]).toEqual({ file_path: ['a.ts'], description: 'Read mentioned files' });
     expect(call[2]).toBe((rec.agentMessages[0] as any).tool_calls[0].id);
     expect(call[3]).toBe(false); // isRetry
     expect(call[5]).toBe(true); // isUserInitiated - raises ReadTool's truncation limit
@@ -137,7 +137,7 @@ describe('MentionAttachmentService - file mentions', () => {
     ]);
     expect(rec.events[0].id).toBe(rec.events[1].id);
     expect(rec.events[0].id).toBe((rec.agentMessages[0] as any).tool_calls[0].id);
-    expect(rec.events[0].data.arguments).toEqual({ file_paths: ['a.ts'] });
+    expect(rec.events[0].data.arguments).toEqual({ file_path: ['a.ts'] });
     expect(rec.events[1].data.success).toBe(true);
   });
 

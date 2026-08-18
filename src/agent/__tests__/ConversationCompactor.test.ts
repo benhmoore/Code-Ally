@@ -39,6 +39,41 @@ function chatClient() {
   } as any;
 }
 
+function structuredClient() {
+  return {
+    providerId: 'chat',
+    capabilities: { nativeCompaction: false, exactInputTokens: false, opaqueReasoningReplay: false },
+    modelName: 'test-model',
+    endpoint: 'test',
+    send: vi.fn().mockImplementation(async (messages: Message[]) => {
+      const request = JSON.parse(messages[1]!.content);
+      const transcript = String(request.transcriptJsonLines)
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+      const firstId = transcript[0].id;
+      const lastId = transcript.at(-1).id;
+      return {
+        role: 'assistant',
+        content: JSON.stringify({
+          schemaVersion: 1,
+          objective: { text: 'Complete the durable objective.', sourceMessageIds: [firstId] },
+          currentRequest: { text: 'Continue from the latest evidence.', sourceMessageIds: [lastId] },
+          userConstraints: [],
+          decisions: [],
+          completedWork: [],
+          activeWork: [{ text: 'Continue the active implementation.', sourceMessageIds: [lastId] }],
+          blockers: [],
+          nextActions: [{ text: 'Execute the next verified step.', sourceMessageIds: [lastId] }],
+          unresolvedQuestions: [],
+          durableFacts: [],
+          artifacts: [],
+        }),
+      };
+    }),
+  } as any;
+}
+
 function toolTurn(pairCount: number, resultWords: number): Message[] {
   const messages: Message[] = [{
     id: 'request',
@@ -188,7 +223,9 @@ describe('ConversationCompactor', () => {
     expect(checkpoint?.trigger).toBe('automatic');
     expect(checkpoint?.phase).toBe('mid-turn');
     expect(checkpoint?.portability).toBe('extractive');
-    expect(client.send).not.toHaveBeenCalled();
+    // Automatic checkpoints first ask the model for a semantic handoff. This
+    // fixture returns invalid JSON, so the bounded extractive fallback commits.
+    expect(client.send).toHaveBeenCalledOnce();
     expect(checkpoint?.source.messageIds).toContain('request');
     // 15% of a 4096-token window must remain between the compacted result and
     // the automatic trigger, preventing another compaction after a few small messages.
@@ -213,7 +250,7 @@ describe('ConversationCompactor', () => {
       );
 
       const resultPromise = compactor.compactAndApply({ ...context(), signal: owner.signal });
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(180_000);
       const result = await resultPromise;
 
       expect(owner.signal.aborted).toBe(false);
@@ -226,6 +263,60 @@ describe('ConversationCompactor', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('preserves structured semantics when fitting and tail removal are required', async () => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const client = structuredClient();
+    const compactor = new ConversationCompactor(
+      client, manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+    const actualCount = (compactor as any).countCandidate.bind(compactor);
+    (compactor as any).countCandidate = vi.fn()
+      // Force both checkpoint fitting and the no-raw-tail rebuild paths.
+      .mockResolvedValueOnce(Number.MAX_SAFE_INTEGER)
+      .mockResolvedValueOnce(Number.MAX_SAFE_INTEGER)
+      .mockImplementation(actualCount);
+
+    const result = await compactor.compactAndApply(context());
+
+    // The complete-domain rebuild may itself be chunked; critically, every
+    // reduction remains structured instead of switching to extraction.
+    expect(client.send.mock.calls.length).toBeGreaterThan(1);
+    expect(result.checkpoint.portability).toBe('model-validated');
+    expect(result.checkpoint.strategy).toBe('local-structured');
+    expect(result.checkpoint.retainedMessageIds).toEqual([]);
+    expect(result.checkpoint.semanticState.activeWork[0]?.text)
+      .toContain('active implementation');
+  });
+
+  it('asks the reducer to preserve evidence-backed identifiers and signatures exactly', async () => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const client = structuredClient();
+    const compactor = new ConversationCompactor(
+      client, manager, new TokenManager(16_384), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    await compactor.compactAndApply(context());
+
+    const reducerMessages = client.send.mock.calls[0]![0] as Message[];
+    expect(reducerMessages[0]!.content).toContain(
+      'Preserve exact identifiers, paths, commands, error text, and compact public declarations/signatures'
+    );
+    expect(reducerMessages[0]!.content).toContain('never rename or infer them');
+  });
+
+  it('uses the reducer request headroom for accumulated structured output', async () => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const client = structuredClient();
+    const compactor = new ConversationCompactor(
+      client, manager, new TokenManager(16_384), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    await compactor.compactAndApply(context());
+
+    expect(client.send).toHaveBeenCalled();
+    expect(client.send.mock.calls[0][1].dynamicMaxTokens).toBe(4_096);
   });
 
   it('checkpoints an oversized completed tool exchange with no raw tail', async () => {

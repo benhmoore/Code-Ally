@@ -22,18 +22,17 @@ import { createReadStream } from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 
-/** Tokens each rendered line costs beyond its text: padded line number + tab. */
-const LINE_NUMBER_TOKEN_OVERHEAD = 4;
-
 export class ReadTool extends BaseTool {
   readonly name = 'read';
   readonly description =
-    'Read one or more files. file_paths is always an array, even for one file. Batch related files.';
+    'Read one or more files. Pass file_path as one path or an array of related paths.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
+  readonly requiresReservedContext = true;
   readonly hideOutput = true; // Hide file content from user, show summary in subtext
 
   readonly usageGuidance = `**When to use read:**
+Locate before loading: use tree/glob to discover files and grep to find symbols or usages, then read the smallest relevant line range. Expand the range only when surrounding behavior is needed; read a whole file when it is small or the task is genuinely cross-cutting.
 Default reads stay in context. Use ephemeral=true only for one-time large file inspection (content removed after one turn).
 For multi-file exploration, prefer explore() to preserve context.`;
 
@@ -45,6 +44,13 @@ For multi-file exploration, prefer explore() to preserve context.`;
    * Validate ReadTool arguments
    */
   validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+    // Keep one canonical path key across filesystem tools. A scalar is the
+    // natural form for one file; normalize it before generic schema validation
+    // so callers can batch files without learning a second parameter name.
+    if (typeof args.file_path === 'string') {
+      args.file_path = [args.file_path];
+    }
+
     // Validate limit parameter
     if (args.limit !== undefined && args.limit !== null) {
       const limit = Number(args.limit);
@@ -160,10 +166,10 @@ For multi-file exploration, prefer explore() to preserve context.`;
         parameters: {
           type: 'object',
           properties: {
-            file_paths: {
+            file_path: {
               type: 'array',
               format: 'local-path',
-              description: 'File paths to read',
+              description: 'One file path or an array of related file paths to read',
               items: {
                 type: 'string',
                 format: 'local-path',
@@ -182,7 +188,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
               description: 'Allow large files (90% context). WARNING: Content removed after one turn.',
             },
           },
-          required: ['file_paths'],
+          required: ['file_path'],
         },
       },
     };
@@ -197,20 +203,20 @@ For multi-file exploration, prefer explore() to preserve context.`;
   ): Promise<ToolResult> {
     this.captureParams(args);
 
-    const filePaths = args.file_paths;
-    let limit = args.limit !== undefined ? Number(args.limit) : 0;
+    const filePaths = typeof args.file_path === 'string' ? [args.file_path] : args.file_path;
+    const limit = args.limit !== undefined ? Number(args.limit) : 0;
     const offset = args.offset !== undefined ? Number(args.offset) : 0;
     const ephemeral = args.ephemeral === true;
 
     if (!Array.isArray(filePaths) || filePaths.length === 0) {
       return this.formatErrorResponse(
-        'file_paths must be a non-empty array',
+        'file_path must be a path or a non-empty array of paths',
         'validation_error',
-        'Example: read(file_paths=["src/main.ts", "package.json"])'
+        'Example: read(file_path=["src/main.ts", "package.json"])'
       );
     }
 
-    let estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
+    const estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
 
     // Check if we have enough remaining context for the non-truncatable result
     // Get remaining context from ServiceRegistry's TokenManager if available
@@ -220,8 +226,8 @@ For multi-file exploration, prefer explore() to preserve context.`;
       const remainingTokens = this.getRemainingContext(tokenManager);
       if (remainingTokens < estimatedTokens) {
         const examples = filePaths.length === 1
-          ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=-100, limit=100) for last 100 lines`
-          : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
+          ? `read(file_path="${filePaths[0]}", limit=100) or read(file_path="${filePaths[0]}", offset=-100, limit=100) for last 100 lines`
+          : `read(file_path="${filePaths[0]}", limit=100) or read fewer files`;
 
         return this.formatErrorResponse(
           `Insufficient context available: read would require ${estimatedTokens.toFixed(1)} tokens but only ${remainingTokens.toFixed(1)} remain. ` +
@@ -246,30 +252,10 @@ For multi-file exploration, prefer explore() to preserve context.`;
         : this.getMaxTokens(executionContext);
     }
 
-    // A single oversized file is a chunking problem, not an error: serve the
-    // largest prefix that fits and say where to continue. Rejecting instead
-    // costs a round trip and, on a small window, the retry is often oversized
-    // too — which is exactly the loop observed in live 16k runs. Reads the
-    // caller sized explicitly, or that a human/context-file initiated, are left
-    // alone: the limit was a deliberate choice there.
-    let autoChunkedFrom: number | null = null;
-    if (estimatedTokens > maxTokens
-      && filePaths.length === 1
-      && limit <= 0
-      && !isUserInitiated
-      && !isContextFile) {
-      const fitted = await this.fitLimitToBudget(filePaths[0]!, offset, maxTokens);
-      if (fitted && fitted.limit > 0) {
-        limit = fitted.limit;
-        autoChunkedFrom = fitted.totalLines;
-        estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
-      }
-    }
-
     if (estimatedTokens > maxTokens) {
       const examples = filePaths.length === 1
-        ? `read(file_paths=["${filePaths[0]}"], limit=100) or read(file_paths=["${filePaths[0]}"], offset=-100, limit=100) for last 100 lines`
-        : `read(file_paths=["${filePaths[0]}"], limit=100) or read fewer files`;
+        ? `read(file_path="${filePaths[0]}", limit=100) or read(file_path="${filePaths[0]}", offset=-100, limit=100) for last 100 lines`
+        : `read(file_path="${filePaths[0]}", limit=100) or read fewer files`;
 
       const ephemeralHint = !ephemeral && !isUserInitiated && !isContextFile
         ? ' As a LAST RESORT for one-time inspection only: ephemeral=true (WARNING: content removed after one turn, you will lose access).'
@@ -278,18 +264,18 @@ For multi-file exploration, prefer explore() to preserve context.`;
       // Suggest a line budget that actually fits, rather than a fixed 100.
       // Source averages roughly 12 tokens per line; leave headroom under the cap.
       const suggestedLimit = Math.max(20, Math.floor((maxTokens * 0.85) / 12));
-      const chunked = filePaths.length === 1
-        ? `read(file_paths=["${filePaths[0]}"], offset=1, limit=${suggestedLimit}), then continue from offset=${suggestedLimit + 1}`
-        : `read one file at a time with limit=${suggestedLimit}`;
+      const targeted = filePaths.length === 1
+        ? `first locate the relevant symbol with grep, then read(file_path="${filePaths[0]}", offset=<matching line>, limit=${suggestedLimit})`
+        : `locate relevant symbols with grep, then read one related file/range at a time with limit=${suggestedLimit}`;
 
       return this.formatErrorResponse(
         `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds the ${maxTokens}-token limit for this read. ` +
         `This limit is the largest result that fits the conversation space still available, so a bigger read cannot be kept. ` +
-        `Read it in sequential chunks instead: ${chunked}. ` +
-        `To find something specific without reading the whole file, use grep/glob. ` +
+        `Do not page through the file by default: ${targeted}. ` +
+        `Use sequential offset/limit chunks only when the task genuinely requires whole-file inspection. ` +
         `Alternative: ${examples}.${ephemeralHint}`,
         'validation_error',
-        `Read in sequential chunks with offset/limit, or search with grep/glob`
+        `Locate with grep/glob, then read the smallest relevant offset/limit range`
       );
     }
 
@@ -322,15 +308,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
       );
     }
 
-    let combinedContent = results.join('\n\n');
-    if (autoChunkedFrom !== null) {
-      const shown = (offset > 0 ? offset - 1 : 0) + limit;
-      combinedContent += shown < autoChunkedFrom
-        ? `\n\n[Automatically limited to what fits the available context. `
-          + `Showing through line ${shown} of ${autoChunkedFrom}. `
-          + `Continue with offset=${shown + 1}, limit=${limit}.]`
-        : `\n\n[Automatically limited to what fits the available context; this is the end of the file.]`;
-    }
+    const combinedContent = results.join('\n\n');
 
     // If some files failed, include warning in content but still succeed
     const result = this.formatSuccessResponse({
@@ -531,46 +509,6 @@ For multi-file exploration, prefer explore() to preserve context.`;
   }
 
   /**
-   * Largest number of lines from `offset` whose tokens fit `maxTokens`.
-   *
-   * Binary search over real token counts rather than a bytes-per-token guess,
-   * because the guess is what would put the result back over the ceiling and
-   * defeat the whole point.
-   */
-  private async fitLimitToBudget(
-    filePath: string,
-    offset: number,
-    maxTokens: number,
-  ): Promise<{ limit: number; totalLines: number } | null> {
-    try {
-      const raw = await fs.readFile(resolvePath(filePath), 'utf-8');
-      if (isBinaryContent(raw)) return null;
-      const lines = raw.split('\n');
-      const startLine = offset > 0 ? offset - 1 : offset < 0 ? Math.max(0, lines.length + offset) : 0;
-      const available = lines.length - startLine;
-      if (available <= 0) return null;
-
-      // The formatter prefixes every line with a padded number and a tab, and
-      // adds a header; charge for that here or the fitted result lands back
-      // over the ceiling it was fitted to.
-      const budget = Math.floor(maxTokens * 0.92);
-      const cost = (count: number): number =>
-        tokenCounter.count(lines.slice(startLine, startLine + count).join('\n'))
-        + count * LINE_NUMBER_TOKEN_OVERHEAD;
-      let low = 0;
-      let high = available;
-      while (low < high) {
-        const mid = Math.ceil((low + high) / 2);
-        if (cost(mid) <= budget) low = mid;
-        else high = mid - 1;
-      }
-      return low > 0 ? { limit: low, totalLines: lines.length } : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
    * A cached read may be served as a dedup stub only while the tool-result
    * message that carried the content is still in the owning agent's active
    * context. Compaction (and ephemeral-read cleanup) can remove it; after that
@@ -641,7 +579,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
         `File too large: ${absolutePath} is ${this.formatFileSize(stat.size)} ` +
         `(exceeds ${this.formatFileSize(TOOL_LIMITS.ABSOLUTE_MAX_FILE_SIZE)} limit). ` +
         `Use offset and limit to read specific portions, e.g., ` +
-        `read(file_paths=["${filePath}"], offset=1, limit=200) for the first 200 lines.`
+        `read(file_path="${filePath}", offset=1, limit=200) for the first 200 lines.`
       );
     }
 
@@ -657,7 +595,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
       if (cached && !this.isCachedReadStillVisible(cached, registry)) {
         readCache.invalidate(absolutePath, readScopeId);
       } else if (cached) {
-        // Still track read state so edit validation works
+        // Still track read state so patch validation works
         const readStateManager = registry.get('read_state_manager');
         if (readStateManager) {
           const cachedStartLine = offset <= 0 ? 1 : offset;
@@ -768,7 +706,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
       selectedLines, startLine, totalLines, absolutePath, offset, limit
     );
 
-    // Track read state for validation by edit tools
+    // Track read state for apply-patch validation
     const readStateManager = registry.get('read_state_manager');
     if (readStateManager) {
       // Track the lines that were read (1-indexed)
@@ -805,7 +743,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
    * Uses actual line count from result when available
    */
   formatSubtext(args: Record<string, any>, result?: any): string | null {
-    const filePaths = args.file_paths;
+    const filePaths = typeof args.file_path === 'string' ? [args.file_path] : args.file_path;
     const description = args.description as string;
 
     if (!filePaths) {
@@ -841,10 +779,10 @@ For multi-file exploration, prefer explore() to preserve context.`;
 
   /**
    * Get parameters shown in subtext
-   * ReadTool shows both 'file_paths' and 'description' in subtext
+   * ReadTool shows both 'file_path' and 'description' in subtext
    */
   getSubtextParameters(): string[] {
-    return ['file_paths', 'description'];
+    return ['file_path', 'description'];
   }
 
   /**
