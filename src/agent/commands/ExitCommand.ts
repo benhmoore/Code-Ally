@@ -26,8 +26,12 @@ export class ExitCommand extends Command {
   async execute(
     _args: string[],
     _messages: Message[],
-    _serviceRegistry: ServiceRegistry
+    serviceRegistry: ServiceRegistry
   ): Promise<CommandResult> {
+    // Slash-command exits bypass the CLI's signal handlers, so explicitly run
+    // the same registered service lifecycle before terminating. In particular,
+    // this prevents supervised background shells from becoming orphans.
+    await serviceRegistry.shutdown();
     process.exit(0);
   }
 }

@@ -42,6 +42,38 @@ import { SchedulerInstaller } from './services/SchedulerInstaller.js';
 import { generateShortId } from './utils/id.js';
 import { formatError } from './utils/errorUtils.js';
 
+let terminalOutputAvailable = true;
+
+function isClosedTerminalError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EPIPE' || code === 'EIO' || code === 'ERR_STREAM_DESTROYED';
+}
+
+// A detached terminal/SSH/tmux owner can close the PTY before our signal
+// handler finishes asynchronous cleanup. stdout/stderr then emit errors rather
+// than throwing synchronously; without listeners, the fatal-error reporter
+// writes to the same dead streams and can spin forever instead of cleaning up.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (error) => {
+    if (isClosedTerminalError(error)) {
+      terminalOutputAvailable = false;
+      return;
+    }
+    terminalOutputAvailable = false;
+    process.exitCode = 1;
+  });
+}
+
+function writeTerminal(value: string): void {
+  if (!terminalOutputAvailable || process.stdout.destroyed || !process.stdout.writable) return;
+  try {
+    process.stdout.write(value);
+  } catch (error) {
+    if (!isClosedTerminalError(error)) process.exitCode = 1;
+    terminalOutputAvailable = false;
+  }
+}
+
 /**
  * Comprehensive terminal state reset
  *
@@ -49,32 +81,17 @@ import { formatError } from './utils/errorUtils.js';
  * Call this on exit to ensure clean terminal state.
  */
 function resetTerminalState(): void {
-  // Clear screen and move cursor to home
-  process.stdout.write('\x1b[2J\x1b[H');
-
-  // Close any open hyperlinks (OSC 8)
-  process.stdout.write('\x1b]8;;\x1b\\');
-
-  // Clear terminal tab progress bar (OSC 9;4)
-  process.stdout.write('\x1b]9;4;0;\x07');
-
-  // Reset all text formatting (SGR 0)
-  process.stdout.write('\x1b[0m');
-
-  // Show cursor (in case it was hidden)
-  process.stdout.write('\x1b[?25h');
-
-  // Reset foreground/background colors
-  process.stdout.write('\x1b[39m\x1b[49m');
-
-  // Exit alternate screen buffer (in case it was entered)
-  process.stdout.write('\x1b[?1049l');
-
-  // Reset bracketed paste mode
-  process.stdout.write('\x1b[?2004l');
-
-  // Ensure we're at the start of a new line
-  process.stdout.write('\n');
+  writeTerminal(
+    '\x1b[2J\x1b[H'       // Clear screen and move cursor to home
+    + '\x1b]8;;\x1b\\'    // Close any open hyperlinks (OSC 8)
+    + '\x1b]9;4;0;\x07'    // Clear terminal tab progress bar (OSC 9;4)
+    + '\x1b[0m'            // Reset all text formatting (SGR 0)
+    + '\x1b[?25h'          // Show cursor
+    + '\x1b[39m\x1b[49m'  // Reset foreground/background colors
+    + '\x1b[?1049l'        // Exit alternate screen buffer
+    + '\x1b[?2004l'        // Reset bracketed paste mode
+    + '\n'
+  );
 }
 
 /**
@@ -84,7 +101,7 @@ function resetTerminalState(): void {
  */
 function reassertTerminalState(): void {
   if (!process.stdout.isTTY) return;
-  process.stdout.write(
+  writeTerminal(
     '\x1b[0m'           // Reset all text formatting
     + '\x1b[?25h'       // Show cursor
     + '\x1b[39m\x1b[49m' // Reset fg/bg colors
@@ -145,7 +162,9 @@ async function performCleanExit(): Promise<void> {
   }
 
   // Wait for stdout to drain before exiting
-  if (process.stdout.write('')) {
+  if (!terminalOutputAvailable || process.stdout.destroyed || !process.stdout.writable) {
+    process.exit(requestedExitCode);
+  } else if (process.stdout.write('')) {
     // Buffer is empty, exit immediately
     process.exit(requestedExitCode);
   } else {
