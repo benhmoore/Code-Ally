@@ -26,6 +26,16 @@ function processInfo(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
 describe('BashProcessManager lifecycle', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('participates in registry cleanup by shutting down managed processes', async () => {
+    const manager = new BashProcessManager();
+    const shutdown = vi.spyOn(manager, 'shutdown').mockResolvedValue();
+
+    await manager.initialize();
+    await manager.cleanup();
+
+    expect(shutdown).toHaveBeenCalledOnce();
+  });
+
   it('marks a signaled process as stopping immediately and stops advertising it as running', () => {
     vi.spyOn(process, 'kill').mockReturnValue(true);
     const manager = new BashProcessManager();

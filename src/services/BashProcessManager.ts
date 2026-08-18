@@ -156,6 +156,12 @@ export class BashProcessManager {
     this.maxProcesses = maxProcesses;
   }
 
+  async initialize(): Promise<void> {}
+
+  async cleanup(): Promise<void> {
+    await this.shutdown();
+  }
+
   /**
    * Add a process to the manager
    *

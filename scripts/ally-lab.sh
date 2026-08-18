@@ -35,6 +35,28 @@ need_session() {
   tmux has-session -t "$SESSION" 2>/dev/null || die "no tmux session '$SESSION' (run: $0 start)"
 }
 
+stop_session() {
+  tmux has-session -t "$SESSION" 2>/dev/null || return 0
+  local pane_pid pane_dead i
+  pane_pid="$(tmux display-message -p -t "$SESSION" '#{pane_pid}' 2>/dev/null || true)"
+
+  # The pane command execs Ally, so pane_pid is the owning process itself.
+  # Signal it while the PTY is still open, allowing Ally to flush state and
+  # terminate every supervised background process before tmux tears down I/O.
+  if [[ "$pane_pid" =~ ^[0-9]+$ ]]; then
+    kill -HUP "$pane_pid" 2>/dev/null || true
+    for ((i = 0; i < 100; i++)); do
+      pane_dead="$(tmux display-message -p -t "$SESSION" '#{pane_dead}' 2>/dev/null || echo 1)"
+      [[ "$pane_dead" == 1 ]] && break
+      sleep 0.1
+    done
+    if [[ "${pane_dead:-0}" != 1 ]]; then
+      kill -KILL "$pane_pid" 2>/dev/null || true
+    fi
+  fi
+  tmux kill-session -t "$SESSION" 2>/dev/null || true
+}
+
 cmd_start() {
   local dir="$PWD" fresh=0 manual=0 extra=()
   while [[ $# -gt 0 ]]; do
@@ -54,7 +76,7 @@ cmd_start() {
   command -v tmux >/dev/null || die "tmux not installed"
 
   if tmux has-session -t "$SESSION" 2>/dev/null; then
-    if [[ $fresh -eq 1 ]]; then tmux kill-session -t "$SESSION"; else
+    if [[ $fresh -eq 1 ]]; then stop_session; else
       die "session '$SESSION' already running (use --fresh to replace, or: tmux attach -t $SESSION)"
     fi
   fi
@@ -62,8 +84,10 @@ cmd_start() {
   printf '%s\n' "$dir" > "$DIR_FILE"
 
   # A wide pane so the Ink UI renders the way it does in a real terminal.
-  tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$dir" \
-    "ally ${extra[*]:-}; echo; echo '[ally exited — press enter to close]'; read"
+  local ally_command
+  printf -v ally_command '%q ' ally "${extra[@]}"
+  tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$dir" "exec $ally_command"
+  tmux set-option -t "$SESSION" remain-on-exit on
   # Let whichever client attaches drive the pane size, so a human joining with
   # a smaller terminal sees the whole UI instead of a cropped 200x50 region.
   tmux set-option -t "$SESSION" window-size latest 2>/dev/null || true
@@ -212,7 +236,7 @@ cmd_dump() {
 
 cmd_stop() {
   need_session
-  tmux kill-session -t "$SESSION"
+  stop_session
   echo "stopped '$SESSION'"
 }
 
@@ -232,7 +256,10 @@ cmd_reset() {
   if [[ ! -f "$dir/.ally-lab-experiment" ]]; then
     [[ $adopt -eq 1 ]] || die "'$dir' is not marked as an experiment dir (use: $0 reset --adopt to designate it)"
   fi
-  tmux kill-session -t "$SESSION" 2>/dev/null && echo "stopped '$SESSION'"
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    stop_session
+    echo "stopped '$SESSION'"
+  fi
   find "$dir" -mindepth 1 -maxdepth 1 ! -name '.ally-lab-experiment' -exec rm -rf {} +
   touch "$dir/.ally-lab-experiment"
   echo "reset experiment dir: $dir"
