@@ -1720,14 +1720,22 @@ export class Agent {
       }
       if (response.nativeCompaction) this.nativeCompactionPending = true;
 
-      // Calibrate the token estimator against the backend's actual prompt-token
-      // count. The gap (tool schemas, chat template, the model's own tokenizer)
-      // is what the message-only estimate misses; feeding it back keeps budget
-      // decisions accurate for whatever open model is running.
+      // Calibrate the token estimator against comparable, text-only backend
+      // counts. Vision providers include resolution/model-dependent image tokens
+      // in prompt usage, while our local estimate intentionally does not inspect
+      // or tokenize image payloads. Treating that variable media cost as fixed
+      // overhead permanently poisons later text-only budgets after the image has
+      // been evicted, and can make a healthy small-context session impossible to
+      // continue. A later text-only request will resume calibration normally.
+      const hasUnestimatedMedia = sentMessages.some(message =>
+        (message.images?.length ?? 0) > 0
+      );
       if (response.usage?.promptTokens) {
         const estimated = this.tokenManager.estimateMessagesTokens(sentMessages)
           + this.tokenManager.estimateTokens(JSON.stringify(functions));
-        this.tokenManager.calibrate(estimated, response.usage.promptTokens);
+        this.tokenManager.calibrate(estimated, response.usage.promptTokens, {
+          containsUnestimatedMedia: hasUnestimatedMedia,
+        });
       }
 
       // Remove ephemeral system-reminder messages after receiving response
