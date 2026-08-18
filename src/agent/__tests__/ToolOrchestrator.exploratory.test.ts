@@ -12,6 +12,7 @@ import { ActivityStream } from '../../services/ActivityStream.js';
 import { TOOL_GUIDANCE } from '../../config/constants.js';
 import type { AgentConfig } from '../../types/index.js';
 import type { ToolCall } from '../../types/index.js';
+import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 
 describe('ToolOrchestrator Exploratory Tracking', () => {
   let orchestrator: ToolOrchestrator;
@@ -229,6 +230,83 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
       expect(lastResult.system_reminder).toBeDefined();
       // Stern warning should be more emphatic
       expect(lastResult.system_reminder).toContain(String(TOOL_GUIDANCE.EXPLORATORY_TOOL_STERN_THRESHOLD));
+      expect(lastResult.system_reminder).toContain('next step must either execute');
+      expect(lastResult.system_reminder).toContain('Do not perform another read/search merely for reassurance');
+    });
+  });
+
+  describe('Batch output budgeting', () => {
+    it('reserves one shared allowance for non-truncatable results in call order', () => {
+      const budgetedTool = {
+        name: 'read',
+        description: 'Read',
+        requiresReservedContext: true,
+        getEstimatedOutputSize: () => 800,
+      };
+      const ordinaryTool = {
+        name: 'grep',
+        description: 'Grep',
+        requiresReservedContext: false,
+        getEstimatedOutputSize: () => 600,
+      };
+      const tm = new ToolManager([budgetedTool as any, ordinaryTool as any]);
+      const agent = {
+        ...mockAgent,
+        getInstanceId: vi.fn().mockReturnValue('agent-budget'),
+      };
+      const local = new ToolOrchestrator(tm, activityStream, agent, agentConfig);
+      const registry = ServiceRegistry.getInstance();
+      const get = vi.spyOn(registry, 'get').mockImplementation(((name: string) => {
+        if (name !== 'context_budget') return null;
+        return {
+          get: () => ({ maxToolBatchTokens: 1_000, maxToolResultTokens: 800 }),
+        };
+      }) as any);
+
+      try {
+        const budget = (local as any).createBatchOutputBudget([
+          createToolCall('read', 'read-1'),
+          createToolCall('grep', 'grep-1'),
+          createToolCall('read', 'read-2'),
+        ]);
+
+        expect(budget.limitTokens).toBe(1_000);
+        expect(budget.estimatedTokens).toBe(1_600);
+        expect([...budget.rejectedCallIds]).toEqual(['read-2']);
+        expect([...budget.maxResultTokensByCallId]).toEqual([['grep-1', 200]]);
+      } finally {
+        get.mockRestore();
+      }
+    });
+
+    it('shares the batch allowance across parallel truncatable outputs', () => {
+      const ordinaryTool = {
+        name: 'grep',
+        description: 'Grep',
+        requiresReservedContext: false,
+      };
+      const tm = new ToolManager([ordinaryTool as any]);
+      const agent = { ...mockAgent, getInstanceId: vi.fn().mockReturnValue('agent-budget') };
+      const local = new ToolOrchestrator(tm, activityStream, agent, agentConfig);
+      const registry = ServiceRegistry.getInstance();
+      const get = vi.spyOn(registry, 'get').mockImplementation(((name: string) => {
+        if (name !== 'context_budget') return null;
+        return { get: () => ({ maxToolBatchTokens: 1_000, maxToolResultTokens: 800 }) };
+      }) as any);
+
+      try {
+        const budget = (local as any).createBatchOutputBudget([
+          createToolCall('grep', 'grep-1'),
+          createToolCall('grep', 'grep-2'),
+          createToolCall('grep', 'grep-3'),
+          createToolCall('grep', 'grep-4'),
+        ]);
+
+        expect([...budget.maxResultTokensByCallId.values()]).toEqual([250, 250, 250, 250]);
+        expect([...budget.maxResultTokensByCallId.values()].reduce((sum, value) => sum + value, 0)).toBeLessThanOrEqual(1_000);
+      } finally {
+        get.mockRestore();
+      }
     });
   });
 

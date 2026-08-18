@@ -61,4 +61,38 @@ describe('normalizeOllamaMessages', () => {
 
     expect(normalizeOllamaMessages(messages).map(message => message.role)).toEqual(['user', 'user']);
   });
+
+  it('converts tool-result data URIs to raw base64 for Ollama', () => {
+    const messages: Message[] = [
+      {
+        role: 'tool',
+        name: 'browser/screenshot',
+        tool_call_id: 'screenshot-1',
+        content: 'Screenshot captured',
+        images: ['data:image/png;base64,aW1hZ2U='],
+      },
+    ];
+
+    const normalized = normalizeOllamaMessages(messages);
+
+    expect(normalized).toHaveLength(2);
+    expect(normalized[0]).not.toHaveProperty('images');
+    expect(normalized[1]).toMatchObject({
+      role: 'user',
+      images: ['aW1hZ2U='],
+    });
+    expect(messages[0]!.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
+  });
+
+  it('leaves existing raw Ollama image payloads unchanged', () => {
+    const message: Message = {
+      role: 'user',
+      content: 'Inspect this image',
+      images: ['aW1hZ2U='],
+    };
+
+    const messages = [message];
+    expect(normalizeOllamaMessages(messages)).toBe(messages);
+    expect(message.images).toEqual(['aW1hZ2U=']);
+  });
 });

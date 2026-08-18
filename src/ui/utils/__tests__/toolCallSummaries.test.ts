@@ -95,7 +95,7 @@ describe('toolCallSummaries', () => {
         createToolCall('ls-4', 'ls', { arguments: { path: 'src/ui' } }),
         createToolCall('tree-5', 'tree', { arguments: { paths: ['src/ui', 'src/tools'] } }),
         createToolCall('read-6', 'read', {
-          arguments: { file_paths: ['src/ui/components/ConversationView.tsx'] },
+          arguments: { file_path: ['src/ui/components/ConversationView.tsx'] },
           result: { files_read: 3, total_lines: 42 } as any,
         }),
       ]);
@@ -118,7 +118,7 @@ describe('toolCallSummaries', () => {
     test('falls back to arguments when result counts are absent', () => {
       const summary = summarizeToolCallGroup([
         createToolCall('read-1', 'read', {
-          arguments: { file_paths: ['a.ts', 'b.ts'] },
+          arguments: { file_path: ['a.ts', 'b.ts'] },
         }),
       ]);
 
@@ -131,7 +131,7 @@ describe('toolCallSummaries', () => {
         createToolCall('read-1', 'read', {
           arguments: {
             description: 'Read conversation view grouping logic',
-            file_paths: ['ConversationView.tsx'],
+            file_path: ['ConversationView.tsx'],
           },
           result: { files_read: 1, total_lines: 30 } as any,
         }),
@@ -149,7 +149,7 @@ describe('toolCallSummaries', () => {
         createToolCall('read-2', 'read', {
           arguments: {
             description: 'Read summary utility tests',
-            file_paths: ['toolCallSummaries.test.ts'],
+            file_path: ['toolCallSummaries.test.ts'],
           },
           result: { files_read: 1, total_lines: 25 } as any,
         }),
@@ -174,13 +174,13 @@ describe('toolCallSummaries', () => {
           arguments: { description: 'Find context tools' },
         }),
         createToolCall('read-3', 'read', {
-          arguments: { description: 'Read summarizer implementation', file_paths: ['a.ts'] },
+          arguments: { description: 'Read summarizer implementation', file_path: ['a.ts'] },
         }),
         createToolCall('read-4', 'read', {
-          arguments: { description: 'Read conversation integration', file_paths: ['b.ts'] },
+          arguments: { description: 'Read conversation integration', file_path: ['b.ts'] },
         }),
         createToolCall('read-5', 'read', {
-          arguments: { description: longDescription, file_paths: ['c.ts'] },
+          arguments: { description: longDescription, file_path: ['c.ts'] },
         }),
       ]);
 
@@ -219,10 +219,10 @@ describe('toolCallSummaries', () => {
       const grouped = groupToolCallTimeline([
         messageItem(1, 'user'),
         toolItem(createToolCall('read-2', 'read', {
-          arguments: { file_paths: ['a.ts'] },
+          arguments: { file_path: ['a.ts'] },
         })),
         toolItem(createToolCall('read-3', 'read', {
-          arguments: { file_paths: ['b.ts'] },
+          arguments: { file_path: ['b.ts'] },
         })),
       ]);
 

@@ -235,7 +235,7 @@ describe.skip('TrustManager - Manual Integration Tests', () => {
 
     const calls = [
       { function: { name: 'write', arguments: { file_path: 'test1.txt' } } },
-      { function: { name: 'edit', arguments: { file_path: 'test2.txt' } } },
+      { function: { name: 'apply-patch', arguments: { file_path: 'test2.txt' } } },
     ];
 
     const result = await tm.promptForBatchOperations(calls);

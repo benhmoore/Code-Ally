@@ -5,7 +5,7 @@
  * to file content, supporting the undo system.
  */
 
-import { applyPatch, StructuredPatch } from 'diff';
+import { applyPatch, parsePatch, StructuredPatch } from 'diff';
 import { parseUnifiedDiff } from './diffUtils.js';
 import { logger } from '../services/Logger.js';
 
@@ -21,6 +21,54 @@ export interface PatchResult {
     message: string;
     operation: string;
   };
+}
+
+export interface AppliedModelPatch extends PatchResult {
+  /** Original-file line ranges whose exact text anchors the patch. */
+  readRanges?: Array<{ start: number; end: number }>;
+  /** Updated-file ranges fully represented by patch context and additions. */
+  updatedReadRanges?: Array<{ start: number; end: number }>;
+  hunkCount?: number;
+}
+
+/**
+ * Treat hunk ranges as location hints, not model-authored bookkeeping.
+ * Unified diff parsers require their counts to exactly match the body even
+ * though the body already contains that information. Recompute the counts so
+ * a correct contextual edit is not rejected for an arithmetic mistake.
+ */
+function normalizeModelPatchHunkCounts(diffContent: string): string {
+  const lines = diffContent.replace(/\r\n/g, '\n').split('\n');
+  const bodyEnd = lines.at(-1) === '' ? lines.length - 1 : lines.length;
+  const headerPattern = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@(.*)$/;
+
+  for (let index = 0; index < bodyEnd; index++) {
+    const match = headerPattern.exec(lines[index]!);
+    if (!match) continue;
+
+    let oldLines = 0;
+    let newLines = 0;
+    for (let bodyIndex = index + 1; bodyIndex < bodyEnd; bodyIndex++) {
+      let line = lines[bodyIndex]!;
+      if (line.startsWith('@@ ')) break;
+      if (line.startsWith('--- ') && lines[bodyIndex + 1]?.startsWith('+++ ')) break;
+      if (line.startsWith('\\ No newline at end of file')) continue;
+
+      // Models commonly omit the single context marker on an unchanged blank
+      // line. Its location inside a hunk makes the intended meaning unambiguous.
+      if (line === '') {
+        line = ' ';
+        lines[bodyIndex] = line;
+      }
+
+      if (!line.startsWith('+')) oldLines++;
+      if (!line.startsWith('-')) newLines++;
+    }
+
+    lines[index] = `@@ -${match[1]},${oldLines} +${match[2]},${newLines} @@${match[3]}`;
+  }
+
+  return lines.join('\n');
 }
 
 /**
@@ -39,6 +87,56 @@ function createPatchError(message: string, operation: string): PatchResult {
       operation,
     },
   };
+}
+
+function leadingWhitespace(value: string): string {
+  return value.match(/^\s*/)?.[0] ?? '';
+}
+
+/**
+ * Reconcile a hunk whose old-side text differs from the source only in its
+ * outer whitespace. Model-authored diffs occasionally shift every line by one
+ * indentation column even immediately after reading the target. Accept that
+ * only when the target is unambiguous and every nonblank old line describes
+ * the same indentation shift. Context and removals are then anchored to the
+ * exact source text, while additions inherit that shift.
+ */
+function alignHunkWhitespace(
+  hunk: StructuredPatch['hunks'][number],
+  sourceLines: string[],
+  actualStart: number
+): boolean {
+  let sourceOffset = 0;
+  const indentationDeltas = new Set<number>();
+
+  for (const line of hunk.lines) {
+    if (!line.startsWith(' ') && !line.startsWith('-')) continue;
+    const authored = line.slice(1);
+    const source = sourceLines[actualStart + sourceOffset]!;
+    if (authored.trim().length > 0) {
+      indentationDeltas.add(leadingWhitespace(source).length - leadingWhitespace(authored).length);
+    }
+    sourceOffset++;
+  }
+
+  if (indentationDeltas.size > 1) return false;
+  const indentationDelta = indentationDeltas.values().next().value ?? 0;
+  sourceOffset = 0;
+  hunk.lines = hunk.lines.map(line => {
+    if (line.startsWith(' ') || line.startsWith('-')) {
+      return line[0] + sourceLines[actualStart + sourceOffset++]!;
+    }
+    if (!line.startsWith('+') || line.slice(1).trim().length === 0 || indentationDelta === 0) {
+      return line;
+    }
+
+    const body = line.slice(1);
+    if (indentationDelta > 0) return `+${' '.repeat(indentationDelta)}${body}`;
+    const indent = leadingWhitespace(body);
+    if (indent.length < -indentationDelta) return line;
+    return `+${body.slice(-indentationDelta)}`;
+  });
+  return true;
 }
 
 /**
@@ -92,6 +190,170 @@ export function applyUnifiedDiff(
       'applyUnifiedDiff'
     );
   }
+}
+
+/**
+ * Validate and apply a model-authored, single-file unified diff.
+ *
+ * Hunk headers may be provided without file headers. Every hunk that targets a
+ * non-empty file must carry old-side context or removals. We locate that exact
+ * text before applying so callers can enforce read-before-write against the
+ * lines the patch actually targets, even when a hunk's line-number hint drifted.
+ */
+export function applyModelPatch(
+  diffContent: string,
+  currentContent: string
+): AppliedModelPatch {
+  if (!diffContent || !diffContent.trim()) {
+    return createPatchError('Patch cannot be empty', 'applyModelPatch');
+  }
+
+  let patches: StructuredPatch[];
+  try {
+    patches = parsePatch(normalizeModelPatchHunkCounts(diffContent));
+  } catch (error) {
+    return createPatchError(
+      `Invalid unified diff: ${error instanceof Error ? error.message : 'unable to parse patch'}`,
+      'applyModelPatch'
+    );
+  }
+
+  if (patches.length !== 1 || !patches[0] || patches[0].hunks.length === 0) {
+    return createPatchError(
+      'Patch must contain exactly one file patch with at least one @@ hunk',
+      'applyModelPatch'
+    );
+  }
+
+  const patch = patches[0];
+  if (patch.oldFileName === '/dev/null' || patch.newFileName === '/dev/null') {
+    return createPatchError(
+      'apply-patch only modifies existing files; use write to create files',
+      'applyModelPatch'
+    );
+  }
+
+  const normalizedSource = currentContent.replace(/\r\n/g, '\n');
+  const sourceLines = normalizedSource.split('\n');
+  const readRanges: Array<{ start: number; end: number }> = [];
+  const updatedReadRanges: Array<{ start: number; end: number }> = [];
+  let precedingLineDelta = 0;
+
+  for (const [index, hunk] of patch.hunks.entries()) {
+    const oldLines = hunk.lines
+      .filter(line => line.startsWith(' ') || line.startsWith('-'))
+      .map(line => line.slice(1));
+
+    if (oldLines.length === 0) {
+      if (normalizedSource.length !== 0) {
+        return createPatchError(
+          `Hunk ${index + 1} has no original-file context. Include unchanged or removed lines so the target is unambiguous`,
+          'applyModelPatch'
+        );
+      }
+      const addedLines = hunk.lines.filter(line => line.startsWith('+')).length;
+      if (addedLines > 0) updatedReadRanges.push({ start: 1, end: addedLines });
+      precedingLineDelta += hunk.newLines;
+      continue;
+    }
+
+    const candidates: number[] = [];
+    for (let start = 0; start + oldLines.length <= sourceLines.length; start++) {
+      if (oldLines.every((line, offset) => sourceLines[start + offset] === line)) {
+        candidates.push(start);
+      }
+    }
+
+    const declaredStart = Math.max(0, hunk.oldStart - 1);
+    let actualStart = candidates.includes(declaredStart)
+      ? declaredStart
+      : candidates.length === 1
+        ? candidates[0]!
+        : null;
+
+    if (actualStart === null && candidates.length === 0) {
+      const whitespaceCandidates: number[] = [];
+      for (let start = 0; start + oldLines.length <= sourceLines.length; start++) {
+        if (oldLines.every((line, offset) => sourceLines[start + offset]!.trim() === line.trim())) {
+          whitespaceCandidates.push(start);
+        }
+      }
+      const whitespaceStart = whitespaceCandidates.includes(declaredStart)
+        ? declaredStart
+        : whitespaceCandidates.length === 1
+          ? whitespaceCandidates[0]!
+          : null;
+      if (
+        whitespaceStart !== null
+        && alignHunkWhitespace(hunk, sourceLines, whitespaceStart)
+      ) {
+        actualStart = whitespaceStart;
+      }
+    }
+
+    if (actualStart === null) {
+      const reason = candidates.length === 0
+        ? 'its original lines were not found'
+        : `its original lines match ${candidates.length} locations and the @@ line number does not disambiguate them`;
+      // Hunk line numbers authored from memory are often stale. When the full
+      // context misses, surface exact, unique lines that still exist so the
+      // caller can read the right region instead of trusting the stale header
+      // or rereading the whole file.
+      const uniqueAnchorLines = oldLines
+        .filter(line => line.trim().length >= 8)
+        .flatMap(line => {
+          const matches = sourceLines
+            .map((sourceLine, sourceIndex) => sourceLine === line ? sourceIndex + 1 : 0)
+            .filter(Boolean);
+          return matches.length === 1 ? matches : [];
+        });
+      const anchors = [...new Set(uniqueAnchorLines)].sort((a, b) => a - b).slice(0, 4);
+      const anchorHint = anchors.length > 0
+        ? ` Exact unique context from this hunk exists near current file line${anchors.length === 1 ? '' : 's'} ${anchors.join(', ')}.`
+        : '';
+      return createPatchError(
+        `Cannot apply hunk ${index + 1}: ${reason}.${anchorHint} Re-read that narrow region and retry only this hunk with current surrounding context`,
+        'applyModelPatch'
+      );
+    }
+
+    readRanges.push({
+      start: actualStart + 1,
+      end: actualStart + oldLines.length,
+    });
+    const newLineCount = hunk.lines
+      .filter(line => line.startsWith(' ') || line.startsWith('+'))
+      .length;
+    if (newLineCount > 0) {
+      const updatedStart = actualStart + 1 + precedingLineDelta;
+      updatedReadRanges.push({
+        start: updatedStart,
+        end: updatedStart + newLineCount - 1,
+      });
+    }
+    hunk.oldStart = actualStart + 1;
+    hunk.newStart = actualStart + 1 + precedingLineDelta;
+    precedingLineDelta += hunk.newLines - hunk.oldLines;
+  }
+
+  const result = applyPatch(currentContent, patch);
+  if (result === false || result === undefined) {
+    return createPatchError(
+      'Patch context does not match the current file. Re-read the target region and regenerate the hunk',
+      'applyModelPatch'
+    );
+  }
+  if (result === currentContent) {
+    return createPatchError('Patch makes no changes', 'applyModelPatch');
+  }
+
+  return {
+    success: true,
+    content: result,
+    readRanges,
+    updatedReadRanges,
+    hunkCount: patch.hunks.length,
+  };
 }
 
 /**

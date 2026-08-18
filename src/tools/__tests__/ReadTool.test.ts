@@ -53,14 +53,14 @@ describe('ReadTool', () => {
     it('should have function definition', () => {
       const def = readTool.getFunctionDefinition();
       expect(def.function.name).toBe('read');
-      expect(def.function.parameters.required).toContain('file_paths');
+      expect(def.function.parameters.required).toContain('file_path');
     });
   });
 
   describe('execute', () => {
     it('should read single file', async () => {
       const result = await readTool.execute({
-        file_paths: [testFile],
+        file_path: [testFile],
       });
 
       expect(result.success).toBe(true);
@@ -74,7 +74,7 @@ describe('ReadTool', () => {
       await fs.writeFile(testFile2, 'File 2 content\n');
 
       const result = await readTool.execute({
-        file_paths: [testFile, testFile2],
+        file_path: [testFile, testFile2],
       });
 
       expect(result.success).toBe(true);
@@ -83,9 +83,31 @@ describe('ReadTool', () => {
       expect(result.files_read).toBe(2);
     });
 
+    it('does not execute when its parallel group exceeds the shared output budget', async () => {
+      const result = await readTool.execute(
+        { file_path: [testFile] },
+        'read-over-budget',
+        undefined,
+        false,
+        false,
+        {
+          outputBudget: {
+            limitTokens: 1_000,
+            estimatedTokens: 1_600,
+            rejectedCallIds: new Set(['read-over-budget']),
+            maxResultTokensByCallId: new Map(),
+          },
+        },
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('combined non-truncatable outputs');
+      expect(result.suggestion).toContain('split the reads');
+    });
+
     it('should include line numbers', async () => {
       const result = await readTool.execute({
-        file_paths: [testFile],
+        file_path: [testFile],
       });
 
       expect(result.success).toBe(true);
@@ -96,7 +118,7 @@ describe('ReadTool', () => {
 
     it('should respect limit parameter', async () => {
       const result = await readTool.execute({
-        file_paths: [testFile],
+        file_path: [testFile],
         limit: 2,
       });
 
@@ -108,7 +130,7 @@ describe('ReadTool', () => {
 
     it('should respect offset parameter', async () => {
       const result = await readTool.execute({
-        file_paths: [testFile],
+        file_path: [testFile],
         offset: 3, // Start from line 3
       });
 
@@ -120,7 +142,7 @@ describe('ReadTool', () => {
 
     it('should handle non-existent file', async () => {
       const result = await readTool.execute({
-        file_paths: [path.join(tempDir, 'nonexistent.txt')],
+        file_path: [path.join(tempDir, 'nonexistent.txt')],
       });
 
       expect(result.success).toBe(false); // Tool fails when ALL files fail
@@ -128,17 +150,17 @@ describe('ReadTool', () => {
       expect(result.error).toContain('Failed to read');
     });
 
-    it('should require file_paths parameter', async () => {
+    it('should require file_path parameter', async () => {
       const result = await readTool.execute({});
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('file_paths');
+      expect(result.error).toContain('file_path');
       expect(result.error_type).toBe('validation_error');
     });
 
-    it('should reject empty file_paths array', async () => {
+    it('should reject empty file_path array', async () => {
       const result = await readTool.execute({
-        file_paths: [],
+        file_path: [],
       });
 
       expect(result.success).toBe(false);
@@ -151,7 +173,7 @@ describe('ReadTool', () => {
       await fs.writeFile(binaryFile, Buffer.from([0x00, 0x01, 0x02, 0xff]));
 
       const result = await readTool.execute({
-        file_paths: [binaryFile],
+        file_path: [binaryFile],
       });
 
       expect(result.success).toBe(true);
@@ -160,7 +182,7 @@ describe('ReadTool', () => {
 
     it('should only deduplicate unchanged reads within the same agent scope', async () => {
       const firstAgentRead = await readTool.execute(
-        { file_paths: [testFile] },
+        { file_path: [testFile] },
         undefined,
         undefined,
         false,
@@ -171,7 +193,7 @@ describe('ReadTool', () => {
       expect(firstAgentRead.content).toContain('Line 1');
 
       const secondAgentRead = await readTool.execute(
-        { file_paths: [testFile] },
+        { file_path: [testFile] },
         undefined,
         undefined,
         false,
@@ -183,7 +205,7 @@ describe('ReadTool', () => {
       expect(secondAgentRead.content).not.toContain('File unchanged since last read');
 
       const sameAgentRead = await readTool.execute(
-        { file_paths: [testFile] },
+        { file_path: [testFile] },
         undefined,
         undefined,
         false,
@@ -208,13 +230,13 @@ describe('ReadTool', () => {
       } as any);
 
       const first = await readTool.execute(
-        { file_paths: [testFile] }, 'call-1', undefined, false, false, { agentId: 'agent-a' },
+        { file_path: [testFile] }, 'call-1', undefined, false, false, { agentId: 'agent-a' },
       );
       expect(first.content).toContain('Line 1');
       activeMessages.push({ role: 'tool', tool_call_id: 'call-1', content: 'carried content' });
 
       const second = await readTool.execute(
-        { file_paths: [testFile] }, 'call-2', undefined, false, false, { agentId: 'agent-a' },
+        { file_path: [testFile] }, 'call-2', undefined, false, false, { agentId: 'agent-a' },
       );
       expect(second.content).toContain('File unchanged since last read');
 
@@ -222,7 +244,7 @@ describe('ReadTool', () => {
       // would now lie, so the tool must serve the full content again.
       activeMessages.length = 0;
       const third = await readTool.execute(
-        { file_paths: [testFile] }, 'call-3', undefined, false, false, { agentId: 'agent-a' },
+        { file_path: [testFile] }, 'call-3', undefined, false, false, { agentId: 'agent-a' },
       );
       expect(third.content).toContain('Line 1');
       expect(third.content).not.toContain('File unchanged since last read');
@@ -230,7 +252,7 @@ describe('ReadTool', () => {
       // The fresh read re-primes deduplication under its own tool call.
       activeMessages.push({ role: 'tool', tool_call_id: 'call-3', content: 'carried content' });
       const fourth = await readTool.execute(
-        { file_paths: [testFile] }, 'call-4', undefined, false, false, { agentId: 'agent-a' },
+        { file_path: [testFile] }, 'call-4', undefined, false, false, { agentId: 'agent-a' },
       );
       expect(fourth.content).toContain('File unchanged since last read');
 
@@ -243,7 +265,7 @@ describe('ReadTool', () => {
         metadata: { contentEvicted: true },
       };
       const fifth = await readTool.execute(
-        { file_paths: [testFile] }, 'call-5', undefined, false, false, { agentId: 'agent-a' },
+        { file_path: [testFile] }, 'call-5', undefined, false, false, { agentId: 'agent-a' },
       );
       expect(fifth.content).toContain('Line 1');
       expect(fifth.content).not.toContain('File unchanged since last read');
@@ -266,7 +288,7 @@ describe('ReadTool', () => {
       // Without a published budget the legacy window fraction applies (20% of
       // 16k = 3276 tokens), so this file is allowed.
       const permissive = await readTool.execute(
-        { file_paths: [bigFile] }, 'call-1', undefined, false, false, { agentId: 'agent-a' },
+        { file_path: [bigFile] }, 'call-1', undefined, false, false, { agentId: 'agent-a' },
       );
       expect(permissive.success).toBe(true);
 
@@ -285,14 +307,14 @@ describe('ReadTool', () => {
       const second = path.join(tempDir, 'big2.js');
       await fs.writeFile(second, 'const other = compute(input, options);\n'.repeat(250));
       const restricted = await readTool.execute(
-        { file_paths: [bigFile, second] }, 'call-2', undefined, false, false, { agentId: 'agent-b' },
+        { file_path: [bigFile, second] }, 'call-2', undefined, false, false, { agentId: 'agent-b' },
       );
       expect(restricted.success).toBe(false);
       expect(restricted.error).toContain('2054-token limit');
-      expect(restricted.error).toContain('one file at a time');
+      expect(restricted.error).toContain('one related file/range at a time');
     });
 
-    it('auto-chunks an oversized single-file read instead of failing', async () => {
+    it('redirects an oversized broad read to search and a narrow range', async () => {
       const { ContextBudgetService } = await import('@services/ContextBudgetService.js');
       const budgets = new ContextBudgetService();
       registry.registerInstance('context_budget', budgets);
@@ -311,23 +333,20 @@ describe('ReadTool', () => {
       await fs.writeFile(bigFile, 'const value = compute(input, options);\n'.repeat(400));
 
       const result = await readTool.execute(
-        { file_paths: [bigFile] }, 'call-1', undefined, false, false, { agentId: 'agent-a' },
+        { file_path: [bigFile] }, 'call-1', undefined, false, false, { agentId: 'agent-a' },
       );
 
-      // Useful content plus a pointer to continue, rather than a wasted turn.
-      expect(result.success).toBe(true);
-      expect(result.content).toContain('const value = compute');
-      expect(result.content).toMatch(/Continue with offset=\d+, limit=\d+/);
-      // And it must actually respect the ceiling it was fitted to.
-      const { tokenCounter } = await import('@services/TokenCounter.js');
-      expect(tokenCounter.count(result.content as string)).toBeLessThanOrEqual(1_738);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Do not page through the file by default');
+      expect(result.error).toContain('first locate the relevant symbol with grep');
+      expect(result.suggestion).toContain('smallest relevant offset/limit range');
     });
 
     it('should track read state in the reading agent scope only', async () => {
       const readStateManager = registry.get('read_state_manager')!;
 
       await readTool.execute(
-        { file_paths: [testFile], limit: 2 },
+        { file_path: [testFile], limit: 2 },
         undefined,
         undefined,
         false,
@@ -343,7 +362,7 @@ describe('ReadTool', () => {
   describe('getResultPreview', () => {
     it('should show files read count', async () => {
       const result = await readTool.execute({
-        file_paths: [testFile],
+        file_path: [testFile],
       });
 
       const preview = readTool.getResultPreview(result, 3);
@@ -352,7 +371,7 @@ describe('ReadTool', () => {
 
     it('should show content preview', async () => {
       const result = await readTool.execute({
-        file_paths: [testFile],
+        file_path: [testFile],
       });
 
       // Request more lines to get actual content in preview

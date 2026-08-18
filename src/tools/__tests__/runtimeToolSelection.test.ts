@@ -17,7 +17,6 @@ describe('runtime tool selection', () => {
       'wait',
       'scheduled-tasks',
       'watch',
-      'line-edit',
       'manage-agents',
       'sessions',
     ]);
@@ -39,7 +38,6 @@ describe('runtime tool selection', () => {
     });
     expect(exclusions).not.toContain('sessions');
     expect(exclusions).not.toContain('manage-agents');
-    expect(exclusions).not.toContain('line-edit');
   });
 
   it('adds volatile clock context only for time-sensitive requests', () => {

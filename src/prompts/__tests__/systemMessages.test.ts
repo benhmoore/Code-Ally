@@ -30,7 +30,7 @@ describe('systemMessages', () => {
 Tool rules:
 - Choose the narrowest tool that directly matches the operation.
 - Read a file before editing it.
-- Use one read call with file_paths for multiple related files.
+- Use one read call with file_path for multiple related files.
 - For different independent operations, emit separate native tool calls in one response.
 - Do not call unrelated tools or describe a tool call instead of making it.`)).toBe(true);
   });

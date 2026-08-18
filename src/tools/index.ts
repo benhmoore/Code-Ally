@@ -19,8 +19,7 @@ export { GlobTool } from './GlobTool.js';
 export { LsTool } from './LsTool.js';
 export { WriteTool } from './WriteTool.js';
 export { WriteAgentTool } from './WriteAgentTool.js';
-export { EditTool } from './EditTool.js';
-export { LineEditTool } from './LineEditTool.js';
+export { ApplyPatchTool } from './ApplyPatchTool.js';
 
 // Advanced tools
 export { AgentTool } from './AgentTool.js';

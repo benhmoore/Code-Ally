@@ -1361,6 +1361,13 @@ export class Agent {
       metadata: { isInterjection: true },
     });
 
+    // An interjection is new external evidence, just like the user input that
+    // starts a turn. Do not charge the revised request for a recovery attempt
+    // made before it arrived, and do not compare the next generation's text
+    // against repetition accumulated under the superseded instruction.
+    this.invocationState.recoveryAttempts = 0;
+    this.loopDetector.resetTextDetectors();
+
     logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'User interjection added:', message.substring(0, 50));
   }
 
@@ -1920,6 +1927,23 @@ export class Agent {
         const continuation = await this.getLLMResponse(executionContext);
         return await this.processLLMResponse(continuation, executionContext);
       }
+
+      const unfinishedTodos = registry.get('todo_manager')
+        ?.getTodos()
+        .filter(todo => todo.status !== 'completed') ?? [];
+      if (
+        unfinishedTodos.length > 0
+        && this.invocationState.unfinishedWorkContinuations
+          < AGENT_CONFIG.MAX_UNFINISHED_WORK_CONTINUATIONS
+      ) {
+        this.invocationState.unfinishedWorkContinuations++;
+        this.conversationManager.addMessage(createSystemReminder(
+          'This turn still has unfinished todos, so a progress update alone does not finish the work. Continue with the next concrete tool call. If the work is actually complete, reconcile the todo statuses first. If no safe path remains without user input, state the concrete blocker and the decision or information needed.',
+          false
+        ));
+        const continuation = await this.getLLMResponse(executionContext);
+        return await this.processLLMResponse(continuation, executionContext);
+      }
     }
 
     return result;
@@ -1944,11 +1968,25 @@ export class Agent {
         throw new Error(message);
       }
 
-      this.conversationManager.addMessage({
+      const assistantMessage: Message = {
         role: 'assistant',
         content: message,
         timestamp: Date.now(),
         metadata: { agentName: this.agentName },
+      };
+      this.conversationManager.addMessage(assistantMessage);
+      // Recovery exhaustion is still an assistant completion. Route it through
+      // the same activity contract as ordinary model text so terminal and other
+      // clients cannot silently appear to stall.
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
+        timestamp: assistantMessage.timestamp,
+        parentId: executionContext.parentCallId,
+        data: {
+          message: assistantMessage,
+          content: assistantMessage.content,
+        },
       });
 
       await ServiceRegistry.getInstance().get('run_supervisor')?.block(message);
@@ -2041,6 +2079,14 @@ export class Agent {
       recordToolCalls: (toolCalls, results) => {
         this.loopDetector.recordToolCalls(toolCalls, results);
         this.turnController.recordToolCalls(toolCalls.length);
+        // Recovery is bounded between concrete outcomes, not across the entire
+        // user turn. A successful tool batch proves the model escaped the prior
+        // reasoning stall; a later loop is an independent incident and gets its
+        // own clean retry. Failed calls deliberately do not replenish the budget.
+        if (results?.some(result => result.success)) {
+          this.invocationState.recoveryAttempts = 0;
+          this.invocationState.unfinishedWorkContinuations = 0;
+        }
         // Increment checkpoint counters after successful tool execution
         this.checkpointTracker.incrementToolCalls(toolCalls.length);
       },
@@ -2380,26 +2426,58 @@ export class Agent {
     functions?: readonly FunctionDefinition[],
     dynamicContext?: string
   ): Promise<void> {
-    const lastRole = this.conversationManager.getLastMessage()?.role;
-    this.publishContextBudget(functions, dynamicContext);
-    const compacted = await this.agentCompactor.checkAndPerformAutoCompaction({
-      instanceId: this.instanceId,
-      isSpecializedAgent: this.config.isSpecializedAgent || false,
-      generateId: () => this.generateId(),
-      parentCallId: this.activeExecutionContext.parentCallId,
-      signal: this.interruptionManager.beginRequest(),
-      functions,
-      dynamicContext,
-      modelMaxOutput: this.appConfig.max_tokens,
-      phase: lastRole === 'user' ? 'pre-turn' : 'mid-turn',
-    });
+    let compacted = false;
+    // Semantic reduction is its own model request with an independent deadline
+    // and the owner's abort signal. The foreground no-progress watchdog cannot
+    // observe its non-streaming output; leaving it armed would abort healthy
+    // reducers at the foreground timeout before their own bound expires.
+    const watchdogWasActive = this.activityMonitor.isActive();
+    let checkCompleted = false;
+    if (watchdogWasActive) this.pauseActivityMonitoring();
 
-    if (compacted) {
-      // Reclaim changed the conversation; republish so tools sizing their
-      // output this turn see the post-reclaim budget rather than the one that
-      // triggered it.
-      this.publishContextBudget(functions, dynamicContext);
-      await this.autoSaveSession();
+    try {
+      // An interjection is appended to ConversationManager before it aborts the
+      // current request. If that request is an auxiliary compaction transaction,
+      // retry from a fresh snapshot so the queued message becomes part of the
+      // checkpoint instead of escaping through the outer hard-cancel path. This
+      // also handles several interjections arriving across successive attempts.
+      while (true) {
+        const lastRole = this.conversationManager.getLastMessage()?.role;
+        this.publishContextBudget(functions, dynamicContext);
+        try {
+          compacted = await this.agentCompactor.checkAndPerformAutoCompaction({
+            instanceId: this.instanceId,
+            isSpecializedAgent: this.config.isSpecializedAgent || false,
+            generateId: () => this.generateId(),
+            parentCallId: this.activeExecutionContext.parentCallId,
+            signal: this.interruptionManager.beginRequest(),
+            functions,
+            dynamicContext,
+            modelMaxOutput: this.appConfig.max_tokens,
+            phase: lastRole === 'user' ? 'pre-turn' : 'mid-turn',
+          });
+          break;
+        } catch (error) {
+          if (this.interruptionManager.getCause()?.kind !== 'user_interjection') throw error;
+          logger.debug(
+            '[AGENT_COMPACTION]',
+            this.instanceId,
+            'Compaction interrupted by queued user input; retrying from updated conversation',
+          );
+          this.interruptionManager.reset();
+        }
+      }
+
+      if (compacted) {
+        // Reclaim changed the conversation; republish so tools sizing their
+        // output this turn see the post-reclaim budget rather than the one that
+        // triggered it.
+        this.publishContextBudget(functions, dynamicContext);
+        await this.autoSaveSession();
+      }
+      checkCompleted = true;
+    } finally {
+      if (watchdogWasActive) this.resumeActivityMonitoring(checkCompleted);
     }
   }
 
@@ -2434,6 +2512,7 @@ export class Agent {
       retainedTailBudget: snapshot.retainedTailBudget,
       checkpointBudget: snapshot.checkpointBudget,
       maxToolResultTokens: snapshot.maxToolResultTokens,
+      maxToolBatchTokens: snapshot.maxToolBatchTokens,
     };
   }
 

@@ -75,6 +75,7 @@ export function createToolResultMessage(
   name: string;
   content: string;
   is_error?: boolean;
+  images?: string[];
 } {
   // When given a result object, strip display-only fields so the user-facing
   // rendering never reaches the model. Pre-serialized strings pass through
@@ -142,4 +143,3 @@ export function isValidToolCall(toolCall: any): boolean {
 
   return true;
 }
-

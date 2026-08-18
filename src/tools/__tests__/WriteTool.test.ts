@@ -75,7 +75,7 @@ describe('WriteTool', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('already exists');
-      expect(result.suggestion).toContain('edit or line-edit');
+      expect(result.suggestion).toContain('apply-patch');
     });
 
     it('should write multi-line content', async () => {
@@ -247,8 +247,11 @@ describe('WriteTool', () => {
 
       expect(def.type).toBe('function');
       expect(def.function.name).toBe('write');
+      expect(def.function.parameters.properties).not.toHaveProperty('overwrite');
       expect(def.function.parameters.required).toContain('file_path');
       expect(def.function.parameters.required).toContain('content');
+      expect(def.function.description).toContain('one model response');
+      expect(def.function.parameters.properties.content.description).toContain('split large implementations');
     });
 
     it('should provide custom result preview', () => {

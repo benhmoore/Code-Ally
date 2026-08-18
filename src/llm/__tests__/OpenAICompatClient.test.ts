@@ -92,6 +92,27 @@ describe('OpenAICompatClient', () => {
     expect(body.messages[1]).toEqual({ role: 'tool', tool_call_id: 'c1', content: 'match' });
   });
 
+  it('sends tool images after all parallel tool results', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
+    const messages: Message[] = [
+      { role: 'assistant', content: '', tool_calls: [
+        { id: 'c1', type: 'function', function: { name: 'shot', arguments: {} } },
+        { id: 'c2', type: 'function', function: { name: 'inspect', arguments: {} } },
+      ] },
+      { role: 'tool', name: 'shot', tool_call_id: 'c1', content: 'captured', images: ['data:image/png;base64,ONE'] },
+      { role: 'tool', name: 'inspect', tool_call_id: 'c2', content: 'inspected', images: ['data:image/png;base64,TWO'] },
+    ];
+
+    await client.send(messages, { stream: false, signal: signal() });
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+
+    expect(body.messages.map((message: any) => message.role)).toEqual(['assistant', 'tool', 'tool', 'user']);
+    expect(body.messages[3].content).toEqual(expect.arrayContaining([
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,ONE' } },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,TWO' } },
+    ]));
+  });
+
   it('sends an Authorization header when an apiKey is configured', async () => {
     const authed = new OpenAICompatClient({
       endpoint: 'http://host', modelName: 'm', temperature: 0.3, contextSize: 8192, maxTokens: 100,

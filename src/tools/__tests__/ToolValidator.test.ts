@@ -8,7 +8,6 @@ import { BaseTool } from '../BaseTool.js';
 import { ReadTool } from '../ReadTool.js';
 import { BashTool } from '../BashTool.js';
 import { GrepTool } from '../GrepTool.js';
-import { LineEditTool } from '../LineEditTool.js';
 import { AgentTool } from '../AgentTool.js';
 import { ToolResult, FunctionDefinition } from '@shared/index.js';
 import { ActivityStream } from '@services/ActivityStream.js';
@@ -30,7 +29,6 @@ describe('ToolValidator', () => {
   let readTool: ReadTool;
   let bashTool: BashTool;
   let grepTool: GrepTool;
-  let lineEditTool: LineEditTool;
   let agentTool: AgentTool;
 
   beforeEach(() => {
@@ -39,7 +37,6 @@ describe('ToolValidator', () => {
     readTool = new ReadTool(activityStream);
     bashTool = new BashTool(activityStream);
     grepTool = new GrepTool(activityStream);
-    lineEditTool = new LineEditTool(activityStream);
     agentTool = new AgentTool(activityStream);
   });
 
@@ -230,75 +227,6 @@ describe('ToolValidator', () => {
         pattern: 'class.*Test',
         after_context: 3,
         before_context: 3,
-      });
-
-      expect(result.valid).toBe(true);
-    });
-  });
-
-  describe('LineEditTool validation', () => {
-    const lineEditFunctionDef: FunctionDefinition = {
-      type: 'function',
-      function: {
-        name: 'line-edit',
-        description: 'Edit files by line',
-        parameters: {
-          type: 'object',
-          properties: {
-            file_path: { type: 'string' },
-            operation: { type: 'string' },
-            line_number: { type: 'integer' },
-            content: { type: 'string' },
-            num_lines: { type: 'integer' },
-          },
-          required: ['file_path', 'operation', 'line_number'],
-        },
-      },
-    };
-
-    it('should reject line_number < 1', () => {
-      const result = validator.validateArguments(lineEditTool, lineEditFunctionDef, {
-        file_path: 'test.txt',
-        operation: 'replace',
-        line_number: 0,
-        content: 'new content',
-      });
-
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('line_number must be >= 1');
-      expect(result.suggestion).toContain('1-indexed');
-    });
-
-    it('should reject unreasonably large line_number', () => {
-      const result = validator.validateArguments(lineEditTool, lineEditFunctionDef, {
-        file_path: 'test.txt',
-        operation: 'replace',
-        line_number: 2000000,
-        content: 'new content',
-      });
-
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('unreasonably large');
-    });
-
-    it('should reject negative num_lines for delete', () => {
-      const result = validator.validateArguments(lineEditTool, lineEditFunctionDef, {
-        file_path: 'test.txt',
-        operation: 'delete',
-        line_number: 5,
-        num_lines: -1,
-      });
-
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('num_lines must be >= 1');
-    });
-
-    it('should accept valid line edit', () => {
-      const result = validator.validateArguments(lineEditTool, lineEditFunctionDef, {
-        file_path: 'test.txt',
-        operation: 'replace',
-        line_number: 10,
-        content: 'new content',
       });
 
       expect(result.valid).toBe(true);

@@ -116,13 +116,27 @@ export class MCPTool extends BaseTool {
             callArgs,
           );
 
+      const images = result.content
+        .filter((item): item is typeof item & { data: string; mimeType: string } =>
+          item.type === 'image'
+          && typeof item.data === 'string'
+          && item.data.length > 0
+          && typeof item.mimeType === 'string'
+          && item.mimeType.length > 0)
+        .map(item => `data:${item.mimeType};base64,${item.data}`);
+
       // Convert MCP result to ToolResult
       if (result.isError) {
         const errorText = result.content
           .filter(c => c.type === 'text' && c.text)
           .map(c => c.text)
           .join('\n') || 'MCP tool returned an error';
-        return this.formatErrorResponse(errorText, 'plugin_error');
+        return this.formatErrorResponse(
+          errorText,
+          'plugin_error',
+          undefined,
+          images.length > 0 ? { images } : undefined,
+        );
       }
 
       const contentText = result.content
@@ -130,7 +144,10 @@ export class MCPTool extends BaseTool {
         .map(c => c.text)
         .join('\n');
 
-      return this.formatSuccessResponse({ content: contentText || 'Success' });
+      return this.formatSuccessResponse({
+        content: contentText || (images.length > 0 ? `Returned ${images.length} image attachment(s).` : 'Success'),
+        ...(images.length > 0 && { images }),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`[MCPTool] ${this.name} execution failed: ${message}`);

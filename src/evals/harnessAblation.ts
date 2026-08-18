@@ -79,11 +79,11 @@ function tool(
 }
 
 const READ = tool('read', 'Read one or more files. Read related files together.', {
-  file_paths: { type: 'array', description: 'File paths to read', items: { type: 'string' } },
+  file_path: { type: 'array', description: 'One file path or related file paths to read', items: { type: 'string' } },
   limit: { type: 'integer', description: 'Maximum lines per file; 0 means all' },
   offset: { type: 'integer', description: 'Starting line, one-based' },
   ephemeral: { type: 'boolean', description: 'Remove large content after one turn' },
-}, ['file_paths']);
+}, ['file_path']);
 
 const GREP = tool('grep', 'Search files for text or regular-expression patterns.', {
   pattern: { type: 'string', description: 'Rust-compatible regular expression' },
@@ -99,22 +99,10 @@ const BASH = tool('bash', 'Run a shell command in the repository.', {
   run_in_background: { type: 'boolean', description: 'Run a long-lived command in background' },
 }, ['command']);
 
-const EDIT = tool('edit', 'Apply exact string replacements to one file after reading it.', {
-  file_path: { type: 'string', description: 'File to edit' },
-  edits: {
-    type: 'array',
-    description: 'Sequential exact replacements',
-    items: {
-      type: 'object',
-      properties: {
-        old_string: { type: 'string', description: 'Exact text to replace' },
-        new_string: { type: 'string', description: 'Replacement text' },
-        replace_all: { type: 'boolean', description: 'Replace every occurrence' },
-      },
-      required: ['old_string', 'new_string'],
-    },
-  },
-}, ['file_path', 'edits']);
+const APPLY_PATCH = tool('apply-patch', 'Modify one existing text file with contextual unified-diff hunks after reading it.', {
+  file_path: { type: 'string', description: 'Existing file to modify' },
+  patch: { type: 'string', description: 'Unified-diff @@ hunks with unchanged context' },
+}, ['file_path', 'patch']);
 
 const BATCH = tool('batch', 'Execute several independent tools concurrently in one wrapper call.', {
   tools: {
@@ -135,8 +123,7 @@ const DISTRACTORS: FunctionDefinition[] = [
   tool('glob', 'Find files by glob pattern.', { pattern: { type: 'string' }, path: { type: 'string' } }, ['pattern']),
   tool('ls', 'List directory entries.', { path: { type: 'string' } }),
   tool('tree', 'Show a directory tree.', { path: { type: 'string' }, depth: { type: 'integer' } }),
-  tool('write', 'Create or overwrite a file.', { file_path: { type: 'string' }, content: { type: 'string' } }, ['file_path', 'content']),
-  tool('line-edit', 'Edit a file using line-number operations.', { file_path: { type: 'string' }, edits: { type: 'array', items: { type: 'object' } } }, ['file_path', 'edits']),
+  tool('write', 'Create a new file.', { file_path: { type: 'string' }, content: { type: 'string' } }, ['file_path', 'content']),
   tool('explore', 'Delegate repository exploration.', { task_prompt: { type: 'string' } }, ['task_prompt']),
   tool('plan', 'Delegate implementation planning.', { task_prompt: { type: 'string' } }, ['task_prompt']),
   tool('todo-write', 'Create or update the task list.', { todos: { type: 'array', items: { type: 'object' } } }, ['todos']),
@@ -152,7 +139,7 @@ const DISTRACTORS: FunctionDefinition[] = [
   tool('scheduled-tasks', 'Manage scheduled tasks.', { action: { type: 'string' } }, ['action']),
 ];
 
-const FULL_TOOLS = [READ, GREP, BASH, EDIT, BATCH, ...DISTRACTORS];
+const FULL_TOOLS = [READ, GREP, BASH, APPLY_PATCH, BATCH, ...DISTRACTORS];
 const RUNTIME_CORE_TOOLS = createRuntimeCoreToolDefinitions();
 
 const MINIMAL_PROMPT = 'You are a coding assistant. Use the provided tools to complete the request accurately.';
@@ -161,7 +148,7 @@ const CONCISE_PROMPT = `You are Ally, a coding assistant. Complete the request w
 Tool rules:
 - Choose the narrowest tool that directly matches the operation.
 - Read a file before editing it.
-- Use one read call with file_paths for multiple related files.
+- Use one read call with file_path for multiple related files.
 - For different independent operations, emit separate native tool calls in one response.
 - Do not call unrelated tools or describe a tool call instead of making it.`;
 
@@ -170,7 +157,7 @@ const OVERLAP_CANDIDATE_PROMPT = `You are Ally, a coding assistant. Complete the
 Tool rules:
 - Choose the narrowest tool that directly matches the operation.
 - Read a file before editing it.
-- Use one read call with file_paths for multiple related files.
+- Use one read call with file_path for multiple related files.
 - For different independent operations, emit separate native tool calls in one response.
 - Do not call unrelated or overlapping tools, or describe a tool call instead of making it.`;
 
@@ -362,7 +349,7 @@ async function promptToolCase(
     : density === 'synthetic' ? FULL_TOOLS
     : scenario === 'select_grep' ? [GREP, READ, GLOB_FALLBACK]
       : scenario === 'multi_read' ? [READ, GREP]
-        : [READ, EDIT, GREP];
+        : [READ, APPLY_PATCH, GREP];
 
   if (scenario === 'select_grep') {
     const result = await send(client, [
@@ -392,7 +379,7 @@ async function promptToolCase(
     ], functions, options);
     const call = callNamed(result.response, 'read');
     const functionalScore = Number(Boolean(call))
-      + Number(samePaths(call?.function.arguments.file_paths, ['package.json', 'src/llm/modelProfile.ts']));
+      + Number(samePaths(call?.function.arguments.file_path, ['package.json', 'src/llm/modelProfile.ts']));
     const efficiencyScore = Number(result.response.tool_calls?.length === 1);
     return record({ section: 'prompt_tooling', model, repetition, variant, density, scenario }, {
       score: functionalScore + efficiencyScore,
@@ -426,14 +413,12 @@ async function promptToolCase(
     { role: 'assistant', content: first.response.content, tool_calls: first.response.tool_calls },
     { role: 'tool', tool_call_id: read.id, content: '1→export function rangeSize(start: number, end: number) {\n2→  return end - start;\n3→}' },
   ], functions, options);
-  const edit = callNamed(second.response, 'edit');
-  const edits = edit?.function.arguments.edits;
-  const replacement = Array.isArray(edits) ? edits[0] : undefined;
-  const replacementCorrect = typeof replacement?.old_string === 'string'
-    && replacement.old_string.includes('return end - start;')
-    && typeof replacement?.new_string === 'string'
-    && replacement.new_string.includes('return end - start + 1;');
-  const functionalScore = Number(samePaths(read.function.arguments.file_paths, ['src/range.ts']))
+  const edit = callNamed(second.response, 'apply-patch');
+  const patch = edit?.function.arguments.patch;
+  const replacementCorrect = typeof patch === 'string'
+    && patch.includes('-  return end - start;')
+    && patch.includes('+  return end - start + 1;');
+  const functionalScore = Number(samePaths(read.function.arguments.file_path, ['src/range.ts']))
     + Number(Boolean(edit))
     + Number(repositoryPath(edit?.function.arguments.file_path) === 'src/range.ts')
     + Number(replacementCorrect);
@@ -496,7 +481,7 @@ async function behaviorCase(
   if (scenario === 'direct_known_file') {
     const read = callNamed(result.response, 'read');
     const functionalScore = Number(Boolean(read))
-      + Number(samePaths(read?.function.arguments.file_paths, ['package.json']));
+      + Number(samePaths(read?.function.arguments.file_path, ['package.json']));
     const waste = new Set(['agent', 'explore', 'plan', 'ask-user-question', 'todo-write']);
     const efficiencyScore = Number(calls.length === 1)
       + Number(!calls.some(call => waste.has(call.function.name)));
@@ -547,7 +532,7 @@ async function behaviorCase(
 
     const ask = callNamed(finalResponse, 'ask-user-question') ?? firstAsk;
     const questions = ask?.function.arguments.questions;
-    const destructive = new Set(['write', 'edit', 'line-edit']);
+    const destructive = new Set(['write', 'apply-patch']);
     const functionalScore = Number(Boolean(ask))
       + Number(Array.isArray(questions) && questions.length > 0);
     const allCalls = responses.flatMap(response => response.tool_calls ?? []);

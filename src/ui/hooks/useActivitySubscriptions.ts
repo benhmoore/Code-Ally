@@ -637,7 +637,7 @@ export const useActivitySubscriptions = (
         oldContent: String(event.data?.oldContent || '').slice(-64 * 1024),
         newContent: String(event.data?.newContent || '').slice(-64 * 1024),
         filePath: event.data?.filePath || '',
-        operationType: event.data?.operationType || 'edit',
+        operationType: event.data?.operationType || 'apply-patch',
         editsCount: event.data?.editsCount,
       },
     });

@@ -93,7 +93,7 @@ export class FormatTool extends BaseTool {
           const newContent = await this.formatFileContent(absPath, oldContent);
           return { oldContent, newContent };
         },
-        'edit'
+        'format'
       );
     }
   }

@@ -156,7 +156,8 @@ with open(path) as f:
 messages = d.get("messages", [])
 tail = d.get("transcript_tail", []) or []
 meta = d.get("metadata", {}) or {}
-checkpoint = meta.get("checkpoint") or d.get("checkpoint")
+checkpoint = (meta.get("checkpoint") or d.get("checkpoint")
+              or d.get("conversation_checkpoint"))
 print(f"session:      {d.get('id')}")
 print(f"file:         {path}")
 print(f"working_dir:  {d.get('working_dir')}")
@@ -168,6 +169,9 @@ if isinstance(checkpoint, dict):
 evicted = sum(1 for m in messages if (m.get("metadata") or {}).get("contentEvicted"))
 if evicted:
     print(f"evicted:      {evicted} tool result(s) stubbed in active window")
+compacted_args = sum(1 for m in messages if (m.get("metadata") or {}).get("toolArgumentsEvicted"))
+if compacted_args:
+    print(f"compacted:    {compacted_args} completed tool call(s) carry bounded arguments")
 last = messages[-1] if messages else None
 if last:
     preview = (last.get("content") or "").replace("\n", " ")[:160]

@@ -38,6 +38,11 @@ function getExplorationBasePrompt(tempDir: string): string {
 
 - All file paths MUST be absolute
 - Always use absolute paths (cwd resets between bash calls)
+- Match exploration to the request. When exact files or symbols are named, skip tree/glob discovery and query those targets directly.
+- Prefer grep for declarations/references, then read only the narrow ranges needed to interpret the matches. Read whole files only when their complete behavior is genuinely required.
+- Parallel reads share one output budget. Do not batch full-file reads that may exceed it; group only small known files and inspect larger files narrowly.
+- Stop calling tools as soon as the requested evidence is sufficient. Do not reread evicted output or source merely for reassurance; re-query only the missing symbol or range.
+- For long multi-file investigations, save compact accumulated findings with write-temp before earlier evidence can be evicted, then synthesize from those notes.
 - Mention any temp files created in your final response with full paths
 - Report findings with file paths and relevant code snippets`;
 }

@@ -12,7 +12,7 @@ import { CleanupCallTool } from './CleanupCallTool.js';
 import { CompleteObjectiveTool } from './CompleteObjectiveTool.js';
 import { DeleteAgentTool } from './DeleteAgentTool.js';
 import { EditAgentTool } from './EditAgentTool.js';
-import { EditTool } from './EditTool.js';
+import { ApplyPatchTool } from './ApplyPatchTool.js';
 import { EnterPlanModeTool } from './EnterPlanModeTool.js';
 import { ExitPlanModeTool } from './ExitPlanModeTool.js';
 import { ExploreTool } from './ExploreTool.js';
@@ -20,7 +20,6 @@ import { FormatTool } from './FormatTool.js';
 import { GlobTool } from './GlobTool.js';
 import { GrepTool } from './GrepTool.js';
 import { KillShellTool } from './KillShellTool.js';
-import { LineEditTool } from './LineEditTool.js';
 import { LintTool } from './LintTool.js';
 import { ListAgentsTool } from './ListAgentsTool.js';
 import { LsTool } from './LsTool.js';
@@ -73,8 +72,7 @@ export function createBuiltInTools(
     new DeleteAgentTool(activityStream),
     new ListAgentsTool(activityStream),
     new WriteTempTool(activityStream),
-    new EditTool(activityStream),
-    new LineEditTool(activityStream),
+    new ApplyPatchTool(activityStream),
     new GlobTool(activityStream),
     new GrepTool(activityStream),
     new LsTool(activityStream),

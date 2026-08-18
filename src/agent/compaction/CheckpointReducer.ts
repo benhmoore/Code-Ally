@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { Message, ToolCall } from '../../types/index.js';
 import { parseToolCallArguments } from '../../llm/FunctionCalling.js';
+import { extractSourceOutline } from './ToolCallArgumentCompaction.js';
 import {
   emptySemanticCheckpoint,
   type ArtifactReference,
@@ -127,6 +128,14 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+/** Keep the assistant's planned action without canonizing its preceding diagnosis. */
+function assistantIntent(text: string): string {
+  const compact = oneLine(text);
+  const markers = [...compact.matchAll(/\b(?:let me|I['’]ll|I will|next\s*[:,]|now\s+(?:let me|I['’]ll|I will))\b/gi)];
+  const lastMarker = markers.at(-1);
+  return (lastMarker ? compact.slice(lastMarker.index) : compact).slice(0, 400);
+}
+
 /** Structured error signals only. Prose that merely mentions "error" is not a blocker. */
 function toolResultFailed(
   message: Message,
@@ -173,16 +182,17 @@ function artifactFromCall(call: ToolCall, sourceId: string): ArtifactReference[]
   const name = call.function.name;
   const operation: ArtifactReference['operation'] =
     name === 'write' ? 'created' :
-      ['edit', 'line-edit', 'apply_patch'].includes(name) ? 'modified' :
+      ['apply-patch', 'apply_patch'].includes(name) ? 'modified' :
         name === 'read' ? 'read' : 'referenced';
   const rawPaths = [args.file_path, args.path, args.file, args.target]
     .flatMap(value => Array.isArray(value) ? value : [value])
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
+  const outline = extractSourceOutline(args);
   return rawPaths.map(rawPath => ({
     path: path.normalize(path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath)),
     operation,
-    reason: `${name} tool`,
+    reason: `${name} tool${outline ? `; outline: ${outline}` : ''}`.slice(0, 800),
     sourceMessageIds: [sourceId],
   }));
 }
@@ -248,10 +258,18 @@ export function extractSemanticCheckpoint(
   const lastIntent = [...messages].reverse().find(message =>
     message.role === 'assistant' && message.content.trim().length > 0 && messageId(message));
   if (lastIntent?.id) {
-    state.activeWork.push(fact(
-      `Assistant's last stated intent (unverified): ${oneLine(lastIntent.content).slice(0, 400)}`,
+    const plannedAction = assistantIntent(lastIntent.content);
+    const intent = fact(
+      `Assistant's latest planned action (unverified): ${plannedAction}`,
       lastIntent.id,
-    ));
+    );
+    // Operational continuity must point to the newest boundary, not accumulate
+    // several mutually stale "next" intentions across generations.
+    state.activeWork = [intent];
+    state.nextActions = [fact(
+      `Continue from this planned action after reconciling it with the newest tool evidence: ${plannedAction}`,
+      lastIntent.id,
+    )];
   }
 
   for (const key of STATE_ARRAY_KEYS) {
@@ -318,42 +336,49 @@ export function parseSemanticCheckpoint(
   if (value.schemaVersion !== 1) throw new Error('Checkpoint schemaVersion must be 1');
   if (value.objective !== null && !isFact(value.objective, validIds)) throw new Error('Invalid checkpoint objective');
   if (value.currentRequest !== null && !isFact(value.currentRequest, validIds)) throw new Error('Invalid checkpoint currentRequest');
+  const normalized = emptySemanticCheckpoint();
+  normalized.objective = value.objective as SemanticCheckpointStateV1['objective'];
+  normalized.currentRequest = value.currentRequest as SemanticCheckpointStateV1['currentRequest'];
   for (const key of STATE_ARRAY_KEYS) {
     const entries = value[key];
     const extras = key === 'decisions' ? ['rationale'] : key === 'blockers' ? ['exactError'] : [];
-    if (!Array.isArray(entries) || entries.length > 25
-      || !entries.every(entry => {
+    // Array sections are independent evidence buckets. A local schema mistake
+    // in one optional/empty bucket must not discard an otherwise valid model
+    // checkpoint and force a wholesale extractive fallback. Keep only entries
+    // with valid shape and provenance; deterministic extraction remains the
+    // fallback for the omitted evidence on the next merge.
+    const validEntries = Array.isArray(entries) ? entries.slice(0, 25).filter(entry => {
         if (!isFact(entry, validIds, extras)) return false;
         const candidate = entry as unknown as Record<string, unknown>;
         return (candidate.rationale === undefined || typeof candidate.rationale === 'string')
           && (candidate.exactError === undefined || typeof candidate.exactError === 'string');
-      })) {
-      throw new Error(`Invalid checkpoint field: ${key}`);
-    }
+      }) : [];
+    normalized[key] = validEntries as any;
   }
-  if (!Array.isArray(value.artifacts) || value.artifacts.length > 100) throw new Error('Invalid checkpoint artifacts');
-  for (const artifact of value.artifacts) {
-    if (!artifact || typeof artifact !== 'object') throw new Error('Invalid checkpoint artifact');
+  const artifacts = Array.isArray(value.artifacts) ? value.artifacts : [];
+  for (const artifact of artifacts.slice(0, 100)) {
+    if (!artifact || typeof artifact !== 'object') continue;
     const item = artifact as Record<string, unknown>;
     if (!hasOnlyKeys(item, [
       'path', 'reason', 'operation', 'sourceMessageIds', 'contentHash', 'symbol', 'lineStart', 'lineEnd',
-    ])) throw new Error('Checkpoint artifact contains unknown fields');
-    if (typeof item.path !== 'string' || !path.isAbsolute(item.path)) throw new Error('Checkpoint artifact path must be absolute');
+    ])) continue;
+    if (typeof item.path !== 'string' || !path.isAbsolute(item.path)) continue;
     if (typeof item.reason !== 'string' || item.reason.length === 0
       || !['read', 'modified', 'created', 'referenced'].includes(String(item.operation))) {
-      throw new Error('Invalid checkpoint artifact metadata');
+      continue;
     }
     if ((item.contentHash !== undefined && typeof item.contentHash !== 'string')
       || (item.symbol !== undefined && typeof item.symbol !== 'string')
       || (item.lineStart !== undefined && !Number.isInteger(item.lineStart))
       || (item.lineEnd !== undefined && !Number.isInteger(item.lineEnd))) {
-      throw new Error('Invalid checkpoint artifact detail');
+      continue;
     }
     if (!Array.isArray(item.sourceMessageIds) || !item.sourceMessageIds.every(id => typeof id === 'string' && validIds.has(id))) {
-      throw new Error('Invalid checkpoint artifact provenance');
+      continue;
     }
+    normalized.artifacts.push(item as unknown as ArtifactReference);
   }
-  return value as unknown as SemanticCheckpointStateV1;
+  return normalized;
 }
 
 export function checkpointSourceDigest(messages: readonly Message[]): string {

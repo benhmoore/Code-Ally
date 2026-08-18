@@ -377,7 +377,7 @@ Only set run_in_background=false when your very next step depends on the result.
             type: 'function' as const,
             function: {
               name: 'read',
-              arguments: { file_paths: contextFiles },
+              arguments: { file_path: contextFiles },
             },
           }],
         };
@@ -386,7 +386,7 @@ Only set run_in_background=false when your very next step depends on the result.
         const result = await toolManager.executeTool(
           'read',
           {
-            file_paths: contextFiles,
+            file_path: contextFiles,
             description: 'Load context files for agent',
           },
           toolCallId,

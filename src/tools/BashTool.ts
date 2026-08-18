@@ -78,6 +78,11 @@ export class BashTool extends BaseTool {
   readonly name = 'bash';
   readonly description =
     'Execute shell commands. Use for running scripts, system operations, building/testing code';
+  readonly usageGuidance = `**When to use bash:**
+- Use shell commands to run builds, tests, package managers, scripts, and processes.
+- Do not create, delete, overwrite, or rewrite project source files through shell commands. Use write for new files and apply-patch for every existing text-file change.
+- Never terminate a process merely because it occupies a desired port. Stop only a process handle or PID created and recorded by the current session; otherwise choose another free endpoint.
+- If apply-patch fails, re-read the exact target and retry with a smaller contextual hunk. Never delete and recreate a file to bypass patch validation.`;
   readonly capabilities = [ToolCapability.ShellExec] as const;
 
   getShellCommand(args: Record<string, any>): string | null {

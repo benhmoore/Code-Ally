@@ -204,6 +204,23 @@ describe('MCPTool', () => {
       expect(result.error).toContain('File not found');
     });
 
+    it('preserves typed MCP images outside textual content', async () => {
+      (mockManager.callTool as any).mockResolvedValueOnce({
+        content: [
+          { type: 'text', text: 'Screenshot attached' },
+          { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' },
+        ],
+        isError: false,
+      });
+
+      const tool = createTool('browser', { name: 'screenshot', description: 'Capture', inputSchema: {} });
+      const result = await tool.execute({});
+
+      expect(result.content).toBe('Screenshot attached');
+      expect(result.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
+      expect(result.content).not.toContain('aW1hZ2U=');
+    });
+
     it('handles connection errors', async () => {
       (mockManager.ensureConnected as any).mockRejectedValueOnce(new Error('Connection refused'));
 

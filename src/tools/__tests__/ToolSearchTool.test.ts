@@ -48,8 +48,8 @@ describe('ToolSearchTool', () => {
 
     expect(result.success).toBe(true);
     expect(result.content).toContain('chrome_take_screenshot');
-    // The full schema must come back, so the model can call it immediately.
-    expect(result.content).toContain('"parameters"');
+    // The native schema is sent on the next request; conversation content stays compact.
+    expect(result.content).not.toContain('"parameters"');
     expect(activations.get('agent-a')).toContain('chrome_take_screenshot');
   });
 

@@ -1,8 +1,8 @@
 /**
  * FileInteractionTracker - Tracks files touched by file tools
  *
- * Maintains a history of recently accessed files from read, write, edit,
- * and line-edit operations. Used by /open command for:
+ * Maintains a history of recently accessed files from read, write, and
+ * apply-patch operations. Used by /open command for:
  * - Opening the last touched file when no argument is provided
  * - Suggesting recent files in tab completion
  */
@@ -10,7 +10,7 @@
 import path from 'path';
 
 /** Tools that interact with files and should be tracked */
-const FILE_TOOLS = new Set(['read', 'write', 'edit', 'line-edit']);
+const FILE_TOOLS = new Set(['read', 'write', 'apply-patch']);
 
 /** Maximum number of recent files to track */
 const MAX_HISTORY = 20;
@@ -22,7 +22,7 @@ export class FileInteractionTracker {
   /**
    * Record a file interaction from a tool execution
    *
-   * @param toolName - Name of the tool (read, write, edit, line-edit)
+   * @param toolName - Name of the tool (read, write, apply-patch)
    * @param filePath - Absolute or relative file path
    */
   recordInteraction(toolName: string, filePath: string): void {

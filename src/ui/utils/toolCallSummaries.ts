@@ -189,7 +189,7 @@ function countReadFiles(call: ToolCallTreeNode): number {
     return resultCount;
   }
 
-  const argCount = countValue(call.arguments?.file_paths);
+  const argCount = countValue(call.arguments?.file_path);
   return argCount > 0 ? argCount : 1;
 }
 

@@ -173,7 +173,7 @@ Verify alignment:
     // Cleaned up after turn since agent should apply pattern, not keep re-reading
     GENTLE_WARNING: {
       text: (consecutiveCount: number) =>
-        `You've made ${consecutiveCount} consecutive exploratory tool calls. Consider using explore() instead - it has its own context budget and is more efficient for multi-file investigations. Use cleanup-call first to free context, then delegate via explore() with a detailed task_prompt.`,
+        `You've made ${consecutiveCount} consecutive exploratory tool calls. Decide whether the evidence already supports the next concrete edit or verification. If it does, act now and let build/test feedback guide narrow follow-up. If the investigation is still genuinely broad, use cleanup-call and delegate it via explore() with a focused task_prompt.`,
       persist: false,
     },
 
@@ -182,7 +182,7 @@ Verify alignment:
     // Cleaned up after turn since agent should immediately switch to explore()
     STERN_WARNING: {
       text: (consecutiveCount: number) =>
-        `⚠️ CRITICAL: ${consecutiveCount} consecutive exploratory calls - you are wasting context. STOP manual exploration. Use cleanup-call to remove recent results, then use explore() with a task_prompt summarizing what you're looking for and what you've found so far.`,
+        `⚠️ CRITICAL: ${consecutiveCount} consecutive exploratory calls are consuming the working context. STOP manual exploration. Your next step must either execute the concrete edit/verification already supported by evidence, or use cleanup-call and delegate a still-broad investigation via explore() with a focused task_prompt. Do not perform another read/search merely for reassurance.`,
       persist: false,
     },
   },

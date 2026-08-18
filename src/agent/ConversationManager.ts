@@ -698,8 +698,7 @@ export class ConversationManager {
         if (args.file_paths) {
           filePaths = Array.isArray(args.file_paths) ? args.file_paths : [args.file_paths];
         } else if (args.file_path) {
-          // Handle legacy single file_path argument
-          filePaths = [args.file_path];
+          filePaths = Array.isArray(args.file_path) ? args.file_path : [args.file_path];
         }
 
         // Check if target file is in this read call

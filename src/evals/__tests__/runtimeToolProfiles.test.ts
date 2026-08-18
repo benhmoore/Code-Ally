@@ -19,6 +19,8 @@ describe('runtime tool profiles', () => {
     expect(profile.names).not.toContain('scheduled-tasks');
     expect(profile.names).not.toContain('bash-output');
     expect(profile.names).not.toContain('line-edit');
+    expect(profile.names).not.toContain('edit');
+    expect(profile.names).toContain('apply-patch');
     expect(profile.names).not.toContain('agent-ask');
     expect(profile.names).not.toContain('cleanup-call');
     expect(profile.characters).toBeGreaterThan(12_000);

@@ -34,7 +34,7 @@ describe('scheduled permission policy', () => {
     manager.setScheduledPermissionPolicy({ allowed_tools: ['write'] });
 
     await expect(manager.checkPermission('write', { file_path: 'a.txt' }, 'a.txt')).resolves.toBe(true);
-    await expect(manager.checkPermission('edit', { file_path: 'a.txt' }, 'a.txt'))
+    await expect(manager.checkPermission('apply-patch', { file_path: 'a.txt' }, 'a.txt'))
       .rejects.toBeInstanceOf(PermissionDeniedError);
   });
 

@@ -26,6 +26,7 @@ import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
 import { createHttpResponseError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries } from './httpTransport.js';
 import { validateToolCalls } from './toolCalls.js';
+import { materializeToolImageMessages } from './messageImages.js';
 
 /** OpenAI chat-completions request payload (the subset we send). */
 interface OpenAIPayload {
@@ -189,7 +190,7 @@ export class OpenAICompatClient extends ModelClient {
   ): OpenAIPayload {
     const payload: OpenAIPayload = {
       model: this._modelName,
-      messages: messages.map(m => this.toOpenAIMessage(m)),
+      messages: materializeToolImageMessages(messages).map(m => this.toOpenAIMessage(m)),
       stream,
       max_tokens: dynamicMaxTokens ?? this._maxTokens,
     };

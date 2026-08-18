@@ -1,4 +1,5 @@
 import type { Message } from '../types/index.js';
+import { materializeToolImageMessages } from './messageImages.js';
 
 /**
  * Normalize internal conversation history for Ollama's native chat endpoint.
@@ -14,6 +15,8 @@ import type { Message } from '../types/index.js';
  * - later internal system reminders are user continuation messages
  */
 export function normalizeOllamaMessages(messages: readonly Message[]): readonly Message[] {
+  messages = materializeToolImageMessages(messages);
+  messages = normalizeOllamaImages(messages);
   let leadingSystemCount = 0;
   while (messages[leadingSystemCount]?.role === 'system') {
     leadingSystemCount++;
@@ -45,4 +48,31 @@ export function normalizeOllamaMessages(messages: readonly Message[]): readonly 
   }
 
   return normalized;
+}
+
+/**
+ * Ollama's native `/api/chat` schema accepts raw base64 strings in
+ * `message.images`. Internal messages use data URIs so MIME information is not
+ * lost and OpenAI-compatible providers can consume them directly. Remove only
+ * a valid base64 data-URI prefix at this provider boundary and leave existing
+ * raw payloads unchanged.
+ */
+function normalizeOllamaImages(messages: readonly Message[]): readonly Message[] {
+  let changed = false;
+  const normalized = messages.map(message => {
+    if (!message.images?.length) return message;
+
+    const images = message.images.map(image => {
+      const match = /^data:[^;,]+;base64,(.*)$/s.exec(image);
+      if (!match) return image;
+      changed = true;
+      return match[1]!;
+    });
+
+    return images.some((image, index) => image !== message.images![index])
+      ? { ...message, images }
+      : message;
+  });
+
+  return changed ? normalized : messages;
 }

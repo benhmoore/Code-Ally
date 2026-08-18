@@ -58,6 +58,8 @@ export interface ContextBudgetSnapshot {
    * reclaim and loops re-fetching it.
    */
   maxToolResultTokens: number;
+  /** Aggregate ceiling for non-truncatable results in one tool-call group. */
+  maxToolBatchTokens: number;
   shouldCompact: boolean;
 }
 
@@ -168,6 +170,7 @@ export class ContextBudgetPlanner {
       retainedTailBudget,
       checkpointBudget,
       maxToolResultTokens: Math.max(1, Math.floor(retainedTailBudget * SINGLE_RESULT_SHARE_OF_TAIL)),
+      maxToolBatchTokens: retainedTailBudget,
       shouldCompact: effectiveInput >= triggerBudget,
     };
   }

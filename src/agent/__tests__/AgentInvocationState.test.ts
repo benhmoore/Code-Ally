@@ -6,6 +6,7 @@ describe('AgentInvocationState', () => {
     const state = new AgentInvocationState();
     expect({ ...state }).toEqual({
       recoveryAttempts: 0,
+      unfinishedWorkContinuations: 0,
       pendingCleanupIds: [],
       requestInProgress: false,
       agentEndEmitted: false,
@@ -15,6 +16,7 @@ describe('AgentInvocationState', () => {
   it('restores every field after a dirty invocation', () => {
     const state = new AgentInvocationState();
     state.recoveryAttempts = 3;
+    state.unfinishedWorkContinuations = 1;
     state.pendingCleanupIds.push('call-1', 'call-2');
     state.requestInProgress = true;
     state.agentEndEmitted = true;

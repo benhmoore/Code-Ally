@@ -71,6 +71,8 @@ export interface MessageMetadata {
    * must treat an evicted message as absent.
    */
   contentEvicted?: boolean;
+  /** Bulky payload fields in completed mutation calls were replaced by a structural stub. */
+  toolArgumentsEvicted?: boolean;
   /** File paths, images, and directories that were mentioned using '@' completion in this message */
   mentions?: {
     files?: string[];
@@ -603,6 +605,18 @@ export interface ToolExecutionContext {
   activityStream?: { emit(event: ActivityEvent): void };
   /** Form response data from user interaction (populated after form submission) */
   formResponse?: Record<string, any>;
+  /**
+   * Shared allowance for non-truncatable outputs produced by one assistant
+   * tool-call group. Calls listed here still pass normal validation, but return
+   * a bounded context-budget error before execution.
+   */
+  outputBudget?: {
+    limitTokens: number;
+    estimatedTokens: number;
+    rejectedCallIds: ReadonlySet<string>;
+    /** Per-call payload ceilings whose sum fits within limitTokens. */
+    maxResultTokensByCallId: ReadonlyMap<string, number>;
+  };
 }
 
 // ===========================

@@ -12,7 +12,7 @@ describe('createBuiltInTools', () => {
       'bash', 'bash-output', 'kill-shell', 'cancel-agent', 'wait', 'watch',
       'complete-objective', 'block-objective', 'reconcile-effect', 'read', 'write',
       'write-agent', 'edit-agent', 'delete-agent', 'list-agents', 'write-temp',
-      'edit', 'line-edit', 'glob', 'grep', 'ls', 'tool-search', 'tree', 'agent', 'manage-agents',
+      'apply-patch', 'glob', 'grep', 'ls', 'tool-search', 'tree', 'agent', 'manage-agents',
       'explore', 'plan', 'agent-ask', 'cleanup-call', 'todo-write', 'sessions',
       'lint', 'format', 'ask-user-question', 'web-fetch', 'web-search', 'research',
       'skill', 'memory', 'scheduled-tasks', 'enter-plan-mode', 'exit-plan-mode',
@@ -27,9 +27,12 @@ describe('createBuiltInTools', () => {
       'ally',
     );
 
-    expect(definitions).toHaveLength(34);
+    expect(definitions).toHaveLength(33);
     expect(definitions.map(definition => definition.function.name)).not.toContain('write-agent');
     expect(definitions.map(definition => definition.function.name)).toContain('memory');
+    expect(definitions.map(definition => definition.function.name)).toContain('apply-patch');
+    expect(definitions.map(definition => definition.function.name)).not.toContain('edit');
+    expect(definitions.map(definition => definition.function.name)).not.toContain('line-edit');
   });
 
   it('keeps todo calls minimal by deriving display text internally', () => {
