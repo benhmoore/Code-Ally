@@ -38,6 +38,22 @@ export class HttpResponseError extends Error {
   }
 }
 
+/** A retry ceiling was reached; preserves the final failure for recovery logic. */
+export class RetryBudgetExceededError extends Error {
+  readonly cause: unknown;
+  readonly httpStatus?: number;
+  readonly responseBody?: string;
+
+  constructor(lastError: any) {
+    const detail = lastError?.message ? ` Last error: ${lastError.message}` : '';
+    super(`Too many consecutive failures.${detail}`);
+    this.name = 'RetryBudgetExceededError';
+    this.cause = lastError;
+    this.httpStatus = lastError?.httpStatus ?? lastError?.status ?? lastError?.statusCode;
+    this.responseBody = lastError?.responseBody;
+  }
+}
+
 function parseRetryAfter(value?: string | null): number | undefined {
   if (!value) return undefined;
   const seconds = Number(value);
@@ -321,7 +337,7 @@ export async function runWithRetries<T>(params: {
       if (errorClass !== 'non_retryable') {
         failures++;
         if (Number.isFinite(maxFailures) && failures >= maxFailures) {
-          return onError(new Error('Too many consecutive failures'));
+          return onError(new RetryBudgetExceededError(error));
         }
         const delayMs = Math.max(
           getRetryDelayMs(attemptNum),
