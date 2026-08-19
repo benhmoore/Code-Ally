@@ -21,6 +21,10 @@ describe('BashTool', () => {
       expect(bashTool.name).toBe('bash');
     });
 
+    it('does not hide an ongoing exploratory streak', () => {
+      expect(bashTool.breaksExploratoryStreak).toBe(false);
+    });
+
     it('should require confirmation', () => {
       expect(bashTool.requiresConfirmation({})).toBe(true);
     });
