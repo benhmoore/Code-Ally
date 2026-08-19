@@ -296,10 +296,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   children,
 }) => {
   // State
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationView, setConversationView] = useState<{
+    messages: Message[];
+    activeToolCalls: ToolCallState[];
+  }>({ messages: [], activeToolCalls: [] });
+  const { messages, activeToolCalls } = conversationView;
   const [config, setConfig] = useState<Config>(initialConfig);
   const [contextUsage, setContextUsage] = useState<number>(0);
-  const [activeToolCalls, setActiveToolCalls] = useState<ToolCallState[]>([]);
   const [isThinking, setIsThinking] = useState<boolean>(false);
   const [streamingContent, setStreamingContent] = useState<string | undefined>(undefined);
   const [isCompacting, setIsCompacting] = useState<boolean>(false);
@@ -327,12 +330,15 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       timestamp: message.timestamp || Date.now(),
     };
 
-    setMessages((prev) => {
+    setConversationView((prev) => {
       // Check for duplicate by ID
-      if (prev.some(m => m.id === messageWithMetadata.id)) {
+      if (prev.messages.some(m => m.id === messageWithMetadata.id)) {
         return prev;
       }
-      return boundVisibleMessages([...prev, messageWithMetadata]);
+      return {
+        ...prev,
+        messages: boundVisibleMessages([...prev.messages, messageWithMetadata]),
+      };
     });
   }, []);
 
@@ -354,7 +360,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       return true;
     });
 
-    setMessages(boundVisibleMessages(deduplicated));
+    setConversationView((prev) => ({
+      ...prev,
+      messages: boundVisibleMessages(deduplicated),
+    }));
   }, []);
 
   const updateConfig = useCallback((updates: Partial<Config>) => {
@@ -370,14 +379,17 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       throw new Error(`Cannot add tool call without ID. Tool: ${toolCall.toolName}`);
     }
 
-    setActiveToolCalls((prev) => {
+    setConversationView((prev) => {
       // Check if tool call already exists by ID (prevent duplicates)
-      const exists = prev.some(tc => tc.id === toolCall.id);
+      const exists = prev.activeToolCalls.some(tc => tc.id === toolCall.id);
       if (exists) {
         throw new Error(`Duplicate tool call detected. ID ${toolCall.id} already exists. Tool: ${toolCall.toolName}`);
       }
 
-      return boundToolCalls([...prev, toolCall]);
+      return {
+        ...prev,
+        activeToolCalls: boundToolCalls([...prev.activeToolCalls, toolCall]),
+      };
     });
   }, []);
 
@@ -388,10 +400,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     const updates = new Map(pendingUpdatesRef.current);
     pendingUpdatesRef.current.clear();
 
-    setActiveToolCalls((prev) => {
+    setConversationView((prev) => {
       // Only create new array if something actually changed
       let hasChanges = false;
-      const newArray = prev.map((call) => {
+      const newArray = prev.activeToolCalls.map((call) => {
         const update = updates.get(call.id);
         if (update) {
           hasChanges = true;
@@ -399,7 +411,9 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         }
         return call;
       });
-      return hasChanges ? boundToolCalls(newArray) : prev;
+      return hasChanges
+        ? { ...prev, activeToolCalls: boundToolCalls(newArray) }
+        : prev;
     });
   }, []);
 
@@ -453,11 +467,16 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   }, [flushPendingUpdates]);
 
   const removeToolCall = useCallback((id: string) => {
-    setActiveToolCalls((prev) => prev.filter((call) => call.id !== id));
+    setConversationView((prev) => ({
+      ...prev,
+      activeToolCalls: prev.activeToolCalls.filter((call) => call.id !== id),
+    }));
   }, []);
 
   const clearToolCalls = useCallback(() => {
-    setActiveToolCalls([]);
+    setConversationView((prev) => (
+      prev.activeToolCalls.length > 0 ? { ...prev, activeToolCalls: [] } : prev
+    ));
   }, []);
 
   const addCompactionNotice = useCallback((notice: CompactionNotice) => {
@@ -513,7 +532,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
 
     // CRITICAL: Clear messages and remount key FIRST, then clear terminal, then set new messages
     // This ensures the old Static component unmounts cleanly before terminal clear
-    setMessages([]);
+    setConversationView((prev) => ({ ...prev, messages: [] }));
     setStaticRemountKey((prev) => prev + 1);
 
     // Use setImmediate to ensure React has processed the empty state before we clear and set new content
@@ -525,7 +544,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
 
       // Now set the new messages
-      setMessages(boundVisibleMessages(deduplicated));
+      setConversationView((prev) => ({
+        ...prev,
+        messages: boundVisibleMessages(deduplicated),
+      }));
     });
   }, []);
 
@@ -553,13 +575,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     // Clear + remount FIRST, then (after the old Static unmounts) clear the
     // terminal and set messages + tool calls in ONE commit so the rebuilt
     // timeline is complete and correctly ordered.
-    setMessages([]);
-    setActiveToolCalls([]);
+    setConversationView({ messages: [], activeToolCalls: [] });
     setStaticRemountKey((prev) => prev + 1);
     setImmediate(() => {
       process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
-      setMessages(boundVisibleMessages(deduplicated));
-      setActiveToolCalls(boundToolCalls(toolCalls));
+      setConversationView({
+        messages: boundVisibleMessages(deduplicated),
+        activeToolCalls: boundToolCalls(toolCalls),
+      });
     });
   }, []);
 
