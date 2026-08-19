@@ -2,7 +2,9 @@ import React from 'react';
 import { EventEmitter } from 'events';
 import { render } from 'ink';
 import { afterEach, describe, expect, test } from 'vitest';
-import type { Message } from '@shared/index.js';
+import type { Message, ToolCallState } from '@shared/index.js';
+import { ActivityStream } from '@services/ActivityStream.js';
+import { ActivityProvider } from '../../contexts/ActivityContext.js';
 import { ConversationView } from '../ConversationView.js';
 import { MessageDisplay } from '../MessageDisplay.js';
 
@@ -59,6 +61,45 @@ describe('ConversationView terminal stability', () => {
     const updateOutput = stdout.frames.slice(frameCount).join('');
     expect(updateOutput).not.toContain('\x1B[2J\x1B[3J\x1B[H');
     expect(updateOutput).not.toContain('completed line 0');
+  });
+
+  test('completed tool output retains the conversation width inside Static', async () => {
+    const stdout = new FakeStdout();
+    stdout.columns = 120;
+    stdout.rows = 24;
+    const toolCall: ToolCallState = {
+      id: 'wide-output',
+      status: 'success',
+      toolName: 'bash',
+      arguments: { command: 'inspect' },
+      output: 'abcdefghijklmnopqrstuvwxyz 0123456789 this output should remain on one physical line',
+      startTime: 1,
+      endTime: 2,
+    };
+    const instance = render(
+      <ActivityProvider activityStream={new ActivityStream()}>
+        <ConversationView
+          messages={[]}
+          activeToolCalls={[toolCall]}
+          compactionNotices={[]}
+          rewindNotices={[]}
+          statusMessages={[]}
+          staticRemountKey={0}
+          config={{ show_thinking_in_chat: false }}
+        />
+      </ActivityProvider>,
+      {
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
+    );
+    mounted.push(instance);
+    await waitForInk();
+
+    const output = stdout.frames.join('');
+    expect(output).toContain('abcdefghijklmnopqrstuvwxyz 0123456789 this output should remain on one physical line');
   });
 });
 
