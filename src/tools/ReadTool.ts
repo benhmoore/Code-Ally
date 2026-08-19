@@ -262,7 +262,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
 
       return this.formatErrorResponse(
         `File too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds the ${maxTokens}-token limit for this read. ` +
-        `This limit is the largest result that fits the conversation space still available, so a bigger read cannot be kept. ` +
+        `This is a per-result retention limit derived from the available conversation budget; it does not mean the overall context is exhausted. ` +
         `Do not page through the file by default: ${targeted}. ` +
         `Use sequential offset/limit chunks only when the task genuinely requires whole-file inspection. ` +
         `Alternative: ${examples}.${ephemeralHint}`,
