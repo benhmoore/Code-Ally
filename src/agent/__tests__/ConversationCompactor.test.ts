@@ -180,6 +180,28 @@ describe('ConversationCompactor', () => {
     expect(retried.checkpoint.generation).toBe(1);
   });
 
+  it('continues checkpoint generations after late session restoration', async () => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    // Agents construct their compactor before the UI asynchronously loads a
+    // resumed conversation, so this instance initially observes generation 0.
+    const resumedCompactor = new ConversationCompactor(
+      chatClient(), manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+    const originalCompactor = new ConversationCompactor(
+      chatClient(), manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    const first = await originalCompactor.compactAndApply(context());
+    expect(first.checkpoint.generation).toBe(1);
+
+    resumedCompactor.synchronizeCheckpointState();
+    manager.addMessage({ id: 'after-resume', role: 'user', content: 'Continue.', timestamp: 99 });
+    const next = await resumedCompactor.compactAndApply(context());
+
+    expect(next.checkpoint.generation).toBe(2);
+    expect(next.checkpoint.parentId).toBe(first.checkpoint.id);
+  });
+
   it('retries a transient durable commit without rebuilding or mutating early', async () => {
     const manager = new ConversationManager({ initialMessages: history() });
     const commit = vi.fn()
