@@ -78,7 +78,7 @@ function tool(
   };
 }
 
-const READ = tool('read', 'Read one file. Use separate parallel calls for several files.', {
+const READ = tool('read', 'Read one file or bounded range. Parallelize several reads only when their combined output is known to be modest.', {
   file_path: { type: 'string', description: 'One file path to read' },
   limit: { type: 'integer', description: 'Maximum lines per file; 0 means all' },
   offset: { type: 'integer', description: 'Starting line, one-based' },
@@ -148,7 +148,7 @@ const CONCISE_PROMPT = `You are Ally, a coding assistant. Complete the request w
 Tool rules:
 - Choose the narrowest tool that directly matches the operation.
 - Read a file before editing it.
-- file_path always identifies one file. Read several files with separate parallel calls.
+- file_path always identifies one file. Parallelize separate reads only for known-small, bounded ranges; otherwise search first and read narrowly or sequentially.
 - For different independent operations, emit separate native tool calls in one response.
 - Do not call unrelated tools or describe a tool call instead of making it.`;
 
@@ -157,7 +157,7 @@ const OVERLAP_CANDIDATE_PROMPT = `You are Ally, a coding assistant. Complete the
 Tool rules:
 - Choose the narrowest tool that directly matches the operation.
 - Read a file before editing it.
-- file_path always identifies one file. Read several files with separate parallel calls.
+- file_path always identifies one file. Parallelize separate reads only for known-small, bounded ranges; otherwise search first and read narrowly or sequentially.
 - For different independent operations, emit separate native tool calls in one response.
 - Do not call unrelated or overlapping tools, or describe a tool call instead of making it.`;
 

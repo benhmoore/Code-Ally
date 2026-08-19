@@ -220,7 +220,7 @@ export function applyModelPatch(
 
   if (patches.length !== 1 || !patches[0] || patches[0].hunks.length === 0) {
     return createPatchError(
-      'Patch must contain exactly one file patch with at least one @@ hunk',
+      'Patch must contain exactly one file patch with at least one numeric unified-diff hunk header, for example: @@ -12,3 +12,4 @@. A bare @@ header is invalid.',
       'applyModelPatch'
     );
   }

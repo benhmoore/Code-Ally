@@ -8,6 +8,14 @@ import { createUnifiedDiff } from '../diffUtils.js';
 
 describe('patchApplier', () => {
 describe('applyModelPatch', () => {
+  it('explains that bare hunk markers are not valid unified-diff headers', () => {
+    const result = applyModelPatch('@@\n-old\n+new', 'old\n');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('@@ -12,3 +12,4 @@');
+    expect(result.error).toContain('bare @@ header is invalid');
+  });
+
   it('reports surviving unique anchors when a hunk context is stale', () => {
     const source = [
       'export function buildAtlas() {',

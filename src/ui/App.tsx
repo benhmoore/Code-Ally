@@ -58,6 +58,7 @@ import { SyntaxHighlighter } from '../services/SyntaxHighlighter.js';
 import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
+import { shouldRestoreMainView } from './utils/agentViewLifecycle.js';
 
 /**
  * Props for the App component
@@ -322,6 +323,20 @@ const AppContentComponent: React.FC<{
       modal.setFleetFocused(false);
     }
   }, [backgroundAgents.length, modal]);
+
+  // Entered children are transient interactive views. Completion, failure, or
+  // interruption can remove a foreground task without a fleet-row action, so
+  // restore the primary conversation whenever that tracked run is no longer
+  // alive. The agent-list refresh is driven by lifecycle events and also has a
+  // low-frequency safety tick for missed/late events.
+  React.useEffect(() => {
+    if (state.activeAgentId === 'main') return;
+    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
+    const status = manager?.getTask(state.activeAgentId)?.status ?? null;
+    if (shouldRestoreMainView(state.activeAgentId, status)) {
+      returnToMain();
+    }
+  }, [backgroundAgents, state.activeAgentId, returnToMain]);
 
   // Event-driven refresh of the entered agent's transcript (no polling). Only
   // re-applies the full view when the agent's message count grows, so an active
