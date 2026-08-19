@@ -87,7 +87,6 @@ export class SessionsTool extends BaseTool {
   // visibleInChat defaults to true from BaseTool
 
   private activeDelegations: Map<string, any> = new Map();
-  private currentPooledAgent: PooledAgent | null = null;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -269,7 +268,6 @@ export class SessionsTool extends BaseTool {
         pooledAgent = await agentPoolService.acquire(agentConfig, toolManager);
         analysisAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
-        this.currentPooledAgent = pooledAgent; // Track for interjection routing
         logger.debug('[SESSIONS_TOOL] Acquired pooled agent:', agentId);
       }
 
@@ -344,7 +342,6 @@ export class SessionsTool extends BaseTool {
           await analysisAgent.restoreFocus();
           logger.debug('[SESSIONS_TOOL] Releasing agent back to pool');
           pooledAgent.release();
-          this.currentPooledAgent = null;
         } else {
           // Don't persist: full cleanup (restores focus + stops monitoring + closes resources)
           await analysisAgent.cleanup();
@@ -370,27 +367,6 @@ export class SessionsTool extends BaseTool {
         agent.interrupt();
       }
     }
-  }
-
-  /**
-   * Inject user message into active pooled agent
-   * Used for routing interjections to subagents
-   */
-  injectUserMessage(message: string): void {
-    if (!this.currentPooledAgent) {
-      logger.warn('[SESSIONS_TOOL] injectUserMessage called but no active pooled agent');
-      return;
-    }
-
-    const agent = this.currentPooledAgent.agent;
-    if (!agent) {
-      logger.warn('[SESSIONS_TOOL] injectUserMessage called but pooled agent has no agent instance');
-      return;
-    }
-
-    logger.debug('[SESSIONS_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
-    agent.addUserInterjection(message);
-    agent.interrupt({ kind: 'user_interjection' });
   }
 
   /**

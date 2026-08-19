@@ -33,7 +33,6 @@ import { createAgentTaskContextReminder } from '../utils/messageUtils.js';
 
 export class AgentAskTool extends BaseTool {
   readonly name = 'agent-ask';
-  private currentPooledAgent: PooledAgent | null = null;
   readonly displayName = 'Follow Up';
   readonly description =
     'Continue a persistent explore/plan/agent using its returned agent_id.';
@@ -192,8 +191,7 @@ Only start a NEW agent for completely unrelated areas.`;
       // Get agent instance
       const agent = metadata.agent;
 
-      // Track pooled agent for interjection routing
-      this.currentPooledAgent = {
+      const delegationAgent: PooledAgent = {
         agent,
         agentId,
         release: () => {} // No-op since we're using an existing pooled agent
@@ -201,7 +199,7 @@ Only start a NEW agent for completely unrelated areas.`;
 
       // Register delegation context for INSTRUCT option in permission prompts
       // This enables "Tell Ally what to do differently" instead of plain "Deny"
-      registerDelegation(callId, 'agent-ask', this.currentPooledAgent);
+      registerDelegation(callId, 'agent-ask', delegationAgent);
 
       // Map thoroughness to max duration for this turn
       const maxDuration = getThoroughnessDuration(thoroughness as any);
@@ -299,8 +297,6 @@ Only start a NEW agent for completely unrelated areas.`;
         // Clear delegation context
         completeDelegation(callId);
 
-        // Clear tracked pooled agent
-        this.currentPooledAgent = null;
       }
     } catch (error) {
       const duration = (Date.now() - startTime) / 1000;
@@ -414,32 +410,4 @@ Only start a NEW agent for completely unrelated areas.`;
     return lines.slice(0, maxLines);
   }
 
-  /**
-   * Inject user message into active pooled agent
-   *
-   * NOTE: This method exists for interface compatibility but is NOT used.
-   * agent-ask is intentionally excluded from injectable tools in ToolManager.
-   * When agent-ask is running, interjections route to main agent instead,
-   * since agent-ask is just querying for information while the main
-   * conversation continues with the main agent.
-   *
-   * This differs from explore/plan/agent which DO accept interjections
-   * because those tools represent direct interactions with subagents.
-   */
-  injectUserMessage(message: string): void {
-    if (!this.currentPooledAgent) {
-      logger.warn('[AGENT_ASK_TOOL] injectUserMessage called but no active pooled agent');
-      return;
-    }
-
-    const agent = this.currentPooledAgent.agent;
-    if (!agent) {
-      logger.warn('[AGENT_ASK_TOOL] injectUserMessage called but pooled agent has no agent instance');
-      return;
-    }
-
-    logger.debug('[AGENT_ASK_TOOL] Injecting user message into pooled agent:', this.currentPooledAgent.agentId);
-    agent.addUserInterjection(message);
-    agent.interrupt({ kind: 'user_interjection' });
-  }
 }

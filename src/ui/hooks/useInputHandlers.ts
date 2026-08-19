@@ -19,7 +19,6 @@ import { useCallback } from 'react';
 import { CommandHandler } from '@agent/CommandHandler.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { isInjectableTool } from '@tools/InjectableTool.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ActivityEventType } from '@shared/index.js';
 import { logger } from '@services/Logger.js';
@@ -91,45 +90,17 @@ export const useInputHandlers = (
 
     logger.debug('[APP] Handling interjection:', message);
 
-    // Get ToolManager from ServiceRegistry
-    const toolManager = serviceRegistry.get('tool_manager');
+    // The registry agent is the conversation the user explicitly selected in
+    // the fleet UI. Tool-call depth must never override that choice: entering a
+    // child swaps this pointer, while remaining on main keeps input on main.
+    logger.debug('[APP] Routing interjection to selected foreground agent:', state.activeAgentId);
+    agent.addUserInterjection(message);
+    agent.interrupt({ kind: 'user_interjection' });
 
-    // Find currently active injectable tool (explore, plan, agent)
-    const activeTool = toolManager?.getActiveInjectableTool();
-
-    let routedToTool = false;
-    let targetToolName = 'main';
-    let parentId = 'root';
-
-    if (activeTool) {
-      // Route to active tool
-      logger.debug('[APP] Routing interjection to active tool:', activeTool.name);
-
-      try {
-        // Type-safe check for injectable tool
-        if (isInjectableTool(activeTool.tool)) {
-          activeTool.tool.injectUserMessage(message);
-          routedToTool = true;
-          targetToolName = activeTool.name;
-          parentId = activeTool.callId; // Use tool call ID for nesting
-
-          logger.debug('[APP] Successfully routed to tool:', activeTool.name, 'callId:', activeTool.callId);
-        } else {
-          logger.debug('[APP] Active tool does not support message injection:', activeTool.name);
-          routedToTool = false;
-        }
-      } catch (error) {
-        logger.error('[APP] Failed to inject into tool:', error);
-        routedToTool = false;
-      }
-    }
-
-    // Fallback to main agent if no active tool or routing failed
-    if (!routedToTool) {
-      logger.debug('[APP] Routing interjection to main agent');
-      agent.addUserInterjection(message);
-      agent.interrupt({ kind: 'user_interjection' });
-    }
+    const parentId = 'root';
+    const targetAgent = state.activeAgentId === 'main'
+      ? 'main'
+      : state.currentAgent || state.activeAgentId;
 
     // Add user message to UI conversation with parentId for reconstruction
     actions.addMessage({
@@ -150,10 +121,10 @@ export const useInputHandlers = (
       parentId: parentId,
       data: {
         message,
-        targetAgent: targetToolName,
+        targetAgent,
       },
     });
-  }, [activityStream, actions]);
+  }, [activityStream, actions, state.activeAgentId, state.currentAgent]);
 
   /**
    * Handle user input (messages, commands, bash shortcuts)

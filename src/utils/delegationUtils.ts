@@ -7,8 +7,7 @@
  *
  * - The "user can't see this" response suffix (one canonical wording).
  * - The empty/incomplete response → conversation-summary fallback.
- * - DelegationContextManager lifecycle calls (with the registry lookup and
- *   error-swallowing that every caller needs).
+ * - DelegationContextManager lifecycle calls used by permission UI metadata.
  *
  * Each tool composes only the pieces it needs, so genuinely different flows
  * (e.g. AgentTool's richer summary recovery) stay where they belong rather than
@@ -91,8 +90,8 @@ function getDelegationManager(): {
 }
 
 /**
- * Register an active delegation so permission prompts can route interjections to
- * the running sub-agent. No-op when the context manager is unavailable.
+ * Register an active delegation so permission prompts can identify the agent
+ * that owns the request. No-op when the context manager is unavailable.
  */
 export function registerDelegation(callId: string, agentType: string, pooledAgent: PooledAgent): void {
   const manager = getDelegationManager();
@@ -161,30 +160,6 @@ export function resolveDelegationServices(toolName: string): DelegationServices 
   }
 
   return { registry, mainModelClient, toolManager, configManager, permissionManager, appConfig };
-}
-
-/**
- * Route an interjection to a running pooled sub-agent: queue the message and
- * interrupt the agent so it picks the message up. No-op (with a warning) when no
- * pooled agent is active. Shared by every delegation tool's injectUserMessage.
- */
-export function injectInterjection(
-  pooledAgent: PooledAgent | null,
-  message: string,
-  context: string
-): void {
-  if (!pooledAgent) {
-    logger.warn(`${context} injectUserMessage called but no active pooled agent`);
-    return;
-  }
-  const agent = pooledAgent.agent;
-  if (!agent) {
-    logger.warn(`${context} injectUserMessage called but pooled agent has no agent instance`);
-    return;
-  }
-  logger.debug(`${context} Injecting user message into pooled agent:`, pooledAgent.agentId);
-  agent.addUserInterjection(message);
-  agent.interrupt({ kind: 'user_interjection' });
 }
 
 /**

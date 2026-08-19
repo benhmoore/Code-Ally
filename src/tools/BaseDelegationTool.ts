@@ -16,7 +16,6 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { InjectableTool } from './InjectableTool.js';
 import { ToolResult, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry, ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
@@ -35,7 +34,6 @@ import {
   registerDelegation,
   completeDelegation,
   resolveDelegationServices,
-  injectInterjection,
   cancelRunningBackgroundAgents,
 } from '../utils/delegationUtils.js';
 import type { Config } from '../types/index.js';
@@ -75,27 +73,10 @@ export interface DelegationToolConfig {
  * Implements common delegation patterns while allowing subclasses to customize
  * behavior through configuration and abstract methods.
  */
-export abstract class BaseDelegationTool extends BaseTool implements InjectableTool {
+export abstract class BaseDelegationTool extends BaseTool {
   /** Map of active delegations by call ID */
   protected activeDelegations = new Map<string, { agent: Agent; startTime: number }>();
 
-  /** Currently active pooled agent (for interjection routing) */
-  protected _currentPooledAgent: PooledAgent | null = null;
-
-  // InjectableTool interface properties
-  get delegationState(): 'executing' | 'completing' | null {
-    // Always null - delegation state is managed by DelegationContextManager
-    return null;
-  }
-
-  get activeCallId(): string | null {
-    // Always null - delegation tracking is done by DelegationContextManager
-    return null;
-  }
-
-  get currentPooledAgent(): PooledAgent | null {
-    return this._currentPooledAgent;
-  }
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -286,8 +267,6 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
         delegationAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
-        this._currentPooledAgent = pooledAgent; // Track for interjection routing
-
         // Register delegation with DelegationContextManager
         registerDelegation(callId, config.agentType, pooledAgent);
 
@@ -311,7 +290,6 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
         this.activeDelegations.delete(callId);
         if (pooledAgent) {
           pooledAgent.release();
-          this._currentPooledAgent = null;
         } else {
           await delegationAgent.cleanup();
         }
@@ -496,14 +474,6 @@ export abstract class BaseDelegationTool extends BaseTool implements InjectableT
     // A delegation promoted to the background (Ctrl+B) is detached from the
     // foreground activeDelegations above, so cancel running background agents too.
     cancelRunningBackgroundAgents();
-  }
-
-  /**
-   * Inject user message into active pooled agent
-   * Used for routing interjections to subagents
-   */
-  injectUserMessage(message: string): void {
-    injectInterjection(this._currentPooledAgent, message, `[${this.name.toUpperCase()}_TOOL]`);
   }
 
   /**

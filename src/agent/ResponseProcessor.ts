@@ -498,10 +498,10 @@ export class ResponseProcessor {
       logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Tool calls completed. Total messages now:', this.conversationManager.getMessageCount());
     } finally {
       // ALWAYS clear delegation context, even on error/interruption
-      // This ensures interjections don't route to stale/dead agents
+      // This keeps permission-request attribution from referencing stale agents.
       // Pass the specific call IDs that just completed to avoid clearing concurrent delegations
       const completedCallIds = toolCalls.map(tc => tc.id);
-      this.clearInjectableToolDelegations(completedCallIds);
+      this.clearDelegationContexts(completedCallIds);
     }
 
     // Check if agent was interrupted during tool execution
@@ -809,7 +809,7 @@ export class ResponseProcessor {
    *
    * @param completedCallIds - Array of tool call IDs that just finished execution
    */
-  private clearInjectableToolDelegations(completedCallIds: string[]): void {
+  private clearDelegationContexts(completedCallIds: string[]): void {
     try {
       const registry = ServiceRegistry.getInstance();
       const toolManager = registry.get('tool_manager');

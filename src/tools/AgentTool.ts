@@ -10,7 +10,6 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { InjectableTool } from './InjectableTool.js';
 import { ToolResult, FunctionDefinition, ActivityEventType, Message } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry, ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
@@ -35,7 +34,6 @@ import {
   registerDelegation,
   completeDelegation,
   resolveDelegationServices,
-  injectInterjection,
   cancelRunningBackgroundAgents,
 } from '../utils/delegationUtils.js';
 
@@ -64,7 +62,7 @@ interface AgentTaskExecutionParams extends AgentExecutionParams {
   agentData: any;
 }
 
-export class AgentTool extends BaseTool implements InjectableTool {
+export class AgentTool extends BaseTool {
   readonly name = 'agent';
   readonly description =
     'Delegate task to specialized agent. Multiple calls can run in parallel';
@@ -83,22 +81,6 @@ Only set run_in_background=false when your very next step depends on the result.
 
   private agentManager: AgentManager | null = null;
   private activeDelegations: Map<string, any> = new Map();
-  private _currentPooledAgent: PooledAgent | null = null;
-
-  // InjectableTool interface properties
-  get delegationState(): 'executing' | 'completing' | null {
-    // Always null for AgentTool - delegation state is managed by DelegationContextManager
-    return null;
-  }
-
-  get activeCallId(): string | null {
-    // Always null for AgentTool - delegation tracking is done by DelegationContextManager
-    return null;
-  }
-
-  get currentPooledAgent(): PooledAgent | null {
-    return this._currentPooledAgent;
-  }
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -793,8 +775,6 @@ Only set run_in_background=false when your very next step depends on the result.
     const customModelClient = targetModel !== config.model ? modelClient : undefined;
     const pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
     const agentId = pooledAgent.agentId;
-    this._currentPooledAgent = pooledAgent; // Track for interjection routing
-
     logger.debug(`[AGENT_TOOL] Using pooled agent ${agentId} for ${agentType}`);
     return { agent: pooledAgent.agent, pooledAgent, agentId };
   }
@@ -1173,14 +1153,6 @@ Only set run_in_background=false when your very next step depends on the result.
     // Also cancel any running background agents (their runs are detached from
     // activeDelegations' foreground lifecycle, so cover them explicitly).
     cancelRunningBackgroundAgents();
-  }
-
-  /**
-   * Inject user message into active pooled agent
-   * Used for routing interjections to subagents
-   */
-  injectUserMessage(message: string): void {
-    injectInterjection(this._currentPooledAgent, message, '[AGENT_TOOL]');
   }
 
   /**

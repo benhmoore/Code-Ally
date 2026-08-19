@@ -1,14 +1,14 @@
 /**
  * DelegationContextManager - Centralized delegation state tracking
  *
- * Manages the lifecycle and state of all active delegations in the interjection
- * routing system. Supports concurrent delegations and recursive delegation
+ * Manages lifecycle metadata for active delegations, including permission UI
+ * attribution. Supports concurrent delegations and recursive delegation
  * hierarchies (Main → Agent1 → Agent2 → ...).
  *
  * Core responsibilities:
  * - Track all active delegations across the system
  * - Manage delegation lifecycle: register → transitionToCompleting → clear
- * - Find the deepest active delegation for interjection routing
+ * - Find the deepest active delegation for permission-request attribution
  * - Support recursive depth-first search through nested agent hierarchies
  *
  * Thread Safety:
@@ -61,8 +61,8 @@ export interface ActiveDelegation {
 /**
  * DelegationContextManager manages delegation state tracking
  *
- * This service centralizes delegation context management for the interjection
- * routing system. It tracks delegation lifecycle and provides depth-first
+ * This service centralizes delegation context management for permission UI
+ * attribution. It tracks delegation lifecycle and provides depth-first
  * search to find the deepest active delegation in nested agent hierarchies.
  */
 export class DelegationContextManager {
@@ -113,7 +113,7 @@ export class DelegationContextManager {
    * Transition delegation from 'executing' to 'completing'
    *
    * Marks the delegation as completing when the agent finishes execution.
-   * The delegation remains active for interjection routing until clear() is called.
+   * The delegation remains available for permission attribution until clear() is called.
    *
    * @param callId - Call ID of the delegation to transition
    */
@@ -193,19 +193,19 @@ export class DelegationContextManager {
   }
 
   /**
-   * Get the deepest active delegation for interjection routing
+   * Get the deepest active delegation for permission-request attribution
    *
    * Performs recursive depth-first search through nested agent hierarchies
    * to find the deepest delegation in 'executing' state.
    *
    * IMPORTANT: Only routes to 'executing' delegations, NOT 'completing'.
-   * This prevents race conditions where interjections route to dying/dead agents:
-   * - 'executing' = active delegation, capable of receiving interjections
-   * - 'completing' = agent done, parent processing result, NO interjections
+   * This prevents permission UI from attributing a request to a dying/dead agent:
+   * - 'executing' = active delegation that can still own a request
+   * - 'completing' = agent done, parent processing result
    *
    * The 'completing' state exists to track lifecycle (agent finished but not yet
-   * cleaned up by parent), but interjections should never route to completing agents
-   * since they may already be released to the pool or cleaned up.
+   * cleaned up by parent), but completing agents must not be presented as active
+   * request owners because they may already be released to the pool.
    *
    * Algorithm:
    * 1. Find all contexts in 'executing' state (NOT 'completing')
@@ -217,7 +217,7 @@ export class DelegationContextManager {
    */
   getActiveDelegation(): ActiveDelegation | undefined {
     // Collect only executing contexts (NOT completing)
-    // Completing agents are dying/dead and cannot receive interjections
+    // Completing agents are dying/dead and cannot own new permission requests.
     const activeContexts = this.getExecutingContexts();
 
     if (activeContexts.length === 0) {
