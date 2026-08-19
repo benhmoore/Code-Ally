@@ -7,6 +7,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import { useStdout } from 'ink';
 import type { Message, Config, ToolCallState } from '@shared/index.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { generateMessageId } from '@utils/id.js';
@@ -283,6 +284,11 @@ export function resolveCurrentAgentModelOverride(
   return agentModel && agentModel !== configModel ? agentModel : '';
 }
 
+/** Clear the terminal through Ink so its cached dynamic frame is restored. */
+export function clearTerminalPreservingInk(write: (data: string) => void): void {
+  write('\x1B[2J\x1B[3J\x1B[H');
+}
+
 export function reconcileCurrentAgentModelAfterConfigUpdate(
   currentAgentModel: string,
   previousConfig: Config,
@@ -309,6 +315,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
   initialConfig,
   children,
 }) => {
+  const { write: writeToStdout } = useStdout();
   // State
   const [conversationView, setConversationView] = useState<{
     messages: Message[];
@@ -560,7 +567,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
       // \x1B[2J = Clear entire screen
       // \x1B[3J = Clear scrollback buffer
       // \x1B[H = Move cursor to home (0,0)
-      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+      clearTerminalPreservingInk(writeToStdout);
 
       // Now set the new messages
       setConversationView((prev) => ({
@@ -568,7 +575,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         messages: boundVisibleMessages(deduplicated),
       }));
     });
-  }, []);
+  }, [writeToStdout]);
 
   /**
    * Atomically reset the conversation view to a full transcript — messages AND
@@ -597,13 +604,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setConversationView({ messages: [], activeToolCalls: [] });
     setStaticRemountKey((prev) => prev + 1);
     setImmediate(() => {
-      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+      clearTerminalPreservingInk(writeToStdout);
       setConversationView({
         messages: boundVisibleMessages(deduplicated),
         activeToolCalls: boundToolCalls(toolCalls),
       });
     });
-  }, []);
+  }, [writeToStdout]);
 
   const setCurrentAgent = useCallback((agent: string, model?: string) => {
     setCurrentAgentState(agent);

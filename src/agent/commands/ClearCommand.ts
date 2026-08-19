@@ -41,19 +41,9 @@ export class ClearCommand extends Command {
       return this.createError('Agent not available');
     }
 
-    // Get system message if it exists
-    const messages = agent.getMessagesCopy();
-    const systemMessage = messages.find(m => m.role === 'system');
-
-    // Keep only system message
-    const clearedMessages = systemMessage ? [systemMessage] : [];
-    agent.setMessages(clearedMessages);
-
-    // Update token manager
-    const tokenManager = serviceRegistry.get('token_manager');
-    if (tokenManager && typeof (tokenManager as any).updateTokenCount === 'function') {
-      (tokenManager as any).updateTokenCount(clearedMessages);
-    }
+    // The agent owns both the in-memory reset and its durable replacement. The
+    // command must not emit a clear event until both have succeeded.
+    await agent.clearConversation();
 
     // Emit event to reset the UI view completely
     const activityStream = serviceRegistry.get('activity_stream');

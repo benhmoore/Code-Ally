@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG } from '../../../config/defaults.js';
 import {
+  clearTerminalPreservingInk,
   reconcileCurrentAgentModelAfterConfigUpdate,
   resolveCurrentAgentModelOverride,
 } from '../AppContext.js';
@@ -43,5 +44,13 @@ describe('AppContext model display state', () => {
         { model: 'qwen3.5:35b' }
       )
     ).toBe('glm-5.2:cloud');
+  });
+});
+
+describe('AppContext terminal clearing', () => {
+  it('routes the clear sequence through Ink-aware output', () => {
+    const write = vi.fn();
+    clearTerminalPreservingInk(write);
+    expect(write).toHaveBeenCalledWith('\x1B[2J\x1B[3J\x1B[H');
   });
 });
