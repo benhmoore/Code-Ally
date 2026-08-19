@@ -78,8 +78,8 @@ function tool(
   };
 }
 
-const READ = tool('read', 'Read one or more files. Read related files together.', {
-  file_path: { type: 'array', description: 'One file path or related file paths to read', items: { type: 'string' } },
+const READ = tool('read', 'Read one file. Use separate parallel calls for several files.', {
+  file_path: { type: 'string', description: 'One file path to read' },
   limit: { type: 'integer', description: 'Maximum lines per file; 0 means all' },
   offset: { type: 'integer', description: 'Starting line, one-based' },
   ephemeral: { type: 'boolean', description: 'Remove large content after one turn' },
@@ -148,7 +148,7 @@ const CONCISE_PROMPT = `You are Ally, a coding assistant. Complete the request w
 Tool rules:
 - Choose the narrowest tool that directly matches the operation.
 - Read a file before editing it.
-- Use one read call with file_path for multiple related files.
+- file_path always identifies one file. Read several files with separate parallel calls.
 - For different independent operations, emit separate native tool calls in one response.
 - Do not call unrelated tools or describe a tool call instead of making it.`;
 
@@ -157,7 +157,7 @@ const OVERLAP_CANDIDATE_PROMPT = `You are Ally, a coding assistant. Complete the
 Tool rules:
 - Choose the narrowest tool that directly matches the operation.
 - Read a file before editing it.
-- Use one read call with file_path for multiple related files.
+- file_path always identifies one file. Read several files with separate parallel calls.
 - For different independent operations, emit separate native tool calls in one response.
 - Do not call unrelated or overlapping tools, or describe a tool call instead of making it.`;
 
@@ -168,7 +168,7 @@ const SHIP_CANDIDATE_PROMPT = `You are Ally, an AI coding agent. Complete exactl
 
 Rules:
 - Act directly with the narrowest tool. Do not delegate simple work or make unrelated changes.
-- Read before editing; batch related paths in one read and related replacements in one edits array.
+- Read before editing; use one file_path per call and emit independent reads together.
 - Emit independent tool calls together. Run long-lived processes in background.
 - On failure, use the error to change the call or approach; never repeat identical failed arguments.
 - Make reversible assumptions; ask only when a required decision changes the result.
@@ -242,6 +242,10 @@ function repositoryPath(value: unknown): string | undefined {
 
 function samePaths(actual: unknown, expected: string[]): boolean {
   return Array.isArray(actual) && sameStrings(actual.map(repositoryPath), expected);
+}
+
+function samePath(actual: unknown, expected: string): boolean {
+  return repositoryPath(actual) === expected;
 }
 
 async function send(
@@ -375,12 +379,12 @@ async function promptToolCase(
   if (scenario === 'multi_read') {
     const result = await send(client, [
       { role: 'system', content: system },
-      { role: 'user', content: 'Read package.json and src/llm/modelProfile.ts efficiently in one operation.' },
+      { role: 'user', content: 'Read package.json and src/llm/modelProfile.ts efficiently in one response.' },
     ], functions, options);
-    const call = callNamed(result.response, 'read');
-    const functionalScore = Number(Boolean(call))
-      + Number(samePaths(call?.function.arguments.file_path, ['package.json', 'src/llm/modelProfile.ts']));
-    const efficiencyScore = Number(result.response.tool_calls?.length === 1);
+    const reads = (result.response.tool_calls ?? []).filter(call => call.function.name === 'read');
+    const functionalScore = Number(reads.length === 2)
+      + Number(samePaths(reads.map(call => call.function.arguments.file_path), ['package.json', 'src/llm/modelProfile.ts']));
+    const efficiencyScore = Number(result.response.tool_calls?.length === 2);
     return record({ section: 'prompt_tooling', model, repetition, variant, density, scenario }, {
       score: functionalScore + efficiencyScore,
       maxScore: 3,
@@ -418,7 +422,7 @@ async function promptToolCase(
   const replacementCorrect = typeof patch === 'string'
     && patch.includes('-  return end - start;')
     && patch.includes('+  return end - start + 1;');
-  const functionalScore = Number(samePaths(read.function.arguments.file_path, ['src/range.ts']))
+  const functionalScore = Number(samePath(read.function.arguments.file_path, 'src/range.ts'))
     + Number(Boolean(edit))
     + Number(repositoryPath(edit?.function.arguments.file_path) === 'src/range.ts')
     + Number(replacementCorrect);
@@ -481,7 +485,7 @@ async function behaviorCase(
   if (scenario === 'direct_known_file') {
     const read = callNamed(result.response, 'read');
     const functionalScore = Number(Boolean(read))
-      + Number(samePaths(read?.function.arguments.file_path, ['package.json']));
+      + Number(samePath(read?.function.arguments.file_path, 'package.json'));
     const waste = new Set(['agent', 'explore', 'plan', 'ask-user-question', 'todo-write']);
     const efficiencyScore = Number(calls.length === 1)
       + Number(!calls.some(call => waste.has(call.function.name)));

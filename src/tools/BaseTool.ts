@@ -399,7 +399,7 @@ export abstract class BaseTool {
               + `${outputBudget.estimatedTokens} tokens, exceeding the safe batch budget of `
               + `${outputBudget.limitTokens} tokens.`,
               'validation_error',
-              'Combine related paths into one targeted call, reduce limit/range, or split the reads across model turns.'
+              'Reduce each read range, issue fewer parallel reads, or split the reads across model turns.'
             );
           }
 

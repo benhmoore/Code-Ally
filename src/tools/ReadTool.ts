@@ -1,5 +1,5 @@
 /**
- * ReadTool - Read multiple file contents at once
+ * ReadTool - Read one file or line range
  *
  * Reads file contents with line numbering, token estimation, and binary detection.
  */
@@ -25,7 +25,7 @@ import * as readline from 'readline';
 export class ReadTool extends BaseTool {
   readonly name = 'read';
   readonly description =
-    'Read one or more files. Pass file_path as one path or an array of related paths.';
+    'Read one file. For several files, issue separate read calls in parallel.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
   readonly requiresReservedContext = true;
@@ -44,11 +44,13 @@ For multi-file exploration, prefer explore() to preserve context.`;
    * Validate ReadTool arguments
    */
   validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
-    // Keep one canonical path key across filesystem tools. A scalar is the
-    // natural form for one file; normalize it before generic schema validation
-    // so callers can batch files without learning a second parameter name.
-    if (typeof args.file_path === 'string') {
-      args.file_path = [args.file_path];
+    if (typeof args.file_path !== 'string' || args.file_path.length === 0) {
+      return {
+        valid: false,
+        error: 'file_path must be one file path',
+        error_type: 'validation_error',
+        suggestion: 'Issue separate read calls in parallel to read several files.',
+      };
     }
 
     // Validate limit parameter
@@ -167,13 +169,9 @@ For multi-file exploration, prefer explore() to preserve context.`;
           type: 'object',
           properties: {
             file_path: {
-              type: 'array',
+              type: 'string',
               format: 'local-path',
-              description: 'One file path or an array of related file paths to read',
-              items: {
-                type: 'string',
-                format: 'local-path',
-              },
+              description: 'One file path to read',
             },
             limit: {
               type: 'integer',
@@ -203,20 +201,20 @@ For multi-file exploration, prefer explore() to preserve context.`;
   ): Promise<ToolResult> {
     this.captureParams(args);
 
-    const filePaths = typeof args.file_path === 'string' ? [args.file_path] : args.file_path;
+    const filePath = args.file_path;
     const limit = args.limit !== undefined ? Number(args.limit) : 0;
     const offset = args.offset !== undefined ? Number(args.offset) : 0;
     const ephemeral = args.ephemeral === true;
 
-    if (!Array.isArray(filePaths) || filePaths.length === 0) {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
       return this.formatErrorResponse(
-        'file_path must be a path or a non-empty array of paths',
+        'file_path must be one file path',
         'validation_error',
-        'Example: read(file_path=["src/main.ts", "package.json"])'
+        'Issue separate read calls in parallel to read several files.'
       );
     }
 
-    const estimatedTokens = await this.estimateTokens(filePaths, limit, offset);
+    const estimatedTokens = await this.estimateTokens(filePath, limit, offset);
 
     // Check if we have enough remaining context for the non-truncatable result
     // Get remaining context from ServiceRegistry's TokenManager if available
@@ -225,9 +223,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
     if (tokenManager) {
       const remainingTokens = this.getRemainingContext(tokenManager);
       if (remainingTokens < estimatedTokens) {
-        const examples = filePaths.length === 1
-          ? `read(file_path="${filePaths[0]}", limit=100) or read(file_path="${filePaths[0]}", offset=-100, limit=100) for last 100 lines`
-          : `read(file_path="${filePaths[0]}", limit=100) or read fewer files`;
+        const examples = `read(file_path="${filePath}", limit=100) or read(file_path="${filePath}", offset=-100, limit=100) for last 100 lines`;
 
         return this.formatErrorResponse(
           `Insufficient context available: read would require ${estimatedTokens.toFixed(1)} tokens but only ${remainingTokens.toFixed(1)} remain. ` +
@@ -253,9 +249,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
     }
 
     if (estimatedTokens > maxTokens) {
-      const examples = filePaths.length === 1
-        ? `read(file_path="${filePaths[0]}", limit=100) or read(file_path="${filePaths[0]}", offset=-100, limit=100) for last 100 lines`
-        : `read(file_path="${filePaths[0]}", limit=100) or read fewer files`;
+      const examples = `read(file_path="${filePath}", limit=100) or read(file_path="${filePath}", offset=-100, limit=100) for last 100 lines`;
 
       const ephemeralHint = !ephemeral && !isUserInitiated && !isContextFile
         ? ' As a LAST RESORT for one-time inspection only: ephemeral=true (WARNING: content removed after one turn, you will lose access).'
@@ -264,12 +258,10 @@ For multi-file exploration, prefer explore() to preserve context.`;
       // Suggest a line budget that actually fits, rather than a fixed 100.
       // Source averages roughly 12 tokens per line; leave headroom under the cap.
       const suggestedLimit = Math.max(20, Math.floor((maxTokens * 0.85) / 12));
-      const targeted = filePaths.length === 1
-        ? `first locate the relevant symbol with grep, then read(file_path="${filePaths[0]}", offset=<matching line>, limit=${suggestedLimit})`
-        : `locate relevant symbols with grep, then read one related file/range at a time with limit=${suggestedLimit}`;
+      const targeted = `first locate the relevant symbol with grep, then read(file_path="${filePath}", offset=<matching line>, limit=${suggestedLimit})`;
 
       return this.formatErrorResponse(
-        `File(s) too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds the ${maxTokens}-token limit for this read. ` +
+        `File too large: estimated ${estimatedTokens.toFixed(1)} tokens exceeds the ${maxTokens}-token limit for this read. ` +
         `This limit is the largest result that fits the conversation space still available, so a bigger read cannot be kept. ` +
         `Do not page through the file by default: ${targeted}. ` +
         `Use sequential offset/limit chunks only when the task genuinely requires whole-file inspection. ` +
@@ -279,43 +271,24 @@ For multi-file exploration, prefer explore() to preserve context.`;
       );
     }
 
-    // Read files
-    const results: string[] = [];
-    const errors: string[] = [];
-    let filesRead = 0;
-    let totalLines = 0;
-
-    for (const filePath of filePaths) {
-      try {
-        const { content, lineCount } = await this.readFile(filePath, limit, offset, executionContext);
-        results.push(content);
-        filesRead++;
-        totalLines += lineCount;
-      } catch (error) {
-        const errorMsg = formatError(error);
-        errors.push(`${filePath}: ${errorMsg}`);
-        results.push(
-          `=== ${filePath} ===\nError: ${errorMsg}`
-        );
-      }
-    }
-
-    // If ALL files failed, return an error
-    if (filesRead === 0) {
+    let content: string;
+    let totalLines: number;
+    try {
+      const read = await this.readFile(filePath, limit, offset, executionContext);
+      content = read.content;
+      totalLines = read.lineCount;
+    } catch (error) {
       return this.formatErrorResponse(
-        `Failed to read ${errors.length} file${errors.length !== 1 ? 's' : ''}: ${errors.join(', ')}`,
+        `Failed to read ${filePath}: ${formatError(error)}`,
         'file_error'
       );
     }
 
-    const combinedContent = results.join('\n\n');
-
-    // If some files failed, include warning in content but still succeed
     const result = this.formatSuccessResponse({
-      content: combinedContent,
-      files_read: filesRead,
-      files_failed: errors.length,
-      partial_failure: errors.length > 0,
+      content,
+      files_read: 1,
+      files_failed: 0,
+      partial_failure: false,
       total_lines: totalLines,
     });
 
@@ -334,37 +307,28 @@ For multi-file exploration, prefer explore() to preserve context.`;
   }
 
   /**
-   * Estimate total tokens for files considering limit and offset
+   * Estimate tokens for the requested file range.
    */
   private async estimateTokens(
-    filePaths: string[],
+    filePath: string,
     limit: number = 0,
     offset: number = 0
   ): Promise<number> {
-    let totalEstimate = 0;
-
-    for (const filePath of filePaths) {
-      try {
-        if (limit > 0) {
-          // Read raw content directly to bypass read cache (cache stubs have wrong token counts)
-          const absolutePath = resolvePath(filePath);
-          const raw = await fs.readFile(absolutePath, 'utf-8');
-          const lines = raw.split('\n');
-          const startLine = offset > 0 ? offset - 1 : offset < 0 ? Math.max(0, lines.length + offset) : 0;
-          const endLine = startLine + limit;
-          const selected = lines.slice(startLine, endLine).join('\n');
-          totalEstimate += tokenCounter.count(selected);
-        } else {
-          const stats = await fs.stat(filePath);
-          const tokenEstimate = Math.ceil(stats.size / this.getBytesPerToken(filePath));
-          totalEstimate += tokenEstimate;
-        }
-      } catch {
-        continue;
+    try {
+      if (limit > 0) {
+        // Read raw content directly to bypass read cache (cache stubs have wrong token counts)
+        const absolutePath = resolvePath(filePath);
+        const raw = await fs.readFile(absolutePath, 'utf-8');
+        const lines = raw.split('\n');
+        const startLine = offset > 0 ? offset - 1 : offset < 0 ? Math.max(0, lines.length + offset) : 0;
+        const endLine = startLine + limit;
+        return tokenCounter.count(lines.slice(startLine, endLine).join('\n'));
       }
+      const stats = await fs.stat(filePath);
+      return Math.ceil(stats.size / this.getBytesPerToken(filePath));
+    } catch {
+      return 0;
     }
-
-    return totalEstimate;
   }
 
   /**
@@ -743,19 +707,15 @@ For multi-file exploration, prefer explore() to preserve context.`;
    * Uses actual line count from result when available
    */
   formatSubtext(args: Record<string, any>, result?: any): string | null {
-    const filePaths = typeof args.file_path === 'string' ? [args.file_path] : args.file_path;
+    const filePath = args.file_path;
     const description = args.description as string;
 
-    if (!filePaths) {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
       return null;
     }
 
-    // Extract filenames (basename only)
-    const paths = Array.isArray(filePaths) ? filePaths : [filePaths];
-    const filenames = paths.map((p: string) => {
-      const parts = p.split('/');
-      return parts[parts.length - 1] || p;
-    });
+    const parts = filePath.split('/');
+    const filename = parts[parts.length - 1] || filePath;
 
     // Build line count info
     let lineCountInfo = '';
@@ -765,16 +725,14 @@ For multi-file exploration, prefer explore() to preserve context.`;
       lineCountInfo = ` - ${count} line${count !== 1 ? 's' : ''}`;
     }
 
-    const filenamesStr = filenames.length === 1
-      ? `(${filenames[0]}${lineCountInfo})`
-      : `(${filenames.join(', ')}${lineCountInfo})`;
+    const filenameText = `(${filename}${lineCountInfo})`;
 
     // If description exists, show it first
     if (description) {
-      return `${description} ${filenamesStr}`;
+      return `${description} ${filenameText}`;
     }
 
-    return filenamesStr;
+    return filenameText;
   }
 
   /**

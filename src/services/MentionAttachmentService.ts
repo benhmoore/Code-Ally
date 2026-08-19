@@ -123,14 +123,19 @@ export class MentionAttachmentService {
     agent: MentionAgent,
     addUiMessage: MentionMessageSink
   ): Promise<MentionOutcome> {
-    return this.attach(agent, addUiMessage, {
-      toolName: 'read',
-      missingToolMessage: 'Error: Read tool not available',
-      displayArguments: { file_path: filePaths },
-      executeArguments: { file_path: filePaths, description: 'Read mentioned files' },
-      beforeExecute: () => this.promoteNextTodo(),
-      throwMessagePrefix: 'Error reading mentioned files',
-    });
+    for (const [index, filePath] of filePaths.entries()) {
+      const outcome = await this.attach(agent, addUiMessage, {
+        toolName: 'read',
+        missingToolMessage: 'Error: Read tool not available',
+        displayArguments: { file_path: filePath },
+        executeArguments: { file_path: filePath, description: 'Read mentioned file' },
+        beforeExecute: index === 0 ? () => this.promoteNextTodo() : undefined,
+        throwMessagePrefix: 'Error reading mentioned file',
+      });
+      if (outcome === 'aborted') return outcome;
+    }
+
+    return 'attached';
   }
 
   /**
