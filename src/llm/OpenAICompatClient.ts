@@ -24,7 +24,7 @@ import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
-import { createHttpResponseError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries } from './httpTransport.js';
+import { createHttpResponseError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
 import { validateToolCalls } from './toolCalls.js';
 import { materializeToolImageMessages } from './messageImages.js';
 
@@ -356,6 +356,7 @@ export class OpenAICompatClient extends ModelClient {
     let contentWasStreamed = false;
     let finishReason: string | undefined;
     let usage: LLMResponse['usage'] | undefined;
+    const progressDeadline = new StreamProgressDeadline();
     // Tool calls arrive incrementally, keyed by their `index`; arguments are
     // concatenated as raw JSON-string fragments and parsed during validation.
     const toolAcc = new Map<number, { id: string; name: string; args: string }>();
@@ -386,7 +387,7 @@ export class OpenAICompatClient extends ModelClient {
         // A server can open the stream and then stall without closing it; the
         // overall request budget is only checked between attempts, so each read
         // is bounded here.
-        const { done, value } = await readWithTimeout(reader);
+        const { done, value } = await readWithTimeout(reader, progressDeadline.nextReadTimeout());
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -397,7 +398,10 @@ export class OpenAICompatClient extends ModelClient {
           const line = rawLine.trim();
           if (!line || !line.startsWith('data:')) continue;
           const data = line.slice(5).trim();
-          if (data === '[DONE]') continue;
+          if (data === '[DONE]') {
+            progressDeadline.progress();
+            continue;
+          }
 
           let chunk: any;
           try {
@@ -410,14 +414,19 @@ export class OpenAICompatClient extends ModelClient {
           // Usage may arrive on a trailing chunk with an empty choices array.
           if (chunk.usage) {
             usage = openAIUsage(chunk.usage);
+            progressDeadline.progress();
           }
 
           const choice = chunk.choices?.[0];
-          if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
+          if (typeof choice?.finish_reason === 'string') {
+            finishReason = choice.finish_reason;
+            progressDeadline.progress();
+          }
           const delta = choice?.delta;
           if (!delta) continue;
 
           if (delta.content) {
+            progressDeadline.progress();
             content += delta.content;
             contentWasStreamed = true;
             eventStream?.emit({
@@ -431,6 +440,7 @@ export class OpenAICompatClient extends ModelClient {
           // vLLM and some servers surface native reasoning as reasoning_content.
           const reasoningChunk = delta.reasoning_content || delta.reasoning;
           if (reasoningChunk) {
+            progressDeadline.progress();
             thinking += reasoningChunk;
             if (!suppressThinking) {
               eventStream?.emit({
@@ -443,6 +453,7 @@ export class OpenAICompatClient extends ModelClient {
           }
 
           if (Array.isArray(delta.tool_calls)) {
+            if (delta.tool_calls.length > 0) progressDeadline.progress();
             for (const tc of delta.tool_calls) {
               const idx = tc.index ?? 0;
               const entry = toolAcc.get(idx) ?? { id: '', name: '', args: '' };

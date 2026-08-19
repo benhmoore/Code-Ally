@@ -32,6 +32,12 @@ export const API_TIMEOUTS = {
   /** Base timeout for LLM requests (6 minutes) */
   LLM_REQUEST_BASE: 360000,
 
+  /**
+   * Maximum time a streaming provider may emit only keepalives or empty protocol
+   * frames without producing model output or a terminal event (2 minutes).
+   */
+  LLM_STREAM_PROGRESS: 120000,
+
   /** Additional timeout per retry attempt (1 minute) */
   LLM_REQUEST_RETRY_INCREMENT: 60000,
 

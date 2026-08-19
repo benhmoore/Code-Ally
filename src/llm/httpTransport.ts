@@ -105,11 +105,18 @@ export function classifyHttpError(error: any): ErrorClass {
 
   if (error instanceof SyntaxError) return 'json';
 
-  if (error?.message?.includes('Stream read timeout')) return 'stream_timeout';
+  if (isStreamTimeoutError(error)) return 'stream_timeout';
 
   if (error?.cause && error.cause !== error) return classifyHttpError(error.cause);
 
   return 'non_retryable';
+}
+
+/** True for either a silent socket or a live socket with no model progress. */
+export function isStreamTimeoutError(error: any): boolean {
+  const message = error?.message;
+  return typeof message === 'string'
+    && (message.includes('Stream read timeout') || message.includes('Stream progress timeout'));
 }
 
 /** Human-readable label per retry category, for status messages. */
@@ -161,6 +168,38 @@ export async function readWithTimeout<T>(
     // Always clear the timer: a settled read must never leave a dangling timer
     // that later rejects (and aborts) a healthy iteration.
     clearTimeout(timeoutHandle);
+  }
+}
+
+/**
+ * Tracks application-level progress independently of raw network activity.
+ *
+ * Some gateways send SSE comments or empty frames often enough to keep every
+ * individual body read healthy while the upstream model is permanently
+ * stranded. Protocol parsers call `progress()` only for actual model output or
+ * a terminal event, and use `nextReadTimeout()` to bound the next read by both
+ * the ordinary transport timeout and this progress deadline.
+ */
+export class StreamProgressDeadline {
+  private deadline: number;
+
+  constructor(
+    private readonly timeoutMs: number = API_TIMEOUTS.LLM_STREAM_PROGRESS,
+    private readonly now: () => number = Date.now,
+  ) {
+    this.deadline = this.now() + timeoutMs;
+  }
+
+  progress(): void {
+    this.deadline = this.now() + this.timeoutMs;
+  }
+
+  nextReadTimeout(readTimeoutMs: number = API_TIMEOUTS.LLM_REQUEST_BASE): number {
+    const remaining = this.deadline - this.now();
+    if (remaining <= 0) {
+      throw new Error('Stream progress timeout - no model output received');
+    }
+    return Math.min(readTimeoutMs, remaining);
   }
 }
 
