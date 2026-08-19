@@ -335,6 +335,8 @@ describe('ReadTool', () => {
       );
 
       expect(result.success).toBe(false);
+      expect(result.error).toContain('per-result retention limit');
+      expect(result.error).toContain('does not mean the overall context is exhausted');
       expect(result.error).toContain('Do not page through the file by default');
       expect(result.error).toContain('first locate the relevant symbol with grep');
       expect(result.suggestion).toContain('smallest relevant offset/limit range');

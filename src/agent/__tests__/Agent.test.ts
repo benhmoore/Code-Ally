@@ -37,6 +37,7 @@ describe('Agent - Interruption Handling', () => {
       tool_call_repair_attempts: true,
       tool_call_verbose_errors: true,
       tool_call_activity_timeout: 120,
+      stream_responses: true,
       dir_tree_max_depth: 3,
       dir_tree_max_files: 50,
       dir_tree_enable: true,
@@ -476,6 +477,26 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('Isolated Context Tracking', () => {
+    it('streams specialized-agent requests on their scoped activity stream', async () => {
+      const specializedStream = new ActivityStream();
+      const specializedAgent = new Agent(mockModelClient, toolManager, specializedStream, {
+        config: mockConfig,
+        isSpecializedAgent: true,
+        baseAgentPrompt: 'Base prompt',
+        taskPrompt: 'Task prompt',
+      });
+
+      await specializedAgent.sendMessage('Do delegated work');
+
+      expect(mockModelClient.send).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          stream: true,
+          activityStream: specializedStream,
+        }),
+      );
+    });
+
     it('should have its own TokenManager instance', () => {
       const tokenManager = agent.getTokenManager();
       expect(tokenManager).toBeDefined();

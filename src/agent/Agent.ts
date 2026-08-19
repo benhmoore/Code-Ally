@@ -1685,8 +1685,11 @@ export class Agent {
 
       const requestOptions: SendOptions = {
         functions,
-        // Disable streaming for subagents - only main agent should stream responses
-        stream: !this.config.isSpecializedAgent && this.appConfig.stream_responses,
+        // Every agent owns a scoped activity stream, so delegated output can be
+        // streamed without leaking into the parent's conversation. Keeping
+        // delegates streaming also makes long cloud generations observable and
+        // lets the activity watchdog distinguish progress from a silent stall.
+        stream: this.appConfig.stream_responses,
         // Pass parentCallId for associating thinking events with tool calls
         parentId: executionContext.parentCallId,
         // Route thinking/assistant events to THIS agent's stream. For a sub-agent
