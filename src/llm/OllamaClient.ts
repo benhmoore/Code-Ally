@@ -547,6 +547,7 @@ export class OllamaClient extends ModelClient {
     let hadThinking = false; // Track if we've seen thinking chunks
     let thinkingComplete = false; // Track if thinking block completed
     let streamTimedOut = false; // Track if stream timeout occurred
+    let finishReason: string | undefined;
 
     // Line buffer to handle JSON objects that span multiple network chunks
     // Network chunks are determined by TCP packet sizes (~1500 bytes MTU), not JSON boundaries
@@ -653,6 +654,7 @@ export class OllamaClient extends ModelClient {
 
             // Check for completion
             if (chunkData.done) {
+              if (typeof chunkData.done_reason === 'string') finishReason = chunkData.done_reason;
               const usage = extractOllamaUsage(chunkData);
               if (usage) aggregatedMessage.usage = usage;
               break;
@@ -709,6 +711,7 @@ export class OllamaClient extends ModelClient {
           // Capture server-reported token usage from the final chunk
           const usage = extractOllamaUsage(chunkData);
           if (usage) aggregatedMessage.usage = usage;
+          if (typeof chunkData.done_reason === 'string') finishReason = chunkData.done_reason;
         } catch (parseError) {
           // Final buffer wasn't valid JSON - log for debugging
           logger.warn('[OLLAMA_CLIENT] Failed to parse final buffer content:', parseError);
@@ -768,6 +771,7 @@ export class OllamaClient extends ModelClient {
       aggregatedMessage._content_was_streamed = true;
       aggregatedMessage._should_replace_streaming = true;
     }
+    if (finishReason) aggregatedMessage.finishReason = finishReason;
 
     return aggregatedMessage as LLMResponse;
   }
@@ -782,6 +786,7 @@ export class OllamaClient extends ModelClient {
       role: 'assistant',
       content: message.content || '',
     };
+    if (typeof data.done_reason === 'string') response.finishReason = data.done_reason;
 
     if (message.thinking) {
       response.thinking = message.thinking;

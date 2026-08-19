@@ -27,6 +27,7 @@ import {
   createHttpErrorReminder,
   createEmptyResponseReminder,
   createEmptyAfterToolsReminder,
+  createOutputLimitReminder,
   createRequirementsNotMetReminder,
 } from '../utils/messageUtils.js';
 
@@ -92,6 +93,8 @@ export interface ResponseContext {
   cleanupEphemeralMessages: () => void;
   /** Callback to ensure context room before adding retry/continuation messages */
   ensureContextRoom: () => Promise<void>;
+  /** Force semantic reclamation when the provider exhausts its output budget. */
+  reclaimContext: () => Promise<void>;
 }
 
 /**
@@ -311,12 +314,30 @@ export class ResponseProcessor {
       };
       this.conversationManager.addMessage(assistantMessage);
 
-      // Ensure context room before adding retry message
-      await context.ensureContextRoom();
+      const outputLimited = response.finishReason === 'length'
+        || response.finishReason === 'max_tokens'
+        || response.finishReason === 'max_output_tokens';
+
+      // Repeating the same request with the same runway reproduces a
+      // reasoning-only truncation. Preserve that reasoning in a checkpoint,
+      // reclaim space, and direct the model to act from work it already did.
+      if (outputLimited) {
+        logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Reasoning exhausted output budget; reclaiming context before retry');
+        try {
+          await context.reclaimContext();
+        } catch (error) {
+          logger.warn('[AGENT_RESPONSE] Output-limit reclamation failed; continuing with available context:', error);
+          await context.ensureContextRoom();
+        }
+      } else {
+        await context.ensureContextRoom();
+      }
 
       // Add generic continuation prompt
       // PERSIST: false - Ephemeral, one-time continuation signal for incomplete response
-      const continuationPrompt = createEmptyResponseReminder();
+      const continuationPrompt = outputLimited
+        ? createOutputLimitReminder()
+        : createEmptyResponseReminder();
       this.conversationManager.addMessage(continuationPrompt);
 
       // Check for interruption before requesting continuation

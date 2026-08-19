@@ -371,9 +371,13 @@ export class OpenAIResponsesClient extends ModelClient {
     if (lastCompaction >= 0) items = items.slice(lastCompaction);
 
     const content = response.output_text ?? '';
+    const incompleteReason = response.incomplete_details?.reason;
     return {
       role: 'assistant',
       content,
+      ...(response.status === 'incomplete' && typeof incompleteReason === 'string'
+        ? { finishReason: incompleteReason === 'max_output_tokens' ? 'length' : incompleteReason }
+        : {}),
       ...(response.__streamed ? {
         _content_was_streamed: true,
         _should_replace_streaming: true,

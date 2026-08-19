@@ -96,6 +96,8 @@ export interface LLMResponse {
   role: 'assistant';
   /** Text content of the response */
   content: string;
+  /** Provider-reported reason generation stopped (for example `stop` or `length`). */
+  finishReason?: string;
   /** Tool calls requested by the model */
   tool_calls?: Array<{
     id: string;
