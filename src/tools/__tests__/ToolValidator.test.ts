@@ -49,18 +49,18 @@ describe('ToolValidator', () => {
         parameters: {
           type: 'object',
           properties: {
-            file_paths: { type: 'array' },
+            file_path: { type: 'string' },
             limit: { type: 'integer' },
             offset: { type: 'integer' },
           },
-          required: ['file_paths'],
+          required: ['file_path'],
         },
       },
     };
 
     it('should reject negative limit', () => {
       const result = validator.validateArguments(readTool, readFunctionDef, {
-        file_paths: ['test.txt'],
+        file_path: 'test.txt',
         limit: -5,
       });
 
@@ -71,7 +71,7 @@ describe('ToolValidator', () => {
 
     it('should accept negative offset', () => {
       const result = validator.validateArguments(readTool, readFunctionDef, {
-        file_paths: ['test.txt'],
+        file_path: 'test.txt',
         offset: -20,
       });
 
@@ -80,7 +80,7 @@ describe('ToolValidator', () => {
 
     it('should accept valid limit and offset', () => {
       const result = validator.validateArguments(readTool, readFunctionDef, {
-        file_paths: ['test.txt'],
+        file_path: 'test.txt',
         limit: 100,
         offset: 50,
       });
@@ -90,7 +90,7 @@ describe('ToolValidator', () => {
 
     it('should accept limit=0 (all lines)', () => {
       const result = validator.validateArguments(readTool, readFunctionDef, {
-        file_paths: ['test.txt'],
+        file_path: 'test.txt',
         limit: 0,
       });
 
