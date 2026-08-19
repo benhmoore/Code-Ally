@@ -118,6 +118,7 @@ Returns results inline once they finish (or partial state on timeout).`;
       // signal through BaseTool.currentAbortSignal.
       signal: executionContext?.turnInterruptionSignal ?? this.currentAbortSignal,
     });
+    taskRegistry.acknowledgeResults(results);
 
     const aborted = executionContext?.turnInterruptionSignal?.aborted
       ?? this.currentAbortSignal?.aborted
