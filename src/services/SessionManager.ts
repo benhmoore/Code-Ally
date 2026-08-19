@@ -1295,6 +1295,38 @@ export class SessionManager implements IService {
   }
 
   /**
+   * Durably replace conversation history, including with an empty transcript.
+   *
+   * Ordinary auto-save is append-oriented and deliberately ignores an empty
+   * conversation. History rewrites such as rewind need different semantics:
+   * stale transcript segments and compaction state must be replaced atomically
+   * so a later resume cannot resurrect discarded messages.
+   */
+  async replaceConversation(
+    messages: readonly Message[],
+    transcript: readonly Message[] = messages,
+    providerState: ProviderCheckpointState = { kind: 'chat' },
+  ): Promise<boolean> {
+    const name = this.currentSession;
+    if (!name || this.isShuttingDown) return false;
+
+    try {
+      await this.flushPendingAutoSave(name);
+      return await this.mutateSession(name, false, (session) => {
+        session.messages = this.filterMessagesForPersistence(messages);
+        session.transcript = this.filterMessagesForPersistence(transcript);
+        session.provider_state = structuredClone(providerState);
+        delete session.conversation_checkpoint;
+        delete session.transcript_segments;
+        delete session.transcript_tail;
+      });
+    } catch (error) {
+      logger.error(`[SESSION] Failed to replace conversation for ${name}:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Durably commit a new model window and its checkpoint before the agent
    * installs either in memory. Unlike ordinary autosave this is never debounced.
    */

@@ -188,6 +188,39 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('replaceConversation', () => {
+    it('durably truncates both the model window and full transcript', async () => {
+      await sessionManager.createSession('replace-test');
+      const original: Message[] = [
+        { id: 'u1', role: 'user', content: 'first' },
+        { id: 'a1', role: 'assistant', content: 'done' },
+        { id: 'u2', role: 'user', content: 'second' },
+        { id: 'a2', role: 'assistant', content: 'done again' },
+      ];
+      await sessionManager.saveSession('replace-test', original, original);
+
+      const replacement = original.slice(0, 2);
+      expect(await sessionManager.replaceConversation(replacement, replacement)).toBe(true);
+
+      const resumed = await sessionManager.loadSession('replace-test');
+      expect(resumed?.messages).toEqual(replacement);
+      expect(resumed?.transcript).toEqual(replacement);
+      expect(resumed?.provider_state).toEqual({ kind: 'chat' });
+    });
+
+    it('persists an empty rewind instead of retaining stale history', async () => {
+      await sessionManager.createSession('replace-empty-test');
+      const original: Message[] = [{ id: 'u1', role: 'user', content: 'first' }];
+      await sessionManager.saveSession('replace-empty-test', original, original);
+
+      expect(await sessionManager.replaceConversation([], [])).toBe(true);
+
+      const resumed = await sessionManager.loadSession('replace-empty-test');
+      expect(resumed?.messages).toEqual([]);
+      expect(resumed?.transcript).toEqual([]);
+    });
+  });
+
   describe('sessionExists', () => {
     it('should return true for existing session', async () => {
       await sessionManager.createSession('exists-test');

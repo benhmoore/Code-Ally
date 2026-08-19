@@ -291,6 +291,39 @@ describe('PatchManager', () => {
       expect(preview?.length).toBe(3);
     });
 
+    it('should preview sequential edits to one file cumulatively', async () => {
+      const testFilePath = path.join(testFilesDir, 'sequential.txt');
+
+      await patchManager.captureOperation('edit', testFilePath, 'zero\n', 'one\n');
+      await patchManager.captureOperation('edit', testFilePath, 'one\n', 'two\n');
+      await fs.writeFile(testFilePath, 'two\n', 'utf-8');
+
+      const preview = await patchManager.previewUndoOperations(2);
+
+      expect(preview).toHaveLength(2);
+      expect(preview?.map(item => [item.current_content, item.predicted_content])).toEqual([
+        ['two\n', 'one\n'],
+        ['one\n', 'zero\n'],
+      ]);
+    });
+
+    it('should preview timestamp-based sequential edits cumulatively', async () => {
+      const testFilePath = path.join(testFilesDir, 'timestamp-sequential.txt');
+      const since = Date.now() - 1_000;
+
+      await patchManager.captureOperation('edit', testFilePath, 'zero\n', 'one\n');
+      await patchManager.captureOperation('edit', testFilePath, 'one\n', 'two\n');
+      await fs.writeFile(testFilePath, 'two\n', 'utf-8');
+
+      const preview = await patchManager.previewUndoSinceTimestamp(since);
+
+      expect(preview).toHaveLength(2);
+      expect(preview?.map(item => [item.current_content, item.predicted_content])).toEqual([
+        ['two\n', 'one\n'],
+        ['one\n', 'zero\n'],
+      ]);
+    });
+
     it('should return null if count exceeds available patches', async () => {
       await patchManager.captureOperation('edit', '/test/file.txt', 'a', 'b');
 

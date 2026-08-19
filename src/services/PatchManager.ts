@@ -460,48 +460,7 @@ export class PatchManager implements IService {
       return null;
     }
 
-    const patchesToPreview = this.indexManager.getLastPatches(actualCount);
-    const previewData: UndoPreview[] = [];
-
-    // Process in reverse order (same as undo)
-    for (let i = patchesToPreview.length - 1; i >= 0; i--) {
-      const patchEntry = patchesToPreview[i]!;
-      try {
-        const filePath = patchEntry.file_path;
-
-        // Read current content
-        let currentContent = '';
-        const fileExists = await fs.access(filePath).then(() => true).catch(() => false);
-        if (fileExists) {
-          try {
-            currentContent = await fs.readFile(filePath, 'utf-8');
-          } catch (error) {
-            logger.warn(`Could not read ${filePath} for preview:`, error);
-            continue;
-          }
-        }
-
-        // Simulate undo
-        const predictedContent = await this.simulateUndoResult(patchEntry, currentContent);
-        if (predictedContent === null) {
-          continue;
-        }
-
-        previewData.push({
-          operation_type: patchEntry.operation_type,
-          file_path: filePath,
-          patch_number: patchEntry.patch_number,
-          timestamp: patchEntry.timestamp,
-          current_content: currentContent,
-          predicted_content: predictedContent,
-        });
-      } catch (error) {
-        logger.error(`Failed to generate preview for patch ${patchEntry.patch_number}:`, error);
-        continue;
-      }
-    }
-
-    return previewData.length > 0 ? previewData : null;
+    return this.previewPatches(this.indexManager.getLastPatches(actualCount));
   }
 
   // ========== Timestamp-Based Operations ==========
@@ -668,25 +627,59 @@ export class PatchManager implements IService {
       }
 
       logger.debug(`Generating preview for ${patchesToPreview.length} patches since timestamp ${timestamp}`);
-
-      // Generate preview for each patch in parallel
-      const previewResults = await Promise.all(
-        patchesToPreview.map(entry => this.previewSinglePatch(entry.patch_number))
-      );
-      const previews = previewResults.filter((p): p is UndoPreview => p !== null);
-
-      // Log warnings for failed previews
-      previewResults.forEach((preview, index) => {
-        if (!preview) {
-          logger.warn(`Failed to generate preview for patch ${patchesToPreview[index]!.patch_number}`);
-        }
-      });
-
-      return previews.length > 0 ? previews : null;
+      return this.previewPatches(patchesToPreview);
     } catch (error) {
       logger.error('Failed to preview undo since timestamp:', error);
       return null;
     }
+  }
+
+  /**
+   * Preview a batch in the exact order undo will apply it.
+   *
+   * Multiple patches may target the same file. Each older reverse patch must
+   * therefore see the virtual content produced by the newer reverse patch,
+   * rather than every patch being simulated independently against the current
+   * on-disk file.
+   */
+  private async previewPatches(
+    patchesInChronologicalOrder: ReadonlyArray<PatchMetadata>
+  ): Promise<UndoPreview[] | null> {
+    const previewData: UndoPreview[] = [];
+    const virtualContents = new Map<string, string>();
+
+    for (let i = patchesInChronologicalOrder.length - 1; i >= 0; i--) {
+      const patchEntry = patchesInChronologicalOrder[i]!;
+      const filePath = patchEntry.file_path;
+
+      try {
+        let currentContent = virtualContents.get(filePath);
+        if (currentContent === undefined) {
+          const fileExists = await fs.access(filePath).then(() => true).catch(() => false);
+          currentContent = fileExists ? await fs.readFile(filePath, 'utf-8') : '';
+        }
+
+        const predictedContent = await this.simulateUndoResult(patchEntry, currentContent);
+        if (predictedContent === null) {
+          logger.warn(`Failed to generate preview for patch ${patchEntry.patch_number}`);
+          continue;
+        }
+
+        previewData.push({
+          operation_type: patchEntry.operation_type,
+          file_path: filePath,
+          patch_number: patchEntry.patch_number,
+          timestamp: patchEntry.timestamp,
+          current_content: currentContent,
+          predicted_content: predictedContent,
+        });
+        virtualContents.set(filePath, predictedContent);
+      } catch (error) {
+        logger.error(`Failed to generate preview for patch ${patchEntry.patch_number}:`, error);
+      }
+    }
+
+    return previewData.length > 0 ? previewData : null;
   }
 
   /**

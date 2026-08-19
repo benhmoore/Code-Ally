@@ -2462,10 +2462,24 @@ export class Agent {
 
     const systemMessage = this.conversationManager.getSystemMessage()?.role === 'system' ? this.conversationManager.getSystemMessage() : null;
     const truncatedMessages = transcript.slice(0, cutoffIndex);
+    const nextMessages = systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages;
+    const nextProviderState = { kind: 'chat' } as const;
 
-    this.conversationManager.setMessages(systemMessage ? [systemMessage, ...truncatedMessages] : truncatedMessages);
+    // Persist the replacement before installing it in memory. Session
+    // auto-save is append-oriented and cannot represent transcript truncation;
+    // without this durable replacement, resume resurrects the rewound turn.
+    const persisted = await this.sessionPersistence.replaceConversation(
+      nextMessages,
+      truncatedMessages,
+      nextProviderState,
+    );
+    if (!persisted) {
+      throw new Error('Could not persist rewound conversation; no history was changed');
+    }
+
+    this.conversationManager.setMessages(nextMessages);
     this.conversationManager.setCheckpoint(null);
-    this.conversationManager.setProviderState({ kind: 'chat' });
+    this.conversationManager.setProviderState(nextProviderState);
 
     // Recalculate token count after rewind
     this.tokenManager.updateTokenCount(this.conversationManager.getMessages());

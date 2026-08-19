@@ -471,6 +471,30 @@ describe('UndoCoordinator', () => {
       expect(outcome.rewindedMessages.map((m) => m.content)).toEqual(['first', 'ok']);
     });
 
+    it('reports each restored file once when several changes touched it', async () => {
+      const messages = [
+        userMessage('first', 100),
+        { role: 'assistant', content: 'ok' } as Message,
+        userMessage('second', 200),
+      ];
+      const agent = makeAgent(messages);
+      const patchManager = makePatchManager({
+        getPatchesSinceTimestamp: vi.fn(async () => [
+          { patch_number: 1, file_path: 'src/a.ts' } as never,
+          { patch_number: 2, file_path: 'src/a.ts' } as never,
+        ]),
+        undoOperationsSinceTimestamp: vi.fn(async () =>
+          makeResult({ reverted_files: ['src/a.ts', 'src/a.ts'] })
+        ),
+      });
+      const coordinator = makeCoordinator(patchManager, agent);
+
+      coordinator.resolveRewindSelection();
+      const outcome = await coordinator.performRewind(0, { restoreFiles: true });
+
+      expect(outcome.restoredFiles).toEqual(['src/a.ts']);
+    });
+
     it('skips file restoration when the user opted out', async () => {
       const agent = makeAgent([userMessage('first', 100), userMessage('second', 200)]);
       const patchManager = makePatchManager();
