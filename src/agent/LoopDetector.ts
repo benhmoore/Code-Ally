@@ -681,6 +681,18 @@ class ToolCycleDetector {
       const targetSignature = this.createTargetSignature(toolCall);
       let fileHashes: Map<string, string> | undefined;
 
+      // A successful retry is concrete evidence that an earlier failure on
+      // the same operation or resource is no longer relevant. Do not infer
+      // progress merely from unrelated intervening calls: alternating a
+      // failing check with different edits is itself a common failure loop.
+      if (results?.[i]?.success === true) {
+        this.toolCallHistory = this.toolCallHistory.filter(entry =>
+          entry.success !== false
+          || (entry.signature !== signature
+            && (!targetSignature || entry.targetSignature !== targetSignature))
+        );
+      }
+
       // Record metrics
       if (results && results[i]) {
         this.recordMetrics(toolCall, results[i]);
@@ -713,20 +725,6 @@ class ToolCycleDetector {
     // Trim history to max size
     while (this.toolCallHistory.length > this.maxHistory) {
       this.toolCallHistory.shift();
-    }
-  }
-
-  clearIfBroken(): void {
-    if (this.toolCallHistory.length < AGENT_CONFIG.CYCLE_BREAK_THRESHOLD) {
-      return;
-    }
-
-    const lastN = this.toolCallHistory.slice(-AGENT_CONFIG.CYCLE_BREAK_THRESHOLD);
-    const signatures = lastN.map(entry => entry.signature);
-
-    if (new Set(signatures).size === AGENT_CONFIG.CYCLE_BREAK_THRESHOLD) {
-      logger.debug('[TOOL_CYCLE_DETECTOR]', this.instanceId, 'Cycle broken - clearing history');
-      this.toolCallHistory = [];
     }
   }
 
@@ -864,10 +862,6 @@ export class LoopDetector {
     results?: Array<{ success: boolean; [key: string]: any }>
   ): void {
     this.toolCycleDetector.recordToolCalls(toolCalls, results);
-  }
-
-  clearCyclesIfBroken(): void {
-    this.toolCycleDetector.clearIfBroken();
   }
 
   clearToolHistory(): void {

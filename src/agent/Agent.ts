@@ -2134,7 +2134,6 @@ export class Agent {
         '[TOOL_LOOP]',
         { kind: 'tool_loop', reason }
       ),
-      clearCyclesIfBroken: () => this.loopDetector.clearCyclesIfBroken(),
       clearCurrentTurn: () => this.toolManager.clearCurrentTurn(this.instanceId),
       startToolExecution: () => this.startToolExecution(),
       cleanupEphemeralMessages: () => this.cleanupEphemeralMessages(),

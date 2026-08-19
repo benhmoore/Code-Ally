@@ -121,19 +121,13 @@ describe('LoopDetector', () => {
         });
       });
 
-      it('tracks prior failures separately from successful identical calls', () => {
+      it('clears prior failures when the identical call succeeds', () => {
         const toolCall = createToolCall('apply-patch', { patch: 'same patch' });
 
         detector.recordToolCalls([toolCall], [{ success: false }]);
         detector.recordToolCalls([toolCall], [{ success: true }]);
 
-        const cycleInfo = detector.detectCycles([toolCall]).get(toolCall.id);
-
-        expect(cycleInfo?.count).toBe(3);
-        expect(cycleInfo?.metadata).toMatchObject({
-          priorFailureCount: 1,
-          failureThreshold: 3,
-        });
+        expect(detector.detectCycles([toolCall]).has(toolCall.id)).toBe(false);
       });
 
       it('detects varied failed operations against the same semantic target', () => {
@@ -358,23 +352,19 @@ describe('LoopDetector', () => {
         expect(detector.getToolHistorySize()).toBe(15);
       });
 
-      it('should clear history when cycle is broken', () => {
-        const repeatedCall = createToolCall('Grep', { pattern: 'same' });
+      it('retains recurrent failures across unrelated intervening calls', () => {
+        const failingCheck = createToolCall('Bash', { command: 'run-tests' });
 
-        // Create potential cycle
-        detector.recordToolCalls([repeatedCall]);
-        detector.recordToolCalls([repeatedCall]);
+        detector.recordToolCalls([failingCheck], [{ success: false }]);
+        detector.recordToolCalls([createToolCall('Bash', { command: 'edit-one' })], [{ success: true }]);
+        detector.recordToolCalls([failingCheck], [{ success: false }]);
+        detector.recordToolCalls([createToolCall('Bash', { command: 'edit-two' })], [{ success: true }]);
 
-        // Break cycle with 3 different calls
-        detector.recordToolCalls([createToolCall('Tool1', { a: 1 })]);
-        detector.recordToolCalls([createToolCall('Tool2', { b: 2 })]);
-        detector.recordToolCalls([createToolCall('Tool3', { c: 3 })]);
-
-        // Try to clear if broken
-        detector.clearCyclesIfBroken();
-
-        // History should be cleared
-        expect(detector.getToolHistorySize()).toBe(0);
+        const cycle = detector.detectCycles([failingCheck]).get(failingCheck.id);
+        expect(cycle).toMatchObject({
+          issueType: 'exact_duplicate',
+          metadata: { priorFailureCount: 2, failureThreshold: 3 },
+        });
       });
 
       it('should explicitly clear all history', () => {

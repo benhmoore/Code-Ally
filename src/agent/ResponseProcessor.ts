@@ -39,7 +39,7 @@ import {
  * - Identity & Persistence: generateId, autoSaveSession
  * - LLM Communication: getLLMResponse
  * - Tool Execution: executeToolCalls, recordToolCalls
- * - Cycle Detection: detectCycles, clearCyclesIfBroken
+ * - Cycle Detection: detectCycles, recordToolCalls
  * - Context Management: getContextUsagePercentage, ensureContextRoom, cleanupEphemeralMessages
  * - Turn Management: clearCurrentTurn, startToolExecution
  */
@@ -87,7 +87,6 @@ export interface ResponseContext {
   /** Stop this response and let Agent perform bounded internal recovery. */
   interruptForToolLoop: (reason: string) => void;
   /** Callback to clear cycle detection if pattern broken */
-  clearCyclesIfBroken: () => void;
   /** Callback to clear current turn (for redundancy detection) */
   clearCurrentTurn: () => void;
   /** Callback to start tool execution (creates abort controller) */
@@ -537,9 +536,6 @@ export class ResponseProcessor {
         `${repeatedFailure.function.name} failed with identical arguments ${failureCount} times`
       );
     }
-
-    // Check if cycle pattern is broken (3 consecutive different calls)
-    context.clearCyclesIfBroken();
 
     // Track required tool calls (legacy requiredToolCalls config)
     if (this.requiredToolTracker.hasRequiredTools()) {
