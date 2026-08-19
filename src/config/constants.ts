@@ -906,9 +906,6 @@ export const AGENT_CONFIG = {
   /** Number of identical tool calls that trigger cycle detection */
   CYCLE_THRESHOLD: 3,
 
-  /** Number of consecutive different tool calls to clear cycle history */
-  CYCLE_BREAK_THRESHOLD: 3,
-
   /** Number of accesses to the same file before warning about repeated reads */
   REPEATED_FILE_THRESHOLD: 5,
 
