@@ -216,7 +216,7 @@ export function applyUnifiedDiff(
  * text before applying so callers can enforce read-before-write against the
  * lines the patch actually targets, even when a hunk's line-number hint drifted.
  */
-export function applyModelPatch(
+function applyModelPatchExact(
   diffContent: string,
   currentContent: string
 ): AppliedModelPatch {
@@ -370,6 +370,25 @@ export function applyModelPatch(
     updatedReadRanges,
     hunkCount: patch.hunks.length,
   };
+}
+
+/**
+ * Apply a model-authored patch, tolerating one common structured-argument
+ * encoding artifact. Some providers preserve the JSON escape before a double
+ * quote inside an already-decoded string, so exact source lines arrive as
+ * `\"text\"` instead of `"text"`. Exact application always wins; the repaired
+ * candidate is accepted only when it independently parses, anchors, and
+ * applies, so genuine escaped-quote source remains unchanged.
+ */
+export function applyModelPatch(
+  diffContent: string,
+  currentContent: string
+): AppliedModelPatch {
+  const exact = applyModelPatchExact(diffContent, currentContent);
+  if (exact.success || !diffContent.includes('\\"')) return exact;
+
+  const repaired = applyModelPatchExact(diffContent.replace(/\\"/g, '"'), currentContent);
+  return repaired.success ? repaired : exact;
 }
 
 /**
