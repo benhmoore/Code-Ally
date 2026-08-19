@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BackgroundTaskRegistry } from '../BackgroundTaskRegistry.js';
 
 function fakeAgentManager(tasks: any[] = []) {
-  return { listTasks: () => tasks } as any;
+  return { listTasks: () => tasks, acknowledgeCompletedResults: vi.fn() } as any;
 }
 function fakeBashManager(processes: any[] = []) {
   return { listProcesses: () => processes } as any;
@@ -67,6 +67,20 @@ describe('BackgroundTaskRegistry', () => {
     const out = await reg.waitFor(['a1'], { timeoutMs: 1000, pollMs: 10 });
     expect(out).toHaveLength(1);
     expect(out[0].status).toBe('done');
+  });
+
+  it('acknowledges settled agent results and clears their watched state', () => {
+    const manager = fakeAgentManager();
+    const reg = new BackgroundTaskRegistry(manager, fakeBashManager(), fakeStream());
+    reg.markWatched('a1');
+
+    reg.acknowledgeResults([{
+      id: 'a1', kind: 'agent', label: 'audit', status: 'done', startTime: 1,
+      endTime: 2, result: 'complete', error: null, watched: true, blocksCompletion: true,
+    }]);
+
+    expect(manager.acknowledgeCompletedResults).toHaveBeenCalledWith(['a1']);
+    expect(reg.isWatched('a1')).toBe(false);
   });
 
   it('waitFor resolves when a running task settles', async () => {

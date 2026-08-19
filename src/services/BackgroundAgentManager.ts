@@ -261,6 +261,16 @@ export class BackgroundAgentManager {
     return drained;
   }
 
+  /** Mark specific settled background results as delivered by an explicit join. */
+  acknowledgeCompletedResults(ids: Iterable<string>): void {
+    for (const id of ids) {
+      const task = this.tasks.get(id);
+      if (task?.mode === 'background' && task.status !== 'running') {
+        task.consumed = true;
+      }
+    }
+  }
+
   /**
    * Status reminders for the model: running agents + recently completed ones.
    * Mirrors BashProcessManager.getStatusReminders().
@@ -278,7 +288,7 @@ export class BackgroundAgentManager {
           `Background agent ${task.id} [running]: ${task.agentType} — "${task.taskPrompt}" (${elapsed}). ` +
           `It will report its result automatically when done; use cancel-agent(agent_id="${task.id}") to stop it.`
         );
-      } else if (task.endTime && task.endTime >= recentCutoff) {
+      } else if (!task.consumed && task.endTime && task.endTime >= recentCutoff) {
         reminders.push(
           `Background agent ${task.id} [${task.status}]: ${task.agentType} — "${task.taskPrompt}" finished (${elapsed}).`
         );

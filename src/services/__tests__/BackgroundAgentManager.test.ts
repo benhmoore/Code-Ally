@@ -87,6 +87,16 @@ describe('BackgroundAgentManager', () => {
     expect(manager.drainCompletedResults()).toHaveLength(0);
   });
 
+  it('acknowledges results delivered by an explicit join', () => {
+    manager.addTask(makeTask('t1', { status: 'done', endTime: Date.now(), result: 'done output' }));
+    manager.addTask(makeTask('t2', { status: 'done', endTime: Date.now(), result: 'other output' }));
+
+    manager.acknowledgeCompletedResults(['t1']);
+
+    expect(manager.drainCompletedResults().map((task) => task.id)).toEqual(['t2']);
+    expect(manager.getStatusReminders().some((line) => line.includes('t1'))).toBe(false);
+  });
+
   it('produces running and recently-completed status reminders', () => {
     manager.addTask(makeTask('t1'));
     manager.addTask(makeTask('t2', { status: 'done', endTime: Date.now() }));

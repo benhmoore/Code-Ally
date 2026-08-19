@@ -167,6 +167,21 @@ export class BackgroundTaskRegistry {
   }
 
   /**
+   * A synchronous consumer already received these settled results (for
+   * example, through `wait`). Prevent the passive delivery path from injecting
+   * the same agent output again on a later tool call.
+   */
+  acknowledgeResults(tasks: readonly BackgroundTask[]): void {
+    const settledAgentIds = tasks
+      .filter((task) => task.kind === 'agent' && task.status !== 'running')
+      .map((task) => task.id);
+    this.agentManager.acknowledgeCompletedResults(settledAgentIds);
+    for (const task of tasks) {
+      if (task.status !== 'running') this.clearWatched(task.id);
+    }
+  }
+
+  /**
    * Block until the target tasks settle (status !== 'running'), the timeout
    * elapses, or the abort signal fires. Uniform across kinds via status polling.
    *

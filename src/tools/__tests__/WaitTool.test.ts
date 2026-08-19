@@ -34,9 +34,11 @@ describe('WaitTool', () => {
       });
       return [task];
     });
+    const acknowledgeResults = vi.fn();
     ServiceRegistry.getInstance().registerInstance('background_task_registry', {
       get: () => task,
       waitFor,
+      acknowledgeResults,
     } as any);
 
     const controller = new AbortController();
@@ -58,5 +60,6 @@ describe('WaitTool', () => {
     expect(result.content).toContain('Wait interrupted by user');
     expect(result.content).toContain('still running');
     expect(task.status).toBe('running');
+    expect(acknowledgeResults).toHaveBeenCalledWith([task]);
   });
 });
