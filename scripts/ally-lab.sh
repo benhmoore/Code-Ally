@@ -21,7 +21,7 @@
 #   ally-lab key escape                        # interrupt the turn
 #   ally-lab dump                              # write a /debug dump
 #   ally-lab stop                              # end the session
-#   ally-lab reset [--adopt]                   # wipe the experiment dir for a clean run
+#   ally-lab reset [--dir PATH] [--adopt]      # wipe the experiment dir for a clean run
 #                                              #   (only dirs marked .ally-lab-experiment)
 
 set -euo pipefail
@@ -246,10 +246,17 @@ cmd_stop() {
 # `reset --adopt` designates the current lab directory (writes the marker).
 cmd_reset() {
   local adopt=0
-  [[ "${1:-}" == "--adopt" ]] && adopt=1
-  local dir
-  dir="$(cat "$DIR_FILE" 2>/dev/null || true)"
-  [[ -n "$dir" && -d "$dir" ]] || die "no recorded lab directory (run start/hook first)"
+  local dir=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --adopt) adopt=1; shift ;;
+      --dir) [[ $# -ge 2 ]] || die "--dir requires a path"; dir="$2"; shift 2 ;;
+      *) die "unknown reset option: $1" ;;
+    esac
+  done
+  [[ -n "$dir" ]] || dir="$(cat "$DIR_FILE" 2>/dev/null || true)"
+  [[ -n "$dir" && -d "$dir" ]] || die "no lab directory available (pass: --dir PATH)"
+  dir="$(cd "$dir" && pwd)" || die "bad --dir"
   case "$dir" in
     "$HOME"|"$HOME/"|/|/Users|/Users/) die "refusing to reset '$dir'" ;;
   esac
