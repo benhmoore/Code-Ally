@@ -67,7 +67,7 @@ describe('runWithRetries failure budget', () => {
 
     await vi.runAllTimersAsync();
 
-    expect(await promise).toBe('error:Too many consecutive failures');
+    expect(await promise).toContain('error:Too many consecutive failures. Last error: ECONNREFUSED');
     expect(attempts).toBe(RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES);
   });
 
@@ -77,11 +77,27 @@ describe('runWithRetries failure budget', () => {
       throw new Error('ECONNREFUSED');
     });
     await vi.runAllTimersAsync();
-    expect(await exhausted).toBe('error:Too many consecutive failures');
+    expect(await exhausted).toContain('error:Too many consecutive failures. Last error: ECONNREFUSED');
 
     // A restarted local server is healthy immediately: the very next request
     // must reach it rather than being refused by leftover failure state.
     expect(await harness(async () => 'ok')).toBe('ok');
+  });
+
+  it('preserves the final HTTP failure when the retry budget is exhausted', async () => {
+    const result = await runWithRetries<any>({
+      attempt: async () => {
+        throw createHttpResponseError(500, 'opaque provider failure');
+      },
+      onInterrupted: () => null,
+      onError: error => error,
+      maxFailures: 1,
+    });
+
+    expect(result.message).toContain('Last error: HTTP 500: opaque provider failure');
+    expect(result.httpStatus).toBe(500);
+    expect(result.responseBody).toBe('opaque provider failure');
+    expect(result.cause).toBeInstanceOf(HttpResponseError);
   });
 
   it('stops immediately on a non-retryable error without consuming the budget', async () => {
