@@ -479,11 +479,8 @@ async function handleResumeCommand(
 /**
  * Apply CLI overrides to configuration
  */
-function applyConfigOverrides(
-  config: any,
-  options: CLIOptions
-): Record<string, any> {
-  const overrides: Record<string, any> = { ...config };
+function getCliConfigOverrides(options: CLIOptions): Record<string, any> {
+  const overrides: Record<string, any> = {};
 
   if (options.model !== undefined) overrides.model = options.model;
   if (options.endpoint !== undefined) overrides.endpoint = options.endpoint;
@@ -1063,15 +1060,14 @@ async function main() {
     }
 
     // Apply CLI overrides to configuration
-    const configOverrides = applyConfigOverrides(
-      configManager.getConfig(),
-      options
-    );
+    const runtimeOverrides = getCliConfigOverrides(options);
     if (options.scheduledTask) {
       // Scheduled runs must use their stored deny-by-default policy, even if
       // the user's interactive profile normally has auto_confirm enabled.
-      configOverrides.auto_confirm = false;
+      runtimeOverrides.auto_confirm = false;
     }
+    configManager.applyRuntimeOverrides(runtimeOverrides);
+    const configOverrides = configManager.getConfig();
 
     // Configure logging
     configureLogging(options.verbose, options.debug);

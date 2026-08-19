@@ -750,13 +750,11 @@ Only set run_in_background=false when your very next step depends on the result.
     agentConfig: AgentConfig;
     toolManager: ToolManager;
     modelClient: ModelClient;
-    targetModel: string;
-    config: any;
     configManager: any;
     permissionManager: any;
     agentType: string;
   }): Promise<{ agent: Agent; pooledAgent: PooledAgent | null; agentId: string | null }> {
-    const { agentConfig, toolManager, modelClient, targetModel, config, configManager, permissionManager, agentType } =
+    const { agentConfig, toolManager, modelClient, configManager, permissionManager, agentType } =
       params;
 
     const registry = ServiceRegistry.getInstance();
@@ -772,8 +770,10 @@ Only set run_in_background=false when your very next step depends on the result.
 
     // Acquire agent from pool
     logger.debug('[AGENT_TOOL] Acquiring agent from pool with poolKey:', agentConfig._poolKey);
-    const customModelClient = targetModel !== config.model ? modelClient : undefined;
-    const pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
+    // Always pass the client resolved for this invocation. The pool's default
+    // client reflects service-construction time and may be stale after a CLI or
+    // runtime model override, even when targetModel now matches config.model.
+    const pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, modelClient);
     const agentId = pooledAgent.agentId;
     logger.debug(`[AGENT_TOOL] Using pooled agent ${agentId} for ${agentType}`);
     return { agent: pooledAgent.agent, pooledAgent, agentId };
@@ -1000,8 +1000,6 @@ Only set run_in_background=false when your very next step depends on the result.
       agentConfig,
       toolManager: effectiveToolManager,
       modelClient,
-      targetModel,
-      config,
       configManager,
       permissionManager,
       agentType,

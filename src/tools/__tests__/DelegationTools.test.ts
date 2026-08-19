@@ -131,6 +131,10 @@ describe('BaseDelegationTool (via ExploreTool)', () => {
       expect(result.content).toContain('Exploration found the relevant handler');
       // Pooled agents always surface their id for reuse.
       expect(result.agent_id).toBe('explore-agent-id');
+      const pool = registry.get('agent_pool') as any;
+      const resolvedClient = pool.acquire.mock.calls[0][2];
+      expect(resolvedClient).toBeDefined();
+      expect(resolvedClient.modelName).toBe('test-model');
     });
 
     it('emits AGENT_START and AGENT_END events', async () => {

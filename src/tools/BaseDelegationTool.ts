@@ -263,8 +263,9 @@ export abstract class BaseDelegationTool extends BaseTool {
         // Acquire agent from pool
         logger.debug(`[${this.name.toUpperCase()}_TOOL] Acquiring agent from pool`);
         // Pass custom modelClient only if using a different model than global
-        const customModelClient = targetModel !== appConfig.model ? modelClient : undefined;
-        pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, customModelClient);
+        // Always pass the client resolved for this invocation. The pool's
+        // construction-time default can be stale after runtime model changes.
+        pooledAgent = await agentPoolService.acquire(agentConfig, toolManager, modelClient);
         delegationAgent = pooledAgent.agent;
         agentId = pooledAgent.agentId;
         // Register delegation with DelegationContextManager
