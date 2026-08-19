@@ -108,6 +108,14 @@ function alignHunkWhitespace(
 ): boolean {
   let sourceOffset = 0;
   const indentationDeltas = new Set<number>();
+  const oldLogicalLines = hunk.lines
+    .filter(line => line.startsWith(' ') || line.startsWith('-'))
+    .map(line => line.slice(1).trim());
+  const newLogicalLines = hunk.lines
+    .filter(line => line.startsWith(' ') || line.startsWith('+'))
+    .map(line => line.slice(1).trim());
+  const changesOnlyOuterWhitespace = oldLogicalLines.length === newLogicalLines.length
+    && oldLogicalLines.every((line, index) => line === newLogicalLines[index]);
 
   for (const line of hunk.lines) {
     if (!line.startsWith(' ') && !line.startsWith('-')) continue;
@@ -126,7 +134,15 @@ function alignHunkWhitespace(
     if (line.startsWith(' ') || line.startsWith('-')) {
       return line[0] + sourceLines[actualStart + sourceOffset++]!;
     }
-    if (!line.startsWith('+') || line.slice(1).trim().length === 0 || indentationDelta === 0) {
+    if (
+      !line.startsWith('+')
+      || line.slice(1).trim().length === 0
+      || indentationDelta === 0
+      // When the hunk's actual purpose is indentation, its added whitespace is
+      // the desired result. Translating it by the old-side anchor drift would
+      // silently undo or overshoot that repair.
+      || changesOnlyOuterWhitespace
+    ) {
       return line;
     }
 

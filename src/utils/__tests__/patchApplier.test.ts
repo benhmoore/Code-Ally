@@ -72,6 +72,17 @@ describe('applyModelPatch', () => {
       expect(result.readRanges).toEqual([{ start: 3, end: 3 }]);
     });
 
+    it('preserves authored indentation when whitespace is the intended change', () => {
+      const result = applyModelPatch(
+        '@@ -2,1 +2,1 @@\n-      """doc"""\n+    """doc"""',
+        'class Parser:\n     """doc"""\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe('class Parser:\n    """doc"""\n');
+      expect(result.readRanges).toEqual([{ start: 2, end: 2 }]);
+    });
+
     it('rejects whitespace-only matching when indentation drift is inconsistent', () => {
       const result = applyModelPatch(
         '@@ -1,2 +1,2 @@\n one\n-  two\n+  changed',
