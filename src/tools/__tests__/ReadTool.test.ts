@@ -79,7 +79,8 @@ describe('ReadTool', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('one file path');
-      expect(result.suggestion).toContain('separate read calls in parallel');
+      expect(result.suggestion).toContain('one read per path');
+      expect(result.suggestion).toContain('known-small');
     });
 
     it('does not execute when its parallel group exceeds the shared output budget', async () => {

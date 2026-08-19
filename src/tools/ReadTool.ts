@@ -25,7 +25,7 @@ import * as readline from 'readline';
 export class ReadTool extends BaseTool {
   readonly name = 'read';
   readonly description =
-    'Read one file. For several files, issue separate read calls in parallel.';
+    'Read one file or bounded line range. Read several known-small ranges in parallel only when their combined output is modest; otherwise search first and read narrowly or sequentially.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
   readonly requiresReservedContext = true;
@@ -34,7 +34,7 @@ export class ReadTool extends BaseTool {
   readonly usageGuidance = `**When to use read:**
 Locate before loading: use tree/glob to discover files and grep to find symbols or usages, then read the smallest relevant line range. Expand the range only when surrounding behavior is needed; read a whole file when it is small or the task is genuinely cross-cutting.
 Default reads stay in context. Use ephemeral=true only for one-time large file inspection (content removed after one turn).
-For multi-file exploration, prefer explore() to preserve context.`;
+For multi-file exploration, prefer explore() to preserve context. Parallelize only known-small, bounded reads whose combined output is modest; for unknown or large files, grep first and read narrow ranges sequentially.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
@@ -49,7 +49,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
         valid: false,
         error: 'file_path must be one file path',
         error_type: 'validation_error',
-        suggestion: 'Issue separate read calls in parallel to read several files.',
+        suggestion: 'Issue one read per path. Parallelize only known-small, bounded ranges; otherwise grep first and read narrowly or sequentially.',
       };
     }
 
@@ -210,7 +210,7 @@ For multi-file exploration, prefer explore() to preserve context.`;
       return this.formatErrorResponse(
         'file_path must be one file path',
         'validation_error',
-        'Issue separate read calls in parallel to read several files.'
+        'Issue one read per path. Parallelize only known-small, bounded ranges; otherwise grep first and read narrowly or sequentially.'
       );
     }
 
