@@ -33,6 +33,10 @@ describe('createBuiltInTools', () => {
     expect(definitions.map(definition => definition.function.name)).toContain('apply-patch');
     expect(definitions.map(definition => definition.function.name)).not.toContain('edit');
     expect(definitions.map(definition => definition.function.name)).not.toContain('line-edit');
+
+    const bashDescription = definitions.find(definition => definition.function.name === 'bash')
+      ?.function.description;
+    expect(bashDescription).toContain('Do not create, delete, overwrite, or rewrite project source files');
   });
 
   it('keeps todo calls minimal by deriving display text internally', () => {
