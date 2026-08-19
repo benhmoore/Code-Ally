@@ -297,6 +297,23 @@ describe('OllamaClient', () => {
       expect(result.content).toContain('HTTP 500: system message must be at the beginning');
     });
 
+    it('marks failed multimodal requests for attachment recovery', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => JSON.stringify({
+          error: 'system message must be at the beginning',
+        }),
+      });
+
+      const result = await client.send(
+        [{ role: 'user', content: 'Inspect this', images: ['data:image/png;base64,aW1hZ2U='] }],
+        { stream: false, signal: new AbortController().signal },
+      );
+
+      expect((result as typeof result & { shouldStripImages?: boolean }).shouldStripImages).toBe(true);
+    });
+
     it('should handle JSON parse errors with retry', async () => {
       mockFetch
         .mockResolvedValueOnce({

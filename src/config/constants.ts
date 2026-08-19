@@ -91,7 +91,7 @@ export const RETRY_CONFIG = {
    * and dies with it, so a later request always starts fresh against a backend
    * that may have recovered in the meantime.
    */
-  MAX_CONSECUTIVE_FAILURES: 10,
+  MAX_CONSECUTIVE_FAILURES: 5,
 } as const;
 
 // ===========================================
