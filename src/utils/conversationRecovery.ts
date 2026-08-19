@@ -66,15 +66,24 @@ export function reconcileToolCallPairs(messages: Message[]): Message[] {
     for (const toolCall of msg.tool_calls) {
       if (answeredIds.has(toolCall.id)) continue;
 
-      reconciled.push(
-        createToolResultMessage(
-          toolCall.id,
-          toolCall.function?.name ?? 'unknown',
-          INTERRUPTED_TOOL_RESULT,
-          true,
-          'interrupted'
-        ) as Message
+      const syntheticResult = createToolResultMessage(
+        toolCall.id,
+        toolCall.function?.name ?? 'unknown',
+        INTERRUPTED_TOOL_RESULT,
+        true,
+        'interrupted'
       );
+      syntheticResult.metadata = {
+        tool_status: { [toolCall.id]: 'error' },
+        tool_result: {
+          [toolCall.id]: {
+            error: INTERRUPTED_TOOL_RESULT.error,
+            error_type: INTERRUPTED_TOOL_RESULT.error_type,
+          },
+        },
+      };
+      syntheticResult.timestamp = Date.now();
+      reconciled.push(syntheticResult);
       answeredIds.add(toolCall.id);
       synthesized++;
     }

@@ -44,6 +44,31 @@ export function reconstructInterjectionsFromMessages(messages: Message[], activi
 }
 
 /**
+ * Add results repaired in the active conversation to the full transcript used
+ * for UI reconstruction. Session recovery repairs the provider-facing active
+ * window, while the immutable transcript can still end at the interrupted call.
+ */
+export function supplementTranscriptToolResults(
+  transcriptMessages: Message[],
+  recoveredMessages: Message[]
+): Message[] {
+  const transcriptResultIds = new Set(
+    transcriptMessages
+      .filter(message => message.role === 'tool' && message.tool_call_id)
+      .map(message => message.tool_call_id as string)
+  );
+  const missingResults = recoveredMessages.filter(message => (
+    message.role === 'tool'
+    && !!message.tool_call_id
+    && !transcriptResultIds.has(message.tool_call_id)
+  ));
+
+  return missingResults.length > 0
+    ? [...transcriptMessages, ...missingResults]
+    : transcriptMessages;
+}
+
+/**
  * Reconstruct ToolCallState objects from message history
  *
  * When loading a session from disk, we have messages with tool_calls and tool results,
@@ -60,7 +85,13 @@ export function reconstructInterjectionsFromMessages(messages: Message[], activi
  */
 export function reconstructToolCallsFromMessages(messages: Message[], serviceRegistry: ServiceRegistry): ToolCallState[] {
   const toolCalls: ToolCallState[] = [];
-  const toolResultsMap = new Map<string, { output: string; error?: string; timestamp: number; metadata?: any }>();
+  const toolResultsMap = new Map<string, {
+    output: string;
+    error?: string;
+    isError: boolean;
+    timestamp?: number;
+    metadata?: any;
+  }>();
 
   // Get ToolManager to look up tool visibility
   const toolManager = serviceRegistry.get('tool_manager');
@@ -75,7 +106,10 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
       toolResultsMap.set(msg.tool_call_id, {
         output: resolveDisplayContent(display),
         error: display?.error,
-        timestamp: msg.timestamp || Date.now(),
+        // `is_error` is the protocol-level source of truth and is present even
+        // on recovery results created before display metadata existed.
+        isError: msg.is_error === true,
+        timestamp: msg.timestamp,
         metadata: msg.metadata,
       });
     }
@@ -88,7 +122,10 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
 
       msg.tool_calls.forEach((tc, index) => {
         const result = toolResultsMap.get(tc.id);
-        const hasError = result?.error !== undefined;
+        const hasDisplayError = typeof result?.error === 'string'
+          ? result.error.length > 0
+          : result?.error != null;
+        const hasError = result?.isError === true || hasDisplayError;
 
         // Parse arguments if they're a string
         let parsedArgs: any;
@@ -128,7 +165,9 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
 
         // Try to get status from stored metadata (prefer tool result message metadata over assistant message)
         // Tool result message metadata is more accurate as it's set at execution time
-        if (result?.metadata?.tool_status?.[tc.id]) {
+        if (result?.isError === true) {
+          status = 'error';
+        } else if (result?.metadata?.tool_status?.[tc.id]) {
           status = result.metadata.tool_status[tc.id];
         } else if (result) {
           // Fallback to inferring from result
@@ -172,7 +211,10 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
           output: result?.output,
           error: result?.error,
           startTime: baseTimestamp + index, // Slightly offset multiple calls in same message
-          endTime: result?.timestamp,
+          // Legacy recovery results had no timestamp. A terminal call with an
+          // unknown end time should render zero/unknown duration, not keep
+          // aging every time the session is opened.
+          endTime: result ? (result.timestamp ?? baseTimestamp + index) : undefined,
           visibleInChat: visibleInChat,
           hideOutput,
           alwaysShowFullOutput,
@@ -220,6 +262,7 @@ export async function loadSessionData(
   const { messages: userMessages, interruption, changed: recoveryChanged } = recoverConversation(nonSystemMessages);
   const transcriptMessages = (sessionData.transcript ?? sessionData.messages)
     .filter((m: Message) => m.role !== 'system' && !m.metadata?.ephemeral);
+  const reconstructionMessages = supplementTranscriptToolResults(transcriptMessages, userMessages);
   const restoredCheckpoint = sessionData.checkpoint
     ? structuredClone(sessionData.checkpoint)
     : null;
@@ -303,7 +346,7 @@ export async function loadSessionData(
 
   // Reconstruct tool calls from message history
   // This populates activeToolCalls with completed tool calls so they appear in the timeline
-  const reconstructedToolCalls = reconstructToolCallsFromMessages(transcriptMessages, serviceRegistry);
+  const reconstructedToolCalls = reconstructToolCallsFromMessages(reconstructionMessages, serviceRegistry);
 
   // Restore the complete visible timeline in one state transaction. Enqueuing
   // one React update per historical tool call scales quadratically and can make
