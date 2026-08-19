@@ -69,6 +69,20 @@ function boundToolCalls(calls: ToolCallState[]): ToolCallState[] {
   return [...completed.filter(call => !ids.has(call.id)), ...running];
 }
 
+function applyToolCallUpdates(
+  calls: ToolCallState[],
+  updates: ReadonlyMap<string, Partial<ToolCallState>>
+): ToolCallState[] {
+  let hasChanges = false;
+  const updated = calls.map((call) => {
+    const update = updates.get(call.id);
+    if (!update) return call;
+    hasChanges = true;
+    return { ...call, ...update };
+  });
+  return hasChanges ? boundToolCalls(updated) : calls;
+}
+
 /**
  * Compaction notice for UI display
  */
@@ -401,19 +415,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     pendingUpdatesRef.current.clear();
 
     setConversationView((prev) => {
-      // Only create new array if something actually changed
-      let hasChanges = false;
-      const newArray = prev.activeToolCalls.map((call) => {
-        const update = updates.get(call.id);
-        if (update) {
-          hasChanges = true;
-          return { ...call, ...update };
-        }
-        return call;
-      });
-      return hasChanges
-        ? { ...prev, activeToolCalls: boundToolCalls(newArray) }
-        : prev;
+      const activeToolCalls = applyToolCallUpdates(prev.activeToolCalls, updates);
+      return activeToolCalls === prev.activeToolCalls ? prev : { ...prev, activeToolCalls };
     });
   }, []);
 
@@ -425,7 +428,23 @@ export const AppProvider: React.FC<AppProviderProps> = ({
 
     // Merge with any pending updates for this ID
     const existing = pendingUpdatesRef.current.get(id) || {};
-    pendingUpdatesRef.current.set(id, { ...existing, ...updates });
+    const mergedUpdates = { ...existing, ...updates };
+
+    // A terminal tool transition is a timeline ordering boundary. Apply it
+    // immediately, together with any buffered chunks for the same call, so a
+    // later assistant message cannot be committed to Ink's append-only Static
+    // output ahead of the completed tool row.
+    if (updates.status && ['success', 'error', 'cancelled'].includes(updates.status)) {
+      pendingUpdatesRef.current.delete(id);
+      const terminalUpdates = new Map([[id, mergedUpdates]]);
+      setConversationView((prev) => {
+        const activeToolCalls = applyToolCallUpdates(prev.activeToolCalls, terminalUpdates);
+        return activeToolCalls === prev.activeToolCalls ? prev : { ...prev, activeToolCalls };
+      });
+      return;
+    }
+
+    pendingUpdatesRef.current.set(id, mergedUpdates);
 
     // Set max batch timeout on first update (prevents indefinite batching under load)
     if (!maxBatchTimeoutRef.current) {
