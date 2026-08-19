@@ -69,6 +69,7 @@ export interface IAgentForOrchestrator {
   resetToolCallActivity(): void;
   addMessage(message: any): void;
   getToolAbortSignal(): AbortSignal | undefined;
+  getTurnInterruptionSignal?(): AbortSignal | undefined;
   getTurnStartTime(): number | undefined;
   getMaxDuration(): number | undefined;
   getInstanceId?(): string;
@@ -914,6 +915,7 @@ export class ToolOrchestrator {
       // Route tool-emitted events to this agent's (possibly scoped) stream so a
       // sub-agent's streaming output stays isolated from the main conversation.
       activityStream: this.activityStream,
+      turnInterruptionSignal: this.agent.getTurnInterruptionSignal?.(),
       ...(outputBudget ? { outputBudget } : {}),
     };
 

@@ -88,6 +88,25 @@ describe('BackgroundTaskRegistry', () => {
     expect(out[0].status).toBe('running');
   });
 
+  it('waitFor yields immediately when its caller is interrupted', async () => {
+    const reg = new BackgroundTaskRegistry(
+      fakeAgentManager([{ id: 'a1', agentType: 'x', status: 'running', startTime: 1, endTime: null, result: null, error: null }]),
+      fakeBashManager(),
+      fakeStream(),
+    );
+    const controller = new AbortController();
+    const waiting = reg.waitFor(['a1'], {
+      timeoutMs: 60_000,
+      pollMs: 30_000,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    const out = await waiting;
+    expect(out[0].status).toBe('running');
+  });
+
   it('createWatcher resolves done when the predicate is satisfied and emits completion', async () => {
     const stream = fakeStream();
     const reg = new BackgroundTaskRegistry(fakeAgentManager(), fakeBashManager(), stream);

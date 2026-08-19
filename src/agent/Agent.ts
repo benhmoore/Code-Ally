@@ -1390,6 +1390,11 @@ export class Agent {
     return this.interruptionManager.getToolAbortSignal();
   }
 
+  /** Signal passive tools can observe to yield on an interjection. */
+  getTurnInterruptionSignal(): AbortSignal | undefined {
+    return this.interruptionManager.getTurnInterruptionSignal();
+  }
+
   /**
    * Get the turn start time for specialized agents
    * Used by ToolOrchestrator to calculate elapsed turn duration

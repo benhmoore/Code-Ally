@@ -603,6 +603,12 @@ export interface ToolExecutionContext {
    * avoid a circular import (ActivityEvent is declared in this file).
    */
   activityStream?: { emit(event: ActivityEvent): void };
+  /**
+   * Signal for interruption of the selected agent's current turn. Passive tools
+   * such as wait may opt into this so an interjection releases the caller while
+   * leaving the background work itself running.
+   */
+  turnInterruptionSignal?: AbortSignal;
   /** Form response data from user interaction (populated after form submission) */
   formResponse?: Record<string, any>;
   /**

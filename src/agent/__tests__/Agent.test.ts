@@ -10,6 +10,7 @@ import type { ModelClient, LLMResponse } from '@llm/ModelClient.js';
 import { ActivityEventType, type Message, type Config } from '@shared/index.js';
 import { AGENT_CONFIG } from '../../config/constants.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import { WaitTool } from '../../tools/WaitTool.js';
 
 describe('Agent - Interruption Handling', () => {
   let agent: Agent;
@@ -400,6 +401,66 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('Turn admission', () => {
+    it('continues a queued interjection by releasing a passive wait', async () => {
+      const waitStream = new ActivityStream();
+      const waitTool = new WaitTool(waitStream);
+      let waitSignal: AbortSignal | undefined;
+      vi.spyOn(waitTool as any, 'executeImpl').mockImplementation(
+        async (
+          _args: unknown,
+          _callId: unknown,
+          _isUserInitiated: unknown,
+          _isContextFile: unknown,
+          executionContext: { turnInterruptionSignal?: AbortSignal },
+        ) => {
+          waitSignal = executionContext.turnInterruptionSignal;
+          await new Promise<void>((resolve) => {
+            if (waitSignal?.aborted) resolve();
+            else waitSignal?.addEventListener('abort', () => resolve(), { once: true });
+          });
+          return { success: true, error: '', content: 'Wait interrupted by user; task still running.' };
+        },
+      );
+      const waitingAgent = new Agent(
+        mockModelClient,
+        new ToolManager([waitTool]),
+        waitStream,
+        { config: mockConfig, isSpecializedAgent: false },
+      );
+      mockModelClient.send = vi.fn()
+        .mockResolvedValueOnce({
+          content: '',
+          tool_calls: [{
+            id: 'wait-1',
+            type: 'function',
+            function: { name: 'wait', arguments: { all: true } },
+          }],
+          interrupted: false,
+        })
+        .mockResolvedValueOnce({
+          content: 'continued with the new instruction',
+          tool_calls: [],
+          interrupted: false,
+        });
+
+      const result = waitingAgent.sendMessage('start background work and wait');
+      await vi.waitFor(() => expect(waitSignal).toBeInstanceOf(AbortSignal));
+
+      waitingAgent.addUserInterjection('work on documentation while it runs');
+      waitingAgent.interrupt({ kind: 'user_interjection' });
+
+      await expect(result).resolves.toBe('continued with the new instruction');
+      expect(mockModelClient.send).toHaveBeenCalledTimes(2);
+      expect((mockModelClient.send as any).mock.calls[1][0]).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: 'work on documentation while it runs',
+          metadata: expect.objectContaining({ isInterjection: true }),
+        }),
+      ]));
+      expect(waitingAgent.getTurnSnapshot().terminationReason).toBe('completed');
+    });
+
     it('claims the whole turn synchronously and rejects concurrent sendMessage calls', async () => {
       let release!: (response: LLMResponse) => void;
       mockModelClient.send = vi.fn(() => new Promise<LLMResponse>(resolve => {

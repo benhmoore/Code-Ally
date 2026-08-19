@@ -11,7 +11,7 @@
  */
 
 import { BaseTool } from './BaseTool.js';
-import { ToolResult, FunctionDefinition } from '../types/index.js';
+import { ToolResult, FunctionDefinition, ToolExecutionContext } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { BackgroundTask } from '../services/BackgroundTaskRegistry.js';
@@ -64,7 +64,13 @@ Returns results inline once they finish (or partial state on timeout).`;
     };
   }
 
-  protected async executeImpl(args: any): Promise<ToolResult> {
+  protected async executeImpl(
+    args: any,
+    _toolCallId?: string,
+    _isUserInitiated?: boolean,
+    _isContextFile?: boolean,
+    executionContext?: ToolExecutionContext,
+  ): Promise<ToolResult> {
     this.captureParams(args);
 
     const registry = ServiceRegistry.getInstance();
@@ -107,10 +113,15 @@ Returns results inline once they finish (or partial state on timeout).`;
 
     const results = await taskRegistry.waitFor(target, {
       timeoutMs: timeoutSeconds * 1000,
-      signal: this.currentAbortSignal,
+      // An interjection should release this passive join, not terminate the
+      // background task. Other tools continue to observe only their hard-cancel
+      // signal through BaseTool.currentAbortSignal.
+      signal: executionContext?.turnInterruptionSignal ?? this.currentAbortSignal,
     });
 
-    const aborted = this.currentAbortSignal?.aborted ?? false;
+    const aborted = executionContext?.turnInterruptionSignal?.aborted
+      ?? this.currentAbortSignal?.aborted
+      ?? false;
     return this.formatSuccessResponse({
       content: this.renderResults(results, aborted, false),
       display_content: this.renderResults(results, aborted, true),
