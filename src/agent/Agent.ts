@@ -2281,6 +2281,26 @@ export class Agent {
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Messages set, count:', this.conversationManager.getMessageCount());
   }
 
+  /** Clear the root conversation and durably remove its persisted transcript. */
+  async clearConversation(): Promise<void> {
+    const systemMessage = this.conversationManager.getSystemMessage();
+    const nextMessages = systemMessage ? [systemMessage] : [];
+    const nextProviderState = { kind: 'chat' } as const;
+    const persisted = await this.sessionPersistence.replaceConversation(
+      nextMessages,
+      [],
+      nextProviderState,
+    );
+    if (!persisted) {
+      throw new Error('Could not persist cleared conversation; no history was changed');
+    }
+
+    this.conversationManager.setMessages(nextMessages);
+    this.conversationManager.setCheckpoint(null);
+    this.conversationManager.setProviderState(nextProviderState);
+    this.tokenManager.resetContextTracking(nextMessages);
+  }
+
   /** Restore independently persisted transcript, active window, and checkpoint. */
   loadConversationState(
     messages: Message[],
