@@ -150,7 +150,8 @@ function renderToolCallTree(
   toolCall: ToolCallTreeNode,
   level: number = 0,
   config?: any,
-  compactionNotices?: CompactionNotice[]
+  compactionNotices?: CompactionNotice[],
+  width?: number,
 ): React.ReactNode {
   return (
     <ToolCallDisplay
@@ -159,6 +160,7 @@ function renderToolCallTree(
       level={level}
       config={config}
       compactionNotices={compactionNotices}
+      width={width}
     />
   );
 }
@@ -241,7 +243,8 @@ const ActiveContent = React.memo<{
   config?: any;
   compactionNotices?: CompactionNotice[];
   pendingSummary?: ToolCallSummary;
-}>(({ runningToolCalls, streamingContent, config, compactionNotices, pendingSummary }) => {
+  width: number;
+}>(({ runningToolCalls, streamingContent, config, compactionNotices, pendingSummary, width }) => {
   const terminalRows = useTerminalRows();
   const maxActiveHeight = liveRegionBudget(terminalRows);
 
@@ -292,9 +295,9 @@ const ActiveContent = React.memo<{
       )}
 
       {visibleTools.map((toolCall) => (
-        <Box key={`running-tool-${toolCall.id}`} paddingLeft={2}>
+        <Box key={`running-tool-${toolCall.id}`} paddingLeft={2} width={width}>
           <ErrorBoundary label={`running-tool-${toolCall.id}`}>
-            {renderToolCallTree(toolCall, 0, config, compactionNotices)}
+            {renderToolCallTree(toolCall, 0, config, compactionNotices, Math.max(1, width - 2))}
           </ErrorBoundary>
         </Box>
       ))}
@@ -541,9 +544,15 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         );
     } else if (item.type === 'toolCall') {
         return (
-          <Box key={`tool-${item.toolCall.id}`} {...spacing} paddingLeft={2}>
+          <Box key={`tool-${item.toolCall.id}`} {...spacing} paddingLeft={2} width={terminalWidth}>
             <ErrorBoundary label={`tool-${item.toolCall.id}`}>
-              {renderToolCallTree(item.toolCall, 0, config, compactionNoticesRef.current)}
+              {renderToolCallTree(
+                item.toolCall,
+                0,
+                config,
+                compactionNoticesRef.current,
+                Math.max(1, terminalWidth - 2),
+              )}
             </ErrorBoundary>
           </Box>
         );
@@ -652,6 +661,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         config={config}
         compactionNotices={compactionNotices}
         pendingSummary={pendingContextSummary}
+        width={terminalWidth}
       />
     </Box>
   );

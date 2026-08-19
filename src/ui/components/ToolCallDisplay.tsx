@@ -34,6 +34,8 @@ interface ToolCallDisplayProps {
   config?: any;
   /** Compaction notices to check for nested notices */
   compactionNotices?: CompactionNotice[];
+  /** Available width after the conversation-level indent. */
+  width?: number;
 }
 
 /**
@@ -211,6 +213,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   level = 0,
   config,
   compactionNotices = [],
+  width,
 }) => {
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
 
@@ -366,7 +369,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const trimmedOutput = toolCall.output?.trim();
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={width}>
       <Box>
         {/* Indentation */}
         <Text>{indent}</Text>
@@ -737,6 +740,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
                     level={level + 1}
                     config={config}
                     compactionNotices={compactionNotices}
+                    width={width}
                   />
                 );
               }
