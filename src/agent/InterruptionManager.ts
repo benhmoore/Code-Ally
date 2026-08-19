@@ -227,6 +227,17 @@ export class InterruptionManager {
   }
 
   /**
+   * Return the signal owned by the current model/turn request.
+   *
+   * Unlike the tool signal, this is aborted for interjections as well as hard
+   * cancellation. Passive tools can observe it to yield control without
+   * cancelling the external work they are waiting on.
+   */
+  getTurnInterruptionSignal(): AbortSignal | undefined {
+    return this.requestAbortController?.signal;
+  }
+
+  /**
    * Clean up request state after completion or error
    *
    * Full teardown at end of request: resets interruption state and clears the abort controller.

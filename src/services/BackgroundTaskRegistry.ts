@@ -195,7 +195,7 @@ export class BackgroundTaskRegistry {
       });
 
     while (!settled() && Date.now() < deadline && !opts.signal?.aborted) {
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      await abortableDelay(Math.min(pollMs, Math.max(1, deadline - Date.now())), opts.signal);
     }
 
     return ids.map((id) => this.get(id)).filter((t): t is BackgroundTask => !!t);

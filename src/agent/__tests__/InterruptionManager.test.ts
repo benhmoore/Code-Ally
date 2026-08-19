@@ -53,6 +53,7 @@ describe('InterruptionManager', () => {
     manager.interrupt({ kind: 'user_interjection' });
 
     expect(requestSignal.aborted).toBe(true);
+    expect(manager.getTurnInterruptionSignal()).toBe(requestSignal);
     expect(toolSignal.aborted).toBe(false);
   });
 
