@@ -254,6 +254,12 @@ describe('AgentTool', () => {
       expect(result.success).toBe(true);
       expect(result.agent_used).toBeDefined();
       expect(result.content).toBeDefined();
+      const pool = registry.get('agent_pool') as any;
+      expect(pool.acquire).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        registry.get('model_client'),
+      );
     });
 
     it('should use default agent when agent not specified', async () => {

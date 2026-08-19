@@ -26,6 +26,8 @@ const SECRET_CONFIG_KEYS = new Set<keyof Config>(['api_key', 'search_api_key']);
 
 export class ConfigManager implements IService {
   private _config: Config;
+  /** Process-local precedence layer (for CLI flags); never written to disk. */
+  private _runtimeOverrides: Partial<Config> = {};
   private _configPath: string;
   private readonly crypto: CryptoService;
   /**
@@ -272,11 +274,11 @@ export class ConfigManager implements IService {
    * Get the complete configuration object
    */
   getConfig(): Readonly<Config> {
-    return { ...this._config };
+    return { ...this._config, ...this._runtimeOverrides };
   }
 
   getRedactedConfig(): Readonly<Config> {
-    const config = { ...this._config };
+    const config = { ...this.getConfig() };
     for (const key of SECRET_CONFIG_KEYS) {
       if (config[key]) (config as any)[key] = '[REDACTED]';
     }
@@ -326,6 +328,9 @@ export class ConfigManager implements IService {
   getValue<K extends keyof Config>(key: K): Config[K];
   getValue<K extends keyof Config>(key: K, defaultValue: Config[K]): Config[K];
   getValue<K extends keyof Config>(key: K, defaultValue?: Config[K]): Config[K] {
+    if (Object.prototype.hasOwnProperty.call(this._runtimeOverrides, key)) {
+      return this._runtimeOverrides[key] as Config[K];
+    }
     if (key in this._config) {
       return this._config[key];
     }
@@ -354,6 +359,7 @@ export class ConfigManager implements IService {
     }
 
     this._config[key] = validation.coercedValue as Config[K];
+    delete this._runtimeOverrides[key];
 
     // Save to disk
     await this.saveConfig();
@@ -388,10 +394,29 @@ export class ConfigManager implements IService {
     // Apply all validated values
     for (const [key, value] of validations) {
       (this._config as any)[key] = value;
+      delete this._runtimeOverrides[key];
     }
 
     // Save to disk
     await this.saveConfig();
+  }
+
+  /**
+   * Apply validated process-local configuration without changing the profile.
+   * Explicit persistent updates later in the run take ownership of their keys
+   * and remove the corresponding overlay entry.
+   */
+  applyRuntimeOverrides(values: Partial<Config>): void {
+    const validated: Partial<Config> = {};
+    for (const [key, value] of Object.entries(values)) {
+      if (!(key in DEFAULT_CONFIG)) throw new Error(`Unknown config key '${key}'`);
+      const result = validateConfigValue(key as keyof Config, value);
+      if (!result.valid) {
+        throw new Error(`Cannot override config value '${key}': ${result.error}`);
+      }
+      (validated as any)[key] = result.coercedValue;
+    }
+    this._runtimeOverrides = { ...this._runtimeOverrides, ...validated };
   }
 
   /**
@@ -409,6 +434,7 @@ export class ConfigManager implements IService {
       }
     }
 
+    this._runtimeOverrides = {};
     await this.saveConfig();
     return changes;
   }
@@ -634,6 +660,7 @@ export class ConfigManager implements IService {
     const newValue = DEFAULT_CONFIG[key];
 
     (this._config as any)[key] = newValue;
+    delete this._runtimeOverrides[key];
     await this.saveConfig();
 
     return { key: key as string, oldValue, newValue };

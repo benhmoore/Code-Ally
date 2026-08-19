@@ -114,6 +114,30 @@ describe('ConfigManager', () => {
       expect(configManager.getValue('context_size')).toBe(DEFAULT_CONFIG.context_size);
     });
 
+    it('exposes runtime overrides without persisting them', async () => {
+      await configManager.setValue('model', 'profile-model');
+      configManager.applyRuntimeOverrides({ model: 'cli-model', context_size: 16_384 });
+
+      expect(configManager.getValue('model')).toBe('cli-model');
+      expect(configManager.getConfig()).toMatchObject({
+        model: 'cli-model',
+        context_size: 16_384,
+      });
+
+      const persisted = JSON.parse(await fs.readFile(configPath, 'utf8'));
+      expect(persisted.model).toBe('profile-model');
+      expect(persisted.context_size).toBeUndefined();
+    });
+
+    it('lets an explicit persistent update replace a runtime override', async () => {
+      configManager.applyRuntimeOverrides({ model: 'cli-model' });
+      await configManager.setValue('model', 'interactive-model');
+
+      expect(configManager.getValue('model')).toBe('interactive-model');
+      const persisted = JSON.parse(await fs.readFile(configPath, 'utf8'));
+      expect(persisted.model).toBe('interactive-model');
+    });
+
     it('should return default value for missing keys', () => {
       // The key exists with an undefined default so model-tuned sampling wins.
       expect(configManager.getValue('temperature', 0.5)).toBeUndefined();
