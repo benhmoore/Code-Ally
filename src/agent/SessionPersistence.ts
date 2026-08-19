@@ -139,9 +139,14 @@ export class SessionPersistence {
   ): Promise<boolean> {
     if (this.agentDepth > 0) return true;
     const sessionManager = ServiceRegistry.getInstance().get('session_manager');
-    if (!sessionManager || typeof (sessionManager as any).replaceConversation !== 'function') {
-      return false;
-    }
+    // Explicit no-session operation has nothing durable that could resurrect
+    // discarded history, so the in-memory replacement may proceed.
+    if (!sessionManager) return true;
+    if (
+      typeof (sessionManager as any).getCurrentSession === 'function' &&
+      !(sessionManager as any).getCurrentSession()
+    ) return true;
+    if (typeof (sessionManager as any).replaceConversation !== 'function') return false;
     return (sessionManager as any).replaceConversation(messages, transcript, providerState);
   }
 
