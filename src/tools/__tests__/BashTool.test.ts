@@ -117,6 +117,35 @@ describe('BashTool', () => {
     });
   });
 
+  describe('background process validation', () => {
+    it.each([
+      'node server.js &',
+      'node server.js&',
+      'first & second',
+    ])('rejects shell-detached commands in supervised mode: %s', (command) => {
+      expect(bashTool.validateArgs({ command, run_in_background: true })).toMatchObject({
+        valid: false,
+        error_type: 'validation_error',
+      });
+    });
+
+    it.each([
+      'first && second',
+      'node server.js 2>&1',
+      'node server.js &>server.log',
+      'node server.js |& tee server.log',
+      'printf "&"',
+      "printf '&'",
+      'printf \\&',
+    ])('preserves non-background uses of ampersands: %s', (command) => {
+      expect(bashTool.validateArgs({ command, run_in_background: true })).toBeNull();
+    });
+
+    it('allows ordinary foreground shell backgrounding', () => {
+      expect(bashTool.validateArgs({ command: 'short-task &', run_in_background: false })).toBeNull();
+    });
+  });
+
   it('bounds giant no-newline background output by bytes', () => {
     const buffer = new CircularBuffer(10_000, 1024);
     buffer.append('x'.repeat(10_000));

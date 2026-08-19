@@ -74,6 +74,50 @@ class BoundedOutputBuffer {
   }
 }
 
+/**
+ * Detect a shell control operator that backgrounds a command. Operators used
+ * for logical AND, combined pipes, and file-descriptor redirection also contain
+ * `&`, but do not detach the supervised shell and must remain valid.
+ */
+function hasUnmanagedBackgroundOperator(command: string): boolean {
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char !== '&') continue;
+
+    const previous = command[index - 1];
+    const next = command[index + 1];
+    if (next === '&') {
+      index++;
+      continue;
+    }
+    if (previous === '&' || previous === '|' || previous === '>' || next === '>') {
+      continue;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 export class BashTool extends BaseTool {
   readonly name = 'bash';
   readonly description =
@@ -82,6 +126,7 @@ export class BashTool extends BaseTool {
 - Use shell commands to run builds, tests, package managers, scripts, and processes.
 - Do not create, delete, overwrite, or rewrite project source files through shell commands. Use write for new files and apply-patch for every existing text-file change.
 - Never terminate a process merely because it occupies a desired port. Stop only a process handle or PID created and recorded by the current session; otherwise choose another free endpoint.
+- For a server or watcher, set run_in_background=true and leave shell background operators such as & out of the command; the tool owns the process lifecycle.
 - If apply-patch fails, re-read the exact target and retry with a smaller contextual hunk. Never delete and recreate a file to bypass patch validation.`;
   readonly capabilities = [ToolCapability.ShellExec] as const;
   // Builds and tests provide feedback but do not constitute an implementation
@@ -114,6 +159,19 @@ export class BashTool extends BaseTool {
   validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
     // Skip timeout validation for background processes (timeout is ignored)
     const runInBackground = args.run_in_background === true;
+
+    if (
+      runInBackground
+      && typeof args.command === 'string'
+      && hasUnmanagedBackgroundOperator(args.command)
+    ) {
+      return {
+        valid: false,
+        error: 'run_in_background already manages the process; the command must not contain a shell background operator (&)',
+        error_type: 'validation_error',
+        suggestion: 'Remove the background operator from command and keep run_in_background=true',
+      };
+    }
 
     // Validate timeout parameter (only for foreground processes)
     if (!runInBackground && args.timeout !== undefined && args.timeout !== null) {
@@ -191,7 +249,7 @@ export class BashTool extends BaseTool {
             },
             run_in_background: {
               type: 'boolean',
-              description: 'Run non-blocking; required for servers and watchers. Returns shell_id.',
+              description: 'Run non-blocking; required for servers and watchers. Returns shell_id. Do not also add a shell & operator.',
             },
             blocks_completion: {
               type: 'boolean',
