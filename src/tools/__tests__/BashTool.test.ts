@@ -102,6 +102,15 @@ describe('BashTool', () => {
       expect(result.error).toContain('disallowed');
       expect(result.error_type).toBe('security_error');
     });
+
+    it('does not confuse an absolute descendant with the filesystem root', async () => {
+      const result = await bashTool.execute({
+        command: 'printf "%s" "rm -rf /tmp/isolated-test-state"',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe('rm -rf /tmp/isolated-test-state');
+    });
   });
 
   it('bounds giant no-newline background output by bytes', () => {
