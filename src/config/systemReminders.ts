@@ -57,6 +57,12 @@ export const SYSTEM_REMINDERS = {
       persist: false,
     },
 
+    /** Reasoning consumed the output allowance before producing an action. */
+    OUTPUT_LIMIT: {
+      text: 'Your reasoning reached the output limit before producing text or a tool call. Use the preserved reasoning and take the next concrete action now; do not restart the analysis.',
+      persist: false,
+    },
+
     /** Empty response after tool execution - request response based on tool results */
     // PERSIST: false - Ephemeral: One-time prompt to respond after tool execution
     // Cleaned up after turn since tool execution context already in history

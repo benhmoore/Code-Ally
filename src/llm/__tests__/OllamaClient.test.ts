@@ -49,6 +49,24 @@ describe('OllamaClient', () => {
   });
 
   describe('Non-streaming responses', () => {
+    it('preserves the provider stop reason for output-limit recovery', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          message: { role: 'assistant', content: '', thinking: 'unfinished reasoning' },
+          done_reason: 'length',
+        }),
+      });
+
+      const result = await client.send(
+        [{ role: 'user', content: 'Continue' }],
+        { stream: false, signal: new AbortController().signal },
+      );
+
+      expect(result.finishReason).toBe('length');
+      expect(result.thinking).toBe('unfinished reasoning');
+    });
+
     it('should send messages and receive a response', async () => {
       const mockResponse = {
         message: {

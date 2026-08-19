@@ -65,6 +65,23 @@ describe('OpenAICompatClient', () => {
     expect(res.content).toBe('hello there');
   });
 
+  it('preserves a length finish reason on a reasoning-only response', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      choices: [{
+        finish_reason: 'length',
+        message: { role: 'assistant', content: '', reasoning_content: 'unfinished reasoning' },
+      }],
+    }));
+
+    const res = await client.send(
+      [{ role: 'user', content: 'continue' }],
+      { stream: false, signal: signal() },
+    );
+
+    expect(res.finishReason).toBe('length');
+    expect(res.thinking).toBe('unfinished reasoning');
+  });
+
   it('parses tool_calls and converts string arguments to an object', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({
       choices: [{ message: { role: 'assistant', content: '', tool_calls: [

@@ -69,6 +69,12 @@ export function createEmptyResponseReminder(): Message {
   );
 }
 
+/** Create a focused continuation after reasoning exhausted the output budget. */
+export function createOutputLimitReminder(): Message {
+  const config = SYSTEM_REMINDERS.CONTINUATIONS.OUTPUT_LIMIT;
+  return createSystemReminder(resolveReminderText(config), config.persist);
+}
+
 /**
  * Create empty response after tools reminder
  */

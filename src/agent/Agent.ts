@@ -2105,6 +2105,9 @@ export class Agent {
       ensureContextRoom: async () => {
         await this.checkAutoCompaction();
       },
+      reclaimContext: async () => {
+        await this.compactCurrentConversation({ trigger: 'automatic', phase: 'mid-turn' });
+      },
     };
   }
 
@@ -2333,12 +2336,13 @@ export class Agent {
       generateId: () => this.generateId(),
       parentCallId: this.activeExecutionContext.parentCallId,
       signal: this.interruptionManager.beginRequest(),
+      functions: this.lastRequestFunctions,
       modelMaxOutput: this.appConfig.max_tokens,
-      phase: 'manual',
+      phase: options.phase ?? 'manual',
     }, {
-      ...options,
       trigger: 'manual',
       phase: 'manual',
+      ...options,
     });
 
     await this.autoSaveSession();

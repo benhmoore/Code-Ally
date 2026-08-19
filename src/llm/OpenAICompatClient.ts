@@ -354,6 +354,7 @@ export class OpenAICompatClient extends ModelClient {
     let content = '';
     let thinking = '';
     let contentWasStreamed = false;
+    let finishReason: string | undefined;
     let usage: LLMResponse['usage'] | undefined;
     // Tool calls arrive incrementally, keyed by their `index`; arguments are
     // concatenated as raw JSON-string fragments and parsed during validation.
@@ -411,7 +412,9 @@ export class OpenAICompatClient extends ModelClient {
             usage = openAIUsage(chunk.usage);
           }
 
-          const delta = chunk.choices?.[0]?.delta;
+          const choice = chunk.choices?.[0];
+          if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
+          const delta = choice?.delta;
           if (!delta) continue;
 
           if (delta.content) {
@@ -482,6 +485,7 @@ export class OpenAICompatClient extends ModelClient {
     }
 
     const result: LLMResponse = { role: 'assistant', content };
+    if (finishReason) result.finishReason = finishReason;
     if (thinking) result.thinking = thinking;
     if (usage) result.usage = usage;
     const toolCalls = toolCallsSoFar();
@@ -503,6 +507,8 @@ export class OpenAICompatClient extends ModelClient {
   ): LLMResponse {
     const message = data.choices?.[0]?.message || {};
     const result: LLMResponse = { role: 'assistant', content: message.content || '' };
+    const finishReason = data.choices?.[0]?.finish_reason;
+    if (typeof finishReason === 'string') result.finishReason = finishReason;
 
     const reasoning = message.reasoning_content || message.reasoning;
     if (reasoning) {
