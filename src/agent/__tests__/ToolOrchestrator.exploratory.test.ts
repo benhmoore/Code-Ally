@@ -211,7 +211,7 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
       // Last result should have the warning
       const lastResult = results[results.length - 1];
       expect(lastResult.system_reminder).toBeDefined();
-      expect(lastResult.system_reminder).toContain('consecutive');
+      expect(lastResult.system_reminder).toContain('since the last concrete implementation step');
       expect(lastResult.system_reminder).toContain('exploratory');
     });
 

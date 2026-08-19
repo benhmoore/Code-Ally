@@ -179,7 +179,7 @@ Verify alignment:
     // Cleaned up after turn since agent should apply pattern, not keep re-reading
     GENTLE_WARNING: {
       text: (consecutiveCount: number) =>
-        `You've made ${consecutiveCount} consecutive exploratory tool calls. Decide whether the evidence already supports the next concrete edit or verification. If it does, act now and let build/test feedback guide narrow follow-up. If the investigation is still genuinely broad, use cleanup-call and delegate it via explore() with a focused task_prompt.`,
+        `You've made ${consecutiveCount} exploratory calls since the last concrete implementation step. Decide whether the evidence already supports the next edit. If it does, act now and let focused build/test feedback guide narrow follow-up. If the investigation is still genuinely broad, use cleanup-call and delegate it via explore() with a focused task_prompt.`,
       persist: false,
     },
 
@@ -188,7 +188,7 @@ Verify alignment:
     // Cleaned up after turn since agent should immediately switch to explore()
     STERN_WARNING: {
       text: (consecutiveCount: number) =>
-        `⚠️ CRITICAL: ${consecutiveCount} consecutive exploratory calls are consuming the working context. STOP manual exploration. Your next step must either execute the concrete edit/verification already supported by evidence, or use cleanup-call and delegate a still-broad investigation via explore() with a focused task_prompt. Do not perform another read/search merely for reassurance.`,
+        `⚠️ CRITICAL: ${consecutiveCount} exploratory calls without an implementation step are consuming the working context. Diagnostic test/build calls do not by themselves resolve this loop. STOP manual exploration. Your next step must either execute the concrete edit already supported by evidence, or use cleanup-call and delegate a still-broad investigation via explore() with a focused task_prompt. Do not perform another read/search merely for reassurance.`,
       persist: false,
     },
   },

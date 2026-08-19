@@ -84,6 +84,10 @@ export class BashTool extends BaseTool {
 - Never terminate a process merely because it occupies a desired port. Stop only a process handle or PID created and recorded by the current session; otherwise choose another free endpoint.
 - If apply-patch fails, re-read the exact target and retry with a smaller contextual hunk. Never delete and recreate a file to bypass patch validation.`;
   readonly capabilities = [ToolCapability.ShellExec] as const;
+  // Builds and tests provide feedback but do not constitute an implementation
+  // step. Preserve any evidence-gathering streak until a real mutation occurs,
+  // so alternating read/test loops still receive the loop-breaking reminder.
+  readonly breaksExploratoryStreak = false;
 
   getShellCommand(args: Record<string, any>): string | null {
     return typeof args.command === 'string' ? args.command : null;
