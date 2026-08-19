@@ -139,9 +139,19 @@ export class ConversationCompactor {
     private readonly commitCheckpoint: CheckpointCommitter = async () => true,
   ) {
     this.planner = new ContextBudgetPlanner(tokenManager);
-    this.generation = conversationManager.getCheckpoint()?.generation ?? 0;
-    this.lastCheckpointSourceCount = conversationManager.getCheckpoint()
-      ? conversationManager.getTranscript().length
+    this.synchronizeCheckpointState();
+  }
+
+  /**
+   * Synchronize counters after a persisted conversation is loaded into the
+   * manager. Agent construction precedes asynchronous session restoration, so
+   * constructor-time state alone would restart resumed checkpoint numbering.
+   */
+  synchronizeCheckpointState(): void {
+    const checkpoint = this.conversationManager.getCheckpoint();
+    this.generation = checkpoint?.generation ?? 0;
+    this.lastCheckpointSourceCount = checkpoint
+      ? this.conversationManager.getTranscript().length
       : 0;
   }
 

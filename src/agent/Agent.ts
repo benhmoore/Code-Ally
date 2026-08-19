@@ -2260,6 +2260,7 @@ export class Agent {
       }
     }
     this.conversationManager.loadConversation(messages, transcript, safeCheckpoint, safeProviderState);
+    this.agentCompactor.synchronizeCheckpointState();
     this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
   }
 
