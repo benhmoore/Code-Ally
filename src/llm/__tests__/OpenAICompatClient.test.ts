@@ -226,6 +226,32 @@ describe('OpenAICompatClient', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
+  it('times out a stream that sends keepalives but no model output', async () => {
+    vi.useFakeTimers();
+    try {
+      const encoder = new TextEncoder();
+      let reads = 0;
+      const response = {
+        body: {
+          getReader: () => ({
+            read: () => reads++ === 0
+              ? Promise.resolve({ done: false, value: encoder.encode(': keepalive\n\n') })
+              : new Promise(() => {}),
+          }),
+        },
+      } as unknown as Response;
+
+      const pending = (client as any).parseStreamingResponse(
+        'heartbeat-only', response, signal(), undefined, false, undefined,
+      );
+      const rejection = expect(pending).rejects.toThrow('Stream read timeout');
+      await vi.advanceTimersByTimeAsync(120_001);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports a malformed tool call to the model instead of silently dropping it', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({
       choices: [{ message: { role: 'assistant', content: '', tool_calls: [

@@ -3,8 +3,10 @@ import {
   classifyHttpError,
   createHttpResponseError,
   HttpResponseError,
+  isStreamTimeoutError,
   readResponseTextWithTimeout,
   readWithTimeout,
+  StreamProgressDeadline,
   runWithRetries,
 } from '../httpTransport.js';
 import { RETRY_CONFIG } from '../../config/constants.js';
@@ -144,6 +146,8 @@ describe('readWithTimeout', () => {
 
   it('classifies its own timeout as retryable', () => {
     expect(classifyHttpError(new Error('Stream read timeout - no data received'))).toBe('stream_timeout');
+    expect(classifyHttpError(new Error('Stream progress timeout - no model output received'))).toBe('stream_timeout');
+    expect(isStreamTimeoutError(new Error('Stream progress timeout - no model output received'))).toBe(true);
   });
 
   it('clears its timer so a settled read leaves nothing pending', async () => {
@@ -157,6 +161,27 @@ describe('readWithTimeout', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('StreamProgressDeadline', () => {
+  it('is not extended by transport reads, only explicit model progress', () => {
+    let now = 1000;
+    const deadline = new StreamProgressDeadline(100, () => now);
+
+    now = 1090;
+    expect(deadline.nextReadTimeout(1000)).toBe(10);
+    now = 1100;
+    expect(() => deadline.nextReadTimeout()).toThrow('Stream progress timeout');
+
+    deadline.progress();
+    now = 1190;
+    expect(deadline.nextReadTimeout(1000)).toBe(10);
+  });
+
+  it('preserves a shorter ordinary per-read timeout', () => {
+    const deadline = new StreamProgressDeadline(1000, () => 0);
+    expect(deadline.nextReadTimeout(25)).toBe(25);
   });
 });
 

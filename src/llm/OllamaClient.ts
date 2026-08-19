@@ -26,7 +26,7 @@ import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
-import { createHttpResponseError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries } from './httpTransport.js';
+import { createHttpResponseError, isStreamTimeoutError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
 import { normalizeOllamaMessages } from './ollamaMessages.js';
 import { validateToolCalls } from './toolCalls.js';
 
@@ -548,6 +548,7 @@ export class OllamaClient extends ModelClient {
     let thinkingComplete = false; // Track if thinking block completed
     let streamTimedOut = false; // Track if stream timeout occurred
     let finishReason: string | undefined;
+    const progressDeadline = new StreamProgressDeadline();
 
     // Line buffer to handle JSON objects that span multiple network chunks
     // Network chunks are determined by TCP packet sizes (~1500 bytes MTU), not JSON boundaries
@@ -569,7 +570,7 @@ export class OllamaClient extends ModelClient {
 
         // Timeout protection for stream reads: Ollama can start streaming and
         // then hang without closing the stream.
-        const { done, value } = await readWithTimeout(reader);
+        const { done, value } = await readWithTimeout(reader, progressDeadline.nextReadTimeout());
         if (done) break;
 
         // Decode the chunk and prepend any buffered incomplete line from previous iteration
@@ -594,6 +595,7 @@ export class OllamaClient extends ModelClient {
             // Accumulate content
             const contentChunk = message.content || '';
             if (contentChunk) {
+              progressDeadline.progress();
               aggregatedContent += contentChunk;
               aggregatedMessage.content = aggregatedContent;
               contentWasStreamed = true;
@@ -612,6 +614,7 @@ export class OllamaClient extends ModelClient {
             // Accumulate thinking
             const thinkingChunk = message.thinking || '';
             if (thinkingChunk) {
+              progressDeadline.progress();
               hadThinking = true;
               aggregatedThinking += thinkingChunk;
               aggregatedMessage.thinking = aggregatedThinking;
@@ -646,6 +649,7 @@ export class OllamaClient extends ModelClient {
 
             // Preserve distinct native calls emitted in separate stream chunks.
             if (message.tool_calls) {
+              progressDeadline.progress();
               aggregatedMessage.tool_calls = mergeStreamedToolCalls(
                 aggregatedMessage.tool_calls,
                 message.tool_calls
@@ -654,6 +658,7 @@ export class OllamaClient extends ModelClient {
 
             // Check for completion
             if (chunkData.done) {
+              progressDeadline.progress();
               if (typeof chunkData.done_reason === 'string') finishReason = chunkData.done_reason;
               const usage = extractOllamaUsage(chunkData);
               if (usage) aggregatedMessage.usage = usage;
@@ -728,7 +733,7 @@ export class OllamaClient extends ModelClient {
           _content_was_streamed: contentWasStreamed,
         };
       }
-      if (error.message === 'Stream read timeout - no data received') {
+      if (isStreamTimeoutError(error)) {
         // PHASE 3: Stream timeout retry - mark for retry instead of returning error
         logger.warn('[OLLAMA_CLIENT] Stream read timeout on request', requestId);
         logger.debug('[OLLAMA_CLIENT] Partial content before timeout:', aggregatedContent.length, 'chars');
