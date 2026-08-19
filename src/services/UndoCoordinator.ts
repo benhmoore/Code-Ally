@@ -378,15 +378,20 @@ export class UndoCoordinator {
             logger.info(`Restoring ${patchesToUndo.length} file changes during rewind`);
 
             const undoResult = await patchManager.undoOperationsSinceTimestamp(targetTimestamp);
+            const uniqueRevertedFiles = [...new Set(undoResult.reverted_files)];
 
             if (undoResult.success) {
-              restoredFiles = undoResult.reverted_files;
-              logger.info(`Successfully restored ${restoredFiles.length} files`);
+              restoredFiles = uniqueRevertedFiles;
+              logger.info(
+                `Successfully reverted ${undoResult.reverted_files.length} changes across ` +
+                `${restoredFiles.length} files`
+              );
             } else {
-              restoredFiles = undoResult.reverted_files;
+              restoredFiles = uniqueRevertedFiles;
               failedRestorations = undoResult.failed_operations;
               logger.warn(
-                `Partial file restoration: ${restoredFiles.length} succeeded, ${failedRestorations.length} failed`
+                `Partial file restoration: ${undoResult.reverted_files.length} changes succeeded ` +
+                `across ${restoredFiles.length} files, ${failedRestorations.length} failed`
               );
             }
           } else {

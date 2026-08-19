@@ -15,7 +15,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ConversationManager } from './ConversationManager.js';
 import { logger } from '../services/Logger.js';
 import type { Message } from '../types/index.js';
-import type { ConversationCheckpointV1 } from './compaction/types.js';
+import type { ConversationCheckpointV1, ProviderCheckpointState } from './compaction/types.js';
 
 /**
  * Coordinates automatic session saving with multiple data sources
@@ -129,6 +129,20 @@ export class SessionPersistence {
     if (this.agentDepth > 0) return;
     await this.autoSave();
     await ServiceRegistry.getInstance().get('session_manager')?.forceSave();
+  }
+
+  /** Durably replace history after a destructive conversation operation. */
+  async replaceConversation(
+    messages: readonly Message[],
+    transcript: readonly Message[],
+    providerState: ProviderCheckpointState,
+  ): Promise<boolean> {
+    if (this.agentDepth > 0) return true;
+    const sessionManager = ServiceRegistry.getInstance().get('session_manager');
+    if (!sessionManager || typeof (sessionManager as any).replaceConversation !== 'function') {
+      return false;
+    }
+    return (sessionManager as any).replaceConversation(messages, transcript, providerState);
   }
 
   /** Critical checkpoint commit; returns only after the session manifest is durable. */

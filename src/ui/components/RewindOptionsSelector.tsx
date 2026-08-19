@@ -36,6 +36,65 @@ export interface FileChangeStats {
   files: Array<{ path: string }>;
 }
 
+export interface FileRestoreDisplay {
+  path: string;
+  operationLabel: string;
+  stats: ReturnType<typeof calculateDiffStats>;
+  timestamp: string;
+}
+
+/** Collapse operation-level previews into the net restoration per file. */
+export function buildFileRestoreDisplays(
+  previewData?: ReadonlyArray<UndoPreview>
+): FileRestoreDisplay[] | null {
+  if (!previewData || previewData.length === 0) return null;
+
+  const byPath = new Map<string, {
+    path: string;
+    currentContent: string;
+    predictedContent: string;
+    operationTypes: string[];
+    timestamp: string;
+  }>();
+
+  // Preview entries are newest-first. The first state is the on-disk content;
+  // the last prediction is the content after every selected undo is applied.
+  previewData.forEach(preview => {
+    const existing = byPath.get(preview.file_path);
+    if (existing) {
+      existing.predictedContent = preview.predicted_content;
+      existing.operationTypes.push(preview.operation_type);
+    } else {
+      byPath.set(preview.file_path, {
+        path: preview.file_path,
+        currentContent: preview.current_content,
+        predictedContent: preview.predicted_content,
+        operationTypes: [preview.operation_type],
+        timestamp: preview.timestamp,
+      });
+    }
+  });
+
+  return Array.from(byPath.values()).map(file => {
+    const diff = createTwoFilesPatch(
+      file.path,
+      file.path,
+      file.currentContent,
+      file.predictedContent,
+      '',
+      ''
+    );
+    return {
+      path: file.path,
+      operationLabel: file.operationTypes.length === 1
+        ? file.operationTypes[0]!
+        : `${file.operationTypes.length} changes`,
+      stats: calculateDiffStats(diff),
+      timestamp: file.timestamp,
+    };
+  });
+}
+
 /**
  * Rewind choice type
  */
@@ -138,28 +197,10 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
   const messagePreview = truncateContent(targetMessage.content);
 
   // Prepare file display data from preview data if available
-  const fileDisplays = React.useMemo(() => {
-    if (previewData && previewData.length > 0) {
-      return previewData.map(preview => {
-        const diff = createTwoFilesPatch(
-          preview.file_path,
-          preview.file_path,
-          preview.current_content,
-          preview.predicted_content,
-          '',
-          ''
-        );
-        const stats = calculateDiffStats(diff);
-        return {
-          path: preview.file_path,
-          operation_type: preview.operation_type,
-          stats,
-          timestamp: preview.timestamp,
-        };
-      });
-    }
-    return null;
-  }, [previewData]);
+  const fileDisplays = React.useMemo(
+    () => buildFileRestoreDisplays(previewData),
+    [previewData]
+  );
 
   if (!visible) {
     return null;
@@ -171,7 +212,8 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     minimum: 1,
     maximum: 5,
   });
-  const hasMoreFiles = fileChanges.fileCount > displayLimit;
+  const displayedFileCount = fileDisplays?.length ?? fileChanges.files.length;
+  const hasMoreFiles = displayedFileCount > displayLimit;
 
   return (
     <InteractiveSurface
@@ -197,7 +239,7 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
                       <Text>▸ {filePath}</Text>
                     </Box>
                     <Box marginLeft={2}>
-                      <Text dimColor>{file.operation_type}</Text>
+                      <Text dimColor>{file.operationLabel}</Text>
                       <Text dimColor> </Text>
                       <Text color={file.stats.changes > 0 ? 'cyan' : 'gray'}>
                         {diffStats}
@@ -210,7 +252,7 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
               })}
               {hasMoreFiles && (
                 <Box marginLeft={2}>
-                  <Text dimColor>▸ ... and {fileChanges.fileCount - displayLimit} more</Text>
+                  <Text dimColor>▸ ... and {displayedFileCount - displayLimit} more</Text>
                 </Box>
               )}
             </>
@@ -223,7 +265,7 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
               ))}
               {hasMoreFiles && (
                 <Box marginLeft={2}>
-                  <Text dimColor>▸ ... and {fileChanges.fileCount - displayLimit} more</Text>
+                  <Text dimColor>▸ ... and {displayedFileCount - displayLimit} more</Text>
                 </Box>
               )}
             </>
