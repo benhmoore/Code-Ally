@@ -272,6 +272,46 @@ describe('AgentTool', () => {
       expect(result.agent_used).toBe('task');
     });
 
+    it('preloads context files through one read call per path', async () => {
+      const manager = registry.get('tool_manager') as any;
+      manager.getTool = vi.fn().mockReturnValue({ name: 'read' });
+      manager.executeTool = vi.fn(async (_name: string, args: any) => ({
+        success: true,
+        content: `contents of ${args.file_path}`,
+        files_read: 1,
+      }));
+
+      const result = await tool.execute({
+        task_prompt: 'Audit these files',
+        context_files: ['src/one.ts', 'src/two.ts'],
+        run_in_background: false,
+      }, 'test-call-id');
+
+      expect(result.success).toBe(true);
+      expect(manager.executeTool).toHaveBeenCalledTimes(2);
+      expect(manager.executeTool.mock.calls.map((call: any[]) => call[1].file_path))
+        .toEqual(['src/one.ts', 'src/two.ts']);
+      expect(manager.executeTool.mock.calls.every((call: any[]) => typeof call[1].file_path === 'string'))
+        .toBe(true);
+    });
+
+    it('reports the specific context file whose read failed', async () => {
+      const manager = registry.get('tool_manager') as any;
+      manager.getTool = vi.fn().mockReturnValue({ name: 'read' });
+      manager.executeTool = vi.fn()
+        .mockResolvedValueOnce({ success: true, content: 'first file' })
+        .mockResolvedValueOnce({ success: false, error: 'not found', error_type: 'file_error' });
+
+      const result = await tool.execute({
+        task_prompt: 'Audit these files',
+        context_files: ['src/one.ts', 'src/missing.ts'],
+      }, 'test-call-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('src/missing.ts');
+      expect(result.error).toContain('not found');
+    });
+
     it('should fall back to task agent when agent does not exist', async () => {
       const result = await tool.execute({
         agent_type: 'nonexistent',

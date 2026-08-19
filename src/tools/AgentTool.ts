@@ -20,7 +20,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, ID_GENERATION, AGENT_CONFIG, PERMISSION_MESSAGES, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
+import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, ID_GENERATION, AGENT_CONFIG, PERMISSION_MESSAGES, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS, CONTEXT_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
 import { ModelCapabilitiesIndex } from '../services/ModelCapabilitiesIndex.js';
 import { fileToBase64 } from '../utils/imageUtils.js';
 import { PooledAgent } from '../services/AgentPoolService.js';
@@ -29,6 +29,7 @@ import { getThoroughnessDuration, getThoroughnessMaxTokens, formatElapsed } from
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
 import { extractSummaryFromConversation } from '../utils/agentUtils.js';
+import { tokenCounter } from '../services/TokenCounter.js';
 import {
   appendAgentResponseSuffix,
   registerDelegation,
@@ -347,68 +348,81 @@ Only set run_in_background=false when your very next step depends on the result.
           );
         }
 
-        // Generate tool call ID
-        const toolCallId = `read-context-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
+        const contextSize = serviceRegistry.get('token_manager')?.getContextSize()
+          ?? serviceRegistry.get('config_manager')?.getConfig().context_size
+          ?? CONTEXT_SIZES.SMALL;
+        const contextTokenLimit = Math.floor(
+          contextSize * TOKEN_MANAGEMENT.CONTEXT_FILE_READ_MAX_PERCENT
+        );
+        let contextTokens = 0;
+        const calls: NonNullable<Message['tool_calls']> = [];
+        const results: Message[] = [];
 
-        // Create assistant message with tool_calls
-        const assistantMessage: Message = {
-          role: 'assistant' as const,
-          content: '',
-          tool_calls: [{
+        // ReadTool deliberately has a one-path contract. Keep delegation
+        // preloading on that same contract instead of inventing a private batch
+        // shape, and preserve standard assistant-call/tool-result pairing.
+        const { createToolResultMessage } = await import('../llm/FunctionCalling.js');
+        for (const [index, filePath] of contextFiles.entries()) {
+          const toolCallId = `read-context-${Date.now()}-${index}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
+          calls.push({
             id: toolCallId,
             type: 'function' as const,
             function: {
               name: 'read',
-              arguments: { file_path: contextFiles },
+              arguments: { file_path: filePath },
             },
-          }],
+          });
+
+          const result = await toolManager.executeTool(
+            'read',
+            {
+              file_path: filePath,
+              description: 'Load context file for agent',
+            },
+            toolCallId,
+            false, // isRetry
+            undefined, // abort signal (agent doesn't exist yet)
+            false, // isUserInitiated
+            true,  // isContextFile - enables per-result limit
+            agentType, // currentAgentName for tool-agent binding validation
+            {
+              agentId: `context:${toolCallId}`,
+              agentName: agentType,
+            }
+          );
+
+          if (!result || (!result.success && !result.error)) {
+            return this.formatErrorResponse(
+              `Failed to read context file ${filePath}: Invalid result from ReadTool`,
+              'execution_error'
+            );
+          }
+          if (!result.success) {
+            return this.formatErrorResponse(
+              `Failed to read context file ${filePath}: ${result.error || 'Unknown error'}`,
+              result.error_type || 'execution_error'
+            );
+          }
+
+          contextTokens += tokenCounter.count(JSON.stringify(result));
+          if (contextTokens > contextTokenLimit) {
+            return this.formatErrorResponse(
+              `Context files exceed the ${contextTokenLimit}-token preload limit after ${filePath}`,
+              'validation_error',
+              'Provide fewer or smaller context_files; put additional paths in task_prompt for the agent to inspect selectively.'
+            );
+          }
+          results.push(createToolResultMessage(toolCallId, 'read', result));
+        }
+
+        const assistantMessage: Message = {
+          role: 'assistant' as const,
+          content: '',
+          tool_calls: calls,
         };
 
-        // Execute read tool
-        const result = await toolManager.executeTool(
-          'read',
-          {
-            file_path: contextFiles,
-            description: 'Load context files for agent',
-          },
-          toolCallId,
-          false, // isRetry
-          undefined, // abort signal (agent doesn't exist yet)
-          false, // isUserInitiated
-          true,  // isContextFile - enables 40% limit
-          agentType, // currentAgentName for tool-agent binding validation
-          {
-            agentId: `context:${toolCallId}`,
-            agentName: agentType,
-          }
-        );
-
-        // Validate read result before adding to conversation
-        if (!result || (!result.success && !result.error)) {
-          return this.formatErrorResponse(
-            'Failed to read context files: Invalid result from ReadTool',
-            'execution_error'
-          );
-        }
-
-        // If read failed, return the error
-        if (!result.success) {
-          return this.formatErrorResponse(
-            `Failed to read context files: ${result.error || 'Unknown error'}`,
-            result.error_type || 'execution_error'
-          );
-        }
-
-        // Create tool result message using centralized function
-        const { createToolResultMessage } = await import('../llm/FunctionCalling.js');
-        const toolResultMessage: Message = createToolResultMessage(
-          toolCallId,
-          'read',
-          result
-        );
-
         // Store messages to pass to agent creation
-        initialMessages = [assistantMessage, toolResultMessage];
+        initialMessages = [assistantMessage, ...results];
 
       } catch (error) {
         // If file reading fails, return error
