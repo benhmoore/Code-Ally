@@ -1039,6 +1039,7 @@ export class Agent {
 
     // Reset internal recovery tracking on new user input
     this.invocationState.recoveryAttempts = 0;
+    this.invocationState.recoverySuccessStreak = 0;
     this.captureTodoBaseline();
 
     this.turnController.start();
@@ -1369,6 +1370,7 @@ export class Agent {
     // compare the next generation's text against repetition accumulated under
     // the superseded instruction.
     this.invocationState.recoveryAttempts = 0;
+    this.invocationState.recoverySuccessStreak = 0;
     this.invocationState.unfinishedWorkContinuations = 0;
     this.captureTodoBaseline();
     this.loopDetector.resetTextDetectors();
@@ -2032,6 +2034,7 @@ export class Agent {
     }
 
     this.invocationState.recoveryAttempts++;
+    this.invocationState.recoverySuccessStreak = 0;
     logger.debug(
       '[AGENT_RECOVERY]',
       this.instanceId,
@@ -2119,13 +2122,26 @@ export class Agent {
       recordToolCalls: (toolCalls, results) => {
         this.loopDetector.recordToolCalls(toolCalls, results);
         this.turnController.recordToolCalls(toolCalls.length);
-        // Recovery is bounded between concrete outcomes, not across the entire
-        // user turn. A successful tool batch proves the model escaped the prior
-        // reasoning stall; a later loop is an independent incident and gets its
-        // own clean retry. Failed calls deliberately do not replenish the budget.
-        if (results?.some(result => result.success)) {
-          this.invocationState.recoveryAttempts = 0;
+        const hasSuccessfulResult = results?.some(result => result.success) === true;
+        if (hasSuccessfulResult) {
           this.invocationState.unfinishedWorkContinuations = 0;
+        }
+
+        // Do not let one unrelated success (or a mixed batch containing a
+        // failure) replenish bounded recovery. Sustained successful batches
+        // are evidence that the prior loop was actually escaped.
+        if (this.invocationState.recoveryAttempts > 0) {
+          const wholeBatchSucceeded = results !== undefined
+            && results.length > 0
+            && results.every(result => result.success === true);
+          this.invocationState.recoverySuccessStreak = wholeBatchSucceeded
+            ? this.invocationState.recoverySuccessStreak + 1
+            : 0;
+          if (this.invocationState.recoverySuccessStreak
+            >= AGENT_CONFIG.RECOVERY_SUCCESS_BATCHES_TO_REPLENISH) {
+            this.invocationState.recoveryAttempts = 0;
+            this.invocationState.recoverySuccessStreak = 0;
+          }
         }
         // Increment checkpoint counters after successful tool execution
         this.checkpointTracker.incrementToolCalls(toolCalls.length);
