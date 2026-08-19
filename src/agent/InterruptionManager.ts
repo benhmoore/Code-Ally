@@ -21,7 +21,8 @@ export type UserInterruptionCause =
 export type RecoverableInterruptionCause =
   | { kind: 'activity_timeout'; reason: string }
   | { kind: 'thinking_loop'; reason: string }
-  | { kind: 'response_loop'; reason: string };
+  | { kind: 'response_loop'; reason: string }
+  | { kind: 'tool_loop'; reason: string };
 
 export type InterruptionCause = UserInterruptionCause | RecoverableInterruptionCause;
 

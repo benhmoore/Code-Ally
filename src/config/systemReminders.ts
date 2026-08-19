@@ -147,6 +147,14 @@ export const SYSTEM_REMINDERS = {
         `${reason}. Your visible response appears to be repeating. Stop the repetition and either provide the concise final answer or take the next concrete tool action.`,
       persist: false,
     },
+
+    /** Repeated identical tool failure - require a materially different next step */
+    // PERSIST: false - the failed calls and results remain in conversation history
+    TOOL_LOOP: {
+      text: (reason: string) =>
+        `${reason}. The repeated invocation was stopped. Do not retry the same tool with the same arguments. Inspect the current state and failure, then materially change the arguments or use a different approach.`,
+      persist: false,
+    },
   },
 
   // ===========================================

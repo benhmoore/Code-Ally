@@ -229,8 +229,10 @@ class TextLoopDetector {
  */
 interface ToolCallHistoryEntry {
   signature: string;
+  targetSignature?: string;
   toolName: string;
   timestamp: number;
+  success?: boolean;
   fileHashes?: Map<string, string>;
 }
 
@@ -239,6 +241,7 @@ interface ToolCallHistoryEntry {
  */
 export type IssueType =
   | 'exact_duplicate'
+  | 'repeated_failure'
   | 'repeated_file'
   | 'similar_calls'
   | 'low_hit_rate'
@@ -266,6 +269,8 @@ export interface CycleInfo {
     searchTotal?: number;
     searchHits?: number;
     fileAccessCount?: number;
+    priorFailureCount?: number;
+    failureThreshold?: number;
     [key: string]: any;
   };
 }
@@ -313,6 +318,49 @@ class ToolCycleDetector {
     }
 
     return signature;
+  }
+
+  /**
+   * Identify the resource an operation acts on without coupling cycle detection
+   * to individual tools or including mutable payloads such as patch contents.
+   */
+  private createTargetSignature(toolCall: {
+    function: { name: string; arguments: Record<string, any> };
+  }): string | undefined {
+    const targetEntries = Object.entries(toolCall.function.arguments || {})
+      .filter(([key, value]) =>
+        /(^|_)(file|path|dir|directory|url|uri|id|name)s?$/i.test(key)
+        && value !== undefined
+      )
+      .sort(([left], [right]) => left.localeCompare(right));
+
+    if (targetEntries.length === 0) return undefined;
+    return `${toolCall.function.name}|${JSON.stringify(Object.fromEntries(targetEntries))}`;
+  }
+
+  private detectRepeatedTargetFailure(toolCall: {
+    function: { name: string; arguments: Record<string, any> };
+  }): CycleInfo | null {
+    const targetSignature = this.createTargetSignature(toolCall);
+    if (!targetSignature) return null;
+
+    const priorFailureCount = this.toolCallHistory.filter(entry =>
+      entry.targetSignature === targetSignature && entry.success === false
+    ).length;
+    if (priorFailureCount < this.cycleThreshold - 1) return null;
+
+    return {
+      toolName: toolCall.function.name,
+      count: priorFailureCount + 1,
+      isValidRepeat: false,
+      issueType: 'repeated_failure',
+      severity: 'high',
+      customMessage: `${toolCall.function.name} has repeatedly failed on the same target. Inspect the failure and change approach.`,
+      metadata: {
+        priorFailureCount,
+        failureThreshold: this.cycleThreshold,
+      },
+    };
   }
 
   private getReadFilePaths(args: Record<string, any>): string[] {
@@ -510,12 +558,17 @@ class ToolCycleDetector {
 
       if (count >= this.cycleThreshold) {
         const isValidRepeat = this.isValidFileRepeat(toolCall, previousCalls);
+        const priorFailureCount = previousCalls.filter(entry => entry.success === false).length;
         cycles.set(toolCall.id, {
           toolName: toolCall.function.name,
           count,
           isValidRepeat,
           issueType: 'exact_duplicate',
           severity: isValidRepeat ? 'low' : 'high',
+          metadata: {
+            priorFailureCount,
+            failureThreshold: this.cycleThreshold,
+          },
         });
 
         logger.debug(
@@ -523,6 +576,20 @@ class ToolCycleDetector {
           this.instanceId,
           `Detected exact duplicate: ${toolCall.function.name} called ${count} times (valid repeat: ${isValidRepeat})`
         );
+      }
+
+      // Exact arguments often drift slightly while a model remains stuck on
+      // the same failed operation. Detect that at the resource boundary.
+      if (!cycles.has(toolCall.id)) {
+        const repeatedFailure = this.detectRepeatedTargetFailure(toolCall);
+        if (repeatedFailure) {
+          cycles.set(toolCall.id, repeatedFailure);
+          logger.debug(
+            '[TOOL_CYCLE_DETECTOR]',
+            this.instanceId,
+            `Detected repeated target failure: ${toolCall.function.name} (${repeatedFailure.count} attempts)`
+          );
+        }
       }
 
       // 2. Repeated file access detection
@@ -611,6 +678,7 @@ class ToolCycleDetector {
       if (!toolCall) continue;
 
       const signature = this.createToolCallSignature(toolCall);
+      const targetSignature = this.createTargetSignature(toolCall);
       let fileHashes: Map<string, string> | undefined;
 
       // Record metrics
@@ -634,8 +702,10 @@ class ToolCycleDetector {
 
       this.toolCallHistory.push({
         signature,
+        targetSignature,
         toolName: toolCall.function.name,
         timestamp: Date.now(),
+        success: results?.[i]?.success,
         fileHashes,
       });
     }

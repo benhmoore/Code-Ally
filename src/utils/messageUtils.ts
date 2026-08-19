@@ -201,6 +201,15 @@ export function createResponseLoopContinuationReminder(reason: string): Message 
   );
 }
 
+/** Create a system reminder after a repeated identical tool failure. */
+export function createToolLoopContinuationReminder(reason: string): Message {
+  const config = SYSTEM_REMINDERS.INTERRUPTIONS.TOOL_LOOP;
+  return createSystemReminder(
+    resolveReminderText(config, reason),
+    config.persist
+  );
+}
+
 // ===========================================
 // PROGRESS REMINDERS
 // ===========================================
