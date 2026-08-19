@@ -552,31 +552,27 @@ export const useActivitySubscriptions = (
       pendingStreamingChunks.current = '';
       actions.setStreamingContent(undefined);
 
-      // Reconcile tool calls when the main agent ends. On interrupt we drop
-      // them outright; on a normal end we mark any call that never reported
-      // completion as errored, so a dropped TOOL_CALL_END event can never
-      // leave a tool spinning in the UI forever.
-      if (wasInterrupted) {
-        actions.clearToolCalls();
-      } else {
-        const messages = agent.getMessages().filter((message) => message.role !== 'system');
-        const reconstructed = reconstructToolCallsFromMessages(
-          messages,
-          ServiceRegistry.getInstance(),
-        );
-        const finalized = finalizeToolCallsAtAgentEnd(
-          state.activeToolCalls,
-          reconstructed,
-          Date.now(),
-        );
-        finalized.forEach((toolCall, index) => {
-          const previous = state.activeToolCalls[index];
-          if (previous && previous.status !== toolCall.status) {
-            flushChunks.current(toolCall.id);
-            actions.updateToolCall(toolCall.id, toolCall);
-          }
-        });
-      }
+      // Reconcile tool calls whenever the main agent ends, including hard
+      // interrupts. Recorded tool results are authoritative; calls that truly
+      // never reported completion become errors instead of disappearing or
+      // spinning forever.
+      const messages = agent.getMessages().filter((message) => message.role !== 'system');
+      const reconstructed = reconstructToolCallsFromMessages(
+        messages,
+        ServiceRegistry.getInstance(),
+      );
+      const finalized = finalizeToolCallsAtAgentEnd(
+        state.activeToolCalls,
+        reconstructed,
+        Date.now(),
+      );
+      finalized.forEach((toolCall, index) => {
+        const previous = state.activeToolCalls[index];
+        if (previous && previous.status !== toolCall.status) {
+          flushChunks.current(toolCall.id);
+          actions.updateToolCall(toolCall.id, toolCall);
+        }
+      });
 
       // Clear per-turn tracking maps to prevent unbounded growth across turns.
       thinkingClock.current.clearAll();
@@ -599,23 +595,13 @@ export const useActivitySubscriptions = (
     // main "Cancelling" indicator while the main turn is still unwinding.
   });
 
-  /**
-   * Interrupt handler - clears UI state defensively.
-   *
-   * IDEMPOTENCY CONTRACT:
-   * These operations are safe to call multiple times:
-   * - clearToolCalls(): Sets array to empty (idempotent)
-   * - removeSubAgent(): Filters by name, no-op if already removed
-   *
-   * This defensive approach ensures UI cleanup even if AGENT_END events
-   * are delayed or lost. Late-arriving AGENT_END events will safely
-   * attempt to remove already-cleared state with no adverse effects.
-   */
+  /** Begin hard-interrupt UI cleanup without discarding tool history. */
   useActivityEvent(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
     setIsCancelling(true);
-    // Flush any pending streaming content before clearing state
+    // Preserve any output received before cancellation. The terminal tool
+    // event or AGENT_END reconciliation will finalize the row.
     flushStreamingContent.current();
-    actions.clearToolCalls();
+    flushChunks.current();
     state.activeSubAgents.forEach(agentName => {
       actions.removeSubAgent(agentName);
     });
@@ -626,8 +612,8 @@ export const useActivitySubscriptions = (
     // here or they would linger after the work they belong to is abandoned.
     modal.clearTransientModals();
 
-    // Clear per-turn tracking maps; interrupted tools/sub-agents never emit
-    // their completion events, so their entries would otherwise leak.
+    // Per-turn clocks are no longer useful after cancellation. Tool chunks were
+    // flushed above, so clearing their accumulator cannot erase visible output.
     thinkingClock.current.clearAll();
     pendingChunks.current.clear();
   });
