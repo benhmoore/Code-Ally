@@ -102,6 +102,7 @@ describe('BaseDelegationTool (via ExploreTool)', () => {
       expect(prompt).toContain('When exact files or symbols are named, skip tree/glob discovery');
       expect(prompt).toContain('Parallel reads share one output budget');
       expect(prompt).toContain('save compact accumulated findings with write-temp');
+      expect(prompt).toContain('Never copy whole source files or large raw tool outputs');
       expect(prompt).toContain('Do not reread evicted output');
     });
   });

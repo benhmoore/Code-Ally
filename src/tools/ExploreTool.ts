@@ -43,6 +43,7 @@ function getExplorationBasePrompt(tempDir: string): string {
 - Parallel reads share one output budget. Do not batch full-file reads that may exceed it; group only small known files and inspect larger files narrowly.
 - Stop calling tools as soon as the requested evidence is sufficient. Do not reread evicted output or source merely for reassurance; re-query only the missing symbol or range.
 - For long multi-file investigations, save compact accumulated findings with write-temp before earlier evidence can be evicted, then synthesize from those notes.
+- Never copy whole source files or large raw tool outputs into notes or the final response. Return compact conclusions with exact symbols and locations so the caller can verify only what it needs.
 - Mention any temp files created in your final response with full paths
 - Report findings with file paths and relevant code snippets`;
 }
@@ -60,7 +61,7 @@ export class ExploreTool extends BaseDelegationTool {
   readonly usageGuidance = `**When to use explore:**
 Unknown scope/location, multi-file synthesis, architecture analysis. Preserves your context.
 NOT for: Known file paths, single-file questions, simple lookups. No internet access.
-Explore agents may create temp note files - read those paths for additional detail.`;
+Expect compact findings with exact symbols and locations. Temp notes are for durable synthesized findings, never source-file dumps.`;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
