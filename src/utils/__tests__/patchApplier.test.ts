@@ -104,6 +104,31 @@ describe('applyModelPatch', () => {
       expect(result.readRanges).toEqual([{ start: 2, end: 6 }]);
     });
 
+    it('repairs redundant JSON quote escapes only after exact matching fails', () => {
+      const result = applyModelPatch(
+        '@@ -1,2 +1,2 @@\n-parser.add_argument(\\"--strict\\")\n-print(\\"old\\")\n+parser.add_argument(\\"--strict\\", required=True)\n+print(\\"new\\")',
+        'parser.add_argument("--strict")\nprint("old")\n'
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        content: 'parser.add_argument("--strict", required=True)\nprint("new")\n',
+        readRanges: [{ start: 1, end: 2 }],
+      });
+    });
+
+    it('preserves intentional escaped quotes when the exact patch matches', () => {
+      const result = applyModelPatch(
+        String.raw`@@ -1,1 +1,1 @@
+-const quoted = '\\"old\\"';
++const quoted = '\\"new\\"';`,
+        String.raw`const quoted = '\"old\"';` + '\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe(String.raw`const quoted = '\"new\"';` + '\n');
+    });
+
     it('rejects ambiguous context unless the hunk line hint identifies a match', () => {
       const ambiguous = applyModelPatch(
         '@@ -2,1 +2,1 @@\n-same\n+changed',
