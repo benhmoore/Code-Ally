@@ -39,3 +39,30 @@ export function reconcileRestoredToolCalls(
     };
   });
 }
+
+/**
+ * Resolve stale live tool state when the main agent ends. Tool-result messages
+ * are authoritative: their reconstructed terminal state wins over a queued UI
+ * update that has not rendered yet. Only calls with no recorded result become
+ * errors.
+ */
+export function finalizeToolCallsAtAgentEnd(
+  liveCalls: ToolCallState[],
+  reconstructed: ToolCallState[],
+  now: number,
+): ToolCallState[] {
+  const terminal = new Set(['success', 'error', 'cancelled']);
+  const reconstructedById = new Map(reconstructed.map((call) => [call.id, call]));
+
+  return liveCalls.map((call) => {
+    if (terminal.has(call.status)) return call;
+    const recorded = reconstructedById.get(call.id);
+    if (recorded && terminal.has(recorded.status)) return recorded;
+    return {
+      ...call,
+      status: 'error',
+      endTime: now,
+      error: call.error || 'Tool did not report completion',
+    };
+  });
+}
