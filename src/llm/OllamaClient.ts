@@ -271,7 +271,7 @@ export class OllamaClient extends ModelClient {
   /**
    * Send messages to Ollama and receive a response
    *
-   * Implements infinite retry logic with capped exponential backoff for network/HTTP/timeout/stream timeout errors.
+   * Implements bounded retry logic with capped exponential backoff for network/HTTP/timeout/stream timeout errors.
    * Backoff is capped at 60 seconds and timeout growth is capped at 10 minutes.
    * Tool call validation is performed on all responses.
    *
@@ -293,14 +293,15 @@ export class OllamaClient extends ModelClient {
 
     // Prepare payload
     const payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens, responseSchema?.schema);
+    const requestContainsImages = messages.some(message => (message.images?.length ?? 0) > 0);
 
     try {
       // Shared retry policy (capped backoff + failure ceiling + time budget).
       // The per-attempt work below is Ollama-specific; the loop is not.
       return await runWithRetries<LLMResponse>({
         signal,
-        maxFailures: options.retryPolicy === 'foreground' ? Infinity : 3,
-        maxTotalMs: options.retryPolicy === 'foreground' ? Infinity : RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
+        maxFailures: options.retryPolicy === 'foreground' ? RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES : 3,
+        maxTotalMs: RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
         onRetry: (label, delaySec, attemptNum) => {
           logger.debug(`[OLLAMA_CLIENT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attemptNum})...`);
           this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
@@ -318,7 +319,8 @@ export class OllamaClient extends ModelClient {
           // Check if this is an image-related error
           const errorMsg = error.message || String(error);
           const isImageError = errorMsg.includes('Cannot decode or download image') ||
-                               errorMsg.includes('image') && (error.httpStatus === 400 || error.httpStatus === 415);
+                               errorMsg.includes('image') && (error.httpStatus === 400 || error.httpStatus === 415) ||
+                               requestContainsImages && (error.httpStatus === 500 || error.httpStatus === 503);
           const errorResponse = this.handleRequestError(error);
           if (isImageError) {
             logger.debug('[OLLAMA_CLIENT] Image-related error detected - marking for image removal from history');

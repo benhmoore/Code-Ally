@@ -105,8 +105,8 @@ export class OpenAIResponsesClient extends ModelClient {
     const payload = this.payload(prepared, options);
     return runWithRetries<LLMResponse>({
       signal: options.signal,
-      maxFailures: options.retryPolicy === 'foreground' ? Infinity : 3,
-      maxTotalMs: options.retryPolicy === 'foreground' ? Infinity : 30 * 60 * 1000,
+      maxFailures: options.retryPolicy === 'foreground' ? RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES : 3,
+      maxTotalMs: RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
       onInterrupted: () => ({ role: 'assistant', content: '', interrupted: true }),
       onError: (error) => { throw error; },
       onRetry: (label, delaySeconds) => {

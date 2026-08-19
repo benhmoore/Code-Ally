@@ -139,18 +139,28 @@ export class OpenAICompatClient extends ModelClient {
 
     const requestId = `req-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
     const payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
+    const requestContainsImages = messages.some(message => (message.images?.length ?? 0) > 0);
 
     try {
       return await runWithRetries<LLMResponse>({
         signal,
-        maxFailures: options.retryPolicy === 'foreground' ? Infinity : 3,
-        maxTotalMs: options.retryPolicy === 'foreground' ? Infinity : RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
+        maxFailures: options.retryPolicy === 'foreground' ? RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES : 3,
+        maxTotalMs: RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
         onRetry: (label, delaySec, attemptNum) => {
           logger.debug(`[OPENAI_COMPAT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attemptNum})...`);
           this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
         },
         onInterrupted: () => ({ role: 'assistant', content: '', interrupted: true }),
-        onError: (error: any) => this.handleRequestError(error),
+        onError: (error: any) => {
+          const response = this.handleRequestError(error);
+          if (
+            requestContainsImages
+            && [400, 415, 500, 503].includes(error.httpStatus)
+          ) {
+            (response as LLMResponse & { shouldStripImages?: boolean }).shouldStripImages = true;
+          }
+          return response;
+        },
         attempt: async (attempt) => {
           const result = await this.executeRequest(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream);
 
