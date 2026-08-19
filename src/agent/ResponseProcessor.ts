@@ -517,23 +517,28 @@ export class ResponseProcessor {
     // Pass results to enable search hit rate tracking
     context.recordToolCalls(toolCalls, toolResults);
 
-    // Advisory cycle warnings are easy for a model to ignore. Once the same
-    // exact, invalid invocation has failed repeatedly, stop this response and
-    // route through Agent's bounded recovery path. Successful calls remain
-    // untouched because repeated stateful operations can be intentional.
+    // Re-evaluate after recording outcomes. A model may issue an entire retry
+    // sequence in one response, so the pre-execution view cannot see failures
+    // from sibling calls in that batch.
+    const completedCycles = context.detectCycles(toolCalls);
+
+    // Advisory cycle warnings are easy for a model to ignore. Once an invalid
+    // operation has failed repeatedly, stop this response and route through
+    // Agent's bounded recovery path. Successful calls remain untouched because
+    // repeated stateful operations can be intentional.
     const repeatedFailure = toolCalls.find((toolCall, index) => {
-      const cycle = cycles.get(toolCall.id);
+      const cycle = completedCycles.get(toolCall.id);
       return (cycle?.issueType === 'exact_duplicate' || cycle?.issueType === 'repeated_failure')
         && !cycle.isValidRepeat
         && toolResults[index]?.success !== true
-        && (cycle.metadata?.priorFailureCount ?? 0) + 1
+        && (cycle.metadata?.priorFailureCount ?? 0)
           >= (cycle.metadata?.failureThreshold ?? Number.POSITIVE_INFINITY);
     });
     if (repeatedFailure) {
-      const cycle = cycles.get(repeatedFailure.id)!;
-      const failureCount = (cycle.metadata?.priorFailureCount ?? 0) + 1;
+      const cycle = completedCycles.get(repeatedFailure.id)!;
+      const failureCount = cycle.metadata?.priorFailureCount ?? 0;
       context.interruptForToolLoop(
-        `${repeatedFailure.function.name} failed with identical arguments ${failureCount} times`
+        `${repeatedFailure.function.name} failed repeatedly (${failureCount} attempts)`
       );
     }
 

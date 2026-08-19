@@ -233,14 +233,23 @@ describe('Agent - Interruption Handling', () => {
         function: { name: 'apply-patch', arguments: { patch: 'unchanged patch' } },
       };
       const context = (agent as any).buildResponseContext({});
-      context.detectCycles = vi.fn(() => new Map([[call.id, {
-        toolName: call.function.name,
-        count: 3,
-        isValidRepeat: false,
-        issueType: 'exact_duplicate',
-        severity: 'high',
-        metadata: { priorFailureCount: 2, failureThreshold: 3 },
-      }]]));
+      context.detectCycles = vi.fn()
+        .mockReturnValueOnce(new Map([[call.id, {
+          toolName: call.function.name,
+          count: 3,
+          isValidRepeat: false,
+          issueType: 'exact_duplicate',
+          severity: 'high',
+          metadata: { priorFailureCount: 2, failureThreshold: 3 },
+        }]]))
+        .mockReturnValueOnce(new Map([[call.id, {
+          toolName: call.function.name,
+          count: 4,
+          isValidRepeat: false,
+          issueType: 'exact_duplicate',
+          severity: 'high',
+          metadata: { priorFailureCount: 3, failureThreshold: 3 },
+        }]]));
       context.executeToolCalls = vi.fn(async () => [{ success: false, error: 'hunk not found' }]);
 
       const result = await (agent as any).responseProcessor.processToolResponse(
@@ -252,7 +261,7 @@ describe('Agent - Interruption Handling', () => {
       expect(result).toBe('');
       expect((agent as any).interruptionManager.getCause()).toEqual({
         kind: 'tool_loop',
-        reason: 'apply-patch failed with identical arguments 3 times',
+        reason: 'apply-patch failed repeatedly (3 attempts)',
       });
       expect(mockModelClient.send).not.toHaveBeenCalled();
     });
@@ -283,6 +292,36 @@ describe('Agent - Interruption Handling', () => {
       expect(result).toBe('Mock response');
       expect((agent as any).interruptionManager.getCause()).toBeNull();
       expect(mockModelClient.send).toHaveBeenCalledOnce();
+    });
+
+    it('routes repeated failures from one mixed-result tool batch through recovery', async () => {
+      const calls = ['run-tests', 'edit-one', 'run-tests', 'edit-two', 'run-tests']
+        .map((command, index) => ({
+          id: `call-${index}`,
+          type: 'function' as const,
+          function: { name: 'bash', arguments: { command } },
+        }));
+      const context = (agent as any).buildResponseContext({});
+      context.executeToolCalls = vi.fn(async () => [
+        { success: false, error: 'failed' },
+        { success: true, content: 'edited' },
+        { success: false, error: 'failed' },
+        { success: true, content: 'edited' },
+        { success: false, error: 'failed' },
+      ]);
+
+      const result = await (agent as any).responseProcessor.processToolResponse(
+        { content: '', tool_calls: calls },
+        calls,
+        context,
+      );
+
+      expect(result).toBe('');
+      expect((agent as any).interruptionManager.getCause()).toEqual({
+        kind: 'tool_loop',
+        reason: 'bash failed repeatedly (3 attempts)',
+      });
+      expect(mockModelClient.send).not.toHaveBeenCalled();
     });
 
     it('treats a user interjection as a fresh recovery opportunity', () => {

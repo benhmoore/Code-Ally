@@ -156,6 +156,31 @@ describe('LoopDetector', () => {
         });
       });
 
+      it('detects failures issued together in one tool-call batch', () => {
+        const failingCheck = createToolCall('Bash', { command: 'run-tests' });
+        const calls = [
+          failingCheck,
+          createToolCall('Bash', { command: 'edit-one' }),
+          createToolCall('Bash', { command: 'run-tests' }),
+          createToolCall('Bash', { command: 'edit-two' }),
+          createToolCall('Bash', { command: 'run-tests' }),
+        ];
+
+        detector.recordToolCalls(calls, [
+          { success: false },
+          { success: true },
+          { success: false },
+          { success: true },
+          { success: false },
+        ]);
+
+        const cycle = detector.detectCycles([failingCheck]).get(failingCheck.id);
+        expect(cycle).toMatchObject({
+          issueType: 'exact_duplicate',
+          metadata: { priorFailureCount: 3, failureThreshold: 3 },
+        });
+      });
+
       it('does not combine failures against different targets', () => {
         detector.recordToolCalls([
           createToolCall('apply-patch', { file_path: '/repo/a.ts', patch: 'one' }),
