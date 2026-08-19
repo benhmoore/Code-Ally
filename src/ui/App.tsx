@@ -58,7 +58,7 @@ import { SyntaxHighlighter } from '../services/SyntaxHighlighter.js';
 import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
-import { shouldRestoreMainView } from './utils/agentViewLifecycle.js';
+import { reconcileRestoredToolCalls, shouldRestoreMainView } from './utils/agentViewLifecycle.js';
 
 /**
  * Props for the App component
@@ -221,6 +221,9 @@ const AppContentComponent: React.FC<{
   // Saved main-conversation view (messages + tool calls) captured when entering
   // an agent, so returning to main restores it EXACTLY (invariant preservation).
   const savedMainViewRef = useRef<{ messages: Message[]; toolCalls: ToolCallState[] } | null>(null);
+  // Invalidates deferred restoration when the user enters another view before
+  // the previous switch has committed.
+  const viewSwitchGenerationRef = useRef(0);
   // The entered agent's rendered message count, to refresh only when it grows.
   const enteredCountRef = useRef(0);
 
@@ -243,17 +246,21 @@ const AppContentComponent: React.FC<{
     exitForegroundAgent({ registry, activityStream, mainAgent: agent });
     const saved = savedMainViewRef.current;
     savedMainViewRef.current = null;
+    const generation = ++viewSwitchGenerationRef.current;
     actions.setActiveAgentId('main');
     actions.setCurrentAgent(agent.getAgentName() || 'ally');
-    // Restore the exact main view (messages + tool calls) that was showing
-    // before entering an agent — in one atomic reset.
-    if (saved) {
-      actions.resetConversationViewWithTools(saved.messages, saved.toolCalls);
-    } else {
+    // A foreground child can settle in the same event turn that triggers this
+    // switch. Reconstruct on the next macrotask so its parent TOOL_CALL_END and
+    // tool-result message are both visible, rather than restoring the stale
+    // pre-entry "executing" snapshot.
+    setImmediate(() => {
+      if (viewSwitchGenerationRef.current !== generation) return;
       const registry = ServiceRegistry.getInstance();
       const msgs = agent.getMessages().filter((m) => m.role !== 'system');
-      actions.resetConversationViewWithTools(msgs, reconstructToolCallsFromMessages(msgs, registry));
-    }
+      const reconstructed = reconstructToolCallsFromMessages(msgs, registry);
+      const toolCalls = reconcileRestoredToolCalls(msgs, reconstructed, saved?.toolCalls ?? []);
+      actions.resetConversationViewWithTools(msgs, toolCalls);
+    });
   }, [activityStream, agent, actions]);
 
   const handleEnterFleet = React.useCallback(() => {
@@ -284,6 +291,7 @@ const AppContentComponent: React.FC<{
     const manager = registry.get('background_agent_manager');
     const task = manager?.getTask(target.id);
     if (!task) return;
+    viewSwitchGenerationRef.current++;
     // Save the main view once, when leaving main (not on agent→agent switches).
     if (state.activeAgentId === 'main') {
       savedMainViewRef.current = { messages: state.messages, toolCalls: state.activeToolCalls };
