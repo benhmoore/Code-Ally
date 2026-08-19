@@ -43,7 +43,7 @@ const EXPLORE_CONFIGS: Record<string, ThoroughnessConfig> = {
     extras: [
       'Use "overview then deep dive" pattern: map the landscape, then delegate details',
       'Cross-reference findings across multiple files',
-      'Create separate note files for different aspects',
+      'Preserve compact cross-cutting conclusions before earlier evidence is evicted',
     ],
   },
   uncapped: {
