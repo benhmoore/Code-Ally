@@ -337,14 +337,22 @@ export class BashTool extends BaseTool {
   private validateCommand(
     command: string
   ): { valid: boolean; error?: string; suggestion?: string } {
-    // Check for disallowed commands
-    const disallowedCommands = ['rm -rf /', 'mkfs', 'dd if=/dev/zero', ':(){:|:&};:'];
+    // Match dangerous command targets, not string prefixes. A substring check
+    // for `rm -rf /` also matches every absolute descendant such as /tmp/x,
+    // turning ordinary isolated-test cleanup into a false security failure.
+    const disallowedCommands: Array<{ label: string; pattern: RegExp }> = [
+      { label: 'rm -rf /', pattern: /\brm\s+-rf\s+\/(?=$|[\s;&|])/ },
+      { label: 'rm -rf /*', pattern: /\brm\s+-rf\s+\/\*(?=$|[\s;&|])/ },
+      { label: 'mkfs', pattern: /\bmkfs(?:\.[a-z0-9_-]+)?\b/i },
+      { label: 'dd if=/dev/zero', pattern: /\bdd\s+[^\n;&|]*\bif=\/dev\/zero\b/ },
+      { label: ':(){:|:&};:', pattern: /:\(\)\{:\|:&\};:/ },
+    ];
 
     for (const disallowed of disallowedCommands) {
-      if (command.includes(disallowed)) {
+      if (disallowed.pattern.test(command)) {
         return {
           valid: false,
-          error: `Command contains disallowed pattern: ${disallowed}`,
+          error: `Command contains disallowed pattern: ${disallowed.label}`,
           suggestion: 'This command is blocked for safety reasons',
         };
       }
