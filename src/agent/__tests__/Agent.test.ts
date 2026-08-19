@@ -229,10 +229,12 @@ describe('Agent - Interruption Handling', () => {
     it('treats a user interjection as a fresh recovery opportunity', () => {
       const resetTextDetectors = vi.spyOn((agent as any).loopDetector, 'resetTextDetectors');
       (agent as any).invocationState.recoveryAttempts = 1;
+      (agent as any).invocationState.unfinishedWorkContinuations = 3;
 
       agent.addUserInterjection('also use port 5174');
 
       expect((agent as any).invocationState.recoveryAttempts).toBe(0);
+      expect((agent as any).invocationState.unfinishedWorkContinuations).toBe(0);
       expect(resetTextDetectors).toHaveBeenCalledOnce();
     });
 

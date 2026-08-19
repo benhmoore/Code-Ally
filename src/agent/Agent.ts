@@ -1363,9 +1363,11 @@ export class Agent {
 
     // An interjection is new external evidence, just like the user input that
     // starts a turn. Do not charge the revised request for a recovery attempt
-    // made before it arrived, and do not compare the next generation's text
-    // against repetition accumulated under the superseded instruction.
+    // or unfinished-work continuation made before it arrived, and do not
+    // compare the next generation's text against repetition accumulated under
+    // the superseded instruction.
     this.invocationState.recoveryAttempts = 0;
+    this.invocationState.unfinishedWorkContinuations = 0;
     this.loopDetector.resetTextDetectors();
 
     logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'User interjection added:', message.substring(0, 50));
