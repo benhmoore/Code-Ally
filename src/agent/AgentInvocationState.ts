@@ -18,6 +18,8 @@ export interface AgentInvocationStateValues {
   recoveryAttempts: number;
   /** Consecutive text-only responses while structured work remains unfinished. */
   unfinishedWorkContinuations: number;
+  /** Todo IDs that predate the current user instruction and cannot bind it. */
+  todoBaselineIds: string[];
   /** Tool call IDs queued by cleanup-call, removed once the model responds. */
   pendingCleanupIds: string[];
   /** Whether a request is currently being processed. */
@@ -30,6 +32,7 @@ function defaults(): AgentInvocationStateValues {
   return {
     recoveryAttempts: 0,
     unfinishedWorkContinuations: 0,
+    todoBaselineIds: [],
     pendingCleanupIds: [],
     requestInProgress: false,
     agentEndEmitted: false,
@@ -39,6 +42,7 @@ function defaults(): AgentInvocationStateValues {
 export class AgentInvocationState implements AgentInvocationStateValues {
   recoveryAttempts!: number;
   unfinishedWorkContinuations!: number;
+  todoBaselineIds!: string[];
   pendingCleanupIds!: string[];
   requestInProgress!: boolean;
   agentEndEmitted!: boolean;

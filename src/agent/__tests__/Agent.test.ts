@@ -287,14 +287,24 @@ describe('Agent - Interruption Handling', () => {
 
     it('treats a user interjection as a fresh recovery opportunity', () => {
       const resetTextDetectors = vi.spyOn((agent as any).loopDetector, 'resetTextDetectors');
+      const registrySpy = vi.spyOn(ServiceRegistry, 'getInstance').mockReturnValue({
+        get: (name: string) => name === 'todo_manager'
+          ? { getTodos: () => [{ id: 'prior-todo', status: 'in_progress' }] }
+          : null,
+      } as any);
       (agent as any).invocationState.recoveryAttempts = 1;
       (agent as any).invocationState.unfinishedWorkContinuations = 3;
 
-      agent.addUserInterjection('also use port 5174');
+      try {
+        agent.addUserInterjection('also use port 5174');
 
-      expect((agent as any).invocationState.recoveryAttempts).toBe(0);
-      expect((agent as any).invocationState.unfinishedWorkContinuations).toBe(0);
-      expect(resetTextDetectors).toHaveBeenCalledOnce();
+        expect((agent as any).invocationState.recoveryAttempts).toBe(0);
+        expect((agent as any).invocationState.unfinishedWorkContinuations).toBe(0);
+        expect((agent as any).invocationState.todoBaselineIds).toEqual(['prior-todo']);
+        expect(resetTextDetectors).toHaveBeenCalledOnce();
+      } finally {
+        registrySpy.mockRestore();
+      }
     });
 
     it('publishes recovery exhaustion as a visible assistant completion', async () => {
@@ -753,6 +763,55 @@ describe('Agent - Interruption Handling', () => {
           {}
         )).resolves.toBe('All work is complete.');
         expect(continuation).not.toHaveBeenCalled();
+      } finally {
+        registrySpy.mockRestore();
+      }
+    });
+
+    it('does not force a new instruction to continue stale todos', async () => {
+      const registrySpy = vi
+        .spyOn(ServiceRegistry, 'getInstance')
+        .mockReturnValue({
+          get: (name: string) => name === 'todo_manager'
+            ? { getTodos: () => [{ id: 'stale-1', task: 'Prior objective', status: 'in_progress' }] }
+            : null,
+        } as any);
+      const continuation = vi.spyOn(agent as any, 'getLLMResponse');
+      (agent as any).invocationState.todoBaselineIds = ['stale-1'];
+
+      try {
+        await expect((agent as any).processLLMResponse(
+          { content: 'The requested audit is complete.', tool_calls: [] },
+          {}
+        )).resolves.toBe('The requested audit is complete.');
+        expect(continuation).not.toHaveBeenCalled();
+      } finally {
+        registrySpy.mockRestore();
+      }
+    });
+
+    it('still enforces todos created after the current instruction', async () => {
+      const registrySpy = vi
+        .spyOn(ServiceRegistry, 'getInstance')
+        .mockReturnValue({
+          get: (name: string) => name === 'todo_manager'
+            ? { getTodos: () => [
+                { id: 'stale-1', task: 'Prior objective', status: 'in_progress' },
+                { id: 'current-1', task: 'Current objective', status: 'pending' },
+              ] }
+            : null,
+        } as any);
+      const continuation = vi
+        .spyOn(agent as any, 'getLLMResponse')
+        .mockResolvedValue({ content: 'Current work continued.', tool_calls: [] });
+      (agent as any).invocationState.todoBaselineIds = ['stale-1'];
+
+      try {
+        await expect((agent as any).processLLMResponse(
+          { content: 'Progress update.', tool_calls: [] },
+          {}
+        )).resolves.toBe('Current work continued.');
+        expect(continuation).toHaveBeenCalledOnce();
       } finally {
         registrySpy.mockRestore();
       }
