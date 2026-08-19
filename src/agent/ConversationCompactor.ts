@@ -783,6 +783,8 @@ export class ConversationCompactor {
             'Do not include private reasoning. Every fact must cite one or more supplied message IDs.',
             'Keep the checkpoint concise: use one-sentence facts and never copy source bodies or raw tool output.',
             'Preserve exact identifiers, paths, commands, error text, and compact public declarations/signatures when they are needed for the next action. Copy these from evidence verbatim; never rename or infer them.',
+            'For each created or modified code artifact, use its reason to preserve the smallest continuation contract needed by dependent work: exported/public symbols, call signatures, important data shapes, and invariants visible in the transcript. Do not summarize implementation bodies.',
+            'Reconcile plans against the newest successful tool evidence before setting activeWork and nextActions. A step whose artifact was successfully created or modified is completed unless the transcript records an unresolved verification failure; advance to the next concrete step instead of carrying stale assistant intent forward.',
             'Use absolute artifact paths. Required schema keys: schemaVersion, objective, currentRequest, userConstraints, decisions, completedWork, activeWork, blockers, nextActions, unresolvedQuestions, durableFacts, artifacts.',
           ].join('\n'),
         },

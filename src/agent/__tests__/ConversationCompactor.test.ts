@@ -326,6 +326,12 @@ describe('ConversationCompactor', () => {
       'Preserve exact identifiers, paths, commands, error text, and compact public declarations/signatures'
     );
     expect(reducerMessages[0]!.content).toContain('never rename or infer them');
+    expect(reducerMessages[0]!.content).toContain(
+      'exported/public symbols, call signatures, important data shapes, and invariants'
+    );
+    expect(reducerMessages[0]!.content).toContain(
+      'Reconcile plans against the newest successful tool evidence'
+    );
   });
 
   it('uses the reducer request headroom for accumulated structured output', async () => {
