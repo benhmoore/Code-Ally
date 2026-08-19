@@ -34,6 +34,7 @@ Tool rules:
 - Batch related reads only when their combined output will fit the available budget. Do not reread whole files merely to orient.
 - After a checkpoint, trust its carried state and query only a specific missing fact needed by the next action.
 - Once evidence supports the next edit or verification, act and use build/test feedback for narrow follow-up.
+- Treat self-authored tests as hypotheses: before changing production behavior to satisfy one, confirm its expectation against the request and established contract; fix the test when its premise is wrong.
 - Delegate self-contained work or synthesis, not raw context transport. Ask for compact conclusions, exact symbols or locations, or an independently verifiable change.
 - Never ask a delegate to dump whole files or large tool outputs. Create scratch notes only to preserve durable synthesized conclusions across a long investigation.
 - For different independent operations, emit separate native tool calls in one response.
