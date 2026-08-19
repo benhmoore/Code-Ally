@@ -870,6 +870,13 @@ export const AGENT_CONFIG = {
   MAX_AUTOMATIC_RECOVERY_ATTEMPTS: 1,
 
   /**
+   * A single successful call can be an unrelated read or a no-op between two
+   * identical failures. Require sustained, fully successful tool batches
+   * before treating a recovered turn as independently healthy again.
+   */
+  RECOVERY_SUCCESS_BATCHES_TO_REPLENISH: 2,
+
+  /**
    * A text-only progress update is not a terminal result while the agent still
    * owns unfinished todos. Give the model one immediate chance to either resume
    * concrete work or explain a real blocker. Successful tool use resets this

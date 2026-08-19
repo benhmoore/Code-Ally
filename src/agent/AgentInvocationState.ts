@@ -16,6 +16,8 @@
 export interface AgentInvocationStateValues {
   /** Number of internal generation recoveries in the current turn. */
   recoveryAttempts: number;
+  /** Consecutive fully successful tool batches since the last recovery. */
+  recoverySuccessStreak: number;
   /** Consecutive text-only responses while structured work remains unfinished. */
   unfinishedWorkContinuations: number;
   /** Todo IDs that predate the current user instruction and cannot bind it. */
@@ -31,6 +33,7 @@ export interface AgentInvocationStateValues {
 function defaults(): AgentInvocationStateValues {
   return {
     recoveryAttempts: 0,
+    recoverySuccessStreak: 0,
     unfinishedWorkContinuations: 0,
     todoBaselineIds: [],
     pendingCleanupIds: [],
@@ -41,6 +44,7 @@ function defaults(): AgentInvocationStateValues {
 
 export class AgentInvocationState implements AgentInvocationStateValues {
   recoveryAttempts!: number;
+  recoverySuccessStreak!: number;
   unfinishedWorkContinuations!: number;
   todoBaselineIds!: string[];
   pendingCleanupIds!: string[];

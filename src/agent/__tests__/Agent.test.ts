@@ -210,7 +210,7 @@ describe('Agent - Interruption Handling', () => {
       monitor.stop();
     });
 
-    it('replenishes internal recovery only after concrete tool progress', () => {
+    it('replenishes internal recovery only after sustained successful tool batches', () => {
       const context = (agent as any).buildResponseContext({});
       const call = {
         id: 'call-1',
@@ -223,7 +223,32 @@ describe('Agent - Interruption Handling', () => {
       expect((agent as any).invocationState.recoveryAttempts).toBe(1);
 
       context.recordToolCalls([call], [{ success: true, error: '', content: 'source' }]);
+      expect((agent as any).invocationState.recoveryAttempts).toBe(1);
+      expect((agent as any).invocationState.recoverySuccessStreak).toBe(1);
+
+      context.recordToolCalls([call], [{ success: true, error: '', content: 'source' }]);
       expect((agent as any).invocationState.recoveryAttempts).toBe(0);
+      expect((agent as any).invocationState.recoverySuccessStreak).toBe(0);
+    });
+
+    it('does not replenish recovery across a failed or mixed-result batch', () => {
+      const context = (agent as any).buildResponseContext({});
+      const call = {
+        id: 'call-1',
+        type: 'function',
+        function: { name: 'bash', arguments: { command: 'check' } },
+      };
+      (agent as any).invocationState.recoveryAttempts = 1;
+
+      context.recordToolCalls([call], [{ success: true }]);
+      context.recordToolCalls([call, { ...call, id: 'call-2' }], [
+        { success: true },
+        { success: false, error: 'failed' },
+      ]);
+      context.recordToolCalls([call], [{ success: true }]);
+
+      expect((agent as any).invocationState.recoveryAttempts).toBe(1);
+      expect((agent as any).invocationState.recoverySuccessStreak).toBe(1);
     });
 
     it('routes an exact repeated tool failure through bounded recovery', async () => {
