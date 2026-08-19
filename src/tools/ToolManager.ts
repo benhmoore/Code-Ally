@@ -15,7 +15,6 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { logger } from '../services/Logger.js';
 import { validateToolName } from '../utils/namingValidation.js';
 import { DelegationContextManager } from '../services/DelegationContextManager.js';
-import { isInjectableTool } from './InjectableTool.js';
 
 /** Why a tool is not available to a given agent, or null if it is. */
 type AgentVisibilityBlock = { kind: 'visible_to'; visibleTo: string[] };
@@ -94,45 +93,6 @@ export class ToolManager {
     return Array.from(this.tools.values())
       .filter(tool => tool.mainAgentOnly)
       .map(tool => tool.name);
-  }
-
-  /**
-   * Find the currently active tool that supports message injection
-   *
-   * Finds the deepest 'executing' delegation for interjection routing.
-   * Only routes to actively executing agents, NOT completing/dying agents.
-   *
-   * NOTE: agent-ask is intentionally excluded - interjections should route
-   * to the main agent, not the queried subagent, since agent-ask is just
-   * querying for information while the main conversation continues.
-   *
-   * @returns {tool: BaseTool, name: string, callId: string} if found, undefined otherwise
-   */
-  getActiveInjectableTool(): { tool: BaseTool; name: string; callId: string } | undefined {
-    const activeDelegation = this.delegationContextManager.getActiveDelegation();
-
-    if (!activeDelegation) {
-      return undefined;
-    }
-
-    const tool = this.tools.get(activeDelegation.toolName);
-    if (!tool) {
-      logger.debug(`[TOOL_MANAGER] Active delegation references unknown tool: ${activeDelegation.toolName}`);
-      return undefined;
-    }
-
-    // Validate that the tool implements InjectableTool interface
-    // This ensures type safety - only tools with injectUserMessage() can be returned
-    if (!isInjectableTool(tool)) {
-      logger.debug(`[TOOL_MANAGER] Active delegation tool '${activeDelegation.toolName}' does not implement InjectableTool interface`);
-      return undefined;
-    }
-
-    return {
-      tool,
-      name: activeDelegation.toolName,
-      callId: activeDelegation.callId
-    };
   }
 
   /**
