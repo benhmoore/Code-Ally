@@ -25,6 +25,7 @@ import { sendTerminalNotification } from '../../utils/terminal.js';
 import { resolveDisplayContent } from '../../utils/toolResultContent.js';
 import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
 import { ThinkingClock } from '../utils/thinkingClock.js';
+import { finalizeToolCallsAtAgentEnd } from '../utils/agentViewLifecycle.js';
 
 /**
  * Activity subscriptions state
@@ -558,16 +559,21 @@ export const useActivitySubscriptions = (
       if (wasInterrupted) {
         actions.clearToolCalls();
       } else {
-        const NON_TERMINAL = ['pending', 'validating', 'scheduled', 'executing'];
-        state.activeToolCalls.forEach((tc: ToolCallState) => {
-          if (NON_TERMINAL.includes(tc.status)) {
-            // Flush any buffered output before forcing the call closed.
-            flushChunks.current(tc.id);
-            actions.updateToolCall(tc.id, {
-              status: 'error',
-              endTime: Date.now(),
-              error: tc.error || 'Tool did not report completion',
-            });
+        const messages = agent.getMessages().filter((message) => message.role !== 'system');
+        const reconstructed = reconstructToolCallsFromMessages(
+          messages,
+          ServiceRegistry.getInstance(),
+        );
+        const finalized = finalizeToolCallsAtAgentEnd(
+          state.activeToolCalls,
+          reconstructed,
+          Date.now(),
+        );
+        finalized.forEach((toolCall, index) => {
+          const previous = state.activeToolCalls[index];
+          if (previous && previous.status !== toolCall.status) {
+            flushChunks.current(toolCall.id);
+            actions.updateToolCall(toolCall.id, toolCall);
           }
         });
       }

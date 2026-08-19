@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Message, ToolCallState } from '@shared/index.js';
-import { reconcileRestoredToolCalls, shouldRestoreMainView } from '../agentViewLifecycle.js';
+import {
+  finalizeToolCallsAtAgentEnd,
+  reconcileRestoredToolCalls,
+  shouldRestoreMainView,
+} from '../agentViewLifecycle.js';
 
 describe('shouldRestoreMainView', () => {
   it('keeps the primary and running child views stable', () => {
@@ -68,5 +72,23 @@ describe('reconcileRestoredToolCalls', () => {
 
     expect(reconcileRestoredToolCalls([assistantMessage], [reconstructed], [])[0])
       .toMatchObject({ id: 'task-1', status: 'executing', endTime: undefined });
+  });
+});
+
+describe('finalizeToolCallsAtAgentEnd', () => {
+  const executing: ToolCallState = {
+    id: 'wait-1', status: 'executing', toolName: 'wait', arguments: { all: true }, startTime: 10,
+  };
+
+  it('uses a recorded result instead of overwriting a queued success', () => {
+    const recorded: ToolCallState = { ...executing, status: 'success', endTime: 20, output: 'done' };
+
+    expect(finalizeToolCallsAtAgentEnd([executing], [recorded], 30)).toEqual([recorded]);
+  });
+
+  it('marks only result-less non-terminal calls as errors', () => {
+    expect(finalizeToolCallsAtAgentEnd([executing], [], 30)[0]).toMatchObject({
+      id: 'wait-1', status: 'error', endTime: 30, error: 'Tool did not report completion',
+    });
   });
 });
