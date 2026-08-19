@@ -226,6 +226,65 @@ describe('Agent - Interruption Handling', () => {
       expect((agent as any).invocationState.recoveryAttempts).toBe(0);
     });
 
+    it('routes an exact repeated tool failure through bounded recovery', async () => {
+      const call = {
+        id: 'call-3',
+        type: 'function' as const,
+        function: { name: 'apply-patch', arguments: { patch: 'unchanged patch' } },
+      };
+      const context = (agent as any).buildResponseContext({});
+      context.detectCycles = vi.fn(() => new Map([[call.id, {
+        toolName: call.function.name,
+        count: 3,
+        isValidRepeat: false,
+        issueType: 'exact_duplicate',
+        severity: 'high',
+        metadata: { priorFailureCount: 2, failureThreshold: 3 },
+      }]]));
+      context.executeToolCalls = vi.fn(async () => [{ success: false, error: 'hunk not found' }]);
+
+      const result = await (agent as any).responseProcessor.processToolResponse(
+        { content: '', tool_calls: [call] },
+        [call],
+        context,
+      );
+
+      expect(result).toBe('');
+      expect((agent as any).interruptionManager.getCause()).toEqual({
+        kind: 'tool_loop',
+        reason: 'apply-patch failed with identical arguments 3 times',
+      });
+      expect(mockModelClient.send).not.toHaveBeenCalled();
+    });
+
+    it('does not stop repeated successful stateful tool calls', async () => {
+      const call = {
+        id: 'call-3',
+        type: 'function' as const,
+        function: { name: 'bash', arguments: { command: 'poll-job' } },
+      };
+      const context = (agent as any).buildResponseContext({});
+      context.detectCycles = vi.fn(() => new Map([[call.id, {
+        toolName: call.function.name,
+        count: 3,
+        isValidRepeat: false,
+        issueType: 'exact_duplicate',
+        severity: 'high',
+        metadata: { priorFailureCount: 0, failureThreshold: 3 },
+      }]]));
+      context.executeToolCalls = vi.fn(async () => [{ success: true, content: 'still running' }]);
+
+      const result = await (agent as any).responseProcessor.processToolResponse(
+        { content: '', tool_calls: [call] },
+        [call],
+        context,
+      );
+
+      expect(result).toBe('Mock response');
+      expect((agent as any).interruptionManager.getCause()).toBeNull();
+      expect(mockModelClient.send).toHaveBeenCalledOnce();
+    });
+
     it('treats a user interjection as a fresh recovery opportunity', () => {
       const resetTextDetectors = vi.spyOn((agent as any).loopDetector, 'resetTextDetectors');
       (agent as any).invocationState.recoveryAttempts = 1;

@@ -18,6 +18,7 @@ import { MessageValidator } from './MessageValidator.js';
 import { RequiredToolTracker } from './RequiredToolTracker.js';
 import { RequirementValidator } from './RequirementTracker.js';
 import { InterruptionManager } from './InterruptionManager.js';
+import type { CycleInfo } from './LoopDetector.js';
 import { ConversationManager } from './ConversationManager.js';
 import { Message, ActivityEventType, ToolCallContext } from '../types/index.js';
 import { logger } from '../services/Logger.js';
@@ -66,14 +67,14 @@ export interface ResponseContext {
       type: 'function';
       function: { name: string; arguments: Record<string, any> };
     }>,
-    cycles: Map<string, any>
+    cycles: Map<string, CycleInfo>
   ) => Promise<Array<{ success: boolean; [key: string]: any }>>;
   /** Callback to detect cycles before tool execution */
   detectCycles: (toolCalls: Array<{
     id: string;
     type: 'function';
     function: { name: string; arguments: Record<string, any> };
-  }>) => Map<string, any>;
+  }>) => Map<string, CycleInfo>;
   /** Callback to record tool calls for cycle detection */
   recordToolCalls: (
     toolCalls: Array<{
@@ -83,6 +84,8 @@ export interface ResponseContext {
     }>,
     results: Array<{ success: boolean; [key: string]: any }>
   ) => void;
+  /** Stop this response and let Agent perform bounded internal recovery. */
+  interruptForToolLoop: (reason: string) => void;
   /** Callback to clear cycle detection if pattern broken */
   clearCyclesIfBroken: () => void;
   /** Callback to clear current turn (for redundancy detection) */
@@ -514,6 +517,26 @@ export class ResponseProcessor {
     // Add tool calls to history for cycle detection (AFTER execution)
     // Pass results to enable search hit rate tracking
     context.recordToolCalls(toolCalls, toolResults);
+
+    // Advisory cycle warnings are easy for a model to ignore. Once the same
+    // exact, invalid invocation has failed repeatedly, stop this response and
+    // route through Agent's bounded recovery path. Successful calls remain
+    // untouched because repeated stateful operations can be intentional.
+    const repeatedFailure = toolCalls.find((toolCall, index) => {
+      const cycle = cycles.get(toolCall.id);
+      return (cycle?.issueType === 'exact_duplicate' || cycle?.issueType === 'repeated_failure')
+        && !cycle.isValidRepeat
+        && toolResults[index]?.success !== true
+        && (cycle.metadata?.priorFailureCount ?? 0) + 1
+          >= (cycle.metadata?.failureThreshold ?? Number.POSITIVE_INFINITY);
+    });
+    if (repeatedFailure) {
+      const cycle = cycles.get(repeatedFailure.id)!;
+      const failureCount = (cycle.metadata?.priorFailureCount ?? 0) + 1;
+      context.interruptForToolLoop(
+        `${repeatedFailure.function.name} failed with identical arguments ${failureCount} times`
+      );
+    }
 
     // Check if cycle pattern is broken (3 consecutive different calls)
     context.clearCyclesIfBroken();

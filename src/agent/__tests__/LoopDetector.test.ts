@@ -115,6 +115,66 @@ describe('LoopDetector', () => {
         expect(cycleInfo!.issueType).toBe('exact_duplicate');
         expect(cycleInfo!.count).toBe(3);
         expect(cycleInfo!.isValidRepeat).toBe(false);
+        expect(cycleInfo!.metadata).toMatchObject({
+          priorFailureCount: 0,
+          failureThreshold: 3,
+        });
+      });
+
+      it('tracks prior failures separately from successful identical calls', () => {
+        const toolCall = createToolCall('apply-patch', { patch: 'same patch' });
+
+        detector.recordToolCalls([toolCall], [{ success: false }]);
+        detector.recordToolCalls([toolCall], [{ success: true }]);
+
+        const cycleInfo = detector.detectCycles([toolCall]).get(toolCall.id);
+
+        expect(cycleInfo?.count).toBe(3);
+        expect(cycleInfo?.metadata).toMatchObject({
+          priorFailureCount: 1,
+          failureThreshold: 3,
+        });
+      });
+
+      it('detects varied failed operations against the same semantic target', () => {
+        const first = createToolCall('apply-patch', {
+          file_path: '/repo/core.ts',
+          patch: 'first attempted hunk',
+        });
+        const second = createToolCall('apply-patch', {
+          file_path: '/repo/core.ts',
+          patch: 'materially different second hunk',
+        });
+        const third = createToolCall('apply-patch', {
+          file_path: '/repo/core.ts',
+          patch: 'third attempted hunk',
+        });
+
+        detector.recordToolCalls([first], [{ success: false }]);
+        detector.recordToolCalls([second], [{ success: false }]);
+
+        const cycleInfo = detector.detectCycles([third]).get(third.id);
+
+        expect(cycleInfo).toMatchObject({
+          issueType: 'repeated_failure',
+          count: 3,
+          metadata: { priorFailureCount: 2, failureThreshold: 3 },
+        });
+      });
+
+      it('does not combine failures against different targets', () => {
+        detector.recordToolCalls([
+          createToolCall('apply-patch', { file_path: '/repo/a.ts', patch: 'one' }),
+        ], [{ success: false }]);
+        detector.recordToolCalls([
+          createToolCall('apply-patch', { file_path: '/repo/b.ts', patch: 'two' }),
+        ], [{ success: false }]);
+        const third = createToolCall('apply-patch', {
+          file_path: '/repo/c.ts',
+          patch: 'three',
+        });
+
+        expect(detector.detectCycles([third]).has(third.id)).toBe(false);
       });
 
       it('should not detect cycles below threshold', () => {
