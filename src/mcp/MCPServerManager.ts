@@ -13,9 +13,11 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import {
   ListToolsResultSchema,
   CallToolResultSchema,
+  ListRootsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { promises as fs } from 'fs';
-import { join } from 'path';
+import { basename, join, resolve } from 'path';
+import { pathToFileURL } from 'url';
 import { logger } from '@services/Logger.js';
 import { getMCPConfigFile } from '@config/paths.js';
 import { atomicWriteFile } from '../utils/atomicFile.js';
@@ -44,6 +46,7 @@ export class MCPServerManager implements IService {
   private activityStream: ActivityStream;
   private connecting: Map<string, Promise<BaseTool[]>> = new Map();
   private shuttingDown = false;
+  private projectRoot?: string;
 
   /** Tracks which servers belong to which marketplace plugin (serverKey -> pluginName) */
   private pluginServerOwnership: Map<string, string> = new Map();
@@ -65,6 +68,7 @@ export class MCPServerManager implements IService {
    * Project config overrides profile config for same-named servers.
    */
   async loadConfig(projectDir?: string): Promise<void> {
+    this.projectRoot = projectDir ? resolve(projectDir) : undefined;
     const profileConfig = await this.readConfigFile(getMCPConfigFile());
     let projectConfig: MCPConfig | null = null;
 
@@ -147,8 +151,21 @@ export class MCPServerManager implements IService {
 
       const client = new Client(
         { name: 'code-ally', version: '0.3.0' },
-        { capabilities: {} }
+        {
+          capabilities: this.projectRoot
+            ? { roots: { listChanged: false } }
+            : {},
+        }
       );
+      if (this.projectRoot) {
+        const projectRoot = this.projectRoot;
+        client.setRequestHandler(ListRootsRequestSchema, async () => ({
+          roots: [{
+            uri: pathToFileURL(projectRoot).href,
+            name: basename(projectRoot),
+          }],
+        }));
+      }
       client.onclose = () => this.invalidateConnection(name, client, 'transport closed');
       client.onerror = (error) => {
         logger.warn(`[MCP] Transport error for '${name}':`, error);
