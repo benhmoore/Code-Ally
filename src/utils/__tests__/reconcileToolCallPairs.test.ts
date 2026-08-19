@@ -66,6 +66,11 @@ describe('reconcileToolCallPairs', () => {
     const synthetic = result.find(m => m.role === 'tool');
     expect(synthetic?.tool_call_id).toBe('c1');
     expect(synthetic?.is_error).toBe(true);
+    expect(synthetic?.metadata?.tool_status?.c1).toBe('error');
+    expect(synthetic?.metadata?.tool_result?.c1).toMatchObject({
+      error: 'Tool call did not complete; no result was recorded.',
+      error_type: 'interrupted',
+    });
   });
 
   it('places the synthesized result immediately after its call', () => {

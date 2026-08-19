@@ -12,6 +12,7 @@
 import { TEXT_LIMITS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
 import { stripDisplayOnlyFields } from '../utils/toolResultContent.js';
+import type { MessageMetadata } from '../types/index.js';
 
 /**
  * Parse tool call arguments from string or object
@@ -76,6 +77,8 @@ export function createToolResultMessage(
   content: string;
   is_error?: boolean;
   images?: string[];
+  metadata?: MessageMetadata;
+  timestamp?: number;
 } {
   // When given a result object, strip display-only fields so the user-facing
   // rendering never reaches the model. Pre-serialized strings pass through
