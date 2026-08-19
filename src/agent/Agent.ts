@@ -1039,6 +1039,7 @@ export class Agent {
 
     // Reset internal recovery tracking on new user input
     this.invocationState.recoveryAttempts = 0;
+    this.captureTodoBaseline();
 
     this.turnController.start();
 
@@ -1369,6 +1370,7 @@ export class Agent {
     // the superseded instruction.
     this.invocationState.recoveryAttempts = 0;
     this.invocationState.unfinishedWorkContinuations = 0;
+    this.captureTodoBaseline();
     this.loopDetector.resetTextDetectors();
 
     logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'User interjection added:', message.substring(0, 50));
@@ -1947,9 +1949,10 @@ export class Agent {
         return await this.processLLMResponse(continuation, executionContext);
       }
 
+      const todoBaseline = new Set(this.invocationState.todoBaselineIds);
       const unfinishedTodos = registry.get('todo_manager')
         ?.getTodos()
-        .filter(todo => todo.status !== 'completed') ?? [];
+        .filter(todo => todo.status !== 'completed' && !todoBaseline.has(todo.id)) ?? [];
       if (
         unfinishedTodos.length > 0
         && this.invocationState.unfinishedWorkContinuations
@@ -1966,6 +1969,22 @@ export class Agent {
     }
 
     return result;
+  }
+
+  /**
+   * Snapshot todo identity at an instruction boundary. Existing todos remain
+   * visible as context, but only a todo list the model creates/reconciles after
+   * this boundary may force automatic continuation of the current turn.
+   */
+  private captureTodoBaseline(): void {
+    if (this.config.isSpecializedAgent) {
+      this.invocationState.todoBaselineIds = [];
+      return;
+    }
+    this.invocationState.todoBaselineIds = ServiceRegistry.getInstance()
+      .get('todo_manager')
+      ?.getTodos()
+      .map(todo => todo.id) ?? [];
   }
 
   private async continueAfterRecovery(

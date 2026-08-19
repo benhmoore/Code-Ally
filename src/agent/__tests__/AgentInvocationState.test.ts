@@ -7,6 +7,7 @@ describe('AgentInvocationState', () => {
     expect({ ...state }).toEqual({
       recoveryAttempts: 0,
       unfinishedWorkContinuations: 0,
+      todoBaselineIds: [],
       pendingCleanupIds: [],
       requestInProgress: false,
       agentEndEmitted: false,
@@ -17,6 +18,7 @@ describe('AgentInvocationState', () => {
     const state = new AgentInvocationState();
     state.recoveryAttempts = 3;
     state.unfinishedWorkContinuations = 1;
+    state.todoBaselineIds.push('todo-1');
     state.pendingCleanupIds.push('call-1', 'call-2');
     state.requestInProgress = true;
     state.agentEndEmitted = true;
