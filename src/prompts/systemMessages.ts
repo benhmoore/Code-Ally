@@ -342,8 +342,9 @@ ${body}`;
  * Generate the main system prompt (the cache-stable msg[0]).
  *
  * Returns ONLY content that is stable across round-trips within a session:
- * the core directives, tool/agent usage guidance, and the cache-stable context
- * (environment, project instructions, memory index, rosters). Per-round-trip
+ * the core directives and cache-stable context (environment, project
+ * instructions, memory index, rosters). Tool-specific guidance travels with
+ * each runtime-filtered function definition instead. Per-round-trip
  * volatile state — date, live context usage, todos, plan-mode banner, budget
  * warnings — is produced separately by {@link getDynamicContextBlock} and
  * appended as a trailing ephemeral message, so this prefix can be KV-cached.

@@ -11,6 +11,7 @@ import { ActivityStream } from '@services/ActivityStream.js';
 class TestTool extends BaseTool {
   readonly name = 'test-tool';
   readonly description = 'A test tool';
+  readonly usageGuidance = 'Use this only to echo a required value.';
   readonly capabilities = [] as const;
 
   getFunctionDefinition(): FunctionDefinition {
@@ -152,7 +153,17 @@ describe('ToolManager', () => {
       expect(defs).toHaveLength(3);
       expect(defs[0].type).toBe('function');
       expect(defs[0].function.name).toBe('test-tool');
-      expect(defs[0].function.description).toBe('A test tool');
+      expect(defs[0].function.description).toBe(
+        'A test tool\n\nUse this only to echo a required value.'
+      );
+    });
+
+    it('does not duplicate usage guidance when definitions are regenerated', () => {
+      const first = toolManager.getFunctionDefinitions()[0]?.function.description;
+      toolManager.clearDefinitionsCache();
+      const second = toolManager.getFunctionDefinitions()[0]?.function.description;
+
+      expect(second).toBe(first);
     });
 
     it('does not inject display-only description arguments into tool schemas', () => {

@@ -332,13 +332,45 @@ export class ToolManager {
    * Generate function definition for a single tool
    */
   private generateFunctionDefinition(tool: BaseTool): FunctionDefinition {
-    // Operational arguments only. UI labels come from formatSubtext(), which
-    // keeps display metadata from competing with parameters that affect work.
-    return tool.getFunctionDefinition();
+    // Keep behavioral contracts next to the tool they govern. Function
+    // definitions are the one prompt surface guaranteed to accompany every
+    // exposed tool (main or delegated, including runtime-filtered profiles).
+    // This avoids a second, global guidance block that can drift from the
+    // actual tool set while keeping UI-only labels out of argument schemas.
+    const definition = tool.getFunctionDefinition();
+    const guidance = this.formatToolUsageGuidance(tool);
+    if (!guidance) return definition;
+
+    return {
+      ...definition,
+      function: {
+        ...definition.function,
+        description: [definition.function.description, guidance]
+          .filter(Boolean)
+          .join('\n\n'),
+      },
+    };
+  }
+
+  private formatToolUsageGuidance(tool: BaseTool): string | undefined {
+    if (!tool.usageGuidance) return undefined;
+    if (!tool.pluginName) return tool.usageGuidance;
+
+    const lines = tool.usageGuidance.split('\n');
+    const firstLine = lines[0];
+    if (!firstLine) return tool.usageGuidance;
+
+    const whenMatch = firstLine.match(/^(\*\*When to use [^:]+:\*\*)/);
+    lines[0] = whenMatch
+      ? `${whenMatch[1]} (from plugin: ${tool.pluginName})`
+      : `(from plugin: ${tool.pluginName}) ${firstLine}`;
+    return lines.join('\n');
   }
 
   /**
-   * Get all tool usage guidance strings for injection into system prompt
+   * Get all tool usage guidance strings for catalog and diagnostic consumers.
+   * Live model requests receive the same text through each visible function
+   * definition, assembled by generateFunctionDefinition().
    *
    * @returns Array of guidance strings from tools that provide them
    */
@@ -346,31 +378,8 @@ export class ToolManager {
     const guidances: string[] = [];
 
     for (const tool of this.tools.values()) {
-      if (tool.usageGuidance) {
-        // If tool has a plugin name, prepend it to the first line
-        if (tool.pluginName) {
-          // Split guidance into lines to modify the first line
-          const lines = tool.usageGuidance.split('\n');
-          if (lines.length > 0 && lines[0]) {
-            // Check if first line starts with "**When to use" pattern
-            const firstLine = lines[0];
-            const whenMatch = firstLine.match(/^(\*\*When to use [^:]+:\*\*)/);
-            if (whenMatch) {
-              // Insert plugin attribution after the bold header
-              lines[0] = `${whenMatch[1]} (from plugin: ${tool.pluginName})`;
-            } else {
-              // Fallback: just prepend plugin info at the start
-              lines[0] = `(from plugin: ${tool.pluginName}) ${firstLine}`;
-            }
-            guidances.push(lines.join('\n'));
-          } else {
-            guidances.push(tool.usageGuidance);
-          }
-        } else {
-          // Built-in tool - use guidance as-is
-          guidances.push(tool.usageGuidance);
-        }
-      }
+      const guidance = this.formatToolUsageGuidance(tool);
+      if (guidance) guidances.push(guidance);
     }
 
     return guidances;
