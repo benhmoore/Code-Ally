@@ -84,6 +84,23 @@ describe('normalizeOllamaMessages', () => {
     expect(messages[0]!.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
   });
 
+  it('does not send tool images to a model known to be text-only', () => {
+    const messages: Message[] = [{
+      role: 'tool',
+      name: 'browser/screenshot',
+      tool_call_id: 'screenshot-1',
+      content: 'Screenshot captured',
+      images: ['data:image/png;base64,aW1hZ2U='],
+    }];
+
+    const normalized = normalizeOllamaMessages(messages, false);
+
+    expect(normalized).toHaveLength(2);
+    expect(normalized.every(message => !message.images?.length)).toBe(true);
+    expect(normalized[1]?.content).toContain('does not support image input');
+    expect(messages[0]?.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
+  });
+
   it('leaves existing raw Ollama image payloads unchanged', () => {
     const message: Message = {
       role: 'user',

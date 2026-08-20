@@ -29,6 +29,7 @@ set -euo pipefail
 SESSION="${ALLY_LAB_SESSION:-ally-lab}"
 STATE_DIR="${TMPDIR:-/tmp}/ally-lab"
 DIR_FILE="$STATE_DIR/$SESSION.dir"
+START_FILE="$STATE_DIR/$SESSION.started"
 
 die() { echo "ally-lab: $*" >&2; exit 1; }
 need_session() {
@@ -82,6 +83,7 @@ cmd_start() {
   fi
   mkdir -p "$STATE_DIR"
   printf '%s\n' "$dir" > "$DIR_FILE"
+  python3 -c 'import time; print(time.time_ns())' > "$START_FILE"
 
   # A wide pane so the Ink UI renders the way it does in a real terminal.
   local ally_command
@@ -110,6 +112,10 @@ cmd_hook() {
   SESSION="$name"
   mkdir -p "$STATE_DIR"
   tmux display-message -p -t "$name" '#{pane_current_path}' > "$STATE_DIR/$name.dir"
+  # An adopted process may have started long before the hook. Directory matching
+  # remains authoritative, but a launch-time boundary from an earlier managed
+  # run must not hide its session file.
+  rm -f "$STATE_DIR/$name.started"
   echo "hooked tmux session '$name' (dir: $(cat "$STATE_DIR/$name.dir"))"
   [[ "$name" != "${ALLY_LAB_SESSION:-ally-lab}" ]] \
     && echo "note: export ALLY_LAB_SESSION=$name for subsequent commands"
@@ -140,31 +146,27 @@ cmd_peek() {
 }
 
 latest_session_file() {
-  local dir
+  local dir started_ns
   dir="$(cat "$DIR_FILE" 2>/dev/null || true)"
-  python3 - "$dir" <<'PY'
+  started_ns="$(cat "$START_FILE" 2>/dev/null || true)"
+  python3 - "$dir" "$started_ns" <<'PY'
 import glob, json, os, sys
 want_dir = sys.argv[1] if len(sys.argv) > 1 else ""
+started_ns = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else None
 candidates = sorted(
     glob.glob(os.path.expanduser("~/.ally/projects/*/sessions/session_*.json")),
     key=os.path.getmtime, reverse=True)
-fallback = None
 for path in candidates:
+    if started_ns is not None and os.stat(path).st_mtime_ns < started_ns:
+        continue
     try:
         with open(path) as f:
             data = json.load(f)
     except Exception:
         continue
-    if fallback is None:
-        fallback = path
     if not want_dir or data.get("working_dir") == want_dir:
         print(path)
         break
-else:
-    # No session matches the recorded dir (e.g. hooked pane cd'd after launch):
-    # fall back to the newest session on disk.
-    if fallback:
-        print(fallback)
 PY
 }
 

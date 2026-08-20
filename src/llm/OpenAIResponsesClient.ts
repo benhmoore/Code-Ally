@@ -14,7 +14,7 @@ import type { ProviderCheckpointState } from '../agent/compaction/types.js';
 import { parseToolCallArguments } from './FunctionCalling.js';
 import { runWithRetries } from './httpTransport.js';
 import { RETRY_CONFIG } from '../config/constants.js';
-import { materializeToolImageMessages } from './messageImages.js';
+import { isImageInputRejection, prepareMessageImages } from './messageImages.js';
 
 interface PreparedInput {
   input: any[];
@@ -52,6 +52,7 @@ export class OpenAIResponsesClient extends ModelClient {
   private readonly apiKey?: string;
   private readonly activityStream?: ActivityStream;
   private contextWindow: number;
+  private _supportsImages?: boolean;
 
   constructor(config: ModelClientConfig) {
     super();
@@ -63,6 +64,7 @@ export class OpenAIResponsesClient extends ModelClient {
     this.contextWindow = config.contextSize;
     this.apiKey = config.apiKey;
     this.activityStream = config.activityStream;
+    this._supportsImages = config.supportsImages;
     this.client = this.createClient();
   }
 
@@ -78,6 +80,9 @@ export class OpenAIResponsesClient extends ModelClient {
   get endpoint(): string { return this._endpoint; }
 
   setModelName(modelName: string): void { this._modelName = modelName; }
+  override setSupportsImages(supportsImages: boolean | undefined): void {
+    this._supportsImages = supportsImages;
+  }
   setEndpoint(endpoint: string): void {
     this._endpoint = endpoint;
     this.client = this.createClient();
@@ -101,8 +106,11 @@ export class OpenAIResponsesClient extends ModelClient {
   }
 
   async send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse> {
-    const prepared = this.prepareInput(messages, options.providerState);
-    const payload = this.payload(prepared, options);
+    let prepared = this.prepareInput(messages, options.providerState);
+    let payload = this.payload(prepared, options);
+    let requestContainsImages = this._supportsImages !== false
+      && messages.some(message => (message.images?.length ?? 0) > 0);
+    let usedImageFallback = false;
     return runWithRetries<LLMResponse>({
       signal: options.signal,
       maxFailures: options.retryPolicy === 'foreground' ? RETRY_CONFIG.MAX_CONSECUTIVE_FAILURES : 3,
@@ -118,10 +126,24 @@ export class OpenAIResponsesClient extends ModelClient {
         });
       },
       attempt: async () => {
-        const response = options.stream
-          ? await this.streamResponse(payload, options)
-          : await this.client.responses.create(payload as any, { signal: options.signal });
-        return this.toResult(response as any, prepared);
+        const execute = async (): Promise<LLMResponse> => {
+          const response = options.stream
+            ? await this.streamResponse(payload, options)
+            : await this.client.responses.create(payload as any, { signal: options.signal });
+          return this.toResult(response as any, prepared);
+        };
+
+        try {
+          return await execute();
+        } catch (error) {
+          if (usedImageFallback || !isImageInputRejection(error, requestContainsImages)) throw error;
+          this._supportsImages = false;
+          usedImageFallback = true;
+          prepared = this.prepareInput(messages, options.providerState);
+          payload = this.payload(prepared, options);
+          requestContainsImages = false;
+          return execute();
+        }
       },
     });
   }
@@ -238,7 +260,7 @@ export class OpenAIResponsesClient extends ModelClient {
     messages: readonly Message[],
     providerState?: ProviderCheckpointState,
   ): PreparedInput {
-    messages = materializeToolImageMessages(messages);
+    messages = prepareMessageImages(messages, this._supportsImages);
     const state = providerState?.kind === 'openai-responses'
       ? providerState
       : { kind: 'openai-responses' as const, items: [], coveredMessageIds: [] };

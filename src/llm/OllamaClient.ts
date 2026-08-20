@@ -28,6 +28,7 @@ import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
 import { createHttpResponseError, isStreamTimeoutError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
 import { normalizeOllamaMessages } from './ollamaMessages.js';
+import { isImageInputRejection } from './messageImages.js';
 import { validateToolCalls } from './toolCalls.js';
 
 /**
@@ -148,6 +149,7 @@ export class OllamaClient extends ModelClient {
   private readonly requestHeaders: Record<string, string>;
   private apiUrl: string;
   private readonly activityStream?: ActivityStream;
+  private _supportsImages?: boolean;
 
   // Track active requests for cancellation (keyed by request ID)
   private activeRequests: Map<string, AbortController> = new Map();
@@ -180,6 +182,7 @@ export class OllamaClient extends ModelClient {
     this.sampling = config.sampling;
     this.requestHeaders = buildRequestHeaders({ apiKey: config.apiKey, headers: config.headers });
     this.activityStream = config.activityStream;
+    this._supportsImages = config.supportsImages;
     this.apiUrl = `${this._endpoint}/api/chat`;
   }
 
@@ -210,6 +213,10 @@ export class OllamaClient extends ModelClient {
   setModelName(newModelName: string): void {
     logger.debug(`[OLLAMA_CLIENT] Changing model from ${this._modelName} to ${newModelName}`);
     this._modelName = newModelName;
+  }
+
+  override setSupportsImages(supportsImages: boolean | undefined): void {
+    this._supportsImages = supportsImages;
   }
 
   /**
@@ -292,8 +299,9 @@ export class OllamaClient extends ModelClient {
     logger.debug('[OLLAMA_CLIENT] Starting request:', requestId);
 
     // Prepare payload
-    const payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens, responseSchema?.schema);
-    const requestContainsImages = messages.some(message => (message.images?.length ?? 0) > 0);
+    let payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens, responseSchema?.schema);
+    let requestContainsImages = payload.messages.some(message => (message.images?.length ?? 0) > 0);
+    let usedImageFallback = false;
 
     try {
       // Shared retry policy (capped backoff + failure ceiling + time budget).
@@ -316,30 +324,26 @@ export class OllamaClient extends ModelClient {
         },
         onError: (error: any) => {
           logger.debug(`[OLLAMA_CLIENT] Non-retryable error on request ${requestId}`);
-          // Check if this is an image-related error
-          const errorMsg = error.message || String(error);
-          const isImageError = errorMsg.includes('Cannot decode or download image') ||
-                               errorMsg.includes('image') && (error.httpStatus === 400 || error.httpStatus === 415) ||
-                               requestContainsImages && (error.httpStatus === 500 || error.httpStatus === 503);
-          const errorResponse = this.handleRequestError(error);
-          if (isImageError) {
-            logger.debug('[OLLAMA_CLIENT] Image-related error detected - marking for image removal from history');
-            (errorResponse as any).shouldStripImages = true;
-          }
-          return errorResponse;
+          return this.handleRequestError(error);
         },
         attempt: async (attempt) => {
-          // Execute request with cancellation support
-          const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream);
+          const execute = async (): Promise<LLMResponse> => {
+            const result = await this.executeRequestWithCancellation(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream);
+            if (responseSchema && result.content) result.content = normalizeStructuredJson(result.content);
+            return validateToolCalls(result);
+          };
 
-          if (responseSchema && result.content) {
-            result.content = normalizeStructuredJson(result.content);
+          try {
+            return await execute();
+          } catch (error) {
+            if (usedImageFallback || !isImageInputRejection(error, requestContainsImages)) throw error;
+            logger.debug('[OLLAMA_CLIENT] Model rejected image input; retrying without attachments');
+            this._supportsImages = false;
+            usedImageFallback = true;
+            payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens, responseSchema?.schema);
+            requestContainsImages = false;
+            return execute();
           }
-
-          // Validate and repair tool calls (ALL responses, not just non-streaming).
-          // A validation failure is a terminal (non-retried) outcome, so it is
-          // returned from attempt() — not thrown.
-          return validateToolCalls(result);
         },
       });
     } finally {
@@ -379,7 +383,8 @@ export class OllamaClient extends ModelClient {
     const payload: OllamaPayload = {
       model: this._modelName,
       messages: normalizeOllamaMessages(
-        responseSchema ? messagesWithResponseSchema(messages, responseSchema) : messages
+        responseSchema ? messagesWithResponseSchema(messages, responseSchema) : messages,
+        this._supportsImages,
       ),
       stream,
       options: {

@@ -26,7 +26,7 @@ import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
 import { createHttpResponseError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
 import { validateToolCalls } from './toolCalls.js';
-import { materializeToolImageMessages } from './messageImages.js';
+import { isImageInputRejection, prepareMessageImages } from './messageImages.js';
 
 /** OpenAI chat-completions request payload (the subset we send). */
 interface OpenAIPayload {
@@ -66,6 +66,7 @@ export class OpenAICompatClient extends ModelClient {
   private readonly requestHeaders: Record<string, string>;
   private apiUrl: string;
   private readonly activityStream?: ActivityStream;
+  private _supportsImages?: boolean;
 
   private activeRequests: Map<string, AbortController> = new Map();
 
@@ -79,6 +80,7 @@ export class OpenAICompatClient extends ModelClient {
     this.sampling = config.sampling;
     this.requestHeaders = buildRequestHeaders({ apiKey: config.apiKey, headers: config.headers });
     this.activityStream = config.activityStream;
+    this._supportsImages = config.supportsImages;
     this.apiUrl = this.buildApiUrl(this._endpoint);
   }
 
@@ -105,6 +107,10 @@ export class OpenAICompatClient extends ModelClient {
   setModelName(newModelName: string): void {
     logger.debug(`[OPENAI_COMPAT] Changing model from ${this._modelName} to ${newModelName}`);
     this._modelName = newModelName;
+  }
+
+  override setSupportsImages(supportsImages: boolean | undefined): void {
+    this._supportsImages = supportsImages;
   }
 
   setTemperature(newTemperature: number | undefined): void {
@@ -138,8 +144,12 @@ export class OpenAICompatClient extends ModelClient {
     const eventStream: ActivityStream | undefined = options.activityStream ?? this.activityStream;
 
     const requestId = `req-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
-    const payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
-    const requestContainsImages = messages.some(message => (message.images?.length ?? 0) > 0);
+    let payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
+    let requestContainsImages = payload.messages.some(message =>
+      Array.isArray(message.content)
+      && message.content.some((part: any) => part?.type === 'image_url')
+    );
+    let usedImageFallback = false;
 
     try {
       return await runWithRetries<LLMResponse>({
@@ -152,22 +162,24 @@ export class OpenAICompatClient extends ModelClient {
         },
         onInterrupted: () => ({ role: 'assistant', content: '', interrupted: true }),
         onError: (error: any) => {
-          const response = this.handleRequestError(error);
-          if (
-            requestContainsImages
-            && [400, 415, 500, 503].includes(error.httpStatus)
-          ) {
-            (response as LLMResponse & { shouldStripImages?: boolean }).shouldStripImages = true;
-          }
-          return response;
+          return this.handleRequestError(error);
         },
         attempt: async (attempt) => {
-          const result = await this.executeRequest(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream);
+          const execute = async (): Promise<LLMResponse> => validateToolCalls(
+            await this.executeRequest(requestId, payload, stream, attempt, signal, parentId, suppressThinking, eventStream)
+          );
 
-          // Repair/validate tool calls. A validation failure is a terminal
-          // (non-retried) outcome the Agent turns into a repair prompt, so it is
-          // returned from attempt() — not thrown.
-          return validateToolCalls(result);
+          try {
+            return await execute();
+          } catch (error) {
+            if (usedImageFallback || !isImageInputRejection(error, requestContainsImages)) throw error;
+            logger.debug('[OPENAI_COMPAT] Model rejected image input; retrying without attachments');
+            this._supportsImages = false;
+            usedImageFallback = true;
+            payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
+            requestContainsImages = false;
+            return execute();
+          }
         },
       });
     } finally {
@@ -200,7 +212,7 @@ export class OpenAICompatClient extends ModelClient {
   ): OpenAIPayload {
     const payload: OpenAIPayload = {
       model: this._modelName,
-      messages: materializeToolImageMessages(messages).map(m => this.toOpenAIMessage(m)),
+      messages: prepareMessageImages(messages, this._supportsImages).map(m => this.toOpenAIMessage(m)),
       stream,
       max_tokens: dynamicMaxTokens ?? this._maxTokens,
     };

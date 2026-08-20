@@ -7,6 +7,7 @@
 
 import { ModelClient, ModelClientConfig, SamplingParams } from './ModelClient.js';
 import type { Config } from '../types/index.js';
+import { ModelCapabilitiesIndex } from '../services/ModelCapabilitiesIndex.js';
 
 /**
  * Collect the explicitly-configured sampling overrides from a Config. Returns
@@ -65,6 +66,18 @@ export function toModelClientConfig(opts: CreateModelClientOptions): ModelClient
 export async function createModelClient(opts: CreateModelClientOptions): Promise<ModelClient> {
   const clientConfig = toModelClientConfig(opts);
   const provider = opts.config.provider ?? 'ollama';
+
+  // Ollama capability probes are cached by model and endpoint. Carry that
+  // model-specific fact into the request boundary; provider type alone cannot
+  // tell us whether a particular model accepts images.
+  if (provider === 'ollama' && clientConfig.modelName) {
+    const capabilities = ModelCapabilitiesIndex.getInstance();
+    await capabilities.load();
+    clientConfig.supportsImages = capabilities.getCapabilities(
+      clientConfig.modelName,
+      clientConfig.endpoint,
+    )?.supportsImages;
+  }
 
   if (provider === 'openai-compat') {
     const { OpenAICompatClient } = await import('./OpenAICompatClient.js');
