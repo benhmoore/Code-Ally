@@ -151,6 +151,31 @@ describe('applyModelPatch', () => {
       expect(result.content).toBe(String.raw`const value = "new\ntext";` + '\n');
     });
 
+    it('repairs count-verified escaped separators inside a multiline patch', () => {
+      const result = applyModelPatch(
+        String.raw`@@ -2,1 +2,2 @@
+-                Record::Nack { .. } => {}\n+                Record::Nack { .. } => {}\n+                Record::Lease { .. } => {}`,
+        'start\n                Record::Nack { .. } => {}\nend\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe(
+        'start\n                Record::Nack { .. } => {}\n                Record::Lease { .. } => {}\nend\n'
+      );
+    });
+
+    it('preserves escaped newline-like text when physical lines satisfy the hunk counts', () => {
+      const result = applyModelPatch(
+        String.raw`@@ -1,1 +1,1 @@
+-const value = "old";
++const value = "new\n+literal";`,
+        'const value = "old";\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe(String.raw`const value = "new\n+literal";` + '\n');
+    });
+
     it('rejects ambiguous context unless the hunk line hint identifies a match', () => {
       const ambiguous = applyModelPatch(
         '@@ -2,1 +2,1 @@\n-same\n+changed',

@@ -72,6 +72,64 @@ function normalizeModelPatchHunkCounts(diffContent: string): string {
 }
 
 /**
+ * Repair a partially double-encoded hunk without guessing about source
+ * literals. Some providers decode the outer JSON argument but leave selected
+ * newline separators as `\\n`, producing a mixture of real and escaped line
+ * breaks. Expand those separators only when the hunk's authored counts do not
+ * describe the physical body but exactly describe the expanded body.
+ */
+function repairCountVerifiedEscapedNewlines(diffContent: string): string {
+  if (!/[\r\n]/.test(diffContent) || !diffContent.includes('\\n')) return diffContent;
+
+  const lines = diffContent.replace(/\r\n/g, '\n').split('\n');
+  const headerPattern = /^@@\s+-\d+(?:,(\d+))?\s+\+\d+(?:,(\d+))?\s+@@/;
+  const countBody = (body: string[]): { oldLines: number; newLines: number } => {
+    let oldLines = 0;
+    let newLines = 0;
+    for (const line of body) {
+      if (line.startsWith('\\ No newline at end of file')) continue;
+      if (!line.startsWith('+')) oldLines++;
+      if (!line.startsWith('-')) newLines++;
+    }
+    return { oldLines, newLines };
+  };
+
+  for (let index = 0; index < lines.length; index++) {
+    const match = headerPattern.exec(lines[index]!);
+    if (!match) continue;
+
+    const bodyStart = index + 1;
+    let bodyEnd = bodyStart;
+    while (bodyEnd < lines.length && !lines[bodyEnd]!.startsWith('@@ ')) bodyEnd++;
+    const body = lines.slice(bodyStart, bodyEnd);
+    const declared = {
+      oldLines: match[1] === undefined ? 1 : Number(match[1]),
+      newLines: match[2] === undefined ? 1 : Number(match[2]),
+    };
+    const physical = countBody(body);
+    if (physical.oldLines === declared.oldLines && physical.newLines === declared.newLines) {
+      index = bodyEnd - 1;
+      continue;
+    }
+
+    const expanded = body.flatMap((line) => line.split(/\\n(?=[ +\\-])/));
+    const expandedCounts = countBody(expanded);
+    if (
+      expanded.length > body.length
+      && expandedCounts.oldLines === declared.oldLines
+      && expandedCounts.newLines === declared.newLines
+    ) {
+      lines.splice(bodyStart, body.length, ...expanded);
+      index = bodyStart + expanded.length - 1;
+    } else {
+      index = bodyEnd - 1;
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
  * Create a structured patch error
  *
  * @param message - Human-readable error message
@@ -402,6 +460,12 @@ export function applyModelPatch(
     } catch {
       // Not a completely JSON-escaped string; keep the exact diagnostic.
     }
+  }
+
+  const mixedNewlineRepair = repairCountVerifiedEscapedNewlines(diffContent);
+  if (mixedNewlineRepair !== diffContent) {
+    const repaired = applyModelPatchExact(mixedNewlineRepair, currentContent);
+    if (repaired.success) return repaired;
   }
 
   if (!diffContent.includes('\\"')) return exact;
