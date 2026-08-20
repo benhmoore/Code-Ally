@@ -236,7 +236,7 @@ export class BashTool extends BaseTool {
    * Provide custom function definition for better LLM guidance
    */
   getFunctionDefinition(): FunctionDefinition {
-    const defaultTimeoutSeconds = this.config?.bash_timeout ?? 60;
+    const defaultTimeoutSeconds = this.config?.bash_timeout ?? TIMEOUT_LIMITS.DEFAULT / 1000;
     return {
       type: 'function',
       function: {
@@ -390,7 +390,7 @@ export class BashTool extends BaseTool {
   private validateTimeout(timeout: any): number {
     if (timeout === undefined || timeout === null) {
       // Use config bash_timeout (in seconds), convert to milliseconds
-      const configTimeoutSec = this.config?.bash_timeout ?? 60;
+      const configTimeoutSec = this.config?.bash_timeout ?? TIMEOUT_LIMITS.DEFAULT / 1000;
       return configTimeoutSec * 1000;
     }
 
@@ -402,7 +402,7 @@ export class BashTool extends BaseTool {
     const timeoutMs = Number(timeout) * 1000;
     if (isNaN(timeoutMs) || timeoutMs <= 0) {
       // Use config bash_timeout (in seconds), convert to milliseconds
-      const configTimeoutSec = this.config?.bash_timeout ?? 60;
+      const configTimeoutSec = this.config?.bash_timeout ?? TIMEOUT_LIMITS.DEFAULT / 1000;
       return configTimeoutSec * 1000;
     }
 

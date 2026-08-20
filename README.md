@@ -271,7 +271,7 @@ lives at `~/.ally/config.json`.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `bash_timeout` | `30` | Command timeout (seconds) |
+| `bash_timeout` | `120` | Command timeout (seconds) |
 | `auto_confirm` | `false` | Skip permission prompts |
 | `parallel_tools` | `true` | Enable parallel tool execution |
 | `stream_responses` | `true` | Stream model responses independently of tool parallelism |

@@ -8,6 +8,7 @@
 import type { Config } from '../types/index.js';
 import { formatError } from '../utils/errorUtils.js';
 import { REASONING_EFFORT, REASONING_EFFORT_API_VALUES } from './constants.js';
+import { TIMEOUT_LIMITS } from './toolDefaults.js';
 
 /**
  * Default configuration object
@@ -45,7 +46,7 @@ export const DEFAULT_CONFIG: Config = {
   // ==========================================
   // EXECUTION SETTINGS
   // ==========================================
-  bash_timeout: 30, // Bash command timeout in seconds
+  bash_timeout: TIMEOUT_LIMITS.DEFAULT / 1000, // Bash command timeout in seconds
   auto_confirm: false, // Skip permission prompts (dangerous)
   parallel_tools: true, // Enable parallel tool execution
   stream_responses: true, // Stream main-agent responses independently of tool parallelism

@@ -109,6 +109,7 @@ describe('BashTool', () => {
       expect(properties.command?.description).toContain('stdin is closed');
       expect(properties.command?.description).not.toContain('idle');
       expect(properties.timeout?.description).toContain('Overall deadline');
+      expect(properties.timeout?.description).toContain('default 120');
     });
 
     it('uses a noninteractive environment', async () => {
