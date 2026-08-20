@@ -165,6 +165,12 @@ describe('ArgumentParser', () => {
       const options = parser.parse(['node', 'ally', '--auto-confirm']);
       expect(options.autoConfirm).toBe(true);
     });
+
+    it('should parse --durable-objective independently from authorization', () => {
+      const options = parser.parse(['node', 'ally', '--durable-objective']);
+      expect(options.durableObjective).toBe(true);
+      expect(options.autoConfirm).toBeUndefined();
+    });
   });
 
   describe('Multiple Flags', () => {

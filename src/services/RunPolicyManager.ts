@@ -24,10 +24,12 @@ export const DEFAULT_INTERACTIVE_RUN_POLICY: RunPolicy = Object.freeze({
  */
 export class RunPolicyManager {
   private policy: RunPolicy;
+  private readonly terminalBaseline: RunPolicy;
   private epoch = 0;
 
   constructor(initial: RunPolicy = DEFAULT_INTERACTIVE_RUN_POLICY) {
     this.policy = { ...initial };
+    this.terminalBaseline = { ...initial };
   }
 
   getPolicy(): Readonly<RunPolicy> {
@@ -52,6 +54,29 @@ export class RunPolicyManager {
     if (interaction === this.policy.interaction) return;
     this.policy = { ...this.policy, interaction };
     this.epoch += 1;
+  }
+
+  /**
+   * Apply the terminal UI's temporary auto-allow mode without erasing the
+   * completion contract selected at process startup. Authorization,
+   * interactivity, and completion are independent policy dimensions: turning
+   * Shift-Tab auto-allow off must not turn an explicitly durable interactive
+   * objective back into ordinary chat.
+   */
+  setTerminalAutoAllow(enabled: boolean): void {
+    this.updatePolicy(enabled
+      ? {
+          ...this.policy,
+          interaction: 'none',
+          completion: 'durable_objective',
+          authorizationPresetId: 'ui-auto',
+        }
+      : {
+          ...this.policy,
+          interaction: this.terminalBaseline.interaction,
+          completion: this.terminalBaseline.completion,
+          authorizationPresetId: this.terminalBaseline.authorizationPresetId,
+        });
   }
 }
 

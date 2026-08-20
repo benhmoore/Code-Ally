@@ -13,6 +13,7 @@
 #
 # Agent entry points:
 #   ally-lab start --dir ~/minecraft-clone     # launch detached
+#                  [--chat]                    # opt out of durable completion
 #   ally-lab hook [tmux-session]               # adopt a session the human started
 #   ally-lab say "Build a minecraft clone..."  # send a message
 #   ally-lab peek 80                           # read the rendered screen
@@ -69,12 +70,13 @@ stop_session() {
 }
 
 cmd_start() {
-  local dir="$PWD" fresh=0 manual=0 extra=()
+  local dir="$PWD" fresh=0 manual=0 durable=1 extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dir) dir="$2"; shift 2 ;;
       --fresh) fresh=1; shift ;;
       --manual) manual=1; shift ;;
+      --chat) durable=0; shift ;;
       --) shift; extra=("$@"); break ;;
       *) die "unknown start option: $1 (ally flags go after --)" ;;
     esac
@@ -82,6 +84,10 @@ cmd_start() {
   # Labs run unattended stretches; a permission prompt silently stalls the
   # experiment. Auto-confirm by default; pass --manual to keep prompts.
   [[ $manual -eq 0 ]] && extra=(--auto-confirm "${extra[@]}")
+  # A lab run is an objective evaluation by default. Keep the interactive TUI
+  # and interjection channel, but require structured completion instead of
+  # accepting unsupported final prose. Use --chat for conversational probes.
+  [[ $durable -eq 1 ]] && extra=(--durable-objective "${extra[@]}")
   dir="$(cd "$dir" && pwd)" || die "bad --dir"
   command -v ally >/dev/null || die "ally not on PATH"
   command -v tmux >/dev/null || die "tmux not installed"

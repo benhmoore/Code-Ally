@@ -1115,10 +1115,11 @@ async function main() {
     // and scheduled modes are headless by construction and can never prompt.
     const { RunPolicyManager } = await import('./services/RunPolicyManager.js');
     const isHeadlessRun = Boolean(options.once || options.scheduledTask);
+    const usesDurableCompletion = isHeadlessRun || options.durableObjective === true;
     const runPolicyManager = new RunPolicyManager({
       interaction: isHeadlessRun ? 'none' : 'human',
       execution: isHeadlessRun ? 'headless' : 'terminal',
-      completion: isHeadlessRun ? 'durable_objective' : 'chat',
+      completion: usesDurableCompletion ? 'durable_objective' : 'chat',
       authorizationPresetId: options.scheduledTask
         ? 'scheduled'
         : config.auto_confirm
