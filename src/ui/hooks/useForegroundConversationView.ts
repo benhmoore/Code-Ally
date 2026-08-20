@@ -7,6 +7,7 @@ import { reconstructToolCallsFromMessages } from './useSessionResume.js';
 import { appendBoundedText } from '../utils/boundedText.js';
 
 export interface ForegroundConversationView {
+  agentId: string;
   messages: Message[];
   activeToolCalls: ToolCallState[];
   streamingContent?: string;
@@ -32,12 +33,12 @@ const snapshot = (agent: Agent): Pick<ForegroundConversationView, 'messages' | '
  */
 export function useForegroundConversationView(
   activeAgentId: string,
-  foregroundAgent: Agent,
+  foregroundAgent: Agent | null,
 ): ForegroundConversationView | null {
   const [view, setView] = useState<ForegroundConversationView | null>(null);
 
   useEffect(() => {
-    if (activeAgentId === 'main') {
+    if (activeAgentId === 'main' || !foregroundAgent) {
       setView(null);
       return;
     }
@@ -45,6 +46,7 @@ export function useForegroundConversationView(
     const refresh = () => {
       const next = snapshot(foregroundAgent);
       setView((current) => ({
+        agentId: activeAgentId,
         ...next,
         streamingContent: current?.streamingContent,
         isThinking: foregroundAgent.isProcessing(),
@@ -52,7 +54,7 @@ export function useForegroundConversationView(
       }));
     };
 
-    setView({ ...snapshot(foregroundAgent), isThinking: foregroundAgent.isProcessing(), isCompacting: false });
+    setView({ agentId: activeAgentId, ...snapshot(foregroundAgent), isThinking: foregroundAgent.isProcessing(), isCompacting: false });
 
     const stream = foregroundAgent.getActivityStream?.();
     if (!stream) return;
@@ -80,10 +82,10 @@ export function useForegroundConversationView(
       stream.subscribe(ActivityEventType.TOOL_CALL_START, () => setTimeout(refresh, 0)),
       stream.subscribe(ActivityEventType.TOOL_CALL_END, () => setTimeout(refresh, 0)),
       stream.subscribe(ActivityEventType.ASSISTANT_MESSAGE_COMPLETE, () => {
-        setView({ ...snapshot(foregroundAgent), isThinking: foregroundAgent.isProcessing(), isCompacting: false });
+        setView({ agentId: activeAgentId, ...snapshot(foregroundAgent), isThinking: foregroundAgent.isProcessing(), isCompacting: false });
       }),
       stream.subscribe(ActivityEventType.AGENT_END, () => {
-        setView({ ...snapshot(foregroundAgent), isThinking: false, isCompacting: false });
+        setView({ agentId: activeAgentId, ...snapshot(foregroundAgent), isThinking: false, isCompacting: false });
       }),
     ];
 

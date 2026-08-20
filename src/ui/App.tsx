@@ -108,6 +108,7 @@ export interface AppProps {
  */
 const AppContentComponent: React.FC<{
   foregroundAgent: Agent;
+  foregroundAgentId: string;
   primaryAgent: Agent;
   resumeSession?: string | 'interactive' | null;
   showSetupWizard?: boolean;
@@ -119,6 +120,7 @@ const AppContentComponent: React.FC<{
   totalMcpCount?: number;
 }> = ({
   foregroundAgent,
+  foregroundAgentId,
   primaryAgent,
   resumeSession,
   showSetupWizard,
@@ -205,7 +207,10 @@ const AppContentComponent: React.FC<{
   // An entered child owns a separate render projection. The root AppContext is
   // never replaced, so root events can continue updating it without leaking
   // into the child or requiring a lossy reconstruction on return.
-  const foregroundView = useForegroundConversationView(state.activeAgentId, foregroundAgent);
+  const foregroundView = useForegroundConversationView(
+    state.activeAgentId,
+    foregroundAgentId === state.activeAgentId ? foregroundAgent : null,
+  );
   const previousConversationViewRef = useRef(state.activeAgentId);
 
   useEffect(() => {
@@ -507,20 +512,26 @@ const AppContentComponent: React.FC<{
   // project/agent wizard branches, which made the todo list vanish whenever a
   // wizard opened. Defining it once guarantees consistency. Only one branch
   // renders per pass, so reusing a single element instance is safe.
-  const displayedMessages = foregroundView?.messages ?? state.messages;
-  const displayedToolCalls = foregroundView?.activeToolCalls ?? state.activeToolCalls;
-  const displayedStreamingContent = foregroundView?.streamingContent ?? state.streamingContent;
-  const displayedIsThinking = foregroundView?.isThinking ?? state.isThinking;
-  const displayedIsCompacting = foregroundView?.isCompacting ?? state.isCompacting;
-  const displayedAgentName = state.activeAgentId === 'main'
+  const isChildSelected = state.activeAgentId !== 'main';
+  const selectedChildView = isChildSelected && foregroundView?.agentId === state.activeAgentId
+    ? foregroundView
+    : null;
+  // Never fall through to another conversation while a projection is changing.
+  // A pending child renders an empty surface; main renders root state directly.
+  const displayedMessages = isChildSelected ? selectedChildView?.messages ?? [] : state.messages;
+  const displayedToolCalls = isChildSelected ? selectedChildView?.activeToolCalls ?? [] : state.activeToolCalls;
+  const displayedStreamingContent = isChildSelected ? selectedChildView?.streamingContent : state.streamingContent;
+  const displayedIsThinking = isChildSelected ? selectedChildView?.isThinking ?? false : state.isThinking;
+  const displayedIsCompacting = isChildSelected ? selectedChildView?.isCompacting ?? false : state.isCompacting;
+  const displayedAgentName = !isChildSelected
     ? state.currentAgent
-    : foregroundAgent.getAgentName() || state.activeAgentId;
-  const displayedContextUsage = state.activeAgentId === 'main'
+    : selectedChildView ? foregroundAgent.getAgentName() || state.activeAgentId : state.activeAgentId;
+  const displayedContextUsage = !isChildSelected
     ? state.contextUsage
-    : foregroundAgent.getContextUsagePercentage();
-  const displayedModel = state.activeAgentId === 'main'
+    : selectedChildView ? foregroundAgent.getContextUsagePercentage() : 0;
+  const displayedModel = !isChildSelected
     ? state.currentAgentModel || state.config.model
-    : foregroundAgent.getModelClient().modelName;
+    : selectedChildView ? foregroundAgent.getModelClient().modelName : state.config.model;
 
   const statusIndicator = (
     <StatusIndicator
@@ -528,9 +539,9 @@ const AppContentComponent: React.FC<{
       isCompacting={displayedIsCompacting}
       isCancelling={isCancelling}
       activeToolCalls={displayedToolCalls}
-      activeSubAgents={foregroundView ? [] : state.activeSubAgents}
-      activityStream={foregroundView ? foregroundAgent.getActivityStream?.() : undefined}
-      hideTodos={Boolean(foregroundView)}
+      activeSubAgents={isChildSelected ? [] : state.activeSubAgents}
+      activityStream={selectedChildView ? foregroundAgent.getActivityStream?.() : undefined}
+      hideTodos={isChildSelected}
     />
   );
 
@@ -569,9 +580,9 @@ const AppContentComponent: React.FC<{
           isThinking={displayedIsThinking}
           streamingContent={displayedStreamingContent}
           activeToolCalls={displayedToolCalls}
-          compactionNotices={foregroundView ? [] : state.compactionNotices}
-          rewindNotices={foregroundView ? [] : state.rewindNotices}
-          statusMessages={foregroundView ? [] : state.statusMessages}
+          compactionNotices={isChildSelected ? [] : state.compactionNotices}
+          rewindNotices={isChildSelected ? [] : state.rewindNotices}
+          statusMessages={isChildSelected ? [] : state.statusMessages}
           staticRemountKey={state.staticRemountKey}
           config={effectiveConfig}
           activePluginCount={activePluginCount}
@@ -1177,7 +1188,7 @@ export const App: React.FC<AppProps> = ({
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
-  const { primaryAgent, foregroundAgent } = useAgentRouting(agent, streamRef.current);
+  const { primaryAgent, foregroundAgent, foregroundAgentId } = useAgentRouting(agent, streamRef.current);
 
   return (
     <TerminalProvider>
@@ -1185,6 +1196,7 @@ export const App: React.FC<AppProps> = ({
         <AppProvider initialConfig={config}>
           <AppContent
             foregroundAgent={foregroundAgent}
+            foregroundAgentId={foregroundAgentId}
             primaryAgent={primaryAgent}
             resumeSession={resumeSession}
             showSetupWizard={showSetupWizard}
@@ -1232,7 +1244,7 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
 }) => {
   const streamRef = useRef(activityStream || new ActivityStream());
 
-  const { primaryAgent, foregroundAgent } = useAgentRouting(agent, streamRef.current);
+  const { primaryAgent, foregroundAgent, foregroundAgentId } = useAgentRouting(agent, streamRef.current);
 
   return (
     <TerminalProvider>
@@ -1240,6 +1252,7 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
         <AppProvider initialConfig={config}>
           <AppContentWithMessages
             foregroundAgent={foregroundAgent}
+            foregroundAgentId={foregroundAgentId}
             primaryAgent={primaryAgent}
             initialMessages={initialMessages}
           />
@@ -1254,9 +1267,10 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
  */
 const AppContentWithMessages: React.FC<{
   foregroundAgent: Agent;
+  foregroundAgentId: string;
   primaryAgent: Agent;
   initialMessages: Message[];
-}> = ({ foregroundAgent, primaryAgent, initialMessages }) => {
+}> = ({ foregroundAgent, foregroundAgentId, primaryAgent, initialMessages }) => {
   const { actions } = useAppContext();
   const hasLoadedRef = useRef(false);
 
@@ -1268,7 +1282,7 @@ const AppContentWithMessages: React.FC<{
     }
   }, [initialMessages, actions]);
 
-  return <AppContent foregroundAgent={foregroundAgent} primaryAgent={primaryAgent} />;
+  return <AppContent foregroundAgent={foregroundAgent} foregroundAgentId={foregroundAgentId} primaryAgent={primaryAgent} />;
 };
 
 export default App;

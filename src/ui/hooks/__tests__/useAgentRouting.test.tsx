@@ -71,7 +71,7 @@ describe('useAgentRouting', () => {
       data: { agentId: 'task-id', agentName: 'task', isMain: false },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)).toEqual({ primaryAgent: main, foregroundAgent: child });
+    expect(observed.at(-1)).toEqual({ primaryAgent: main, foregroundAgent: child, foregroundAgentId: 'task-id' });
     expect(primaryAnnouncements).toEqual(['main-instance']);
 
     registry.registerInstance('agent', main);
@@ -82,7 +82,7 @@ describe('useAgentRouting', () => {
       data: { agentId: 'main', agentName: 'ally', isMain: true },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)).toEqual({ primaryAgent: main, foregroundAgent: main });
+    expect(observed.at(-1)).toEqual({ primaryAgent: main, foregroundAgent: main, foregroundAgentId: 'main' });
     expect(primaryAnnouncements).toEqual(['main-instance']);
   });
 
@@ -116,6 +116,6 @@ describe('useAgentRouting', () => {
       data: { agentId: 'second', agentName: 'review' },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed).toEqual({ primaryAgent: second, foregroundAgent: second });
+    expect(observed).toEqual({ primaryAgent: second, foregroundAgent: second, foregroundAgentId: 'main' });
   });
 });
