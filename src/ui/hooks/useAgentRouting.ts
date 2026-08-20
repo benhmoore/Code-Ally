@@ -71,5 +71,22 @@ export const useAgentRouting = (
     };
   }, [activityStream]);
 
+  // The routing owner is the only place allowed to announce a primary switch.
+  // A foreground child can rerender the application, but cannot reach this
+  // effect's dependency unless primary ownership actually changes.
+  useEffect(() => {
+    const primary = routing.primaryAgent;
+    activityStream.emit({
+      id: `agent-primary-${Date.now()}`,
+      type: ActivityEventType.AGENT_SWITCHED,
+      timestamp: Date.now(),
+      data: {
+        agentName: primary.getAgentName() || 'ally',
+        agentId: primary.getInstanceId(),
+        agentModel: primary.getModelClient().modelName,
+      },
+    });
+  }, [activityStream, routing.primaryAgent]);
+
   return routing;
 };

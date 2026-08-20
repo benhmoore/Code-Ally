@@ -106,7 +106,7 @@ export interface AppProps {
  * Memoized to prevent unnecessary re-renders when children update.
  */
 const AppContentComponent: React.FC<{
-  agent: Agent;
+  foregroundAgent: Agent;
   primaryAgent: Agent;
   resumeSession?: string | 'interactive' | null;
   showSetupWizard?: boolean;
@@ -117,7 +117,7 @@ const AppContentComponent: React.FC<{
   activeMcpCount?: number;
   totalMcpCount?: number;
 }> = ({
-  agent,
+  foregroundAgent,
   primaryAgent,
   resumeSession,
   showSetupWizard,
@@ -133,7 +133,7 @@ const AppContentComponent: React.FC<{
 
   // Initialize services (command history, completion provider, command handler)
   const { commandHistory, completionProvider, commandHandler, shouldShowSetupWizard } = useServiceInitialization(
-    agent,
+    primaryAgent,
     actions,
     showSetupWizard
   );
@@ -183,33 +183,14 @@ const AppContentComponent: React.FC<{
   // Handle session resumption on mount
   useSessionResume(
     resumeSession,
-    agent,
+    primaryAgent,
     actions,
     activityStream,
     modal.setSessionSelectRequest
   );
 
   // Subscribe to all activity events
-  const { isCancelling } = useActivitySubscriptions(state, actions, modal, agent, activityStream);
-
-  // Emit AGENT_SWITCHED event on mount to sync footer with actual agent
-  // This ensures the UI shows the real agent and model being used
-  // IMPORTANT: This must come AFTER useActivitySubscriptions so the listener is set up first
-  useEffect(() => {
-    const actualModel = agent.getModelClient().modelName;
-    const actualAgent = agent.getAgentName() || 'ally';
-    activityStream.emit({
-      id: `agent_init_${Date.now()}`,
-      type: ActivityEventType.AGENT_SWITCHED,
-      timestamp: Date.now(),
-      data: {
-        agentName: actualAgent,
-        agentId: agent.getInstanceId(),
-        agentModel: actualModel,
-      },
-    });
-    logger.debug('[APP]', 'Emitted initial AGENT_SWITCHED event:', actualAgent, 'model:', actualModel);
-  }, [activityStream, agent]);
+  const { isCancelling } = useActivitySubscriptions(state, actions, modal, primaryAgent, activityStream);
 
   // Get input handler functions
   const { handleInput, handleInterjection } = useInputHandlers(commandHandler, activityStream, state, actions);
@@ -620,7 +601,7 @@ const AppContentComponent: React.FC<{
         commandHistory={commandHistory || undefined}
         completionProvider={completionProvider || undefined}
         activityStream={activityStream}
-        agent={agent}
+        agent={foregroundAgent}
         prefillText={modal.inputPrefillText}
         onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
         bufferValue={modal.inputBuffer}
@@ -1150,7 +1131,7 @@ const AppContentComponent: React.FC<{
             defaultAgent={defaultAgent}
             autoAllowMode={modal.autoAllowMode}
             activityStream={activityStream}
-            agent={agent}
+            agent={foregroundAgent}
             prefillText={modal.inputPrefillText}
             onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
             promptPrefilled={modal.promptPrefilled}
@@ -1256,7 +1237,7 @@ export const App: React.FC<AppProps> = ({
       <ActivityProvider activityStream={streamRef.current}>
         <AppProvider initialConfig={config}>
           <AppContent
-            agent={foregroundAgent}
+            foregroundAgent={foregroundAgent}
             primaryAgent={primaryAgent}
             resumeSession={resumeSession}
             showSetupWizard={showSetupWizard}
@@ -1311,7 +1292,7 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
       <ActivityProvider activityStream={streamRef.current}>
         <AppProvider initialConfig={config}>
           <AppContentWithMessages
-            agent={foregroundAgent}
+            foregroundAgent={foregroundAgent}
             primaryAgent={primaryAgent}
             initialMessages={initialMessages}
           />
@@ -1325,10 +1306,10 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
  * Inner component that accepts initial messages
  */
 const AppContentWithMessages: React.FC<{
-  agent: Agent;
+  foregroundAgent: Agent;
   primaryAgent: Agent;
   initialMessages: Message[];
-}> = ({ agent, primaryAgent, initialMessages }) => {
+}> = ({ foregroundAgent, primaryAgent, initialMessages }) => {
   const { actions } = useAppContext();
   const hasLoadedRef = useRef(false);
 
@@ -1340,7 +1321,7 @@ const AppContentWithMessages: React.FC<{
     }
   }, [initialMessages, actions]);
 
-  return <AppContent agent={agent} primaryAgent={primaryAgent} />;
+  return <AppContent foregroundAgent={foregroundAgent} primaryAgent={primaryAgent} />;
 };
 
 export default App;

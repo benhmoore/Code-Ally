@@ -25,7 +25,11 @@ afterEach(() => {
 });
 
 function fakeAgent(id: string): Agent {
-  return { getInstanceId: () => id } as Agent;
+  return {
+    getInstanceId: () => id,
+    getAgentName: () => id,
+    getModelClient: () => ({ modelName: `${id}-model` }),
+  } as Agent;
 }
 
 describe('useAgentRouting', () => {
@@ -35,6 +39,11 @@ describe('useAgentRouting', () => {
     const registry = ServiceRegistry.getInstance();
     const activityStream = new ActivityStream();
     const observed: AgentRouting[] = [];
+    const primaryAnnouncements: string[] = [];
+
+    activityStream.subscribe(ActivityEventType.AGENT_SWITCHED, (event) => {
+      primaryAnnouncements.push(event.data?.agentId);
+    });
 
     registry.registerInstance('agent', main);
 
@@ -52,6 +61,7 @@ describe('useAgentRouting', () => {
     });
     mounted.push(instance);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(primaryAnnouncements).toEqual(['main-instance']);
 
     registry.registerInstance('agent', child);
     activityStream.emit({
@@ -62,6 +72,7 @@ describe('useAgentRouting', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(observed.at(-1)).toEqual({ primaryAgent: main, foregroundAgent: child });
+    expect(primaryAnnouncements).toEqual(['main-instance']);
 
     registry.registerInstance('agent', main);
     activityStream.emit({
@@ -72,6 +83,7 @@ describe('useAgentRouting', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(observed.at(-1)).toEqual({ primaryAgent: main, foregroundAgent: main });
+    expect(primaryAnnouncements).toEqual(['main-instance']);
   });
 
   it('replaces both routes when the primary conversation changes agent', async () => {
