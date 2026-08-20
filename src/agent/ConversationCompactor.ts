@@ -123,7 +123,15 @@ export type CheckpointCommitter = (
 export class ConversationCompactor {
   private operation: Promise<AppliedCompactionResult> | null = null;
   private generation = 0;
-  private lastCheckpointSourceCount = 0;
+  /**
+   * Last visible transcript message present when a checkpoint committed.
+   *
+   * This is a cursor, not a count: ConversationManager keeps a bounded visible
+   * transcript, so its length stops changing once the tail reaches its cap.
+   * Comparing lengths permanently disabled later compactions in long sessions
+   * even as old entries rotated out and new work arrived.
+   */
+  private lastCheckpointTranscriptCursor: string | null = null;
   private lastEviction?: { at: number; evictedCount: number; reclaimedTokens: number };
   private readonly planner: ContextBudgetPlanner;
   private debugState: Omit<CompactionDebugState, 'elapsedMs'> = {
@@ -150,9 +158,13 @@ export class ConversationCompactor {
   synchronizeCheckpointState(): void {
     const checkpoint = this.conversationManager.getCheckpoint();
     this.generation = checkpoint?.generation ?? 0;
-    this.lastCheckpointSourceCount = checkpoint
-      ? this.conversationManager.getTranscript().length
-      : 0;
+    this.lastCheckpointTranscriptCursor = checkpoint
+      ? this.currentTranscriptCursor()
+      : null;
+  }
+
+  private currentTranscriptCursor(): string | null {
+    return this.conversationManager.getTranscript().at(-1)?.id ?? null;
   }
 
   budget(context: CompactionContext): ContextBudgetSnapshot {
@@ -180,8 +192,8 @@ export class ConversationCompactor {
     if (!budget.shouldCompact) return false;
 
     // Hysteresis: a committed checkpoint cannot immediately compact itself.
-    const sourceCount = this.conversationManager.getTranscript().length;
-    if (sourceCount === this.lastCheckpointSourceCount) return false;
+    const sourceCursor = this.currentTranscriptCursor();
+    if (sourceCursor === this.lastCheckpointTranscriptCursor) return false;
 
     // First-line reclaim: evict stale bulky tool outputs in place before
     // spending a checkpoint generation. On small windows this is what breaks
@@ -349,7 +361,7 @@ export class ConversationCompactor {
       this.conversationManager.setCheckpoint(candidate.checkpoint);
       this.conversationManager.setProviderState(candidate.checkpoint.providerState);
       this.tokenManager.resetContextTracking(candidate.replacement);
-      this.lastCheckpointSourceCount = this.conversationManager.getTranscript().length;
+      this.lastCheckpointTranscriptCursor = this.currentTranscriptCursor();
       this.generation = candidate.checkpoint.generation;
 
       const newTokenCount = this.tokenManager.getCurrentTokenCount();
