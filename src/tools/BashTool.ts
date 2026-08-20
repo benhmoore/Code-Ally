@@ -75,6 +75,21 @@ class BoundedOutputBuffer {
 }
 
 /**
+ * Preserve both output streams when a command fails. Test runners and build
+ * tools commonly write their actionable diagnostics to stdout while emitting
+ * warnings on stderr; preferring stderr would discard the actual failure.
+ */
+function formatFailedCommandOutput(stdout: string, stderr: string): string {
+  const trimmedStdout = stdout.trim();
+  const trimmedStderr = stderr.trim();
+
+  if (trimmedStdout && trimmedStderr) {
+    return `stdout:\n${trimmedStdout}\n\nstderr:\n${trimmedStderr}`;
+  }
+  return trimmedStdout || trimmedStderr || 'Command failed with no output';
+}
+
+/**
  * Detect a shell control operator that backgrounds a command. Operators used
  * for logical AND, combined pipes, and file-descriptor redirection also contain
  * `&`, but do not detach the supervised shell and must remain valid.
@@ -759,8 +774,7 @@ export class BashTool extends BaseTool {
 
         // Non-zero exit code = failure (except for special cases)
         if (returnCode !== 0 && returnCode !== null) {
-          // Use stderr if available, otherwise stdout, otherwise generic message
-          const errorMsg = stderr.trim() || stdout.trim() || 'Command failed with no output';
+          const errorMsg = formatFailedCommandOutput(stdout, stderr);
 
           resolve(
             this.formatErrorResponse(
