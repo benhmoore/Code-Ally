@@ -57,8 +57,8 @@ export const FILE_EXCLUSIONS = {
  * Timeout limits for command execution
  */
 export const TIMEOUT_LIMITS = {
-  /** Fallback default timeout if config is not available (5 seconds) - BashTool uses config.bash_timeout as primary default */
-  DEFAULT: 5000,
+  /** Default foreground command deadline (2 minutes) */
+  DEFAULT: 120000,
 
   /** Maximum timeout for bash commands (20 minutes) */
   MAX: 1200000,
