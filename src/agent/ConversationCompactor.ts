@@ -578,6 +578,11 @@ export class ConversationCompactor {
     let portability: ConversationCheckpointV1['portability'] = 'model-validated';
     let semanticState: SemanticCheckpointStateV1;
     let degradedReason: string | undefined;
+    // Deterministic extraction is the invariant floor, not merely an error
+    // fallback. A schema-valid reducer response may still omit the objective or
+    // latest request; seeding reduction with observed user messages prevents a
+    // weak model from narrowing a long-running task during compaction.
+    const extractedFloor = extractSemanticCheckpoint(delta, previous?.semanticState);
 
     try {
       if (options.forceExtractive) {
@@ -591,7 +596,7 @@ export class ConversationCompactor {
       }
       semanticState = await this.reduceStructured(
         delta,
-        previous?.semanticState ?? null,
+        extractedFloor,
         validSourceIds,
         options.customInstructions,
         context.signal,
@@ -604,7 +609,7 @@ export class ConversationCompactor {
       if (!options.forceExtractive) {
         logger.warn('[COMPACTION] Structured reduction failed; using deterministic extraction:', error);
       }
-      semanticState = extractSemanticCheckpoint(delta, previous?.semanticState);
+      semanticState = extractedFloor;
     }
 
     let providerState: ProviderCheckpointState = { kind: 'chat' };
@@ -653,6 +658,18 @@ export class ConversationCompactor {
     const checkpointId = context.generateId();
     const estimatedAfter = this.tokenManager.estimateMessagesTokens(replacement)
       + this.estimateRequestOverhead(context);
+    // Active-window eviction deliberately replaces bulky results and mutation
+    // arguments with stubs, while the transcript retains their canonical
+    // content. Build the integrity digest from that durable transcript so a
+    // valid checkpoint remains loadable after a process restart.
+    const transcriptById = new Map(this.conversationManager.getTranscript()
+      .filter((message): message is Message & { id: string } => typeof message.id === 'string')
+      .map(message => [message.id, message]));
+    const canonicalSource = deltaIds.map(id => transcriptById.get(id));
+    if (canonicalSource.some(message => message === undefined)) {
+      throw new Error('Compaction source messages are missing from the durable transcript.');
+    }
+
     const checkpoint: ConversationCheckpointV1 = {
       schemaVersion: 1,
       id: checkpointId,
@@ -672,7 +689,7 @@ export class ConversationCompactor {
         // per-generation, not cumulative. Semantic provenance is carried by the
         // checkpoint itself and validated separately.
         messageIds: deltaIds,
-        digest: checkpointSourceDigest(delta),
+        digest: checkpointSourceDigest(canonicalSource as Message[]),
       },
       retainedMessageIds: retained.map(message => message.id).filter((id): id is string => Boolean(id)),
       semanticState,
