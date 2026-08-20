@@ -56,6 +56,16 @@ describe('BashTool', () => {
       expect(result.error).toBeDefined();
     });
 
+    it('preserves stdout diagnostics when a failed command also writes stderr', async () => {
+      const result = await bashTool.execute({
+        command: `node -e "console.log('actionable failure'); console.error('warning only'); process.exit(1)"`,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error_details?.message).toContain('stdout:\nactionable failure');
+      expect(result.error_details?.message).toContain('stderr:\nwarning only');
+    });
+
     it('should require command parameter', async () => {
       const result = await bashTool.execute({});
 
