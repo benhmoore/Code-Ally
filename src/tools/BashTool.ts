@@ -236,6 +236,7 @@ export class BashTool extends BaseTool {
    * Provide custom function definition for better LLM guidance
    */
   getFunctionDefinition(): FunctionDefinition {
+    const defaultTimeoutSeconds = this.config?.bash_timeout ?? 60;
     return {
       type: 'function',
       function: {
@@ -246,11 +247,11 @@ export class BashTool extends BaseTool {
           properties: {
             command: {
               type: 'string',
-              description: `Shell command. Use non-interactive flags; killed after ${TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000}s idle.`,
+              description: 'Shell command. Use non-interactive flags; stdin is closed.',
             },
             timeout: {
               type: 'integer',
-              description: 'Seconds (default 60, max 600, -1 disables).',
+              description: `Overall deadline in seconds (default ${defaultTimeoutSeconds}, max ${TIMEOUT_LIMITS.MAX / 1000}, -1 disables).`,
             },
             output_mode: {
               type: 'string',
@@ -598,8 +599,6 @@ export class BashTool extends BaseTool {
     const stdoutBuffer = new BoundedOutputBuffer();
     const stderrBuffer = new BoundedOutputBuffer();
     let returnCode: number | null = null;
-    let lastOutputTime = Date.now();
-    let idleKilled = false;
     let timedOut = false;
 
     // Check for known interactive patterns
@@ -673,30 +672,11 @@ export class BashTool extends BaseTool {
           }, timeout)
         : null;
 
-      // Idle detection: kill process if no output for configured idle timeout
-      const idleCheckInterval = setInterval(() => {
-        const now = Date.now();
-        const idleTime = now - lastOutputTime;
-
-        // If process is running and has been idle for too long, it's likely waiting for input
-        if (child.exitCode === null && idleTime > TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT) {
-          idleKilled = true;
-          clearInterval(idleCheckInterval);
-          this.killProcessGroup(child, 'SIGTERM');
-          setTimeout(() => {
-            if (child.exitCode === null) {
-              this.killProcessGroup(child, 'SIGKILL');
-            }
-          }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
-        }
-      }, TIMEOUT_LIMITS.IDLE_CHECK_INTERVAL);
-
       // Handle stdout
       if (child.stdout) {
         child.stdout.on('data', (data: Buffer) => {
           const chunk = data.toString();
           stdoutBuffer.append(chunk);
-          lastOutputTime = Date.now(); // Update last output time
           this.emitOutputChunk(Buffer.byteLength(chunk) > MAX_STREAM_CHUNK_BYTES
             ? Buffer.from(chunk).subarray(-MAX_STREAM_CHUNK_BYTES).toString('utf8')
             : chunk);
@@ -708,7 +688,6 @@ export class BashTool extends BaseTool {
         child.stderr.on('data', (data: Buffer) => {
           const chunk = data.toString();
           stderrBuffer.append(chunk);
-          lastOutputTime = Date.now(); // Update last output time
           this.emitOutputChunk(Buffer.byteLength(chunk) > MAX_STREAM_CHUNK_BYTES
             ? Buffer.from(chunk).subarray(-MAX_STREAM_CHUNK_BYTES).toString('utf8')
             : chunk);
@@ -718,7 +697,6 @@ export class BashTool extends BaseTool {
       // Handle process exit
       child.on('close', (code: number | null) => {
         if (timeoutHandle) clearTimeout(timeoutHandle);
-        clearInterval(idleCheckInterval);
         if (abortTimeoutHandle) {
           clearTimeout(abortTimeoutHandle);
         }
@@ -736,23 +714,6 @@ export class BashTool extends BaseTool {
             this.formatErrorResponse(
               'Command interrupted by user',
               'interrupted'
-            )
-          );
-          return;
-        }
-
-        // Check if killed due to idle (likely interactive prompt)
-        if (idleKilled) {
-          const stdout = stdoutBuffer.toString();
-          const stderr = stderrBuffer.toString();
-          const combined = stdout + stderr;
-          const lastOutput = combined.trim().split('\n').slice(-3).join('\n');
-          const idleSeconds = TIMEOUT_LIMITS.IDLE_DETECTION_TIMEOUT / 1000;
-          resolve(
-            this.formatErrorResponse(
-              `Command appears to be waiting for input (idle for ${idleSeconds}+ seconds)\n\nLast output:\n${lastOutput}`,
-              'interactive_command',
-              'Use non-interactive flags like --yes, -y, or provide input via pipe'
             )
           );
           return;
@@ -808,7 +769,6 @@ export class BashTool extends BaseTool {
       // Handle process error
       child.on('error', (error: Error) => {
         if (timeoutHandle) clearTimeout(timeoutHandle);
-        clearInterval(idleCheckInterval);
         if (abortTimeoutHandle) clearTimeout(abortTimeoutHandle);
         if (abortSignal) abortSignal.removeEventListener('abort', abortHandler);
         resolve(
