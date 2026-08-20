@@ -50,7 +50,7 @@ import { useBackgroundProcesses } from './hooks/useBackgroundProcesses.js';
 import { useBackgroundAgents } from './hooks/useBackgroundAgents.js';
 import { useScheduledTaskCount } from './hooks/useScheduledTaskCount.js';
 import { useTaskWake } from './hooks/useTaskWake.js';
-import { useAgentSwitch } from './hooks/useAgentSwitch.js';
+import { useAgentRouting } from './hooks/useAgentRouting.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { switchAgent } from '../services/AgentSwitcher.js';
 import { enterForegroundAgent, exitForegroundAgent } from '../services/ForegroundSwitcher.js';
@@ -107,6 +107,7 @@ export interface AppProps {
  */
 const AppContentComponent: React.FC<{
   agent: Agent;
+  primaryAgent: Agent;
   resumeSession?: string | 'interactive' | null;
   showSetupWizard?: boolean;
   showModelSelector?: boolean;
@@ -117,6 +118,7 @@ const AppContentComponent: React.FC<{
   totalMcpCount?: number;
 }> = ({
   agent,
+  primaryAgent,
   resumeSession,
   showSetupWizard,
   showModelSelector,
@@ -243,12 +245,12 @@ const AppContentComponent: React.FC<{
 
   const returnToMain = React.useCallback(() => {
     const registry = ServiceRegistry.getInstance();
-    exitForegroundAgent({ registry, activityStream, mainAgent: agent });
+    exitForegroundAgent({ registry, activityStream, mainAgent: primaryAgent });
     const saved = savedMainViewRef.current;
     savedMainViewRef.current = null;
     const generation = ++viewSwitchGenerationRef.current;
     actions.setActiveAgentId('main');
-    actions.setCurrentAgent(agent.getAgentName() || 'ally');
+    actions.setCurrentAgent(primaryAgent.getAgentName() || 'ally');
     // A foreground child can settle in the same event turn that triggers this
     // switch. Reconstruct on the next macrotask so its parent TOOL_CALL_END and
     // tool-result message are both visible, rather than restoring the stale
@@ -256,12 +258,12 @@ const AppContentComponent: React.FC<{
     setImmediate(() => {
       if (viewSwitchGenerationRef.current !== generation) return;
       const registry = ServiceRegistry.getInstance();
-      const msgs = agent.getMessages().filter((m) => m.role !== 'system');
+      const msgs = primaryAgent.getMessages().filter((m) => m.role !== 'system');
       const reconstructed = reconstructToolCallsFromMessages(msgs, registry);
       const toolCalls = reconcileRestoredToolCalls(msgs, reconstructed, saved?.toolCalls ?? []);
       actions.resetConversationViewWithTools(msgs, toolCalls);
     });
-  }, [activityStream, agent, actions]);
+  }, [activityStream, primaryAgent, actions]);
 
   const handleEnterFleet = React.useCallback(() => {
     modal.setFleetSelectedIndex(0);
@@ -1247,15 +1249,15 @@ export const App: React.FC<AppProps> = ({
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
-  // Track current agent (updates when agent is switched via useAgentSwitch hook)
-  const currentAgent = useAgentSwitch(agent, streamRef.current);
+  const { primaryAgent, foregroundAgent } = useAgentRouting(agent, streamRef.current);
 
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
         <AppProvider initialConfig={config}>
           <AppContent
-            agent={currentAgent}
+            agent={foregroundAgent}
+            primaryAgent={primaryAgent}
             resumeSession={resumeSession}
             showSetupWizard={showSetupWizard}
             showModelSelector={showModelSelector}
@@ -1302,14 +1304,17 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
 }) => {
   const streamRef = useRef(activityStream || new ActivityStream());
 
-  // Track current agent (updates when agent is switched via useAgentSwitch hook)
-  const currentAgent = useAgentSwitch(agent, streamRef.current);
+  const { primaryAgent, foregroundAgent } = useAgentRouting(agent, streamRef.current);
 
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
         <AppProvider initialConfig={config}>
-          <AppContentWithMessages agent={currentAgent} initialMessages={initialMessages} />
+          <AppContentWithMessages
+            agent={foregroundAgent}
+            primaryAgent={primaryAgent}
+            initialMessages={initialMessages}
+          />
         </AppProvider>
       </ActivityProvider>
     </TerminalProvider>
@@ -1319,7 +1324,11 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
 /**
  * Inner component that accepts initial messages
  */
-const AppContentWithMessages: React.FC<{ agent: Agent; initialMessages: Message[] }> = ({ agent, initialMessages }) => {
+const AppContentWithMessages: React.FC<{
+  agent: Agent;
+  primaryAgent: Agent;
+  initialMessages: Message[];
+}> = ({ agent, primaryAgent, initialMessages }) => {
   const { actions } = useAppContext();
   const hasLoadedRef = useRef(false);
 
@@ -1331,7 +1340,7 @@ const AppContentWithMessages: React.FC<{ agent: Agent; initialMessages: Message[
     }
   }, [initialMessages, actions]);
 
-  return <AppContent agent={agent} />;
+  return <AppContent agent={agent} primaryAgent={primaryAgent} />;
 };
 
 export default App;
