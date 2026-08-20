@@ -385,7 +385,26 @@ export function applyModelPatch(
   currentContent: string
 ): AppliedModelPatch {
   const exact = applyModelPatchExact(diffContent, currentContent);
-  if (exact.success || !diffContent.includes('\\"')) return exact;
+  if (exact.success) return exact;
+
+  // Some providers double-encode the complete JSON string argument, leaving a
+  // one-line value whose diff separators are literal `\n` sequences. Decoding
+  // is unambiguous only when the authored value has no real line breaks and a
+  // full JSON-string decode produces them. Normally multiline patches are
+  // never transformed, so source literals containing `\n` remain untouched.
+  if (!/[\r\n]/.test(diffContent) && diffContent.includes('\\n')) {
+    try {
+      const decoded = JSON.parse(`"${diffContent}"`);
+      if (typeof decoded === 'string' && /[\r\n]/.test(decoded)) {
+        const repaired = applyModelPatchExact(decoded, currentContent);
+        if (repaired.success) return repaired;
+      }
+    } catch {
+      // Not a completely JSON-escaped string; keep the exact diagnostic.
+    }
+  }
+
+  if (!diffContent.includes('\\"')) return exact;
 
   const repaired = applyModelPatchExact(diffContent.replace(/\\"/g, '"'), currentContent);
   return repaired.success ? repaired : exact;

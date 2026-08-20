@@ -129,6 +129,28 @@ describe('applyModelPatch', () => {
       expect(result.content).toBe(String.raw`const quoted = '\"new\"';` + '\n');
     });
 
+    it('repairs a completely double-encoded single-line patch argument', () => {
+      const result = applyModelPatch(
+        String.raw`@@ -1,2 +1,2 @@\n fn example() {\n-    let value = b\"old\";\n+    let value = b\"new\";`,
+        'fn example() {\n    let value = b"old";\n}\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe('fn example() {\n    let value = b"new";\n}\n');
+    });
+
+    it('does not decode escaped newline literals in a normally multiline patch', () => {
+      const result = applyModelPatch(
+        String.raw`@@ -1,1 +1,1 @@
+-const value = "old\ntext";
++const value = "new\ntext";`,
+        String.raw`const value = "old\ntext";` + '\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe(String.raw`const value = "new\ntext";` + '\n');
+    });
+
     it('rejects ambiguous context unless the hunk line hint identifies a match', () => {
       const ambiguous = applyModelPatch(
         '@@ -2,1 +2,1 @@\n-same\n+changed',
