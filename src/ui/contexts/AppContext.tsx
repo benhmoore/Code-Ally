@@ -167,10 +167,8 @@ export interface AppState {
   /**
    * Which agent's transcript is currently shown in the conversation view.
    * 'main' = the primary conversation. Any other value = a background agent
-   * the user has "entered" to view. The view itself is driven through the
-   * standard resetConversationView machinery (messages + reconstructed tool
-   * calls), so an entered agent shows its FULL transcript and returning to main
-   * restores its saved view exactly.
+   * the user has "entered" to view. Child projections are isolated from this
+   * root conversation state and sourced from the child's scoped activity stream.
    */
   activeAgentId: string;
 }
@@ -232,6 +230,9 @@ export interface AppActions {
 
   /** Force Static component to remount (for rewind/compaction) */
   forceStaticRemount: () => void;
+
+  /** Repaint the selected conversation projection without replacing root state. */
+  repaintConversationSurface: () => void;
 
   /** Atomically reset conversation view with new messages (for resume/compact/rewind) */
   resetConversationView: (messages: Message[]) => void;
@@ -539,6 +540,15 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     setStaticRemountKey((prev) => prev + 1);
   }, []);
 
+  const repaintConversationSurface = useCallback(() => {
+    // Unlike a transcript reset, the selected projection is already available.
+    // Clear the old projection first, then remount Static so the new projection
+    // is what gets committed to scrollback. Clearing on a deferred callback
+    // would erase the newly committed child transcript.
+    clearTerminalPreservingInk(writeToStdout);
+    setStaticRemountKey((prev) => prev + 1);
+  }, [writeToStdout]);
+
   const resetConversationView = useCallback((newMessages: Message[]) => {
     // Add metadata and deduplicate messages
     const messagesWithMetadata = newMessages.map((msg, idx) => ({
@@ -671,13 +681,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     addStatusMessage,
     clearStatusMessages,
     forceStaticRemount,
+    repaintConversationSurface,
     resetConversationView,
     resetConversationViewWithTools,
     setCurrentAgent,
     addSubAgent,
     removeSubAgent,
     setActiveAgentId,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, addStatusMessage, clearStatusMessages, forceStaticRemount, resetConversationView, resetConversationViewWithTools, setCurrentAgent, addSubAgent, removeSubAgent, setActiveAgentId]);
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, addStatusMessage, clearStatusMessages, forceStaticRemount, repaintConversationSurface, resetConversationView, resetConversationViewWithTools, setCurrentAgent, addSubAgent, removeSubAgent, setActiveAgentId]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

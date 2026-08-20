@@ -11,6 +11,7 @@ import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import { setTerminalProgress, clearTerminalProgress } from '@utils/terminal.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
+import type { ActivityStream } from '@services/ActivityStream.js';
 
 interface StatusIndicatorProps {
   isProcessing: boolean;
@@ -18,6 +19,8 @@ interface StatusIndicatorProps {
   isCancelling?: boolean;
   activeToolCalls?: ToolCallState[];
   activeSubAgents?: string[];
+  activityStream?: ActivityStream;
+  hideTodos?: boolean;
 }
 
 function getActiveAgentName(toolCalls: ToolCallState[]): string | null {
@@ -52,6 +55,8 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   isCancelling = false,
   activeToolCalls = [],
   activeSubAgents = [],
+  activityStream: selectedActivityStream,
+  hideTodos = false,
 }) => {
   const active = isProcessing || isCompacting || isCancelling;
   const [todos, setTodos] = useState<TodoItem[]>([]);
@@ -96,14 +101,18 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     try {
       const registry = ServiceRegistry.getInstance();
       const todoManager = registry.get('todo_manager');
-      const activityStream = registry.get('activity_stream');
+      const activityStream = selectedActivityStream ?? registry.get('activity_stream');
+      if (hideTodos) {
+        setTodos([]);
+        return undefined;
+      }
       const refresh = () => setTodos(todoManager?.getTodos() ?? []);
       refresh();
       return activityStream?.subscribe(ActivityEventType.TODO_UPDATE, refresh);
     } catch {
       return undefined;
     }
-  }, []);
+  }, [hideTodos, selectedActivityStream]);
 
   // Distinguish "request is out, backend has sent nothing back" from "tokens are
   // arriving". Prefill on a large prompt can run for minutes with an identical
@@ -112,17 +121,19 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   // already describing the delegation.
   useEffect(() => {
     try {
-      const activityStream = ServiceRegistry.getInstance().get('activity_stream');
+      const activityStream = selectedActivityStream
+        ?? ServiceRegistry.getInstance().get('activity_stream');
       if (!activityStream) return undefined;
+      const accepts = (event: { parentId?: string }) => selectedActivityStream !== undefined || !event.parentId;
 
       const unsubscribes = [
         activityStream.subscribe(ActivityEventType.MODEL_REQUEST_START, (event) => {
-          if (event.parentId) return;
+          if (!accepts(event)) return;
           setAwaitingModel(true);
           waitingForOutputRef.current = true;
         }),
         activityStream.subscribe(ActivityEventType.MODEL_REQUEST_END, (event) => {
-          if (event.parentId) return;
+          if (!accepts(event)) return;
           setAwaitingModel(false);
           waitingForOutputRef.current = false;
         }),
@@ -130,7 +141,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
           activityStream.subscribe(eventType, (event) => {
             // Synthetic status events carry no chunk; only real output counts.
             const chunk = (event.data as { chunk?: unknown } | undefined)?.chunk;
-            if (!event.parentId && typeof chunk === 'string' && chunk.length > 0) {
+            if (accepts(event) && typeof chunk === 'string' && chunk.length > 0) {
               setAwaitingModel(false);
               // Refs, not state: this fires per chunk, and the label reads it on
               // the shared animation tick instead of re-rendering the whole row.
@@ -144,7 +155,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     } catch {
       return undefined;
     }
-  }, []);
+  }, [selectedActivityStream]);
 
   // A turn opens in the waiting state - nothing has been received yet - and a
   // turn that ends between a request's start and its end (interrupt, error) must

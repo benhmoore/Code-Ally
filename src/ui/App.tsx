@@ -12,7 +12,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityProvider, useActivityStreamContext } from './contexts/ActivityContext.js';
 import { AppProvider, useAppContext } from './contexts/AppContext.js';
 import { TerminalProvider } from './contexts/TerminalContext.js';
-import { ActivityEventType, Config, Message, ToolCallState } from '../types/index.js';
+import { ActivityEventType, Config, Message } from '../types/index.js';
 import { InputPrompt } from './components/InputPrompt.js';
 import { AgentFleetView } from './components/AgentFleetView.js';
 import { ConversationView } from './components/ConversationView.js';
@@ -40,7 +40,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { logger, LogLevel } from '../services/Logger.js';
 import { useServiceInitialization } from './hooks/useServiceInitialization.js';
 import { useModalState } from './hooks/useModalState.js';
-import { useSessionResume, reconstructToolCallsFromMessages, reconstructInterjectionsFromMessages } from './hooks/useSessionResume.js';
+import { useSessionResume } from './hooks/useSessionResume.js';
 import { useInputHandlers } from './hooks/useInputHandlers.js';
 import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
 import { useContentWidth } from './hooks/useContentWidth.js';
@@ -51,6 +51,7 @@ import { useBackgroundAgents } from './hooks/useBackgroundAgents.js';
 import { useScheduledTaskCount } from './hooks/useScheduledTaskCount.js';
 import { useTaskWake } from './hooks/useTaskWake.js';
 import { useAgentRouting } from './hooks/useAgentRouting.js';
+import { useForegroundConversationView } from './hooks/useForegroundConversationView.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { switchAgent } from '../services/AgentSwitcher.js';
 import { enterForegroundAgent, exitForegroundAgent } from '../services/ForegroundSwitcher.js';
@@ -58,7 +59,7 @@ import { SyntaxHighlighter } from '../services/SyntaxHighlighter.js';
 import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
-import { reconcileRestoredToolCalls, shouldRestoreMainView } from './utils/agentViewLifecycle.js';
+import { shouldRestoreMainView } from './utils/agentViewLifecycle.js';
 
 /**
  * Props for the App component
@@ -201,49 +202,22 @@ const AppContentComponent: React.FC<{
   // ===== Background-agent fleet (live list + enter/exit) =====
   const backgroundAgents = useBackgroundAgents();
 
-  // Saved main-conversation view (messages + tool calls) captured when entering
-  // an agent, so returning to main restores it EXACTLY (invariant preservation).
-  const savedMainViewRef = useRef<{ messages: Message[]; toolCalls: ToolCallState[] } | null>(null);
-  // Invalidates deferred restoration when the user enters another view before
-  // the previous switch has committed.
-  const viewSwitchGenerationRef = useRef(0);
-  // The entered agent's rendered message count, to refresh only when it grows.
-  const enteredCountRef = useRef(0);
+  // An entered child owns a separate render projection. The root AppContext is
+  // never replaced, so root events can continue updating it without leaking
+  // into the child or requiring a lossy reconstruction on return.
+  const foregroundView = useForegroundConversationView(state.activeAgentId, foregroundAgent);
+  const previousConversationViewRef = useRef(state.activeAgentId);
 
-  // Render an agent's FULL transcript — messages + reconstructed tool calls +
-  // interjections — via the exact machinery session-resume uses. This is what
-  // guarantees the complete conversation context appears (not just text turns).
-  const applyAgentView = React.useCallback((targetAgent: Agent) => {
-    const registry = ServiceRegistry.getInstance();
-    const msgs = targetAgent.getMessages().filter((m) => m.role !== 'system');
-    const tools = reconstructToolCallsFromMessages(msgs, registry);
-    // Messages + tool calls in one atomic reset so the leading messages
-    // (e.g. the agent's initial prompt) aren't skipped by the Static accumulator.
-    actions.resetConversationViewWithTools(msgs, tools);
-    reconstructInterjectionsFromMessages(msgs, activityStream);
-    enteredCountRef.current = msgs.length;
-  }, [actions, activityStream]);
+  useEffect(() => {
+    if (previousConversationViewRef.current === state.activeAgentId) return;
+    previousConversationViewRef.current = state.activeAgentId;
+    actions.repaintConversationSurface();
+  }, [state.activeAgentId, actions]);
 
   const returnToMain = React.useCallback(() => {
     const registry = ServiceRegistry.getInstance();
     exitForegroundAgent({ registry, activityStream, mainAgent: primaryAgent });
-    const saved = savedMainViewRef.current;
-    savedMainViewRef.current = null;
-    const generation = ++viewSwitchGenerationRef.current;
     actions.setActiveAgentId('main');
-    actions.setCurrentAgent(primaryAgent.getAgentName() || 'ally');
-    // A foreground child can settle in the same event turn that triggers this
-    // switch. Reconstruct on the next macrotask so its parent TOOL_CALL_END and
-    // tool-result message are both visible, rather than restoring the stale
-    // pre-entry "executing" snapshot.
-    setImmediate(() => {
-      if (viewSwitchGenerationRef.current !== generation) return;
-      const registry = ServiceRegistry.getInstance();
-      const msgs = primaryAgent.getMessages().filter((m) => m.role !== 'system');
-      const reconstructed = reconstructToolCallsFromMessages(msgs, registry);
-      const toolCalls = reconcileRestoredToolCalls(msgs, reconstructed, saved?.toolCalls ?? []);
-      actions.resetConversationViewWithTools(msgs, toolCalls);
-    });
   }, [activityStream, primaryAgent, actions]);
 
   const handleEnterFleet = React.useCallback(() => {
@@ -274,17 +248,11 @@ const AppContentComponent: React.FC<{
     const manager = registry.get('background_agent_manager');
     const task = manager?.getTask(target.id);
     if (!task) return;
-    viewSwitchGenerationRef.current++;
-    // Save the main view once, when leaving main (not on agent→agent switches).
-    if (state.activeAgentId === 'main') {
-      savedMainViewRef.current = { messages: state.messages, toolCalls: state.activeToolCalls };
-    }
-    // Swap foreground input routing to the entered agent, then show its transcript.
+    // Swap foreground input routing. Rendering is independently projected from
+    // the child and never mutates the root conversation state.
     enterForegroundAgent({ registry, activityStream, targetAgent: task.subAgent, targetAgentId: target.id });
     actions.setActiveAgentId(target.id);
-    actions.setCurrentAgent(target.agentType);
-    applyAgentView(task.subAgent);
-  }, [backgroundAgents, state.activeAgentId, state.messages, state.activeToolCalls, activityStream, actions, returnToMain, applyAgentView]);
+  }, [backgroundAgents, state.activeAgentId, activityStream, actions, returnToMain]);
 
   // Ctrl+B: background all running foreground agents (they keep running; the
   // main loop returns and they appear in the fleet).
@@ -328,40 +296,6 @@ const AppContentComponent: React.FC<{
       returnToMain();
     }
   }, [backgroundAgents, state.activeAgentId, returnToMain]);
-
-  // Event-driven refresh of the entered agent's transcript (no polling). Only
-  // re-applies the full view when the agent's message count grows, so an active
-  // agent's new turns (and their tool calls) appear without constant repaints.
-  React.useEffect(() => {
-    if (state.activeAgentId === 'main') return;
-    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
-    const task = manager?.getTask(state.activeAgentId);
-    const refresh = () => {
-      const t = manager?.getTask(state.activeAgentId);
-      if (!t) return;
-      const count = t.subAgent.getMessages().filter((m) => m.role !== 'system').length;
-      if (count !== enteredCountRef.current) {
-        applyAgentView(t.subAgent);
-      }
-    };
-    const unsubs: Array<() => void> = [];
-    // After stream isolation, the entered agent's own activity lives ONLY on its
-    // scoped stream — subscribe there so its new turns/tool calls refresh the view
-    // (and only this agent's activity does, not unrelated main-conversation events).
-    const agentStream = task?.subAgent.getActivityStream?.();
-    if (agentStream) {
-      unsubs.push(
-        ...[ActivityEventType.ASSISTANT_MESSAGE_COMPLETE, ActivityEventType.TOOL_CALL_END].map(
-          (type) => agentStream.subscribe(type, () => setTimeout(refresh, 0))
-        )
-      );
-    }
-    // Completion of a backgrounded run is signalled on the root (parent) stream.
-    unsubs.push(
-      activityStream.subscribe(ActivityEventType.AGENT_BACKGROUND_COMPLETE, () => setTimeout(refresh, 0))
-    );
-    return () => unsubs.forEach((u) => u());
-  }, [state.activeAgentId, activityStream, applyAgentView]);
 
   // Default agent from config (determines Esc behavior and footer hint)
   const defaultAgent = state.config.default_agent || 'ally';
@@ -573,17 +507,30 @@ const AppContentComponent: React.FC<{
   // project/agent wizard branches, which made the todo list vanish whenever a
   // wizard opened. Defining it once guarantees consistency. Only one branch
   // renders per pass, so reusing a single element instance is safe.
-  // The conversation view always renders state.messages; entering/exiting an
-  // agent swaps that (and the tool calls) via the resetConversationView path.
-  const displayedMessages = state.messages;
+  const displayedMessages = foregroundView?.messages ?? state.messages;
+  const displayedToolCalls = foregroundView?.activeToolCalls ?? state.activeToolCalls;
+  const displayedStreamingContent = foregroundView?.streamingContent ?? state.streamingContent;
+  const displayedIsThinking = foregroundView?.isThinking ?? state.isThinking;
+  const displayedIsCompacting = foregroundView?.isCompacting ?? state.isCompacting;
+  const displayedAgentName = state.activeAgentId === 'main'
+    ? state.currentAgent
+    : foregroundAgent.getAgentName() || state.activeAgentId;
+  const displayedContextUsage = state.activeAgentId === 'main'
+    ? state.contextUsage
+    : foregroundAgent.getContextUsagePercentage();
+  const displayedModel = state.activeAgentId === 'main'
+    ? state.currentAgentModel || state.config.model
+    : foregroundAgent.getModelClient().modelName;
 
   const statusIndicator = (
     <StatusIndicator
-      isProcessing={state.isThinking}
-      isCompacting={state.isCompacting}
+      isProcessing={displayedIsThinking}
+      isCompacting={displayedIsCompacting}
       isCancelling={isCancelling}
-      activeToolCalls={state.activeToolCalls}
-      activeSubAgents={state.activeSubAgents}
+      activeToolCalls={displayedToolCalls}
+      activeSubAgents={foregroundView ? [] : state.activeSubAgents}
+      activityStream={foregroundView ? foregroundAgent.getActivityStream?.() : undefined}
+      hideTodos={Boolean(foregroundView)}
     />
   );
 
@@ -619,19 +566,19 @@ const AppContentComponent: React.FC<{
         <ErrorBoundary label="ConversationView" resetKey={state.staticRemountKey}>
           <ConversationView
           messages={displayedMessages}
-          isThinking={state.isThinking}
-          streamingContent={state.streamingContent}
-          activeToolCalls={state.activeToolCalls}
-          compactionNotices={state.compactionNotices}
-          rewindNotices={state.rewindNotices}
-          statusMessages={state.statusMessages}
+          isThinking={displayedIsThinking}
+          streamingContent={displayedStreamingContent}
+          activeToolCalls={displayedToolCalls}
+          compactionNotices={foregroundView ? [] : state.compactionNotices}
+          rewindNotices={foregroundView ? [] : state.rewindNotices}
+          statusMessages={foregroundView ? [] : state.statusMessages}
           staticRemountKey={state.staticRemountKey}
           config={effectiveConfig}
           activePluginCount={activePluginCount}
           totalPluginCount={totalPluginCount}
           activeMcpCount={activeMcpCount}
           totalMcpCount={totalMcpCount}
-          currentAgent={state.currentAgent}
+          currentAgent={displayedAgentName}
           />
         </ErrorBoundary>
       </Box>
@@ -1127,7 +1074,7 @@ const AppContentComponent: React.FC<{
             completionProvider={completionProvider || undefined}
             onAutoAllowToggle={() => modal.setAutoAllowMode(!modal.autoAllowMode)}
             onSwitchToDefault={handleSwitchToDefault}
-            currentAgent={state.currentAgent}
+            currentAgent={displayedAgentName}
             defaultAgent={defaultAgent}
             autoAllowMode={modal.autoAllowMode}
             activityStream={activityStream}
@@ -1167,19 +1114,19 @@ const AppContentComponent: React.FC<{
             ) : (
               <Text dimColor>
                 {isDebugMode && <Text color={UI_COLORS.PRIMARY}>debug · </Text>}
-                {state.currentAgentModel || state.config.model || 'no model'}
+                {displayedModel || 'no model'}
                 {isDebugMode && ` · ${debugStats.heapMB} MB · ${debugStats.tokensUsed.toLocaleString()}/${debugStats.tokensTotal.toLocaleString()} tokens`}
                 {currentFocus && <> · focus <Text color="magenta">{currentFocus}</Text></>}
-                {state.contextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
-                  <> · <Text color={state.contextUsage >= CONTEXT_THRESHOLDS.WARNING ? UI_COLORS.ERROR : state.contextUsage >= CONTEXT_THRESHOLDS.NORMAL ? UI_COLORS.WARNING : undefined}>
-                    {CONTEXT_THRESHOLDS.MAX_PERCENT - state.contextUsage}% context left
+                {displayedContextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
+                  <> · <Text color={displayedContextUsage >= CONTEXT_THRESHOLDS.WARNING ? UI_COLORS.ERROR : displayedContextUsage >= CONTEXT_THRESHOLDS.NORMAL ? UI_COLORS.WARNING : undefined}>
+                    {CONTEXT_THRESHOLDS.MAX_PERCENT - displayedContextUsage}% context left
                   </Text></>
                 )}
                 {getActiveProfile() !== 'default' && <> · <Text color={UI_COLORS.PRIMARY}>{getActiveProfile()}</Text></>}
                 {backgroundProcessCount > 0 && <> · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running</Text></>}
                 {scheduledTaskCount > 0 && <> · <Text color={UI_COLORS.PRIMARY}>{scheduledTaskCount} scheduled</Text></>}
                 {modal.autoAllowMode && <> · <Text color={UI_COLORS.ERROR}>auto-allow on</Text></>}
-                {state.currentAgent !== defaultAgent && <> · <Text color={UI_COLORS.PRIMARY}>{state.currentAgent}</Text></>}
+                {displayedAgentName !== defaultAgent && <> · <Text color={UI_COLORS.PRIMARY}>{displayedAgentName}</Text></>}
               </Text>
             )}
           </Box>
