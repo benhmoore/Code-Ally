@@ -4,6 +4,7 @@ import {
   fitSemanticCheckpointToTokenBudget,
   mergeSemanticCheckpoint,
   parseSemanticCheckpoint,
+  renderCheckpointForModel,
 } from '../compaction/CheckpointReducer.js';
 import { emptySemanticCheckpoint, type SemanticCheckpointStateV1 } from '../compaction/types.js';
 import type { Message } from '../../types/index.js';
@@ -22,6 +23,15 @@ function toolResult(overrides: Partial<Message> & { id: string; content: string 
 function envelopeContent(callId: string, payload: Record<string, unknown>): string {
   return `[Tool Call ID: ${callId}]\n${JSON.stringify(payload, null, 2)}`;
 }
+
+describe('renderCheckpointForModel', () => {
+  it('makes newer user instructions authoritative over historical active work', () => {
+    const rendered = renderCheckpointForModel(emptySemanticCheckpoint());
+
+    expect(rendered).toContain('A user message after this checkpoint is newer and authoritative');
+    expect(rendered).toContain('only when they remain consistent with the newest user request');
+  });
+});
 
 describe('extractSemanticCheckpoint', () => {
   it('does not classify successful tool envelopes as blockers despite the empty error field', () => {
