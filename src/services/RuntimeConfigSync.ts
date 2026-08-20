@@ -3,6 +3,7 @@ import { ServiceRegistry } from './ServiceRegistry.js';
 import { IdleMessageGenerator } from './IdleMessageGenerator.js';
 import { SessionTitleGenerator } from './SessionTitleGenerator.js';
 import { logger } from './Logger.js';
+import { ModelCapabilitiesIndex } from './ModelCapabilitiesIndex.js';
 
 function hasUpdate<K extends keyof Config>(updates: Partial<Config>, key: K): boolean {
   return Object.prototype.hasOwnProperty.call(updates, key);
@@ -31,6 +32,13 @@ function syncCommonModelClientSettings(client: unknown, updates: Partial<Config>
   if (hasUpdate(updates, 'reasoning_effort')) {
     setIfAvailable(client, 'setReasoningEffort', updates.reasoning_effort);
   }
+}
+
+function cachedImageSupport(config: Config, modelName: string | null | undefined): boolean | undefined {
+  if ((config.provider ?? 'ollama') !== 'ollama' || !modelName) return undefined;
+  return ModelCapabilitiesIndex.getInstance()
+    .getCapabilities(modelName, config.endpoint)
+    ?.supportsImages;
 }
 
 /**
@@ -62,8 +70,23 @@ export function applyRuntimeConfigUpdates(
     setIfAvailable(modelClient, 'setModelName', fullConfig.model ?? '');
   }
 
+  if (hasUpdate(updates, 'model') || hasUpdate(updates, 'endpoint')) {
+    setIfAvailable(modelClient, 'setSupportsImages', cachedImageSupport(fullConfig, fullConfig.model));
+  }
+
   if (hasUpdate(updates, 'service_model') || (hasUpdate(updates, 'model') && !fullConfig.service_model)) {
     setIfAvailable(serviceModelClient, 'setModelName', fullConfig.service_model ?? fullConfig.model ?? '');
+  }
+  if (
+    hasUpdate(updates, 'service_model')
+    || hasUpdate(updates, 'endpoint')
+    || (hasUpdate(updates, 'model') && !fullConfig.service_model)
+  ) {
+    setIfAvailable(
+      serviceModelClient,
+      'setSupportsImages',
+      cachedImageSupport(fullConfig, fullConfig.service_model ?? fullConfig.model),
+    );
   }
 
   const activeAgent = serviceRegistry.get('agent');

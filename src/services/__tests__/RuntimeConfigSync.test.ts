@@ -3,6 +3,7 @@ import { DEFAULT_CONFIG } from '../../config/defaults.js';
 import { TokenManager } from '../../agent/TokenManager.js';
 import { ServiceRegistry } from '../ServiceRegistry.js';
 import { applyRuntimeConfigUpdates } from '../RuntimeConfigSync.js';
+import { ModelCapabilitiesIndex } from '../ModelCapabilitiesIndex.js';
 import type { Config } from '../../types/index.js';
 
 describe('applyRuntimeConfigUpdates', () => {
@@ -24,6 +25,7 @@ describe('applyRuntimeConfigUpdates', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await registry.shutdown();
   });
 
@@ -50,11 +52,13 @@ describe('applyRuntimeConfigUpdates', () => {
   it('keeps main and service model clients in sync with model config', () => {
     const mainClient = {
       setModelName: vi.fn(),
+      setSupportsImages: vi.fn(),
       setContextSize: vi.fn(),
       setEndpoint: vi.fn(),
     };
     const serviceClient = {
       setModelName: vi.fn(),
+      setSupportsImages: vi.fn(),
       setContextSize: vi.fn(),
       setEndpoint: vi.fn(),
     };
@@ -67,6 +71,12 @@ describe('applyRuntimeConfigUpdates', () => {
 
     registry.registerInstance('model_client', mainClient);
     registry.registerInstance('service_model_client', serviceClient);
+    vi.spyOn(ModelCapabilitiesIndex.getInstance(), 'getCapabilities').mockReturnValue({
+      supportsTools: true,
+      supportsImages: false,
+      testedAt: new Date().toISOString(),
+      endpoint: 'http://localhost:9999',
+    });
 
     applyRuntimeConfigUpdates(registry, {
       model: 'new-main-model',
@@ -76,6 +86,8 @@ describe('applyRuntimeConfigUpdates', () => {
 
     expect(mainClient.setModelName).toHaveBeenCalledWith('new-main-model');
     expect(serviceClient.setModelName).toHaveBeenCalledWith('new-main-model');
+    expect(mainClient.setSupportsImages).toHaveBeenCalledWith(false);
+    expect(serviceClient.setSupportsImages).toHaveBeenCalledWith(false);
     expect(mainClient.setEndpoint).toHaveBeenCalledWith('http://localhost:9999');
     expect(serviceClient.setEndpoint).toHaveBeenCalledWith('http://localhost:9999');
     expect(mainClient.setContextSize).toHaveBeenCalledWith(262144);

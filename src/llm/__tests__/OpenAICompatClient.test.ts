@@ -82,6 +82,33 @@ describe('OpenAICompatClient', () => {
     expect(res.thinking).toBe('unfinished reasoning');
   });
 
+  it('retries explicit image rejection as text-only without mutating history', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 415,
+        text: async () => JSON.stringify({ error: 'model does not support image input' }),
+      })
+      .mockResolvedValueOnce(jsonResponse({
+        choices: [{ message: { role: 'assistant', content: 'recovered' } }],
+      }));
+    const messages: Message[] = [{
+      role: 'user',
+      content: 'Inspect this',
+      images: ['data:image/png;base64,aW1hZ2U='],
+    }];
+
+    const result = await client.send(messages, { stream: false, signal: signal() });
+
+    expect(result.content).toBe('recovered');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const firstPayload = JSON.parse(mockFetch.mock.calls[0]![1].body);
+    const fallbackPayload = JSON.parse(mockFetch.mock.calls[1]![1].body);
+    expect(firstPayload.messages[0].content[1].type).toBe('image_url');
+    expect(fallbackPayload.messages[0].content).toContain('does not support image input');
+    expect(messages[0]?.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
+  });
+
   it('parses tool_calls and converts string arguments to an object', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({
       choices: [{ message: { role: 'assistant', content: '', tool_calls: [

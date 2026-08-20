@@ -297,7 +297,7 @@ describe('OllamaClient', () => {
       expect(result.content).toContain('HTTP 500: system message must be at the beginning');
     });
 
-    it('marks failed multimodal requests for attachment recovery', async () => {
+    it('does not misclassify an unrelated failure on a multimodal request', async () => {
       mockFetch.mockResolvedValue({
         ok: false,
         status: 500,
@@ -306,12 +306,47 @@ describe('OllamaClient', () => {
         }),
       });
 
+      const messages: Message[] = [
+        { role: 'user', content: 'Inspect this', images: ['data:image/png;base64,aW1hZ2U='] },
+      ];
       const result = await client.send(
-        [{ role: 'user', content: 'Inspect this', images: ['data:image/png;base64,aW1hZ2U='] }],
+        messages,
         { stream: false, signal: new AbortController().signal },
       );
 
-      expect((result as typeof result & { shouldStripImages?: boolean }).shouldStripImages).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(result.error).toBe(true);
+      expect(messages[0]?.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
+    });
+
+    it('retries an explicit image rejection without mutating conversation history', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 400,
+          text: async () => JSON.stringify({ error: 'model does not support images' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ message: { role: 'assistant', content: 'Recovered' } }),
+        });
+      const messages: Message[] = [
+        { role: 'user', content: 'Inspect this', images: ['data:image/png;base64,aW1hZ2U='] },
+      ];
+
+      const result = await client.send(
+        messages,
+        { stream: false, signal: new AbortController().signal },
+      );
+
+      expect(result.content).toBe('Recovered');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const firstPayload = JSON.parse(mockFetch.mock.calls[0]![1].body);
+      const fallbackPayload = JSON.parse(mockFetch.mock.calls[1]![1].body);
+      expect(firstPayload.messages[0].images).toEqual(['aW1hZ2U=']);
+      expect(fallbackPayload.messages[0].images).toBeUndefined();
+      expect(fallbackPayload.messages[0].content).toContain('does not support image input');
+      expect(messages[0]?.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
     });
 
     it('should handle JSON parse errors with retry', async () => {

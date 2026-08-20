@@ -171,6 +171,8 @@ export interface ModelClientConfig {
   headers?: Record<string, string>;
   /** Activity stream for emitting events (optional) */
   activityStream?: any; // Using 'any' to avoid circular dependency
+  /** Cached model capability. Undefined means the provider capability is unknown. */
+  supportsImages?: boolean;
 }
 
 /**
@@ -262,6 +264,11 @@ export abstract class ModelClient {
    * Update the API endpoint URL at runtime (optional)
    */
   abstract setEndpoint?(newEndpoint: string): void;
+
+  /** Update the selected model's cached image-input capability (optional). */
+  setSupportsImages?(_supportsImages: boolean | undefined): void {
+    // Providers that do not send image input need no runtime state.
+  }
 
   /**
    * Close the client and cleanup resources (optional)

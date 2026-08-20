@@ -1,5 +1,5 @@
 import type { Message } from '../types/index.js';
-import { materializeToolImageMessages } from './messageImages.js';
+import { prepareMessageImages } from './messageImages.js';
 
 /**
  * Normalize internal conversation history for Ollama's native chat endpoint.
@@ -14,8 +14,11 @@ import { materializeToolImageMessages } from './messageImages.js';
  * - when present, the system message is first
  * - later internal system reminders are user continuation messages
  */
-export function normalizeOllamaMessages(messages: readonly Message[]): readonly Message[] {
-  messages = materializeToolImageMessages(messages);
+export function normalizeOllamaMessages(
+  messages: readonly Message[],
+  supportsImages?: boolean,
+): readonly Message[] {
+  messages = prepareMessageImages(messages, supportsImages);
   messages = normalizeOllamaImages(messages);
   let leadingSystemCount = 0;
   while (messages[leadingSystemCount]?.role === 'system') {

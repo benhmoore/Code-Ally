@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { OpenAIResponsesClient } from '../OpenAIResponsesClient.js';
 import type { Message } from '../../types/index.js';
 
@@ -90,5 +90,29 @@ describe('OpenAIResponsesClient stateless replay', () => {
     const prepared = { input: [], baseItems: [], persistentInput: [], coveredMessageIds: [] };
     expect(conventional.payload(prepared, { signal: new AbortController().signal }))
       .not.toHaveProperty('temperature');
+  });
+
+  it('retries explicit image rejection without mutating stored messages', async () => {
+    const transport = client() as any;
+    const create = vi.fn()
+      .mockRejectedValueOnce({ status: 400, message: 'model does not support image input' })
+      .mockResolvedValueOnce({ output: [], output_text: 'recovered', usage: {} });
+    transport.client.responses.create = create;
+    const messages: Message[] = [{
+      role: 'user',
+      content: 'Inspect this',
+      images: ['data:image/png;base64,aW1hZ2U='],
+    }];
+
+    const result = await transport.send(messages, {
+      stream: false,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.content).toBe('recovered');
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[0][0].input[0].content[1].type).toBe('input_image');
+    expect(create.mock.calls[1][0].input[0].content).toContain('does not support image input');
+    expect(messages[0]?.images).toEqual(['data:image/png;base64,aW1hZ2U=']);
   });
 });
