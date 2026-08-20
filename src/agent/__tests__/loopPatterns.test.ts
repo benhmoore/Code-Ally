@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PhraseRepetitionPattern } from '../patterns/loopPatterns.js';
+import { PhraseRepetitionPattern, SentenceRepetitionPattern } from '../patterns/loopPatterns.js';
 
 describe('PhraseRepetitionPattern', () => {
   it('detects repeated natural-language phrases', () => {
@@ -21,5 +21,27 @@ describe('PhraseRepetitionPattern', () => {
     ];
 
     expect(pattern.check(derivations.join(',\n'))).toBeNull();
+  });
+});
+
+describe('SentenceRepetitionPattern', () => {
+  it('detects repeated prose sentences', () => {
+    const pattern = new SentenceRepetitionPattern();
+    const sentence = 'I will inspect the current implementation before changing it.';
+
+    expect(pattern.check([sentence, sentence, sentence].join(' '))).toEqual(
+      expect.objectContaining({ patternName: 'sentence_repetition', repetitionCount: 3 })
+    );
+  });
+
+  it('does not split repeated dotted identifiers into standalone sentences', () => {
+    const pattern = new SentenceRepetitionPattern();
+    const report = [
+      'The check using self.HEADER_STRUCT.size distinguishes a partial header from a complete frame.',
+      'The call to self.HEADER_STRUCT.unpack decodes the version and declared payload length.',
+      'The expression self.HEADER_STRUCT.pack writes the validated header during append.',
+    ].join(' ');
+
+    expect(pattern.check(report)).toBeNull();
   });
 });
