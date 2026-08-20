@@ -26,6 +26,16 @@
 
 set -euo pipefail
 
+# Resolve through npm-link/Homebrew symlinks so companion scripts are found
+# relative to the checked-out package, not the entry point in /opt/homebrew/bin.
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_SOURCE" ]]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  [[ "$SCRIPT_SOURCE" != /* ]] && SCRIPT_SOURCE="$SOURCE_DIR/$SCRIPT_SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+
 SESSION="${ALLY_LAB_SESSION:-ally-lab}"
 STATE_DIR="${TMPDIR:-/tmp}/ally-lab"
 DIR_FILE="$STATE_DIR/$SESSION.dir"
@@ -174,59 +184,14 @@ cmd_status() {
   local file
   file="$(latest_session_file)"
   [[ -n "$file" ]] || die "no session file found for the lab directory yet"
-  python3 - "$file" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-with open(path) as f:
-    d = json.load(f)
-messages = d.get("messages", [])
-tail = d.get("transcript_tail", []) or []
-meta = d.get("metadata", {}) or {}
-checkpoint = (meta.get("checkpoint") or d.get("checkpoint")
-              or d.get("conversation_checkpoint"))
-print(f"session:      {d.get('id')}")
-print(f"file:         {path}")
-print(f"working_dir:  {d.get('working_dir')}")
-print(f"updated_at:   {d.get('updated_at')}")
-print(f"active msgs:  {len(messages)}   transcript tail: {len(tail)}")
-if isinstance(checkpoint, dict):
-    print(f"checkpoint:   generation {checkpoint.get('generation')} "
-          f"({checkpoint.get('strategy')}, {checkpoint.get('portability')})")
-evicted = sum(1 for m in messages if (m.get("metadata") or {}).get("contentEvicted"))
-if evicted:
-    print(f"evicted:      {evicted} tool result(s) stubbed in active window")
-compacted_args = sum(1 for m in messages if (m.get("metadata") or {}).get("toolArgumentsEvicted"))
-if compacted_args:
-    print(f"compacted:    {compacted_args} completed tool call(s) carry bounded arguments")
-last = messages[-1] if messages else None
-if last:
-    preview = (last.get("content") or "").replace("\n", " ")[:160]
-    print(f"last message: [{last.get('role')}] {preview}")
-PY
+  python3 "$SCRIPT_DIR/ally-lab-session.py" status "$file"
 }
 
 cmd_transcript() {
   local count="${1:-10}" file
   file="$(latest_session_file)"
   [[ -n "$file" ]] || die "no session file found for the lab directory yet"
-  python3 - "$file" "$count" <<'PY'
-import json, sys
-path, count = sys.argv[1], int(sys.argv[2])
-with open(path) as f:
-    d = json.load(f)
-entries = (d.get("transcript_tail") or d.get("messages") or [])[-count:]
-for m in entries:
-    role = m.get("role", "?")
-    flags = []
-    if (m.get("metadata") or {}).get("contentEvicted"): flags.append("evicted")
-    if (m.get("metadata") or {}).get("isConversationCheckpoint"): flags.append("checkpoint")
-    if m.get("is_error"): flags.append("error")
-    tag = f" ({','.join(flags)})" if flags else ""
-    body = (m.get("content") or "").replace("\n", " ")[:200]
-    calls = m.get("tool_calls") or []
-    call_note = " -> " + ", ".join(c["function"]["name"] for c in calls) if calls else ""
-    print(f"[{role}{tag}]{call_note} {body}")
-PY
+  python3 "$SCRIPT_DIR/ally-lab-session.py" transcript "$file" "$count"
 }
 
 cmd_dump() {
