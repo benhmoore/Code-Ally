@@ -25,8 +25,11 @@ import { THINKING_LOOP_DETECTOR } from '../../config/constants.js';
  * @returns Array of sentence strings
  */
 export function extractSentences(text: string): string[] {
-  // Split on sentence boundaries
-  const rawSentences = text.split(/[.!?]+/);
+  // A period is a sentence boundary only when it is followed by whitespace or
+  // the end of the stream. Splitting every period turns dotted identifiers
+  // such as `self.HEADER_STRUCT.size` into repeated one-token "sentences" and
+  // makes ordinary technical reports look like generation loops.
+  const rawSentences = text.split(/[.!?]+(?=\s|$)/);
   const sentences: string[] = [];
 
   for (const sentence of rawSentences) {
