@@ -102,6 +102,15 @@ describe('BashTool', () => {
       expect(result.content).toBe('ok');
     });
 
+    it('describes one overall deadline instead of a separate silence timeout', () => {
+      const definition = bashTool.getFunctionDefinition();
+      const properties = definition.function.parameters.properties as Record<string, { description?: string }>;
+
+      expect(properties.command?.description).toContain('stdin is closed');
+      expect(properties.command?.description).not.toContain('idle');
+      expect(properties.timeout?.description).toContain('Overall deadline');
+    });
+
     it('uses a noninteractive environment', async () => {
       const result = await bashTool.execute({ command: 'printf "%s:%s:%s" "$CI" "$GIT_TERMINAL_PROMPT" "$PAGER"' });
       expect(result.content).toBe('1:0:cat');
