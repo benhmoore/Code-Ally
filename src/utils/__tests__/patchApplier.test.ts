@@ -176,6 +176,31 @@ describe('applyModelPatch', () => {
       expect(result.content).toBe(String.raw`const value = "new\n+literal";` + '\n');
     });
 
+    it('composes mixed separator and quote repairs after exact application fails', () => {
+      const result = applyModelPatch(
+        String.raw`@@ -2,9 +2,7 @@
+-        let _file = OpenOptions::new().open(\".lock\")?;\n+        let file = OpenOptions::new().open(\".lock\")?;\n\n-        // obsolete\n         acquire(file)`,
+        'start\n        let _file = OpenOptions::new().open(".lock")?;\n\n        // obsolete\n        acquire(file)\nend\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe(
+        'start\n        let file = OpenOptions::new().open(".lock")?;\n\n        acquire(file)\nend\n'
+      );
+    });
+
+    it('keeps an intentional escaped separator in an addition despite wrong authored counts', () => {
+      const result = applyModelPatch(
+        String.raw`@@ -1,8 +1,9 @@
+-const value = "old";
++const value = "new\n+literal";`,
+        'const value = "old";\n'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe(String.raw`const value = "new\n+literal";` + '\n');
+    });
+
     it('rejects ambiguous context unless the hunk line hint identifies a match', () => {
       const ambiguous = applyModelPatch(
         '@@ -2,1 +2,1 @@\n-same\n+changed',

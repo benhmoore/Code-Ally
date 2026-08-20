@@ -130,6 +130,22 @@ function repairCountVerifiedEscapedNewlines(diffContent: string): string {
 }
 
 /**
+ * Produce a structural mixed-encoding candidate for providers that leave some
+ * diff line separators escaped. This is never accepted on shape alone: the
+ * caller must parse, uniquely anchor, and apply it against the current file.
+ */
+function repairEscapedDiffSeparators(diffContent: string): string {
+  if (!/[\r\n]/.test(diffContent) || !diffContent.includes('\\n')) return diffContent;
+  const lines = diffContent.replace(/\r\n/g, '\n').split('\n');
+  let inHunk = false;
+  return lines.map((line) => {
+    if (line.startsWith('@@ ')) inHunk = true;
+    else if (line.startsWith('--- ') || line.startsWith('+++ ')) inHunk = false;
+    return inHunk ? line.replace(/\\n(?=(?:@@\s|[ +\\-]))/g, '\n') : line;
+  }).join('\n');
+}
+
+/**
  * Create a structured patch error
  *
  * @param message - Human-readable error message
@@ -445,6 +461,11 @@ export function applyModelPatch(
   const exact = applyModelPatchExact(diffContent, currentContent);
   if (exact.success) return exact;
 
+  const candidates: string[] = [];
+  const addCandidate = (candidate: string) => {
+    if (candidate !== diffContent && !candidates.includes(candidate)) candidates.push(candidate);
+  };
+
   // Some providers double-encode the complete JSON string argument, leaving a
   // one-line value whose diff separators are literal `\n` sequences. Decoding
   // is unambiguous only when the authored value has no real line breaks and a
@@ -454,8 +475,7 @@ export function applyModelPatch(
     try {
       const decoded = JSON.parse(`"${diffContent}"`);
       if (typeof decoded === 'string' && /[\r\n]/.test(decoded)) {
-        const repaired = applyModelPatchExact(decoded, currentContent);
-        if (repaired.success) return repaired;
+        addCandidate(decoded);
       }
     } catch {
       // Not a completely JSON-escaped string; keep the exact diagnostic.
@@ -463,15 +483,19 @@ export function applyModelPatch(
   }
 
   const mixedNewlineRepair = repairCountVerifiedEscapedNewlines(diffContent);
-  if (mixedNewlineRepair !== diffContent) {
-    const repaired = applyModelPatchExact(mixedNewlineRepair, currentContent);
-    if (repaired.success) return repaired;
+  addCandidate(mixedNewlineRepair);
+  addCandidate(repairEscapedDiffSeparators(diffContent));
+
+  if (diffContent.includes('\\"')) {
+    addCandidate(diffContent.replace(/\\"/g, '"'));
+    for (const candidate of [...candidates]) addCandidate(candidate.replace(/\\"/g, '"'));
   }
 
-  if (!diffContent.includes('\\"')) return exact;
-
-  const repaired = applyModelPatchExact(diffContent.replace(/\\"/g, '"'), currentContent);
-  return repaired.success ? repaired : exact;
+  for (const candidate of candidates) {
+    const repaired = applyModelPatchExact(candidate, currentContent);
+    if (repaired.success) return repaired;
+  }
+  return exact;
 }
 
 /**
