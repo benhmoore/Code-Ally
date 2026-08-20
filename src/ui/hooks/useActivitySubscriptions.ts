@@ -26,6 +26,7 @@ import { resolveDisplayContent } from '../../utils/toolResultContent.js';
 import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
 import { ThinkingClock } from '../utils/thinkingClock.js';
 import { finalizeToolCallsAtAgentEnd } from '../utils/agentViewLifecycle.js';
+import { appendBoundedText } from '../utils/boundedText.js';
 
 /**
  * Activity subscriptions state
@@ -67,10 +68,6 @@ export const useActivitySubscriptions = (
   agent: Agent,
   activityStream: ActivityStream
 ): ActivitySubscriptionsState => {
-  const appendBounded = (current: string, chunk: string, maxChars: number): string => {
-    const next = current + chunk;
-    return next.length <= maxChars ? next : next.slice(-maxChars);
-  };
   // Streaming content accumulator (use ref to avoid stale closure in event handlers)
   const streamingContentRef = useRef<string>('');
 
@@ -355,7 +352,7 @@ export const useActivitySubscriptions = (
     const boundedChunk = chunk.length > 64 * 1024 ? chunk.slice(-64 * 1024) : chunk;
     pendingChunks.current.set(
       event.id,
-      appendBounded(pendingChunks.current.get(event.id) ?? '', boundedChunk, 256 * 1024),
+      appendBoundedText(pendingChunks.current.get(event.id) ?? '', boundedChunk, 256 * 1024),
     );
 
     // Schedule debounced flush (batches chunks over 100ms window)
@@ -367,9 +364,9 @@ export const useActivitySubscriptions = (
     const chunk = event.data?.chunk || '';
     if (chunk) {
       // Update the source of truth immediately
-      streamingContentRef.current = appendBounded(streamingContentRef.current, chunk, 4 * 1024 * 1024);
+      streamingContentRef.current = appendBoundedText(streamingContentRef.current, chunk, 4 * 1024 * 1024);
       // Accumulate chunk for batched state update
-      pendingStreamingChunks.current = appendBounded(pendingStreamingChunks.current, chunk, 512 * 1024);
+      pendingStreamingChunks.current = appendBoundedText(pendingStreamingChunks.current, chunk, 512 * 1024);
       // Schedule batched flush (100ms throttle window)
       scheduleStreamingFlush.current();
     }
