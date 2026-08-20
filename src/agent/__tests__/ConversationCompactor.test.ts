@@ -3,6 +3,7 @@ import { ConversationCompactor } from '../ConversationCompactor.js';
 import { ConversationManager } from '../ConversationManager.js';
 import { TokenManager } from '../TokenManager.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
+import { checkpointSourceDigest } from '../compaction/CheckpointReducer.js';
 import type { Message } from '../../types/index.js';
 
 const signal = new AbortController().signal;
@@ -200,6 +201,57 @@ describe('ConversationCompactor', () => {
 
     expect(next.checkpoint.generation).toBe(2);
     expect(next.checkpoint.parentId).toBe(first.checkpoint.id);
+  });
+
+  it('digests canonical transcript content after active-window eviction', async () => {
+    const messages = history();
+    const manager = new ConversationManager({ initialMessages: messages });
+    manager.replaceActiveMessages(manager.getMessages().map(message => ({
+      ...message,
+      content: `[active-window stub for ${message.id}]`,
+      metadata: { ...message.metadata, contentEvicted: true },
+    })));
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    const result = await compactor.compactAndApply(context(), {
+      forceExtractive: true,
+      forceNoRetainedTail: true,
+    });
+    const transcriptById = new Map(manager.getTranscript().map(message => [message.id, message]));
+    const canonicalSource = result.checkpoint.source.messageIds.map(id => transcriptById.get(id)!);
+
+    expect(canonicalSource.every(message => !message.content.includes('active-window stub'))).toBe(true);
+    expect(result.checkpoint.source.digest).toBe(checkpointSourceDigest(canonicalSource));
+  });
+
+  it('retains the observed objective when a structured reducer returns null', async () => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const client = structuredClient();
+    client.send = vi.fn().mockImplementation(async (request: Message[]) => {
+      const input = JSON.parse(request[1]!.content);
+      const transcript = String(input.transcriptJsonLines).trim().split('\n').map(line => JSON.parse(line));
+      expect(transcript.length).toBeGreaterThan(0);
+      return {
+        role: 'assistant',
+        content: JSON.stringify({
+          schemaVersion: 1,
+          objective: null,
+          currentRequest: null,
+          userConstraints: [], decisions: [], completedWork: [], activeWork: [], blockers: [],
+          nextActions: [], unresolvedQuestions: [], durableFacts: [], artifacts: [],
+        }),
+      };
+    });
+    const compactor = new ConversationCompactor(
+      client, manager, new TokenManager(4096), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    const result = await compactor.compactAndApply(context(), { forceNoRetainedTail: true });
+
+    expect(result.checkpoint.semanticState.objective?.text).toContain('0: context');
+    expect(result.checkpoint.semanticState.currentRequest?.text).toContain('10: context');
   });
 
   it('retries a transient durable commit without rebuilding or mutating early', async () => {

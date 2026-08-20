@@ -290,6 +290,7 @@ export function mergeSemanticCheckpoint(
   if (!previous) return proposed;
   const merged = structuredClone(proposed);
   merged.objective = proposed.objective ?? previous.objective;
+  merged.currentRequest = proposed.currentRequest ?? previous.currentRequest;
   const durableKeys = ['userConstraints', 'decisions', 'completedWork', 'durableFacts'] as const;
   for (const key of durableKeys) {
     merged[key] = uniqueFacts([...(previous[key] as any), ...(proposed[key] as any)], 25) as any;

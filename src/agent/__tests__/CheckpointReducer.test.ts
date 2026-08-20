@@ -287,6 +287,19 @@ describe('parseSemanticCheckpoint', () => {
   });
 });
 
+describe('mergeSemanticCheckpoint', () => {
+  it('preserves deterministic request identity when a reducer omits it', () => {
+    const previous = emptySemanticCheckpoint();
+    previous.objective = { text: 'Build the complete system.', sourceMessageIds: ['u1'] };
+    previous.currentRequest = { text: 'Continue after the interruption.', sourceMessageIds: ['u2'] };
+
+    const merged = mergeSemanticCheckpoint(previous, emptySemanticCheckpoint());
+
+    expect(merged.objective).toEqual(previous.objective);
+    expect(merged.currentRequest).toEqual(previous.currentRequest);
+  });
+});
+
 describe('fitSemanticCheckpointToTokenBudget', () => {
   const estimate = (text: string) => Math.ceil(text.length / 4);
 
