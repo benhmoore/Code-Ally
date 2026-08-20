@@ -42,6 +42,7 @@ export interface CLIOptions {
 
   // Advanced settings
   autoConfirm?: boolean;
+  durableObjective?: boolean;
 
   // Profile options
   profile?: string;
@@ -157,7 +158,11 @@ Use '/help' for complete interactive command reference.
 
     // Advanced Settings
     this.program
-      .option('--auto-confirm', 'Auto-confirm tool executions');
+      .option('--auto-confirm', 'Auto-confirm tool executions')
+      .option(
+        '--durable-objective',
+        'Keep an interactive objective running until complete-objective or block-objective is accepted'
+      );
 
     // Profile Management
     this.program
@@ -214,6 +219,7 @@ Use '/help' for complete interactive command reference.
 
       // Advanced
       autoConfirm: opts.autoConfirm,
+      durableObjective: opts.durableObjective,
 
       // Profile
       profile: opts.profile,

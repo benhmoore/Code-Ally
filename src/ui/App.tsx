@@ -157,13 +157,7 @@ const AppContentComponent: React.FC<{
       trustManager.setAutoAllowModeGetter(() => modal.autoAllowMode);
     }
     if (runPolicyManager) {
-      const current = runPolicyManager.getPolicy();
-      runPolicyManager.updatePolicy({
-        ...current,
-        interaction: modal.autoAllowMode ? 'none' : 'human',
-        completion: modal.autoAllowMode ? 'durable_objective' : 'chat',
-        authorizationPresetId: modal.autoAllowMode ? 'ui-auto' : 'interactive',
-      });
+      runPolicyManager.setTerminalAutoAllow(modal.autoAllowMode);
       if (modal.autoAllowMode) {
         registry.get('form_manager')?.cancelAllPending();
         registry.get('plan_mode_manager')?.cancelPendingApproval();
