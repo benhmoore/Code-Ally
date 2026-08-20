@@ -16,6 +16,7 @@ import { logger } from '@services/Logger.js';
 export interface AgentRouting {
   primaryAgent: Agent;
   foregroundAgent: Agent;
+  foregroundAgentId: string;
 }
 
 export const useAgentRouting = (
@@ -25,6 +26,7 @@ export const useAgentRouting = (
   const [routing, setRouting] = useState<AgentRouting>({
     primaryAgent: initialPrimaryAgent,
     foregroundAgent: initialPrimaryAgent,
+    foregroundAgentId: 'main',
   });
 
   useEffect(() => {
@@ -51,17 +53,20 @@ export const useAgentRouting = (
         }
 
         logger.debug('[AGENT_ROUTING_HOOK]', 'Primary agent changed:', actualAgentId);
-        setRouting({ primaryAgent: nextPrimary, foregroundAgent: nextPrimary });
+        setRouting({ primaryAgent: nextPrimary, foregroundAgent: nextPrimary, foregroundAgentId: 'main' });
       },
     );
 
     const unsubscribeForegroundSwitch = activityStream.subscribe(
       ActivityEventType.FOREGROUND_AGENT_CHANGED,
-      () => {
+      (event) => {
         const nextForeground = registryAgent();
         if (!nextForeground) return;
+        const foregroundAgentId = typeof event.data?.agentId === 'string'
+          ? event.data.agentId
+          : event.data?.isMain ? 'main' : nextForeground.getInstanceId();
         logger.debug('[AGENT_ROUTING_HOOK]', 'Foreground agent changed:', nextForeground.getInstanceId());
-        setRouting((current) => ({ ...current, foregroundAgent: nextForeground }));
+        setRouting((current) => ({ ...current, foregroundAgent: nextForeground, foregroundAgentId }));
       },
     );
 
