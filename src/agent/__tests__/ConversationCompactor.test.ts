@@ -203,6 +203,43 @@ describe('ConversationCompactor', () => {
     expect(next.checkpoint.parentId).toBe(first.checkpoint.id);
   });
 
+  it('continues auto-compacting after the bounded transcript tail reaches capacity', async () => {
+    const messages: Message[] = Array.from({ length: 500 }, (_, index) => ({
+      id: `initial-${index}`,
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `initial ${index} ${'context '.repeat(20)}`,
+      timestamp: index + 1,
+    }));
+    const manager = new ConversationManager({ initialMessages: messages });
+    const tokens = new TokenManager(16_384);
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, tokens, new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+    const runContext = { ...context(), phase: 'mid-turn' as const };
+
+    const first = await compactor.compactAndApply(runContext, { forceExtractive: true });
+    expect(first.checkpoint.generation).toBe(1);
+    expect(manager.getTranscript()).toHaveLength(500);
+
+    for (let index = 0; index < 120; index++) {
+      manager.addMessage({
+        id: `later-${index}`,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `later ${index} ${'new work '.repeat(35)}`,
+        timestamp: 1_000 + index,
+      });
+    }
+    tokens.resetContextTracking(manager.getMessages());
+
+    expect(manager.getTranscript()).toHaveLength(500);
+    expect(compactor.budget(runContext).shouldCompact).toBe(true);
+
+    const compacted = await compactor.checkAndPerformAutoCompaction(runContext);
+
+    expect(compacted).toBe(true);
+    expect(manager.getCheckpoint()?.generation).toBe(2);
+  });
+
   it('digests canonical transcript content after active-window eviction', async () => {
     const messages = history();
     const manager = new ConversationManager({ initialMessages: messages });
