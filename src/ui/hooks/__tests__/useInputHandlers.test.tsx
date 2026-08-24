@@ -4,7 +4,7 @@ import { render } from 'ink';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import type { AppActions, AppState } from '../../contexts/AppContext.js';
+import type { AppActions } from '../../contexts/AppContext.js';
 import { useInputHandlers } from '../useInputHandlers.js';
 
 class FakeStdout extends EventEmitter {
@@ -29,7 +29,8 @@ describe('useInputHandlers interjection routing', () => {
     const interrupt = vi.fn();
     const injectUserMessage = vi.fn();
     const registry = ServiceRegistry.getInstance();
-    registry.registerInstance('agent', { addUserInterjection, interrupt } as any);
+    const mainAgent = { addUserInterjection, interrupt } as any;
+    registry.registerInstance('agent', mainAgent);
     registry.registerInstance('tool_manager', {
       getActiveInjectableTool: () => ({
         name: 'agent',
@@ -46,8 +47,7 @@ describe('useInputHandlers interjection routing', () => {
     const Harness = () => {
       const { handleInterjection } = useInputHandlers(
         null,
-        activityStream,
-        { activeAgentId: 'main', currentAgent: 'ally' } as AppState,
+        { id: 'main', kind: 'primary', agent: mainAgent, activityStream },
         { addMessage: vi.fn() } as unknown as AppActions,
       );
       useEffect(() => {
@@ -74,5 +74,38 @@ describe('useInputHandlers interjection routing', () => {
       parentId: 'root',
       data: { targetAgent: 'main' },
     });
+  });
+
+  it('keeps child interjections out of the primary UI projection', async () => {
+    const addUserInterjection = vi.fn();
+    const interrupt = vi.fn();
+    const childStream = new ActivityStream('child-call');
+    const childAgent = { addUserInterjection, interrupt } as any;
+    const addMessage = vi.fn();
+    let completion: Promise<void> | undefined;
+
+    const Harness = () => {
+      const { handleInterjection } = useInputHandlers(
+        null,
+        { id: 'child-call', kind: 'child', agent: childAgent, activityStream: childStream },
+        { addMessage } as unknown as AppActions,
+      );
+      useEffect(() => { completion = handleInterjection('change the child task'); }, [handleInterjection]);
+      return null;
+    };
+
+    const instance = render(<Harness />, {
+      stdout: new FakeStdout() as unknown as NodeJS.WriteStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
+    mounted.push(instance);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await completion;
+
+    expect(addUserInterjection).toHaveBeenCalledWith('change the child task');
+    expect(interrupt).toHaveBeenCalledWith({ kind: 'user_interjection' });
+    expect(addMessage).not.toHaveBeenCalled();
   });
 });

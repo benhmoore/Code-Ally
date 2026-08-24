@@ -9,8 +9,14 @@ import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { ServiceMap, ServiceName } from '@services/ServiceMap.js';
 import type { CommandResult } from '../CommandHandler.js';
+import type { CommandExecutionContext, CommandScope } from './types.js';
 
 export abstract class Command {
+  /**
+   * Default-deny conversation scope. Commands are primary-only unless they
+   * explicitly opt into application-wide or foreground-conversation behavior.
+   */
+  readonly scope: CommandScope = 'primary-conversation';
   /**
    * Command name (e.g., "/undo")
    */
@@ -38,7 +44,8 @@ export abstract class Command {
   abstract execute(
     args: string[],
     messages: Message[],
-    serviceRegistry: ServiceRegistry
+    serviceRegistry: ServiceRegistry,
+    context: CommandExecutionContext,
   ): Promise<CommandResult>;
 
   /**

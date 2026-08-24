@@ -7,9 +7,10 @@ import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 import { CommandRegistry } from './CommandRegistry.js';
-import type { CommandMetadata } from './types.js';
+import type { CommandExecutionContext, CommandMetadata } from './types.js';
 
 export class CompactCommand extends Command {
+  override readonly scope = 'foreground-conversation' as const;
   static readonly metadata: CommandMetadata = {
     name: '/compact',
     description: 'Compact conversation context',
@@ -29,17 +30,10 @@ export class CompactCommand extends Command {
   async execute(
     args: string[],
     _messages: Message[],
-    serviceRegistry: ServiceRegistry
+    _serviceRegistry: ServiceRegistry,
+    context: CommandExecutionContext,
   ): Promise<CommandResult> {
-    // Get agent from service registry
-    const agent = serviceRegistry.get('agent');
-
-    if (!agent) {
-      return {
-        handled: true,
-        response: 'Error: Agent not available for compaction',
-      };
-    }
+    const { agent } = context.route;
 
     // Extract custom instructions if provided
     const customInstructions = args.join(' ').trim() || undefined;

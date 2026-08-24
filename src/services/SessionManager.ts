@@ -600,23 +600,37 @@ export class SessionManager implements IService {
     sessionName: string,
     checkpoint: ConversationCheckpointV1,
   ): Promise<boolean> {
-    const wanted = new Set(checkpoint.source.messageIds);
-    const found = new Map<string, Message>();
-    let cursor: number | undefined;
-    do {
-      const page = await this.getTranscriptPage(sessionName, cursor, 200, 2 * 1024 * 1024);
-      for (const message of page.messages) {
-        if (message.id && wanted.has(message.id)) found.set(message.id, message);
-      }
-      if (found.size === wanted.size) break;
-      cursor = page.nextCursor ?? undefined;
-      if (page.nextCursor === null) break;
-    } while (true);
+    const found = await this.findTranscriptMessagesById(sessionName, checkpoint.source.messageIds);
     const source = checkpoint.source.messageIds
       .map((id) => found.get(id))
       .filter((message): message is Message => Boolean(message));
     return source.length === checkpoint.source.messageIds.length
       && checkpointSourceDigest(source) === checkpoint.source.digest;
+  }
+
+  /** Locate selected canonical transcript records without hydrating full history. */
+  private async findTranscriptMessagesById(
+    sessionName: string,
+    messageIds: readonly string[],
+    initialMessages: readonly Message[] = [],
+    beforeCursor?: number | null,
+  ): Promise<Map<string, Message>> {
+    const wanted = new Set(messageIds);
+    const found = new Map<string, Message>();
+    for (const message of initialMessages) {
+      if (message.id && wanted.has(message.id)) found.set(message.id, message);
+    }
+    let cursor: number | null | undefined = beforeCursor;
+    do {
+      if (found.size === wanted.size || cursor === null) break;
+      const page = await this.getTranscriptPage(sessionName, cursor ?? undefined, 200, 2 * 1024 * 1024);
+      for (const message of page.messages) {
+        if (message.id && wanted.has(message.id)) found.set(message.id, message);
+      }
+      cursor = page.nextCursor ?? undefined;
+      if (page.nextCursor === null) break;
+    } while (true);
+    return found;
   }
 
   /**
@@ -932,6 +946,7 @@ export class SessionManager implements IService {
   async getSessionData(sessionName: string): Promise<{
     messages: Message[];
     transcript: Message[];
+    canonicalMessages: Message[];
     checkpoint: ConversationCheckpointV1 | null;
     providerState: ProviderCheckpointState;
     todos: TodoItem[];
@@ -946,6 +961,7 @@ export class SessionManager implements IService {
       return {
         messages: [],
         transcript: [],
+        canonicalMessages: [],
         checkpoint: null,
         providerState: { kind: 'chat' },
         todos: [],
@@ -957,6 +973,18 @@ export class SessionManager implements IService {
     }
 
     const recent = await this.getTranscriptPage(sessionName, undefined, 500, 4 * 1024 * 1024);
+    const activeCanonicalIds = (session.messages ?? [])
+      .filter(message => message.role !== 'system'
+        && !message.metadata?.ephemeral
+        && !message.metadata?.isConversationCheckpoint)
+      .map(message => message.id)
+      .filter((id): id is string => Boolean(id));
+    const canonicalById = await this.findTranscriptMessagesById(
+      sessionName,
+      activeCanonicalIds,
+      recent.messages,
+      recent.nextCursor,
+    );
     let checkpoint = session.conversation_checkpoint ?? null;
     if (checkpoint && !(await this.validateCheckpointSource(sessionName, checkpoint))) {
       logger.error(`[SESSION] Checkpoint ${checkpoint.id} failed source integrity validation; falling back to portable active messages`);
@@ -965,6 +993,9 @@ export class SessionManager implements IService {
     return {
       messages: session.messages ?? [],
       transcript: recent.messages,
+      canonicalMessages: activeCanonicalIds
+        .map(id => canonicalById.get(id))
+        .filter((message): message is Message => Boolean(message)),
       checkpoint,
       providerState: checkpoint
         ? session.provider_state ?? checkpoint.providerState

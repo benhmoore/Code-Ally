@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Message, ToolCallState } from '@shared/index.js';
 import {
   finalizeToolCallsAtAgentEnd,
+  reconcileRecordedToolCalls,
   reconcileRestoredToolCalls,
   shouldRestoreMainView,
 } from '../agentViewLifecycle.js';
@@ -90,5 +91,25 @@ describe('finalizeToolCallsAtAgentEnd', () => {
     expect(finalizeToolCallsAtAgentEnd([executing], [], 30)[0]).toMatchObject({
       id: 'wait-1', status: 'error', endTime: 30, error: 'Tool did not report completion',
     });
+  });
+});
+
+describe('reconcileRecordedToolCalls', () => {
+  it('settles only calls backed by durable tool-result messages', () => {
+    const live = [
+      { id: 'done', toolName: 'read', status: 'executing', startTime: 1 },
+      { id: 'running', toolName: 'task', status: 'executing', startTime: 2 },
+    ] as ToolCallState[];
+    const recorded = [
+      { id: 'done', toolName: 'read', status: 'success', startTime: 1, endTime: 3 },
+      { id: 'running', toolName: 'task', status: 'success', startTime: 2, endTime: 3 },
+    ] as ToolCallState[];
+    const messages = [
+      { role: 'tool', tool_call_id: 'done', content: 'ok' },
+    ] as Message[];
+
+    const result = reconcileRecordedToolCalls(messages, live, recorded);
+    expect(result[0]).toEqual(recorded[0]);
+    expect(result[1]).toBe(live[1]);
   });
 });

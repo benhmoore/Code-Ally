@@ -7,6 +7,8 @@
  * - Command registration
  */
 
+import type { ConversationRoute } from '../../services/ConversationRoute.js';
+
 export type HelpCategory =
   | 'Input Modes'
   | 'Core'
@@ -54,4 +56,10 @@ export interface CommandMetadata {
   completion?: CommandCompletionOptions;
   /** Whether responses should use yellow styling (default: false) */
   useYellowOutput?: boolean;
+}
+
+export type CommandScope = 'application' | 'primary-conversation' | 'foreground-conversation';
+
+export interface CommandExecutionContext {
+  readonly route: ConversationRoute;
 }

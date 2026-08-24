@@ -770,6 +770,13 @@ export class OllamaClient extends ModelClient {
         // No partial response - re-throw for full retry
         throw error;
       }
+    } finally {
+      try {
+        await reader.cancel?.();
+      } catch (cleanupError) {
+        logger.debug('[OLLAMA_CLIENT] Stream reader cleanup failed:', cleanupError);
+      }
+      reader.releaseLock?.();
     }
 
     // PHASE 3: If stream timed out, throw error to trigger retry

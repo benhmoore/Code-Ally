@@ -29,6 +29,8 @@ export interface ConversationManagerConfig {
   initialMessages?: Message[];
   /** Full visible transcript when it differs from the active model window. */
   initialTranscript?: Message[];
+  /** Canonical originals for active messages whose model-facing payloads were evicted. */
+  initialCanonicalMessages?: Message[];
   initialCheckpoint?: ConversationCheckpointV1;
   initialProviderState?: ProviderCheckpointState;
 }
@@ -53,8 +55,18 @@ export class ConversationManager {
   /** Compactable model-facing message window. */
   private messages: Message[] = [];
 
-  /** Complete user-visible history. Internal system/ephemeral messages never enter it. */
+  /** Bounded user-visible tail. Older history is durably segmented by SessionManager. */
   private transcript: Message[] = [];
+
+  /**
+   * Canonical content for messages still represented in the model window.
+   *
+   * The visible transcript is deliberately a bounded UI tail, while active
+   * context can retain older messages across many turns. Keeping canonical
+   * originals here lets payload eviction remain reversible for checkpoint
+   * integrity without retaining the complete conversation in memory.
+   */
+  private canonicalActiveMessages = new Map<string, Message>();
 
   private checkpoint: ConversationCheckpointV1 | null = null;
   private providerState: ProviderCheckpointState = { kind: 'chat' };
@@ -91,6 +103,10 @@ export class ConversationManager {
         .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
         .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
         .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
+      this.rebuildCanonicalActiveMessages([
+        ...(config.initialTranscript ?? []),
+        ...(config.initialCanonicalMessages ?? []),
+      ]);
       logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Initialized with', this.messages.length, 'messages');
     } else if (config.initialTranscript?.length) {
       this.transcript = config.initialTranscript
@@ -115,6 +131,9 @@ export class ConversationManager {
       timestamp: message.timestamp || Date.now(),
     };
     this.messages.push(messageWithMetadata);
+    if (messageWithMetadata.id) {
+      this.canonicalActiveMessages.set(messageWithMetadata.id, messageWithMetadata);
+    }
 
     if (messageWithMetadata.role !== 'system' && !messageWithMetadata.metadata?.ephemeral) {
       this.transcript.push(messageWithMetadata);
@@ -202,13 +221,21 @@ export class ConversationManager {
     return [...this.messages];
   }
 
-  /** Complete user-visible history, independent from the compacted model window. */
+  /** Bounded visible tail, independent from the compacted model window. */
   getTranscript(): readonly Message[] {
     return this.transcript;
   }
 
   getTranscriptCopy(): Message[] {
     return [...this.transcript];
+  }
+
+  /** Resolve exact canonical content for active message IDs, in caller order. */
+  getCanonicalActiveMessages(messageIds: readonly string[]): Message[] | null {
+    const resolved = messageIds.map(id => this.canonicalActiveMessages.get(id));
+    return resolved.some(message => message === undefined)
+      ? null
+      : resolved as Message[];
   }
 
   getCheckpoint(): ConversationCheckpointV1 | null {
@@ -245,6 +272,7 @@ export class ConversationManager {
       .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
       .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
       .map(msg => ({ ...msg }));
+    this.rebuildCanonicalActiveMessages();
     // Rebuild tool result index from scratch
     this.rebuildToolResultIndex();
     logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Messages set, count:', this.messages.length);
@@ -252,10 +280,12 @@ export class ConversationManager {
 
   /** Replace only the model-facing window; compaction must not rewrite the transcript. */
   replaceActiveMessages(messages: readonly Message[]): void {
+    const previousCanonical = this.canonicalActiveMessages;
     this.messages = messages.map(msg => ({
       ...msg,
       id: msg.id || generateMessageId(),
     }));
+    this.rebuildCanonicalActiveMessages([], previousCanonical);
     this.rebuildToolResultIndex();
     logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Active window replaced, count:', this.messages.length);
   }
@@ -266,6 +296,7 @@ export class ConversationManager {
     transcript: readonly Message[],
     checkpoint: ConversationCheckpointV1 | null = null,
     providerState: ProviderCheckpointState = checkpoint?.providerState ?? { kind: 'chat' },
+    canonicalMessages: readonly Message[] = [],
   ): void {
     this.messages = activeMessages.map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     this.transcript = transcript
@@ -274,6 +305,7 @@ export class ConversationManager {
       .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     this.checkpoint = checkpoint ? structuredClone(checkpoint) : null;
     this.providerState = structuredClone(providerState);
+    this.rebuildCanonicalActiveMessages([...transcript, ...canonicalMessages]);
     this.rebuildToolResultIndex();
   }
 
@@ -292,6 +324,7 @@ export class ConversationManager {
   clearMessages(): void {
     this.messages = [];
     this.transcript = [];
+    this.canonicalActiveMessages.clear();
     this.checkpoint = null;
     this.providerState = { kind: 'chat' };
     this.toolResultIndex.clear();
@@ -319,6 +352,9 @@ export class ConversationManager {
         ...this.messages[0],
         content
       };
+      if (this.messages[0].id) {
+        this.canonicalActiveMessages.set(this.messages[0].id, this.messages[0]);
+      }
       logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'System message updated');
     }
   }
@@ -340,6 +376,7 @@ export class ConversationManager {
     }
 
     this.messages = this.messages.filter(msg => !predicate(msg));
+    this.rebuildCanonicalActiveMessages([], this.canonicalActiveMessages);
     const removedCount = originalLength - this.messages.length;
 
     if (removedCount > 0) {
@@ -442,6 +479,7 @@ export class ConversationManager {
     }
 
     if (totalRemoved > 0) {
+      this.rebuildCanonicalActiveMessages([], this.canonicalActiveMessages);
       logger.debug(
         '[CONVERSATION_MANAGER]',
         this.instanceId,
@@ -508,6 +546,7 @@ export class ConversationManager {
 
       return true;
     });
+    this.rebuildCanonicalActiveMessages([], this.canonicalActiveMessages);
 
     if (removed > 0) {
       logger.debug(`[CONVERSATION_MANAGER] Cleaned up ${removed} stale persistent reminders`);
@@ -631,6 +670,7 @@ export class ConversationManager {
       }
       return true;
     });
+    this.rebuildCanonicalActiveMessages([], this.canonicalActiveMessages);
     const removedCount = originalLength - this.messages.length;
 
     // Log results
@@ -915,5 +955,34 @@ export class ConversationManager {
         this.toolResultIndex.set(msg.tool_call_id, msg);
       }
     }
+  }
+
+  /**
+   * Rebuild the bounded canonical source set for the current model window.
+   * Explicit sources (typically persisted transcript records) win. During an
+   * active-window projection, only marked eviction stubs reuse the prior exact
+   * content; ordinary replacements become the new canonical value.
+   */
+  private rebuildCanonicalActiveMessages(
+    sources: readonly Message[] = [],
+    previousCanonical?: ReadonlyMap<string, Message>,
+  ): void {
+    const sourceById = new Map(
+      sources
+        .filter((message): message is Message & { id: string } => Boolean(message.id))
+        .map(message => [message.id, message]),
+    );
+    const rebuilt = new Map<string, Message>();
+    for (const message of this.messages) {
+      if (!message.id) continue;
+      const projected = message.metadata?.contentEvicted || message.metadata?.toolArgumentsEvicted;
+      rebuilt.set(
+        message.id,
+        sourceById.get(message.id)
+          ?? (projected ? previousCanonical?.get(message.id) : undefined)
+          ?? message,
+      );
+    }
+    this.canonicalActiveMessages = rebuilt;
   }
 }

@@ -17,9 +17,8 @@
 
 import { useCallback } from 'react';
 import { CommandHandler } from '@agent/CommandHandler.js';
-import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { AppState, AppActions } from '../contexts/AppContext.js';
+import { AppActions } from '../contexts/AppContext.js';
 import { ActivityEventType } from '@shared/index.js';
 import { logger } from '@services/Logger.js';
 import { PERMISSION_MESSAGES } from '@config/constants.js';
@@ -29,6 +28,8 @@ import { resolvePath } from '@utils/pathUtils.js';
 import { ModelCapabilitiesIndex } from '@services/ModelCapabilitiesIndex.js';
 import { UserShortcutService } from '@services/UserShortcutService.js';
 import { MentionAttachmentService } from '@services/MentionAttachmentService.js';
+import type { ConversationRoute } from '@services/ConversationRoute.js';
+import type { Message } from '@shared/index.js';
 
 /**
  * Input handler functions
@@ -44,8 +45,7 @@ export interface InputHandlers {
  * Create input handler functions
  *
  * @param commandHandler - The command handler instance
- * @param activityStream - ActivityStream to emit events
- * @param state - App context state
+ * @param route - Immutable target conversation and its scoped activity stream
  * @param actions - App context actions
  * @returns Input handler functions
  *
@@ -53,8 +53,7 @@ export interface InputHandlers {
  * ```tsx
  * const { handleInput, handleInterjection } = useInputHandlers(
  *   commandHandler,
- *   activityStream,
- *   state,
+ *   route,
  *   actions
  * );
  *
@@ -66,52 +65,46 @@ export interface InputHandlers {
  */
 export const useInputHandlers = (
   commandHandler: CommandHandler | null,
-  activityStream: ActivityStream,
-  state: AppState,
+  route: ConversationRoute,
   actions: AppActions
 ): InputHandlers => {
+  const addDisplayMessage = useCallback((message: Message) => {
+    if (route.kind === 'primary') {
+      actions.addMessage(message);
+      return;
+    }
+    route.activityStream.emit({
+      id: `display-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type: ActivityEventType.CONVERSATION_DISPLAY_MESSAGE,
+      timestamp: Date.now(),
+      data: { message },
+    });
+  }, [actions, route]);
+
   /**
    * Handle user interjection (submitting message mid-response)
    */
   const handleInterjection = useCallback(async (message: string) => {
-    // Get current agent from ServiceRegistry (supports agent switching)
-    const serviceRegistry = ServiceRegistry.getInstance();
-    const agent = serviceRegistry.get('agent');
-
-    if (!agent) {
-      logger.error('[INTERJECTION] No agent available to handle interjection');
-      actions.addMessage({
-        role: 'assistant',
-        content: 'Error: Agent not available. Please try again or restart the application.',
-        metadata: { isError: true },
-      });
-      return;
-    }
+    const { agent, activityStream } = route;
 
     logger.debug('[APP] Handling interjection:', message);
 
-    // The registry agent is the conversation the user explicitly selected in
-    // the fleet UI. Tool-call depth must never override that choice: entering a
-    // child swaps this pointer, while remaining on main keeps input on main.
-    logger.debug('[APP] Routing interjection to selected foreground agent:', state.activeAgentId);
+    logger.debug('[APP] Routing interjection to selected conversation:', route.id);
     agent.addUserInterjection(message);
     agent.interrupt({ kind: 'user_interjection' });
 
     const parentId = 'root';
-    const targetAgent = state.activeAgentId === 'main'
-      ? 'main'
-      : state.currentAgent || state.activeAgentId;
+    const targetAgent = route.kind === 'primary' ? 'main' : route.id;
 
     // Add user message to UI conversation with parentId for reconstruction
-    actions.addMessage({
-      role: 'user',
-      content: message,
-      timestamp: Date.now(),
-      metadata: {
-        isInterjection: true,
-        parentId: parentId,
-      },
-    });
+    if (route.kind === 'primary') {
+      addDisplayMessage({
+        role: 'user',
+        content: message,
+        timestamp: Date.now(),
+        metadata: { isInterjection: true, parentId },
+      });
+    }
 
     // Emit event for UI
     activityStream.emit({
@@ -124,37 +117,31 @@ export const useInputHandlers = (
         targetAgent,
       },
     });
-  }, [activityStream, actions, state.activeAgentId, state.currentAgent]);
+  }, [addDisplayMessage, route]);
 
   /**
    * Handle user input (messages, commands, bash shortcuts)
    */
   const handleInput = useCallback(async (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
-    // Get current agent from ServiceRegistry (supports agent switching)
     const serviceRegistry = ServiceRegistry.getInstance();
-    const agent = serviceRegistry.get('agent');
-
-    if (!agent) {
-      logger.error('[INPUT_HANDLER] No agent available to handle input');
-      actions.addMessage({
-        role: 'assistant',
-        content: 'Error: Agent not available. Please try again or restart the application.',
-        metadata: { isError: true },
-      });
-      return;
-    }
+    const { agent, activityStream } = route;
+    // Child views are projections of the Agent transcript, so durable user
+    // echoes arrive through CONVERSATION_MESSAGE_ADDED. Presentation-only
+    // errors and responses still use the route-local display channel.
+    const shortcutMessageSink = (message: Message) => {
+      if (route.kind === 'child' && message.role === 'user') return;
+      addDisplayMessage(message);
+    };
 
     logger.debug('[INPUT_HANDLER]', 'Handling input with agent:', agent.getInstanceId());
 
     const trimmed = input.trim();
 
-    // Built per submission: the registry's tool manager and todo manager are
-    // swapped when the user enters a background agent's view.
     const createMentionService = () =>
       new MentionAttachmentService(
-        serviceRegistry.get('tool_manager'),
+        agent.getToolManager(),
         activityStream,
-        serviceRegistry.get('todo_manager') ?? null
+        route.kind === 'primary' ? serviceRegistry.get('todo_manager') : null,
       );
 
     // Check for bash shortcuts (! prefix)
@@ -163,10 +150,10 @@ export const useInputHandlers = (
 
       if (bashCommand) {
         const shortcutService = new UserShortcutService(
-          serviceRegistry.get('tool_manager'),
+          agent.getToolManager(),
           activityStream
         );
-        await shortcutService.runBashShortcut(bashCommand, agent, actions.addMessage);
+        await shortcutService.runBashShortcut(bashCommand, agent, shortcutMessageSink);
         return;
       }
     }
@@ -177,10 +164,10 @@ export const useInputHandlers = (
 
       if (memoryContent) {
         const shortcutService = new UserShortcutService(
-          serviceRegistry.get('tool_manager'),
+          agent.getToolManager(),
           activityStream
         );
-        shortcutService.saveMemoryShortcut(memoryContent, trimmed, actions.addMessage);
+        shortcutService.saveMemoryShortcut(memoryContent, trimmed, shortcutMessageSink);
         return;
       }
     }
@@ -188,18 +175,19 @@ export const useInputHandlers = (
     // Check for slash commands
     if (trimmed.startsWith('/') && commandHandler) {
       try {
-        const result = await commandHandler.handleCommand(trimmed, state.messages);
+        const routeMessages = agent.getMessages().filter((message) => message.role !== 'system') as Message[];
+        const result = await commandHandler.handleCommand(trimmed, routeMessages, { route });
 
         if (result.handled) {
           // Add user message
-          actions.addMessage({
+          addDisplayMessage({
             role: 'user',
             content: trimmed,
           });
 
           // Add command response if provided
           if (result.response) {
-            actions.addMessage({
+            addDisplayMessage({
               role: 'assistant',
               content: result.response,
               metadata: result.metadata, // Pass command metadata for styling
@@ -209,7 +197,7 @@ export const useInputHandlers = (
           // Add any updated messages (e.g., system reminders) to both UI and Agent
           if (result.updatedMessages) {
             result.updatedMessages.forEach(msg => {
-              actions.addMessage(msg);  // UI display
+              addDisplayMessage(msg);  // route-local UI display
               agent.addMessage(msg);    // Agent context for LLM
             });
           }
@@ -218,7 +206,7 @@ export const useInputHandlers = (
         }
       } catch (error) {
         // Add error message for failed command
-        actions.addMessage({
+        addDisplayMessage({
           role: 'assistant',
           content: `Command error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         });
@@ -239,20 +227,11 @@ export const useInputHandlers = (
       // Check if current model supports images
       let modelSupportsImages = true; // Default to true if we can't determine
       try {
-        const configManager = serviceRegistry.get('config_manager');
-        if (configManager) {
-          const config = configManager.getConfig();
-          const endpoint = config.endpoint || 'http://localhost:11434';
-          const modelName = config.model;
-          if (modelName) {
-            const capabilitiesIndex = ModelCapabilitiesIndex.getInstance();
-            await capabilitiesIndex.load();
-            const capabilities = capabilitiesIndex.getCapabilities(modelName, endpoint);
-            if (capabilities) {
-              modelSupportsImages = capabilities.supportsImages;
-            }
-          }
-        }
+        const modelClient = agent.getModelClient();
+        const capabilitiesIndex = ModelCapabilitiesIndex.getInstance();
+        await capabilitiesIndex.load();
+        const capabilities = capabilitiesIndex.getCapabilities(modelClient.modelName, modelClient.endpoint);
+        if (capabilities) modelSupportsImages = capabilities.supportsImages;
       } catch (error) {
         logger.debug('[INPUT] Failed to check model image support, assuming supported:', error);
       }
@@ -278,7 +257,7 @@ export const useInputHandlers = (
           );
         } catch (error) {
           // If image conversion fails, show error but continue
-          actions.addMessage({
+          addDisplayMessage({
             role: 'assistant',
             content: `Error loading image: ${error instanceof Error ? error.message : 'Unknown error'}`,
           });
@@ -288,11 +267,10 @@ export const useInputHandlers = (
 
       // Add user message to UI (separate from Agent's internal message history)
       // This displays the message to the user immediately.
-      // While viewing an entered background agent, skip the main conversation:
-      // the message goes to that agent (registry 'agent' is swapped) and shows
-      // in its transcript via the snapshot refresh, keeping main untouched.
-      if (state.activeAgentId === 'main') {
-        actions.addMessage({
+      // Child projections receive the durable user message from the Agent's
+      // own message-added event; the primary UI still owns its legacy context.
+      if (route.kind === 'primary') {
+        addDisplayMessage({
           role: 'user',
           content: trimmed,
           metadata: filteredMentions && (filteredMentions.files?.length || filteredMentions.images?.length || filteredMentions.directories?.length)
@@ -312,7 +290,7 @@ export const useInputHandlers = (
         const outcome = await createMentionService().attachFiles(
           readableFiles,
           agent,
-          actions.addMessage
+          addDisplayMessage
         );
         if (outcome === 'aborted') {
           return;
@@ -324,7 +302,7 @@ export const useInputHandlers = (
         const outcome = await createMentionService().attachDirectories(
           filteredMentions.directories,
           agent,
-          actions.addMessage
+          addDisplayMessage
         );
         if (outcome === 'aborted') {
           return;
@@ -332,7 +310,7 @@ export const useInputHandlers = (
       }
 
       // Set thinking state
-      actions.setIsThinking(true);
+      if (route.kind === 'primary') actions.setIsThinking(true);
 
       // Cancel any ongoing background LLM tasks (idle messages, title generation)
       // This must be done BEFORE calling agent.sendMessage() to avoid resource competition
@@ -394,7 +372,7 @@ export const useInputHandlers = (
             }
           }
 
-          actions.addMessage({
+          addDisplayMessage({
             role: 'assistant',
             content: messageContent,
             metadata: { isError: true },
@@ -405,27 +383,20 @@ export const useInputHandlers = (
         }
 
         // Update TokenManager and context usage
-        const tokenManager = serviceRegistry.get('token_manager');
-        if (tokenManager) {
-          // Recalculate from the model's compacted window. The complete
-          // transcript is UI history and must not re-inflate context usage.
-          const agentMessages = agent.getContextMessages();
-          if (typeof (tokenManager as any).updateTokenCount === 'function') {
-            (tokenManager as any).updateTokenCount(agentMessages);
-          }
-
-          // Update context usage display
-          if (typeof (tokenManager as any).getContextUsagePercentage === 'function') {
-            const contextUsage = (tokenManager as any).getContextUsagePercentage();
-            actions.setContextUsage(contextUsage);
-          }
+        const tokenManager = agent.getTokenManager();
+        // Recalculate from the model's compacted window. The complete
+        // transcript is UI history and must not re-inflate context usage.
+        const agentMessages = agent.getContextMessages();
+        tokenManager.updateTokenCount(agentMessages);
+        if (route.kind === 'primary') {
+          actions.setContextUsage(tokenManager.getContextUsagePercentage());
         }
 
         // Send terminal bell/badge notification
         sendTerminalNotification();
       } catch (error) {
         // Add error message
-        actions.addMessage({
+        addDisplayMessage({
           role: 'assistant',
           content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         });
@@ -434,10 +405,10 @@ export const useInputHandlers = (
         sendTerminalNotification();
       } finally {
         // Clear thinking state
-        actions.setIsThinking(false);
+        if (route.kind === 'primary') actions.setIsThinking(false);
       }
     }
-  }, [commandHandler, activityStream, state.messages, state.activeAgentId, actions]);
+  }, [addDisplayMessage, commandHandler, route, actions]);
 
   return {
     handleInput,

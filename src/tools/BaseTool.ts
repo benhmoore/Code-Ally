@@ -31,7 +31,20 @@ interface ToolInvocationState {
   params: Record<string, any>;
 }
 
+export interface ToolArgumentCompactionPolicy {
+  /** Exact argument-object paths whose bulk is recoverable after success. */
+  readonly payloadPaths: readonly (readonly string[])[];
+  /** Evidence required before any payload is removed from the active window. */
+  readonly durableReceipt: 'successful-tool-result';
+}
+
 export abstract class BaseTool {
+  /**
+   * Opt-in active-window compaction contract. The safe default is retention:
+   * generic tools and plugins never lose arguments merely because a property
+   * happens to be named "content" or "patch".
+   */
+  readonly argumentCompaction?: ToolArgumentCompactionPolicy;
   /**
    * Unique tool identifier (must be set by subclass)
    */

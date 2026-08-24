@@ -462,6 +462,7 @@ export class Agent {
       this.tokenManager,
       activityStream,
       (messages, checkpoint) => this.sessionPersistence.commitCheckpoint(messages, checkpoint),
+      (toolName) => this.toolManager.getTool(toolName)?.argumentCompaction,
     );
 
     // Create tool orchestrator
@@ -548,6 +549,11 @@ export class Agent {
    */
   getTokenManager(): TokenManager {
     return this.tokenManager;
+  }
+
+  /** Tool capability set owned by this Agent (including delegated filters). */
+  getToolManager(): ToolManager {
+    return this.toolManager;
   }
 
   /** Guard live transport changes and provider-native replay identity. */
@@ -2232,6 +2238,13 @@ export class Agent {
       },
     });
 
+    this.emitEvent({
+      id: this.generateId(),
+      type: ActivityEventType.CONVERSATION_MESSAGE_ADDED,
+      timestamp: Date.now(),
+      data: { message },
+    });
+
     const toolInfo = message.tool_calls ? ` toolCalls:${message.tool_calls.length}` : '';
     const toolCallId = message.tool_call_id ? ` toolCallId:${message.tool_call_id}` : '';
     const toolName = message.name ? ` name:${message.name}` : '';
@@ -2307,6 +2320,7 @@ export class Agent {
     transcript: Message[],
     checkpoint: import('./compaction/types.js').ConversationCheckpointV1 | null,
     providerState: import('./compaction/types.js').ProviderCheckpointState = checkpoint?.providerState ?? { kind: 'chat' },
+    canonicalMessages: Message[] = [],
   ): void {
     const safeCheckpoint = checkpoint ? structuredClone(checkpoint) : null;
     let safeProviderState = structuredClone(providerState);
@@ -2330,7 +2344,13 @@ export class Agent {
           : 'local-structured';
       }
     }
-    this.conversationManager.loadConversation(messages, transcript, safeCheckpoint, safeProviderState);
+    this.conversationManager.loadConversation(
+      messages,
+      transcript,
+      safeCheckpoint,
+      safeProviderState,
+      canonicalMessages,
+    );
     this.agentCompactor.synchronizeCheckpointState();
     this.tokenManager.updateTokenCount(this.conversationManager.getMessages());
   }

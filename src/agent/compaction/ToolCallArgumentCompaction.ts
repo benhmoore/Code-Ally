@@ -1,18 +1,6 @@
 import type { ToolCall } from '../../types/index.js';
 import { parseToolCallArguments } from '../../llm/FunctionCalling.js';
-
-/**
- * Argument keys whose values duplicate durable mutation payloads. These names
- * describe data shape rather than particular tools, so plugin mutation tools
- * receive the same bounded-history behavior as built-ins.
- */
-const DURABLE_PAYLOAD_KEYS = new Set([
-  'content',
-  'old_string',
-  'new_string',
-  'patch',
-  'diff',
-]);
+import type { ToolArgumentCompactionPolicy } from '../../tools/BaseTool.js';
 
 const MAX_OUTLINE_ENTRIES = 16;
 const MAX_OUTLINE_CHARS = 600;
@@ -76,41 +64,55 @@ export function extractSourceOutline(value: unknown): string {
     .slice(0, MAX_OUTLINE_CHARS);
 }
 
-function compactValue(value: unknown, key: string | null, outline: string): unknown {
-  if (key && DURABLE_PAYLOAD_KEYS.has(key) && typeof value === 'string') {
-    return `[payload evicted after successful tool call: ${value.length} chars`
-      + `${outline ? `; outline: ${outline}` : ''}]`;
-  }
-  if (Array.isArray(value)) return value.map(item => compactValue(item, null, outline));
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .map(([childKey, child]) => [childKey, compactValue(child, childKey, outline)]));
-  }
-  return value;
+function valueAtPath(value: unknown, path: readonly string[]): unknown {
+  return path.reduce<unknown>((current, segment) => (
+    current && typeof current === 'object' && !Array.isArray(current)
+      ? (current as Record<string, unknown>)[segment]
+      : undefined
+  ), value);
 }
 
-export function toolCallHasDurablePayload(call: ToolCall): boolean {
+function compactPath(value: unknown, path: readonly string[], outline: string): unknown {
+  if (path.length === 0 || !value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const [head, ...tail] = path;
+  if (!head || !(head in value)) return value;
+  const record = value as Record<string, unknown>;
+  const current = record[head];
+  const replacement = tail.length === 0 && typeof current === 'string'
+    ? `[payload evicted after successful tool call: ${current.length} chars${outline ? `; outline: ${outline}` : ''}]`
+    : compactPath(current, tail, outline);
+  if (replacement === current) return value;
+  return { ...record, [head]: replacement };
+}
+
+export function toolCallHasCompactablePayload(
+  call: ToolCall,
+  policy: ToolArgumentCompactionPolicy | undefined,
+): boolean {
+  if (!policy) return false;
   const args = parseToolCallArguments(call.function.arguments as any);
-  const search = (value: unknown, key: string | null): boolean => {
-    if (key && DURABLE_PAYLOAD_KEYS.has(key) && typeof value === 'string' && value.length > 0) return true;
-    if (Array.isArray(value)) return value.some(item => search(item, null));
-    if (value && typeof value === 'object') {
-      return Object.entries(value as Record<string, unknown>).some(([childKey, child]) => search(child, childKey));
-    }
-    return false;
-  };
-  return search(args, null);
+  return policy.payloadPaths.some((path) => {
+    const payload = valueAtPath(args, path);
+    return typeof payload === 'string' && payload.length > 0;
+  });
 }
 
 /** Preserve argument shape and control fields while stubbing durable bulk. */
-export function compactCompletedToolCall(call: ToolCall): ToolCall {
+export function compactCompletedToolCall(
+  call: ToolCall,
+  policy: ToolArgumentCompactionPolicy,
+): ToolCall {
   const args = parseToolCallArguments(call.function.arguments as any);
   const outline = extractSourceOutline(args);
+  const compacted = policy.payloadPaths.reduce(
+    (current, path) => compactPath(current, path, outline),
+    args as unknown,
+  );
   return {
     ...call,
     function: {
       ...call.function,
-      arguments: compactValue(args, null, outline) as Record<string, unknown>,
+      arguments: compacted as Record<string, unknown>,
     },
   };
 }
