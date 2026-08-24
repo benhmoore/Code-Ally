@@ -1679,7 +1679,7 @@ export class Agent {
       // tool call during entirely ordinary use.
       this.conversationManager.reconcileToolCalls();
 
-      const sentMessages = this.conversationManager.getMessages();
+      let sentMessages = this.conversationManager.getMessages();
       const estimatedRequestTokens = this.tokenManager.estimateMessagesTokens(sentMessages)
         + this.tokenManager.estimateTokens(JSON.stringify(functions))
         + this.tokenManager.getCalibrationOverhead();
@@ -1688,6 +1688,21 @@ export class Agent {
         TOKEN_MANAGEMENT.MIN_OUTPUT_TOKENS,
         Math.floor(remainingTokens * TOKEN_MANAGEMENT.DYNAMIC_OUTPUT_PERCENT)
       );
+
+      // When the output budget is tight, a single large tool call (a whole-file
+      // write, say) gets cut off at num_predict; the backend discards the
+      // incomplete call and the response arrives as truncated text. Warn the
+      // model up front so it works in smaller pieces instead of failing and
+      // retrying. Ephemeral like the dynamic-context reminder above.
+      if (dynamicMaxTokens < TOKEN_MANAGEMENT.LOW_OUTPUT_BUDGET_WARNING_TOKENS) {
+        const budgetWarning = createSystemReminder(
+          `Output budget notice: this response is limited to roughly ${dynamicMaxTokens} tokens and will be cut off beyond that. Keep it to one focused action. Create large files in multiple smaller pieces (write the first section, then extend it with further edits) rather than emitting one large tool call.`,
+          false
+        );
+        budgetWarning.metadata = { ...(budgetWarning.metadata ?? {}), ephemeral: true };
+        this.conversationManager.addMessage(budgetWarning);
+        sentMessages = this.conversationManager.getMessages();
+      }
       // The watchdog stands down until the model produces its first output; a
       // large prompt on a slow backend spends that whole time in prefill with
       // nothing on the wire. The UI reads the same signal to show a pulse rather

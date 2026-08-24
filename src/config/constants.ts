@@ -854,8 +854,21 @@ export const TOKEN_MANAGEMENT = {
   /** Percentage of remaining context to allocate for dynamic output (90%) */
   DYNAMIC_OUTPUT_PERCENT: 0.9,
 
-  /** Minimum output tokens to ensure viable responses (256 tokens) */
-  MIN_OUTPUT_TOKENS: 256,
+  /**
+   * Minimum output tokens to ensure viable responses. 256 proved too small in
+   * practice: a nearly-full context clamped num_predict below the size of a
+   * single file-writing tool call, and the model was silently truncated
+   * mid-call on every attempt. 1024 keeps at least a small write viable.
+   */
+  MIN_OUTPUT_TOKENS: 1024,
+
+  /**
+   * When the computed dynamic output budget falls below this, warn the model
+   * up front (via the ephemeral dynamic-context reminder) to produce large
+   * files in multiple smaller tool calls instead of one big one, so the
+   * response is not cut off at the output token limit.
+   */
+  LOW_OUTPUT_BUDGET_WARNING_TOKENS: 4096,
 } as const;
 
 // ===========================================

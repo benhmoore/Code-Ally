@@ -75,6 +75,12 @@ export function createOutputLimitReminder(): Message {
   return createSystemReminder(resolveReminderText(config), config.persist);
 }
 
+/** Create a continuation after generation was cut off at the output token limit. */
+export function createOutputTruncatedReminder(): Message {
+  const config = SYSTEM_REMINDERS.CONTINUATIONS.OUTPUT_TRUNCATED;
+  return createSystemReminder(resolveReminderText(config), config.persist);
+}
+
 /**
  * Create empty response after tools reminder
  */
