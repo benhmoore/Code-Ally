@@ -288,8 +288,10 @@ export class CompletionProvider {
 
     // Complete config keys and values for /config set
     // Format: /config set key=value (no space between key and value)
-    if (command === '/config' && subcommand === 'set' && wordCount >= 3) {
-      const thirdPart = parts[2] || context.currentWord;
+    // Only while the cursor sits on that third word: once the token is finished
+    // the same value would otherwise be offered again and re-inserted on Enter.
+    if (command === '/config' && subcommand === 'set' && wordCount === 3) {
+      const thirdPart = context.currentWord;
 
       // Check if user has typed key= (value completion) or just key (key completion)
       const equalsIndex = thirdPart.indexOf('=');

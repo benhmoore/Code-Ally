@@ -481,6 +481,18 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     }
 
     const decision = getCompletionAcceptDecision(completion, key);
+
+    // A suggestion the user already typed in full leaves the buffer unchanged.
+    // Enter then means "run this", not "accept it again".
+    const preview = applyCompletionToInput(input, cursor, completion, {
+      appendSpace: decision.appendSpace,
+    });
+    if (key === 'enter' && !decision.submit && preview.nextValue.trimEnd() === input.trimEnd()) {
+      dismissCompletions();
+      void handleSubmit(input);
+      return;
+    }
+
     const application = applyCompletion(completion, input, cursor, {
       appendSpace: decision.appendSpace,
     });

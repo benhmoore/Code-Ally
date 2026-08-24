@@ -119,6 +119,27 @@ describe('CompletionProvider', () => {
     });
   });
 
+  describe('/config set completions', () => {
+    beforeEach(() => {
+      provider.setConfigManager({ getValue: (key: string) => (key === 'context_size' ? 16384 : undefined) } as any);
+    });
+
+    it('suggests values while the cursor is on the key=value token', async () => {
+      const input = '/config set context_size=';
+      const completions = await provider.getCompletions(input, input.length);
+
+      expect(completions.map(c => c.value)).toContain('32768');
+      expect(completions.find(c => c.value === '32768')?.insertText).toBe('context_size=32768');
+    });
+
+    it('stops suggesting once the key=value token is finished', async () => {
+      const input = '/config set context_size=32768 ';
+      const completions = await provider.getCompletions(input, input.length);
+
+      expect(completions).toEqual([]);
+    });
+  });
+
   describe('agent subcommand completions', () => {
     it('should complete agent subcommands', async () => {
       const completions = await provider.getCompletions('/agent ', 7);
