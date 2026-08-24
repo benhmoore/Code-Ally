@@ -98,6 +98,41 @@ describe('InputPrompt controlled buffer', () => {
     instance.unmount();
   });
 
+  test('enter submits when the selected suggestion is already fully typed', async () => {
+    const stdout = new FakeStdout();
+    const stdin = new FakeStdin();
+    const submitted: string[] = [];
+    const completionProvider = {
+      getCompletions: vi.fn(async (input: string) => {
+        const match = input.match(/context_size=(\d*)$/);
+        if (!match) return [];
+        return ['32768'].filter(value => value.startsWith(match[1])).map(value => ({
+          value,
+          type: 'option' as const,
+          insertText: `context_size=${value}`,
+        }));
+      }),
+    } as unknown as CompletionProvider;
+    const instance = render(
+      <InputPrompt onSubmit={value => { submitted.push(value); }} completionProvider={completionProvider} />,
+      {
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        stdin: stdin as unknown as NodeJS.ReadStream,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      }
+    );
+
+    stdin.write('/config set context_size=32768');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    stdin.write('\r');
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    expect(submitted).toEqual(['/config set context_size=32768']);
+    instance.unmount();
+  });
+
   test('keeps the suggestion surface mounted while refreshed results are pending', async () => {
     const stdout = new FakeStdout();
     const stdin = new FakeStdin();
