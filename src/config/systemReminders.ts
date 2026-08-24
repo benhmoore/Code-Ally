@@ -63,6 +63,12 @@ export const SYSTEM_REMINDERS = {
       persist: false,
     },
 
+    /** Generation was cut off at the output token limit mid-response. */
+    OUTPUT_TRUNCATED: {
+      text: 'Your previous response was cut off at the output token limit before it finished. Any incomplete tool call was discarded and never executed - do not assume it ran. Continue now from where you stopped, and keep this response within the limit: if you were producing a large file or payload, split it across multiple smaller tool calls (for example, write the first section of the file, then extend it with further edits).',
+      persist: false,
+    },
+
     /** Empty response after tool execution - request response based on tool results */
     // PERSIST: false - Ephemeral: One-time prompt to respond after tool execution
     // Cleaned up after turn since tool execution context already in history

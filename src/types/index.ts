@@ -62,6 +62,10 @@ export interface MessageMetadata {
   parentId?: string;
   /** Whether this is a partial assistant response (interrupted mid-stream) */
   partial?: boolean;
+  /** Generation stopped at the output token limit; the response may be cut off mid-action */
+  outputLimited?: boolean;
+  /** Provider-reported finish reason for this assistant message (e.g. 'stop', 'length') */
+  finishReason?: string;
   /** Internal, model-facing checkpoint handoff. Never shown in the transcript. */
   isConversationCheckpoint?: boolean;
   /**

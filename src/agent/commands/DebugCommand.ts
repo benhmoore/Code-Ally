@@ -827,6 +827,11 @@ export class DebugCommand extends Command {
     if (msg.metadata?.isCommandResponse) {
       output += `${indent}│ [Command Response]\n`;
     }
+    if (msg.metadata?.outputLimited) {
+      output += `${indent}│ [TRUNCATED: generation stopped at the output token limit (finishReason: ${msg.metadata.finishReason ?? 'length'}) - any in-progress tool call was discarded]\n`;
+    } else if (msg.metadata?.finishReason && msg.metadata.finishReason !== 'stop') {
+      output += `${indent}│ [Finish reason: ${msg.metadata.finishReason}]\n`;
+    }
 
     output += `${indent}└─\n`;
 

@@ -29,8 +29,23 @@ import {
   createEmptyResponseReminder,
   createEmptyAfterToolsReminder,
   createOutputLimitReminder,
+  createOutputTruncatedReminder,
   createRequirementsNotMetReminder,
 } from '../utils/messageUtils.js';
+
+/**
+ * Whether the model stopped because it exhausted the output token budget
+ * (Ollama reports done_reason 'length'; OpenAI-style backends report
+ * 'max_tokens'/'max_output_tokens'). A response cut off this way may have
+ * lost a tool call that was still being generated - backends discard the
+ * incomplete call, so the response arrives looking like a deliberate
+ * text-only answer.
+ */
+function isOutputLimited(response: LLMResponse): boolean {
+  return response.finishReason === 'length'
+    || response.finishReason === 'max_tokens'
+    || response.finishReason === 'max_output_tokens';
+}
 
 /**
  * Context for response processing containing all necessary callbacks and dependencies.
@@ -295,9 +310,7 @@ export class ResponseProcessor {
       };
       this.conversationManager.addMessage(assistantMessage);
 
-      const outputLimited = response.finishReason === 'length'
-        || response.finishReason === 'max_tokens'
-        || response.finishReason === 'max_output_tokens';
+      const outputLimited = isOutputLimited(response);
 
       // Repeating the same request with the same runway reproduces a
       // reasoning-only truncation. Preserve that reasoning in a checkpoint,
@@ -330,6 +343,57 @@ export class ResponseProcessor {
 
       // Get continuation from LLM
       logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Requesting continuation after truly empty response...');
+      const continuationResponse = await context.getLLMResponse();
+
+      // Process continuation (mark as retry to prevent infinite loop)
+      return await this.processLLMResponse(continuationResponse, context, true);
+    }
+
+    // GAP 4: Output-limited response with content but no tool calls.
+    // The model was cut off at the output token limit while (most likely)
+    // generating a tool call - the backend discards the incomplete call, so
+    // what arrives is indistinguishable from a deliberate text-only answer
+    // unless finishReason is consulted. Without this check the truncated
+    // preamble ("Now the main loop...") is accepted as the final response and
+    // the turn ends "completed" with the task half done. Record the partial
+    // content, reclaim context so the retry has more output runway, and direct
+    // the model to continue in smaller pieces.
+    if (isOutputLimited(response) && toolCalls.length === 0 && content.trim() && !isRetry) {
+      logger.debug('[CONTINUATION] Gap 4: Response truncated at output token limit with content but no tool calls - prodding model to continue');
+      logger.debug('[AGENT_RESPONSE]', context.instanceId, `Output-limited response (finishReason=${response.finishReason}) - attempting continuation`);
+
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content,
+        thinking: response.thinking,
+        timestamp: Date.now(),
+        metadata: {
+          agentName: context.agentName,
+          outputLimited: true,
+          finishReason: response.finishReason,
+        },
+      };
+      this.conversationManager.addMessage(assistantMessage);
+
+      // The same request with the same runway reproduces the truncation.
+      // Reclaim context first so the retry gets a larger output budget.
+      try {
+        await context.reclaimContext();
+      } catch (error) {
+        logger.warn('[AGENT_RESPONSE] Output-limit reclamation failed; continuing with available context:', error);
+        await context.ensureContextRoom();
+      }
+
+      // PERSIST: false - Ephemeral, one-time continuation signal after truncation
+      this.conversationManager.addMessage(createOutputTruncatedReminder());
+
+      const interruptMessage = this.checkForInterruption();
+      if (interruptMessage !== null) {
+        logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Agent interrupted before output-limit continuation - stopping');
+        return interruptMessage;
+      }
+
+      logger.debug('[AGENT_RESPONSE]', context.instanceId, 'Requesting continuation after output-limited response...');
       const continuationResponse = await context.getLLMResponse();
 
       // Process continuation (mark as retry to prevent infinite loop)
@@ -754,12 +818,22 @@ export class ResponseProcessor {
     }
 
     // Normal path - we have content and all required tools (if any) have been called
+    const outputLimited = isOutputLimited(response);
+    if (outputLimited) {
+      // Reaching here truncated means the Gap 4 retry was already spent (or
+      // tool calls were present). Accept the content, but record the
+      // truncation so it is visible in session data and the debug dump.
+      logger.warn('[AGENT_RESPONSE]', context.instanceId,
+        `Accepting output-limited text response (finishReason=${response.finishReason}); the response may be incomplete`);
+    }
     const assistantMessage: Message = {
       role: 'assistant',
       content: content,
       timestamp: Date.now(),
       metadata: {
         agentName: context.agentName,
+        ...(response.finishReason ? { finishReason: response.finishReason } : {}),
+        ...(outputLimited ? { outputLimited: true } : {}),
       },
     };
     this.conversationManager.addMessage(assistantMessage);
