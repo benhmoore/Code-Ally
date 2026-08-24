@@ -72,80 +72,6 @@ function normalizeModelPatchHunkCounts(diffContent: string): string {
 }
 
 /**
- * Repair a partially double-encoded hunk without guessing about source
- * literals. Some providers decode the outer JSON argument but leave selected
- * newline separators as `\\n`, producing a mixture of real and escaped line
- * breaks. Expand those separators only when the hunk's authored counts do not
- * describe the physical body but exactly describe the expanded body.
- */
-function repairCountVerifiedEscapedNewlines(diffContent: string): string {
-  if (!/[\r\n]/.test(diffContent) || !diffContent.includes('\\n')) return diffContent;
-
-  const lines = diffContent.replace(/\r\n/g, '\n').split('\n');
-  const headerPattern = /^@@\s+-\d+(?:,(\d+))?\s+\+\d+(?:,(\d+))?\s+@@/;
-  const countBody = (body: string[]): { oldLines: number; newLines: number } => {
-    let oldLines = 0;
-    let newLines = 0;
-    for (const line of body) {
-      if (line.startsWith('\\ No newline at end of file')) continue;
-      if (!line.startsWith('+')) oldLines++;
-      if (!line.startsWith('-')) newLines++;
-    }
-    return { oldLines, newLines };
-  };
-
-  for (let index = 0; index < lines.length; index++) {
-    const match = headerPattern.exec(lines[index]!);
-    if (!match) continue;
-
-    const bodyStart = index + 1;
-    let bodyEnd = bodyStart;
-    while (bodyEnd < lines.length && !lines[bodyEnd]!.startsWith('@@ ')) bodyEnd++;
-    const body = lines.slice(bodyStart, bodyEnd);
-    const declared = {
-      oldLines: match[1] === undefined ? 1 : Number(match[1]),
-      newLines: match[2] === undefined ? 1 : Number(match[2]),
-    };
-    const physical = countBody(body);
-    if (physical.oldLines === declared.oldLines && physical.newLines === declared.newLines) {
-      index = bodyEnd - 1;
-      continue;
-    }
-
-    const expanded = body.flatMap((line) => line.split(/\\n(?=[ +\\-])/));
-    const expandedCounts = countBody(expanded);
-    if (
-      expanded.length > body.length
-      && expandedCounts.oldLines === declared.oldLines
-      && expandedCounts.newLines === declared.newLines
-    ) {
-      lines.splice(bodyStart, body.length, ...expanded);
-      index = bodyStart + expanded.length - 1;
-    } else {
-      index = bodyEnd - 1;
-    }
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * Produce a structural mixed-encoding candidate for providers that leave some
- * diff line separators escaped. This is never accepted on shape alone: the
- * caller must parse, uniquely anchor, and apply it against the current file.
- */
-function repairEscapedDiffSeparators(diffContent: string): string {
-  if (!/[\r\n]/.test(diffContent) || !diffContent.includes('\\n')) return diffContent;
-  const lines = diffContent.replace(/\r\n/g, '\n').split('\n');
-  let inHunk = false;
-  return lines.map((line) => {
-    if (line.startsWith('@@ ')) inHunk = true;
-    else if (line.startsWith('--- ') || line.startsWith('+++ ')) inHunk = false;
-    return inHunk ? line.replace(/\\n(?=(?:@@\s|[ +\\-]))/g, '\n') : line;
-  }).join('\n');
-}
-
-/**
  * Create a structured patch error
  *
  * @param message - Human-readable error message
@@ -447,12 +373,12 @@ function applyModelPatchExact(
 }
 
 /**
- * Apply a model-authored patch, tolerating one common structured-argument
- * encoding artifact. Some providers preserve the JSON escape before a double
- * quote inside an already-decoded string, so exact source lines arrive as
- * `\"text\"` instead of `"text"`. Exact application always wins; the repaired
- * candidate is accepted only when it independently parses, anchors, and
- * applies, so genuine escaped-quote source remains unchanged.
+ * Apply a model-authored patch. Exact text always wins. The only accepted
+ * decoding fallback is a complete JSON-string payload: it must contain no
+ * physical line breaks, parse as one JSON string, and round-trip byte-for-byte
+ * through JSON encoding. Partially decoded multiline payloads are necessarily
+ * ambiguous with intentional source escapes and are rejected rather than
+ * guessed at.
  */
 export function applyModelPatch(
   diffContent: string,
@@ -461,39 +387,22 @@ export function applyModelPatch(
   const exact = applyModelPatchExact(diffContent, currentContent);
   if (exact.success) return exact;
 
-  const candidates: string[] = [];
-  const addCandidate = (candidate: string) => {
-    if (candidate !== diffContent && !candidates.includes(candidate)) candidates.push(candidate);
-  };
-
   // Some providers double-encode the complete JSON string argument, leaving a
-  // one-line value whose diff separators are literal `\n` sequences. Decoding
-  // is unambiguous only when the authored value has no real line breaks and a
-  // full JSON-string decode produces them. Normally multiline patches are
-  // never transformed, so source literals containing `\n` remain untouched.
+  // one-line value whose diff separators are literal `\n` sequences. Only a
+  // complete, canonical JSON-string encoding is safe to decode here.
   if (!/[\r\n]/.test(diffContent) && diffContent.includes('\\n')) {
     try {
       const decoded = JSON.parse(`"${diffContent}"`);
-      if (typeof decoded === 'string' && /[\r\n]/.test(decoded)) {
-        addCandidate(decoded);
+      const roundTrip = typeof decoded === 'string'
+        ? JSON.stringify(decoded).slice(1, -1)
+        : '';
+      if (roundTrip === diffContent && /[\r\n]/.test(decoded)) {
+        const repaired = applyModelPatchExact(decoded, currentContent);
+        if (repaired.success) return repaired;
       }
     } catch {
-      // Not a completely JSON-escaped string; keep the exact diagnostic.
+      // Not a complete JSON-string payload; keep the exact diagnostic.
     }
-  }
-
-  const mixedNewlineRepair = repairCountVerifiedEscapedNewlines(diffContent);
-  addCandidate(mixedNewlineRepair);
-  addCandidate(repairEscapedDiffSeparators(diffContent));
-
-  if (diffContent.includes('\\"')) {
-    addCandidate(diffContent.replace(/\\"/g, '"'));
-    for (const candidate of [...candidates]) addCandidate(candidate.replace(/\\"/g, '"'));
-  }
-
-  for (const candidate of candidates) {
-    const repaired = applyModelPatchExact(candidate, currentContent);
-    if (repaired.success) return repaired;
   }
   return exact;
 }
