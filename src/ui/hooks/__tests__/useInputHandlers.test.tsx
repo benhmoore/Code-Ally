@@ -47,7 +47,7 @@ describe('useInputHandlers interjection routing', () => {
     const Harness = () => {
       const { handleInterjection } = useInputHandlers(
         null,
-        { id: 'main', kind: 'primary', agent: mainAgent, activityStream },
+        { id: 'main', kind: 'primary', agent: mainAgent, activityStream, isAvailable: () => true },
         { addMessage: vi.fn() } as unknown as AppActions,
       );
       useEffect(() => {
@@ -87,7 +87,7 @@ describe('useInputHandlers interjection routing', () => {
     const Harness = () => {
       const { handleInterjection } = useInputHandlers(
         null,
-        { id: 'child-call', kind: 'child', agent: childAgent, activityStream: childStream },
+        { id: 'child-call', kind: 'child', agent: childAgent, activityStream: childStream, isAvailable: () => true },
         { addMessage } as unknown as AppActions,
       );
       useEffect(() => { completion = handleInterjection('change the child task'); }, [handleInterjection]);
@@ -107,5 +107,43 @@ describe('useInputHandlers interjection routing', () => {
     expect(addUserInterjection).toHaveBeenCalledWith('change the child task');
     expect(interrupt).toHaveBeenCalledWith({ kind: 'user_interjection' });
     expect(addMessage).not.toHaveBeenCalled();
+  });
+
+  it('reports a child-completion race instead of dropping or misrouting input', async () => {
+    const addUserInterjection = vi.fn();
+    const addMessage = vi.fn();
+    let completion: Promise<void> | undefined;
+
+    const Harness = () => {
+      const { handleInterjection } = useInputHandlers(
+        null,
+        {
+          id: 'finished-child',
+          kind: 'child',
+          agent: { addUserInterjection, interrupt: vi.fn() } as any,
+          activityStream: new ActivityStream('finished-child'),
+          isAvailable: () => false,
+        },
+        { addMessage } as unknown as AppActions,
+      );
+      useEffect(() => { completion = handleInterjection('late follow-up'); }, [handleInterjection]);
+      return null;
+    };
+
+    const instance = render(<Harness />, {
+      stdout: new FakeStdout() as unknown as NodeJS.WriteStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
+    mounted.push(instance);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await completion;
+
+    expect(addUserInterjection).not.toHaveBeenCalled();
+    expect(addMessage).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('already finished'),
+      metadata: { isError: true },
+    }));
   });
 });

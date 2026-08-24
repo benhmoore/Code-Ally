@@ -68,6 +68,16 @@ export const useInputHandlers = (
   route: ConversationRoute,
   actions: AppActions
 ): InputHandlers => {
+  const ensureRouteAvailable = useCallback(() => {
+    if (route.isAvailable()) return true;
+    actions.addMessage({
+      role: 'assistant',
+      content: 'That delegated conversation has already finished. Return to main and resend your message.',
+      metadata: { isError: true },
+    });
+    return false;
+  }, [actions, route]);
+
   const addDisplayMessage = useCallback((message: Message) => {
     if (route.kind === 'primary') {
       actions.addMessage(message);
@@ -85,6 +95,7 @@ export const useInputHandlers = (
    * Handle user interjection (submitting message mid-response)
    */
   const handleInterjection = useCallback(async (message: string) => {
+    if (!ensureRouteAvailable()) return;
     const { agent, activityStream } = route;
 
     logger.debug('[APP] Handling interjection:', message);
@@ -117,12 +128,13 @@ export const useInputHandlers = (
         targetAgent,
       },
     });
-  }, [addDisplayMessage, route]);
+  }, [addDisplayMessage, ensureRouteAvailable, route]);
 
   /**
    * Handle user input (messages, commands, bash shortcuts)
    */
   const handleInput = useCallback(async (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
+    if (!ensureRouteAvailable()) return;
     const serviceRegistry = ServiceRegistry.getInstance();
     const { agent, activityStream } = route;
     // Child views are projections of the Agent transcript, so durable user
@@ -408,7 +420,7 @@ export const useInputHandlers = (
         if (route.kind === 'primary') actions.setIsThinking(false);
       }
     }
-  }, [addDisplayMessage, commandHandler, route, actions]);
+  }, [addDisplayMessage, commandHandler, ensureRouteAvailable, route, actions]);
 
   return {
     handleInput,

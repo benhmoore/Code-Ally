@@ -60,7 +60,7 @@ describe('CommandHandler', () => {
     // Create command handler
     const activityStream = new ActivityStream();
     commandHandler = new TestCommandHandler(mockAgent, serviceRegistry, {
-      route: { id: 'main', kind: 'primary', agent: mockAgent, activityStream },
+      route: { id: 'main', kind: 'primary', agent: mockAgent, activityStream, isAvailable: () => true },
     });
   });
 
@@ -241,6 +241,7 @@ describe('CommandHandler', () => {
         route: {
           id: 'child',
           kind: 'child',
+          isAvailable: () => true,
           agent: mockAgent,
           activityStream: new ActivityStream('child'),
         },

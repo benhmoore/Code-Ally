@@ -54,7 +54,6 @@ import { useAgentRouting } from './hooks/useAgentRouting.js';
 import { useForegroundConversationView } from './hooks/useForegroundConversationView.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { switchAgent } from '../services/AgentSwitcher.js';
-import { enterForegroundAgent, exitForegroundAgent } from '../services/ForegroundSwitcher.js';
 import { SyntaxHighlighter } from '../services/SyntaxHighlighter.js';
 import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
@@ -110,6 +109,8 @@ const AppContentComponent: React.FC<{
   foregroundAgent: Agent;
   foregroundAgentId: string;
   primaryAgent: Agent;
+  selectForegroundConversation: (agent: Agent, agentId: string) => void;
+  returnToPrimaryConversation: () => void;
   resumeSession?: string | 'interactive' | null;
   showSetupWizard?: boolean;
   showModelSelector?: boolean;
@@ -122,6 +123,8 @@ const AppContentComponent: React.FC<{
   foregroundAgent,
   foregroundAgentId,
   primaryAgent,
+  selectForegroundConversation,
+  returnToPrimaryConversation,
   resumeSession,
   showSetupWizard,
   showModelSelector,
@@ -196,6 +199,12 @@ const AppContentComponent: React.FC<{
     activityStream: foregroundAgentId === 'main'
       ? activityStream
       : foregroundAgent.getActivityStream(),
+    isAvailable: () => {
+      if (foregroundAgentId === 'main') return true;
+      return ServiceRegistry.getInstance()
+        .get('background_agent_manager')
+        ?.getTask(foregroundAgentId)?.status === 'running';
+    },
   }), [activityStream, foregroundAgent, foregroundAgentId]);
 
   // Get input handler functions. The immutable route is captured per submit,
@@ -228,9 +237,9 @@ const AppContentComponent: React.FC<{
   }, [state.activeAgentId, actions]);
 
   const returnToMain = React.useCallback(() => {
-    exitForegroundAgent({ activityStream, mainAgent: primaryAgent });
+    returnToPrimaryConversation();
     actions.setActiveAgentId('main');
-  }, [activityStream, primaryAgent, actions]);
+  }, [returnToPrimaryConversation, actions]);
 
   const handleEnterFleet = React.useCallback(() => {
     modal.setFleetSelectedIndex(0);
@@ -261,9 +270,9 @@ const AppContentComponent: React.FC<{
     if (!task) return;
     // Swap foreground input routing. Rendering is independently projected from
     // the child and never mutates the root conversation state.
-    enterForegroundAgent({ activityStream, targetAgent: task.subAgent, targetAgentId: target.id });
+    selectForegroundConversation(task.subAgent, target.id);
     actions.setActiveAgentId(target.id);
-  }, [backgroundAgents, state.activeAgentId, activityStream, actions, returnToMain]);
+  }, [backgroundAgents, state.activeAgentId, actions, returnToMain, selectForegroundConversation]);
 
   // Ctrl+B: background all running foreground agents (they keep running; the
   // main loop returns and they appear in the fleet).
@@ -331,7 +340,6 @@ const AppContentComponent: React.FC<{
           agentName: defaultAgent,
           agentId: newAgent.getInstanceId(),
           agentModel: newAgent.getModelClient().modelName,
-          agent: newAgent,
         },
       });
 
@@ -1195,16 +1203,18 @@ export const App: React.FC<AppProps> = ({
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
 
-  const { primaryAgent, foregroundAgent, foregroundAgentId } = useAgentRouting(agent, streamRef.current);
+  const routing = useAgentRouting(agent, streamRef.current);
 
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
         <AppProvider initialConfig={config}>
           <AppContent
-            foregroundAgent={foregroundAgent}
-            foregroundAgentId={foregroundAgentId}
-            primaryAgent={primaryAgent}
+            foregroundAgent={routing.foregroundAgent}
+            foregroundAgentId={routing.foregroundAgentId}
+            primaryAgent={routing.primaryAgent}
+            selectForegroundConversation={routing.selectForegroundConversation}
+            returnToPrimaryConversation={routing.returnToPrimaryConversation}
             resumeSession={resumeSession}
             showSetupWizard={showSetupWizard}
             showModelSelector={showModelSelector}
@@ -1251,16 +1261,18 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
 }) => {
   const streamRef = useRef(activityStream || new ActivityStream());
 
-  const { primaryAgent, foregroundAgent, foregroundAgentId } = useAgentRouting(agent, streamRef.current);
+  const routing = useAgentRouting(agent, streamRef.current);
 
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
         <AppProvider initialConfig={config}>
           <AppContentWithMessages
-            foregroundAgent={foregroundAgent}
-            foregroundAgentId={foregroundAgentId}
-            primaryAgent={primaryAgent}
+            foregroundAgent={routing.foregroundAgent}
+            foregroundAgentId={routing.foregroundAgentId}
+            primaryAgent={routing.primaryAgent}
+            selectForegroundConversation={routing.selectForegroundConversation}
+            returnToPrimaryConversation={routing.returnToPrimaryConversation}
             initialMessages={initialMessages}
           />
         </AppProvider>
@@ -1276,8 +1288,17 @@ const AppContentWithMessages: React.FC<{
   foregroundAgent: Agent;
   foregroundAgentId: string;
   primaryAgent: Agent;
+  selectForegroundConversation: (agent: Agent, agentId: string) => void;
+  returnToPrimaryConversation: () => void;
   initialMessages: Message[];
-}> = ({ foregroundAgent, foregroundAgentId, primaryAgent, initialMessages }) => {
+}> = ({
+  foregroundAgent,
+  foregroundAgentId,
+  primaryAgent,
+  selectForegroundConversation,
+  returnToPrimaryConversation,
+  initialMessages,
+}) => {
   const { actions } = useAppContext();
   const hasLoadedRef = useRef(false);
 
@@ -1289,7 +1310,15 @@ const AppContentWithMessages: React.FC<{
     }
   }, [initialMessages, actions]);
 
-  return <AppContent foregroundAgent={foregroundAgent} foregroundAgentId={foregroundAgentId} primaryAgent={primaryAgent} />;
+  return (
+    <AppContent
+      foregroundAgent={foregroundAgent}
+      foregroundAgentId={foregroundAgentId}
+      primaryAgent={primaryAgent}
+      selectForegroundConversation={selectForegroundConversation}
+      returnToPrimaryConversation={returnToPrimaryConversation}
+    />
+  );
 };
 
 export default App;

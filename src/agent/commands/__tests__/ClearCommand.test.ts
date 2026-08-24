@@ -16,7 +16,7 @@ describe('ClearCommand', () => {
     };
 
     const result = await new ClearCommand().execute([], [], registry as never, {
-      route: { id: 'child', kind: 'child', agent, activityStream },
+      route: { id: 'child', kind: 'child', agent, activityStream, isAvailable: () => true },
     } as never);
 
     expect(result.handled).toBe(true);
@@ -37,7 +37,7 @@ describe('ClearCommand', () => {
 
     await expect(
       new ClearCommand().execute([], [], registry as never, {
-        route: { id: 'child', kind: 'child', agent: registry.get('agent'), activityStream },
+        route: { id: 'child', kind: 'child', agent: registry.get('agent'), activityStream, isAvailable: () => true },
       } as never)
     ).rejects.toThrow('save failed');
     expect(activityStream.emit).not.toHaveBeenCalled();
