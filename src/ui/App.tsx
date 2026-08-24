@@ -189,8 +189,22 @@ const AppContentComponent: React.FC<{
   // Subscribe to all activity events
   const { isCancelling } = useActivitySubscriptions(state, actions, modal, primaryAgent, activityStream);
 
-  // Get input handler functions
-  const { handleInput, handleInterjection } = useInputHandlers(commandHandler, activityStream, state, actions);
+  const conversationRoute = useMemo(() => ({
+    id: foregroundAgentId,
+    kind: foregroundAgentId === 'main' ? 'primary' as const : 'child' as const,
+    agent: foregroundAgent,
+    activityStream: foregroundAgentId === 'main'
+      ? activityStream
+      : foregroundAgent.getActivityStream(),
+  }), [activityStream, foregroundAgent, foregroundAgentId]);
+
+  // Get input handler functions. The immutable route is captured per submit,
+  // so navigation cannot redirect an already-running operation.
+  const { handleInput, handleInterjection } = useInputHandlers(
+    commandHandler,
+    conversationRoute,
+    actions,
+  );
 
   // Auto-wake the idle main agent when a watched task completes.
   useTaskWake({ isThinking: state.isThinking, activeAgentId: state.activeAgentId, submit: handleInput });
@@ -214,8 +228,7 @@ const AppContentComponent: React.FC<{
   }, [state.activeAgentId, actions]);
 
   const returnToMain = React.useCallback(() => {
-    const registry = ServiceRegistry.getInstance();
-    exitForegroundAgent({ registry, activityStream, mainAgent: primaryAgent });
+    exitForegroundAgent({ activityStream, mainAgent: primaryAgent });
     actions.setActiveAgentId('main');
   }, [activityStream, primaryAgent, actions]);
 
@@ -243,13 +256,12 @@ const AppContentComponent: React.FC<{
     }
     const target = backgroundAgents[selectedIndex - 1];
     if (!target) return;
-    const registry = ServiceRegistry.getInstance();
-    const manager = registry.get('background_agent_manager');
+    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
     const task = manager?.getTask(target.id);
     if (!task) return;
     // Swap foreground input routing. Rendering is independently projected from
     // the child and never mutates the root conversation state.
-    enterForegroundAgent({ registry, activityStream, targetAgent: task.subAgent, targetAgentId: target.id });
+    enterForegroundAgent({ activityStream, targetAgent: task.subAgent, targetAgentId: target.id });
     actions.setActiveAgentId(target.id);
   }, [backgroundAgents, state.activeAgentId, activityStream, actions, returnToMain]);
 
@@ -319,6 +331,7 @@ const AppContentComponent: React.FC<{
           agentName: defaultAgent,
           agentId: newAgent.getInstanceId(),
           agentModel: newAgent.getModelClient().modelName,
+          agent: newAgent,
         },
       });
 

@@ -23,17 +23,18 @@ export const DEFAULT_INTERACTIVE_RUN_POLICY: RunPolicy = Object.freeze({
  * may change the authorization preset without ever enabling human interaction.
  */
 export class RunPolicyManager {
-  private policy: RunPolicy;
-  private readonly terminalBaseline: RunPolicy;
+  private basePolicy: RunPolicy;
+  private terminalAutoAllow = false;
   private epoch = 0;
 
   constructor(initial: RunPolicy = DEFAULT_INTERACTIVE_RUN_POLICY) {
-    this.policy = { ...initial };
-    this.terminalBaseline = { ...initial };
+    this.basePolicy = { ...initial };
   }
 
   getPolicy(): Readonly<RunPolicy> {
-    return { ...this.policy };
+    return this.terminalAutoAllow
+      ? { ...this.basePolicy, interaction: 'none', authorizationPresetId: 'ui-auto' }
+      : { ...this.basePolicy };
   }
 
   getEpoch(): number {
@@ -41,19 +42,17 @@ export class RunPolicyManager {
   }
 
   isInteractionAvailable(): boolean {
-    return this.policy.interaction === 'human';
+    return this.getPolicy().interaction === 'human';
   }
 
   updatePolicy(next: RunPolicy): void {
-    const changed = JSON.stringify(next) !== JSON.stringify(this.policy);
-    this.policy = { ...next };
-    if (changed) this.epoch += 1;
+    const before = this.getPolicy();
+    this.basePolicy = { ...next };
+    if (JSON.stringify(before) !== JSON.stringify(this.getPolicy())) this.epoch += 1;
   }
 
   setInteraction(interaction: InteractionMode): void {
-    if (interaction === this.policy.interaction) return;
-    this.policy = { ...this.policy, interaction };
-    this.epoch += 1;
+    this.updatePolicy({ ...this.basePolicy, interaction });
   }
 
   /**
@@ -64,19 +63,10 @@ export class RunPolicyManager {
    * objective back into ordinary chat.
    */
   setTerminalAutoAllow(enabled: boolean): void {
-    this.updatePolicy(enabled
-      ? {
-          ...this.policy,
-          interaction: 'none',
-          completion: 'durable_objective',
-          authorizationPresetId: 'ui-auto',
-        }
-      : {
-          ...this.policy,
-          interaction: this.terminalBaseline.interaction,
-          completion: this.terminalBaseline.completion,
-          authorizationPresetId: this.terminalBaseline.authorizationPresetId,
-        });
+    if (enabled === this.terminalAutoAllow) return;
+    const before = this.getPolicy();
+    this.terminalAutoAllow = enabled;
+    if (JSON.stringify(before) !== JSON.stringify(this.getPolicy())) this.epoch += 1;
   }
 }
 

@@ -54,6 +54,17 @@ export class RetryBudgetExceededError extends Error {
   }
 }
 
+/** Overall retry deadline expired; preserves the failure that consumed it. */
+export class RetryDeadlineExceededError extends Error {
+  readonly cause: unknown;
+
+  constructor(maxTotalMs: number, lastError: unknown) {
+    super(`Retry deadline exceeded after ${maxTotalMs}ms`);
+    this.name = 'RetryDeadlineExceededError';
+    this.cause = lastError;
+  }
+}
+
 function parseRetryAfter(value?: string | null): number | undefined {
   if (!value) return undefined;
   const seconds = Number(value);
@@ -319,16 +330,19 @@ export async function runWithRetries<T>(params: {
   let attemptNum = 0;
   let failures = 0;
   const startTime = Date.now();
+  const deadline = Number.isFinite(maxTotalMs) ? startTime + maxTotalMs : Infinity;
+  let lastError: unknown;
 
   while (true) {
     if (signal?.aborted) return onInterrupted();
-    if (Number.isFinite(maxTotalMs) && Date.now() - startTime > maxTotalMs) {
-      return onError(new Error('Request timeout after 30 minutes'));
+    if (Date.now() >= deadline) {
+      return onError(new RetryDeadlineExceededError(maxTotalMs, lastError));
     }
 
     try {
       return await attempt(attemptNum);
     } catch (error: any) {
+      lastError = error;
       if (error?.name === 'AbortError') {
         return onInterrupted();
       }
@@ -339,16 +353,24 @@ export async function runWithRetries<T>(params: {
         if (Number.isFinite(maxFailures) && failures >= maxFailures) {
           return onError(new RetryBudgetExceededError(error));
         }
-        const delayMs = Math.max(
+        const requestedDelayMs = Math.max(
           getRetryDelayMs(attemptNum),
           Number.isFinite(error?.retryAfterMs) ? error.retryAfterMs : 0
         );
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          return onError(new RetryDeadlineExceededError(maxTotalMs, error));
+        }
+        const delayMs = Math.min(requestedDelayMs, remainingMs);
         onRetry?.(retryLabel(errorClass, error?.httpStatus), (delayMs / 1000).toFixed(1), attemptNum + 1);
         try {
           await sleep(delayMs, signal);
         } catch (sleepError: any) {
           if (sleepError?.name === 'AbortError') return onInterrupted();
           throw sleepError;
+        }
+        if (Date.now() >= deadline) {
+          return onError(new RetryDeadlineExceededError(maxTotalMs, error));
         }
         attemptNum++;
         continue;

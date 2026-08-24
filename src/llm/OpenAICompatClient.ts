@@ -505,6 +505,13 @@ export class OpenAICompatClient extends ModelClient {
         error_message: `Response interrupted: ${error.message}`,
         _content_was_streamed: contentWasStreamed,
       } as LLMResponse;
+    } finally {
+      try {
+        await reader.cancel?.();
+      } catch (cleanupError) {
+        logger.debug('[OPENAI_COMPAT] Stream reader cleanup failed:', cleanupError);
+      }
+      reader.releaseLock?.();
     }
 
     if (thinking && !suppressThinking) {

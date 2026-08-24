@@ -13,6 +13,18 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { ActivityStream } from '@services/ActivityStream.js';
+import type { CommandExecutionContext } from '../commands/types.js';
+
+class TestCommandHandler extends CommandHandler {
+  constructor(agent: any, registry: ServiceRegistry, private readonly context: CommandExecutionContext) {
+    super(agent, registry);
+  }
+
+  override handleCommand(input: string, messages: Message[]) {
+    return super.handleCommand(input, messages, this.context);
+  }
+}
 
 describe('CommandHandler', () => {
   let commandHandler: CommandHandler;
@@ -46,7 +58,10 @@ describe('CommandHandler', () => {
     };
 
     // Create command handler
-    commandHandler = new CommandHandler(mockAgent, serviceRegistry);
+    const activityStream = new ActivityStream();
+    commandHandler = new TestCommandHandler(mockAgent, serviceRegistry, {
+      route: { id: 'main', kind: 'primary', agent: mockAgent, activityStream },
+    });
   });
 
   afterEach(async () => {
@@ -216,6 +231,29 @@ describe('CommandHandler', () => {
       const result = await commandHandler.handleCommand('/config invalid', []);
       expect(result.handled).toBe(true);
       expect(result.response).toMatch(/Invalid|format/);
+    });
+  });
+
+  describe('conversation scopes', () => {
+    it('rejects primary-only commands from a child route while allowing application commands', async () => {
+      const raw = new CommandHandler(mockAgent, serviceRegistry);
+      const childContext: CommandExecutionContext = {
+        route: {
+          id: 'child',
+          kind: 'child',
+          agent: mockAgent,
+          activityStream: new ActivityStream('child'),
+        },
+      };
+
+      await expect(raw.handleCommand('/debug', [], childContext)).resolves.toMatchObject({
+        handled: true,
+        response: expect.stringContaining('primary conversation'),
+      });
+      await expect(raw.handleCommand('/help', [], childContext)).resolves.toMatchObject({
+        handled: true,
+        response: expect.stringContaining('/help'),
+      });
     });
   });
 });

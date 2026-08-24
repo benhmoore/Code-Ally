@@ -326,6 +326,7 @@ export async function loadSessionData(
     transcriptMessages,
     restoredCheckpoint,
     restoredProviderState,
+    sessionData.canonicalMessages ?? [],
   );
 
   // If the session was interrupted mid-turn, inject a continuation prompt

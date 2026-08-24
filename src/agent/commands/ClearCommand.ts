@@ -11,9 +11,10 @@ import type { Message } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
 import { CommandRegistry } from './CommandRegistry.js';
-import type { CommandMetadata } from './types.js';
+import type { CommandExecutionContext, CommandMetadata } from './types.js';
 
 export class ClearCommand extends Command {
+  override readonly scope = 'foreground-conversation' as const;
   static readonly metadata: CommandMetadata = {
     name: '/clear',
     description: 'Clear conversation history',
@@ -32,29 +33,22 @@ export class ClearCommand extends Command {
   async execute(
     _args: string[],
     _messages: Message[],
-    serviceRegistry: ServiceRegistry
+    _serviceRegistry: ServiceRegistry,
+    context: CommandExecutionContext,
   ): Promise<CommandResult> {
-    // Get agent from service registry
-    const agent = serviceRegistry.get('agent');
-
-    if (!agent) {
-      return this.createError('Agent not available');
-    }
+    const { agent, activityStream } = context.route;
 
     // The agent owns both the in-memory reset and its durable replacement. The
     // command must not emit a clear event until both have succeeded.
     await agent.clearConversation();
 
     // Emit event to reset the UI view completely
-    const activityStream = serviceRegistry.get('activity_stream');
-    if (activityStream) {
-      activityStream.emit({
-        id: `clear-${Date.now()}`,
-        type: ActivityEventType.CONVERSATION_CLEAR,
-        timestamp: Date.now(),
-        data: {},
-      });
-    }
+    activityStream.emit({
+      id: `clear-${Date.now()}`,
+      type: ActivityEventType.CONVERSATION_CLEAR,
+      timestamp: Date.now(),
+      data: {},
+    });
 
     // Return silent success - UI will be completely reset so no message needed
     return this.createSilentResponse();

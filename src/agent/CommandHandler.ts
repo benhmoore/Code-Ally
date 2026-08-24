@@ -50,6 +50,7 @@ import { SkillCommand } from './commands/SkillCommand.js';
 import { ScheduleCommand } from './commands/ScheduleCommand.js';
 import { HistoryCommand } from './commands/HistoryCommand.js';
 import { RunCommand } from './commands/RunCommand.js';
+import type { CommandExecutionContext } from './commands/types.js';
 
 export interface CommandResult {
   handled: boolean;
@@ -138,7 +139,11 @@ export class CommandHandler {
    * @param messages - Current conversation messages
    * @returns Command result with updated messages if needed
    */
-  async handleCommand(input: string, messages: Message[]): Promise<CommandResult> {
+  async handleCommand(
+    input: string,
+    messages: Message[],
+    context: CommandExecutionContext,
+  ): Promise<CommandResult> {
     const parsed = this.parseCommand(input);
 
     if (!parsed) {
@@ -150,7 +155,13 @@ export class CommandHandler {
     // Check if this is a class-based command
     const commandInstance = this.commands.get(command);
     if (commandInstance) {
-      return await commandInstance.execute(args, messages, this.serviceRegistry);
+      if (context.route.kind === 'child' && commandInstance.scope === 'primary-conversation') {
+        return {
+          handled: true,
+          response: `/${command} applies to the primary conversation. Return to main before running it.`,
+        };
+      }
+      return await commandInstance.execute(args, messages, this.serviceRegistry, context);
     }
 
     // Unknown command

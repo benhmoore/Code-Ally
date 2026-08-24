@@ -66,3 +66,27 @@ export function finalizeToolCallsAtAgentEnd(
     };
   });
 }
+
+/**
+ * Apply terminal states already proven by durable tool-result messages while a
+ * turn is still running. Activity events are an optimization for live display;
+ * they are not authoritative and may be missed during a repaint or compaction.
+ */
+export function reconcileRecordedToolCalls(
+  messages: Message[],
+  liveCalls: ToolCallState[],
+  reconstructed: ToolCallState[],
+): ToolCallState[] {
+  const recordedIds = new Set(
+    messages
+      .filter((message) => message.role === 'tool' && message.tool_call_id)
+      .map((message) => message.tool_call_id as string),
+  );
+  const recordedById = new Map(
+    reconstructed
+      .filter((call) => recordedIds.has(call.id))
+      .map((call) => [call.id, call]),
+  );
+
+  return liveCalls.map((call) => recordedById.get(call.id) ?? call);
+}

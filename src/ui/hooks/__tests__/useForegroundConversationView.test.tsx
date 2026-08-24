@@ -57,6 +57,25 @@ describe('useForegroundConversationView', () => {
     expect(observed.at(-1)?.messages).toEqual(messages);
     expect(observed.at(-1)?.isThinking).toBe(true);
 
+    messages.push({ role: 'user', content: 'follow-up' });
+    stream.emit({
+      id: 'message-added',
+      type: ActivityEventType.CONVERSATION_MESSAGE_ADDED,
+      timestamp: Date.now(),
+      data: { message: messages.at(-1)! },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(observed.at(-1)?.messages.at(-1)?.content).toBe('follow-up');
+
+    stream.emit({
+      id: 'display-error',
+      type: ActivityEventType.CONVERSATION_DISPLAY_MESSAGE,
+      timestamp: Date.now(),
+      data: { message: { role: 'assistant', content: 'route-local error' } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(observed.at(-1)?.messages.at(-1)?.content).toBe('route-local error');
+
     stream.emit({
       id: 'chunk',
       type: ActivityEventType.ASSISTANT_CHUNK,
@@ -79,5 +98,14 @@ describe('useForegroundConversationView', () => {
     expect(observed.at(-1)?.messages).toEqual(messages);
     expect(observed.at(-1)?.streamingContent).toBeUndefined();
     expect(observed.at(-1)?.isThinking).toBe(false);
+
+    stream.emit({
+      id: 'clear',
+      type: ActivityEventType.CONVERSATION_CLEAR,
+      timestamp: Date.now(),
+      data: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(observed.at(-1)?.messages).toEqual([]);
   });
 });

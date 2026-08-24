@@ -79,8 +79,15 @@ export function useForegroundConversationView(
           isThinking: true,
         } : current);
       }),
-      stream.subscribe(ActivityEventType.TOOL_CALL_START, () => setTimeout(refresh, 0)),
-      stream.subscribe(ActivityEventType.TOOL_CALL_END, () => setTimeout(refresh, 0)),
+      stream.subscribe(ActivityEventType.CONVERSATION_MESSAGE_ADDED, refresh),
+      stream.subscribe(ActivityEventType.CONVERSATION_DISPLAY_MESSAGE, (event) => {
+        const message = event.data?.message;
+        if (!message) return;
+        setView((current) => current ? { ...current, messages: [...current.messages, message] } : current);
+      }),
+      stream.subscribe(ActivityEventType.CONVERSATION_CLEAR, () => {
+        setView({ agentId: activeAgentId, messages: [], activeToolCalls: [], isThinking: false, isCompacting: false });
+      }),
       stream.subscribe(ActivityEventType.ASSISTANT_MESSAGE_COMPLETE, () => {
         setView({ agentId: activeAgentId, ...snapshot(foregroundAgent), isThinking: foregroundAgent.isProcessing(), isCompacting: false });
       }),

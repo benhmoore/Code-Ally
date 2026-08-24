@@ -25,7 +25,7 @@ import { sendTerminalNotification } from '../../utils/terminal.js';
 import { resolveDisplayContent } from '../../utils/toolResultContent.js';
 import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
 import { ThinkingClock } from '../utils/thinkingClock.js';
-import { finalizeToolCallsAtAgentEnd } from '../utils/agentViewLifecycle.js';
+import { finalizeToolCallsAtAgentEnd, reconcileRecordedToolCalls } from '../utils/agentViewLifecycle.js';
 import { appendBoundedText } from '../utils/boundedText.js';
 
 /**
@@ -220,6 +220,22 @@ export const useActivitySubscriptions = (
     }, UI_DELAYS.STREAMING_CONTENT_BATCH_FLUSH);
   });
 
+  const reconcileTranscriptToolResults = () => {
+    const messages = agent.getMessages().filter((message) => message.role !== 'system');
+    const reconciled = reconcileRecordedToolCalls(
+      messages,
+      state.activeToolCalls,
+      reconstructToolCallsFromMessages(messages, ServiceRegistry.getInstance()),
+    );
+    reconciled.forEach((call, index) => {
+      if (call !== state.activeToolCalls[index]) actions.updateToolCall(call.id, call);
+    });
+  };
+
+  useActivityEvent(ActivityEventType.CONVERSATION_MESSAGE_ADDED, (event) => {
+    if (event.data?.message?.role === 'tool') reconcileTranscriptToolResults();
+  });
+
   // Tool call start events
   useActivityEvent(ActivityEventType.TOOL_CALL_START, (event) => {
     if (event.data?.groupExecution) return;
@@ -233,6 +249,11 @@ export const useActivitySubscriptions = (
     if (!event.timestamp) {
       throw new Error(`TOOL_CALL_START event missing required 'timestamp' field. ID: ${event.id}, Tool: ${event.data.toolName}`);
     }
+
+    // Reconcile any earlier call whose terminal event was lost. The Agent's
+    // transcript is durable and authoritative; activity events are only a live
+    // projection and must never strand an executing row indefinitely.
+    reconcileTranscriptToolResults();
 
     const toolCall: ToolCallState = {
       id: event.id,

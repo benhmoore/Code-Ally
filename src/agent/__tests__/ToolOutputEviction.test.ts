@@ -5,6 +5,10 @@ import type { Message } from '../../types/index.js';
 // Deterministic estimator for tests: ~4 chars per token.
 const estimate = (message: Message) => Math.ceil(message.content.length / 4);
 const estimateFull = (message: Message) => Math.ceil(JSON.stringify(message).length / 4);
+const writePolicy = (toolName: string) => toolName === 'write' ? {
+  payloadPaths: [['content']] as const,
+  durableReceipt: 'successful-tool-result' as const,
+} : undefined;
 
 function result(id: string, content: string, overrides: Partial<Message> = {}): Message {
   return {
@@ -100,7 +104,7 @@ describe('evictStaleToolOutputs', () => {
       name: 'write', tool_call_id: 'call-old',
     }), result('new-1', bigPayload), result('new-2', bigPayload)];
 
-    const reclaimed = evictStaleToolOutputs(messages, estimateFull);
+    const reclaimed = evictStaleToolOutputs(messages, estimateFull, writePolicy);
     const call = reclaimed.messages[0]!.tool_calls![0]!;
     const args = call.function.arguments;
 
@@ -125,7 +129,7 @@ describe('evictStaleToolOutputs', () => {
       } }],
     }, result('old', 'created', { name: 'write', tool_call_id: 'call-old' }), result('new-1', bigPayload), result('new-2', bigPayload)];
 
-    const compacted = evictStaleToolOutputs(messages, estimateFull);
+    const compacted = evictStaleToolOutputs(messages, estimateFull, writePolicy);
     const outline = compacted.messages[0]!.tool_calls![0]!.function.arguments.content as string;
 
     expect(outline).toContain('export function isSolid(id)');
@@ -148,10 +152,26 @@ describe('evictStaleToolOutputs', () => {
       assistant('recent-2'), result('recent-2', 'ok', { name: 'write', tool_call_id: 'call-recent-2' }),
     ];
 
-    const reclaimed = evictStaleToolOutputs(messages, estimateFull);
+    const reclaimed = evictStaleToolOutputs(messages, estimateFull, writePolicy);
     expect(reclaimed.messages.find(message => message.id === 'assistant-failed')!
       .tool_calls![0]!.function.arguments.content).toBe(source);
     expect(reclaimed.messages.find(message => message.id === 'assistant-recent-1')!
       .tool_calls![0]!.function.arguments.content).toBe(source);
+  });
+
+  it('retains generic and plugin payloads unless the tool explicitly opts in', () => {
+    const content = 'external payload\n'.repeat(200);
+    const messages: Message[] = [{
+      id: 'assistant-old', role: 'assistant', content: '', timestamp: 1,
+      tool_calls: [{ id: 'call-old', type: 'function', function: {
+        name: 'publish', arguments: { content },
+      } }],
+    }, result('old', 'published', {
+      name: 'publish', tool_call_id: 'call-old',
+    }), result('new-1', bigPayload), result('new-2', bigPayload)];
+
+    const compacted = evictStaleToolOutputs(messages, estimateFull, writePolicy);
+    expect(compacted.messages[0]!.tool_calls![0]!.function.arguments.content).toBe(content);
+    expect(compacted.messages[0]!.metadata?.toolArgumentsEvicted).toBeUndefined();
   });
 });

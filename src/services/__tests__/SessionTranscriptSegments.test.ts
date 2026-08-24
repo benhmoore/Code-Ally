@@ -66,4 +66,28 @@ describe('SessionManager transcript segments', () => {
     const reloaded = new SessionManager({ sessionsDir: dir });
     expect(await reloaded.loadSession('corrupt')).toBeNull();
   });
+
+  it('restores canonical originals for active messages older than the visible tail', async () => {
+    const manager = new SessionManager({ sessionsDir: dir });
+    await manager.initialize();
+    await manager.createSession('canonical-active');
+    const transcript: Message[] = Array.from({ length: 620 }, (_, index) => ({
+      id: `message-${index}`,
+      role: index % 2 ? 'assistant' : 'user',
+      content: `canonical ${index}`,
+      timestamp: index,
+    }));
+    const active: Message[] = [{
+      ...transcript[10]!,
+      content: '[payload evicted]',
+      metadata: { contentEvicted: true },
+    }];
+    await manager.saveSession('canonical-active', active, transcript);
+
+    const data = await manager.getSessionData('canonical-active');
+
+    expect(data.transcript).toHaveLength(500);
+    expect(data.transcript.some(message => message.id === 'message-10')).toBe(false);
+    expect(data.canonicalMessages).toEqual([transcript[10]]);
+  });
 });

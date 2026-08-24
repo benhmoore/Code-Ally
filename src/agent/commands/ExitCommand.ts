@@ -10,6 +10,7 @@ import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 
 export class ExitCommand extends Command {
+  override readonly scope = 'application' as const;
   static readonly metadata: CommandMetadata = {
     name: '/exit',
     description: 'Exit the application',

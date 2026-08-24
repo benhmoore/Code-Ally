@@ -145,6 +145,30 @@ describe('runWithRetries failure budget', () => {
     expect(result).toBe('interrupted');
     expect(attempts).toBe(1);
   });
+
+  it('caps Retry-After at the remaining overall deadline', async () => {
+    vi.useFakeTimers();
+    const startedAt = Date.now();
+    let attempts = 0;
+    const promise = runWithRetries({
+      attempt: async () => {
+        attempts += 1;
+        const error = createHttpResponseError(429, 'slow down', '3600');
+        throw error;
+      },
+      onInterrupted: () => 'interrupted',
+      onError: (error) => error,
+      maxFailures: Infinity,
+      maxTotalMs: 5_000,
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    const result = await promise;
+    expect(result.name).toBe('RetryDeadlineExceededError');
+    expect(result.cause).toBeInstanceOf(HttpResponseError);
+    expect(Date.now() - startedAt).toBe(5_000);
+    expect(attempts).toBe(1);
+  });
 });
 
 describe('readWithTimeout', () => {

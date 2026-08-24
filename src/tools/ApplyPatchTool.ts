@@ -29,6 +29,10 @@ class PatchInputError extends Error {
 }
 
 export class ApplyPatchTool extends BaseTool {
+  override readonly argumentCompaction = {
+    payloadPaths: [['patch']],
+    durableReceipt: 'successful-tool-result',
+  } as const;
   readonly name = 'apply-patch';
   readonly description =
     'Modify one existing text file with contextual unified-diff hunks. Read each target region first. Use write only to create new files.';

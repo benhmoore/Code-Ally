@@ -23,6 +23,7 @@ import type {
   ProviderCheckpointState,
   SemanticCheckpointStateV1,
 } from './compaction/types.js';
+import type { ToolArgumentCompactionPolicy } from '../tools/BaseTool.js';
 
 const MAX_REDUCER_INPUT_RATIO = 0.6;
 const MAX_REDUCER_OUTPUT_TOKENS = 4096;
@@ -145,6 +146,7 @@ export class ConversationCompactor {
     private readonly tokenManager: TokenManager,
     private readonly activityStream: ActivityStream,
     private readonly commitCheckpoint: CheckpointCommitter = async () => true,
+    private readonly argumentPolicyFor: (toolName: string) => ToolArgumentCompactionPolicy | undefined = () => undefined,
   ) {
     this.planner = new ContextBudgetPlanner(tokenManager);
     this.synchronizeCheckpointState();
@@ -203,6 +205,7 @@ export class ConversationCompactor {
     const eviction = evictStaleToolOutputs(
       this.conversationManager.getMessages(),
       message => this.tokenManager.estimateMessageTokens(message),
+      this.argumentPolicyFor,
     );
     if (eviction.evictedCount > 0) {
       this.conversationManager.replaceActiveMessages(eviction.messages);
@@ -670,16 +673,13 @@ export class ConversationCompactor {
     const checkpointId = context.generateId();
     const estimatedAfter = this.tokenManager.estimateMessagesTokens(replacement)
       + this.estimateRequestOverhead(context);
-    // Active-window eviction deliberately replaces bulky results and mutation
-    // arguments with stubs, while the transcript retains their canonical
-    // content. Build the integrity digest from that durable transcript so a
-    // valid checkpoint remains loadable after a process restart.
-    const transcriptById = new Map(this.conversationManager.getTranscript()
-      .filter((message): message is Message & { id: string } => typeof message.id === 'string')
-      .map(message => [message.id, message]));
-    const canonicalSource = deltaIds.map(id => transcriptById.get(id));
-    if (canonicalSource.some(message => message === undefined)) {
-      throw new Error('Compaction source messages are missing from the durable transcript.');
+    // Active-window eviction replaces bulky results and mutation arguments
+    // with stubs. The conversation manager retains exact originals only for
+    // messages still represented in this window, independently of its bounded
+    // presentation transcript.
+    const canonicalSource = this.conversationManager.getCanonicalActiveMessages(deltaIds);
+    if (!canonicalSource) {
+      throw new Error('Compaction source messages are missing from the canonical active window.');
     }
 
     const checkpoint: ConversationCheckpointV1 = {
@@ -701,7 +701,7 @@ export class ConversationCompactor {
         // per-generation, not cumulative. Semantic provenance is carried by the
         // checkpoint itself and validated separately.
         messageIds: deltaIds,
-        digest: checkpointSourceDigest(canonicalSource as Message[]),
+        digest: checkpointSourceDigest(canonicalSource),
       },
       retainedMessageIds: retained.map(message => message.id).filter((id): id is string => Boolean(id)),
       semanticState,

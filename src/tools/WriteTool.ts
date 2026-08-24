@@ -17,6 +17,10 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 export class WriteTool extends BaseTool {
+  override readonly argumentCompaction = {
+    payloadPaths: [['content']],
+    durableReceipt: 'successful-tool-result',
+  } as const;
   readonly name = 'write';
   readonly description =
     'Create a new file with its complete content. Fails if the path already exists; use apply-patch for existing text files. Keep each write small enough for one model response; decompose large implementations into cohesive modules or extend a created file with bounded patches.';

@@ -15,7 +15,9 @@ describe('ClearCommand', () => {
       get: (name: string) => name === 'agent' ? agent : activityStream,
     };
 
-    const result = await new ClearCommand().execute([], [], registry as never);
+    const result = await new ClearCommand().execute([], [], registry as never, {
+      route: { id: 'child', kind: 'child', agent, activityStream },
+    } as never);
 
     expect(result.handled).toBe(true);
     expect(agent.clearConversation).toHaveBeenCalledOnce();
@@ -34,7 +36,9 @@ describe('ClearCommand', () => {
     };
 
     await expect(
-      new ClearCommand().execute([], [], registry as never)
+      new ClearCommand().execute([], [], registry as never, {
+        route: { id: 'child', kind: 'child', agent: registry.get('agent'), activityStream },
+      } as never)
     ).rejects.toThrow('save failed');
     expect(activityStream.emit).not.toHaveBeenCalled();
   });

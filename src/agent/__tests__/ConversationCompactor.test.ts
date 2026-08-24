@@ -263,6 +263,33 @@ describe('ConversationCompactor', () => {
     expect(result.checkpoint.source.digest).toBe(checkpointSourceDigest(canonicalSource));
   });
 
+  it('does not depend on the bounded presentation transcript for canonical sources', async () => {
+    const messages: Message[] = Array.from({ length: 520 }, (_, index) => ({
+      id: `long-lived-${index}`,
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `canonical message ${index}`,
+      timestamp: index + 1,
+    }));
+    const manager = new ConversationManager({ initialMessages: messages });
+    manager.replaceActiveMessages(manager.getMessages().map(message => ({
+      ...message,
+      content: `[evicted ${message.id}]`,
+      metadata: { ...message.metadata, contentEvicted: true },
+    })));
+    expect(manager.getTranscript()).toHaveLength(500);
+
+    const compactor = new ConversationCompactor(
+      chatClient(), manager, new TokenManager(16_384), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+    const result = await compactor.compactAndApply(context(), {
+      forceExtractive: true,
+      forceNoRetainedTail: true,
+    });
+
+    expect(result.checkpoint.source.messageIds).toHaveLength(520);
+    expect(result.checkpoint.source.digest).toBe(checkpointSourceDigest(messages));
+  });
+
   it('retains the observed objective when a structured reducer returns null', async () => {
     const manager = new ConversationManager({ initialMessages: history() });
     const client = structuredClient();

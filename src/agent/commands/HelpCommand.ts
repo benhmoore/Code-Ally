@@ -10,6 +10,7 @@ import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata, HelpCategory } from './types.js';
 
 export class HelpCommand extends Command {
+  override readonly scope = 'application' as const;
   static readonly metadata: CommandMetadata = {
     name: '/help',
     description: 'Show help information',

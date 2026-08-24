@@ -1,8 +1,9 @@
 import type { Message } from '../../types/index.js';
 import {
   compactCompletedToolCall,
-  toolCallHasDurablePayload,
+  toolCallHasCompactablePayload,
 } from './ToolCallArgumentCompaction.js';
+import type { ToolArgumentCompactionPolicy } from '../../tools/BaseTool.js';
 
 /**
  * First-line context reclaim: replace the payloads of stale, bulky, successful
@@ -55,6 +56,7 @@ function evictionStub(message: Message, estimatedTokens: number): string {
 export function evictStaleToolOutputs(
   messages: readonly Message[],
   estimateMessageTokens: (message: Message) => number,
+  argumentPolicyFor: (toolName: string) => ToolArgumentCompactionPolicy | undefined = () => undefined,
 ): EvictionResult {
   const evictableIndexes: number[] = [];
   const successfulOldCallIds = new Set<string>();
@@ -86,13 +88,16 @@ export function evictStaleToolOutputs(
       return evicted;
     }
     if (message.role !== 'assistant' || !message.tool_calls?.some(call =>
-      successfulOldCallIds.has(call.id) && toolCallHasDurablePayload(call))) return message;
+      successfulOldCallIds.has(call.id)
+      && toolCallHasCompactablePayload(call, argumentPolicyFor(call.function.name)))) return message;
     const before = estimateMessageTokens(message);
     if (before < MIN_EVICTABLE_ARGUMENT_TOKENS) return message;
     const compacted: Message = {
       ...message,
       tool_calls: message.tool_calls.map(call =>
-        successfulOldCallIds.has(call.id) ? compactCompletedToolCall(call) : call),
+        successfulOldCallIds.has(call.id) && argumentPolicyFor(call.function.name)
+          ? compactCompletedToolCall(call, argumentPolicyFor(call.function.name)!)
+          : call),
       metadata: { ...message.metadata, toolArgumentsEvicted: true },
     };
     const reclaimed = Math.max(0, before - estimateMessageTokens(compacted));

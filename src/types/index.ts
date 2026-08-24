@@ -205,6 +205,10 @@ export enum ActivityEventType {
   THOUGHT_COMPLETE = 'thought_complete',
   ASSISTANT_CHUNK = 'assistant_chunk',
   ASSISTANT_MESSAGE_COMPLETE = 'assistant_message_complete',
+  /** A durable message was appended to an Agent's own transcript. */
+  CONVERSATION_MESSAGE_ADDED = 'conversation_message_added',
+  /** Route-local presentation message that must not enter model context. */
+  CONVERSATION_DISPLAY_MESSAGE = 'conversation_display_message',
   /** Request handed to the model client; no output received yet (prefill). */
   MODEL_REQUEST_START = 'model_request_start',
   /** Model request settled - returned, errored, or aborted. */
@@ -310,6 +314,8 @@ export type ActivityEventData<T extends ActivityEventType> =
   T extends ActivityEventType.TOOL_OUTPUT_CHUNK ? { chunk: string; toolName?: string } :
   T extends ActivityEventType.ASSISTANT_CHUNK ? { chunk: string } :
   T extends ActivityEventType.ASSISTANT_MESSAGE_COMPLETE ? { content: string } :
+  T extends ActivityEventType.CONVERSATION_MESSAGE_ADDED ? { message: Message } :
+  T extends ActivityEventType.CONVERSATION_DISPLAY_MESSAGE ? { message: Message } :
   T extends ActivityEventType.MODEL_REQUEST_START ? Record<string, never> :
   T extends ActivityEventType.MODEL_REQUEST_END ? Record<string, never> :
   T extends ActivityEventType.THOUGHT_CHUNK ? { chunk?: string; thinking?: boolean } :
