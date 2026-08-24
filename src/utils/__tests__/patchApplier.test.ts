@@ -104,24 +104,21 @@ describe('applyModelPatch', () => {
       expect(result.readRanges).toEqual([{ start: 2, end: 6 }]);
     });
 
-    it('repairs redundant JSON quote escapes only after exact matching fails', () => {
+    it('rejects partially encoded quote escapes instead of guessing at source text', () => {
       const result = applyModelPatch(
         '@@ -1,2 +1,2 @@\n-parser.add_argument(\\"--strict\\")\n-print(\\"old\\")\n+parser.add_argument(\\"--strict\\", required=True)\n+print(\\"new\\")',
         'parser.add_argument("--strict")\nprint("old")\n'
       );
 
-      expect(result).toMatchObject({
-        success: true,
-        content: 'parser.add_argument("--strict", required=True)\nprint("new")\n',
-        readRanges: [{ start: 1, end: 2 }],
-      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('original lines were not found');
     });
 
     it('preserves intentional escaped quotes when the exact patch matches', () => {
       const result = applyModelPatch(
         String.raw`@@ -1,1 +1,1 @@
--const quoted = '\\"old\\"';
-+const quoted = '\\"new\\"';`,
+-const quoted = '\"old\"';
++const quoted = '\"new\"';`,
         String.raw`const quoted = '\"old\"';` + '\n'
       );
 
@@ -151,17 +148,14 @@ describe('applyModelPatch', () => {
       expect(result.content).toBe(String.raw`const value = "new\ntext";` + '\n');
     });
 
-    it('repairs count-verified escaped separators inside a multiline patch', () => {
+    it('rejects escaped separators inside a multiline patch as ambiguous', () => {
       const result = applyModelPatch(
         String.raw`@@ -2,1 +2,2 @@
 -                Record::Nack { .. } => {}\n+                Record::Nack { .. } => {}\n+                Record::Lease { .. } => {}`,
         'start\n                Record::Nack { .. } => {}\nend\n'
       );
 
-      expect(result.success).toBe(true);
-      expect(result.content).toBe(
-        'start\n                Record::Nack { .. } => {}\n                Record::Lease { .. } => {}\nend\n'
-      );
+      expect(result.success).toBe(false);
     });
 
     it('preserves escaped newline-like text when physical lines satisfy the hunk counts', () => {
@@ -176,17 +170,26 @@ describe('applyModelPatch', () => {
       expect(result.content).toBe(String.raw`const value = "new\n+literal";` + '\n');
     });
 
-    it('composes mixed separator and quote repairs after exact application fails', () => {
+    it('rejects mixed partial encodings instead of composing heuristic repairs', () => {
       const result = applyModelPatch(
         String.raw`@@ -2,9 +2,7 @@
 -        let _file = OpenOptions::new().open(\".lock\")?;\n+        let file = OpenOptions::new().open(\".lock\")?;\n\n-        // obsolete\n         acquire(file)`,
         'start\n        let _file = OpenOptions::new().open(".lock")?;\n\n        // obsolete\n        acquire(file)\nend\n'
       );
 
-      expect(result.success).toBe(true);
-      expect(result.content).toBe(
-        'start\n        let file = OpenOptions::new().open(".lock")?;\n\n        acquire(file)\nend\n'
+      expect(result.success).toBe(false);
+    });
+
+    it('never turns an intended escaped addition into diff structure', () => {
+      const result = applyModelPatch(
+        String.raw`@@ -1,2 +1,3 @@
+-const a = "old";\n+const a = "new";
+ const b = "x";
++const c = "intent\n+literal";`,
+        'const a = "old";\nconst b = "x";\n'
       );
+
+      expect(result.success).toBe(false);
     });
 
     it('keeps an intentional escaped separator in an addition despite wrong authored counts', () => {
