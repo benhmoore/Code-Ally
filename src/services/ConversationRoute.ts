@@ -15,5 +15,6 @@ export interface ConversationRoute {
   readonly kind: ConversationRouteKind;
   readonly agent: Agent;
   readonly activityStream: ActivityStream;
+  /** Live ownership check evaluated at submission time, not render time. */
+  readonly isAvailable: () => boolean;
 }
-

@@ -6,23 +6,29 @@
  * both; fleet navigation replaces only the foreground route.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ActivityEventType } from '@shared/index.js';
 import { logger } from '@services/Logger.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
 
-export interface AgentRouting {
+interface AgentRoutingState {
   primaryAgent: Agent;
   foregroundAgent: Agent;
   foregroundAgentId: string;
+}
+
+export interface AgentRouting extends AgentRoutingState {
+  selectForegroundConversation: (agent: Agent, agentId: string) => void;
+  returnToPrimaryConversation: () => void;
 }
 
 export const useAgentRouting = (
   initialPrimaryAgent: Agent,
   activityStream: ActivityStream,
 ): AgentRouting => {
-  const [routing, setRouting] = useState<AgentRouting>({
+  const [routing, setRouting] = useState<AgentRoutingState>({
     primaryAgent: initialPrimaryAgent,
     foregroundAgent: initialPrimaryAgent,
     foregroundAgentId: 'main',
@@ -32,9 +38,9 @@ export const useAgentRouting = (
     const unsubscribeAgentSwitch = activityStream.subscribe(
       ActivityEventType.AGENT_SWITCHED,
       (event) => {
-        const nextPrimary = event.data?.agent as Agent | undefined;
+        const nextPrimary = ServiceRegistry.getInstance().get('agent');
         if (!nextPrimary) {
-          logger.error('[AGENT_ROUTING_HOOK] Primary switch omitted its Agent instance');
+          logger.error('[AGENT_ROUTING_HOOK] Primary switch has no registered Agent');
           return;
         }
 
@@ -52,27 +58,25 @@ export const useAgentRouting = (
       },
     );
 
-    const unsubscribeForegroundSwitch = activityStream.subscribe(
-      ActivityEventType.FOREGROUND_AGENT_CHANGED,
-      (event) => {
-        const nextForeground = event.data?.agent as Agent | undefined;
-        if (!nextForeground) {
-          logger.error('[AGENT_ROUTING_HOOK] Foreground switch omitted its Agent instance');
-          return;
-        }
-        const foregroundAgentId = typeof event.data?.agentId === 'string'
-          ? event.data.agentId
-          : event.data?.isMain ? 'main' : nextForeground.getInstanceId();
-        logger.debug('[AGENT_ROUTING_HOOK]', 'Foreground agent changed:', nextForeground.getInstanceId());
-        setRouting((current) => ({ ...current, foregroundAgent: nextForeground, foregroundAgentId }));
-      },
-    );
-
-    return () => {
-      unsubscribeAgentSwitch();
-      unsubscribeForegroundSwitch();
-    };
+    return unsubscribeAgentSwitch;
   }, [activityStream]);
 
-  return routing;
+  const selectForegroundConversation = useCallback((agent: Agent, agentId: string) => {
+    logger.debug('[AGENT_ROUTING_HOOK]', 'Foreground agent changed:', agent.getInstanceId());
+    setRouting((current) => ({ ...current, foregroundAgent: agent, foregroundAgentId: agentId }));
+  }, []);
+
+  const returnToPrimaryConversation = useCallback(() => {
+    setRouting((current) => ({
+      ...current,
+      foregroundAgent: current.primaryAgent,
+      foregroundAgentId: 'main',
+    }));
+  }, []);
+
+  return {
+    ...routing,
+    selectForegroundConversation,
+    returnToPrimaryConversation,
+  };
 };

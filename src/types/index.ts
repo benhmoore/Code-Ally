@@ -253,7 +253,6 @@ export enum ActivityEventType {
   COMPACTION_COMPLETE = 'compaction_complete',
   BACKGROUND_PROCESS_EXIT = 'background_process_exit',
   AGENT_BACKGROUND_COMPLETE = 'agent_background_complete',
-  FOREGROUND_AGENT_CHANGED = 'foreground_agent_changed',
   BACKGROUND_TASK_COMPLETE = 'background_task_complete',
   USER_INTERJECTION = 'user_interjection',
   INTERJECTION_ACKNOWLEDGMENT = 'interjection_acknowledgment',
@@ -306,6 +305,13 @@ export interface ToolCallEndActivityData {
   shouldCollapse?: boolean;
 }
 
+/** Serializable address for a primary-agent switch. Runtime objects never enter the activity bus. */
+export interface AgentSwitchedActivityData {
+  agentId: string;
+  agentName: string;
+  agentModel?: string;
+}
+
 export type ActivityEventData<T extends ActivityEventType> =
   ActivityEventType extends T ? Record<string, any> :
   T extends ActivityEventType.TOOL_CALL_START ? ToolCallStartActivityData :
@@ -316,6 +322,7 @@ export type ActivityEventData<T extends ActivityEventType> =
   T extends ActivityEventType.ASSISTANT_MESSAGE_COMPLETE ? { content: string } :
   T extends ActivityEventType.CONVERSATION_MESSAGE_ADDED ? { message: Message } :
   T extends ActivityEventType.CONVERSATION_DISPLAY_MESSAGE ? { message: Message } :
+  T extends ActivityEventType.AGENT_SWITCHED ? AgentSwitchedActivityData :
   T extends ActivityEventType.MODEL_REQUEST_START ? Record<string, never> :
   T extends ActivityEventType.MODEL_REQUEST_END ? Record<string, never> :
   T extends ActivityEventType.THOUGHT_CHUNK ? { chunk?: string; thinking?: boolean } :

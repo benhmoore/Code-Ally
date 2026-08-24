@@ -38,7 +38,7 @@ describe('useAgentRouting', () => {
     const child = fakeAgent('child-instance');
     const registry = ServiceRegistry.getInstance();
     const activityStream = new ActivityStream();
-    const observed: AgentRouting[] = [];
+    let current: AgentRouting | undefined;
     const primaryAnnouncements: string[] = [];
 
     activityStream.subscribe(ActivityEventType.AGENT_SWITCHED, (event) => {
@@ -48,8 +48,8 @@ describe('useAgentRouting', () => {
     registry.registerInstance('agent', main);
 
     const Harness = () => {
-      const current = useAgentRouting(main, activityStream);
-      useEffect(() => { observed.push(current); }, [current]);
+      const routing = useAgentRouting(main, activityStream);
+      useEffect(() => { current = routing; }, [routing]);
       return null;
     };
 
@@ -63,24 +63,14 @@ describe('useAgentRouting', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(primaryAnnouncements).toEqual([]);
 
-    activityStream.emit({
-      id: 'foreground-child',
-      type: ActivityEventType.FOREGROUND_AGENT_CHANGED,
-      timestamp: Date.now(),
-      data: { agentId: 'task-id', agentName: 'task', agent: child, isMain: false },
-    });
+    current!.selectForegroundConversation(child, 'task-id');
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)).toEqual({ primaryAgent: main, foregroundAgent: child, foregroundAgentId: 'task-id' });
+    expect(current).toMatchObject({ primaryAgent: main, foregroundAgent: child, foregroundAgentId: 'task-id' });
     expect(primaryAnnouncements).toEqual([]);
 
-    activityStream.emit({
-      id: 'foreground-main',
-      type: ActivityEventType.FOREGROUND_AGENT_CHANGED,
-      timestamp: Date.now(),
-      data: { agentId: 'main', agentName: 'ally', agent: main, isMain: true },
-    });
+    current!.returnToPrimaryConversation();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)).toEqual({ primaryAgent: main, foregroundAgent: main, foregroundAgentId: 'main' });
+    expect(current).toMatchObject({ primaryAgent: main, foregroundAgent: main, foregroundAgentId: 'main' });
     expect(primaryAnnouncements).toEqual([]);
   });
 
@@ -106,13 +96,14 @@ describe('useAgentRouting', () => {
     mounted.push(instance);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    registry.registerInstance('agent', second);
     activityStream.emit({
       id: 'agent-switch',
       type: ActivityEventType.AGENT_SWITCHED,
       timestamp: Date.now(),
-      data: { agentId: 'second', agentName: 'review', agent: second },
+      data: { agentId: 'second', agentName: 'review' },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed).toEqual({ primaryAgent: second, foregroundAgent: second, foregroundAgentId: 'main' });
+    expect(observed).toMatchObject({ primaryAgent: second, foregroundAgent: second, foregroundAgentId: 'main' });
   });
 });

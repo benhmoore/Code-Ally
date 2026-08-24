@@ -1556,7 +1556,6 @@ async function main() {
           agentName: agentType,
           agentId: agent.getInstanceId(),
           agentModel: agentModelClient.modelName,
-          agent,
         },
       });
     }

@@ -65,9 +65,9 @@ import type { TodoManager } from './TodoManager.js';
 
 export interface ServiceMap {
   // --- Conversation / agent core ---
-  /** The foreground Agent. Swapped by AgentSwitcher/ForegroundSwitcher and overridden per sub-agent scope. */
+  /** The primary Agent. Foreground child selection is local UI routing state. */
   agent: Agent;
-  /** Token accounting for whichever Agent is currently foreground. */
+  /** Token accounting for the primary Agent. Child agents own scoped managers. */
   token_manager: TokenManager;
   agent_manager: AgentManager;
   agent_pool: AgentPoolService;
