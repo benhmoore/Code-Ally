@@ -23,7 +23,7 @@ import {
 import { Message, FunctionDefinition, ActivityEventType, type ToolCall } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { logger } from '../services/Logger.js';
-import { API_TIMEOUTS, PERMISSION_MESSAGES, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
+import { API_TIMEOUTS, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
 import { createHttpResponseError, isStreamTimeoutError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
@@ -557,6 +557,14 @@ export class OllamaClient extends ModelClient {
     let finishReason: string | undefined;
     const progressDeadline = new StreamProgressDeadline();
 
+    const interruptedResponse = (): LLMResponse => ({
+      role: 'assistant',
+      content: aggregatedContent,
+      thinking: aggregatedThinking || undefined,
+      interrupted: true,
+      _content_was_streamed: contentWasStreamed,
+    });
+
     // Line buffer to handle JSON objects that span multiple network chunks
     // Network chunks are determined by TCP packet sizes (~1500 bytes MTU), not JSON boundaries
     // A large JSON object (e.g., tool call with code) can span multiple packets
@@ -570,7 +578,7 @@ export class OllamaClient extends ModelClient {
         // than being mislabeled as a user interruption.
         if (abortController.signal.aborted) {
           if (callerSignal.aborted) {
-            throw new Error('Streaming interrupted by user');
+            return interruptedResponse();
           }
           throw new Error('Stream read timeout - no data received');
         }
@@ -731,14 +739,13 @@ export class OllamaClient extends ModelClient {
         }
       }
     } catch (error: any) {
-      if (error.message === 'Streaming interrupted by user') {
+      // Aborting fetch rejects an already-pending reader.read() with AbortError,
+      // so the loop-top check above is not guaranteed to run. The owner signal
+      // is authoritative: a caller cancellation is an interruption outcome, not
+      // a transport failure with a partial response.
+      if (callerSignal.aborted) {
         logger.debug('[OLLAMA_CLIENT] Streaming interrupted for request:', requestId);
-        return {
-          role: 'assistant',
-          content: aggregatedContent || PERMISSION_MESSAGES.USER_FACING_INTERRUPTION,
-          interrupted: true,
-          _content_was_streamed: contentWasStreamed,
-        };
+        return interruptedResponse();
       }
       if (isStreamTimeoutError(error)) {
         // PHASE 3: Stream timeout retry - mark for retry instead of returning error
@@ -771,10 +778,14 @@ export class OllamaClient extends ModelClient {
         throw error;
       }
     } finally {
-      try {
-        await reader.cancel?.();
-      } catch (cleanupError) {
-        logger.debug('[OLLAMA_CLIENT] Stream reader cleanup failed:', cleanupError);
+      // A caller abort has already cancelled the fetch body. Calling cancel()
+      // again commonly throws AbortError and creates misleading failure logs.
+      if (!callerSignal.aborted) {
+        try {
+          await reader.cancel?.();
+        } catch (cleanupError) {
+          logger.debug('[OLLAMA_CLIENT] Stream reader cleanup failed:', cleanupError);
+        }
       }
       reader.releaseLock?.();
     }

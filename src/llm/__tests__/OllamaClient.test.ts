@@ -780,6 +780,60 @@ describe('OllamaClient', () => {
   });
 
   describe('Streaming line buffering', () => {
+    it('classifies an owner abort during a pending read as interruption, not a partial transport error', async () => {
+      const controller = new AbortController();
+      const encoder = new TextEncoder();
+      const cancel = vi.fn(async () => {
+        throw new DOMException('This operation was aborted', 'AbortError');
+      });
+      let reads = 0;
+      let markSecondReadStarted!: () => void;
+      const secondReadStarted = new Promise<void>(resolve => {
+        markSecondReadStarted = resolve;
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: () => {
+              if (reads++ === 0) {
+                return Promise.resolve({
+                  done: false,
+                  value: encoder.encode('{"message":{"content":"Partial answer"},"done":false}\n'),
+                });
+              }
+              markSecondReadStarted();
+              return new Promise((_resolve, reject) => {
+                controller.signal.addEventListener(
+                  'abort',
+                  () => reject(new DOMException('This operation was aborted', 'AbortError')),
+                  { once: true },
+                );
+              });
+            },
+            cancel,
+          }),
+        },
+      });
+
+      const pending = client.send(
+        [{ role: 'user', content: 'Test' }],
+        { stream: true, signal: controller.signal },
+      );
+      await secondReadStarted;
+      controller.abort();
+      const result = await pending;
+
+      expect(result).toMatchObject({
+        content: 'Partial answer',
+        interrupted: true,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.partial).toBeUndefined();
+      expect(cancel).not.toHaveBeenCalled();
+    });
+
     it('should handle JSON objects split across network chunks', async () => {
       // Simulate a large JSON object split across two network chunks
       // This was a bug where TCP packet boundaries caused incomplete JSON
