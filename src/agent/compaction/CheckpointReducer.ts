@@ -295,6 +295,19 @@ export function mergeSemanticCheckpoint(
   for (const key of durableKeys) {
     merged[key] = uniqueFacts([...(previous[key] as any), ...(proposed[key] as any)], 25) as any;
   }
+
+  // A checkpoint created while the agent is continuing must retain some
+  // operational frontier. Structured-output schemas can guarantee array shape
+  // but cannot guarantee that a weak reducer populated any of the four
+  // replacing frontier buckets. Treat a wholly empty proposal as omitted
+  // evidence and preserve the deterministic floor rather than converting an
+  // unfinished task into directionless history. A non-empty blocker, question,
+  // active item, or next action remains authoritative and replaces the floor.
+  const frontierKeys = ['activeWork', 'blockers', 'nextActions', 'unresolvedQuestions'] as const;
+  const proposedHasFrontier = frontierKeys.some(key => proposed[key].length > 0);
+  if (!proposedHasFrontier) {
+    for (const key of frontierKeys) merged[key] = structuredClone(previous[key]) as any;
+  }
   merged.artifacts = dedupeArtifacts([...previous.artifacts, ...proposed.artifacts]);
   return merged;
 }

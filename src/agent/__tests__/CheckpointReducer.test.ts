@@ -298,6 +298,35 @@ describe('mergeSemanticCheckpoint', () => {
     expect(merged.objective).toEqual(previous.objective);
     expect(merged.currentRequest).toEqual(previous.currentRequest);
   });
+
+  it('preserves the deterministic frontier when a reducer omits it entirely', () => {
+    const previous = emptySemanticCheckpoint();
+    previous.activeWork = [{ text: 'Implement the queue API.', sourceMessageIds: ['a1'] }];
+    previous.nextActions = [{ text: 'Then verify the public contract.', sourceMessageIds: ['a1'] }];
+
+    const merged = mergeSemanticCheckpoint(previous, emptySemanticCheckpoint());
+
+    expect(merged.activeWork).toEqual(previous.activeWork);
+    expect(merged.nextActions).toEqual(previous.nextActions);
+  });
+
+  it('accepts a non-empty replacement frontier from the reducer', () => {
+    const previous = emptySemanticCheckpoint();
+    previous.activeWork = [{ text: 'Implement the queue API.', sourceMessageIds: ['a1'] }];
+    previous.nextActions = [{ text: 'Then verify the public contract.', sourceMessageIds: ['a1'] }];
+    const proposed = emptySemanticCheckpoint();
+    proposed.blockers = [{
+      text: 'The migration test still fails.',
+      exactError: 'schema version mismatch',
+      sourceMessageIds: ['t1'],
+    }];
+
+    const merged = mergeSemanticCheckpoint(previous, proposed);
+
+    expect(merged.activeWork).toEqual([]);
+    expect(merged.nextActions).toEqual([]);
+    expect(merged.blockers).toEqual(proposed.blockers);
+  });
 });
 
 describe('fitSemanticCheckpointToTokenBudget', () => {
