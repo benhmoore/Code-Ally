@@ -229,6 +229,8 @@ export enum ActivityEventType {
   MODEL_REQUEST_START = 'model_request_start',
   /** Model request settled - returned, errored, or aborted. */
   MODEL_REQUEST_END = 'model_request_end',
+  /** Abandon transient output from a failed transport attempt before retrying. */
+  MODEL_STREAM_RESET = 'model_stream_reset',
   SYSTEM_PROMPT_DISPLAY = 'system_prompt_display',
   AGENT_START = 'agent_start',
   AGENT_END = 'agent_end',
@@ -341,6 +343,7 @@ export type ActivityEventData<T extends ActivityEventType> =
   T extends ActivityEventType.AGENT_SWITCHED ? AgentSwitchedActivityData :
   T extends ActivityEventType.MODEL_REQUEST_START ? Record<string, never> :
   T extends ActivityEventType.MODEL_REQUEST_END ? Record<string, never> :
+  T extends ActivityEventType.MODEL_STREAM_RESET ? { reason: string; attempt: number } :
   T extends ActivityEventType.THOUGHT_CHUNK ? { chunk?: string; thinking?: boolean } :
   T extends ActivityEventType.THOUGHT_COMPLETE ? { thinking: string } :
   T extends ActivityEventType.STATUS_MESSAGE ? { message: string } :

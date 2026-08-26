@@ -246,6 +246,20 @@ describe('OllamaClient', () => {
 
   describe('Error handling', () => {
     it('should handle network errors with retry', async () => {
+      const rootStream = new ActivityStream();
+      const scopedStream = rootStream.createScoped('agent-1');
+      const rootResets: unknown[] = [];
+      const scopedResets: any[] = [];
+      rootStream.subscribe(ActivityEventType.MODEL_STREAM_RESET, event => rootResets.push(event));
+      scopedStream.subscribe(ActivityEventType.MODEL_STREAM_RESET, event => scopedResets.push(event));
+      client = new OllamaClient({
+        endpoint: 'http://localhost:11434',
+        modelName: 'qwen2.5-coder:32b',
+        temperature: 0.3,
+        contextSize: 16384,
+        maxTokens: 5000,
+        activityStream: rootStream,
+      });
       mockFetch
         .mockRejectedValueOnce(new TypeError('Network error'))
         .mockResolvedValueOnce({
@@ -257,10 +271,20 @@ describe('OllamaClient', () => {
 
       const messages: Message[] = [{ role: 'user', content: 'Test' }];
 
-      const result = await client.send(messages, { stream: false, signal: new AbortController().signal });
+      const result = await client.send(messages, {
+        stream: false,
+        signal: new AbortController().signal,
+        activityStream: scopedStream,
+      });
 
       expect(result.content).toBe('Success');
       expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(rootResets).toEqual([]);
+      expect(scopedResets).toHaveLength(1);
+      expect(scopedResets[0]).toMatchObject({
+        parentId: 'agent-1',
+        data: { reason: 'Connection failed', attempt: 1 },
+      });
     });
 
     it('should handle HTTP errors', async () => {

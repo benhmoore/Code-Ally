@@ -220,6 +220,19 @@ export const useActivitySubscriptions = (
     }, UI_DELAYS.STREAMING_CONTENT_BATCH_FLUSH);
   });
 
+  // A retry replaces the failed attempt. Clear its transient text and timing
+  // before replacement chunks arrive so attempts never merge in presentation.
+  useActivityEvent(ActivityEventType.MODEL_STREAM_RESET, (event) => {
+    if (streamingFlushTimerRef.current) {
+      clearTimeout(streamingFlushTimerRef.current);
+      streamingFlushTimerRef.current = null;
+    }
+    pendingStreamingChunks.current = '';
+    streamingContentRef.current = '';
+    actions.setStreamingContent(undefined);
+    thinkingClock.current.clear(event.parentId || 'root');
+  });
+
   const reconcileTranscriptToolResults = () => {
     const messages = agent.getMessages().filter((message) => message.role !== 'system');
     const reconciled = reconcileRecordedToolCalls(

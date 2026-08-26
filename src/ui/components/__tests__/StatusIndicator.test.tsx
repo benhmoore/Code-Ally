@@ -119,6 +119,16 @@ describe('StatusIndicator request phase', () => {
     expectBlinking(await lastFrame());
   });
 
+  test('returns to waiting-for-output when transport starts a replacement attempt', async () => {
+    emit(ActivityEventType.MODEL_REQUEST_START, {});
+    emit(ActivityEventType.ASSISTANT_CHUNK, { chunk: 'abandoned' });
+    expect(ARC_GLYPHS).toContain(indicatorOf(await lastFrame()));
+
+    emit(ActivityEventType.MODEL_STREAM_RESET, { reason: 'Stream timeout', attempt: 1 });
+
+    expectBlinking(await lastFrame());
+  });
+
   test('stops blinking when the request settles without output', async () => {
     emit(ActivityEventType.MODEL_REQUEST_START, {});
     await lastFrame();

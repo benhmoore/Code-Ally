@@ -30,6 +30,7 @@ import { createHttpResponseError, isStreamTimeoutError, readResponseJsonWithTime
 import { normalizeOllamaMessages } from './ollamaMessages.js';
 import { isImageInputRejection } from './messageImages.js';
 import { validateToolCalls } from './toolCalls.js';
+import { emitModelRetryActivity } from './retryActivity.js';
 
 /**
  * Ollama API payload structure
@@ -312,7 +313,13 @@ export class OllamaClient extends ModelClient {
         maxTotalMs: RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
         onRetry: (label, delaySec, attemptNum) => {
           logger.debug(`[OLLAMA_CLIENT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attemptNum})...`);
-          this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
+          emitModelRetryActivity(eventStream, {
+            requestId,
+            label,
+            delaySeconds: delaySec,
+            attempt: attemptNum,
+            parentId,
+          });
         },
         onInterrupted: () => {
           logger.debug('[OLLAMA_CLIENT] Request aborted:', requestId);
@@ -931,17 +938,4 @@ export class OllamaClient extends ModelClient {
     };
   }
 
-  /**
-   * Emit a status message for user-visible connection events
-   */
-  private emitStatusMessage(message: string): void {
-    if (this.activityStream) {
-      this.activityStream.emit({
-        id: 'status-ollama-connection',
-        type: ActivityEventType.STATUS_MESSAGE,
-        timestamp: Date.now(),
-        data: { message },
-      });
-    }
-  }
 }

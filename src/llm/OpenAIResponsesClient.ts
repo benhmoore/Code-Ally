@@ -13,8 +13,9 @@ import type { ActivityStream } from '../services/ActivityStream.js';
 import type { ProviderCheckpointState } from '../agent/compaction/types.js';
 import { parseToolCallArguments } from './FunctionCalling.js';
 import { runWithRetries } from './httpTransport.js';
-import { RETRY_CONFIG } from '../config/constants.js';
+import { ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { isImageInputRejection, prepareMessageImages } from './messageImages.js';
+import { emitModelRetryActivity } from './retryActivity.js';
 
 interface PreparedInput {
   input: any[];
@@ -106,6 +107,7 @@ export class OpenAIResponsesClient extends ModelClient {
   }
 
   async send(messages: readonly Message[], options: SendOptions): Promise<LLMResponse> {
+    const requestId = `responses-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
     let prepared = this.prepareInput(messages, options.providerState);
     let payload = this.payload(prepared, options);
     let requestContainsImages = this._supportsImages !== false
@@ -117,12 +119,13 @@ export class OpenAIResponsesClient extends ModelClient {
       maxTotalMs: RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
       onInterrupted: () => ({ role: 'assistant', content: '', interrupted: true }),
       onError: (error) => { throw error; },
-      onRetry: (label, delaySeconds) => {
-        this.activityStream?.emit({
-          id: 'status-openai-responses-retry',
-          type: ActivityEventType.STATUS_MESSAGE,
-          timestamp: Date.now(),
-          data: { message: `${label}, retrying in ${delaySeconds}s...` },
+      onRetry: (label, delaySeconds, attempt) => {
+        emitModelRetryActivity(options.activityStream ?? this.activityStream, {
+          requestId,
+          label,
+          delaySeconds,
+          attempt,
+          parentId: options.parentId,
         });
       },
       attempt: async () => {

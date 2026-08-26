@@ -27,6 +27,7 @@ import { buildRequestHeaders } from './requestHeaders.js';
 import { createHttpResponseError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
 import { validateToolCalls } from './toolCalls.js';
 import { isImageInputRejection, prepareMessageImages } from './messageImages.js';
+import { emitModelRetryActivity } from './retryActivity.js';
 
 /** OpenAI chat-completions request payload (the subset we send). */
 interface OpenAIPayload {
@@ -158,7 +159,13 @@ export class OpenAICompatClient extends ModelClient {
         maxTotalMs: RETRY_CONFIG.MAX_TOTAL_REQUEST_TIME,
         onRetry: (label, delaySec, attemptNum) => {
           logger.debug(`[OPENAI_COMPAT] ${label} on request ${requestId}, retrying in ${delaySec}s (attempt ${attemptNum})...`);
-          this.emitStatusMessage(`${label}, retrying in ${delaySec}s...`);
+          emitModelRetryActivity(eventStream, {
+            requestId,
+            label,
+            delaySeconds: delaySec,
+            attempt: attemptNum,
+            parentId,
+          });
         },
         onInterrupted: () => ({ role: 'assistant', content: '', interrupted: true }),
         onError: (error: any) => {
@@ -618,12 +625,4 @@ export class OpenAICompatClient extends ModelClient {
     };
   }
 
-  private emitStatusMessage(message: string): void {
-    this.activityStream?.emit({
-      id: 'status-openai-compat-connection',
-      type: ActivityEventType.STATUS_MESSAGE,
-      timestamp: Date.now(),
-      data: { message },
-    });
-  }
 }

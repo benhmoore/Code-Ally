@@ -79,6 +79,13 @@ export function useForegroundConversationView(
           isThinking: true,
         } : current);
       }),
+      stream.subscribe(ActivityEventType.MODEL_STREAM_RESET, () => {
+        setView((current) => current ? {
+          ...current,
+          streamingContent: undefined,
+          isThinking: true,
+        } : current);
+      }),
       stream.subscribe(ActivityEventType.CONVERSATION_MESSAGE_ADDED, refresh),
       stream.subscribe(ActivityEventType.CONVERSATION_DISPLAY_MESSAGE, (event) => {
         const message = event.data?.message;
