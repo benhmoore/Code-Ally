@@ -379,6 +379,14 @@ export class OpenAICompatClient extends ModelClient {
     let finishReason: string | undefined;
     let usage: LLMResponse['usage'] | undefined;
     const progressDeadline = new StreamProgressDeadline();
+
+    const interruptedResponse = (): LLMResponse => ({
+      role: 'assistant',
+      content,
+      thinking: thinking || undefined,
+      interrupted: true,
+      _content_was_streamed: contentWasStreamed,
+    });
     // Tool calls arrive incrementally, keyed by their `index`; arguments are
     // concatenated as raw JSON-string fragments and parsed during validation.
     const toolAcc = new Map<number, { id: string; name: string; args: string }>();
@@ -403,7 +411,7 @@ export class OpenAICompatClient extends ModelClient {
     try {
       while (true) {
         if (callerSignal.aborted) {
-          return { role: 'assistant', content, interrupted: true, _content_was_streamed: contentWasStreamed };
+          return interruptedResponse();
         }
 
         // A server can open the stream and then stall without closing it; the
@@ -488,6 +496,14 @@ export class OpenAICompatClient extends ModelClient {
         }
       }
     } catch (error: any) {
+      // An owner abort rejects an in-flight reader.read() before the loop can
+      // observe signal.aborted. Classify from the owner signal, not the generic
+      // AbortError, so interjections never masquerade as transport failures.
+      if (callerSignal.aborted) {
+        logger.debug('[OPENAI_COMPAT] Streaming interrupted for request:', requestId);
+        return interruptedResponse();
+      }
+
       // Mid-stream failure. Once content has reached the UI, retrying from
       // scratch would append a second response to the ASSISTANT_CHUNK events
       // already emitted, so hand back what we have and let ResponseProcessor
@@ -506,10 +522,12 @@ export class OpenAICompatClient extends ModelClient {
         _content_was_streamed: contentWasStreamed,
       } as LLMResponse;
     } finally {
-      try {
-        await reader.cancel?.();
-      } catch (cleanupError) {
-        logger.debug('[OPENAI_COMPAT] Stream reader cleanup failed:', cleanupError);
+      if (!callerSignal.aborted) {
+        try {
+          await reader.cancel?.();
+        } catch (cleanupError) {
+          logger.debug('[OPENAI_COMPAT] Stream reader cleanup failed:', cleanupError);
+        }
       }
       reader.releaseLock?.();
     }
