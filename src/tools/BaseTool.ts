@@ -972,7 +972,7 @@ export abstract class BaseTool {
     modifiedContent: string;
     operationType: string;
     showUpdatedContext: boolean;
-    knownUpdatedRanges?: Array<{ start: number; end: number }>;
+    editRanges?: Array<{ oldStart: number; oldEnd: number; newStart: number; newEnd: number }>;
     readStateManager: ReadStateManager | null;
     executionContext?: ToolExecutionContext;
   }): Promise<{
@@ -980,8 +980,10 @@ export abstract class BaseTool {
     diff: string;
     updatedContentTracked: boolean;
   }> {
-    const { absolutePath, originalContent, modifiedContent, operationType, showUpdatedContext, knownUpdatedRanges, readStateManager, executionContext } = options;
+    const { absolutePath, originalContent, modifiedContent, operationType, showUpdatedContext, editRanges, readStateManager, executionContext } = options;
     const readScopeId = this.getReadScopeId(executionContext);
+    const cacheRegistry = this.getExecutionRegistry(executionContext);
+    let updatedContentTracked = false;
 
     const patchNumber = await fileMutationCoordinator.run(absolutePath, async () => {
       const currentContent = await readFile(absolutePath, 'utf-8');
@@ -989,34 +991,38 @@ export abstract class BaseTool {
         throw new Error(`File changed while ${this.name} was preparing the edit. Re-read ${absolutePath} and retry.`);
       }
       await atomicWriteFile(absolutePath, modifiedContent);
-      return this.captureOperationPatch(
+      const capturedPatch = await this.captureOperationPatch(
         operationType,
         absolutePath,
         originalContent,
         modifiedContent
       );
+
+      // Mutation and evidence/cache publication are one serialized state
+      // transition. A second writer must never observe the new bytes while the
+      // first writer's stale read state is still installed.
+      if (readStateManager) {
+        if (showUpdatedContext) {
+          readStateManager.clearFile(absolutePath);
+          readStateManager.trackRead(
+            absolutePath,
+            1,
+            modifiedContent.split('\n').length,
+            readScopeId
+          );
+          updatedContentTracked = true;
+        } else if (editRanges) {
+          readStateManager.applyEdit(absolutePath, editRanges, readScopeId);
+          updatedContentTracked = editRanges.length > 0;
+        } else {
+          readStateManager.clearFile(absolutePath);
+        }
+      }
+      cacheRegistry.get('read_cache')?.invalidate(absolutePath);
+      return capturedPatch;
     });
 
-    if (readStateManager) readStateManager.clearFile(absolutePath);
-
-    const cacheRegistry = this.getExecutionRegistry(executionContext);
-    cacheRegistry.get('read_cache')?.invalidate(absolutePath);
-
-    // Generate diff
     const diff = createUnifiedDiff(originalContent, modifiedContent, absolutePath);
-
-    // Track updated content as read if requested
-    let updatedContentTracked = false;
-    if (showUpdatedContext && readStateManager) {
-      const lines = modifiedContent.split('\n');
-      readStateManager.trackRead(absolutePath, 1, lines.length, readScopeId);
-      updatedContentTracked = true;
-    } else if (readStateManager && knownUpdatedRanges) {
-      for (const range of knownUpdatedRanges) {
-        readStateManager.trackRead(absolutePath, range.start, range.end, readScopeId);
-        updatedContentTracked = true;
-      }
-    }
 
     return { patchNumber, diff, updatedContentTracked };
   }

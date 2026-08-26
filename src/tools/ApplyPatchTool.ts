@@ -18,7 +18,7 @@ interface PreparedPatch {
   originalContent: string;
   modifiedContent: string;
   readRanges: NonNullable<AppliedModelPatch['readRanges']>;
-  updatedReadRanges: NonNullable<AppliedModelPatch['updatedReadRanges']>;
+  editRanges: NonNullable<AppliedModelPatch['editRanges']>;
   hunkCount: number;
 }
 
@@ -124,7 +124,7 @@ export class ApplyPatchTool extends BaseTool {
         modifiedContent: prepared.modifiedContent,
         operationType: 'apply-patch',
         showUpdatedContext,
-        knownUpdatedRanges: prepared.updatedReadRanges,
+        editRanges: prepared.editRanges,
         readStateManager,
         executionContext,
       });
@@ -137,7 +137,7 @@ export class ApplyPatchTool extends BaseTool {
       });
       response.system_reminder = showUpdatedContext
         ? 'The returned updated content is tracked as read for the next patch.'
-        : 'Previous read evidence is stale; only updated lines represented by this patch remain tracked as read.';
+        : 'Your read evidence was updated through this patch; other agents must re-read the changed file.';
       if (patchNumber !== null) response.patch_number = patchNumber;
       if (showUpdatedContext) response.updated_content = prepared.modifiedContent;
 
@@ -206,7 +206,7 @@ export class ApplyPatchTool extends BaseTool {
       originalContent,
       modifiedContent: applied.content,
       readRanges: applied.readRanges ?? [],
-      updatedReadRanges: applied.updatedReadRanges ?? [],
+      editRanges: applied.editRanges ?? [],
       hunkCount: applied.hunkCount ?? 0,
     };
   }
