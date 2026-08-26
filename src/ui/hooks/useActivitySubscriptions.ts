@@ -991,17 +991,21 @@ export const useActivitySubscriptions = (
 
   // Compaction complete (success or error)
   useActivityEvent(ActivityEventType.COMPACTION_COMPLETE, (event) => {
-    const { oldContextUsage, newContextUsage, threshold, parentId, error, errorMessage } = event.data;
+    const { oldContextUsage, newContextUsage, threshold, parentId, error, errorMessage, interrupted } = event.data;
 
-    // Handle error case - just clear compacting state without resetting conversation
-    if (error) {
+    // Terminal non-commit outcomes only clear the in-progress surface. Owner
+    // cancellation (usually a queued interjection) is expected control flow;
+    // the agent immediately rebuilds from the newer conversation.
+    if (error || interrupted) {
       if (parentId) {
         scheduleToolUpdate.current(parentId, { isCompacting: false });
       } else {
         actions.setIsCompacting(false);
       }
-      // Error will be shown via Agent error handling, just unstick the UI
-      logger.debug('[useActivitySubscriptions] Compaction error:', errorMessage);
+      if (error) {
+        // Error will be shown via Agent error handling; just unstick the UI.
+        logger.debug('[useActivitySubscriptions] Compaction error:', errorMessage);
+      }
       return;
     }
 
