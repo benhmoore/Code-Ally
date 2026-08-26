@@ -32,6 +32,12 @@ describe('PhraseRepetitionPattern', () => {
       "AND state='leased'",
       "AND state='leased'",
       "AND state='leased'",
+      'from_state: str',
+      'from_state: str',
+      'from_state: str',
+      'maybe call transition(queue',
+      'maybe call transition(queue',
+      'maybe call transition(queue',
     ];
 
     expect(pattern.check(predicates.join(', '))).toBeNull();
