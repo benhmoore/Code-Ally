@@ -137,6 +137,11 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
           setAwaitingModel(false);
           waitingForOutputRef.current = false;
         }),
+        activityStream.subscribe(ActivityEventType.MODEL_STREAM_RESET, (event) => {
+          if (!accepts(event)) return;
+          setAwaitingModel(true);
+          waitingForOutputRef.current = true;
+        }),
         ...[ActivityEventType.ASSISTANT_CHUNK, ActivityEventType.THOUGHT_CHUNK].map(eventType =>
           activityStream.subscribe(eventType, (event) => {
             // Synthetic status events carry no chunk; only real output counts.

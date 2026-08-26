@@ -175,6 +175,25 @@ describe('Agent - Interruption Handling', () => {
       monitor.stop();
     });
 
+    it('resets transient loop detection at a model transport retry boundary', () => {
+      activityStream.emit({
+        id: 'abandoned-thought',
+        type: ActivityEventType.THOUGHT_CHUNK,
+        timestamp: Date.now(),
+        data: { chunk: 'abandoned attempt' },
+      });
+      expect((agent as any).loopDetector.getThinkingAccumulatedLength()).toBeGreaterThan(0);
+
+      activityStream.emit({
+        id: 'retry-boundary',
+        type: ActivityEventType.MODEL_STREAM_RESET,
+        timestamp: Date.now(),
+        data: { reason: 'Stream timeout', attempt: 1 },
+      });
+
+      expect((agent as any).loopDetector.getThinkingAccumulatedLength()).toBe(0);
+    });
+
     it('pauses the foreground watchdog during semantic compaction', async () => {
       let finishCompaction!: (compacted: boolean) => void;
       const compactionGate = new Promise<boolean>(resolve => { finishCompaction = resolve; });

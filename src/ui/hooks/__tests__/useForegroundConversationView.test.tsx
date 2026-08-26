@@ -85,6 +85,24 @@ describe('useForegroundConversationView', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(observed.at(-1)?.streamingContent).toBe('working');
 
+    stream.emit({
+      id: 'retry-boundary',
+      type: ActivityEventType.MODEL_STREAM_RESET,
+      timestamp: Date.now(),
+      data: { reason: 'Stream timeout', attempt: 1 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(observed.at(-1)?.streamingContent).toBeUndefined();
+
+    stream.emit({
+      id: 'replacement-chunk',
+      type: ActivityEventType.ASSISTANT_CHUNK,
+      timestamp: Date.now(),
+      data: { chunk: 'replacement' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(observed.at(-1)?.streamingContent).toBe('replacement');
+
     messages.push({ role: 'assistant', content: 'done' });
     processing = false;
     stream.emit({
