@@ -14,23 +14,13 @@
  * - Clean start/stop interface for lifecycle management
  * - Applies to main and specialized agents when configured
  *
- * PARENT-CHILD AGENT COORDINATION
- * ================================
+ * PAUSED OPERATION COORDINATION
+ * =============================
  *
- * ActivityMonitor plays a critical role in parent-child agent coordination:
- *
- * PROBLEM: When a parent agent delegates to a child agent (e.g., via AgentTool),
- * the parent agent pauses while the child executes. During this time, the parent
- * is not making tool calls, which could trigger a false timeout.
- *
- * SOLUTION: Parent agents pause their ActivityMonitor before delegating, and
- * resume it when the child completes. This prevents false timeouts while
- * preserving timeout detection for genuinely stuck agents.
- *
- * INTEGRATION: Parent agent reference is set in Agent.ts (lines 231-234) from
- * config.parentAgent. When a child agent starts, it calls:
- *   1. this.parentAgent.pauseActivityMonitoring()  (line 608, before sendMessage)
- *   2. this.parentAgent.resumeActivityMonitoring() (line 872, after sendMessage, in finally)
+ * Tool execution, compaction, checks, and child-agent delegation can all take
+ * longer than the model-generation watchdog permits. Their owners pause the
+ * monitor for the bounded operation and resume it afterward. Completion earns
+ * fresh progress credit; exceptions and interruption do not.
  *
  * REFERENCE COUNTING: Multiple pause/resume calls are handled via pauseCount,
  * allowing safe nesting (e.g., Agent1 → Agent2 → Agent3). The monitor only
@@ -254,60 +244,15 @@ export class ActivityMonitor {
   }
 
   /**
-   * Resume monitoring agent activity
+   * Resume monitoring after a bounded operation that legitimately paused the
+   * no-progress clock (tool execution, compaction, checks, or delegation).
    *
-   * Restarts the watchdog timer after being paused. Conditionally records progress
-   * by updating lastActivityTime to Date.now() based on whether the delegated work
-   * succeeded or failed.
-   *
-   * PARENT-CHILD COORDINATION CONTEXT:
-   * This method is called when a child agent completes execution (Agent.ts line 872,
-   * in finally block). The child agent resumes the parent's activity monitoring,
-   * signaling that the delegation is complete and the parent should continue monitoring
-   * for timeout conditions.
-   *
-   * The coordination flow completes as:
-   *   1. Child finishes work (success, error, or timeout)
-   *   2. finally block ensures parent is always resumed: this.parentAgent.resumeActivityMonitoring()
-   *   3. Parent's activity timer conditionally resets based on success/failure
-   *   4. Parent continues monitoring for its own timeout conditions
-   *
-   * Progress Recording Semantics:
-   * - delegationSucceeded=true (default): Records progress by resetting lastActivityTime
-   *   - Semantic: "The delegated work I was waiting for has completed successfully"
-   *   - This prevents timeout after long delegations where wall-clock time advanced but the agent
-   *     was actually making progress through its delegated sub-agent
-   *   - Without this, an agent that delegates a 50-second task would timeout immediately after
-   *     the delegation completes, even though it was making productive progress the entire time
-   *
-   * - delegationSucceeded=false: Does NOT record progress, preserves lastActivityTime
-   *   - Semantic: "The delegated work failed, so no actual progress was made"
-   *   - This ensures a parent agent that delegates to a failing child doesn't get its timer reset
-   *   - If the parent keeps delegating to failing children without making progress, it will timeout
-   *   - Example: Agent delegates to child that immediately errors - parent should not get credit
-   *
-   * When to Pass delegationSucceeded=true (default):
-   * - Delegated work completed successfully (normal execution finished)
-   * - Child agent returned a result, even if the result indicates partial success
-   * - The delegation itself succeeded, even if the outcome wasn't perfect
-   *
-   * When to Pass delegationSucceeded=false:
-   * - Delegated work threw an error or exception
-   * - Child agent was interrupted before completing
-   * - Child agent timed out without making progress
-   * - The delegation failed catastrophically
-   *
-   * Reference Counting:
-   * - Uses reference counting: multiple pause() calls require matching resume() calls
-   * - The watchdog timer is only restarted when the pause count reaches zero
-   * - Safe to call multiple times - maintains a count of pause requests
-   * - Safe to call when not enabled - will be a no-op
-   *
-   * @param delegationSucceeded - Whether the delegated work succeeded (default: true)
-   *                              true = record progress (reset timer)
-   *                              false = don't record progress (preserve timer)
+   * Pauses are reference-counted. Only the outermost resume restarts the
+   * watchdog, and only a completed operation receives progress credit. An
+   * operation that threw, timed out, or was interrupted resumes monitoring
+   * without extending the deadline.
    */
-  resume(delegationSucceeded: boolean = true): void {
+  resume(operationCompleted: boolean = true): void {
     // No-op if monitoring is disabled
     if (!this.config.enabled) {
       return;
@@ -324,18 +269,11 @@ export class ActivityMonitor {
 
     // Only restart the watchdog timer when pause count reaches zero
     if (this.pauseCount === 0) {
-      // Conditionally record progress based on delegation success
-      if (delegationSucceeded) {
-        // Record progress: delegation completion represents successful progress
-        // Semantic: "The delegating tool call I was waiting for has completed successfully"
-        // This prevents timeout after long delegations where wall-clock time advanced
+      if (operationCompleted) {
         this.lastActivityTime = Date.now();
-        logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Progress recorded: delegation succeeded');
+        logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Progress recorded: paused operation completed');
       } else {
-        // Do NOT record progress: delegation failed, no progress was made
-        // Semantic: "The delegating tool call I was waiting for has failed"
-        // This ensures parent agents don't get timer resets for failed delegations
-        logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Progress NOT recorded: delegation failed');
+        logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Progress not recorded: paused operation incomplete');
       }
 
       // Restart the watchdog interval
