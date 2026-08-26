@@ -307,17 +307,36 @@ class ToolCycleDetector {
 
     const sortedKeys = Object.keys(args || {}).sort();
     for (const key of sortedKeys) {
-      const value = args[key];
-      if (Array.isArray(value)) {
-        signature += `|${key}:${value.join(',')}`;
-      } else if (typeof value === 'object' && value !== null) {
-        signature += `|${key}:${JSON.stringify(value)}`;
-      } else {
-        signature += `|${key}:${value}`;
-      }
+      signature += `|${JSON.stringify(key)}:${this.stableArgumentValue(args[key])}`;
     }
 
     return signature;
+  }
+
+  /**
+   * Canonical JSON for model-supplied arguments.
+   *
+   * Array string coercion collapses every object to `[object Object]`, making
+   * semantically different calls (notably todo state updates and structured
+   * query filters) look exactly identical. Plain JSON.stringify also makes
+   * object insertion order part of identity. Normalize recursively so exact
+   * cycle detection reflects values and structure, independent of key order.
+   */
+  private stableArgumentValue(value: unknown): string {
+    const normalize = (current: unknown): unknown => {
+      if (Array.isArray(current)) return current.map(normalize);
+      if (current && typeof current === 'object') {
+        return Object.fromEntries(
+          Object.entries(current as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, nested]) => [key, normalize(nested)])
+        );
+      }
+      return current;
+    };
+
+    const serialized = JSON.stringify(normalize(value));
+    return serialized === undefined ? String(value) : serialized;
   }
 
   /**
