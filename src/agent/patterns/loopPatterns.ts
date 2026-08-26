@@ -101,6 +101,7 @@ const PHRASE_MIN_LENGTH = 15; // Minimum phrase length to consider
 const PHRASE_MAX_LENGTH = 100; // Maximum phrase length to consider
 const PHRASE_MIN_PROSE_RATIO = 0.55;
 const PHRASE_MIN_DISTINCT_WORDS = 3;
+const CODE_OPERATOR_PATTERN = /(?:={1,3}|!==?|<=|>=|=>|:=|::|&&|\|\||[{}\u005b\u005d`;])/;
 
 /**
  * Phrase similarity is meaningful for prose, but not for equations, tables, or
@@ -110,6 +111,13 @@ const PHRASE_MIN_DISTINCT_WORDS = 3;
  * being mistaken for a stalled generation.
  */
 function isProseLikePhrase(text: string): boolean {
+  // Symbolic operators and delimiters are strong structural evidence that a
+  // short fragment is code, a query predicate, or an expression rather than
+  // prose. Repeating the same guard across several state transitions is normal
+  // technical reasoning and must not be mistaken for a generation loop.
+  // Character- and sentence-level detectors still protect these streams.
+  if (CODE_OPERATOR_PATTERN.test(text)) return false;
+
   const compact = text.replace(/\s/g, '');
   if (compact.length === 0) return false;
 

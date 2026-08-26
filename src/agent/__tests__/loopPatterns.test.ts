@@ -22,6 +22,20 @@ describe('PhraseRepetitionPattern', () => {
 
     expect(pattern.check(derivations.join(',\n'))).toBeNull();
   });
+
+  it('does not treat repeated code and query predicates as prose loops', () => {
+    const pattern = new PhraseRepetitionPattern();
+    const predicates = [
+      'Check state == leased',
+      'Check state == leased',
+      'Check state == leased',
+      "AND state='leased'",
+      "AND state='leased'",
+      "AND state='leased'",
+    ];
+
+    expect(pattern.check(predicates.join(', '))).toBeNull();
+  });
 });
 
 describe('SentenceRepetitionPattern', () => {
