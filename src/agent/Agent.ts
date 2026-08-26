@@ -84,11 +84,10 @@ export interface IParentAgent {
   pauseActivityMonitoring(): void;
   /**
    * Resume the agent's activity monitoring timer
-   * @param delegationSucceeded - Whether the delegated work succeeded (default: true)
-   *                              true = record progress (reset timer)
-   *                              false = don't record progress (preserve timer)
+   * @param operationCompleted Whether the delegated operation completed and
+   * earns progress credit (default: true)
    */
-  resumeActivityMonitoring(delegationSucceeded?: boolean): void;
+  resumeActivityMonitoring(operationCompleted?: boolean): void;
   /** Get the agent's nesting depth (optional, for debugging) */
   getAgentDepth?(): number;
 }
@@ -887,12 +886,11 @@ export class Agent {
    *
    * Safe to call multiple times - subsequent calls are ignored if already running.
    *
-   * @param delegationSucceeded - Whether the delegated work succeeded (default: true)
-   *                              true = record progress (reset timer)
-   *                              false = don't record progress (preserve timer)
+   * @param operationCompleted Whether the paused operation completed and earns
+   * progress credit. Failures resume the watchdog without extending its deadline.
    */
-  resumeActivityMonitoring(delegationSucceeded: boolean = true): void {
-    this.activityMonitor.resume(delegationSucceeded);
+  resumeActivityMonitoring(operationCompleted: boolean = true): void {
+    this.activityMonitor.resume(operationCompleted);
   }
 
   /**
