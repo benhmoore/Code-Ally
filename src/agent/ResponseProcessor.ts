@@ -160,8 +160,13 @@ export class ResponseProcessor {
     context: ResponseContext,
     isRetry: boolean = false
   ): Promise<string> {
-    // Note: Interruption handling is done by Agent.ts before calling this method
-    // (interjections need response parameter, timeouts need Agent state)
+    // Agent checks before delegation, but an interjection can land in the small
+    // handoff window between that check and this method. Observe it again before
+    // any response-repair path mutates history; otherwise a clean cancellation
+    // can be mistaken for an empty/partial model failure and append bogus
+    // continuation messages before Agent resumes with the queued input.
+    const pendingInterruption = this.checkForInterruption();
+    if (pendingInterruption !== null) return pendingInterruption;
 
     // GAP 2: Partial response due to HTTP error (mid-stream interruption)
     // Detect partial responses that were interrupted by HTTP 500/503 errors
