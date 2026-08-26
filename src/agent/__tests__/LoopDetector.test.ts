@@ -121,6 +121,31 @@ describe('LoopDetector', () => {
         });
       });
 
+      it('distinguishes structured array arguments while ignoring object key order', () => {
+        const first = createToolCall('todo-write', {
+          todos: [{ content: 'Build parser', status: 'pending' }],
+        });
+        const progressed = createToolCall('todo-write', {
+          todos: [{ content: 'Build parser', status: 'in_progress' }],
+        });
+        const different = createToolCall('todo-write', {
+          todos: [{ status: 'completed', content: 'Build parser' }],
+        });
+
+        detector.recordToolCalls([first]);
+        detector.recordToolCalls([progressed]);
+
+        expect(detector.detectCycles([different]).has(different.id)).toBe(false);
+
+        detector.recordToolCalls([different]);
+        detector.recordToolCalls([createToolCall('todo-write', {
+          todos: [{ content: 'Build parser', status: 'completed' }],
+        })]);
+
+        const repeated = detector.detectCycles([different]).get(different.id);
+        expect(repeated).toMatchObject({ issueType: 'exact_duplicate', count: 3 });
+      });
+
       it('clears prior failures when the identical call succeeds', () => {
         const toolCall = createToolCall('apply-patch', { patch: 'same patch' });
 
