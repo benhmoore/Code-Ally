@@ -481,6 +481,11 @@ describe('ConversationCompactor', () => {
     expect(reducerMessages[0]!.content).toContain(
       'Reconcile plans against the newest successful tool evidence'
     );
+    expect(reducerMessages[0]!.content).toContain('Do not repeat unchanged entries');
+    expect(reducerMessages[0]!.content).toContain('complete current operational frontier');
+    const reducerOptions = client.send.mock.calls[0]![1];
+    expect(reducerOptions.responseSchema.schema.properties.artifacts.maxItems).toBe(32);
+    expect(reducerOptions.responseSchema.schema.$defs.fact.properties.text.maxLength).toBe(800);
   });
 
   it('uses the reducer request headroom for accumulated structured output', async () => {
