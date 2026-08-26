@@ -390,8 +390,10 @@ export const useInputHandlers = (
             metadata: { isError: true },
           });
         } else if (response && response.trim().length > 0) {
-          // Response exists but was filtered - log for debugging
-          logger.debug('[UI_INPUT_HANDLER] Response filtered (not displayed in UI). Length:', response.length, 'Preview:', response.substring(0, 100));
+          // Normal responses are already rendered by ASSISTANT_MESSAGE_COMPLETE.
+          // Record the handoff without implying that user-visible content was
+          // discarded; adding it here would duplicate the rendered message.
+          logger.debug('[UI_INPUT_HANDLER] Response already rendered by activity stream. Length:', response.length, 'Preview:', response.substring(0, 100));
         }
 
         // Update TokenManager and context usage
