@@ -259,21 +259,21 @@ describe('Agent - Interruption Handling', () => {
       };
       const context = (agent as any).buildResponseContext({});
       context.detectCycles = vi.fn()
-        .mockReturnValueOnce(new Map([[call.id, {
+        .mockReturnValue(new Map([[call.id, {
           toolName: call.function.name,
           count: 3,
           isValidRepeat: false,
           issueType: 'exact_duplicate',
           severity: 'high',
           metadata: { priorFailureCount: 2, failureThreshold: 3 },
-        }]]))
-        .mockReturnValueOnce(new Map([[call.id, {
+        }]]));
+      context.detectRecordedFailures = vi.fn(() => new Map([[call.id, {
           toolName: call.function.name,
-          count: 4,
+          count: 3,
           isValidRepeat: false,
           issueType: 'exact_duplicate',
           severity: 'high',
-          metadata: { priorFailureCount: 3, failureThreshold: 3 },
+          metadata: { failureCount: 3, failureThreshold: 3 },
         }]]));
       context.executeToolCalls = vi.fn(async () => [{ success: false, error: 'hunk not found' }]);
 
@@ -306,6 +306,7 @@ describe('Agent - Interruption Handling', () => {
         severity: 'high',
         metadata: { priorFailureCount: 0, failureThreshold: 3 },
       }]]));
+      context.detectRecordedFailures = vi.fn(() => new Map());
       context.executeToolCalls = vi.fn(async () => [{ success: true, content: 'still running' }]);
 
       const result = await (agent as any).responseProcessor.processToolResponse(

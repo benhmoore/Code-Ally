@@ -10,6 +10,7 @@ function context(overrides: Partial<ResponseContext> = {}): ResponseContext {
     getLLMResponse: vi.fn(async () => ({ role: 'assistant', content: 'unexpected retry' })),
     executeToolCalls: vi.fn(async () => []),
     detectCycles: vi.fn(() => new Map()),
+    detectRecordedFailures: vi.fn(() => new Map()),
     recordToolCalls: vi.fn(),
     interruptForToolLoop: vi.fn(),
     clearCurrentTurn: vi.fn(),

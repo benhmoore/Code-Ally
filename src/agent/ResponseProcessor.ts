@@ -90,6 +90,12 @@ export interface ResponseContext {
     type: 'function';
     function: { name: string; arguments: Record<string, any> };
   }>) => Map<string, CycleInfo>;
+  /** Classify failures after their actual outcomes have been recorded. */
+  detectRecordedFailures: (toolCalls: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: Record<string, any> };
+  }>) => Map<string, CycleInfo>;
   /** Callback to record tool calls for cycle detection */
   recordToolCalls: (
     toolCalls: Array<{
@@ -565,10 +571,10 @@ export class ResponseProcessor {
     // Pass results to enable search hit rate tracking
     context.recordToolCalls(toolCalls, toolResults);
 
-    // Re-evaluate after recording outcomes. A model may issue an entire retry
-    // sequence in one response, so the pre-execution view cannot see failures
-    // from sibling calls in that batch.
-    const completedCycles = context.detectCycles(toolCalls);
+    // Classify actual outcomes after recording them. A model may issue an
+    // entire retry sequence in one response, so the prospective view cannot
+    // see failures from sibling calls in that batch.
+    const completedCycles = context.detectRecordedFailures(toolCalls);
 
     // Advisory cycle warnings are easy for a model to ignore. Once an invalid
     // operation has failed repeatedly, stop this response and route through
@@ -579,12 +585,12 @@ export class ResponseProcessor {
       return (cycle?.issueType === 'exact_duplicate' || cycle?.issueType === 'repeated_failure')
         && !cycle.isValidRepeat
         && toolResults[index]?.success !== true
-        && (cycle.metadata?.priorFailureCount ?? 0)
+        && (cycle.metadata?.failureCount ?? 0)
           >= (cycle.metadata?.failureThreshold ?? Number.POSITIVE_INFINITY);
     });
     if (repeatedFailure) {
       const cycle = completedCycles.get(repeatedFailure.id)!;
-      const failureCount = cycle.metadata?.priorFailureCount ?? 0;
+      const failureCount = cycle.metadata?.failureCount ?? 0;
       context.interruptForToolLoop(
         `${repeatedFailure.function.name} failed repeatedly (${failureCount} attempts)`
       );
