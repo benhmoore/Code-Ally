@@ -1,15 +1,15 @@
 /**
- * ActivityMonitor - Detects agents stuck generating tokens without making tool calls
+ * ActivityMonitor - Detects stalled agent orchestration
  *
  * Purpose:
- * Agents can sometimes get stuck in infinite loops where they
- * generate tokens continuously without making tool calls. This monitor detects such
- * scenarios by tracking the time since the last tool call and interrupting the agent
- * if it exceeds a configured timeout.
+ * Agent orchestration can stall between model requests and concrete operations.
+ * This monitor tracks that layer's progress and interrupts it after a configured
+ * timeout. Model requests are deliberately excluded: transport owns their prefill,
+ * streaming progress, retry/backoff, cancellation, and total request budget.
  *
  * Key Features:
  * - Watchdog timer that periodically checks for activity
- * - Tracks time since last tool call
+ * - Tracks time since the last orchestration progress signal
  * - Callback mechanism for timeout handling
  * - Clean start/stop interface for lifecycle management
  * - Applies to main and specialized agents when configured
@@ -18,7 +18,7 @@
  * =============================
  *
  * Tool execution, compaction, checks, and child-agent delegation can all take
- * longer than the model-generation watchdog permits. Their owners pause the
+ * longer than the orchestration watchdog permits. Their owners pause the
  * monitor for the bounded operation and resume it afterward. Completion earns
  * fresh progress credit; exceptions and interruption do not.
  *
@@ -50,7 +50,7 @@ import { logger } from '../services/Logger.js';
  * Configuration options for ActivityMonitor
  */
 export interface ActivityMonitorConfig {
-  /** Timeout threshold in milliseconds - agent is interrupted if no tool calls occur within this period */
+  /** Timeout threshold in milliseconds for stalled orchestration */
   timeoutMs: number;
 
   /** Interval in milliseconds for checking activity (default: 10000ms / 10 seconds) */
@@ -70,8 +70,8 @@ export interface ActivityMonitorConfig {
  * ActivityMonitor monitors agent activity and detects timeout scenarios
  *
  * This class implements a watchdog timer pattern that:
- * 1. Tracks when the last tool call occurred
- * 2. Periodically checks if too much time has elapsed without tool calls
+ * 1. Tracks when orchestration last made progress
+ * 2. Periodically checks if too much time has elapsed outside model transport
  * 3. Invokes a callback when timeout is detected
  * 4. Provides clean start/stop lifecycle management
  */
@@ -84,9 +84,9 @@ export class ActivityMonitor {
   // Safety limit: prevents stuck monitors from pause/resume mismatches
   // If pause count exceeds this limit, reset to 0 to recover from corrupted state
   private maxPauseCount: number = 10;
-  // A model request is in flight and has produced no output yet (prefill).
-  // See awaitingFirstOutput handling in checkTimeout() for why this suspends the clock.
-  private awaitingFirstOutput: boolean = false;
+  // Model transport owns request liveness, including prefill and silent-stream
+  // retries. See modelRequestInFlight handling in checkTimeout().
+  private modelRequestInFlight: boolean = false;
 
   /**
    * Create a new ActivityMonitor
@@ -156,7 +156,7 @@ export class ActivityMonitor {
     // would arm a watchdog whose every check short-circuits on the stale pause.
     this.isRunning = false;
     this.pauseCount = 0;
-    this.awaitingFirstOutput = false;
+    this.modelRequestInFlight = false;
 
     if (wasRunning) {
       logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Stopped');
@@ -300,20 +300,17 @@ export class ActivityMonitor {
   }
 
   /**
-   * Mark the start of a model request that has not produced output yet.
+   * Mark the start of a model request.
    *
-   * Prefill emits nothing on the wire, so a large prompt on a slow (typically
-   * local) backend looks identical to a stuck agent from this monitor's vantage
-   * point. Killing it here is worse than useless: the retry re-sends an even
-   * larger prompt and times out again, so the turn can never complete. That
-   * phase is bounded by the transport instead (`readWithTimeout` per read, plus
-   * the overall request budget), so the watchdog stands down until output
-   * actually starts.
+   * The transport is the sole owner of request liveness. It bounds prefill,
+   * detects silent streams, and performs retry/backoff under one request budget.
+   * Keeping the orchestration watchdog out of that interval prevents it from
+   * racing and aborting a transport retry at the same deadline.
    */
   beginModelRequest(): void {
-    this.awaitingFirstOutput = true;
+    this.modelRequestInFlight = true;
     this.lastActivityTime = Date.now();
-    logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Model request started - awaiting first output');
+    logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Model request started - transport owns liveness');
   }
 
   /**
@@ -323,10 +320,10 @@ export class ActivityMonitor {
    * processing and the space between requests — remain covered.
    */
   endModelRequest(): void {
-    if (!this.awaitingFirstOutput) return;
-    this.awaitingFirstOutput = false;
+    if (!this.modelRequestInFlight) return;
+    this.modelRequestInFlight = false;
     this.lastActivityTime = Date.now();
-    logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Model request ended without output');
+    logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'Model request ended - orchestration owns liveness');
   }
 
   /**
@@ -346,13 +343,7 @@ export class ActivityMonitor {
   recordStreamProgress(): void {
     if (this.pauseCount > 0) return;
 
-    const wasAwaiting = this.awaitingFirstOutput;
-    this.awaitingFirstOutput = false;
     this.lastActivityTime = Date.now();
-
-    if (wasAwaiting) {
-      logger.debug('[ACTIVITY_MONITOR]', this.config.instanceId, 'First model output received - watchdog armed');
-    }
   }
 
   /**
@@ -370,9 +361,10 @@ export class ActivityMonitor {
       return;
     }
 
-    // Skip while a request is still in prefill (no output yet) - bounded by the
-    // transport's stream-read timeout, not by this watchdog.
-    if (this.awaitingFirstOutput) {
+    // Model request liveness is bounded by the transport's progress timeout,
+    // retry policy, and total request budget. The orchestration watchdog must
+    // not race that owner, especially when transport backoff has just begun.
+    if (this.modelRequestInFlight) {
       return;
     }
 

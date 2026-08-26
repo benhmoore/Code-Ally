@@ -106,27 +106,14 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('System Reminder Injection', () => {
-    /**
-     * Put the watchdog in its armed state: it stands down while a request is
-     * still in prefill (nothing on the wire), so a stalled generation is only
-     * detectable once the model has produced some output and then gone quiet.
-     */
-    const simulateFirstOutput = (): void => {
-      activityStream.emit({
-        id: 'chunk-1',
-        type: ActivityEventType.ASSISTANT_CHUNK,
-        timestamp: Date.now(),
-        data: { chunk: 'thinking out loud' },
-      });
+    const forceInternalNoProgressRecovery = (): void => {
+      // Transport owns model-request stalls. Exercise the agent's bounded
+      // recovery path directly so this test remains about recovery semantics,
+      // independent of which subsystem detected the recoverable condition.
+      (agent as any).handleActivityTimeout(121_000);
     };
 
-    const forceActivityTimeout = (): void => {
-      const monitor = (agent as any).activityMonitor;
-      monitor.lastActivityTime = Date.now() - 121_000;
-      monitor.checkTimeout();
-    };
-
-    it('applies the no-tool activity watchdog to the main agent and recovers once', async () => {
+    it('recovers the main agent once from an internal no-progress interruption', async () => {
       let requestCount = 0;
       mockModelClient.send = vi.fn(async (_messages: Message[], options: any): Promise<LLMResponse> => {
         requestCount++;
@@ -144,8 +131,7 @@ describe('Agent - Interruption Handling', () => {
 
       const monitor = (agent as any).activityMonitor;
       expect(monitor.isActive()).toBe(true);
-      simulateFirstOutput();
-      forceActivityTimeout();
+      forceInternalNoProgressRecovery();
 
       await expect(result).resolves.toBe('Recovered after timeout');
       expect(mockModelClient.send).toHaveBeenCalledTimes(2);
@@ -162,12 +148,10 @@ describe('Agent - Interruption Handling', () => {
       const result = agent.sendMessage('Do not hang forever.');
 
       await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledTimes(1));
-      simulateFirstOutput();
-      forceActivityTimeout();
+      forceInternalNoProgressRecovery();
 
       await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledTimes(2));
-      simulateFirstOutput();
-      forceActivityTimeout();
+      forceInternalNoProgressRecovery();
 
       await expect(result).resolves.toMatch(/repeatedly made no concrete progress/i);
       expect(mockModelClient.send).toHaveBeenCalledTimes(2);

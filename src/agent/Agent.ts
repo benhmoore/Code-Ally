@@ -365,9 +365,8 @@ export class Agent {
       this.agentDepth
     );
 
-    // Detect any agent stuck generating without taking a concrete tool action.
-    // Main-agent requests need this too: transport retries and hidden reasoning
-    // can otherwise keep an interactive or durable turn alive indefinitely.
+    // Detect stalled orchestration outside model requests. Model transport owns
+    // request progress, retries, cancellation, and its total time budget.
     const activityTimeoutMs = this.appConfig.tool_call_activity_timeout * 1000;
     this.activityMonitor = new ActivityMonitor({
       timeoutMs: activityTimeoutMs,
