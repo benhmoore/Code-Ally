@@ -13,13 +13,13 @@
  *   - shell       : a shell command exits 0
  */
 
-import { spawn } from 'child_process';
 import { stat } from 'fs/promises';
 import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { spawnBashCommand } from '../utils/bashProcess.js';
 
 const DEFAULT_INTERVAL_SECONDS = 10;
 const DEFAULT_TIMEOUT_SECONDS = 1800; // 30 minutes
@@ -198,8 +198,7 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
         };
       case 'shell':
         return (signal) => new Promise<boolean>((resolve) => {
-          const child = spawn(target, {
-            shell: true,
+          const child = spawnBashCommand(target, {
             stdio: 'ignore',
             detached: process.platform !== 'win32',
             env: {

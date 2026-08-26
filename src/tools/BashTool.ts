@@ -8,12 +8,13 @@ import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { spawn, ChildProcess } from 'child_process';
+import { ChildProcess } from 'child_process';
 import { TIMEOUT_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { formatError } from '../utils/errorUtils.js';
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { CircularBuffer } from '../services/BashProcessManager.js';
+import { spawnBashCommand } from '../utils/bashProcess.js';
 
 /**
  * Whitelist of safe environment variables to pass to spawned processes.
@@ -474,9 +475,8 @@ export class BashTool extends BaseTool {
 
     // Spawn detached process
     // Note: env is filtered to prevent leaking sensitive environment variables
-    const child: ChildProcess = spawn(command, {
+    const child: ChildProcess = spawnBashCommand(command, {
       cwd: workingDir,
-      shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32', // Create process group on Unix
       env: this.getSafeEnvironment(),
@@ -616,9 +616,8 @@ export class BashTool extends BaseTool {
       // Use 'ignore' for stdin to prevent hanging on interactive prompts
       // Use detached: true on Unix to create a new process group for proper cleanup
       // Note: env is filtered to prevent leaking sensitive environment variables
-      const child: ChildProcess = spawn(command, {
+      const child: ChildProcess = spawnBashCommand(command, {
         cwd: workingDir,
-        shell: true,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32', // Create process group on Unix
         env: this.getSafeEnvironment(),
