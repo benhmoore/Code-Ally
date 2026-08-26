@@ -56,11 +56,19 @@ describe('ActivityMonitor - model generation phases', () => {
     expect(onTimeout).not.toHaveBeenCalled();
   });
 
-  it('times out when a started stream goes silent', () => {
+  it('does not race transport recovery when a started stream goes silent', () => {
     monitor.start();
     monitor.beginModelRequest();
     monitor.recordStreamProgress();
 
+    // Stream progress deadlines and retries belong to the model transport. The
+    // orchestration watchdog must not abort at the same deadline.
+    vi.advanceTimersByTime(300_000);
+
+    expect(onTimeout).not.toHaveBeenCalled();
+
+    // Once the request settles, orchestration owns liveness again.
+    monitor.endModelRequest();
     vi.advanceTimersByTime(121_000);
 
     expect(onTimeout).toHaveBeenCalledTimes(1);
