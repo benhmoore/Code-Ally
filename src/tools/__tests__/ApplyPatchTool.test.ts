@@ -102,7 +102,7 @@ describe('ApplyPatchTool', () => {
     expect(reads.getReadState(file, 'agent-b')).toBeNull();
   });
 
-  it('retains evidence for patch-authored lines so focused follow-up patches do not need a reread', async () => {
+  it('transforms the editing agent read evidence and invalidates every other scope', async () => {
     const file = await fixture();
     reads.trackRead(file, 1, 3, 'agent-a');
     reads.trackRead(file, 1, 3, 'agent-b');
@@ -117,12 +117,31 @@ describe('ApplyPatchTool', () => {
     );
     const first = await executeAsAgent('@@ -2,1 +2,1 @@\n-beta\n+BETA');
     expect(first.success).toBe(true);
-    expect(reads.getReadState(file, 'agent-a')).toEqual([{ start: 2, end: 2 }]);
+    expect(reads.getReadState(file, 'agent-a')).toEqual([{ start: 1, end: 3 }]);
     expect(reads.getReadState(file, 'agent-b')).toBeNull();
 
     const second = await executeAsAgent('@@ -2,1 +2,1 @@\n-BETA\n+final');
     expect(second.success).toBe(true);
     expect(await fs.readFile(file, 'utf-8')).toBe('alpha\nfinal\ngamma\n');
+  });
+
+  it('allows multiple non-overlapping patches after one complete read', async () => {
+    const file = await fixture('one\ntwo\nthree\nfour\n');
+    reads.trackRead(file, 1, 4, 'agent-a');
+    const executeAsAgent = (patch: string) => tool.execute(
+      { file_path: file, patch },
+      undefined,
+      undefined,
+      false,
+      false,
+      { agentId: 'agent-a' }
+    );
+
+    expect((await executeAsAgent('@@ -1,1 +1,2 @@\n-one\n+ONE\n+inserted')).success).toBe(true);
+    expect(reads.getReadState(file, 'agent-a')).toEqual([{ start: 1, end: 5 }]);
+
+    expect((await executeAsAgent('@@ -5,1 +5,1 @@\n-four\n+FOUR')).success).toBe(true);
+    expect(await fs.readFile(file, 'utf-8')).toBe('ONE\ninserted\ntwo\nthree\nFOUR\n');
   });
 
   it('has one compact existing-file mutation contract', () => {

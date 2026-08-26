@@ -26,8 +26,13 @@ export interface PatchResult {
 export interface AppliedModelPatch extends PatchResult {
   /** Original-file line ranges whose exact text anchors the patch. */
   readRanges?: Array<{ start: number; end: number }>;
-  /** Updated-file ranges fully represented by patch context and additions. */
-  updatedReadRanges?: Array<{ start: number; end: number }>;
+  /** Old-to-new line mappings for each applied hunk, in source order. */
+  editRanges?: Array<{
+    oldStart: number;
+    oldEnd: number;
+    newStart: number;
+    newEnd: number;
+  }>;
   hunkCount?: number;
 }
 
@@ -252,7 +257,7 @@ function applyModelPatchExact(
   const normalizedSource = currentContent.replace(/\r\n/g, '\n');
   const sourceLines = normalizedSource.split('\n');
   const readRanges: Array<{ start: number; end: number }> = [];
-  const updatedReadRanges: Array<{ start: number; end: number }> = [];
+  const editRanges: NonNullable<AppliedModelPatch['editRanges']> = [];
   let precedingLineDelta = 0;
 
   for (const [index, hunk] of patch.hunks.entries()) {
@@ -268,7 +273,7 @@ function applyModelPatchExact(
         );
       }
       const addedLines = hunk.lines.filter(line => line.startsWith('+')).length;
-      if (addedLines > 0) updatedReadRanges.push({ start: 1, end: addedLines });
+      editRanges.push({ oldStart: 1, oldEnd: 0, newStart: 1, newEnd: addedLines });
       precedingLineDelta += hunk.newLines;
       continue;
     }
@@ -340,13 +345,13 @@ function applyModelPatchExact(
     const newLineCount = hunk.lines
       .filter(line => line.startsWith(' ') || line.startsWith('+'))
       .length;
-    if (newLineCount > 0) {
-      const updatedStart = actualStart + 1 + precedingLineDelta;
-      updatedReadRanges.push({
-        start: updatedStart,
-        end: updatedStart + newLineCount - 1,
-      });
-    }
+    const updatedStart = actualStart + 1 + precedingLineDelta;
+    editRanges.push({
+      oldStart: actualStart + 1,
+      oldEnd: actualStart + oldLines.length,
+      newStart: updatedStart,
+      newEnd: updatedStart + newLineCount - 1,
+    });
     hunk.oldStart = actualStart + 1;
     hunk.newStart = actualStart + 1 + precedingLineDelta;
     precedingLineDelta += hunk.newLines - hunk.oldLines;
@@ -367,7 +372,7 @@ function applyModelPatchExact(
     success: true,
     content: result,
     readRanges,
-    updatedReadRanges,
+    editRanges,
     hunkCount: patch.hunks.length,
   };
 }

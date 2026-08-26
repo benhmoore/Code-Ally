@@ -43,7 +43,7 @@ describe('applyModelPatch', () => {
         success: true,
         content: 'alpha\nBETA\ngamma\n',
         readRanges: [{ start: 1, end: 3 }],
-        updatedReadRanges: [{ start: 1, end: 3 }],
+        editRanges: [{ oldStart: 1, oldEnd: 3, newStart: 1, newEnd: 3 }],
         hunkCount: 1,
       });
     });

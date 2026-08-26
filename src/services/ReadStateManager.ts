@@ -22,6 +22,15 @@ export interface FileReadState {
   readRanges: ReadRange[];
 }
 
+export interface EditRange {
+  /** Inclusive range in the pre-edit file. Empty when oldEnd < oldStart. */
+  oldStart: number;
+  oldEnd: number;
+  /** Inclusive range in the post-edit file. Empty when newEnd < newStart. */
+  newStart: number;
+  newEnd: number;
+}
+
 export interface ValidationResult {
   /** Whether the validation succeeded */
   success: boolean;
@@ -259,6 +268,57 @@ export class ReadStateManager {
         this.fileStates.delete(key);
       }
     }
+  }
+
+  /**
+   * Replace read evidence after a successful, exact patch.
+   *
+   * Other scopes are invalidated because their view is stale. The editing scope
+   * retains knowledge of unchanged lines, shifted through each hunk, and gains
+   * knowledge of the hunk output it just authored. This preserves the safety
+   * invariant without forcing a redundant reread after every self-mutation.
+   */
+  applyEdit(filePath: string, edits: readonly EditRange[], scopeId?: string): void {
+    const owner = scopeId ?? DEFAULT_SCOPE_ID;
+    const previousRanges = this.getReadState(filePath, owner) ?? [];
+    this.clearFile(filePath);
+
+    const sortedEdits = [...edits].sort((a, b) => a.oldStart - b.oldStart);
+    for (const range of previousRanges) {
+      let cursor = range.start;
+      for (const edit of sortedEdits) {
+        if (edit.oldEnd < cursor) continue;
+        if (edit.oldStart > range.end) break;
+
+        const unchangedEnd = Math.min(range.end, edit.oldStart - 1);
+        if (cursor <= unchangedEnd) {
+          const shift = this.lineShiftBefore(sortedEdits, cursor);
+          this.trackRead(filePath, cursor + shift, unchangedEnd + shift, owner);
+        }
+        cursor = Math.max(cursor, edit.oldEnd + 1);
+        if (cursor > range.end) break;
+      }
+
+      if (cursor <= range.end) {
+        const shift = this.lineShiftBefore(sortedEdits, cursor);
+        this.trackRead(filePath, cursor + shift, range.end + shift, owner);
+      }
+    }
+
+    for (const edit of sortedEdits) {
+      if (edit.newStart <= edit.newEnd) {
+        this.trackRead(filePath, edit.newStart, edit.newEnd, owner);
+      }
+    }
+  }
+
+  private lineShiftBefore(edits: readonly EditRange[], line: number): number {
+    return edits.reduce((shift, edit) => {
+      if (edit.oldEnd >= line) return shift;
+      const oldLength = Math.max(0, edit.oldEnd - edit.oldStart + 1);
+      const newLength = Math.max(0, edit.newEnd - edit.newStart + 1);
+      return shift + newLength - oldLength;
+    }, 0);
   }
 
   /**
