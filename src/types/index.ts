@@ -56,6 +56,18 @@ export interface MessageMetadata {
   isError?: boolean;
   /** Whether this message should be removed after the current turn */
   ephemeral?: boolean;
+  /**
+   * Durable deferred-tool catalogue advertisement. Re-emitted only when the
+   * catalogue content changes so the request prefix stays append-only for
+   * backend KV-cache reuse.
+   */
+  deferredToolCatalogue?: boolean;
+  /**
+   * Durable todo-state reminder emitted at user-message submission. Re-emitted
+   * only when the todo state changes so history stays append-only for backend
+   * KV-cache reuse.
+   */
+  todoStateReminder?: boolean;
   /** Whether this is a user interjection mid-response */
   isInterjection?: boolean;
   /** Parent ID for nested interjections (tool call ID or 'root') */

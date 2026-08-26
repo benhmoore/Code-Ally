@@ -102,6 +102,17 @@ export class ToolOrchestrator {
 
   // Exploratory tool tracking - counts consecutive streak of exploratory tool calls
   private currentExploratoryStreak: number = 0;
+  /**
+   * Orchestrator-originated guidance (exploratory streaks, runtime status,
+   * checkpoint, time, cycle, focus) collected during a tool batch and
+   * delivered in the next request's trailing ephemeral reminder instead of
+   * being embedded in tool-result content. Embedding puts an ephemeral tag
+   * inside a durable tool message, and its later strip is a mid-sequence edit
+   * that forfeits backend KV-cache reuse; a trailing message keeps requests
+   * append-only. Tool-provided reminders (result.system_reminder set by the
+   * tool itself) stay embedded — their meaning is tied to that specific result.
+   */
+  private pendingBatchReminders: string[] = [];
 
   // Tool display properties cache - avoids redundant tool lookups
   private toolPropsCache = new Map<string, {
@@ -199,10 +210,10 @@ export class ToolOrchestrator {
   }
 
   /**
-   * Maybe inject exploratory tool reminder into a result
+   * Maybe queue an exploratory tool reminder for the next request
    * Tracks consecutive exploratory tools and suggests explore() when threshold is reached
    */
-  private maybeInjectExploratoryReminder(toolCall: ToolCall, result: any): void {
+  private maybeInjectExploratoryReminder(toolCall: ToolCall): void {
     // Skip for specialized agents - they're supposed to explore
     if (this.config.isSpecializedAgent) {
       return;
@@ -218,10 +229,10 @@ export class ToolOrchestrator {
       const sternThreshold = TOOL_GUIDANCE.EXPLORATORY_TOOL_STERN_THRESHOLD;
 
       if (this.currentExploratoryStreak >= sternThreshold) {
-        result.system_reminder = createExploratorySternWarning(this.currentExploratoryStreak);
+        this.queueBatchReminder(createExploratorySternWarning(this.currentExploratoryStreak));
         logger.debug('[TOOL_ORCHESTRATOR_EXPLORATORY]', `Stern warning after ${this.currentExploratoryStreak} consecutive exploratory calls`);
       } else if (this.currentExploratoryStreak >= threshold) {
-        result.system_reminder = createExploratoryGentleWarning(this.currentExploratoryStreak);
+        this.queueBatchReminder(createExploratoryGentleWarning(this.currentExploratoryStreak));
         logger.debug('[TOOL_ORCHESTRATOR_EXPLORATORY]', `Gentle reminder after ${this.currentExploratoryStreak} consecutive exploratory calls`);
       }
     } else {
@@ -233,8 +244,8 @@ export class ToolOrchestrator {
     }
   }
 
-  /** Attach volatile runtime status once per tool batch, never once per result. */
-  private injectRuntimeStatusReminder(result: ToolResult): void {
+  /** Collect volatile runtime status once per tool batch, never once per result. */
+  private injectRuntimeStatusReminder(): void {
     const registry = ServiceRegistry.getInstance();
     const reminderParts: string[] = [];
     const processManager = registry.get('bash_process_manager');
@@ -258,11 +269,24 @@ export class ToolOrchestrator {
     }
 
     if (reminderParts.length === 0) return;
-    const reminderText = [...new Set(reminderParts)].join('\n\n');
-    result.system_reminder = result.system_reminder
-      ? `${result.system_reminder}\n\n${reminderText}`
-      : reminderText;
-    result.system_reminder_persist = false;
+    this.queueBatchReminder([...new Set(reminderParts)].join('\n\n'));
+  }
+
+  /** Queue orchestrator guidance for the next request's trailing reminder. */
+  private queueBatchReminder(text: string): void {
+    if (!text || this.pendingBatchReminders.includes(text)) return;
+    this.pendingBatchReminders.push(text);
+  }
+
+  /**
+   * Hand the queued batch guidance to the request assembler and clear the
+   * queue. Called once per LLM request; the texts ride in the trailing
+   * ephemeral reminder so history stays append-only for KV-cache reuse.
+   */
+  drainBatchReminders(): string[] {
+    const drained = this.pendingBatchReminders;
+    this.pendingBatchReminders = [];
+    return drained;
   }
 
   /**
@@ -559,28 +583,20 @@ export class ToolOrchestrator {
       // Generate checkpoint reminder once per batch (not per tool)
       // Checkpoint reminders are ephemeral (removed after the next model response).
       const checkpointReminder = this.agent.generateCheckpointReminder();
+      if (checkpointReminder) {
+        logger.debug('[TOOL_ORCHESTRATOR]', 'Queueing checkpoint reminder for next request');
+        this.queueBatchReminder(checkpointReminder);
+      }
 
       const firstResult = successfulResults.find((result): result is ToolResult => result !== null);
-      if (firstResult) this.injectRuntimeStatusReminder(firstResult);
+      if (firstResult) this.injectRuntimeStatusReminder();
 
       for (let i = 0; i < toolCalls.length; i++) {
         const toolCall = toolCalls[i];
         const result = successfulResults[i];
         if (toolCall && result) {
-          // Inject exploratory tool reminder before processing result
-          // This ensures the system_reminder is present when formatToolResult() runs
-          this.maybeInjectExploratoryReminder(toolCall, result);
-
-          // Inject checkpoint reminder into first result only
-          if (i === 0 && checkpointReminder) {
-            logger.debug('[TOOL_ORCHESTRATOR]', 'Injecting checkpoint reminder into', toolCall.function.name);
-            if (result.system_reminder) {
-              // Append to existing reminder (e.g., exploratory warning)
-              result.system_reminder += '\n\n' + checkpointReminder;
-            } else {
-              result.system_reminder = checkpointReminder;
-            }
-          }
+          // Queue exploratory tool guidance before processing result
+          this.maybeInjectExploratoryReminder(toolCall);
 
           await this.processToolResult(toolCall, result, outputBudget);
         }
@@ -635,27 +651,19 @@ export class ToolOrchestrator {
     // Generate checkpoint reminder once per batch (not per tool)
     // Checkpoint reminders are ephemeral (removed after the next model response).
     const checkpointReminder = this.agent.generateCheckpointReminder();
+    if (checkpointReminder) {
+      logger.debug('[TOOL_ORCHESTRATOR]', 'Queueing checkpoint reminder for next request');
+      this.queueBatchReminder(checkpointReminder);
+    }
 
     let isFirstTool = true;
     for (const toolCall of toolCalls) {
       const result = await this.executeSingleTool(toolCall, undefined, true, outputBudget);
 
-      if (isFirstTool) this.injectRuntimeStatusReminder(result);
+      if (isFirstTool) this.injectRuntimeStatusReminder();
 
-      // Inject exploratory tool reminder before processing result
-      // This ensures the system_reminder is present when formatToolResult() runs
-      this.maybeInjectExploratoryReminder(toolCall, result);
-
-      // Inject checkpoint reminder into first result only
-      if (isFirstTool && checkpointReminder) {
-        logger.debug('[TOOL_ORCHESTRATOR]', 'Injecting checkpoint reminder into', toolCall.function.name);
-        if (result.system_reminder) {
-          // Append to existing reminder (e.g., exploratory warning)
-          result.system_reminder += '\n\n' + checkpointReminder;
-        } else {
-          result.system_reminder = checkpointReminder;
-        }
-      }
+      // Queue exploratory tool guidance before processing result
+      this.maybeInjectExploratoryReminder(toolCall);
 
       isFirstTool = false;
 
@@ -1441,24 +1449,26 @@ export class ToolOrchestrator {
       injectSystemReminder(systemReminder, 'Tool result', isPersistent);
     }
 
-    // Inject time reminder if agent has max duration set
+    // Queue time reminder if agent has max duration set. Rides the trailing
+    // request reminder, not the tool result, so history stays append-only.
     const maxDuration = this.agent.getMaxDuration();
     if (maxDuration !== undefined && totalTurnDuration !== undefined) {
       const timeReminder = this.generateTimeReminder(maxDuration, totalTurnDuration);
       if (timeReminder) {
-        // PERSIST: false - Ephemeral: Temporary time budget warning
-        // Cleaned up after turn since time state is dynamic and updated each turn
-        injectSystemReminder(timeReminder, `Time (${totalTurnDuration.toFixed(2)}/${maxDuration}min)`, false);
+        this.queueBatchReminder(timeReminder);
+        logger.debug('[SYSTEM_REMINDER]', `Time (${totalTurnDuration.toFixed(2)}/${maxDuration}min) queued for ${toolName}`);
       }
     }
 
-    // Inject cycle detection warning if this tool call is part of a cycle
+    // Queue cycle detection warning if this tool call is part of a cycle. The
+    // warning text names the offending tool, so it stays actionable from the
+    // trailing reminder.
     if (toolCallId && this.cycleDetectionResults.has(toolCallId)) {
       const cycleInfo = this.cycleDetectionResults.get(toolCallId)!;
 
-      // Determine if we should inject warning:
-      // - Always inject if !isValidRepeat (critical cycles)
-      // - Also inject if severity is 'high' (even if marked as valid repeat)
+      // Determine if we should warn:
+      // - Always warn if !isValidRepeat (critical cycles)
+      // - Also warn if severity is 'high' (even if marked as valid repeat)
       const shouldWarn = !cycleInfo.isValidRepeat || cycleInfo.severity === 'high';
 
       if (shouldWarn) {
@@ -1466,11 +1476,8 @@ export class ToolOrchestrator {
         const message = cycleInfo.customMessage ||
           createCycleWarning(cycleInfo.toolName, cycleInfo.count);
 
-        // Use issueType for label if provided, otherwise default to 'Cycle detection'
-        const label = cycleInfo.issueType || 'Cycle detection';
-
-        // PERSIST: false - Ephemeral, once warned the agent moves past the cycle
-        injectSystemReminder(message, label, false);
+        this.queueBatchReminder(message);
+        logger.debug('[SYSTEM_REMINDER]', `${cycleInfo.issueType || 'Cycle detection'} queued for ${toolName}`);
       }
     }
 
@@ -1486,20 +1493,18 @@ export class ToolOrchestrator {
         const message = globalInfo.customMessage ||
           `Pattern detected: ${globalInfo.issueType}`;
 
-        const label = globalInfo.issueType || 'Pattern detection';
-
-        // PERSIST: false - Ephemeral, temporary hint about global patterns
-        injectSystemReminder(message, label, false);
+        this.queueBatchReminder(message);
+        logger.debug('[SYSTEM_REMINDER]', `${globalInfo.issueType || 'Pattern detection'} queued`);
       }
     }
 
-    // Inject focus reminder in every tool result if there's an active todo (main agent only)
+    // Queue focus reminder when there's an active todo (main agent only). The
+    // queue deduplicates, so the model sees it once per request rather than
+    // once per tool result.
     if (!this.config.isSpecializedAgent) {
       const focusReminder = this.generateFocusReminder();
       if (focusReminder) {
-        // PERSIST: false - Ephemeral: Temporary focus reminder based on current todo
-        // Cleaned up after turn since todo state is dynamic and updated each turn
-        injectSystemReminder(focusReminder, 'Focus (todo)', false);
+        this.queueBatchReminder(focusReminder);
       }
     }
 

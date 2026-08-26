@@ -124,10 +124,13 @@ ${profileContent}`;
       const serviceRegistry = ServiceRegistry.getInstance();
       const memoryService = serviceRegistry.get('memory_service');
       if (memoryService && typeof memoryService.getPromptContext === 'function') {
-        const contextPct = tokenManager && typeof tokenManager.getContextUsagePercentage === 'function'
-          ? tokenManager.getContextUsagePercentage()
-          : 0;
-        if (contextPct < CONTEXT_THRESHOLDS.INJECTION_CEILING) {
+        // Latched per compaction epoch: flipping this section in or out changes
+        // the system message and forfeits backend KV-cache reuse for the whole
+        // window, so the decision holds until the next re-baseline.
+        const allowInjection = tokenManager && typeof tokenManager.allowPromptInjections === 'function'
+          ? tokenManager.allowPromptInjections(CONTEXT_THRESHOLDS.INJECTION_CEILING)
+          : true;
+        if (allowInjection) {
           const memoryContext = await memoryService.getPromptContext();
           if (memoryContext) {
             memoryIndexContent = `
@@ -170,13 +173,13 @@ ${agentsSection}`;
     const skillManager = serviceRegistry.getSkillManager();
 
     if (skillManager) {
-      // Check context usage - only include skills under the injection ceiling
-      let contextPct = 0;
-      if (tokenManager && typeof tokenManager.getContextUsagePercentage === 'function') {
-        contextPct = tokenManager.getContextUsagePercentage();
-      }
+      // Only include skills under the injection ceiling. Latched per compaction
+      // epoch — same KV-cache rationale as the memory index gate above.
+      const allowInjection = tokenManager && typeof tokenManager.allowPromptInjections === 'function'
+        ? tokenManager.allowPromptInjections(CONTEXT_THRESHOLDS.INJECTION_CEILING)
+        : true;
 
-      if (contextPct < CONTEXT_THRESHOLDS.INJECTION_CEILING) {
+      if (allowInjection) {
         const skillsSection = skillManager.getSkillsForSystemPrompt();
         if (skillsSection) {
           skillsInfo = `

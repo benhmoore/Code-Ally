@@ -46,6 +46,7 @@ export class TokenManager {
   private seenFiles: Map<string, string> = new Map(); // path -> content hash
   private toolResultHashes: Map<string, string> = new Map(); // content hash -> tool_call_id (first occurrence)
   private messageTokenCache: Map<string, MessageTokenCacheEntry> = new Map(); // message id -> token count + content fingerprint
+  private contextInjectionLatch?: boolean; // sticky per compaction epoch — see allowPromptInjections()
 
   /**
    * Create a new TokenManager
@@ -300,6 +301,28 @@ export class TokenManager {
   }
 
   /**
+   * Sticky decision for whether budget-gated system-prompt sections (memory
+   * index, skills listing) are included.
+   *
+   * The decision is made once per compaction epoch and held: flipping it
+   * mid-epoch would change the system message, and any change to the first
+   * message forfeits the backend's KV cache for the entire window — at deep
+   * context, the most expensive possible re-prefill, fired repeatedly as usage
+   * oscillates around the ceiling. resetContextTracking() (the compaction /
+   * eviction re-baseline) clears the latch so the next request re-decides at a
+   * boundary that re-prefills the window regardless.
+   *
+   * @param ceilingPercent - Usage percentage above which injections are withheld
+   * @returns true when gated sections should be included in the system prompt
+   */
+  allowPromptInjections(ceilingPercent: number): boolean {
+    if (this.contextInjectionLatch === undefined) {
+      this.contextInjectionLatch = this.getContextUsagePercentage() < ceilingPercent;
+    }
+    return this.contextInjectionLatch;
+  }
+
+  /**
    * Track file content and check if it's new or changed
    * Uses MD5 hashing for content deduplication
    *
@@ -400,6 +423,7 @@ export class TokenManager {
     this.seenFiles.clear();
     this.toolResultHashes.clear();
     this.messageTokenCache.clear();
+    this.contextInjectionLatch = undefined;
     this.updateTokenCount(messages);
   }
 

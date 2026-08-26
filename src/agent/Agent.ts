@@ -1116,8 +1116,6 @@ export class Agent {
         let systemReminder: Message;
 
         if (todos.length === 0) {
-          // PERSIST: false - Ephemeral: Dynamic todo state suggestion
-          // Cleaned up after turn since todo list regenerated each message
           systemReminder = createEmptyTodoReminder();
         } else {
           // Build todo summary
@@ -1131,13 +1129,22 @@ export class Agent {
           const currentTask = inProgressTodo ? inProgressTodo.task : null;
           const guidance = 'Keep list clean: remove irrelevant tasks, maintain ONE in_progress task.\nUpdate list now if needed based on user request.';
 
-          // PERSIST: false - Ephemeral: Current todo list state
-          // Cleaned up after turn since todo state is dynamic and updated each message
           systemReminder = createActiveTodoReminder(todoSummary, currentTask, guidance);
         }
 
-        this.conversationManager.addMessage(systemReminder);
-        logger.debug('[AGENT_TODO_REMINDER]', this.instanceId, 'Injected todo reminder system message');
+        // Durable with dedupe: appended only when the todo state differs from
+        // the newest reminder already in history. Stripping per turn would edit
+        // history mid-sequence and forfeit backend KV-cache reuse; when active,
+        // current state also rides the trailing dynamic-context block, so an
+        // unchanged list needs no fresh copy.
+        const previous = [...this.conversationManager.getMessages()]
+          .reverse()
+          .find(msg => msg.metadata?.todoStateReminder);
+        if (previous?.content !== systemReminder.content) {
+          systemReminder.metadata = { ...(systemReminder.metadata ?? {}), todoStateReminder: true };
+          this.conversationManager.addMessage(systemReminder);
+          logger.debug('[AGENT_TODO_REMINDER]', this.instanceId, 'Injected todo reminder system message');
+        }
       }
     }
 
@@ -1625,9 +1632,19 @@ export class Agent {
       includeTime: Boolean(this.config.isScheduledRun) || needsTemporalContext(latestUserText),
     });
 
-    // The catalogue of withheld tools rides with the volatile context so it is
-    // refreshed as tools are loaded, and is counted in the request budget.
-    const dynamicContext = [baseDynamicContext, this.deferredToolCatalogue]
+    // The catalogue of withheld tools is durable, not volatile: its content is
+    // stable across turns (it changes only when a deferred tool is loaded), so
+    // it lives in conversation history — counted in the request budget through
+    // the message list — and is re-emitted only on change. See
+    // ensureDeferredToolCatalogueMessage() for the cache rationale.
+    this.ensureDeferredToolCatalogueMessage();
+
+    // Orchestrator guidance from the last tool batch (exploratory streaks,
+    // runtime status, checkpoint, time, cycle, focus) rides the same trailing
+    // ephemeral reminder as the volatile context: same round-trip the model
+    // always saw it in, but as tail content whose strip never edits history
+    // mid-sequence.
+    const dynamicContext = [baseDynamicContext, ...this.toolOrchestrator.drainBatchReminders()]
       .filter(part => part && part.length > 0)
       .join('\n\n');
 
@@ -2407,6 +2424,40 @@ export class Agent {
     } catch (error) {
       logger.warn('[AGENT_MEMORY] Failed to inject memory recall:', formatError(error));
     }
+  }
+
+  /**
+   * Advertise deferred tools in a durable message, re-emitted only when the
+   * catalogue content changes.
+   *
+   * The catalogue must NOT ride in the per-turn ephemeral dynamic-context
+   * reminder: an append/strip cycle is a mid-sequence edit, and backend
+   * prefix caches (measured on the Ollama MLX runner) forfeit KV reuse for
+   * everything after an edit point — with reusable KV additionally trailing
+   * one request behind the match point, costing roughly two turns of
+   * re-prefill per edit. Append-only requests cache near-perfectly, so the
+   * catalogue is appended durably and never stripped.
+   *
+   * When the catalogue changes (a deferred tool was loaded), a fresh copy is
+   * appended and any older copy is left in place — removing it would be
+   * another mid-sequence edit. A stale entry is harmless: loading an
+   * already-loaded tool is a no-op. Compaction folds old copies into the
+   * checkpoint; the scan below then re-emits on the next turn, which costs
+   * nothing extra since compaction turns re-prefill the window anyway.
+   */
+  private ensureDeferredToolCatalogueMessage(): void {
+    const catalogue = this.deferredToolCatalogue;
+    if (!catalogue) return;
+    const alreadyPresent = this.conversationManager.getMessages().some(
+      msg =>
+        msg.metadata?.deferredToolCatalogue &&
+        typeof msg.content === 'string' &&
+        msg.content.includes(catalogue)
+    );
+    if (alreadyPresent) return;
+    const reminder = createSystemReminder(catalogue, true);
+    reminder.metadata = { ...(reminder.metadata ?? {}), deferredToolCatalogue: true };
+    this.conversationManager.addMessage(reminder);
   }
 
   /**
