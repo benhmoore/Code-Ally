@@ -4,7 +4,7 @@ import { ConversationManager } from '../ConversationManager.js';
 import { TokenManager } from '../TokenManager.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { checkpointSourceDigest } from '../compaction/CheckpointReducer.js';
-import type { Message } from '../../types/index.js';
+import { ActivityEventType, type Message } from '../../types/index.js';
 
 const signal = new AbortController().signal;
 
@@ -401,6 +401,39 @@ describe('ConversationCompactor', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('treats owner cancellation as control flow without extraction or commit', async () => {
+    const owner = new AbortController();
+    const client = chatClient();
+    client.send.mockImplementation((_messages: Message[], options: { signal: AbortSignal }) =>
+      new Promise(resolve => options.signal.addEventListener('abort', () => resolve({
+        role: 'assistant',
+        content: '',
+        interrupted: true,
+      }), { once: true }))
+    );
+    const messages = history();
+    const manager = new ConversationManager({ initialMessages: messages });
+    const stream = new ActivityStream();
+    const events: any[] = [];
+    stream.subscribe(ActivityEventType.COMPACTION_COMPLETE, event => events.push(event));
+    const commit = vi.fn().mockResolvedValue(true);
+    const compactor = new ConversationCompactor(
+      client, manager, new TokenManager(4096), stream, commit,
+    );
+
+    const compacting = compactor.compactAndApply({ ...context(), signal: owner.signal });
+    await vi.waitFor(() => expect(client.send).toHaveBeenCalledOnce());
+    owner.abort();
+
+    await expect(compacting).rejects.toThrow(/interrupted/i);
+    expect(commit).not.toHaveBeenCalled();
+    expect(manager.getMessages()).toEqual(messages);
+    expect(manager.getCheckpoint()).toBeNull();
+    expect(compactor.getDebugState()).toMatchObject({ active: false, stage: 'interrupted' });
+    expect(events.at(-1)?.data).toMatchObject({ interrupted: true });
+    expect(events.at(-1)?.data.error).toBeUndefined();
   });
 
   it('preserves structured semantics when fitting and tail removal are required', async () => {

@@ -97,7 +97,7 @@ interface Candidate {
 
 export interface CompactionDebugState {
   active: boolean;
-  stage: 'idle' | 'planning' | 'reducing' | 'extracting' | 'counting' | 'committing' | 'complete' | 'failed';
+  stage: 'idle' | 'planning' | 'reducing' | 'extracting' | 'counting' | 'committing' | 'complete' | 'interrupted' | 'failed';
   startedAt?: number;
   finishedAt?: number;
   elapsedMs: number;
@@ -416,12 +416,15 @@ export class ConversationCompactor {
         noticeTimestamp,
       };
     } catch (error) {
+      const interrupted = context.signal.aborted;
       this.debugState = {
         ...this.debugState,
         active: false,
-        stage: 'failed',
+        stage: interrupted ? 'interrupted' : 'failed',
         finishedAt: Date.now(),
-        error: error instanceof Error ? error.message : String(error),
+        ...(interrupted
+          ? {}
+          : { error: error instanceof Error ? error.message : String(error) }),
       };
       if (emitEvents) {
         this.activityStream.emit({
@@ -430,8 +433,12 @@ export class ConversationCompactor {
           timestamp: Date.now(),
           data: {
             parentId: context.parentCallId,
-            error: true,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            ...(interrupted
+              ? { interrupted: true }
+              : {
+                  error: true,
+                  errorMessage: error instanceof Error ? error.message : String(error),
+                }),
           },
         });
       }
@@ -617,6 +624,11 @@ export class ConversationCompactor {
         context.signal,
       );
     } catch (error) {
+      // Owner cancellation is control flow, not reducer degradation. Falling
+      // back here wastes extraction work and proceeds toward a commit that the
+      // same aborted signal must reject. Let the owner rebuild from its newer
+      // conversation (for example, after a queued user interjection).
+      if (context.signal.aborted) throw error;
       portability = 'extractive';
       degradedReason = error instanceof Error ? error.message : String(error);
       this.debugState.stage = 'extracting';
