@@ -56,6 +56,15 @@ describe('BashTool', () => {
       expect(result.error).toBeDefined();
     });
 
+    it('does not hide a failed pipeline stage behind a successful formatter', async () => {
+      const result = await bashTool.execute({
+        command: `node -e "process.exit(7)" | tail -n 1`,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error_details?.suggestion).toContain('code 7');
+    });
+
     it('preserves stdout diagnostics when a failed command also writes stderr', async () => {
       const result = await bashTool.execute({
         command: `node -e "console.log('actionable failure'); console.error('warning only'); process.exit(1)"`,
