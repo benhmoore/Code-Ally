@@ -61,8 +61,6 @@ import { formatError } from '../utils/errorUtils.js';
 import { POLLING_INTERVALS, TEXT_LIMITS, PERMISSION_MESSAGES, PERMISSION_DENIED_TOOL_RESULT, AGENT_CONFIG, ID_GENERATION, TOKEN_MANAGEMENT, THINKING_LOOP_DETECTOR, RESPONSE_LOOP_DETECTOR } from '../config/constants.js';
 import {
   createInterruptionReminder,
-  createEmptyTodoReminder,
-  createActiveTodoReminder,
   createActivityTimeoutContinuationReminder,
   createThinkingLoopContinuationReminder,
   createResponseLoopContinuationReminder,
@@ -1103,50 +1101,6 @@ export class Agent {
     // The initiating user message is a durable run boundary. Commit it before
     // making an endpoint request so a crash cannot strand an unrecorded prompt.
     await this.sessionPersistence.commitTurnStart();
-
-    // Inject system reminder about todos (main agent only, and only if TodoWrite is available)
-    // This nudges the model to consider updating the todo list without blocking
-    const hasTodoWriteAccess = !this.config.allowedTools || this.config.allowedTools.includes('todo-write');
-    if (!this.config.isSpecializedAgent && hasTodoWriteAccess) {
-      const registry = ServiceRegistry.getInstance();
-      const todoManager = registry.get('todo_manager');
-
-      if (todoManager) {
-        const todos = todoManager.getTodos();
-        let systemReminder: Message;
-
-        if (todos.length === 0) {
-          systemReminder = createEmptyTodoReminder();
-        } else {
-          // Build todo summary
-          let todoSummary = '';
-          todos.forEach((todo: any, idx: number) => {
-            const status = todo.status === 'completed' ? 'DONE' : todo.status === 'in_progress' ? 'ACTIVE' : 'PENDING';
-            todoSummary += `${idx + 1}. [${status}] ${todo.task}\n`;
-          });
-
-          const inProgressTodo = todos.find((t: any) => t.status === 'in_progress');
-          const currentTask = inProgressTodo ? inProgressTodo.task : null;
-          const guidance = 'Keep list clean: remove irrelevant tasks, maintain ONE in_progress task.\nUpdate list now if needed based on user request.';
-
-          systemReminder = createActiveTodoReminder(todoSummary, currentTask, guidance);
-        }
-
-        // Durable with dedupe: appended only when the todo state differs from
-        // the newest reminder already in history. Stripping per turn would edit
-        // history mid-sequence and forfeit backend KV-cache reuse; when active,
-        // current state also rides the trailing dynamic-context block, so an
-        // unchanged list needs no fresh copy.
-        const previous = [...this.conversationManager.getMessages()]
-          .reverse()
-          .find(msg => msg.metadata?.todoStateReminder);
-        if (previous?.content !== systemReminder.content) {
-          systemReminder.metadata = { ...(systemReminder.metadata ?? {}), todoStateReminder: true };
-          this.conversationManager.addMessage(systemReminder);
-          logger.debug('[AGENT_TODO_REMINDER]', this.instanceId, 'Injected todo reminder system message');
-        }
-      }
-    }
 
     // Surface relevant long-term memory as ephemeral background context (main agent only).
     // Stripped each turn so it never accumulates; the service applies strict caps.

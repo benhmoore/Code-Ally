@@ -357,31 +357,15 @@ Stay on task. Use todo-write to update status and mark todos as complete when fi
   },
 
   // ===========================================
-  // TODO LIST REMINDERS (Ephemeral)
+  // TODO LIST CONTEXT (Ephemeral)
   // ===========================================
   TODO: {
     /** Empty todo list - suggest creating todos for multi-step tasks */
-    // PERSIST: true - Durable: appended only when todo state changes (the
-    // caller dedupes). Stripping it each turn would edit history mid-sequence
-    // and forfeit backend KV-cache reuse; current state also rides the
-    // trailing dynamic-context block each round-trip.
+    // PERSIST: false - Volatile state rendered at the request tail. Keeping an
+    // old todo snapshot in durable history contradicts later mutations.
     EMPTY_LIST: {
       text: 'Todo list empty. For multi-step tasks, use todo-write to track progress.',
-      persist: true,
-    },
-
-    /** Active todo list with current state */
-    // PERSIST: true - Durable with caller-side dedupe, same rationale as EMPTY_LIST.
-    ACTIVE_LIST: {
-      text: (todoSummary: string, currentTask: string | null, guidance: string) => {
-        let content = `Current todos:\n${todoSummary}`;
-        if (currentTask) {
-          content += `\n\nCurrently working on: "${currentTask}". Stay focused unless blocked.`;
-        }
-        content += `\n\n${guidance}`;
-        return content;
-      },
-      persist: true,
+      persist: false,
     },
   },
 } as const;

@@ -22,6 +22,7 @@ import type { ToolResultManager } from '../services/ToolResultManager.js';
 import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
 import type { Message } from '../types/index.js';
 import { getDefaultTimeZone } from '../services/ScheduledTaskManager.js';
+import { getEmptyTodoGuidance } from '../utils/messageUtils.js';
 
 // --- Core Agent Identity and Directives ---
 
@@ -298,9 +299,7 @@ export async function getDynamicContextBlock(options: {
         const todoManager = serviceRegistry.get('todo_manager');
         if (todoManager && typeof todoManager.generateActiveContext === 'function') {
           const todoStatus = todoManager.generateActiveContext();
-          if (todoStatus) {
-            todoContext = `\n${todoStatus}`;
-          }
+          todoContext = `\n${todoStatus || getEmptyTodoGuidance()}`;
           if (typeof todoManager.logTodosIfChanged === 'function') {
             todoManager.logTodosIfChanged();
           }
