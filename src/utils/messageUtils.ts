@@ -403,28 +403,8 @@ export function createWriteTempHintReminder(filePath: string): {
 // TODO LIST REMINDERS
 // ===========================================
 
-/**
- * Create empty todo list reminder
- */
-export function createEmptyTodoReminder(): Message {
+/** Current empty-list guidance for the volatile todo context. */
+export function getEmptyTodoGuidance(): string {
   const config = SYSTEM_REMINDERS.TODO.EMPTY_LIST;
-  return createSystemReminder(
-    resolveReminderText(config),
-    config.persist
-  );
-}
-
-/**
- * Create active todo list reminder
- */
-export function createActiveTodoReminder(
-  todoSummary: string,
-  currentTask: string | null,
-  guidance: string
-): Message {
-  const config = SYSTEM_REMINDERS.TODO.ACTIVE_LIST;
-  return createSystemReminder(
-    resolveReminderText(config, todoSummary, currentTask, guidance),
-    config.persist
-  );
+  return resolveReminderText(config);
 }

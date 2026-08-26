@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getDynamicContextBlock, getMainSystemPrompt } from '../systemMessages.js';
+import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 
 describe('systemMessages', () => {
   it('adds unattended scheduled run guidance without task-specific behavior', async () => {
@@ -55,5 +56,30 @@ Tool rules:
 
   it('omits an otherwise-empty volatile block on ordinary coding turns', async () => {
     await expect(getDynamicContextBlock({ includeTime: false })).resolves.toBe('');
+  });
+
+  it('renders only the current todo state in volatile context', async () => {
+    let todoContext: string | null = null;
+    const registrySpy = vi.spyOn(ServiceRegistry, 'getInstance').mockReturnValue({
+      hasService: (name: string) => name === 'todo_manager',
+      get: (name: string) => name === 'todo_manager'
+        ? {
+            generateActiveContext: () => todoContext,
+            logTodosIfChanged: vi.fn(),
+          }
+        : null,
+    } as any);
+
+    try {
+      const empty = await getDynamicContextBlock({ includeTodos: true, includeTime: false });
+      expect(empty).toContain('Todo list empty');
+
+      todoContext = 'Current task: Build parser (1/3 completed)';
+      const active = await getDynamicContextBlock({ includeTodos: true, includeTime: false });
+      expect(active).toContain(todoContext);
+      expect(active).not.toContain('Todo list empty');
+    } finally {
+      registrySpy.mockRestore();
+    }
   });
 });
