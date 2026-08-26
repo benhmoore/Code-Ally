@@ -199,11 +199,29 @@ describe('LoopDetector', () => {
           { success: false },
         ]);
 
-        const cycle = detector.detectCycles([failingCheck]).get(failingCheck.id);
+        const cycle = detector.detectRecordedFailures([failingCheck]).get(failingCheck.id);
         expect(cycle).toMatchObject({
           issueType: 'exact_duplicate',
-          metadata: { priorFailureCount: 3, failureThreshold: 3 },
+          count: 3,
+          metadata: { failureCount: 3, failureThreshold: 3 },
         });
+      });
+
+      it('does not count a hypothetical fourth call after three recorded failures', () => {
+        const call = createToolCall('apply-patch', { patch: 'same patch' });
+        detector.recordToolCalls(
+          [call, { ...call, id: 'call-2' }, { ...call, id: 'call-3' }],
+          [{ success: false }, { success: false }, { success: false }]
+        );
+
+        const cycle = detector.detectRecordedFailures([call]).get(call.id);
+
+        expect(cycle).toMatchObject({
+          issueType: 'exact_duplicate',
+          count: 3,
+          metadata: { failureCount: 3, failureThreshold: 3 },
+        });
+        expect(cycle?.metadata?.priorFailureCount).toBeUndefined();
       });
 
       it('does not combine failures against different targets', () => {

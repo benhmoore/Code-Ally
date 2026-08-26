@@ -270,6 +270,7 @@ export interface CycleInfo {
     searchHits?: number;
     fileAccessCount?: number;
     priorFailureCount?: number;
+    failureCount?: number;
     failureThreshold?: number;
     [key: string]: any;
   };
@@ -359,24 +360,61 @@ class ToolCycleDetector {
 
   private detectRepeatedTargetFailure(toolCall: {
     function: { name: string; arguments: Record<string, any> };
-  }): CycleInfo | null {
+  }, phase: 'prospective' | 'recorded' = 'prospective'): CycleInfo | null {
     const targetSignature = this.createTargetSignature(toolCall);
     if (!targetSignature) return null;
 
     const priorFailureCount = this.toolCallHistory.filter(entry =>
       entry.targetSignature === targetSignature && entry.success === false
     ).length;
-    if (priorFailureCount < this.cycleThreshold - 1) return null;
+    const threshold = phase === 'prospective'
+      ? this.cycleThreshold - 1
+      : this.cycleThreshold;
+    if (priorFailureCount < threshold) return null;
+
+    const count = phase === 'prospective'
+      ? priorFailureCount + 1
+      : priorFailureCount;
 
     return {
       toolName: toolCall.function.name,
-      count: priorFailureCount + 1,
+      count,
       isValidRepeat: false,
       issueType: 'repeated_failure',
       severity: 'high',
       customMessage: `${toolCall.function.name} has repeatedly failed on the same target. Inspect the failure and change approach.`,
       metadata: {
-        priorFailureCount,
+        ...(phase === 'prospective'
+          ? { priorFailureCount }
+          : { failureCount: priorFailureCount }),
+        failureThreshold: this.cycleThreshold,
+      },
+    };
+  }
+
+  private detectExactDuplicate(
+    toolCall: {
+      function: { name: string; arguments: Record<string, any> };
+    },
+    phase: 'prospective' | 'recorded'
+  ): CycleInfo | null {
+    const signature = this.createToolCallSignature(toolCall);
+    const matchingCalls = this.toolCallHistory.filter(entry => entry.signature === signature);
+    const count = matchingCalls.length + (phase === 'prospective' ? 1 : 0);
+    if (count < this.cycleThreshold) return null;
+
+    const isValidRepeat = this.isValidFileRepeat(toolCall, matchingCalls);
+    const failureCount = matchingCalls.filter(entry => entry.success === false).length;
+    return {
+      toolName: toolCall.function.name,
+      count,
+      isValidRepeat,
+      issueType: 'exact_duplicate',
+      severity: isValidRepeat ? 'low' : 'high',
+      metadata: {
+        ...(phase === 'prospective'
+          ? { priorFailureCount: failureCount }
+          : { failureCount }),
         failureThreshold: this.cycleThreshold,
       },
     };
@@ -569,31 +607,16 @@ class ToolCycleDetector {
 
     // Per-tool-call detections
     for (const toolCall of toolCalls) {
-      const signature = this.createToolCallSignature(toolCall);
-
       // 1. Exact duplicate detection
-      const previousCalls = this.toolCallHistory.filter(entry => entry.signature === signature);
-      const count = previousCalls.length + 1;
+      const exactDuplicate = this.detectExactDuplicate(toolCall, 'prospective');
 
-      if (count >= this.cycleThreshold) {
-        const isValidRepeat = this.isValidFileRepeat(toolCall, previousCalls);
-        const priorFailureCount = previousCalls.filter(entry => entry.success === false).length;
-        cycles.set(toolCall.id, {
-          toolName: toolCall.function.name,
-          count,
-          isValidRepeat,
-          issueType: 'exact_duplicate',
-          severity: isValidRepeat ? 'low' : 'high',
-          metadata: {
-            priorFailureCount,
-            failureThreshold: this.cycleThreshold,
-          },
-        });
+      if (exactDuplicate) {
+        cycles.set(toolCall.id, exactDuplicate);
 
         logger.debug(
           '[TOOL_CYCLE_DETECTOR]',
           this.instanceId,
-          `Detected exact duplicate: ${toolCall.function.name} called ${count} times (valid repeat: ${isValidRepeat})`
+          `Detected exact duplicate: ${toolCall.function.name} called ${exactDuplicate.count} times (valid repeat: ${exactDuplicate.isValidRepeat})`
         );
       }
 
@@ -645,6 +668,35 @@ class ToolCycleDetector {
         cycles.set(globalId, emptyStreak);
         logger.debug('[TOOL_CYCLE_DETECTOR]', this.instanceId, `Detected empty streak: ${emptyStreak.metadata?.consecutiveEmpty}`);
       }
+    }
+
+    return cycles;
+  }
+
+  /**
+   * Classify failed calls after their outcomes have been recorded.
+   *
+   * Unlike prospective cycle detection, this method never adds a hypothetical
+   * next call. It reports only failures that actually occurred, including
+   * repeated calls issued together in one model response.
+   */
+  detectRecordedFailures(
+    toolCalls: Array<{
+      id: string;
+      function: { name: string; arguments: Record<string, any> };
+    }>
+  ): Map<string, CycleInfo> {
+    const cycles = new Map<string, CycleInfo>();
+
+    for (const toolCall of toolCalls) {
+      const exactDuplicate = this.detectExactDuplicate(toolCall, 'recorded');
+      if (exactDuplicate && (exactDuplicate.metadata?.failureCount ?? 0) >= this.cycleThreshold) {
+        cycles.set(toolCall.id, exactDuplicate);
+        continue;
+      }
+
+      const repeatedFailure = this.detectRepeatedTargetFailure(toolCall, 'recorded');
+      if (repeatedFailure) cycles.set(toolCall.id, repeatedFailure);
     }
 
     return cycles;
@@ -871,6 +923,15 @@ export class LoopDetector {
     }>
   ): Map<string, CycleInfo> {
     return this.toolCycleDetector.detectCycles(toolCalls);
+  }
+
+  detectRecordedFailures(
+    toolCalls: Array<{
+      id: string;
+      function: { name: string; arguments: Record<string, any> };
+    }>
+  ): Map<string, CycleInfo> {
+    return this.toolCycleDetector.detectRecordedFailures(toolCalls);
   }
 
   recordToolCalls(

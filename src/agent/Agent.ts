@@ -2111,6 +2111,7 @@ export class Agent {
         }
       },
       detectCycles: (toolCalls) => this.loopDetector.detectCycles(toolCalls),
+      detectRecordedFailures: (toolCalls) => this.loopDetector.detectRecordedFailures(toolCalls),
       recordToolCalls: (toolCalls, results) => {
         this.loopDetector.recordToolCalls(toolCalls, results);
         this.turnController.recordToolCalls(toolCalls.length);
