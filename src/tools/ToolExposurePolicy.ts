@@ -51,6 +51,8 @@ export interface ToolExposureInput {
   schemaBudget: number;
   /** Tool names already loaded this session, most recently used last. */
   activated?: readonly string[];
+  /** Most recent batch explicitly requested through tool-search. */
+  requested?: readonly string[];
   estimateTokens: (text: string) => number;
 }
 
@@ -109,10 +111,21 @@ export function selectExposedTools(input: ToolExposureInput): ToolExposureResult
   }
   if (searchTool) include(searchTool);
 
+  // An explicit tool-search is a capability request, not a preference. Keep
+  // that entire batch exposed until another search replaces it, even when the
+  // nominal schema share is already occupied by the core loop. Otherwise the
+  // tool-search result claims success while the requested tools remain
+  // impossible to call, trapping the model in a search loop.
+  const requested = new Set(input.requested ?? []);
+  for (const name of requested) {
+    const definition = byName.get(name);
+    if (definition) include(definition);
+  }
+
   // Then previously loaded tools, most recently used first, while they fit.
   for (const name of [...(input.activated ?? [])].reverse()) {
     const definition = byName.get(name);
-    if (!definition || exposedNames.has(name)) continue;
+    if (!definition || exposedNames.has(name) || requested.has(name)) continue;
     if (used + definitionTokens(definition, estimateTokens) > schemaBudget) continue;
     include(definition);
   }

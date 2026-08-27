@@ -9,9 +9,18 @@
  */
 export class ToolActivationRegistry {
   private activations = new Map<string, string[]>();
+  private requested = new Map<string, string[]>();
 
-  /** Mark tools as loaded for this agent, moving them to most-recently-used. */
+  /** Explicitly load tools for this agent and keep that requested batch pinned. */
   activate(agentId: string, toolNames: readonly string[]): void {
+    if (toolNames.length === 0) return;
+    const unique = [...new Set(toolNames)];
+    this.requested.set(agentId, unique);
+    this.touch(agentId, unique);
+  }
+
+  /** Record actual use for LRU exposure without replacing the requested batch. */
+  touch(agentId: string, toolNames: readonly string[]): void {
     if (toolNames.length === 0) return;
     const current = this.activations.get(agentId) ?? [];
     const retained = current.filter(name => !toolNames.includes(name));
@@ -23,7 +32,13 @@ export class ToolActivationRegistry {
     return this.activations.get(agentId) ?? [];
   }
 
+  /** Most recent batch explicitly requested through tool-search. */
+  getRequested(agentId: string): readonly string[] {
+    return this.requested.get(agentId) ?? [];
+  }
+
   clear(agentId: string): void {
     this.activations.delete(agentId);
+    this.requested.delete(agentId);
   }
 }

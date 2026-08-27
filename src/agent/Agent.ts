@@ -1520,6 +1520,7 @@ export class Agent {
       definitions: availableFunctions,
       schemaBudget: toolSchemaBudget(this.tokenManager.getContextSize(), this.appConfig.max_tokens),
       activated: runtimeRegistry.get('tool_activation_registry')?.get(this.instanceId),
+      requested: runtimeRegistry.get('tool_activation_registry')?.getRequested(this.instanceId),
       estimateTokens: text => this.tokenManager.estimateTokens(text),
     });
     const functions = exposure.exposed;
