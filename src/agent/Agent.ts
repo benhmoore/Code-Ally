@@ -1148,8 +1148,7 @@ export class Agent {
         if (!this.interruptionManager.isInterrupted()) return false;
         const cause = this.interruptionManager.getCause();
         if (cause?.kind === 'user_interjection') {
-          this.interruptionManager.reset();
-          this.loopDetector.resetTextDetectors();
+          this.prepareInterjectionContinuation();
           const continuation = await this.getLLMResponse(responseContext);
           finalResponse = await this.processLLMResponse(continuation, responseContext);
           return true;
@@ -1305,8 +1304,12 @@ export class Agent {
       // and scoped to this agent alone — no global client cancellation.
       this.interruptionManager.interrupt(cause);
 
-      // Stop activity monitoring
-      this.stopActivityMonitoring();
+      // An interjection supersedes the current generation but continues the
+      // same admitted turn. Keep its orchestration watchdog alive; terminal
+      // cancellation ends the turn and therefore stops monitoring.
+      if (cause.kind !== 'user_interjection') {
+        this.stopActivityMonitoring();
+      }
 
     }
   }
@@ -1342,6 +1345,13 @@ export class Agent {
     this.loopDetector.resetTextDetectors();
 
     logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'User interjection added:', message.substring(0, 50));
+  }
+
+  /** Re-arm per-turn safeguards before processing queued user direction. */
+  private prepareInterjectionContinuation(): void {
+    this.interruptionManager.reset();
+    this.loopDetector.resetTextDetectors();
+    this.startActivityMonitoring();
   }
 
   /**
@@ -1831,11 +1841,7 @@ export class Agent {
           });
         }
 
-        // Reset flags
-        this.interruptionManager.reset();
-
-        // Reset loop detectors for fresh monitoring after interjection
-        this.loopDetector.resetTextDetectors();
+        this.prepareInterjectionContinuation();
 
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection, continuing...');
@@ -1903,11 +1909,7 @@ export class Agent {
           });
         }
 
-        // Reset flags
-        this.interruptionManager.reset();
-
-        // Reset loop detectors for fresh monitoring after interjection
-        this.loopDetector.resetTextDetectors();
+        this.prepareInterjectionContinuation();
 
         // Resume with continuation call
         logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'Processing interjection after ResponseProcessor, continuing...');
@@ -2753,7 +2755,7 @@ export class Agent {
     while (retryCount < AGENT_CONFIG.MAX_INTERJECTION_RETRIES) {
       retryCount++;
       logger.debug('[AGENT]', this.instanceId, `Permission denied but user provided instructions - continuing (attempt ${retryCount}/${AGENT_CONFIG.MAX_INTERJECTION_RETRIES})`);
-      this.interruptionManager.reset();
+      this.prepareInterjectionContinuation();
 
       try {
         const response = await this.getLLMResponse(executionContext);

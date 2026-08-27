@@ -540,6 +540,32 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('Turn admission', () => {
+    it('keeps the watchdog armed when an interjection replaces an active model request', async () => {
+      let requestCount = 0;
+      let continuationWatchdogActive = false;
+      mockModelClient.send = vi.fn(async (_messages: Message[], options: any) => {
+        requestCount++;
+        if (requestCount === 1) {
+          await new Promise<void>(resolve => {
+            options.signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          return { content: '', tool_calls: [], interrupted: true };
+        }
+        continuationWatchdogActive = (agent as any).activityMonitor.isActive();
+        return { content: 'continued', tool_calls: [], interrupted: false };
+      });
+
+      const result = agent.sendMessage('begin');
+      await vi.waitFor(() => expect(mockModelClient.send).toHaveBeenCalledOnce());
+
+      agent.addUserInterjection('adjust the implementation');
+      agent.interrupt({ kind: 'user_interjection' });
+
+      await expect(result).resolves.toBe('continued');
+      expect(mockModelClient.send).toHaveBeenCalledTimes(2);
+      expect(continuationWatchdogActive).toBe(true);
+    });
+
     it('continues a queued interjection by releasing a passive wait', async () => {
       const waitStream = new ActivityStream();
       const waitTool = new WaitTool(waitStream);
@@ -566,6 +592,7 @@ describe('Agent - Interruption Handling', () => {
         waitStream,
         { config: mockConfig, isSpecializedAgent: false },
       );
+      let continuationWatchdogActive = false;
       mockModelClient.send = vi.fn()
         .mockResolvedValueOnce({
           content: '',
@@ -576,10 +603,13 @@ describe('Agent - Interruption Handling', () => {
           }],
           interrupted: false,
         })
-        .mockResolvedValueOnce({
-          content: 'continued with the new instruction',
-          tool_calls: [],
-          interrupted: false,
+        .mockImplementationOnce(async () => {
+          continuationWatchdogActive = (waitingAgent as any).activityMonitor.isActive();
+          return {
+            content: 'continued with the new instruction',
+            tool_calls: [],
+            interrupted: false,
+          };
         });
 
       const result = waitingAgent.sendMessage('start background work and wait');
@@ -598,6 +628,7 @@ describe('Agent - Interruption Handling', () => {
         }),
       ]));
       expect(waitingAgent.getTurnSnapshot().terminationReason).toBe('completed');
+      expect(continuationWatchdogActive).toBe(true);
     });
 
     it('claims the whole turn synchronously and rejects concurrent sendMessage calls', async () => {
@@ -625,9 +656,13 @@ describe('Agent - Interruption Handling', () => {
       (agent as any).lifecycleHandler.handlePostResponse = vi.fn()
         .mockImplementationOnce(() => finalizationGate)
         .mockResolvedValue(undefined);
+      let continuationWatchdogActive = false;
       mockModelClient.send = vi.fn()
         .mockResolvedValueOnce({ content: 'initial', tool_calls: [], interrupted: false })
-        .mockResolvedValueOnce({ content: 'after interjection', tool_calls: [], interrupted: false });
+        .mockImplementationOnce(async () => {
+          continuationWatchdogActive = (agent as any).activityMonitor.isActive();
+          return { content: 'after interjection', tool_calls: [], interrupted: false };
+        });
 
       const result = agent.sendMessage('start');
       await vi.waitFor(() => {
@@ -640,6 +675,7 @@ describe('Agent - Interruption Handling', () => {
 
       await expect(result).resolves.toBe('after interjection');
       expect(mockModelClient.send).toHaveBeenCalledTimes(2);
+      expect(continuationWatchdogActive).toBe(true);
       expect(agent.isProcessing()).toBe(false);
     });
 
