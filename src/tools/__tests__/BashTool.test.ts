@@ -54,7 +54,10 @@ describe('BashTool', () => {
       });
 
       expect(result.success).toBe(false); // Command failed
-      expect(result.error).toBeDefined();
+      expect(result.error_details?.message).toBe('Command exited with code 1');
+      expect(result.return_code).toBe(1);
+      expect(result.content).toBe('');
+      expect(result.stderr).toBe('');
       expect(bashTool.effectOutcomeFor(args, result)).toBe('failed');
     });
 
@@ -73,8 +76,10 @@ describe('BashTool', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error_details?.message).toContain('stdout:\nactionable failure');
-      expect(result.error_details?.message).toContain('stderr:\nwarning only');
+      expect(result.error_details?.message).toBe('Command exited with code 1');
+      expect(result.content).toBe('actionable failure\n');
+      expect(result.stderr).toBe('warning only\n');
+      expect(result.return_code).toBe(1);
     });
 
     it('should require command parameter', async () => {

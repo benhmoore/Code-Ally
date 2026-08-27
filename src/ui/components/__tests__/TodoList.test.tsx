@@ -36,8 +36,10 @@ function renderToLines(todos: TodoItem[]): string[] {
     patchConsole: false,
   });
   instance.unmount();
-  const lastFrame = stdout.frames[stdout.frames.length - 1] ?? '';
-  return stripAnsi(lastFrame).split('\n').filter(line => line.trim() !== '');
+  // Ink may emit a final empty cleanup frame after the rendered content.
+  // Select the last visible frame, as the other component rendering tests do.
+  const lastVisibleFrame = stdout.frames.findLast(frame => stripAnsi(frame).trim().length > 0) ?? '';
+  return stripAnsi(lastVisibleFrame).split('\n').filter(line => line.trim() !== '');
 }
 
 const todo = (task: string, status: TodoItem['status']): TodoItem =>

@@ -139,6 +139,13 @@ export class UserShortcutService {
     });
 
     try {
+      this.activityStream.emit({
+        id: toolCallId,
+        type: ActivityEventType.TOOL_EXECUTION_START,
+        timestamp: Date.now(),
+        data: {},
+      });
+
       const result = await this.toolManager.executeTool(
         'bash',
         args,

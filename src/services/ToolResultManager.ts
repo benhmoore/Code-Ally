@@ -158,11 +158,11 @@ export class ToolResultManager {
       return resultString;
     }
 
-    const persistedContent = this.getPersistableOutput(toolName, rawResult, resultString);
+    const persistedContent = this.getPersistableOutput(toolName, rawResult);
 
     // Persist full output to disk if persistence is available
     let persistedPath: string | null = null;
-    if (this.persistence && toolCallId) {
+    if (this.persistence && toolCallId && persistedContent !== null) {
       // Do not advertise an artifact until it is durably available to read.
       persistedPath = await this.persistence.persistResult(toolCallId, persistedContent);
     }
@@ -188,7 +188,7 @@ export class ToolResultManager {
       contentTokens = maxTokens - minimalTokens;
 
       // When persisting, show a preview (first N chars) instead of token-truncated content
-      const truncatedResult = persistedPath
+      const truncatedResult = persistedPath && persistedContent !== null
         ? persistedContent.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
         : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
       return this.preferSmallerResult(
@@ -199,7 +199,7 @@ export class ToolResultManager {
     }
 
     // When persisting, show a preview instead of token-truncated content
-    const truncatedResult = persistedPath
+    const truncatedResult = persistedPath && persistedContent !== null
       ? persistedContent.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
       : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
     return this.preferSmallerResult(
@@ -219,9 +219,10 @@ export class ToolResultManager {
       : this.tokenManager.truncateContentToTokens(preferred, hardMaxTokens);
   }
 
-  private getPersistableOutput(toolName: string, rawResult: string | any, fallback: string): string {
+  private getPersistableOutput(toolName: string, rawResult: string | any): string | null {
     const tool = this.toolManager?.getTool(toolName);
-    return tool?.getPersistableOutput(rawResult, fallback) ?? (typeof rawResult === 'string' ? rawResult : fallback);
+    if (tool) return tool.getPersistableOutput(rawResult);
+    return typeof rawResult === 'string' ? rawResult : null;
   }
 
   /**

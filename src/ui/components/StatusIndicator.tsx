@@ -190,8 +190,8 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     const update = () => {
       const now = Date.now();
       const longRunning = toolCallsRef.current.some(call => {
-        if (call.status !== 'executing') return false;
-        return now - (call.executionStartTime || call.startTime) >= UI_DELAYS.TOOL_DURATION_DISPLAY_THRESHOLD;
+        if (call.status !== 'executing' || call.executionStartTime === undefined) return false;
+        return now - call.executionStartTime >= UI_DELAYS.TOOL_DURATION_DISPLAY_THRESHOLD;
       });
       if (longRunning) setTerminalProgress(0, 'indeterminate');
       else clearTerminalProgress();

@@ -180,6 +180,12 @@ export interface ToolResult {
   error: string;
   error_type?: ErrorType;
 
+  /** Canonical textual output channels for executable tools, on both success and failure. */
+  content?: string;
+  stderr?: string;
+  /** Process exit status when the tool represents a command execution; null if no status was available. */
+  return_code?: number | null;
+
   /** Structured error details for clean error message extraction */
   error_details?: {
     message: string;                    // Raw error message without tool call formatting

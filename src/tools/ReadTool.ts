@@ -7,7 +7,7 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { Message, ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
-import type { ReadCacheEntry } from '../services/ReadCache.js';
+import type { ReadCacheEntry, ReadSelection } from '../services/ReadCache.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { tokenCounter } from '../services/TokenCounter.js';
@@ -25,7 +25,7 @@ import * as readline from 'readline';
 export class ReadTool extends BaseTool {
   readonly name = 'read';
   readonly description =
-    'Read one file or bounded line range. Read several known-small ranges in parallel only when their combined output is modest; otherwise search first and read narrowly or sequentially.';
+    'Read file text by line and column.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
   readonly requiresReservedContext = true;
@@ -34,6 +34,7 @@ export class ReadTool extends BaseTool {
   readonly usageGuidance = `**When to use read:**
 Locate before loading: use tree/glob to discover files and grep to find symbols or usages, then read the smallest relevant line range. Expand the range only when surrounding behavior is needed; read a whole file when it is small or the task is genuinely cross-cutting.
 Default reads stay in context. Use ephemeral=true only for one-time large file inspection (content removed after one turn).
+For an exceptionally long line, select it with offset/limit and inspect bounded slices with column_offset/column_limit.
 For multi-file exploration, prefer explore() to preserve context. Parallelize only known-small, bounded reads whose combined output is modest; for unknown or large files, grep first and read narrow ranges sequentially.`;
 
   constructor(activityStream: ActivityStream) {
@@ -75,6 +76,21 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
           error: 'offset must be a number (positive: 1-based line number, negative: count from end)',
           error_type: 'validation_error',
           suggestion: 'Example: offset=1 (starts at line 1) or offset=-20 (last 20 lines with limit=20)',
+        };
+      }
+    }
+
+    for (const [name, minimum] of [['column_offset', 0], ['column_limit', 1]] as const) {
+      if (args[name] === undefined || args[name] === null) continue;
+      const value = Number(args[name]);
+      if (!Number.isInteger(value) || value < minimum) {
+        return {
+          valid: false,
+          error: `${name} must be an integer greater than or equal to ${minimum}`,
+          error_type: 'validation_error',
+          suggestion: name === 'column_offset'
+            ? 'Use column_offset=0 to start at the beginning of each selected line'
+            : 'Use column_limit with limit=1 to inspect a bounded slice of an exceptionally long line',
         };
       }
     }
@@ -171,19 +187,27 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
             file_path: {
               type: 'string',
               format: 'local-path',
-              description: 'One file path to read',
+              description: 'Path to file',
             },
             limit: {
               type: 'integer',
-              description: 'Max lines per file (0=all)',
+              description: 'Line count (0 = all)',
             },
             offset: {
               type: 'integer',
-              description: 'Start line (1-based). Negative = from end (e.g. -20)',
+              description: 'Start line (1-based; negative from end)',
+            },
+            column_offset: {
+              type: 'integer',
+              description: 'Start column (0-based code points)',
+            },
+            column_limit: {
+              type: 'integer',
+              description: 'Code points per line',
             },
             ephemeral: {
               type: 'boolean',
-              description: 'Allow large files (90% context). WARNING: Content removed after one turn.',
+              description: 'Allow a larger one-turn result, then discard it',
             },
           },
           required: ['file_path'],
@@ -204,6 +228,14 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     const filePath = args.file_path;
     const limit = args.limit !== undefined ? Number(args.limit) : 0;
     const offset = args.offset !== undefined ? Number(args.offset) : 0;
+    const columnOffset = args.column_offset !== undefined ? Number(args.column_offset) : 0;
+    const columnLimit = args.column_limit !== undefined ? Number(args.column_limit) : 0;
+    const selection: ReadSelection = {
+      lineOffset: offset,
+      lineLimit: limit,
+      columnOffset,
+      columnLimit,
+    };
     const ephemeral = args.ephemeral === true;
 
     if (typeof filePath !== 'string' || filePath.length === 0) {
@@ -214,7 +246,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
       );
     }
 
-    const estimatedTokens = await this.estimateTokens(filePath, limit, offset);
+    const estimatedTokens = await this.estimateTokens(filePath, selection);
 
     // Check if we have enough remaining context for the non-truncatable result
     // Get remaining context from ServiceRegistry's TokenManager if available
@@ -223,7 +255,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     if (tokenManager) {
       const remainingTokens = this.getRemainingContext(tokenManager);
       if (remainingTokens < estimatedTokens) {
-        const examples = `read(file_path="${filePath}", limit=100) or read(file_path="${filePath}", offset=-100, limit=100) for last 100 lines`;
+        const examples = this.getNarrowReadExamples(filePath, remainingTokens);
 
         return this.formatErrorResponse(
           `Insufficient context available: read would require ${estimatedTokens.toFixed(1)} tokens but only ${remainingTokens.toFixed(1)} remain. ` +
@@ -249,7 +281,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     }
 
     if (estimatedTokens > maxTokens) {
-      const examples = `read(file_path="${filePath}", limit=100) or read(file_path="${filePath}", offset=-100, limit=100) for last 100 lines`;
+      const examples = this.getNarrowReadExamples(filePath, maxTokens);
 
       const ephemeralHint = !ephemeral && !isUserInitiated && !isContextFile
         ? ' As a LAST RESORT for one-time inspection only: ephemeral=true (WARNING: content removed after one turn, you will lose access).'
@@ -265,6 +297,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
         `This is a per-result retention limit derived from the available conversation budget; it does not mean the overall context is exhausted. ` +
         `Do not page through the file by default: ${targeted}. ` +
         `Use sequential offset/limit chunks only when the task genuinely requires whole-file inspection. ` +
+        `For an exceptionally long single line, use column_offset and column_limit to inspect a bounded slice. ` +
         `Alternative: ${examples}.${ephemeralHint}`,
         'validation_error',
         `Locate with grep/glob, then read the smallest relevant offset/limit range`
@@ -274,7 +307,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     let content: string;
     let totalLines: number;
     try {
-      const read = await this.readFile(filePath, limit, offset, executionContext);
+      const read = await this.readFile(filePath, selection, executionContext);
       content = read.content;
       totalLines = read.lineCount;
     } catch (error) {
@@ -311,24 +344,44 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
    */
   private async estimateTokens(
     filePath: string,
-    limit: number = 0,
-    offset: number = 0
+    selection: ReadSelection,
   ): Promise<number> {
     try {
-      if (limit > 0) {
+      const { lineLimit, lineOffset, columnOffset, columnLimit } = selection;
+      if (lineLimit > 0 || columnOffset > 0 || columnLimit > 0) {
         // Read raw content directly to bypass read cache (cache stubs have wrong token counts)
         const absolutePath = resolvePath(filePath);
         const raw = await fs.readFile(absolutePath, 'utf-8');
         const lines = raw.split('\n');
-        const startLine = offset > 0 ? offset - 1 : offset < 0 ? Math.max(0, lines.length + offset) : 0;
-        const endLine = startLine + limit;
-        return tokenCounter.count(lines.slice(startLine, endLine).join('\n'));
+        const startLine = lineOffset > 0
+          ? lineOffset - 1
+          : lineOffset < 0
+            ? Math.max(0, lines.length + lineOffset)
+            : 0;
+        const endLine = lineLimit > 0 ? startLine + lineLimit : lines.length;
+        const selected = lines.slice(startLine, endLine);
+        return tokenCounter.count(this.selectColumns(selected, columnOffset, columnLimit).join('\n'));
       }
       const stats = await fs.stat(filePath);
       return Math.ceil(stats.size / this.getBytesPerToken(filePath));
     } catch {
       return 0;
     }
+  }
+
+  private getNarrowReadExamples(filePath: string, tokenBudget: number): string {
+    // Leave ample room for the result envelope, path header, and line number.
+    // The subsequent exact token estimate remains authoritative.
+    const suggestedColumns = Math.max(64, Math.floor(tokenBudget * 0.5));
+    return `read(file_path="${filePath}", limit=100), ` +
+      `read(file_path="${filePath}", offset=-100, limit=100) for the last 100 lines, or ` +
+      `read(file_path="${filePath}", offset=<line>, limit=1, column_offset=0, column_limit=${suggestedColumns}) for one long line`;
+  }
+
+  private selectColumns(lines: string[], columnOffset: number, columnLimit: number): string[] {
+    if (columnOffset === 0 && columnLimit === 0) return lines;
+    const end = columnLimit > 0 ? columnOffset + columnLimit : undefined;
+    return lines.map(line => [...line].slice(columnOffset, end).join(''));
   }
 
   /**
@@ -363,7 +416,9 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     totalLines: number,
     absolutePath: string,
     offset: number,
-    limit: number
+    limit: number,
+    columnOffset: number = 0,
+    columnLimit: number = 0,
   ): string {
     const endLine = startLine + selectedLines.length;
 
@@ -372,6 +427,10 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
       header += `\n[Showing lines ${startLine + 1}-${Math.min(endLine, totalLines)} of ${totalLines} total lines]`;
     } else {
       header += `\n[${totalLines} line${totalLines !== 1 ? 's' : ''}]`;
+    }
+    if (columnOffset > 0 || columnLimit > 0) {
+      const end = columnLimit > 0 ? columnOffset + columnLimit : 'end';
+      header += `\n[Showing columns ${columnOffset}-${end} of each selected line; partial lines do not authorize edits]`;
     }
 
     const formattedLines = selectedLines.map((line, index) => {
@@ -503,10 +562,10 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
    */
   private async readFile(
     filePath: string,
-    limit: number,
-    offset: number,
+    selection: ReadSelection,
     executionContext?: ToolExecutionContext
   ): Promise<{ content: string; lineCount: number }> {
+    const { lineLimit: limit, lineOffset: offset, columnOffset, columnLimit } = selection;
     // Resolve absolute path
     const absolutePath = resolvePath(filePath);
 
@@ -555,14 +614,16 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     // to a fresh read whenever visibility cannot be confirmed.
     const readCache = registry.get('read_cache');
     if (readCache) {
-      const cached = readCache.check(absolutePath, stat.mtimeMs, offset, limit, readScopeId);
+      const cached = readCache.check(absolutePath, stat.mtimeMs, selection, readScopeId);
       if (cached && !this.isCachedReadStillVisible(cached, registry)) {
         readCache.invalidate(absolutePath, readScopeId);
       } else if (cached) {
         // Still track read state so patch validation works
         const readStateManager = registry.get('read_state_manager');
-        if (readStateManager) {
-          const cachedStartLine = offset <= 0 ? 1 : offset;
+        if (readStateManager && columnOffset === 0 && columnLimit === 0) {
+          const cachedStartLine = offset < 0
+            ? Math.max(1, cached.totalLines + offset + 1)
+            : offset > 0 ? offset : 1;
           const cachedEndLine = limit > 0
             ? Math.min(cachedStartLine + limit - 1, cached.totalLines)
             : cached.totalLines;
@@ -588,13 +649,14 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
         };
       }
 
+      const selectedLines = this.selectColumns(streamedLines, columnOffset, columnLimit);
       const formattedContent = this.formatLinesWithNumbers(
-        streamedLines, streamedStart, streamedTotal, absolutePath, offset, limit
+        selectedLines, streamedStart, streamedTotal, absolutePath, offset, limit, columnOffset, columnLimit
       );
 
       // Track read state
       const readStateManager = registry.get('read_state_manager');
-      if (readStateManager) {
+      if (readStateManager && columnOffset === 0 && columnLimit === 0) {
         readStateManager.trackRead(absolutePath, streamedStart + 1, streamedStart + streamedLines.length, readScopeId);
       }
 
@@ -604,16 +666,15 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
           scopeId: readScopeId,
           filePath: absolutePath,
           mtimeMs: stat.mtimeMs,
-          offset,
-          limit,
-          lineCount: streamedLines.length,
+          selection,
+          lineCount: selectedLines.length,
           totalLines: streamedTotal,
           lastAccessTime: Date.now(),
           toolCallId: this.currentCallId,
         });
       }
 
-      return { content: formattedContent, lineCount: streamedLines.length };
+      return { content: formattedContent, lineCount: selectedLines.length };
     }
 
     // Read file content (standard path for files < 10MB)
@@ -663,16 +724,16 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
 
     // Apply limit
     const endLine = limit > 0 ? startLine + limit : lines.length;
-    const selectedLines = lines.slice(startLine, endLine);
+    const selectedLines = this.selectColumns(lines.slice(startLine, endLine), columnOffset, columnLimit);
 
     // Use shared formatting helper
     const formattedContent = this.formatLinesWithNumbers(
-      selectedLines, startLine, totalLines, absolutePath, offset, limit
+      selectedLines, startLine, totalLines, absolutePath, offset, limit, columnOffset, columnLimit
     );
 
     // Track read state for apply-patch validation
     const readStateManager = registry.get('read_state_manager');
-    if (readStateManager) {
+    if (readStateManager && columnOffset === 0 && columnLimit === 0) {
       // Track the lines that were read (1-indexed)
       const startLineNumber = startLine + 1;
       const endLineNumber = Math.min(endLine, totalLines);
@@ -685,8 +746,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
         scopeId: readScopeId,
         filePath: absolutePath,
         mtimeMs: stat.mtimeMs,
-        offset,
-        limit,
+        selection,
         lineCount: selectedLines.length,
         totalLines,
         lastAccessTime: Date.now(),

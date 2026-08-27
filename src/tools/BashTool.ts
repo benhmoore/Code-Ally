@@ -40,6 +40,13 @@ const SAFE_ENV_VARS = [
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
 const MAX_STREAM_CHUNK_BYTES = 64 * 1024;
 
+function combineOutputStreams(stdout: string, stderr: string): string {
+  if (stdout && stderr) {
+    return `stdout:\n${stdout}${stdout.endsWith('\n') ? '' : '\n'}stderr:\n${stderr}`;
+  }
+  return stdout || stderr;
+}
+
 class BoundedOutputBuffer {
   private chunks: string[] = [];
   private head = 0;
@@ -73,21 +80,6 @@ class BoundedOutputBuffer {
   toString(): string {
     return this.chunks.slice(this.head).join('');
   }
-}
-
-/**
- * Preserve both output streams when a command fails. Test runners and build
- * tools commonly write their actionable diagnostics to stdout while emitting
- * warnings on stderr; preferring stderr would discard the actual failure.
- */
-function formatFailedCommandOutput(stdout: string, stderr: string): string {
-  const trimmedStdout = stdout.trim();
-  const trimmedStderr = stderr.trim();
-
-  if (trimmedStdout && trimmedStderr) {
-    return `stdout:\n${trimmedStdout}\n\nstderr:\n${trimmedStderr}`;
-  }
-  return trimmedStdout || trimmedStderr || 'Command failed with no output';
 }
 
 /**
@@ -649,11 +641,20 @@ export class BashTool extends BaseTool {
         abortTimeoutHandle = setTimeout(() => {
           if (child.exitCode === null) {
             logger.warn('[BashTool] Process did not respond to SIGKILL after abort, forcing completion');
+            const stdout = stdoutBuffer.toString();
+            const stderr = stderrBuffer.toString();
             // Force resolve the promise even if process hasn't closed
             resolve(
               this.formatErrorResponse(
                 'Command interrupted by user (forced completion)',
-                'interrupted'
+                'interrupted',
+                undefined,
+                {
+                  content: stdout,
+                  stderr,
+                  display_content: combineOutputStreams(stdout, stderr),
+                  return_code: child.exitCode,
+                },
               )
             );
           }
@@ -720,21 +721,37 @@ export class BashTool extends BaseTool {
 
         // Check if killed due to abort
         if (abortSignal?.aborted) {
+          const stdout = stdoutBuffer.toString();
+          const stderr = stderrBuffer.toString();
           resolve(
             this.formatErrorResponse(
               'Command interrupted by user',
-              'interrupted'
+              'interrupted',
+              undefined,
+              {
+                content: stdout,
+                stderr,
+                display_content: combineOutputStreams(stdout, stderr),
+                return_code: returnCode,
+              },
             )
           );
           return;
         }
 
         if (timedOut) {
-          const output = (stdoutBuffer.toString() + stderrBuffer.toString()).trim();
+          const stdout = stdoutBuffer.toString();
+          const stderr = stderrBuffer.toString();
           resolve(this.formatErrorResponse(
-            `Command timed out after ${timeout / 1000} seconds${output ? `\n\nLast output:\n${output.slice(-4000)}` : ''}`,
+            `Command timed out after ${timeout / 1000} seconds`,
             'timeout_error',
-            'Increase timeout or explicitly use run_in_background for a supervised long-lived process'
+            'Increase timeout or explicitly use run_in_background for a supervised long-lived process',
+            {
+              content: stdout,
+              stderr,
+              display_content: combineOutputStreams(stdout, stderr),
+              return_code: returnCode,
+            },
           ));
           return;
         }
@@ -745,13 +762,17 @@ export class BashTool extends BaseTool {
 
         // Non-zero exit code = failure (except for special cases)
         if (returnCode !== 0 && returnCode !== null) {
-          const errorMsg = formatFailedCommandOutput(stdout, stderr);
-
           resolve(
             this.formatErrorResponse(
-              errorMsg,
+              `Command exited with code ${returnCode}`,
               'command_failed',
-              `Command exited with code ${returnCode}`
+              `Command exited with code ${returnCode}; inspect content and stderr for command diagnostics`,
+              {
+                content: stdout,
+                stderr,
+                display_content: combineOutputStreams(stdout, stderr),
+                return_code: returnCode,
+              },
             )
           );
         } else {
@@ -844,7 +865,7 @@ export class BashTool extends BaseTool {
    * ToolResult envelope. Bash stores stdout in content and stderr separately,
    * so preserve both streams for later grep/tail/sed inspection.
    */
-  getPersistableOutput(result: ToolResult | string, fallback?: string): string {
+  getPersistableOutput(result: ToolResult | string): string | null {
     if (typeof result === 'string') {
       return result;
     }
@@ -852,14 +873,10 @@ export class BashTool extends BaseTool {
     const stdout = typeof result.content === 'string' ? result.content : '';
     const stderr = typeof result.stderr === 'string' ? result.stderr : '';
 
-    if (stdout && stderr) {
-      return `${stdout}${stdout.endsWith('\n') ? '' : '\n'}${stderr}`;
-    }
-    if (stdout || stderr) {
-      return stdout || stderr;
-    }
+    const combined = combineOutputStreams(stdout, stderr);
+    if (combined) return combined;
 
-    return super.getPersistableOutput(result, fallback);
+    return super.getPersistableOutput(result);
   }
 
   /**

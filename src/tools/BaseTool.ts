@@ -681,7 +681,11 @@ export abstract class BaseTool {
   }
 
   /**
-   * Format a standard error response with tool name and parameter context
+   * Format a standard error response.
+   *
+   * The human/model-readable error is stored once. Tool identity and arguments
+   * remain structured in error_details so transport serialization does not
+   * duplicate potentially large commands, paths, or diagnostics.
    *
    * @param errorMessage - The error message
    * @param errorType - Type of error (user_error, system_error, permission_error, validation_error, security_error)
@@ -695,41 +699,9 @@ export abstract class BaseTool {
     suggestion?: string,
     additionalFields?: Record<string, any>
   ): ToolResult {
-    // Build parameter context for error message (with truncation for clarity)
-    let paramContext = '';
-    if (Object.keys(this.currentParams).length > 0) {
-      const paramPairs = Object.entries(this.currentParams)
-        .map(([key, value]) => {
-          let valueStr: string;
-
-          // Truncate long strings
-          if (typeof value === 'string') {
-            valueStr = value.length > TEXT_LIMITS.TOOL_PARAM_VALUE_MAX
-              ? `"${value.substring(0, TEXT_LIMITS.TOOL_PARAM_VALUE_MAX - TEXT_LIMITS.ELLIPSIS_LENGTH)}..."`
-              : `"${value}"`;
-          }
-          // Summarize long arrays
-          else if (Array.isArray(value)) {
-            valueStr = value.length > TEXT_LIMITS.TOOL_PARAM_ARRAY_DISPLAY
-              ? `[${value.length} items]`
-              : JSON.stringify(value);
-          }
-          // Normal JSON for other types
-          else {
-            valueStr = JSON.stringify(value);
-          }
-
-          return `${key}=${valueStr}`;
-        })
-        .join(', ');
-      paramContext = `${this.name}(${paramPairs}): `;
-    } else {
-      paramContext = `${this.name}(): `;
-    }
-
     const result: ToolResult = {
       success: false,
-      error: `${paramContext}${errorMessage}`,
+      error: errorMessage,
       error_type: errorType,
 
       // Structured error details for clean error extraction
@@ -815,10 +787,11 @@ export abstract class BaseTool {
    * Format the full tool output for persistence to disk when the LLM-facing
    * result must be truncated. This should return the artifact a model can
    * inspect directly with read, grep, tail, sed, or other text tools.
+   * Return null when the result contains no independently readable artifact.
    *
    * Tools with richer execution streams should override this method.
    */
-  getPersistableOutput(result: ToolResult | string, fallback?: string): string {
+  getPersistableOutput(result: ToolResult | string): string | null {
     if (typeof result === 'string') {
       return result;
     }
@@ -827,15 +800,35 @@ export abstract class BaseTool {
       return result.content;
     }
 
-    if (fallback !== undefined) {
-      return fallback;
+    // Failure envelopes are transport metadata, not readable artifacts. Persist
+    // the underlying diagnostic once instead of a JSON object that repeats the
+    // same message, parameters, and suggestion across several fields.
+    if (!result.success) {
+      if (typeof result.error_details?.message === 'string') {
+        return result.error_details.message;
+      }
+      if (typeof result.error === 'string') {
+        return result.error;
+      }
     }
 
     try {
-      // Persisted for the model to read back — strip display-only fields.
-      return JSON.stringify(stripDisplayOnlyFields(result));
+      // Persist structured payload data, never the transport envelope. Control
+      // fields describe delivery and execution; they are not part of the
+      // artifact a model should inspect with read/grep.
+      const payload = stripDisplayOnlyFields({ ...result }) as Record<string, unknown>;
+      for (const key of [
+        'success', 'error', 'error_type', 'error_details', 'suggestion',
+        'system_reminder', 'system_reminder_persist',
+      ]) {
+        delete payload[key];
+      }
+      for (const key of Object.keys(payload)) {
+        if (key.startsWith('_')) delete payload[key];
+      }
+      return Object.keys(payload).length > 0 ? JSON.stringify(payload, null, 2) : null;
     } catch {
-      return String(result);
+      return null;
     }
   }
 

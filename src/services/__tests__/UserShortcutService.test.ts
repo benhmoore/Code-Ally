@@ -95,17 +95,19 @@ describe('UserShortcutService - bash shortcut', () => {
     expect(rec.uiMessages).toEqual([{ role: 'user', content: 'echo hi' }]);
   });
 
-  it('emits a matching TOOL_CALL_START / TOOL_CALL_END pair', async () => {
+  it('emits the complete tool lifecycle', async () => {
     const executeTool = vi.fn().mockResolvedValue({ success: true, content: 'hi', error: '' });
     const service = new UserShortcutService(createToolManager(executeTool), rec.activityStream);
 
     await service.runBashShortcut('echo hi', rec.agent, (m) => rec.uiMessages.push(m));
 
-    expect(rec.events).toHaveLength(2);
-    expect(rec.events[0].type).toBe(ActivityEventType.TOOL_CALL_START);
-    expect(rec.events[1].type).toBe(ActivityEventType.TOOL_CALL_END);
-    expect(rec.events[0].id).toBe(rec.events[1].id);
-    expect(rec.events[1].data.success).toBe(true);
+    expect(rec.events.map((event) => event.type)).toEqual([
+      ActivityEventType.TOOL_CALL_START,
+      ActivityEventType.TOOL_EXECUTION_START,
+      ActivityEventType.TOOL_CALL_END,
+    ]);
+    expect(rec.events.every((event) => event.id === rec.events[0].id)).toBe(true);
+    expect(rec.events[2].data.success).toBe(true);
   });
 
   it('reports a failed tool result without an extra chat error message', async () => {
@@ -119,8 +121,8 @@ describe('UserShortcutService - bash shortcut', () => {
 
     await service.runBashShortcut('nope', rec.agent, (m) => rec.uiMessages.push(m));
 
-    expect(rec.events[1].data.success).toBe(false);
-    expect(rec.events[1].data.error).toBe('command not found');
+    expect(rec.events[2].data.success).toBe(false);
+    expect(rec.events[2].data.error).toBe('command not found');
     expect((rec.agentMessages[2] as any).is_error).toBe(true);
     expect(rec.uiMessages).toEqual([{ role: 'user', content: 'nope' }]);
   });
@@ -134,9 +136,10 @@ describe('UserShortcutService - bash shortcut', () => {
     // TOOL_CALL_END still emitted so the UI does not hang on a started call
     expect(rec.events.map((e) => e.type)).toEqual([
       ActivityEventType.TOOL_CALL_START,
+      ActivityEventType.TOOL_EXECUTION_START,
       ActivityEventType.TOOL_CALL_END,
     ]);
-    expect(rec.events[1].data.success).toBe(false);
+    expect(rec.events[2].data.success).toBe(false);
 
     // Agent history keeps a valid tool_calls/tool pair
     expect(rec.agentMessages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);

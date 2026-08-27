@@ -215,6 +215,13 @@ export class MentionAttachmentService {
     try {
       spec.beforeExecute?.();
 
+      this.activityStream.emit({
+        id: toolCallId,
+        type: ActivityEventType.TOOL_EXECUTION_START,
+        timestamp: Date.now(),
+        data: {},
+      });
+
       const result = await this.toolManager.executeTool(
         spec.toolName,
         spec.executeArguments,

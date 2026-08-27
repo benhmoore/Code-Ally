@@ -140,6 +140,75 @@ describe('ReadTool', () => {
       expect(result.content).toContain('Line 3');
     });
 
+    it('reads an exceptionally long line in bounded column slices', async () => {
+      const longLineFile = path.join(tempDir, 'single-line.json');
+      await fs.writeFile(longLineFile, `{"payload":"${'x'.repeat(30_000)}"}`);
+
+      const broad = await readTool.execute({ file_path: longLineFile });
+      expect(broad.success).toBe(false);
+      expect(broad.error).toContain('exceptionally long single line');
+      expect(broad.error).toContain('column_offset');
+
+      const firstSlice = await readTool.execute({
+        file_path: longLineFile,
+        offset: 1,
+        limit: 1,
+        column_offset: 0,
+        column_limit: 200,
+      });
+      expect(firstSlice.success).toBe(true);
+      expect(firstSlice.content).toContain('[Showing columns 0-200');
+      expect(firstSlice.content).toContain('{"payload":"');
+      expect(firstSlice.content.length).toBeLessThan(500);
+
+      const secondSlice = await readTool.execute({
+        file_path: longLineFile,
+        offset: 1,
+        limit: 1,
+        column_offset: 200,
+        column_limit: 200,
+      });
+      expect(secondSlice.success).toBe(true);
+      expect(secondSlice.content).toContain('[Showing columns 200-400');
+
+      const readStateManager = registry.get('read_state_manager')!;
+      expect(readStateManager.validateLinesRead(longLineFile, 1, 1).success).toBe(false);
+    });
+
+    it('does not split Unicode code points at column boundaries', async () => {
+      const unicodeFile = path.join(tempDir, 'unicode.txt');
+      await fs.writeFile(unicodeFile, 'a😀b');
+
+      const result = await readTool.execute({
+        file_path: unicodeFile,
+        offset: 1,
+        limit: 1,
+        column_offset: 1,
+        column_limit: 1,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toMatch(/1\t😀$/);
+      expect(result.content).not.toContain('�');
+    });
+
+    it('replays cached tail reads against their actual line range', async () => {
+      const tailFile = path.join(tempDir, 'tail.txt');
+      await fs.writeFile(tailFile, 'Line 1\nLine 2\nLine 3\nLine 4');
+      const readStateManager = registry.get('read_state_manager')!;
+      const first = await readTool.execute({ file_path: tailFile, offset: -2, limit: 2 });
+      expect(first.success).toBe(true);
+      expect(first.content).toContain('Line 3');
+
+      // Keep the read cache but clear authorization state so the cache-hit path
+      // must reconstruct the exact range it represents.
+      readStateManager.reset();
+      const cached = await readTool.execute({ file_path: tailFile, offset: -2, limit: 2 });
+      expect(cached.content).toContain('File unchanged since last read');
+      expect(readStateManager.validateLinesRead(tailFile, 3, 4).success).toBe(true);
+      expect(readStateManager.validateLinesRead(tailFile, 1, 2).success).toBe(false);
+    });
+
     it('should handle non-existent file', async () => {
       const result = await readTool.execute({
         file_path: path.join(tempDir, 'nonexistent.txt'),
