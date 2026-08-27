@@ -39,6 +39,7 @@ export interface CLIOptions {
   noSession?: boolean;
   resume?: string | boolean;
   scheduledTask?: string;
+  readyFile?: string;
 
   // Advanced settings
   autoConfirm?: boolean;
@@ -154,7 +155,8 @@ Use '/help' for complete interactive command reference.
         '--resume [session]',
         'Resume a conversation from a session. If session ID provided, resume that session. If no ID provided, show interactive selection menu.'
       )
-      .option('--scheduled-task <id>', 'Internal: run once under a scheduled task permission policy');
+      .option('--scheduled-task <id>', 'Internal: run once under a scheduled task permission policy')
+      .option('--ready-file <path>', 'Write a readiness marker when interactive input can accept messages');
 
     // Advanced Settings
     this.program
@@ -216,6 +218,7 @@ Use '/help' for complete interactive command reference.
       noSession: opts.session === false,
       resume: opts.resume,
       scheduledTask: opts.scheduledTask,
+      readyFile: opts.readyFile,
 
       // Advanced
       autoConfirm: opts.autoConfirm,

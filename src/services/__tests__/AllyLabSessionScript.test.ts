@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const script = resolve('scripts/ally-lab-session.py');
 const labScript = resolve('scripts/ally-lab.sh');
@@ -161,5 +161,52 @@ describe('ally-lab session selection', () => {
     expect(result.status).toBe(0);
     await expect(readFile(join(stateRoot, 'ally-lab', 'test-lab.session'), 'utf8'))
       .resolves.toBe('session_resumed\n');
+  });
+});
+
+describe('ally-lab interactive readiness', () => {
+  it('does not send input until the managed TUI reports that input is ready', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ally-lab-ready-'));
+    temporaryDirectories.push(root);
+    const binDir = join(root, 'bin');
+    const stateRoot = join(root, 'state');
+    const stateDir = join(stateRoot, 'ally-lab');
+    const logPath = join(root, 'tmux.log');
+    await mkdir(binDir, { recursive: true });
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'test-lab.started'), '1\n');
+    const tmux = join(binDir, 'tmux');
+    await writeFile(tmux, [
+      '#!/bin/sh',
+      'case "$1" in',
+      '  has-session) exit 0 ;;',
+      '  display-message) echo 0; exit 0 ;;',
+      '  send-keys) printf "%s\\n" "$*" >> "$TMUX_LOG"; exit 0 ;;',
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'));
+    await chmod(tmux, 0o755);
+
+    const child = spawn('bash', [labScript, 'say', 'hello'], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        TMPDIR: stateRoot,
+        ALLY_LAB_SESSION: 'test-lab',
+        TMUX_LOG: logPath,
+      },
+    });
+    const exit = new Promise<number | null>((resolveExit, rejectExit) => {
+      child.once('error', rejectExit);
+      child.once('exit', resolveExit);
+    });
+
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 150));
+    await expect(readFile(logPath, 'utf8')).rejects.toThrow();
+    await writeFile(join(stateDir, 'test-lab.ready'), 'ready\n');
+
+    await expect(exit).resolves.toBe(0);
+    await expect(readFile(logPath, 'utf8')).resolves.toContain('send-keys -t test-lab -l hello');
   });
 });

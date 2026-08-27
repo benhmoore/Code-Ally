@@ -96,6 +96,9 @@ export interface AppProps {
 
   /** Total number of configured MCP servers */
   totalMcpCount?: number;
+
+  /** Called once startup services and any direct session resume are ready. */
+  onInteractiveReady?: () => void;
 }
 
 /**
@@ -119,6 +122,7 @@ const AppContentComponent: React.FC<{
   totalPluginCount?: number;
   activeMcpCount?: number;
   totalMcpCount?: number;
+  onInteractiveReady?: () => void;
 }> = ({
   foregroundAgent,
   foregroundAgentId,
@@ -133,6 +137,7 @@ const AppContentComponent: React.FC<{
   totalPluginCount,
   activeMcpCount,
   totalMcpCount,
+  onInteractiveReady,
 }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
@@ -181,13 +186,35 @@ const AppContentComponent: React.FC<{
   }, []);
 
   // Handle session resumption on mount
-  useSessionResume(
+  const { sessionLoaded } = useSessionResume(
     resumeSession,
     primaryAgent,
     actions,
     activityStream,
     modal.setSessionSelectRequest
   );
+
+  const interactiveReadySignalled = useRef(false);
+  useEffect(() => {
+    if (interactiveReadySignalled.current
+      || !onInteractiveReady
+      || !sessionLoaded
+      || !commandHandler
+      || !completionProvider
+      || shouldShowSetupWizard
+      || showModelSelector
+      || resumeSession === 'interactive') return;
+    interactiveReadySignalled.current = true;
+    onInteractiveReady();
+  }, [
+    commandHandler,
+    completionProvider,
+    onInteractiveReady,
+    resumeSession,
+    sessionLoaded,
+    shouldShowSetupWizard,
+    showModelSelector,
+  ]);
 
   // Subscribe to all activity events
   const { isCancelling } = useActivitySubscriptions(state, actions, modal, primaryAgent, activityStream);
@@ -1199,6 +1226,7 @@ export const App: React.FC<AppProps> = ({
   totalPluginCount,
   activeMcpCount,
   totalMcpCount,
+  onInteractiveReady,
 }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
@@ -1223,6 +1251,7 @@ export const App: React.FC<AppProps> = ({
             totalPluginCount={totalPluginCount}
             activeMcpCount={activeMcpCount}
             totalMcpCount={totalMcpCount}
+            onInteractiveReady={onInteractiveReady}
           />
         </AppProvider>
       </ActivityProvider>

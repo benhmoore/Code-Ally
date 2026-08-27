@@ -42,6 +42,7 @@ STATE_DIR="${TMPDIR:-/tmp}/ally-lab"
 DIR_FILE="$STATE_DIR/$SESSION.dir"
 START_FILE="$STATE_DIR/$SESSION.started"
 SESSION_ID_FILE="$STATE_DIR/$SESSION.session"
+READY_FILE="$STATE_DIR/$SESSION.ready"
 
 die() { echo "ally-lab: $*" >&2; exit 1; }
 need_session() {
@@ -102,6 +103,7 @@ cmd_start() {
   printf '%s\n' "$dir" > "$DIR_FILE"
   python3 -c 'import time; print(time.time_ns())' > "$START_FILE"
   rm -f "$SESSION_ID_FILE"
+  rm -f "$READY_FILE"
 
   # A resumed session predates this process, so launch time cannot identify it.
   # Preserve the explicit CLI identity as the authoritative diagnostic target.
@@ -122,7 +124,7 @@ cmd_start() {
 
   # A wide pane so the Ink UI renders the way it does in a real terminal.
   local ally_command
-  printf -v ally_command '%q ' ally "${extra[@]}"
+  printf -v ally_command '%q ' ally "${extra[@]}" --ready-file "$READY_FILE"
   tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$dir" "exec $ally_command"
   tmux set-option -t "$SESSION" remain-on-exit on
   # Let whichever client attaches drive the pane size, so a human joining with
@@ -152,6 +154,7 @@ cmd_hook() {
   # run must not hide its session file.
   rm -f "$STATE_DIR/$name.started"
   rm -f "$STATE_DIR/$name.session"
+  rm -f "$STATE_DIR/$name.ready"
   echo "hooked tmux session '$name' (dir: $(cat "$STATE_DIR/$name.dir"))"
   [[ "$name" != "${ALLY_LAB_SESSION:-ally-lab}" ]] \
     && echo "note: export ALLY_LAB_SESSION=$name for subsequent commands"
@@ -160,6 +163,20 @@ cmd_hook() {
 cmd_say() {
   need_session
   [[ $# -ge 1 ]] || die "usage: $0 say \"message\""
+  # Managed sessions expose an application-level readiness marker after Ink's
+  # input handler, startup services, and any direct resume have completed. Do
+  # not infer readiness from rendered text: keystrokes sent during initialization
+  # can be painted later without ever reaching the input handler.
+  if [[ -f "$START_FILE" && ! -f "$READY_FILE" ]]; then
+    local i pane_dead
+    for ((i = 0; i < 600; i++)); do
+      [[ -f "$READY_FILE" ]] && break
+      pane_dead="$(tmux display-message -p -t "$SESSION" '#{pane_dead}' 2>/dev/null || echo 1)"
+      [[ "$pane_dead" == 1 ]] && die "ally exited before interactive input became ready"
+      sleep 0.1
+    done
+    [[ -f "$READY_FILE" ]] || die "interactive input did not become ready within 60 seconds"
+  fi
   # -l sends the text literally (no key-name interpretation), then Enter.
   tmux send-keys -t "$SESSION" -l "$1"
   sleep 0.2

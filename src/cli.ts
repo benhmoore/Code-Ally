@@ -41,6 +41,7 @@ import { ScheduledTaskManager, ScheduledTask, presetPolicy } from './services/Sc
 import { SchedulerInstaller } from './services/SchedulerInstaller.js';
 import { generateShortId } from './utils/id.js';
 import { formatError } from './utils/errorUtils.js';
+import { atomicWriteFile } from './utils/atomicFile.js';
 
 let terminalOutputAvailable = true;
 
@@ -1641,6 +1642,13 @@ async function main() {
         totalPluginCount: pluginCount,
         activeMcpCount,
         totalMcpCount,
+        onInteractiveReady: options.readyFile
+          ? () => {
+              void atomicWriteFile(options.readyFile!, `${process.pid}\n`).catch(error => {
+                logger.error(`[CLI] Could not write interactive readiness marker ${options.readyFile}:`, error);
+              });
+            }
+          : undefined,
       }),
       {
         exitOnCtrlC: false,
