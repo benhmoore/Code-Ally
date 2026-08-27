@@ -76,6 +76,23 @@ describe('selectExposedTools', () => {
     expect(result.exposedTokens).toBeLessThanOrEqual(coreTokens + searchTokens + oneMcp * 2 + 10);
   });
 
+  it('always exposes the complete batch explicitly requested through tool-search', () => {
+    const definitions = [...coreDefs, ...mcpDefs, definition(TOOL_SEARCH_TOOL_NAME)];
+    const result = selectExposedTools({
+      definitions,
+      schemaBudget: 10,
+      activated: ['chrome_action_1', 'chrome_action_2'],
+      requested: ['chrome_action_1', 'chrome_action_2'],
+      estimateTokens: estimate,
+    });
+
+    const exposedNames = result.exposed.map(d => d.function.name);
+    expect(exposedNames).toContain('chrome_action_1');
+    expect(exposedNames).toContain('chrome_action_2');
+    expect(result.deferred.map(tool => tool.name)).not.toContain('chrome_action_1');
+    expect(result.deferred.map(tool => tool.name)).not.toContain('chrome_action_2');
+  });
+
   it('never drops the core loop, even when the budget cannot hold it', () => {
     const definitions = [...coreDefs, ...mcpDefs, definition(TOOL_SEARCH_TOOL_NAME)];
 

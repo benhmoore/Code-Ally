@@ -717,7 +717,7 @@ export class ToolOrchestrator {
     if (tool && activationScope) {
       try {
         ServiceRegistry.getInstance().get('tool_activation_registry')
-          ?.activate(activationScope, [toolName]);
+          ?.touch(activationScope, [toolName]);
       } catch {
         // Activation is an optimisation; never fail a tool call over it.
       }

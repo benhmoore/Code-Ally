@@ -51,6 +51,7 @@ describe('ToolSearchTool', () => {
     // The native schema is sent on the next request; conversation content stays compact.
     expect(result.content).not.toContain('"parameters"');
     expect(activations.get('agent-a')).toContain('chrome_take_screenshot');
+    expect(activations.getRequested('agent-a')).toEqual(['chrome_take_screenshot']);
   });
 
   it('finds tools by keyword when the exact name is unknown', async () => {
@@ -73,6 +74,10 @@ describe('ToolSearchTool', () => {
     expect(activations.get('agent-a')).toEqual(
       expect.arrayContaining(['chrome_navigate_page', 'chrome_take_screenshot']),
     );
+    expect(activations.getRequested('agent-a')).toEqual([
+      'chrome_take_screenshot',
+      'chrome_navigate_page',
+    ]);
   });
 
   it('activates per agent so a delegate never alters its parent surface', async () => {
