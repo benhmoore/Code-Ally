@@ -158,6 +158,11 @@ describe('ArgumentParser', () => {
       ]);
       expect(options.resume).toBe('session-123');
     });
+
+    it('should parse an interactive readiness marker path', () => {
+      const options = parser.parse(['node', 'ally', '--ready-file', '/tmp/ally.ready']);
+      expect(options.readyFile).toBe('/tmp/ally.ready');
+    });
   });
 
   describe('Advanced Settings', () => {
