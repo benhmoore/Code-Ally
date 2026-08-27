@@ -200,13 +200,13 @@ describe('BaseTool', () => {
   });
 
   describe('formatErrorResponse', () => {
-    it('should format error with tool name', async () => {
+    it('stores the message once and keeps tool identity structured', async () => {
       await tool.execute({ shouldFail: true });
 
       const result = await tool.execute({ shouldFail: true });
       expect(result.success).toBe(false);
-      expect(result.error).toContain('mock-tool');
-      expect(result.error).toContain('Mock error');
+      expect(result.error).toBe('Mock error');
+      expect(result.error_details?.tool_name).toBe('mock-tool');
     });
 
     it('should include suggestion if provided', async () => {
@@ -217,6 +217,35 @@ describe('BaseTool', () => {
     it('should include error type', async () => {
       const result = await tool.execute({ shouldFail: true });
       expect(result.error_type).toBe('user_error');
+    });
+  });
+
+  describe('persistable artifacts', () => {
+    it('removes transport fields from structured successful payloads', () => {
+      const artifact = tool.getPersistableOutput({
+        success: true,
+        error: '',
+        result: 'success',
+        records: [{ id: 1 }],
+        _executionStartTime: 123,
+      });
+
+      expect(artifact).toBe(JSON.stringify({ result: 'success', records: [{ id: 1 }] }, null, 2));
+    });
+
+    it('persists one raw failure diagnostic instead of its transport envelope', () => {
+      const artifact = tool.getPersistableOutput({
+        success: false,
+        error: 'mock-tool(data="x"): failed',
+        error_type: 'validation_error',
+        error_details: {
+          message: 'failed',
+          tool_name: 'mock-tool',
+          parameters: { data: 'x' },
+        },
+      });
+
+      expect(artifact).toBe('failed');
     });
   });
 
@@ -279,11 +308,13 @@ describe('BaseTool', () => {
         shouldFail: true,
       });
 
-      // Check that error message includes defined params but not undefined/null
-      expect(result.error).toContain('param1');
-      expect(result.error).toContain('param4');
-      expect(result.error).not.toContain('param2');
-      expect(result.error).not.toContain('param3');
+      expect(result.error).toBe('Mock error');
+      expect(result.error_details?.parameters).toMatchObject({
+        param1: 'value1',
+        param4: 'value4',
+      });
+      expect(result.error_details?.parameters).not.toHaveProperty('param2');
+      expect(result.error_details?.parameters).not.toHaveProperty('param3');
     });
   });
 });

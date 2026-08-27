@@ -270,7 +270,7 @@ export const useActivitySubscriptions = (
 
     const toolCall: ToolCallState = {
       id: event.id,
-      status: 'executing',
+      status: 'pending',
       toolName: event.data.toolName,
       arguments: event.data.arguments || {},
       startTime: event.timestamp,
@@ -327,9 +327,6 @@ export const useActivitySubscriptions = (
     }
 
     const toolCall = state.activeToolCalls.find((tc: ToolCallState) => tc.id === event.id);
-    if (toolCall && !toolCall.executionStartTime) {
-      updates.executionStartTime = event.timestamp;
-    }
 
     // Skip collapse for linked plugin agents (dev mode) to keep tool calls visible
     const isLinkedPluginAgent = event.data.result?._isLinkedPluginAgent === true;
@@ -367,6 +364,7 @@ export const useActivitySubscriptions = (
     }
 
     scheduleToolUpdate.current(event.id, {
+      status: 'executing',
       executionStartTime: event.timestamp,
     });
   });

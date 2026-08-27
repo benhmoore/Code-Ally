@@ -20,6 +20,7 @@ import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
 import { redactSensitiveText } from '../../utils/redaction.js';
 import { tokenCounter } from '../../services/TokenCounter.js';
+import { getToolCallTiming } from '../../utils/toolTiming.js';
 
 /**
  * Timeline entry types for unified chronological display
@@ -623,8 +624,12 @@ export class DebugCommand extends Command {
     }
 
     if (call.endTime && call.startTime) {
-      const duration = call.endTime - call.startTime;
-      output += `Duration: ${this.formatDuration(duration)}\n`;
+      const timing = getToolCallTiming(call);
+      output += `Execution duration: ${this.formatDuration(timing.executionMs)}\n`;
+      if (timing.preExecutionMs > 0) {
+        output += `Pre-execution wait: ${this.formatDuration(timing.preExecutionMs)}\n`;
+        output += `Total elapsed: ${this.formatDuration(timing.totalMs)}\n`;
+      }
     }
 
     output += `Status: ${call.status}\n`;
@@ -849,7 +854,10 @@ export class DebugCommand extends Command {
     const indent = ' '.repeat(27);
 
     const statusIcon = call.status === 'success' ? '✓' : call.status === 'error' ? '✗' : '○';
-    const duration = call.endTime ? `${call.endTime - call.startTime}ms` : 'running';
+    const timing = getToolCallTiming(call);
+    const duration = call.endTime
+      ? `${timing.executionMs}ms execution${timing.preExecutionMs > 0 ? `; ${timing.preExecutionMs}ms pre-execution wait` : ''}`
+      : 'running';
 
     output += `[${isoTime}] ┌─ TOOL CALL: ${call.toolName} ${statusIcon} (${duration})\n`;
 
@@ -927,8 +935,12 @@ export class DebugCommand extends Command {
 
     // Duration
     if (call.endTime && call.startTime) {
-      const duration = call.endTime - call.startTime;
-      output += `Duration: ${duration}ms\n`;
+      const timing = getToolCallTiming(call);
+      output += `Execution duration: ${timing.executionMs}ms\n`;
+      if (timing.preExecutionMs > 0) {
+        output += `Pre-execution wait: ${timing.preExecutionMs}ms\n`;
+        output += `Total elapsed: ${timing.totalMs}ms\n`;
+      }
     }
 
     output += '\n';

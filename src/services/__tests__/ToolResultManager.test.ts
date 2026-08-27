@@ -247,11 +247,72 @@ describe('ToolResultManager', () => {
 
       expect(persistence.persistResult).toHaveBeenCalledWith(
         'call-bash',
-        `${stdout}${stderr}`
+        `stdout:\n${stdout}stderr:\n${stderr}`
       );
       expect(result).toContain('[Full output saved to: /tmp/call-bash.txt]');
       expect(result).toContain('build line');
       expect(result).not.toContain('{"success":true');
+    });
+
+    it('persists failed bash streams instead of the serialized error envelope', async () => {
+      const stdout = 'failed test diagnostics\n'.repeat(1000);
+      const stderr = 'runner warning\n';
+      const persistence = {
+        persistResult: vi.fn().mockResolvedValue('/tmp/call-failed-bash.txt'),
+        getResultPath: vi.fn().mockReturnValue('/tmp/call-failed-bash.txt'),
+      } as unknown as ToolResultPersistence;
+
+      toolResultManager.setPersistence(persistence);
+      toolResultManager.setLimits({ maxContextPercent: 0.01, minTokens: 10 });
+
+      const result = await toolResultManager.processToolResult(
+        'bash',
+        {
+          success: false,
+          error: 'Command exited with code 1',
+          error_type: 'command_failed',
+          content: stdout,
+          stderr,
+          return_code: 1,
+        },
+        'call-failed-bash'
+      );
+
+      expect(persistence.persistResult).toHaveBeenCalledWith(
+        'call-failed-bash',
+        `stdout:\n${stdout}stderr:\n${stderr}`
+      );
+      expect(result).toContain('[Full output saved to: /tmp/call-failed-bash.txt]');
+      expect(result).toContain('failed test diagnostics');
+      expect(result).not.toContain('{"success":false');
+    });
+
+    it('persists a raw diagnostic instead of a repeated validation envelope', async () => {
+      const diagnostic = 'A precise validation diagnostic.\n'.repeat(1000);
+      const persistence = {
+        persistResult: vi.fn().mockResolvedValue('/tmp/call-read-error.txt'),
+        getResultPath: vi.fn().mockReturnValue('/tmp/call-read-error.txt'),
+      } as unknown as ToolResultPersistence;
+
+      toolResultManager.setPersistence(persistence);
+      toolResultManager.setLimits({ maxContextPercent: 0.01, minTokens: 10 });
+
+      await toolResultManager.processToolResult(
+        'read',
+        {
+          success: false,
+          error: `read(file_path="large.txt"): ${diagnostic}`,
+          error_type: 'validation_error',
+          error_details: {
+            message: diagnostic,
+            tool_name: 'read',
+            parameters: { file_path: 'large.txt' },
+          },
+        },
+        'call-read-error',
+      );
+
+      expect(persistence.persistResult).toHaveBeenCalledWith('call-read-error', diagnostic);
     });
 
     it('honors a hard per-call ceiling assigned by a shared batch budget', async () => {

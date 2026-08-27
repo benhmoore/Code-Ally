@@ -132,7 +132,7 @@ describe('MentionAttachmentService - file mentions', () => {
     expect(rec.resetCalls).toBe(1);
   });
 
-  it('emits a matching TOOL_CALL_START / TOOL_CALL_END pair', async () => {
+  it('emits the complete tool lifecycle', async () => {
     const executeTool = vi.fn().mockResolvedValue(ok('x'));
     const service = new MentionAttachmentService(createToolManager(executeTool), rec.activityStream);
 
@@ -140,12 +140,13 @@ describe('MentionAttachmentService - file mentions', () => {
 
     expect(rec.events.map((e) => e.type)).toEqual([
       ActivityEventType.TOOL_CALL_START,
+      ActivityEventType.TOOL_EXECUTION_START,
       ActivityEventType.TOOL_CALL_END,
     ]);
-    expect(rec.events[0].id).toBe(rec.events[1].id);
+    expect(rec.events.every((event) => event.id === rec.events[0].id)).toBe(true);
     expect(rec.events[0].id).toBe((rec.agentMessages[0] as any).tool_calls[0].id);
     expect(rec.events[0].data.arguments).toEqual({ file_path: 'a.ts' });
-    expect(rec.events[1].data.success).toBe(true);
+    expect(rec.events[2].data.success).toBe(true);
   });
 
   it('records a failed tool result as an error but still lets the message be sent', async () => {
@@ -163,8 +164,8 @@ describe('MentionAttachmentService - file mentions', () => {
 
     // A tool-level failure is a normal, recorded outcome - the user's message goes through
     expect(outcome).toBe('attached');
-    expect(rec.events[1].data.success).toBe(false);
-    expect(rec.events[1].data.error).toBe('ENOENT: no such file');
+    expect(rec.events[2].data.success).toBe(false);
+    expect(rec.events[2].data.error).toBe('ENOENT: no such file');
 
     const toolResult = rec.agentMessages[1] as any;
     expect(toolResult.is_error).toBe(true);
@@ -184,11 +185,12 @@ describe('MentionAttachmentService - file mentions', () => {
     // TOOL_CALL_END still emitted so the UI does not hang on a started call
     expect(rec.events.map((e) => e.type)).toEqual([
       ActivityEventType.TOOL_CALL_START,
+      ActivityEventType.TOOL_EXECUTION_START,
       ActivityEventType.TOOL_CALL_END,
     ]);
-    expect(rec.events[1].id).toBe(rec.events[0].id);
-    expect(rec.events[1].data.success).toBe(false);
-    expect(rec.events[1].data.error).toContain('boom');
+    expect(rec.events[2].id).toBe(rec.events[0].id);
+    expect(rec.events[2].data.success).toBe(false);
+    expect(rec.events[2].data.error).toContain('boom');
 
     // History keeps a valid tool_calls/tool pair - no dangling assistant tool call
     expect(rec.agentMessages.map((m) => m.role)).toEqual(['assistant', 'tool']);
@@ -365,10 +367,11 @@ describe('MentionAttachmentService - directory mentions', () => {
 
     expect(rec.events.map((e) => e.type)).toEqual([
       ActivityEventType.TOOL_CALL_START,
+      ActivityEventType.TOOL_EXECUTION_START,
       ActivityEventType.TOOL_OUTPUT_CHUNK,
       ActivityEventType.TOOL_CALL_END,
     ]);
-    expect(rec.events[1].data.chunk).toBe('user view');
+    expect(rec.events[2].data.chunk).toBe('user view');
     expect(rec.events.every((e) => e.id === rec.events[0].id)).toBe(true);
   });
 
@@ -388,6 +391,7 @@ describe('MentionAttachmentService - directory mentions', () => {
     expect(outcome).toBe('attached');
     expect(rec.events.map((e) => e.type)).toEqual([
       ActivityEventType.TOOL_CALL_START,
+      ActivityEventType.TOOL_EXECUTION_START,
       ActivityEventType.TOOL_CALL_END,
     ]);
 
@@ -412,6 +416,7 @@ describe('MentionAttachmentService - directory mentions', () => {
     expect(outcome).toBe('aborted');
     expect(rec.events.map((e) => e.type)).toEqual([
       ActivityEventType.TOOL_CALL_START,
+      ActivityEventType.TOOL_EXECUTION_START,
       ActivityEventType.TOOL_CALL_END,
     ]);
     expect(rec.agentMessages.map((m) => m.role)).toEqual(['assistant', 'tool']);

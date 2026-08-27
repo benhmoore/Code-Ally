@@ -24,6 +24,7 @@ import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
+import { getToolCallTiming } from '@utils/toolTiming.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -266,12 +267,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
     }
   });
 
-  // Calculate duration (no live updates - just shows duration at render time)
-  // Use executionStartTime if available (excludes user permission deliberation time)
-  // Fall back to startTime for tools that don't require permission
-  const startTime = toolCall.executionStartTime || toolCall.startTime;
-  const endTime = toolCall.endTime || Date.now();
-  const duration = Math.max(0, endTime - startTime);
+  // Calculate execution duration (no live updates - just shows duration at render time).
+  // Pre-execution validation and permission time are intentionally excluded.
+  const duration = getToolCallTiming(toolCall).executionMs;
   const durationStr = formatDuration(duration);
 
   // Check if this is an agent delegation
@@ -511,7 +509,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       {/* For linked plugins (dev mode) or alwaysShowFullOutput tools, always show output - overrides all other settings */}
       {(() => {
         const shouldShowOutput = toolCall.isLinkedPlugin || toolCall.alwaysShowFullOutput || (!toolCall.hideOutput || config?.show_full_tool_output);
-        if (toolCall.collapsed || !shouldShowOutput || !trimmedOutput || toolCall.error) return null;
+        if (toolCall.collapsed || !shouldShowOutput || !trimmedOutput) return null;
 
         // Get the output text to display
         // alwaysShowFullOutput tools never truncate

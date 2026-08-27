@@ -8,13 +8,19 @@
  * Inspired by Claude Code's read deduplication which reports ~18% cache token savings.
  */
 
+export interface ReadSelection {
+  lineOffset: number;
+  lineLimit: number;
+  columnOffset: number;
+  columnLimit: number;
+}
+
 export interface ReadCacheEntry {
   /** Scope that owns the cached read (usually an agent instance ID) */
   scopeId?: string;
   filePath: string;
   mtimeMs: number;
-  offset: number;
-  limit: number;
+  selection: ReadSelection;
   lineCount: number;
   totalLines: number;
   lastAccessTime: number;
@@ -37,16 +43,26 @@ export class ReadCache {
   /**
    * Build cache key from file path and read range
    */
-  private key(scopeId: string | undefined, filePath: string, offset: number, limit: number): string {
-    return `${scopeId ?? DEFAULT_SCOPE_ID}:${filePath}:${offset}:${limit}`;
+  private key(
+    scopeId: string | undefined,
+    filePath: string,
+    selection: ReadSelection,
+  ): string {
+    const { lineOffset, lineLimit, columnOffset, columnLimit } = selection;
+    return `${scopeId ?? DEFAULT_SCOPE_ID}:${filePath}:${lineOffset}:${lineLimit}:${columnOffset}:${columnLimit}`;
   }
 
   /**
    * Check if a file read can be served from cache.
    * Returns the cached entry if the file hasn't been modified, null otherwise.
    */
-  check(filePath: string, mtimeMs: number, offset: number, limit: number, scopeId?: string): ReadCacheEntry | null {
-    const key = this.key(scopeId, filePath, offset, limit);
+  check(
+    filePath: string,
+    mtimeMs: number,
+    selection: ReadSelection,
+    scopeId?: string,
+  ): ReadCacheEntry | null {
+    const key = this.key(scopeId, filePath, selection);
     const entry = this.cache.get(key);
     if (!entry) {
       return null;
@@ -83,7 +99,7 @@ export class ReadCache {
     }
 
     this.cache.set(
-      this.key(normalizedScopeId, entry.filePath, entry.offset, entry.limit),
+      this.key(normalizedScopeId, entry.filePath, entry.selection),
       { ...entry, scopeId: normalizedScopeId, lastAccessTime: Date.now() }
     );
   }
