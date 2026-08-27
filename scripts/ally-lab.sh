@@ -41,6 +41,7 @@ SESSION="${ALLY_LAB_SESSION:-ally-lab}"
 STATE_DIR="${TMPDIR:-/tmp}/ally-lab"
 DIR_FILE="$STATE_DIR/$SESSION.dir"
 START_FILE="$STATE_DIR/$SESSION.started"
+SESSION_ID_FILE="$STATE_DIR/$SESSION.session"
 
 die() { echo "ally-lab: $*" >&2; exit 1; }
 need_session() {
@@ -100,6 +101,24 @@ cmd_start() {
   mkdir -p "$STATE_DIR"
   printf '%s\n' "$dir" > "$DIR_FILE"
   python3 -c 'import time; print(time.time_ns())' > "$START_FILE"
+  rm -f "$SESSION_ID_FILE"
+
+  # A resumed session predates this process, so launch time cannot identify it.
+  # Preserve the explicit CLI identity as the authoritative diagnostic target.
+  # Fresh sessions remain discoverable by directory and launch time below.
+  local i arg resumed_session=""
+  for ((i = 0; i < ${#extra[@]}; i++)); do
+    arg="${extra[i]}"
+    case "$arg" in
+      --resume=*) resumed_session="${arg#--resume=}" ;;
+      --resume)
+        if ((i + 1 < ${#extra[@]})) && [[ "${extra[i + 1]}" != -* ]]; then
+          resumed_session="${extra[i + 1]}"
+        fi
+        ;;
+    esac
+  done
+  [[ -z "$resumed_session" ]] || printf '%s\n' "$resumed_session" > "$SESSION_ID_FILE"
 
   # A wide pane so the Ink UI renders the way it does in a real terminal.
   local ally_command
@@ -132,6 +151,7 @@ cmd_hook() {
   # remains authoritative, but a launch-time boundary from an earlier managed
   # run must not hide its session file.
   rm -f "$STATE_DIR/$name.started"
+  rm -f "$STATE_DIR/$name.session"
   echo "hooked tmux session '$name' (dir: $(cat "$STATE_DIR/$name.dir"))"
   [[ "$name" != "${ALLY_LAB_SESSION:-ally-lab}" ]] \
     && echo "note: export ALLY_LAB_SESSION=$name for subsequent commands"
@@ -162,23 +182,27 @@ cmd_peek() {
 }
 
 latest_session_file() {
-  local dir started_ns
+  local dir started_ns session_id
   dir="$(cat "$DIR_FILE" 2>/dev/null || true)"
   started_ns="$(cat "$START_FILE" 2>/dev/null || true)"
-  python3 - "$dir" "$started_ns" <<'PY'
+  session_id="$(cat "$SESSION_ID_FILE" 2>/dev/null || true)"
+  python3 - "$dir" "$started_ns" "$session_id" <<'PY'
 import glob, json, os, sys
 want_dir = sys.argv[1] if len(sys.argv) > 1 else ""
 started_ns = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else None
+session_id = sys.argv[3] if len(sys.argv) > 3 else ""
 candidates = sorted(
     glob.glob(os.path.expanduser("~/.ally/projects/*/sessions/session_*.json")),
     key=os.path.getmtime, reverse=True)
 for path in candidates:
-    if started_ns is not None and os.stat(path).st_mtime_ns < started_ns:
+    if not session_id and started_ns is not None and os.stat(path).st_mtime_ns < started_ns:
         continue
     try:
         with open(path) as f:
             data = json.load(f)
     except Exception:
+        continue
+    if session_id and data.get("id") != session_id:
         continue
     if not want_dir or data.get("working_dir") == want_dir:
         print(path)
