@@ -206,13 +206,13 @@ export class RunSupervisor {
     callId: string,
     tool: string,
     effect: string,
-    success: boolean,
+    outcome: 'succeeded' | 'failed' | 'unknown',
     error?: string
   ): Promise<void> {
-    const ambiguous = !success && effect === 'non_idempotent';
+    const ambiguous = outcome === 'unknown' && effect === 'non_idempotent';
     if (ambiguous) this.unknownEffects.add(callId);
     else this.unknownEffects.delete(callId);
-    await this.record(ambiguous ? 'tool_unknown' : success ? 'tool_succeeded' : 'tool_failed', {
+    await this.record(ambiguous ? 'tool_unknown' : outcome === 'succeeded' ? 'tool_succeeded' : 'tool_failed', {
       callId,
       tool,
       effect,

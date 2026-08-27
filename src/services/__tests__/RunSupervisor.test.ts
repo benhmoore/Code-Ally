@@ -45,12 +45,23 @@ describe('RunSupervisor', () => {
     await supervisor.startRun('publish safely', policy);
     await supervisor.toolPrepared('call-1', 'bash', 'non_idempotent', { command: 'git push' });
     await supervisor.toolStarted('call-1', 'bash', 'non_idempotent');
-    await supervisor.toolFinished('call-1', 'bash', 'non_idempotent', false, 'connection dropped');
+    await supervisor.toolFinished('call-1', 'bash', 'non_idempotent', 'unknown', 'connection dropped');
     const result = await supervisor.claimComplete('done');
     expect(result.accepted).toBe(false);
     expect(result.blockers.join(' ')).toContain('require reconciliation');
     expect(await supervisor.reconcileToolEffect('call-1', 'failed_not_applied', 'remote ref unchanged')).toBe(true);
     expect((await supervisor.claimComplete('done')).accepted).toBe(true);
+  });
+
+  it('settles a definitively failed non-idempotent tool without reconciliation', async () => {
+    const supervisor = new RunSupervisor(dir);
+    await supervisor.initialize();
+    await supervisor.startRun('repair the build', policy);
+    await supervisor.toolPrepared('call-1', 'bash', 'non_idempotent', { command: 'npm test' });
+    await supervisor.toolStarted('call-1', 'bash', 'non_idempotent');
+    await supervisor.toolFinished('call-1', 'bash', 'non_idempotent', 'failed', 'tests failed');
+
+    expect((await supervisor.claimComplete('verified after repair')).accepted).toBe(true);
   });
 
   it('does not let an ordinary long-running background server hold completion open', async () => {

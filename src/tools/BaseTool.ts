@@ -102,6 +102,22 @@ export abstract class BaseTool {
   }
 
   /**
+   * Classify the observed outcome for durable-run recovery.
+   *
+   * A failed non-idempotent operation is unknown by default because a remote
+   * or process-level failure may arrive after the effect was applied. Tools
+   * may narrow a structured failure to `failed` when they directly observed a
+   * definitive outcome.
+   */
+  effectOutcomeFor(
+    args: Record<string, any>,
+    result: ToolResult,
+  ): 'succeeded' | 'failed' | 'unknown' {
+    if (result.success) return 'succeeded';
+    return this.effectFor(args) === 'non_idempotent' ? 'unknown' : 'failed';
+  }
+
+  /**
    * Whether an invocation must be confirmed by the user.
    *
    * Derived from declared capabilities so the gate lives in exactly one place.
