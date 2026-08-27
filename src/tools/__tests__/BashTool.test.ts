@@ -48,12 +48,14 @@ describe('BashTool', () => {
     });
 
     it('should handle command with non-zero exit code', async () => {
+      const args = { command: 'exit 1' };
       const result = await bashTool.execute({
-        command: 'exit 1',
+        ...args,
       });
 
       expect(result.success).toBe(false); // Command failed
       expect(result.error).toBeDefined();
+      expect(bashTool.effectOutcomeFor(args, result)).toBe('failed');
     });
 
     it('does not hide a failed pipeline stage behind a successful formatter', async () => {
@@ -103,6 +105,7 @@ describe('BashTool', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
       expect(result.transitioned).not.toBe(true);
+      expect(bashTool.effectOutcomeFor({ command: 'sleep 10' }, result)).toBe('unknown');
     }, 10000); // Increase test timeout
 
     it('accepts an explicit infinite timeout without scheduling Infinity', async () => {

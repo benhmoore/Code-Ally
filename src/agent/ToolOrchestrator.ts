@@ -1060,11 +1060,13 @@ export class ToolOrchestrator {
       );
 
       if (journaledEffect) {
+        const outcome = tool?.effectOutcomeFor(args, result)
+          ?? (result.success ? 'succeeded' : 'unknown');
         await ServiceRegistry.getInstance().get('run_supervisor')?.toolFinished(
           id,
           toolName,
           journaledEffect,
-          result.success,
+          outcome,
           result.error
         );
       }
@@ -1188,11 +1190,13 @@ export class ToolOrchestrator {
 
 
       if (journaledEffect) {
+        const outcome = tool?.effectOutcomeFor(args, result)
+          ?? (result.success ? 'succeeded' : 'unknown');
         await ServiceRegistry.getInstance().get('run_supervisor')?.toolFinished(
           id,
           toolName,
           journaledEffect,
-          false,
+          outcome,
           formatError(error)
         );
       }

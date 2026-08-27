@@ -153,6 +153,17 @@ export class BashTool extends BaseTool {
   getShellCommand(args: Record<string, any>): string | null {
     return typeof args.command === 'string' ? args.command : null;
   }
+
+  override effectOutcomeFor(
+    args: Record<string, any>,
+    result: ToolResult,
+  ): 'succeeded' | 'failed' | 'unknown' {
+    // A normal non-zero process exit is a definitive command outcome. Reserve
+    // reconciliation for transport/system loss, timeout, or interruption,
+    // where Code Ally may not have observed whether an effect was applied.
+    if (!result.success && result.error_type === 'command_failed') return 'failed';
+    return super.effectOutcomeFor(args, result);
+  }
   readonly streamsOutput = true; // Output is emitted via emitOutputChunk() during execution
 
   private config?: Config;
