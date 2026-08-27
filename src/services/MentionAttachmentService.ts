@@ -212,13 +212,15 @@ export class MentionAttachmentService {
     // Keep the tool-call watchdog from timing out while this runs.
     agent.resetToolCallActivity?.();
 
+    let executionStartTime: number | undefined;
     try {
       spec.beforeExecute?.();
 
+      executionStartTime = Date.now();
       this.activityStream.emit({
         id: toolCallId,
         type: ActivityEventType.TOOL_EXECUTION_START,
-        timestamp: Date.now(),
+        timestamp: executionStartTime,
         data: {},
       });
 
@@ -250,7 +252,7 @@ export class MentionAttachmentService {
         }
       }
 
-      this.emitToolCallEnd(toolCallId, spec.toolName, tool, result);
+      this.emitToolCallEnd(toolCallId, spec.toolName, tool, result, executionStartTime);
 
       // Canonical wire builder - strips display-only fields so the model never sees them.
       const toolResultMessage = createToolResultMessage(
@@ -281,7 +283,7 @@ export class MentionAttachmentService {
       // call, and keep the agent's history a valid tool_calls/tool pair. The
       // result goes through the canonical builder so the model sees a flagged
       // error rather than a bare JSON blob.
-      this.emitToolCallEnd(toolCallId, spec.toolName, tool, errorResult);
+      this.emitToolCallEnd(toolCallId, spec.toolName, tool, errorResult, executionStartTime);
       agent.addMessage(
         createToolResultMessage(
           toolCallId,
@@ -338,7 +340,8 @@ export class MentionAttachmentService {
     toolCallId: string,
     toolName: string,
     tool: MentionTool,
-    result: ToolResult
+    result: ToolResult,
+    executionStartTime?: number,
   ): void {
     this.activityStream.emit({
       id: toolCallId,
@@ -348,6 +351,7 @@ export class MentionAttachmentService {
         toolName,
         result,
         success: result.success,
+        executionStartTime,
         error: result.success ? undefined : result.error,
         visibleInChat: tool.visibleInChat ?? true,
         isTransparent: tool.isTransparentWrapper || false,

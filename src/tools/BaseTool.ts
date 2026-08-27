@@ -16,7 +16,7 @@ import { TEXT_LIMITS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
 import { FormManager, FormCancelledError } from '../services/FormManager.js';
 import { createUnifiedDiff } from '../utils/diffUtils.js';
-import { stripDisplayOnlyFields } from '../utils/toolResultContent.js';
+import { toModelToolResult } from '../utils/toolResultContent.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { atomicWriteFile } from '../utils/atomicFile.js';
@@ -704,9 +704,8 @@ export abstract class BaseTool {
       error: errorMessage,
       error_type: errorType,
 
-      // Structured error details for clean error extraction
+      // Structured context; the message itself lives only in `error`.
       error_details: {
-        message: errorMessage,
         tool_name: this.name,
         parameters: Object.keys(this.currentParams).length > 0
           ? { ...this.currentParams }
@@ -804,9 +803,6 @@ export abstract class BaseTool {
     // the underlying diagnostic once instead of a JSON object that repeats the
     // same message, parameters, and suggestion across several fields.
     if (!result.success) {
-      if (typeof result.error_details?.message === 'string') {
-        return result.error_details.message;
-      }
       if (typeof result.error === 'string') {
         return result.error;
       }
@@ -816,7 +812,7 @@ export abstract class BaseTool {
       // Persist structured payload data, never the transport envelope. Control
       // fields describe delivery and execution; they are not part of the
       // artifact a model should inspect with read/grep.
-      const payload = stripDisplayOnlyFields({ ...result }) as Record<string, unknown>;
+      const payload = toModelToolResult({ ...result }) as Record<string, unknown>;
       for (const key of [
         'success', 'error', 'error_type', 'error_details', 'suggestion',
         'system_reminder', 'system_reminder_persist',

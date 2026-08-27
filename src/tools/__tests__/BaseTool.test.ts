@@ -236,10 +236,9 @@ describe('BaseTool', () => {
     it('persists one raw failure diagnostic instead of its transport envelope', () => {
       const artifact = tool.getPersistableOutput({
         success: false,
-        error: 'mock-tool(data="x"): failed',
+        error: 'failed',
         error_type: 'validation_error',
         error_details: {
-          message: 'failed',
           tool_name: 'mock-tool',
           parameters: { data: 'x' },
         },

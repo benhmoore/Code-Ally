@@ -108,6 +108,7 @@ describe('UserShortcutService - bash shortcut', () => {
     ]);
     expect(rec.events.every((event) => event.id === rec.events[0].id)).toBe(true);
     expect(rec.events[2].data.success).toBe(true);
+    expect(rec.events[2].data.executionStartTime).toBe(rec.events[1].timestamp);
   });
 
   it('reports a failed tool result without an extra chat error message', async () => {

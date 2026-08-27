@@ -231,7 +231,7 @@ describe('ToolResultManager', () => {
       } as unknown as ToolResultPersistence;
 
       toolResultManager.setPersistence(persistence);
-      toolResultManager.setLimits({ maxContextPercent: 0.01, minTokens: 10 });
+      toolResultManager.setLimits({ maxContextPercent: 0.01, minTokens: 300 });
 
       const result = await toolResultManager.processToolResult(
         'bash',
@@ -250,7 +250,10 @@ describe('ToolResultManager', () => {
         `stdout:\n${stdout}stderr:\n${stderr}`
       );
       expect(result).toContain('[Full output saved to: /tmp/call-bash.txt]');
+      expect(result).toContain('[Tool result: success=true, return_code=0]');
       expect(result).toContain('build line');
+      expect(result).toContain('warning from stderr');
+      expect(result).toContain('middle omitted');
       expect(result).not.toContain('{"success":true');
     });
 
@@ -263,7 +266,7 @@ describe('ToolResultManager', () => {
       } as unknown as ToolResultPersistence;
 
       toolResultManager.setPersistence(persistence);
-      toolResultManager.setLimits({ maxContextPercent: 0.01, minTokens: 10 });
+      toolResultManager.setLimits({ maxContextPercent: 0.01, minTokens: 300 });
 
       const result = await toolResultManager.processToolResult(
         'bash',
@@ -283,7 +286,10 @@ describe('ToolResultManager', () => {
         `stdout:\n${stdout}stderr:\n${stderr}`
       );
       expect(result).toContain('[Full output saved to: /tmp/call-failed-bash.txt]');
+      expect(result).toContain('return_code=1');
+      expect(result).toContain('error_type=command_failed');
       expect(result).toContain('failed test diagnostics');
+      expect(result).toContain('runner warning');
       expect(result).not.toContain('{"success":false');
     });
 
@@ -301,10 +307,9 @@ describe('ToolResultManager', () => {
         'read',
         {
           success: false,
-          error: `read(file_path="large.txt"): ${diagnostic}`,
+          error: diagnostic,
           error_type: 'validation_error',
           error_details: {
-            message: diagnostic,
             tool_name: 'read',
             parameters: { file_path: 'large.txt' },
           },

@@ -138,11 +138,13 @@ export class UserShortcutService {
       },
     });
 
+    let executionStartTime: number | undefined;
     try {
+      executionStartTime = Date.now();
       this.activityStream.emit({
         id: toolCallId,
         type: ActivityEventType.TOOL_EXECUTION_START,
-        timestamp: Date.now(),
+        timestamp: executionStartTime,
         data: {},
       });
 
@@ -162,7 +164,7 @@ export class UserShortcutService {
         } as any
       );
 
-      this.emitToolCallEnd(toolCallId, bashTool, result);
+      this.emitToolCallEnd(toolCallId, bashTool, result, executionStartTime);
 
       // Canonical wire builder - strips display-only fields so the model never sees them.
       agent.addMessage(
@@ -182,7 +184,7 @@ export class UserShortcutService {
 
       // Always close out the tool call so the UI does not hang on a started call,
       // and keep the agent's history a valid tool_calls/tool pair.
-      this.emitToolCallEnd(toolCallId, bashTool, errorResult);
+      this.emitToolCallEnd(toolCallId, bashTool, errorResult, executionStartTime);
       agent.addMessage(
         createToolResultMessage(toolCallId, 'bash', errorResult, true, 'system_error') as Message
       );
@@ -231,7 +233,8 @@ export class UserShortcutService {
   private emitToolCallEnd(
     toolCallId: string,
     tool: { visibleInChat?: boolean; isTransparentWrapper?: boolean; shouldCollapse?: boolean },
-    result: ToolResult
+    result: ToolResult,
+    executionStartTime?: number,
   ): void {
     this.activityStream.emit({
       id: toolCallId,
@@ -241,6 +244,7 @@ export class UserShortcutService {
         toolName: 'bash',
         result,
         success: result.success,
+        executionStartTime,
         error: result.success ? undefined : result.error,
         visibleInChat: tool.visibleInChat ?? true,
         isTransparent: tool.isTransparentWrapper || false,

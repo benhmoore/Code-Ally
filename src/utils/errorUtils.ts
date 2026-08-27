@@ -38,8 +38,8 @@ export function truncateErrorMessage(
 }
 
 /**
- * Create a structured error ToolResult
- * This enforces that all errors have error_details for clean extraction
+ * Create a structured error ToolResult with one canonical message and separate
+ * tool/argument context.
  *
  * @param errorMessage - The error message
  * @param errorType - Type of error
@@ -72,31 +72,11 @@ export function createStructuredError(
       )
     : undefined;
 
-  // Build formatted error string for backward compatibility
-  let formattedError = safeErrorMessage;
-  if (sanitizedParams) {
-    // Format parameters for display
-    const paramStr = Object.entries(sanitizedParams)
-      .map(([k, v]) => {
-        try {
-          return `${k}=${JSON.stringify(v)}`;
-        } catch {
-          // Should not happen after sanitization, but defensive
-          return `${k}=[error]`;
-        }
-      })
-      .join(', ');
-    formattedError = `${safeToolName}(${paramStr}): ${safeErrorMessage}`;
-  } else {
-    formattedError = `${safeToolName}(): ${safeErrorMessage}`;
-  }
-
   return {
     success: false,
-    error: formattedError,
+    error: safeErrorMessage,
     error_type: errorType,
     error_details: {
-      message: safeErrorMessage,
       tool_name: safeToolName,
       parameters: sanitizedParams,
     },

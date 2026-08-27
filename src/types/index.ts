@@ -186,9 +186,8 @@ export interface ToolResult {
   /** Process exit status when the tool represents a command execution; null if no status was available. */
   return_code?: number | null;
 
-  /** Structured error details for clean error message extraction */
+  /** Structured context for the canonical message in `error`. */
   error_details?: {
-    message: string;                    // Raw error message without tool call formatting
     tool_name: string;                  // Tool name
     parameters?: Record<string, any>;   // Parameters that were passed
     suggestion?: string;                // Error suggestion
@@ -318,6 +317,8 @@ export interface ToolCallStartActivityData {
 
 export interface ToolCallEndActivityData {
   success: boolean;
+  /** Authoritative start of execution; absent when validation or authorization stopped the call. */
+  executionStartTime?: number;
   toolName?: string;
   groupExecution?: boolean;
   error?: string;

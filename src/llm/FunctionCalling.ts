@@ -11,7 +11,7 @@
 
 import { TEXT_LIMITS } from '../config/constants.js';
 import { logger } from '../services/Logger.js';
-import { stripDisplayOnlyFields } from '../utils/toolResultContent.js';
+import { toModelToolResult } from '../utils/toolResultContent.js';
 import type { MessageMetadata } from '../types/index.js';
 
 /**
@@ -80,12 +80,11 @@ export function createToolResultMessage(
   metadata?: MessageMetadata;
   timestamp?: number;
 } {
-  // When given a result object, strip display-only fields so the user-facing
-  // rendering never reaches the model. Pre-serialized strings pass through
-  // untouched (the orchestrator already strips before serializing).
+  // Pre-serialized strings have already crossed the model-wire boundary in the
+  // orchestrator. Objects cross it here.
   let content = typeof result === 'string'
     ? result
-    : JSON.stringify(stripDisplayOnlyFields(result), null, 2);
+    : JSON.stringify(toModelToolResult(result), null, 2);
 
   // Wrap error content in XML tags so the model can distinguish errors from successful output.
   // This is the primary error signal for Ollama-hosted models (which don't support is_error at protocol level).

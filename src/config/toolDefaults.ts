@@ -142,16 +142,6 @@ export const ERROR_TRUNCATION = {
 } as const;
 
 /**
- * Tool result persistence settings.
- * When output exceeds context limits, full content is saved to disk
- * and the model sees a preview with a file path reference.
- */
-export const TOOL_RESULT_PERSISTENCE = {
-  /** Characters to show in preview when full output is persisted */
-  PREVIEW_CHARS: 2000,
-} as const;
-
-/**
  * Tool name constants
  */
 export const TOOL_NAMES = {
