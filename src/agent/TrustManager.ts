@@ -830,7 +830,6 @@ const EXTREMELY_SENSITIVE_PATTERNS: RegExp[] = [
   /ls\s+.*\*/, // File listing with globs
   /\*.*\|/, // Commands with wildcards and pipes
   /\/.*\*/, // Absolute paths with wildcards
-  /\/Users\/[^/]+\/\.[^/]+/, // Access to hidden directories
   /\/opt\//, // Access to /opt
   /\/usr\/local/, // Access to /usr/local
   /eval\s+.+/, // Eval with commands

@@ -13,12 +13,10 @@
 import path from 'path';
 import { cwd } from 'process';
 import { TrustManager, CommandPath } from '../agent/TrustManager.js';
-import {
-  hasPathTraversalPatterns,
-  isPathWithinAllowedDirectories,
-} from './PathSecurity.js';
+import { isPathWithinAllowedDirectories } from './PathSecurity.js';
 import { logger } from '../services/Logger.js';
 import type { BaseTool } from '../tools/BaseTool.js';
+import { analyzeShellCommandPaths } from './shellCommandPaths.js';
 
 /**
  * PermissionManager class
@@ -93,7 +91,8 @@ export class PermissionManager {
     if (shellCommand) {
       const command = shellCommand;
       const workingDir = typeof args.working_dir === 'string' ? args.working_dir : this.startDirectory;
-      const outsideCwd = this.isCommandOutsideCwd(command) || !await isPathWithinAllowedDirectories(workingDir);
+      const outsideCwd = await this.isCommandOutsideCwd(command)
+        || !await isPathWithinAllowedDirectories(workingDir);
       return {
         command,
         path: workingDir,
@@ -123,9 +122,13 @@ export class PermissionManager {
    * @param command Bash command
    * @returns true if command operates outside CWD
    */
-  private isCommandOutsideCwd(command: string): boolean {
-    // Simple heuristic: check for path traversal patterns
-    return hasPathTraversalPatterns(command);
+  private async isCommandOutsideCwd(command: string): Promise<boolean> {
+    const analysis = analyzeShellCommandPaths(command);
+    if (analysis.hasUnresolvedExpansion || analysis.hasParentTraversal) return true;
+    for (const candidate of analysis.absolutePaths) {
+      if (!await isPathWithinAllowedDirectories(candidate)) return true;
+    }
+    return false;
   }
 
   /**

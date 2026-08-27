@@ -563,12 +563,11 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         );
       })()}
 
-      {/* Error output - Show clean error message from error_details */}
+      {/* Error output */}
       {/* For linked plugins (dev mode), always show errors - overrides all other settings */}
       {(() => {
-        if (toolCall.collapsed || !toolCall.error || !toolCall.result?.error_details) return null;
-        // Use structured error_details.message (clean error without tool call formatting)
-        const errorMessage = toolCall.result.error_details.message;
+        if (toolCall.collapsed || !toolCall.error) return null;
+        const errorMessage = toolCall.result?.error ?? toolCall.error;
         // For linked plugins, show last N lines; otherwise truncate to first line
         const isLinked = toolCall.isLinkedPlugin;
         const allLines = errorMessage.split('\n');

@@ -16,7 +16,7 @@ import { ConfigManager } from './ConfigManager.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { ToolResultPersistence } from './ToolResultPersistence.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
-import { CONTEXT_THRESHOLDS, TOOL_OUTPUT_ESTIMATES, TOOL_RESULT_PERSISTENCE } from '../config/toolDefaults.js';
+import { CONTEXT_THRESHOLDS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { BUFFER_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 
@@ -187,9 +187,9 @@ export class ToolResultManager {
       const minimalTokens = this.tokenManager.estimateTokens(minimalNotice);
       contentTokens = maxTokens - minimalTokens;
 
-      // When persisting, show a preview (first N chars) instead of token-truncated content
+      // Persisted artifacts retain a balanced head/tail preview.
       const truncatedResult = persistedPath && persistedContent !== null
-        ? persistedContent.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
+        ? this.formatPersistedPreview(rawResult, persistedContent, contentTokens)
         : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
       return this.preferSmallerResult(
         resultString,
@@ -198,9 +198,9 @@ export class ToolResultManager {
       );
     }
 
-    // When persisting, show a preview instead of token-truncated content
+    // Persisted artifacts retain a balanced head/tail preview.
     const truncatedResult = persistedPath && persistedContent !== null
-      ? persistedContent.slice(0, TOOL_RESULT_PERSISTENCE.PREVIEW_CHARS) + '\n[... output continues in saved file ...]'
+      ? this.formatPersistedPreview(rawResult, persistedContent, contentTokens)
       : this.tokenManager.truncateContentToTokens(resultString, contentTokens);
     return this.preferSmallerResult(
       resultString,
@@ -223,6 +223,53 @@ export class ToolResultManager {
     const tool = this.toolManager?.getTool(toolName);
     if (tool) return tool.getPersistableOutput(rawResult);
     return typeof rawResult === 'string' ? rawResult : null;
+  }
+
+  private formatPersistedPreview(rawResult: unknown, content: string, maxTokens: number): string {
+    const summary = this.formatResultSummary(rawResult);
+    const summaryPrefix = summary ? `${summary}\n` : '';
+    const complete = summaryPrefix + content;
+    if (this.tokenManager.estimateTokens(complete) <= maxTokens) return complete;
+
+    const omission = '\n[... middle omitted; complete output is in the saved file ...]\n';
+    const fixedTokens = this.tokenManager.estimateTokens(summaryPrefix + omission);
+    const available = Math.max(2, maxTokens - fixedTokens);
+    const headBudget = Math.max(1, Math.floor(available / 2));
+    const tailBudget = Math.max(1, available - headBudget);
+    const head = this.tokenManager.truncateContentToTokens(content, headBudget);
+    const tail = this.truncateTailToTokens(content, tailBudget);
+    return summaryPrefix + head + omission + tail;
+  }
+
+  private formatResultSummary(rawResult: unknown): string {
+    if (!rawResult || typeof rawResult !== 'object') return '';
+    const result = rawResult as Record<string, unknown>;
+    const fields: string[] = [];
+    if (typeof result.success === 'boolean') fields.push(`success=${result.success}`);
+    if (typeof result.return_code === 'number' || result.return_code === null) {
+      fields.push(`return_code=${String(result.return_code)}`);
+    }
+    if (typeof result.error_type === 'string') fields.push(`error_type=${result.error_type}`);
+    if (typeof result.error === 'string' && result.error) fields.push(`error=${JSON.stringify(result.error)}`);
+    return fields.length > 0 ? `[Tool result: ${fields.join(', ')}]` : '';
+  }
+
+  private truncateTailToTokens(content: string, maxTokens: number): string {
+    if (this.tokenManager.estimateTokens(content) <= maxTokens) return content;
+    let low = 0;
+    let high = content.length;
+    let best = content.length;
+    while (low <= high) {
+      const start = Math.floor((low + high) / 2);
+      const candidate = content.slice(start);
+      if (this.tokenManager.estimateTokens(candidate) <= maxTokens) {
+        best = start;
+        high = start - 1;
+      } else {
+        low = start + 1;
+      }
+    }
+    return content.slice(best);
   }
 
   /**

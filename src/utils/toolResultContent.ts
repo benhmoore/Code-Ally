@@ -10,14 +10,14 @@
  * here:
  *
  *   - {@link resolveDisplayContent} — the sole source of the user-facing string.
- *   - {@link stripDisplayOnlyFields} — strips display-only fields before the
- *     result is serialized for the model.
+ *   - {@link toModelToolResult} — strips UI and runtime-control fields before
+ *     the result is serialized for the model.
  *
  * A tool opts into a curated user view by setting `display_content`; if it does
  * not, the user simply sees the same `content` the model does. Every display
  * seam (live output chunk, tool-call history, persisted session payload, session
  * resume) resolves through {@link resolveDisplayContent}, and every model
- * serialization passes through {@link stripDisplayOnlyFields}, so the separation
+ * serialization passes through {@link toModelToolResult}, so the separation
  * is invariant rather than re-implemented per call site.
  */
 import { ToolResult } from '../types/index.js';
@@ -46,13 +46,16 @@ export function resolveDisplayContent(result: DisplayableResult | null | undefin
 }
 
 /**
- * Return a shallow clone of a result with all display-only fields removed, ready
- * to serialize for the model. The only place display-only fields are stripped.
+ * Return a shallow clone containing only fields that belong on the model wire.
+ * Underscore-prefixed fields are runtime control metadata, never tool output.
  */
-export function stripDisplayOnlyFields<T extends Record<string, any>>(result: T): T {
+export function toModelToolResult<T extends Record<string, any>>(result: T): T {
   const clone: Record<string, any> = { ...result };
   for (const field of DISPLAY_ONLY_RESULT_FIELDS) {
     delete clone[field];
+  }
+  for (const field of Object.keys(clone)) {
+    if (field.startsWith('_')) delete clone[field];
   }
   return clone as T;
 }

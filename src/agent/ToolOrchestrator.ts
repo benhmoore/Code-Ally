@@ -34,7 +34,7 @@ import {
 } from '../utils/messageUtils.js';
 import { TOOL_NAMES } from '../config/toolDefaults.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
-import { resolveDisplayContent, stripDisplayOnlyFields } from '../utils/toolResultContent.js';
+import { resolveDisplayContent, toModelToolResult } from '../utils/toolResultContent.js';
 import { FormCancelledError } from '../services/FormManager.js';
 import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
 import type { BaseTool } from '../tools/BaseTool.js';
@@ -1230,6 +1230,7 @@ export class ToolOrchestrator {
             toolName,
             result,
             success: result.success,
+            executionStartTime,
             error: result.success ? undefined : result.error,
             visibleInChat: shouldShowInChat,
             isTransparent: tool?.isTransparentWrapper || false,
@@ -1390,9 +1391,8 @@ export class ToolOrchestrator {
     const warning = result.warning;
     const systemReminder = (result as any).system_reminder;
     const totalTurnDuration = (result as any).total_turn_duration;
-    // Strip display-only fields (e.g. display_content) so the model never sees the
-    // user-facing rendering — the single gateway for the model side of the split.
-    const resultWithoutExtras = stripDisplayOnlyFields({ ...result });
+    // Cross the single model-wire boundary before serialization.
+    const resultWithoutExtras = toModelToolResult({ ...result });
     // Binary attachments travel through Message.images. Serializing base64 into
     // the textual tool result would waste context and defeat output truncation.
     delete resultWithoutExtras.images;

@@ -311,6 +311,7 @@ export const useActivitySubscriptions = (
     const updates: Partial<ToolCallState> = {
       status: event.data.success ? 'success' : 'error',
       endTime: event.timestamp,
+      executionStartTime: event.data.executionStartTime,
       error: event.data.error,
       error_type: event.data.result?.error_type,
       result: event.data.result,

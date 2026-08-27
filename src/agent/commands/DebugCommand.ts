@@ -464,11 +464,17 @@ export class DebugCommand extends Command {
 
       const timeline = this.buildTimeline(logs, messages, allToolCalls, maxEntries);
       const totalEntries = logs.length + messages.length + allToolCalls.length;
+      const untimestampedMessages = messages.filter(message => !message.timestamp).length;
+      const timestampedEntries = totalEntries - untimestampedMessages;
+      const entriesOmittedByLimit = Math.max(0, timestampedEntries - timeline.length);
 
-      if (timeline.length < totalEntries) {
-        content += `Showing last ${timeline.length} of ${totalEntries} total entries\n`;
+      if (entriesOmittedByLimit > 0) {
+        content += `Showing last ${timeline.length} of ${timestampedEntries} timestamped entries\n`;
       } else {
-        content += `Showing all ${timeline.length} entries\n`;
+        content += `Showing all ${timeline.length} timestamped entries\n`;
+      }
+      if (untimestampedMessages > 0) {
+        content += `${untimestampedMessages} untimestamped message${untimestampedMessages === 1 ? '' : 's'} summarized above cannot be placed on the timeline\n`;
       }
       content += '\n';
 
@@ -483,13 +489,15 @@ export class DebugCommand extends Command {
       // Write to file
       fs.writeFileSync(filepath, redactSensitiveText(content), { encoding: 'utf-8', mode: 0o600 });
 
-      const limitInfo = timeline.length < totalEntries
-        ? ` (last ${timeline.length} of ${totalEntries} total entries)`
-        : '';
+      const timelineInfo = entriesOmittedByLimit > 0
+        ? ` (last ${timeline.length} of ${timestampedEntries} timestamped entries)`
+        : untimestampedMessages > 0
+          ? ` (${timeline.length} timestamped entries; ${untimestampedMessages} untimestamped)`
+          : '';
 
       return {
         handled: true,
-        response: `Debug dump written to: ${filepath}${limitInfo}\n\nContains:\n  - ${logs.length} log entries\n  - ${messages.length} conversation messages\n  - ${allToolCalls.length} tool calls\n  - System information`,
+        response: `Debug dump written to: ${filepath}${timelineInfo}\n\nContains:\n  - ${logs.length} log entries\n  - ${messages.length} conversation messages\n  - ${allToolCalls.length} tool calls\n  - System information`,
       };
     } catch (error) {
       return this.createError(
@@ -958,8 +966,7 @@ export class DebugCommand extends Command {
       }
       output += ':\n';
 
-      // Use structured error message if available, otherwise fall back to formatted error
-      const errorMessage = call.result?.error_details?.message || call.error;
+      const errorMessage = call.result?.error || call.error;
       output += errorMessage + '\n\n';
     }
 

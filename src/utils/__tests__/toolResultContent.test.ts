@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveDisplayContent,
-  stripDisplayOnlyFields,
+  toModelToolResult,
   DISPLAY_ONLY_RESULT_FIELDS,
 } from '../toolResultContent.js';
 import { createToolResultMessage } from '../../llm/FunctionCalling.js';
@@ -29,13 +29,13 @@ describe('toolResultContent — the display/model split', () => {
     });
   });
 
-  describe('stripDisplayOnlyFields (model-facing gateway)', () => {
+  describe('toModelToolResult (model-facing gateway)', () => {
     it('removes every registered display-only field', () => {
       const result: Record<string, any> = { success: true, content: 'keep' };
       for (const field of DISPLAY_ONLY_RESULT_FIELDS) {
         result[field] = 'drop';
       }
-      const stripped = stripDisplayOnlyFields(result);
+      const stripped = toModelToolResult(result);
       for (const field of DISPLAY_ONLY_RESULT_FIELDS) {
         expect(stripped[field]).toBeUndefined();
       }
@@ -43,9 +43,18 @@ describe('toolResultContent — the display/model split', () => {
       expect(stripped.success).toBe(true);
     });
 
+    it('removes runtime control metadata', () => {
+      expect(toModelToolResult({
+        success: true,
+        content: 'keep',
+        _executionStartTime: 123,
+        _non_truncatable: true,
+      })).toEqual({ success: true, content: 'keep' });
+    });
+
     it('does not mutate the original result', () => {
       const result = { success: true, content: 'keep', display_content: 'drop' };
-      stripDisplayOnlyFields(result);
+      toModelToolResult(result);
       expect(result.display_content).toBe('drop');
     });
   });

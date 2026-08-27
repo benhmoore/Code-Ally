@@ -147,6 +147,7 @@ describe('MentionAttachmentService - file mentions', () => {
     expect(rec.events[0].id).toBe((rec.agentMessages[0] as any).tool_calls[0].id);
     expect(rec.events[0].data.arguments).toEqual({ file_path: 'a.ts' });
     expect(rec.events[2].data.success).toBe(true);
+    expect(rec.events[2].data.executionStartTime).toBe(rec.events[1].timestamp);
   });
 
   it('records a failed tool result as an error but still lets the message be sent', async () => {
