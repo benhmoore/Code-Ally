@@ -136,7 +136,35 @@ export function detectFilePaths(input: string): string[] {
     return [];
   }
 
-  // Parse quoted and unquoted tokens (handles quotes and backslash-escaped spaces)
+  const { tokens } = tokenizePathList(trimmed);
+
+  // Filter to path-like tokens and validate they exist
+  const validPaths: string[] = [];
+
+  for (const token of tokens) {
+    if (looksLikePath(token)) {
+      // Resolve to absolute path for existence check
+      const absolutePath = resolvePath(token);
+
+      // Check if file exists
+      if (fs.existsSync(absolutePath)) {
+        // Return original format (as pasted)
+        validPaths.push(token);
+      }
+    }
+  }
+
+  return validPaths;
+}
+
+interface TokenizedPathList {
+  tokens: string[];
+  complete: boolean;
+}
+
+/** Tokenize the shell-like path list accepted by terminal paste attachment. */
+function tokenizePathList(input: string): TokenizedPathList {
+  const trimmed = input.trim();
   const tokens: string[] = [];
   let current = '';
   let inQuotes = false;
@@ -163,7 +191,7 @@ export function detectFilePaths(input: string): string[] {
         tokens.push(current);
         current = '';
       }
-    } else if (char === ' ' && !inQuotes) {
+    } else if (/\s/.test(char ?? '') && !inQuotes) {
       if (current) {
         tokens.push(current);
         current = '';
@@ -178,23 +206,7 @@ export function detectFilePaths(input: string): string[] {
     tokens.push(current);
   }
 
-  // Filter to path-like tokens and validate they exist
-  const validPaths: string[] = [];
-
-  for (const token of tokens) {
-    if (looksLikePath(token)) {
-      // Resolve to absolute path for existence check
-      const absolutePath = resolvePath(token);
-
-      // Check if file exists
-      if (fs.existsSync(absolutePath)) {
-        // Return original format (as pasted)
-        validPaths.push(token);
-      }
-    }
-  }
-
-  return validPaths;
+  return { tokens, complete: !inQuotes };
 }
 
 /**
@@ -251,6 +263,13 @@ export function classifyPaths(paths: string[]): { directories: string[], images:
  * @returns Object with separate arrays for directories, images, and files
  */
 export function detectFilesAndImages(input: string): { directories: string[], images: string[], files: string[] } {
-  const allPaths = detectFilePaths(input);
-  return classifyPaths(allPaths);
+  const { tokens, complete } = tokenizePathList(input.trim());
+  if (!complete || tokens.length === 0) return { directories: [], images: [], files: [] };
+
+  // Auto-attachment is an exclusive interpretation of a paste, not entity
+  // extraction from prose. Only replace the pasted text when every token is a
+  // valid existing path; otherwise preserve the entire input literally.
+  const paths = detectFilePaths(input);
+  if (paths.length !== tokens.length) return { directories: [], images: [], files: [] };
+  return classifyPaths(paths);
 }
