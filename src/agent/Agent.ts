@@ -2567,6 +2567,7 @@ export class Agent {
     dynamicContext?: string
   ): Promise<void> {
     let compacted = false;
+    let checkpointRequired = false;
     // Semantic reduction is its own model request with an independent deadline
     // and the owner's abort signal. The foreground no-progress watchdog cannot
     // observe its non-streaming output; leaving it armed would abort healthy
@@ -2581,21 +2582,34 @@ export class Agent {
       // retry from a fresh snapshot so the queued message becomes part of the
       // checkpoint instead of escaping through the outer hard-cancel path. This
       // also handles several interjections arriving across successive attempts.
+      // Once checkpoint reduction has started, the transaction is sticky: its
+      // preliminary eviction may move the next budget estimate just below the
+      // trigger, but that must not turn an interrupted checkpoint into a no-op.
       while (true) {
         const lastRole = this.conversationManager.getLastMessage()?.role;
+        const phase = lastRole === 'user' ? 'pre-turn' : 'mid-turn';
         this.publishContextBudget(functions, dynamicContext);
+        const context = {
+          instanceId: this.instanceId,
+          isSpecializedAgent: this.config.isSpecializedAgent || false,
+          generateId: () => this.generateId(),
+          parentCallId: this.activeExecutionContext.parentCallId,
+          signal: this.interruptionManager.beginRequest(),
+          functions,
+          dynamicContext,
+          modelMaxOutput: this.appConfig.max_tokens,
+          phase,
+        } as const;
         try {
-          compacted = await this.agentCompactor.checkAndPerformAutoCompaction({
-            instanceId: this.instanceId,
-            isSpecializedAgent: this.config.isSpecializedAgent || false,
-            generateId: () => this.generateId(),
-            parentCallId: this.activeExecutionContext.parentCallId,
-            signal: this.interruptionManager.beginRequest(),
-            functions,
-            dynamicContext,
-            modelMaxOutput: this.appConfig.max_tokens,
-            phase: lastRole === 'user' ? 'pre-turn' : 'mid-turn',
-          });
+          if (checkpointRequired) {
+            await this.agentCompactor.compactAndApply(context, {
+              trigger: 'automatic',
+              phase,
+            });
+            compacted = true;
+          } else {
+            compacted = await this.agentCompactor.checkAndPerformAutoCompaction(context);
+          }
           break;
         } catch (error) {
           if (this.interruptionManager.getCause()?.kind !== 'user_interjection') throw error;
@@ -2604,6 +2618,7 @@ export class Agent {
             this.instanceId,
             'Compaction interrupted by queued user input; retrying from updated conversation',
           );
+          checkpointRequired = true;
           this.interruptionManager.reset();
         }
       }

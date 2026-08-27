@@ -686,8 +686,8 @@ describe('Agent - Interruption Handling', () => {
           signal.addEventListener('abort', () => reject(new Error('Compaction interrupted during checkpoint reduction')), {
             once: true,
           });
-        }))
-        .mockResolvedValueOnce(false);
+        }));
+      compactor.compactAndApply = vi.fn().mockResolvedValue({});
       mockModelClient.send = vi.fn()
         .mockResolvedValue({ content: 'continued after queued input', tool_calls: [], interrupted: false });
 
@@ -698,7 +698,12 @@ describe('Agent - Interruption Handling', () => {
       agent.interrupt({ kind: 'user_interjection' });
 
       await expect(result).resolves.toBe('continued after queued input');
-      expect(compactor.checkAndPerformAutoCompaction).toHaveBeenCalledTimes(2);
+      expect(compactor.checkAndPerformAutoCompaction).toHaveBeenCalledOnce();
+      expect(compactor.compactAndApply).toHaveBeenCalledOnce();
+      expect(compactor.compactAndApply).toHaveBeenCalledWith(
+        expect.objectContaining({ phase: 'pre-turn' }),
+        expect.objectContaining({ trigger: 'automatic', phase: 'pre-turn' }),
+      );
       expect(mockModelClient.send).toHaveBeenCalledOnce();
       expect((mockModelClient.send as any).mock.calls[0][0]).toEqual(expect.arrayContaining([
         expect.objectContaining({
