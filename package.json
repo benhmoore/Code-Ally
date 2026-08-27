@@ -13,7 +13,8 @@
   },
   "files": [
     "dist",
-    "scripts/ally-lab.sh"
+    "scripts/ally-lab.sh",
+    "scripts/ally-lab-session.py"
   ],
   "scripts": {
     "build": "tsc && tsc-alias && node scripts/copy-agents.js && chmod +x dist/cli.js",
