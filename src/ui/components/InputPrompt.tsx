@@ -239,9 +239,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const { exit } = useApp();
   const [buffer, setBuffer] = useState(bufferValue || '');
   const [cursorPosition, setCursorPosition] = useState(0);
-  const [mentionedFiles, setMentionedFiles] = useState<string[]>([]);
-  const [mentionedImages, setMentionedImages] = useState<string[]>([]);
-  const [mentionedDirectories, setMentionedDirectories] = useState<string[]>([]);
   const bufferRef = useRef(buffer);
   const onPrefillConsumedRef = useRef(onPrefillConsumed);
 
@@ -559,9 +556,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     setHistoryBuffer('');
     setHistoryBufferCursor(0);
     dismissCompletions(false);
-    setMentionedFiles([]);
-    setMentionedImages([]);
-    setMentionedDirectories([]);
   };
 
   const handleSubmit = async (inputValue = buffer) => {
@@ -594,16 +588,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     // Classify extracted paths into directories, images, and files
     const { directories: extractedDirectories, images: extractedImages, files: extractedFiles } = classifyPaths(extractedPaths);
 
-    // Combine tracked mentions with extracted mentions (deduplicate)
-    const allDirectories = [...new Set([...mentionedDirectories, ...extractedDirectories])];
-    const allFiles = [...new Set([...mentionedFiles, ...extractedFiles])];
-    const allImages = [...new Set([...mentionedImages, ...extractedImages])];
-
     // Call callback with mentions if any
     const mentions = {
-      ...(allDirectories.length > 0 && { directories: allDirectories }),
-      ...(allFiles.length > 0 && { files: allFiles }),
-      ...(allImages.length > 0 && { images: allImages }),
+      ...(extractedDirectories.length > 0 && { directories: extractedDirectories }),
+      ...(extractedFiles.length > 0 && { files: extractedFiles }),
+      ...(extractedImages.length > 0 && { images: extractedImages }),
     };
     onSubmit(trimmed, Object.keys(mentions).length > 0 ? mentions : undefined);
 
@@ -646,39 +635,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     completionRequestIdRef.current++;
     cursorPositionRef.current = newPosition;
     setCursorPosition(newPosition);
-  };
-
-  /**
-   * Handle file paths pasted into TextInput
-   */
-  const handleFilesPasted = (files: string[]) => {
-    // Add files to mentionedFiles, avoiding duplicates
-    setMentionedFiles(prev => [
-      ...prev,
-      ...files.filter(f => !prev.includes(f))
-    ]);
-  };
-
-  /**
-   * Handle images pasted into TextInput
-   */
-  const handleImagesPasted = (images: string[]) => {
-    // Add images to mentionedImages, avoiding duplicates
-    setMentionedImages(prev => [
-      ...prev,
-      ...images.filter(i => !prev.includes(i))
-    ]);
-  };
-
-  /**
-   * Handle directories pasted into TextInput
-   */
-  const handleDirectoriesPasted = (directories: string[]) => {
-    // Add directories to mentionedDirectories, avoiding duplicates
-    setMentionedDirectories(prev => [
-      ...prev,
-      ...directories.filter(d => !prev.includes(d))
-    ]);
   };
 
   /**
@@ -1691,9 +1647,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         onCursorChange={handleCursorChange}
         onKeyPressCapture={handleEditorKeyCapture}
         onSubmit={handleTextInputSubmit}
-        onFilesPasted={handleFilesPasted}
-        onImagesPasted={handleImagesPasted}
-        onDirectoriesPasted={handleDirectoriesPasted}
         onCtrlC={handleCtrlC}
         isActive={textInputActive}
         suppressVerticalNavigation={showCompletions || historyIndex !== -1}

@@ -40,6 +40,53 @@ const ControlledPrompt: React.FC = () => {
 };
 
 describe('InputPrompt controlled buffer', () => {
+  test('preserves pasted prose containing an existing path as literal input', async () => {
+    const stdout = new FakeStdout();
+    const stdin = new FakeStdin();
+    const submitted: string[] = [];
+    const instance = render(
+      <InputPrompt onSubmit={value => { submitted.push(value); }} />,
+      {
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        stdin: stdin as unknown as NodeJS.ReadStream,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      }
+    );
+    const message = `Build the project in ${process.cwd()} and verify it.`;
+
+    stdin.write(message);
+    await settle();
+    stdin.write('\r');
+    await settle();
+
+    expect(submitted).toEqual([message]);
+    instance.unmount();
+  });
+
+  test('retains explicit @ paths as the eager attachment contract', async () => {
+    const stdout = new FakeStdout();
+    const stdin = new FakeStdin();
+    const onSubmit = vi.fn();
+    const instance = render(<InputPrompt onSubmit={onSubmit} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
+    const message = `Inspect @${process.cwd()}`;
+
+    stdin.write(message);
+    await settle();
+    stdin.write('\r');
+    await settle();
+
+    expect(onSubmit).toHaveBeenCalledWith(message, { directories: [process.cwd()] });
+    instance.unmount();
+  });
+
   test('typing advances the local and preserved buffers without an update loop', async () => {
     const stdout = new FakeStdout();
     const stdin = new FakeStdin();
