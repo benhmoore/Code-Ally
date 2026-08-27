@@ -17,7 +17,6 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { Box, Text, useInput, type Key } from 'ink';
 import stringWidth from 'string-width';
-import { detectFilesAndImages } from '@utils/pathUtils.js';
 import { useInnerWidth } from '../hooks/useInnerWidth.js';
 import { stripAnsi, wrapAnsiText } from '@utils/terminalText.js';
 
@@ -42,12 +41,6 @@ export interface TextInputProps {
   onKeyPressCapture?: (input: string, key: Key) => boolean;
   /** Callback when user presses Escape key */
   onEscape?: () => void;
-  /** Callback when file paths are pasted */
-  onFilesPasted?: (files: string[]) => void;
-  /** Callback when image paths are pasted */
-  onImagesPasted?: (images: string[]) => void;
-  /** Callback when directory paths are pasted */
-  onDirectoriesPasted?: (directories: string[]) => void;
   /** Callback when Ctrl+C is pressed on empty buffer (for parent to handle exit/cancel) */
   onCtrlC?: () => void;
   /** Whether input is currently active/enabled */
@@ -108,9 +101,6 @@ export const TextInput: React.FC<TextInputProps> = ({
   onSubmitCapture,
   onKeyPressCapture,
   onEscape,
-  onFilesPasted,
-  onImagesPasted,
-  onDirectoriesPasted,
   onCtrlC,
   isActive = true,
   suppressVerticalNavigation = false,
@@ -580,39 +570,6 @@ export const TextInput: React.FC<TextInputProps> = ({
 
         if (normalizedInput.length === 0) {
           return;
-        }
-
-        // Detect pasted file paths, images, and directories (multi-character input without newlines)
-        if (normalizedInput.length > 1 && !normalizedInput.includes('\n')) {
-          const { directories, files, images } = detectFilesAndImages(normalizedInput);
-          const hasDirectories = directories.length > 0;
-          const hasFiles = files.length > 0;
-          const hasImages = images.length > 0;
-
-          if (hasDirectories || hasFiles || hasImages) {
-            // Notify parent of detected paths
-            if (hasDirectories) onDirectoriesPasted?.(directories);
-            if (hasFiles) onFilesPasted?.(files);
-            if (hasImages) onImagesPasted?.(images);
-
-            // Insert all with @ prefix (quote paths with spaces)
-            const allPaths = [...directories, ...files, ...images];
-            const pathsWithPrefix = allPaths.map(p => {
-              // Quote paths that contain spaces
-              if (p.includes(' ')) {
-                return `@"${p}"`;
-              }
-              return `@${p}`;
-            }).join(' ');
-            const before = currentValue.slice(0, currentCursor);
-            const after = currentValue.slice(currentCursor);
-            const newValue = before + pathsWithPrefix + after;
-            const newCursor = currentCursor + pathsWithPrefix.length;
-
-            onValueChange(newValue);
-            onCursorChange(newCursor);
-            return;
-          }
         }
 
         // Calculate new value and cursor position.
