@@ -573,7 +573,7 @@ describe('LoopDetector', () => {
         expect(detector.isThinkingDetectorActive()).toBe(true);
       });
 
-      it('should ignore empty or whitespace-only chunks', () => {
+      it('should preserve whitespace-only chunks without starting monitoring', () => {
         detector = new LoopDetector(
           {
             instanceId: 'test-whitespace',
@@ -602,7 +602,31 @@ describe('LoopDetector', () => {
           data: { chunk: '   ' },
         });
 
-        expect(detector.getThinkingAccumulatedLength()).toBe(0);
+        expect(detector.getThinkingAccumulatedLength()).toBe(3);
+        expect(detector.isThinkingDetectorActive()).toBe(false);
+      });
+
+      it('passes whitespace chunks unchanged to the pattern matcher', () => {
+        const check = vi.fn(() => null);
+        detector = new LoopDetector({
+          thinkingLoopConfig: {
+            eventType: ActivityEventType.THOUGHT_CHUNK,
+            patterns: [{ name: 'capture', check }],
+            warmupPeriodMs: 100,
+            checkIntervalMs: 50,
+            onLoopDetected: loopDetectedCallback,
+          },
+        }, activityStream);
+        for (const chunk of ['Sample', ' ', 'document', '\n', 'Next']) {
+          activityStream.emit({
+            id: 'chunk',
+            type: ActivityEventType.THOUGHT_CHUNK,
+            timestamp: Date.now(),
+            data: { chunk },
+          });
+        }
+        vi.advanceTimersByTime(100);
+        expect(check).toHaveBeenCalledWith('Sample document\nNext');
       });
 
       it('should ignore events of different types', () => {

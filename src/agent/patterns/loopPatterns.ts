@@ -18,7 +18,7 @@
 
 import type { LoopPattern, LoopInfo } from '../types/loopDetection.js';
 import { RESPONSE_LOOP_DETECTOR } from '../../config/constants.js';
-import { extractSentences, findSimilarGroups, truncateText } from './textAnalysis.js';
+import { findRepeatedProse, truncateText } from './textAnalysis.js';
 
 /**
  * Maximum character pattern length to check for repetition
@@ -132,128 +132,46 @@ function isProseLikePhrase(text: string): boolean {
     && distinctWords.size >= PHRASE_MIN_DISTINCT_WORDS;
 }
 
-/**
- * PhraseRepetitionPattern - Detects repeated phrases
- *
- * Identifies when the same phrase (short text snippet) appears
- * multiple times in the response.
- *
- * Detection:
- * - Extract phrases (15-100 chars) from text
- * - Find groups with 70% similarity
- * - Trigger when 3+ similar phrases found
- */
+/** Detect consecutive unchanged prose fragments, not shared title templates. */
 export class PhraseRepetitionPattern implements LoopPattern {
   readonly name = 'phrase_repetition';
 
-  /**
-   * Check for repeated phrase patterns in accumulated text
-   *
-   * Extracts phrases by splitting on sentence boundaries and
-   * commas, then finds groups of similar phrases.
-   *
-   * @param text - The accumulated stream text to analyze
-   * @returns LoopInfo if pattern detected (3+ similar phrases), null otherwise
-   */
   check(text: string): LoopInfo | null {
-    // Extract phrases (split on sentence boundaries and commas)
-    const phrases = this.extractPhrases(text);
-
-    if (phrases.length < RESPONSE_LOOP_DETECTOR.PHRASE_REPETITION_THRESHOLD) {
-      return null;
-    }
-
-    // Find similar phrase groups
-    const similarGroups = findSimilarGroups(phrases, RESPONSE_LOOP_DETECTOR.SIMILARITY_THRESHOLD);
-
-    for (const group of similarGroups) {
-      if (group.length >= RESPONSE_LOOP_DETECTOR.PHRASE_REPETITION_THRESHOLD) {
-        const firstItem = group[0];
-        if (!firstItem) continue;
-        const preview = truncateText(firstItem, 60);
-        return {
-          reason: `Repeated phrases detected: Similar phrase appears ${group.length} times ("${preview}")`,
-          patternName: this.name,
-          repetitionCount: group.length,
-        };
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Extract phrases from text
-   *
-   * Splits on sentence boundaries and commas, filters by length.
-   *
-   * @param text - Text to extract phrases from
-   * @returns Array of phrase strings
-   */
-  private extractPhrases(text: string): string[] {
-    // Split on sentence boundaries and commas
-    const rawPhrases = text.split(/[.!?,;]+/);
-    const phrases: string[] = [];
-
-    for (const phrase of rawPhrases) {
-      const trimmed = phrase.trim();
-      if (
-        trimmed.length >= PHRASE_MIN_LENGTH
-        && trimmed.length <= PHRASE_MAX_LENGTH
-        && isProseLikePhrase(trimmed)
-      ) {
-        phrases.push(trimmed);
-      }
-    }
-
-    return phrases;
+    // Preserve dotted filenames and identifiers. Newlines are boundaries so
+    // extensions cannot become part of the following list item's title.
+    const phrases = text.split(/(?:[.!?]+(?=\s|$)|[,;]+|\n+)\s*/);
+    const repeated = findRepeatedProse(
+      phrases,
+      RESPONSE_LOOP_DETECTOR.PHRASE_REPETITION_THRESHOLD,
+      phrase => phrase.length >= PHRASE_MIN_LENGTH
+        && phrase.length <= PHRASE_MAX_LENGTH
+        && isProseLikePhrase(phrase)
+    );
+    if (!repeated) return null;
+    return {
+      reason: `Repeated phrases detected: Unchanged prose appears ${repeated.count} times consecutively ("${truncateText(repeated.text, 60)}")`,
+      patternName: this.name,
+      repetitionCount: repeated.count,
+    };
   }
 }
 
-/**
- * SentenceRepetitionPattern - Detects repeated sentences
- *
- * Identifies when the same or very similar sentences appear
- * multiple times in the response.
- *
- * Detection:
- * - Extract sentences from text
- * - Find groups with 70% similarity
- * - Trigger when 3+ similar sentences found
- */
+/** Detect consecutive unchanged sentences while retaining meaningful differences. */
 export class SentenceRepetitionPattern implements LoopPattern {
   readonly name = 'sentence_repetition';
 
-  /**
-   * Check for repeated sentence patterns in accumulated text
-   *
-   * @param text - The accumulated stream text to analyze
-   * @returns LoopInfo if pattern detected (3+ similar sentences), null otherwise
-   */
   check(text: string): LoopInfo | null {
-    // Extract sentences
-    const sentences = extractSentences(text);
-
-    if (sentences.length < RESPONSE_LOOP_DETECTOR.SENTENCE_REPETITION_THRESHOLD) {
-      return null;
-    }
-
-    // Find similar sentence groups
-    const similarGroups = findSimilarGroups(sentences, RESPONSE_LOOP_DETECTOR.SIMILARITY_THRESHOLD);
-
-    for (const group of similarGroups) {
-      if (group.length >= RESPONSE_LOOP_DETECTOR.SENTENCE_REPETITION_THRESHOLD) {
-        const firstItem = group[0];
-        if (!firstItem) continue;
-        const preview = truncateText(firstItem, 80);
-        return {
-          reason: `Repeated sentences detected: Similar sentence appears ${group.length} times ("${preview}")`,
-          patternName: this.name,
-          repetitionCount: group.length,
-        };
-      }
-    }
-
-    return null;
+    const sentences = text.split(/(?:[.!?]+(?=\s|$)|\n+)\s*/);
+    const repeated = findRepeatedProse(
+      sentences,
+      RESPONSE_LOOP_DETECTOR.SENTENCE_REPETITION_THRESHOLD,
+      sentence => isProseLikePhrase(sentence)
+    );
+    if (!repeated) return null;
+    return {
+      reason: `Repeated sentences detected: Unchanged prose appears ${repeated.count} times consecutively ("${truncateText(repeated.text, 80)}")`,
+      patternName: this.name,
+      repetitionCount: repeated.count,
+    };
   }
 }

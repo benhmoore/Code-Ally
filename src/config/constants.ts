@@ -1063,14 +1063,12 @@ export const RESPONSE_LOOP_DETECTOR = {
   /** Character/token must repeat 30+ times to be considered a glitch */
   CHAR_REPETITION_THRESHOLD: 30,
 
-  /** Phrase must appear 3+ times to be considered repetitive */
+  /** Unchanged prose phrase must appear 3+ times consecutively */
   PHRASE_REPETITION_THRESHOLD: 3,
 
-  /** Sentence must appear 3+ times to be considered repetitive */
+  /** Unchanged prose sentence must appear 3+ times consecutively */
   SENTENCE_REPETITION_THRESHOLD: 3,
 
-  /** Word overlap threshold (0.7 = 70%) for considering patterns similar */
-  SIMILARITY_THRESHOLD: 0.7,
 } as const;
 
 // ===========================================

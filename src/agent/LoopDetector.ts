@@ -68,9 +68,9 @@ class TextLoopDetector {
       this.config.eventType,
       (event) => {
         const chunk = event.data?.chunk;
-        if (chunk && typeof chunk === 'string' && chunk.trim().length > 0) {
+        if (typeof chunk === 'string' && chunk.length > 0) {
           this.accumulatedText += chunk;
-          if (!this.isMonitoring) {
+          if (!this.isMonitoring && chunk.trim().length > 0) {
             this.start();
           }
         }
