@@ -642,10 +642,12 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
         </Box>
       )}
 
-      {/* Incremental committed history remains in native terminal scrollback. */}
+      {/* Static is absolutely positioned: give it the conversation width so
+          committed history cannot shrink to the live region's intrinsic width. */}
       <Static
         key={`static-${staticRemountKey}-${staticBatch.generation}`}
         items={staticBatch.entries}
+        style={{ width: terminalWidth }}
       >
         {(entry) => (
           <React.Fragment key={entry.key}>

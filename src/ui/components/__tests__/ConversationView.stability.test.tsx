@@ -1,6 +1,6 @@
 import React from 'react';
 import { EventEmitter } from 'events';
-import { render } from 'ink';
+import { Box, render } from 'ink';
 import { afterEach, describe, expect, test } from 'vitest';
 import type { Message, ToolCallState } from '@shared/index.js';
 import { ActivityStream } from '@services/ActivityStream.js';
@@ -28,6 +28,34 @@ afterEach(() => {
 });
 
 describe('ConversationView terminal stability', () => {
+  test.each(['user', 'assistant'] as const)('committed %s messages retain full width beside a narrow live region', async role => {
+    const stdout = new FakeStdout();
+    stdout.columns = 120;
+    stdout.rows = 24;
+    const content = 'Review storage, restart, and concurrent identifiers without modifying any project files.';
+    const instance = render(
+      <Box flexDirection="column" width={120} padding={1}>
+        <Box width={118}>
+          <ConversationView
+            messages={[{ id: 'review-request', role, content }]}
+            activeToolCalls={[]}
+            compactionNotices={[]}
+            rewindNotices={[]}
+            statusMessages={[]}
+            staticRemountKey={0}
+            streamingContent="working"
+            config={{ show_thinking_in_chat: false }}
+          />
+        </Box>
+      </Box>,
+      { stdout: stdout as unknown as NodeJS.WriteStream, debug: true,
+        exitOnCtrlC: false, patchConsole: false },
+    );
+    mounted.push(instance);
+    await waitForInk();
+    expect(stdout.frames.join('')).toContain(content);
+  });
+
   test('streaming updates do not clear and repaint committed scrollback', async () => {
     const messages: Message[] = Array.from({ length: 20 }, (_, index) => ({
       id: `message-${index}`,
