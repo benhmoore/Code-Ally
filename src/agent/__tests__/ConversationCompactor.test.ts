@@ -171,13 +171,24 @@ describe('ConversationCompactor', () => {
         history()[0]!,
         { ...createSystemReminder('Durable event from the running conversation', true), id: 'durable-event' },
         { ...createSystemReminder('Transient request context'), id: 'transient-event' },
+        { id: 'read-request', role: 'assistant', content: '', tool_calls: [{
+          id: 'read-call', type: 'function', function: { name: 'read', arguments: '{}' },
+        }] },
+        { id: 'read-result', role: 'tool', tool_call_id: 'read-call', content:
+          'Original tool output\n\n<system-reminder>Temporary next-step guidance</system-reminder>' },
         ...history().slice(1),
       ] });
+      manager.removeEphemeralSystemReminders();
+      expect(manager.getMessages().find(message => message.id === 'read-result')?.content)
+        .toBe('Original tool output');
+      expect(manager.getTranscript().find(message => message.id === 'read-result')?.content)
+        .toContain('Temporary next-step guidance');
       const compactor = new ConversationCompactor(chatClient(), manager, new TokenManager(4096),
         new ActivityStream(), (messages, checkpoint) => sessions.commitConversationCheckpoint(
           messages, manager.getTranscript(), checkpoint));
       const result = await compactor.compactAndApply(context());
       expect(result.checkpoint.source.messageIds).toContain('durable-event');
+      expect(result.checkpoint.source.messageIds).toContain('read-result');
       expect(result.checkpoint.source.messageIds).not.toContain('transient-event');
       expect(result.checkpoint.source.messageIds).not.toContain('prompt');
 

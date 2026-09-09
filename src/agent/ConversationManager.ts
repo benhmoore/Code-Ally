@@ -962,9 +962,11 @@ export class ConversationManager {
 
   /**
    * Rebuild the bounded canonical source set for the current model window.
-   * Explicit sources (typically persisted transcript records) win. During an
-   * active-window projection, only marked eviction stubs reuse the prior exact
-   * content; ordinary replacements become the new canonical value.
+   * Explicit sources (typically persisted transcript records) win. Every
+   * active-window projection retains the prior original for a surviving ID:
+   * eviction, reminder cleanup, and other context-only rewrites must not alter
+   * checkpoint provenance. Replacing the conversation branch uses no prior
+   * canonical map and establishes new originals instead.
    */
   private rebuildCanonicalActiveMessages(
     sources: readonly Message[] = [],
@@ -978,11 +980,10 @@ export class ConversationManager {
     const rebuilt = new Map<string, Message>();
     for (const message of this.messages) {
       if (!message.id) continue;
-      const projected = message.metadata?.contentEvicted || message.metadata?.toolArgumentsEvicted;
       rebuilt.set(
         message.id,
         sourceById.get(message.id)
-          ?? (projected ? previousCanonical?.get(message.id) : undefined)
+          ?? previousCanonical?.get(message.id)
           ?? message,
       );
     }
