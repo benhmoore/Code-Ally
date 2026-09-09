@@ -35,7 +35,7 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
   // Live refs so the event subscription (set up once) reads current state.
   const isThinkingRef = useRef(isThinking);
   const activeAgentIdRef = useRef(activeAgentId);
-  const pendingRef = useRef<string[]>([]); // task ids awaiting a wake
+  const pendingRef = useRef<Set<string>>(new Set()); // task ids awaiting a wake
   const wakingRef = useRef(false);
 
   useEffect(() => { isThinkingRef.current = isThinking; }, [isThinking]);
@@ -47,18 +47,20 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
     if (wakingRef.current) return;
     if (isThinkingRef.current) return;
     if (activeAgentIdRef.current !== 'main') return;
-    if (pendingRef.current.length === 0) return;
+    if (pendingRef.current.size === 0) return;
 
     const registry = ServiceRegistry.getInstance();
     const taskRegistry = registry.get('background_task_registry');
     if (!taskRegistry) return;
 
-    const ids = pendingRef.current;
-    pendingRef.current = [];
+    const ids = [...pendingRef.current].filter((id) => taskRegistry.isWatched(id));
+    pendingRef.current.clear();
 
-    const sections = ids.map((id) => {
+    const tasks = ids.flatMap((id) => {
       const t = taskRegistry.get(id);
-      if (!t) return `- ${id}: (completed; details no longer available)`;
+      return t ? [t] : [];
+    });
+    const sections = tasks.map((t) => {
       const body = t.result ?? t.error ?? '(no output)';
       return `- ${t.kind} ${t.id} (${t.label}) [${t.status}]:\n${body}`;
     });
@@ -70,6 +72,7 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
       `[Background watch] ${ids.length} ${noun} you were watching completed:\n\n` +
       `${sections.join('\n\n')}\n\nReview the result(s) and continue as appropriate.`
     );
+    taskRegistry.acknowledgeResults(tasks);
     // Allow subsequent wakes once this turn starts processing.
     setTimeout(() => { wakingRef.current = false; }, 0);
   };
@@ -87,8 +90,7 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
       const registry = ServiceRegistry.getInstance();
       const taskRegistry = registry.get('background_task_registry');
       if (!taskRegistry || !taskRegistry.isWatched(taskId)) return;
-      taskRegistry.clearWatched(taskId); // wake at most once
-      pendingRef.current.push(taskId);
+      pendingRef.current.add(taskId);
       // Defer so the task's final state is settled in the registry.
       setTimeout(() => flush.current(), 50);
     };

@@ -1445,8 +1445,8 @@ export class Agent {
     // when the parent is otherwise idle or only producing progress prose.
     if (!this.config.isSpecializedAgent) {
       const completed = ServiceRegistry.getInstance()
-        .get('background_agent_manager')
-        ?.drainCompletedResults() ?? [];
+        .get('background_task_registry')
+        ?.drainCompletedAgentResults() ?? [];
       if (completed.length > 0) {
         const report = completed.map((task) => {
           const body = task.status === 'done'

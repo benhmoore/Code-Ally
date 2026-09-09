@@ -9,7 +9,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BackgroundTaskRegistry } from '../BackgroundTaskRegistry.js';
 
 function fakeAgentManager(tasks: any[] = []) {
-  return { listTasks: () => tasks, acknowledgeCompletedResults: vi.fn() } as any;
+  return {
+    listTasks: () => tasks,
+    acknowledgeCompletedResults: vi.fn(),
+    drainCompletedResults: vi.fn(() => tasks.filter((task) => task.status !== 'running' && !task.consumed)),
+  } as any;
 }
 function fakeBashManager(processes: any[] = []) {
   return { listProcesses: () => processes } as any;
@@ -80,6 +84,19 @@ describe('BackgroundTaskRegistry', () => {
     }]);
 
     expect(manager.acknowledgeCompletedResults).toHaveBeenCalledWith(['a1']);
+    expect(reg.isWatched('a1')).toBe(false);
+  });
+
+  it('atomically clears watched state when completed agent results are drained', () => {
+    const task = {
+      id: 'a1', agentType: 'audit', mode: 'background', status: 'done',
+      startTime: 1, endTime: 2, result: 'findings', error: null, consumed: false,
+    };
+    const manager = fakeAgentManager([task]);
+    const reg = new BackgroundTaskRegistry(manager, fakeBashManager(), fakeStream());
+    reg.markWatched('a1');
+
+    expect(reg.drainCompletedAgentResults()).toEqual([task]);
     expect(reg.isWatched('a1')).toBe(false);
   });
 

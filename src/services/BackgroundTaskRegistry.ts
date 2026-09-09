@@ -16,7 +16,7 @@
  * events). The registry only tracks the watched set + emits BACKGROUND_TASK_COMPLETE.
  */
 
-import { BackgroundAgentManager } from './BackgroundAgentManager.js';
+import { BackgroundAgentManager, type BackgroundAgentTask } from './BackgroundAgentManager.js';
 import { BashProcessManager, type ProcessInfo } from './BashProcessManager.js';
 import { ActivityStream } from './ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
@@ -38,7 +38,7 @@ export interface BackgroundTask {
   error: string | null;
   /** Whether completion should auto-wake the idle main agent */
   watched: boolean;
-  /** Whether a running task is required before a durable objective can complete */
+  /** Whether durable completion must wait for settlement and result delivery */
   blocksCompletion: boolean;
 }
 
@@ -179,6 +179,20 @@ export class BackgroundTaskRegistry {
     for (const task of tasks) {
       if (task.status !== 'running') this.clearWatched(task.id);
     }
+  }
+
+  /**
+   * Deliver every newly-settled background agent exactly once.
+   *
+   * Consumption and wake acknowledgement are one lifecycle transition. Keeping
+   * them together prevents a completed result from being marked consumed while
+   * a stale UI wake remains queued, which could otherwise race durable
+   * completion and restart an already-completed objective.
+   */
+  drainCompletedAgentResults(): BackgroundAgentTask[] {
+    const tasks = this.agentManager.drainCompletedResults();
+    for (const task of tasks) this.clearWatched(task.id);
+    return tasks;
   }
 
   /**

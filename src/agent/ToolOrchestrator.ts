@@ -254,9 +254,10 @@ export class ToolOrchestrator {
     // Only the main agent consumes background-agent state. Completed results
     // are drained exactly once here; running status is a one-hop reminder.
     if (!this.config.isSpecializedAgent) {
+      const taskRegistry = registry.get('background_task_registry');
       const bgManager = registry.get('background_agent_manager');
-      if (bgManager) {
-        for (const task of bgManager.drainCompletedResults()) {
+      if (taskRegistry) {
+        for (const task of taskRegistry.drainCompletedAgentResults()) {
           const body = task.status === 'done'
             ? (task.result ?? '(no output)')
             : `[${task.status}] ${task.error ?? task.result ?? 'no output'}`;
@@ -264,6 +265,8 @@ export class ToolOrchestrator {
             `Background agent ${task.id} (${task.agentType}) ${task.status}. Result:\n${body}`
           );
         }
+      }
+      if (bgManager) {
         reminderParts.push(...bgManager.getStatusReminders());
       }
     }

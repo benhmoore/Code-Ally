@@ -237,9 +237,15 @@ export class RunSupervisor {
     const blockers: string[] = [];
     const incompleteTodos = registry.get('todo_manager')?.getTodos().filter(todo => todo.status !== 'completed') ?? [];
     if (incompleteTodos.length) blockers.push(`${incompleteTodos.length} todo item(s) remain incomplete`);
-    const runningTasks = registry.get('background_task_registry')?.list()
-      .filter(task => task.status === 'running' && task.blocksCompletion) ?? [];
+    const backgroundTasks = registry.get('background_task_registry')?.list() ?? [];
+    const runningTasks = backgroundTasks
+      .filter(task => task.status === 'running' && task.blocksCompletion);
     if (runningTasks.length) blockers.push(`${runningTasks.length} background dependency/dependencies are still running`);
+    const pendingWatchedResults = backgroundTasks
+      .filter(task => task.status !== 'running' && task.blocksCompletion && task.watched);
+    if (pendingWatchedResults.length) {
+      blockers.push(`${pendingWatchedResults.length} watched background result(s) await delivery`);
+    }
     const undeliveredAgents = registry.get('background_agent_manager')?.listTasks()
       .filter((task) => task.mode === 'background' && task.status !== 'running' && !task.consumed) ?? [];
     if (undeliveredAgents.length) {
