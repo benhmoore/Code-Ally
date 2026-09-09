@@ -66,6 +66,7 @@ import {
   createResponseLoopContinuationReminder,
   createToolLoopContinuationReminder,
   createSystemReminder,
+  createActiveObjectiveReminder,
 } from '../utils/messageUtils.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
 import { TurnController, type TurnSnapshot } from './TurnController.js';
@@ -993,6 +994,7 @@ export class Agent {
   ): Promise<string> {
     const { parentCallId, maxDuration, thoroughness } = executionContext ?? {};
     this.activeExecutionContext = { parentCallId, maxDuration, thoroughness };
+    let objectiveReminder: Message | undefined;
 
     if (!this.config.isSpecializedAgent) {
       const registry = ServiceRegistry.getInstance();
@@ -1000,7 +1002,8 @@ export class Agent {
       const supervisor = registry.get('run_supervisor');
       const policy = policyManager?.getPolicy();
       if (policy?.completion === 'durable_objective' && supervisor && !supervisor.isRunning()) {
-        await supervisor.startRun(message, policy);
+        const run = await supervisor.startRun(message, policy);
+        objectiveReminder = createActiveObjectiveReminder(run, true);
       }
     }
 
@@ -1085,6 +1088,7 @@ export class Agent {
       images,
     };
     this.conversationManager.addMessage(userMessage);
+    if (objectiveReminder) this.conversationManager.addMessage(objectiveReminder);
 
     // If the previous request was interrupted, add a system reminder
     if (this.interruptionManager.wasRequestInterrupted()) {
@@ -1946,10 +1950,7 @@ export class Agent {
       const policy = registry.get('run_policy_manager')?.getPolicy();
       if (policy?.completion === 'durable_objective' && supervisor?.isRunning()) {
         await supervisor.recordProgress(result);
-        this.conversationManager.addMessage(createSystemReminder(
-          'The durable objective is still active. Continue working automatically. Do not ask the user. When all todos, required background work, and verification are complete, call complete-objective with concise evidence. If no safe automatic path remains, call block-objective with the concrete blocker.',
-          false
-        ));
+        this.conversationManager.addMessage(createActiveObjectiveReminder(supervisor.getActiveRun()!));
         const continuation = await this.getLLMResponse(executionContext);
         return await this.processLLMResponse(continuation, executionContext);
       }

@@ -11,6 +11,7 @@ import { ActivityEventType, type Message, type Config } from '@shared/index.js';
 import { AGENT_CONFIG } from '../../config/constants.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { WaitTool } from '../../tools/WaitTool.js';
+import { RunPolicyManager, DEFAULT_INTERACTIVE_RUN_POLICY } from '../../services/RunPolicyManager.js';
 
 describe('Agent - Interruption Handling', () => {
   let agent: Agent;
@@ -106,6 +107,52 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('System Reminder Injection', () => {
+    it('identifies the current objective at admission and continuation across successive runs', async () => {
+      const registry = ServiceRegistry.getInstance();
+      const previousSupervisor = registry.get('run_supervisor');
+      const previousPolicy = registry.get('run_policy_manager');
+      let running = false;
+      let sequence = 0;
+      let active = { runId: '', objective: '' };
+      const requests: Message[][] = [];
+      registry.registerInstance('run_policy_manager', new RunPolicyManager({
+        ...DEFAULT_INTERACTIVE_RUN_POLICY, completion: 'durable_objective',
+      }));
+      registry.registerInstance('run_supervisor', {
+        isRunning: () => running,
+        startRun: async (objective: string) => {
+          running = true;
+          active = { runId: `run-${++sequence}`, objective };
+          return active;
+        },
+        getActiveRun: () => active,
+        recordProgress: vi.fn().mockResolvedValue(undefined),
+      } as any);
+      mockModelClient.send = vi.fn(async (messages: Message[]) => {
+        requests.push(structuredClone(messages));
+        if (requests.length % 2 === 0) running = false;
+        return { role: 'assistant', content: 'The requested work is finished.' };
+      });
+      try {
+        await agent.sendMessage('Build the project');
+        await agent.sendMessage('Review it without editing files');
+        expect(requests).toHaveLength(4);
+        for (const [index, messages] of requests.entries()) {
+          const reminders = messages.filter(message => message.role === 'system'
+            && message.content.includes('Active durable run:'));
+          const latest = reminders.at(-1)!;
+          const runNumber = index < 2 ? 1 : 2;
+          expect(latest.content).toContain(`Active durable run: run-${runNumber}`);
+          expect(latest.content).toContain(runNumber === 1
+            ? 'Build the project' : 'Review it without editing files');
+          expect(latest.content).toContain('Completion of an earlier run does not complete this objective');
+        }
+      } finally {
+        registry.registerInstance('run_supervisor', previousSupervisor as any);
+        registry.registerInstance('run_policy_manager', previousPolicy as any);
+      }
+    });
+
     it('records terminal model errors as failed and resets on the next user turn', async () => {
       vi.mocked(mockModelClient.send).mockResolvedValueOnce({
         role: 'assistant', content: 'Provider request failed', error: true,

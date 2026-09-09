@@ -34,6 +34,21 @@ export function createSystemReminder(
   };
 }
 
+/** Identify the run whose completion is currently required, independently of prior turns. */
+export function createActiveObjectiveReminder(
+  run: { runId: string; objective: string },
+  persist: boolean = false,
+): Message {
+  return createSystemReminder(
+    `Active durable run: ${run.runId}\nObjective: ${JSON.stringify(run.objective)}\n`
+      + 'This run is active. Completion of an earlier run does not complete this objective. '
+      + 'Continue only work required by this objective and the current user constraints. '
+      + 'When its required work, background tasks, and verification are finished, call complete-objective with concise evidence for this run. '
+      + 'If no safe automatic path remains, call block-objective with the concrete blocker.',
+    persist,
+  );
+}
+
 function resolveReminderText<T extends any[]>(
   config: SystemReminderConfig,
   ...args: T
