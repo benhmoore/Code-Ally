@@ -173,7 +173,7 @@ export class ToolResultManager {
     // Generate tool-specific truncation notice with percentage
     const notice = this.getTruncationNotice(toolName, truncationLevel, percentageKept);
     const persistenceNote = persistedPath
-      ? `\n[Full output saved to: ${persistedPath}]\n[Use read(file_path="${persistedPath}") to access the complete output]`
+      ? `\n[Full output saved to: ${persistedPath}]\n[Search the saved output with grep, or read the needed range using offset and limit]`
       : '';
     const fullNotice = notice + persistenceNote;
     const noticeTokens = this.tokenManager.estimateTokens(fullNotice);

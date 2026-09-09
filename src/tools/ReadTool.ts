@@ -807,7 +807,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
    * Get truncation guidance for read output
    */
   getTruncationGuidance(): string {
-    return 'The file has MORE content that was cut off. Use offset=-50 and limit=50 to read the last 50 lines, or use grep to search for specific content';
+    return 'Some requested content was omitted. Use grep to locate the needed text, then read a smaller range with offset and limit. Continue from the last visible line when you need the omitted continuation; use column_offset and column_limit for a single long line';
   }
 
   /**
