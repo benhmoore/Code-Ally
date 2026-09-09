@@ -76,6 +76,22 @@ describe('WriteTool', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('already exists');
       expect(result.suggestion).toContain('apply-patch');
+      expect(result.suggestion).toContain('do not delete and recreate');
+    });
+
+    it('returns the same safe recovery guidance during pre-permission validation', async () => {
+      const filePath = join(tempDir, 'existing.txt');
+      await fs.writeFile(filePath, 'Original content');
+
+      const result = await writeTool.validateBeforePermission({
+        file_path: filePath,
+        content: 'Replacement content',
+      });
+
+      expect(result?.success).toBe(false);
+      expect(result?.error).toContain('already exists');
+      expect(result?.suggestion).toContain('apply-patch');
+      expect(result?.suggestion).toContain('do not delete and recreate');
     });
 
     it('should write multi-line content', async () => {

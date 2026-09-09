@@ -31,6 +31,14 @@ export class WriteTool extends BaseTool {
     super(activityStream);
   }
 
+  private existingFileError(absolutePath: string): ToolResult {
+    return this.formatErrorResponse(
+      `File already exists: ${absolutePath}`,
+      'file_error',
+      'Keep the existing file intact. Use apply-patch with a smaller contextual hunk; do not delete and recreate the file to bypass patch validation.'
+    );
+  }
+
   /**
    * Validate before permission request
    * Checks if the target path already exists.
@@ -43,11 +51,7 @@ export class WriteTool extends BaseTool {
       // Check if file exists
       await fs.access(absolutePath);
       // File exists and overwrite is false - fail without requesting permission
-      return this.formatErrorResponse(
-        `File already exists: ${absolutePath}`,
-        'file_error',
-        'Use apply-patch to modify an existing text file.'
-      );
+      return this.existingFileError(absolutePath);
     } catch {
       // File doesn't exist - validation passed
       return null;
@@ -170,11 +174,7 @@ export class WriteTool extends BaseTool {
       }
 
       if (fileExists) {
-        return this.formatErrorResponse(
-          `File already exists: ${absolutePath}`,
-          'file_error',
-          'Keep the existing file intact. Use apply-patch with a smaller contextual hunk; do not delete and recreate the file to bypass patch validation.'
-        );
+        return this.existingFileError(absolutePath);
       }
 
       // Create parent directory if it doesn't exist
