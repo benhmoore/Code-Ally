@@ -1,5 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { PhraseRepetitionPattern, SentenceRepetitionPattern } from '../patterns/loopPatterns.js';
+import { CharacterRepetitionPattern, PhraseRepetitionPattern, SentenceRepetitionPattern } from '../patterns/loopPatterns.js';
+
+describe('CharacterRepetitionPattern', () => {
+  it.each([' ', '\t', ' \t'])('does not mistake repeated layout %j for a content loop', unit => {
+    const pattern = new CharacterRepetitionPattern();
+    expect(pattern.check(`functionCall(firstArgument,\n${unit.repeat(60)}secondArgument)`)).toBeNull();
+  });
+
+  it.each([' '.repeat(60), '-'.repeat(60)])('continues checking after a formatting match', layout => {
+    const pattern = new CharacterRepetitionPattern();
+    expect(pattern.check(`${layout}\n${'x'.repeat(40)}`)).toEqual(
+      expect.objectContaining({ patternName: 'character_repetition', repetitionCount: 40 }),
+    );
+  });
+
+  it('still detects repeated non-whitespace units', () => {
+    const pattern = new CharacterRepetitionPattern();
+    expect(pattern.check('2.'.repeat(40))).toEqual(
+      expect.objectContaining({ patternName: 'character_repetition', repetitionCount: 40 }),
+    );
+  });
+
+  it.each(['-', '=', '_', '*', '#', '~'])('ignores long homogeneous formatting runs of %s', character => {
+    expect(new CharacterRepetitionPattern().check(character.repeat(240))).toBeNull();
+  });
+});
 
 describe('PhraseRepetitionPattern', () => {
   it('detects repeated natural-language phrases', () => {

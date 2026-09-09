@@ -43,6 +43,7 @@ const MARKDOWN_FORMATTING_CHARS = new Set(['-', '=', '_', '*', '#', '~']);
  * - Regex: `(.{1,5})\1{29,}` matches pattern repeated 30+ times
  * - Excludes: Single markdown formatting characters (-, =, _, *, #, ~)
  *   which are legitimately used for horizontal rules, headers, etc.
+ *   Whitespace-only units are layout, not evidence of a content loop.
  */
 export class CharacterRepetitionPattern implements LoopPattern {
   readonly name = 'character_repetition';
@@ -63,18 +64,20 @@ export class CharacterRepetitionPattern implements LoopPattern {
       const patternStr = `(.{${unitLength}})\\1{${RESPONSE_LOOP_DETECTOR.CHAR_REPETITION_THRESHOLD - 1},}`;
       const pattern = new RegExp(patternStr, 'g');
 
-      const matches = text.match(pattern);
-
-      if (matches && matches.length > 0) {
-        const firstMatch = matches[0];
-        if (!firstMatch) continue;
+      for (const match of text.matchAll(pattern)) {
+        const firstMatch = match[0];
 
         // Extract the repeated unit (first unitLength characters)
         const repeatedUnit = firstMatch.substring(0, unitLength);
 
-        // Skip single-character markdown formatting (horizontal rules, etc.)
-        // These are legitimate uses: ---, ===, ***, ___, ###, ~~~
-        if (unitLength === 1 && MARKDOWN_FORMATTING_CHARS.has(repeatedUnit)) {
+        // Indentation and column alignment are normal in generated code and
+        // tables. They carry no evidence of repeated semantic content.
+        if (repeatedUnit.trim().length === 0) continue;
+
+        // A homogeneous formatting run stays formatting even when the same
+        // text is encountered again at a larger candidate unit length.
+        if (MARKDOWN_FORMATTING_CHARS.has(repeatedUnit[0]!)
+          && repeatedUnit === repeatedUnit[0]!.repeat(unitLength)) {
           continue;
         }
 
