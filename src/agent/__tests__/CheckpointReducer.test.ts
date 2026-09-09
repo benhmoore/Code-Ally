@@ -45,6 +45,20 @@ describe('extractSemanticCheckpoint', () => {
 
     expect(state.objective?.text).toBe(objective);
     expect(state.currentRequest?.text).toBe(currentRequest);
+    expect(state.durableFacts).toEqual([]);
+  });
+
+  it('retains intervening user input without duplicating authoritative requests', () => {
+    const state = extractSemanticCheckpoint([
+      { id: 'u1', role: 'user', content: 'Build the system.', timestamp: 1 },
+      { id: 'u2', role: 'user', content: 'Preserve this additional constraint.', timestamp: 2 },
+      { id: 'u3', role: 'user', content: 'Continue through verification.', timestamp: 3 },
+    ]);
+
+    expect(state.durableFacts).toEqual([{
+      text: 'Preserve this additional constraint.',
+      sourceMessageIds: ['u2'],
+    }]);
   });
 
   it('does not classify successful tool envelopes as blockers despite the empty error field', () => {

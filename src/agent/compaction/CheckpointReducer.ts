@@ -278,6 +278,22 @@ export function extractSemanticCheckpoint(
     const limit = key === 'completedWork' || key === 'durableFacts' ? 12 : 6;
     state[key] = uniqueFacts(state[key] as any, limit) as any;
   }
+  // The authoritative fields already retain the first and latest user
+  // messages exactly. Keep durableFacts for intervening user input and derived
+  // facts, but do not spend checkpoint budget storing those requests twice.
+  const redundantUserFacts = new Map<string, string>();
+  for (const authoritative of [state.objective, state.currentRequest]) {
+    if (authoritative?.sourceMessageIds.length === 1) {
+      redundantUserFacts.set(
+        authoritative.sourceMessageIds[0]!,
+        authoritative.text.slice(0, 1200).trim(),
+      );
+    }
+  }
+  state.durableFacts = state.durableFacts.filter((entry) => {
+    if (entry.sourceMessageIds.length !== 1) return true;
+    return redundantUserFacts.get(entry.sourceMessageIds[0]!) !== entry.text;
+  });
   state.artifacts = dedupeArtifacts(state.artifacts);
   return state;
 }
