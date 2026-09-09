@@ -51,10 +51,10 @@ export class PermissionManager {
   async checkPermission(
     toolName: string,
     args: Record<string, any>,
-    tool?: BaseTool
+    tool: BaseTool
   ): Promise<boolean> {
     // Get permission path based on the tool and arguments
-    const permissionPath = await this.getPermissionPath(toolName, args, tool);
+    const permissionPath = await this.getPermissionPath(args, tool);
 
     // Path authorization is NOT done here. Every tool's path arguments are
     // authorized against the allowed roots by BaseTool from its declared schema,
@@ -76,18 +76,15 @@ export class PermissionManager {
   /**
    * Get permission path based on tool and arguments
    *
-   * @param toolName Name of the tool
    * @param args Tool arguments
    * @returns Permission path for trust checking
    */
   private async getPermissionPath(
-    toolName: string,
     args: Record<string, any>,
-    tool?: BaseTool
+    tool: BaseTool
   ): Promise<CommandPath> {
     // Any tool declaring model-supplied shell execution uses command content.
-    const shellCommand = tool?.getShellCommand(args)
-      ?? (toolName === 'bash' && typeof args.command === 'string' ? args.command : null);
+    const shellCommand = tool.getShellCommand(args);
     if (shellCommand) {
       const command = shellCommand;
       const workingDir = typeof args.working_dir === 'string' ? args.working_dir : this.startDirectory;
