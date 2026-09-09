@@ -11,6 +11,7 @@ import { ActivityEventType, type Message, type Config } from '@shared/index.js';
 import { AGENT_CONFIG } from '../../config/constants.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { WaitTool } from '../../tools/WaitTool.js';
+import { CompleteObjectiveTool } from '../../tools/CompleteObjectiveTool.js';
 import { RunPolicyManager, DEFAULT_INTERACTIVE_RUN_POLICY } from '../../services/RunPolicyManager.js';
 
 describe('Agent - Interruption Handling', () => {
@@ -107,6 +108,56 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('System Reminder Injection', () => {
+    it.each([
+      { content: 'The answer.', rejectFirst: false },
+      { content: '', rejectFirst: false },
+      { content: 'The answer.', rejectFirst: true },
+    ])('stops only at accepted completion (%j)', async ({ content, rejectFirst }) => {
+      const registry = ServiceRegistry.getInstance();
+      const previousSupervisor = registry.get('run_supervisor');
+      const previousPolicy = registry.get('run_policy_manager');
+      let active: any;
+      let claims = 0;
+      registry.registerInstance('run_policy_manager', new RunPolicyManager({
+        ...DEFAULT_INTERACTIVE_RUN_POLICY, completion: 'durable_objective',
+      }));
+      registry.registerInstance('run_supervisor', {
+        isRunning: () => active?.status === 'running',
+        startRun: async (objective: string) => (active = { runId: 'terminal-run', objective, status: 'running' }),
+        getActiveRun: () => active,
+        claimComplete: async (summary: string) => {
+          if (rejectFirst && claims++ === 0) return { accepted: false, blockers: ['Verification still required'] };
+          active.status = 'completed';
+          active.outcome = { kind: 'completed', summary };
+          return { accepted: true, blockers: [] };
+        },
+        toolPrepared: vi.fn(), toolStarted: vi.fn(), toolFinished: vi.fn(),
+      } as any);
+      const completionAgent = new Agent(mockModelClient,
+        new ToolManager([new CompleteObjectiveTool(activityStream)]), activityStream,
+        { config: mockConfig, isSpecializedAgent: false });
+      const completionResponse = {
+        role: 'assistant', content,
+        tool_calls: [{ id: 'complete', type: 'function', function: {
+          name: 'complete-objective', arguments: { summary: 'Accepted answer.' },
+        } }],
+      } as any;
+      vi.mocked(mockModelClient.send).mockResolvedValueOnce(completionResponse);
+      if (rejectFirst) vi.mocked(mockModelClient.send).mockResolvedValueOnce({
+        ...completionResponse,
+        tool_calls: [{ ...completionResponse.tool_calls[0], id: 'complete-retry' }],
+      });
+      try {
+        expect(await completionAgent.sendMessage('Answer the question')).toBe(content || 'Accepted answer.');
+        expect(mockModelClient.send).toHaveBeenCalledTimes(rejectFirst ? 2 : 1);
+        expect(completionAgent.getTurnSnapshot().state).toBe('completed');
+        expect(completionAgent.getMessages().filter(message => message.role === 'tool')).toHaveLength(rejectFirst ? 2 : 1);
+      } finally {
+        registry.registerInstance('run_supervisor', previousSupervisor as any);
+        registry.registerInstance('run_policy_manager', previousPolicy as any);
+      }
+    });
+
     it('identifies the current objective at admission and continuation across successive runs', async () => {
       const registry = ServiceRegistry.getInstance();
       const previousSupervisor = registry.get('run_supervisor');

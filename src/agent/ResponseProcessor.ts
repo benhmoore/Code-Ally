@@ -75,6 +75,8 @@ export interface ResponseContext {
   autoSaveSession: () => void;
   /** Callback to get LLM response for continuations/retries */
   getLLMResponse: () => Promise<LLMResponse>;
+  /** Authoritative terminal outcome for this response's owning run, if any. */
+  getTerminalResponse?: () => string | undefined;
   /** Callback to process tool execution (delegates to ToolOrchestrator) */
   executeToolCalls: (
     toolCalls: Array<{
@@ -629,6 +631,19 @@ export class ResponseProcessor {
       return interruptMessage2;
     }
 
+    // A terminal run does not need another model decision. Its accepted
+    // outcome is authoritative; preserve text already emitted with the tool
+    // call, or publish the outcome when the model supplied only tool calls.
+    const terminalResponse = context.getTerminalResponse?.();
+    if (terminalResponse !== undefined) {
+      if (response.content?.trim()) {
+        context.cleanupEphemeralMessages();
+        context.autoSaveSession();
+        return response.content;
+      }
+      return this.recordTextResponse({ role: 'assistant', content: terminalResponse }, context);
+    }
+
     // Get follow-up response from LLM
     logger.debug('[AGENT_CONTEXT]', context.instanceId, 'Getting follow-up response from LLM...');
     const followUpResponse = await context.getLLMResponse();
@@ -837,6 +852,12 @@ export class ResponseProcessor {
       logger.warn('[AGENT_RESPONSE]', context.instanceId,
         `Accepting output-limited text response (finishReason=${response.finishReason}); the response may be incomplete`);
     }
+    return this.recordTextResponse(response, context);
+  }
+
+  private recordTextResponse(response: LLMResponse, context: ResponseContext): string {
+    const content = response.content || '';
+    const outputLimited = isOutputLimited(response);
     const assistantMessage: Message = {
       role: 'assistant',
       content: content,

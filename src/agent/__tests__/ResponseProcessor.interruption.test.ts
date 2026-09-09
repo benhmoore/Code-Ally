@@ -23,6 +23,32 @@ function context(overrides: Partial<ResponseContext> = {}): ResponseContext {
 }
 
 describe('ResponseProcessor interruption handoff', () => {
+  it.each(['answer already emitted', ''])('ends a terminal tool batch without another model call (content: %j)', async (content) => {
+    const addMessage = vi.fn();
+    const emit = vi.fn();
+    const processor = new ResponseProcessor(
+      { reset: vi.fn() } as any,
+      { emit } as any,
+      { isInterrupted: () => false } as any,
+      { addMessage, getMessageCount: () => addMessage.mock.calls.length } as any,
+      { hasRequiredTools: () => false } as any,
+      { hasRequirements: () => false } as any,
+    );
+    const ctx = context({ getTerminalResponse: () => 'accepted summary' });
+    const result = await processor.processToolResponse(
+      { role: 'assistant', content },
+      [{ id: 'terminal-call', type: 'function', function: { name: 'tool', arguments: {} } }],
+      ctx,
+    );
+    expect(result).toBe(content || 'accepted summary');
+    expect(ctx.getLLMResponse).not.toHaveBeenCalled();
+    expect(ctx.recordToolCalls).toHaveBeenCalledOnce();
+    expect(ctx.cleanupEphemeralMessages).toHaveBeenCalledOnce();
+    const visible = emit.mock.calls.filter(([event]) => event.type === 'assistant_message_complete');
+    expect(visible).toHaveLength(1);
+    expect(visible[0]![0].data.content).toBe(result);
+  });
+
   it('does not turn a concurrent interjection into an empty-response repair', async () => {
     const addMessage = vi.fn();
     const getLLMResponse = vi.fn(async () => ({ role: 'assistant' as const, content: 'unexpected retry' }));

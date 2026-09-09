@@ -1944,6 +1944,8 @@ export class Agent {
       }
     }
 
+    if (context.getTerminalResponse?.() !== undefined) return result;
+
     if (!this.config.isSpecializedAgent && result.trim()) {
       const registry = ServiceRegistry.getInstance();
       const supervisor = registry.get('run_supervisor');
@@ -2071,7 +2073,24 @@ export class Agent {
    * @param executionContext - Execution context for this invocation
    */
   private buildResponseContext(executionContext: AgentExecutionContext): ResponseContext {
+    const registry = ServiceRegistry.getInstance();
+    const supervisor = !this.config.isSpecializedAgent
+      && registry.get('run_policy_manager')?.getPolicy().completion === 'durable_objective'
+      ? registry.get('run_supervisor') : undefined;
+    const runId = supervisor?.getActiveRun()?.runId;
     return {
+      getTerminalResponse: () => {
+        const run = supervisor?.getActiveRun();
+        if (!runId || run?.runId !== runId) return undefined;
+        const outcome = run.outcome;
+        switch (outcome?.kind) {
+          case 'completed': return outcome.summary;
+          case 'blocked':
+          case 'cancelled': return outcome.reason;
+          case 'failed': return outcome.error;
+          default: return undefined;
+        }
+      },
       instanceId: this.instanceId,
       isSpecializedAgent: this.config.isSpecializedAgent || false,
       parentCallId: executionContext.parentCallId, // Use from execution context, not config
