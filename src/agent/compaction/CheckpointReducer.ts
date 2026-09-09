@@ -208,10 +208,10 @@ export function extractSemanticCheckpoint(
   const lastUser = users.at(-1);
 
   if (!state.objective && firstUser?.id && firstUser.content.trim()) {
-    state.objective = fact(firstUser.content.slice(0, 1200), firstUser.id);
+    state.objective = fact(firstUser.content, firstUser.id);
   }
   if (lastUser?.id && lastUser.content.trim()) {
-    state.currentRequest = fact(lastUser.content.slice(0, 2000), lastUser.id);
+    state.currentRequest = fact(lastUser.content, lastUser.id);
   }
 
   for (const message of messages) {
@@ -511,8 +511,10 @@ export function fitSemanticCheckpointToTokenBudget(
       if ('rationale' in item && typeof item.rationale === 'string') item.rationale = item.rationale.slice(0, limit / 2);
       if ('exactError' in item && typeof item.exactError === 'string') item.exactError = item.exactError.slice(0, limit);
     };
-    if (fitted.objective) trimFact(fitted.objective);
-    if (fitted.currentRequest) trimFact(fitted.currentRequest);
+    // Objective and currentRequest are authoritative user input, not derived
+    // summaries. Losing their tail silently drops acceptance criteria. If the
+    // exact requests cannot coexist with the minimum checkpoint, the caller
+    // must reclaim more tail or fail compaction explicitly.
     for (const key of STATE_ARRAY_KEYS) fitted[key].forEach(trimFact as any);
     fitted.artifacts.forEach(artifact => { artifact.reason = artifact.reason.slice(0, Math.max(80, limit / 2)); });
   };

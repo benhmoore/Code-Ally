@@ -318,6 +318,19 @@ describe('ConversationCompactor', () => {
     expect(result.checkpoint.semanticState.currentRequest?.text).toContain('10: context');
   });
 
+  it('does not let structured reduction paraphrase authoritative user requests', async () => {
+    const messages = history();
+    const manager = new ConversationManager({ initialMessages: messages });
+    const compactor = new ConversationCompactor(
+      structuredClient(), manager, new TokenManager(16_384), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+
+    const result = await compactor.compactAndApply(context(), { forceNoRetainedTail: true });
+
+    expect(result.checkpoint.semanticState.objective?.text).toBe(messages[0]!.content.trim());
+    expect(result.checkpoint.semanticState.currentRequest?.text).toBe(messages[10]!.content.trim());
+  });
+
   it('retries a transient durable commit without rebuilding or mutating early', async () => {
     const manager = new ConversationManager({ initialMessages: history() });
     const commit = vi.fn()
@@ -481,7 +494,7 @@ describe('ConversationCompactor', () => {
     expect(reducerMessages[0]!.content).toContain(
       'Reconcile plans against the newest successful tool evidence'
     );
-    expect(reducerMessages[0]!.content).toContain('Do not repeat unchanged entries');
+    expect(reducerMessages[0]!.content).toContain('return only new or revised evidence');
     expect(reducerMessages[0]!.content).toContain('complete current operational frontier');
     const reducerOptions = client.send.mock.calls[0]![1];
     expect(reducerOptions.responseSchema.schema.properties.artifacts.maxItems).toBe(32);

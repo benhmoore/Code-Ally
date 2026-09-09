@@ -34,6 +34,19 @@ describe('renderCheckpointForModel', () => {
 });
 
 describe('extractSemanticCheckpoint', () => {
+  it('preserves authoritative user requests without dropping trailing requirements', () => {
+    const objective = `Build the complete system. ${'scope '.repeat(300)}FINAL_ACCEPTANCE_CRITERION`;
+    const currentRequest = `Continue carefully. ${'detail '.repeat(350)}LATEST_REQUIREMENT`;
+
+    const state = extractSemanticCheckpoint([
+      { id: 'u1', role: 'user', content: objective, timestamp: 1 },
+      { id: 'u2', role: 'user', content: currentRequest, timestamp: 2 },
+    ]);
+
+    expect(state.objective?.text).toBe(objective);
+    expect(state.currentRequest?.text).toBe(currentRequest);
+  });
+
   it('does not classify successful tool envelopes as blockers despite the empty error field', () => {
     const messages: Message[] = [
       { id: 'u1', role: 'user', content: 'Build the app.', timestamp: 1 },
@@ -365,6 +378,20 @@ describe('fitSemanticCheckpointToTokenBudget', () => {
     expect(fitted.artifacts.length).toBeGreaterThanOrEqual(3);
     // The survivors are the newest entries.
     expect(fitted.artifacts.at(-1)!.path).toBe('/repo/src/module-39.ts');
+  });
+
+  it('never truncates authoritative requests to fit derived checkpoint state', () => {
+    const state = crowdedState();
+    const objective = `Objective: ${'requirement '.repeat(120)}FINAL_OBJECTIVE_REQUIREMENT`;
+    const currentRequest = `Current: ${'constraint '.repeat(80)}FINAL_CURRENT_REQUIREMENT`;
+    state.objective = { text: objective, sourceMessageIds: ['objective'] };
+    state.currentRequest = { text: currentRequest, sourceMessageIds: ['current'] };
+
+    const fitted = fitSemanticCheckpointToTokenBudget(state, 1_200, estimate);
+
+    expect(fitted.objective?.text).toBe(objective);
+    expect(fitted.currentRequest?.text).toBe(currentRequest);
+    expect(estimate(renderCheckpointForModel(fitted))).toBeLessThanOrEqual(1_200);
   });
 });
 
