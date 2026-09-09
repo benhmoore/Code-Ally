@@ -26,7 +26,7 @@ import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
-import { createHttpResponseError, isStreamTimeoutError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
+import { createHttpResponseError, httpRecoverySuggestions, isStreamTimeoutError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
 import { normalizeOllamaMessages } from './ollamaMessages.js';
 import { isImageInputRejection } from './messageImages.js';
 import { validateToolCalls } from './toolCalls.js';
@@ -896,7 +896,10 @@ export class OllamaClient extends ModelClient {
 
     let suggestions: string[] = [];
 
-    if (errorMsg.includes('ECONNREFUSED')) {
+    const protocolSuggestions = httpRecoverySuggestions(error);
+    if (protocolSuggestions) {
+      suggestions = protocolSuggestions;
+    } else if (errorMsg.includes('ECONNREFUSED')) {
       suggestions = [
         'Start Ollama service: `ollama serve`',
         'Check if another process is using port 11434',

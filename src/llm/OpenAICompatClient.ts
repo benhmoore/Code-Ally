@@ -24,7 +24,7 @@ import { logger } from '../services/Logger.js';
 import { API_TIMEOUTS, ID_GENERATION, RETRY_CONFIG } from '../config/constants.js';
 import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
-import { createHttpResponseError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
+import { createHttpResponseError, httpRecoverySuggestions, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
 import { validateToolCalls } from './toolCalls.js';
 import { isImageInputRejection, prepareMessageImages } from './messageImages.js';
 import { emitModelRetryActivity } from './retryActivity.js';
@@ -612,7 +612,7 @@ export class OpenAICompatClient extends ModelClient {
 
   private handleRequestError(error: any): LLMResponse {
     const errorMsg = error?.message || String(error);
-    const suggestions = [
+    const suggestions = httpRecoverySuggestions(error) ?? [
       'Verify the endpoint exposes an OpenAI-compatible /v1/chat/completions API',
       'Check the api_key / Authorization header if the endpoint requires auth',
       'Confirm the model name matches one served by the endpoint',

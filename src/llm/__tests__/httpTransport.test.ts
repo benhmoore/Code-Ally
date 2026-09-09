@@ -3,6 +3,9 @@ import {
   classifyHttpError,
   createHttpResponseError,
   HttpResponseError,
+  httpRecoverySuggestions,
+  RetryBudgetExceededError,
+  RetryDeadlineExceededError,
   isStreamTimeoutError,
   readResponseTextWithTimeout,
   readWithTimeout,
@@ -12,6 +15,21 @@ import {
 import { RETRY_CONFIG } from '../../config/constants.js';
 
 describe('HTTP response errors', () => {
+  it('preserves rate-limit recovery advice through nested retry errors', () => {
+    const error = new RetryDeadlineExceededError(1000,
+      new RetryBudgetExceededError(createHttpResponseError(429, 'provider limit')));
+    expect(httpRecoverySuggestions(error)?.join(' ')).toContain('usage quota');
+    expect(httpRecoverySuggestions(error)?.join(' ')).not.toContain('ollama serve');
+  });
+
+  it('uses status metadata rather than interpreting provider message text', () => {
+    expect(httpRecoverySuggestions(new Error('429 provider limit'))).toBeUndefined();
+    expect(httpRecoverySuggestions(createHttpResponseError(403, 'denied'))?.join(' '))
+      .toContain('credentials');
+    const cyclic = { cause: undefined as unknown };
+    cyclic.cause = cyclic;
+    expect(httpRecoverySuggestions(cyclic)).toBeUndefined();
+  });
   it('surfaces a JSON error detail without retrying a deterministic server rejection', () => {
     const error = createHttpResponseError(500, JSON.stringify({ error: 'system message must be at the beginning' }));
 

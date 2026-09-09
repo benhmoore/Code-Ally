@@ -139,6 +139,28 @@ export function classifyHttpError(error: any): ErrorClass {
   return 'non_retryable';
 }
 
+/** Protocol-level recovery advice, including errors wrapped by retry ceilings. */
+export function httpRecoverySuggestions(error: unknown): string[] | undefined {
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const failure = current as { httpStatus?: number; status?: number; statusCode?: number; cause?: unknown };
+    const status = failure.httpStatus ?? failure.status ?? failure.statusCode;
+    if (status === 429) {
+      return [
+        'Check the provider response for rate limits or exhausted usage quota',
+        'Resume after the limit resets or account capacity becomes available',
+      ];
+    }
+    if (status === 401 || status === 403) {
+      return ['Check endpoint credentials and account access permissions'];
+    }
+    current = failure.cause;
+  }
+  return undefined;
+}
+
 /** True for either a silent socket or a live socket with no model progress. */
 export function isStreamTimeoutError(error: any): boolean {
   const message = error?.message;
