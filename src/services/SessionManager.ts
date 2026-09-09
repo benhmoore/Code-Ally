@@ -25,6 +25,7 @@ import { migrateRecord, stampVersion, SchemaTooNewError } from '../utils/version
 import { SESSION_SCHEMA } from '../config/schemas.js';
 import type { ConversationCheckpointV1, ProviderCheckpointState } from '../agent/compaction/types.js';
 import { checkpointSourceDigest } from '../agent/compaction/CheckpointReducer.js';
+import { isPersistentMessage } from '../utils/messagePersistence.js';
 
 /**
  * Configuration for SessionManager
@@ -326,14 +327,11 @@ export class SessionManager implements IService {
 
   /**
    * Filter messages for persistence:
-   * - Remove system messages (regenerated on resume)
+   * - Remove request-only context, preserving durable system events
    * - Preserve prepared tool-call messages so crash recovery can reconcile them
    */
   private filterMessagesForPersistence(messages: readonly Message[]): Message[] {
-    return messages.filter(msg => {
-      if (msg.role === 'system') return false;
-      return true;
-    });
+    return messages.filter(isPersistentMessage);
   }
 
   /**
@@ -974,8 +972,7 @@ export class SessionManager implements IService {
 
     const recent = await this.getTranscriptPage(sessionName, undefined, 500, 4 * 1024 * 1024);
     const activeCanonicalIds = (session.messages ?? [])
-      .filter(message => message.role !== 'system'
-        && !message.metadata?.ephemeral
+      .filter(message => isPersistentMessage(message)
         && !message.metadata?.isConversationCheckpoint)
       .map(message => message.id)
       .filter((id): id is string => Boolean(id));

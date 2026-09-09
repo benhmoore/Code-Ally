@@ -30,6 +30,7 @@ export function createSystemReminder(
     role: 'system',
     content: `${SYSTEM_REMINDER.OPENING_TAG}${persistAttr}>\n${content}\n${SYSTEM_REMINDER.CLOSING_TAG}`,
     timestamp: Date.now(),
+    metadata: { persistent: persist, ephemeral: !persist },
   };
 }
 

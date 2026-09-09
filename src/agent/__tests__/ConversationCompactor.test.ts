@@ -5,6 +5,11 @@ import { TokenManager } from '../TokenManager.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { checkpointSourceDigest } from '../compaction/CheckpointReducer.js';
 import { ActivityEventType, type Message } from '../../types/index.js';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { SessionManager } from '../../services/SessionManager.js';
+import { createSystemReminder } from '../../utils/messageUtils.js';
 
 const signal = new AbortController().signal;
 
@@ -145,6 +150,57 @@ function envelopeTurn(pairCount: number, resultWords: number, pathPrefix = '/rep
 }
 
 describe('ConversationCompactor', () => {
+  it('does not replace a leading durable system event when refreshing the system prompt', () => {
+    const event = { ...createSystemReminder('Keep this durable fact', true), id: 'event' };
+    const manager = new ConversationManager({ initialMessages: [event] });
+    expect(manager.getSystemMessage()).toBeNull();
+    manager.updateSystemMessage('New generated instructions');
+    expect(manager.getMessages()[0]?.content).toBe(event.content);
+    expect(manager.getTranscript()[0]?.id).toBe('event');
+  });
+
+  it('persists system-event provenance through checkpoint reload and the next generation', async () => {
+    const directory = await fs.mkdtemp(join(tmpdir(), 'ally-checkpoint-provenance-'));
+    const sessions = new SessionManager({ sessionsDir: directory });
+    const reloadedSessions = new SessionManager({ sessionsDir: directory });
+    try {
+      await sessions.initialize();
+      sessions.setCurrentSession('provenance');
+      const manager = new ConversationManager({ initialMessages: [
+        { id: 'prompt', role: 'system', content: 'Regenerated system prompt' },
+        history()[0]!,
+        { ...createSystemReminder('Durable event from the running conversation', true), id: 'durable-event' },
+        { ...createSystemReminder('Transient request context'), id: 'transient-event' },
+        ...history().slice(1),
+      ] });
+      const compactor = new ConversationCompactor(chatClient(), manager, new TokenManager(4096),
+        new ActivityStream(), (messages, checkpoint) => sessions.commitConversationCheckpoint(
+          messages, manager.getTranscript(), checkpoint));
+      const result = await compactor.compactAndApply(context());
+      expect(result.checkpoint.source.messageIds).toContain('durable-event');
+      expect(result.checkpoint.source.messageIds).not.toContain('transient-event');
+      expect(result.checkpoint.source.messageIds).not.toContain('prompt');
+
+      await reloadedSessions.initialize();
+      const loaded = await reloadedSessions.getSessionData('provenance');
+      expect(loaded.checkpoint?.id).toBe(result.checkpoint.id);
+      expect(loaded.transcript.some(message => message.id === 'durable-event')).toBe(true);
+      expect(loaded.transcript.some(message => message.id === 'transient-event')).toBe(false);
+      const resumed = new ConversationManager();
+      resumed.loadConversation(loaded.messages, loaded.transcript, loaded.checkpoint,
+        loaded.providerState, loaded.canonicalMessages);
+      resumed.addMessage({ id: 'next-request', role: 'user', content: 'Continue the task.' });
+      const next = await new ConversationCompactor(chatClient(), resumed, new TokenManager(4096),
+        new ActivityStream()).compactAndApply(context());
+      expect(next.checkpoint.generation).toBe(result.checkpoint.generation + 1);
+      expect(next.checkpoint.parentId).toBe(result.checkpoint.id);
+    } finally {
+      await sessions.cleanup();
+      await reloadedSessions.cleanup();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('commits atomically while preserving the complete visible transcript', async () => {
     const messages = history();
     const manager = new ConversationManager({ initialMessages: messages });

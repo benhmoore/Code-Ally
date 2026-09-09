@@ -4,6 +4,7 @@ import type { TokenManager } from './TokenManager.js';
 import type { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, type FunctionDefinition, type Message } from '../types/index.js';
 import { logger } from '../services/Logger.js';
+import { isPersistentMessage } from '../utils/messagePersistence.js';
 import { findSafeSplitIndex } from '../utils/conversationRecovery.js';
 import { ContextBudgetPlanner, type ContextBudgetSnapshot } from './context/ContextBudget.js';
 import { evictStaleToolOutputs } from './compaction/ToolOutputEviction.js';
@@ -572,9 +573,9 @@ export class ConversationCompactor {
   ): Promise<Candidate> {
     const active = this.conversationManager.getMessages()
       .filter(message => !message.metadata?.ephemeral);
-    const system = active[0]?.role === 'system' ? active[0] : null;
+    const system = active[0]?.role === 'system' && !isPersistentMessage(active[0]) ? active[0] : null;
     const domain = (system ? active.slice(1) : active)
-      .filter(message => !message.metadata?.isConversationCheckpoint);
+      .filter(message => isPersistentMessage(message) && !message.metadata?.isConversationCheckpoint);
     if (domain.length < 2) throw new Error('There is not enough completed conversation state to checkpoint.');
 
     const previous = this.conversationManager.getCheckpoint();

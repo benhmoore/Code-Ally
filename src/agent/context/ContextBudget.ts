@@ -1,5 +1,6 @@
 import type { FunctionDefinition, Message } from '../../types/index.js';
 import type { TokenManager } from '../TokenManager.js';
+import { isPersistentMessage } from '../../utils/messagePersistence.js';
 
 /**
  * How the input budget is divided once fixed request overhead is paid.
@@ -130,7 +131,7 @@ export class ContextBudgetPlanner {
       ? this.tokenManager.estimateTokens(input.dynamicContext)
       : 0;
     const firstMessage = input.messages[0];
-    const systemTokens = firstMessage?.role === 'system'
+    const systemTokens = firstMessage?.role === 'system' && !isPersistentMessage(firstMessage)
       ? this.tokenManager.estimateMessageTokens(firstMessage)
       : 0;
     const fixedOverhead = schemaTokens

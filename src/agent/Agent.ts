@@ -1459,7 +1459,7 @@ export class Agent {
           role: 'system',
           content: report.slice(-200_000),
           timestamp: Date.now(),
-          metadata: { backgroundTaskResult: true },
+          metadata: { backgroundTaskResult: true, persistent: true },
         });
       }
     }
@@ -2257,7 +2257,7 @@ export class Agent {
    * @returns Readonly reference to message array
    */
   getMessages(): readonly Message[] {
-    return this.conversationManager.getTranscript();
+    return this.conversationManager.getTranscript().filter(message => message.role !== 'system');
   }
 
   /** Model-facing active window; unlike getMessages(), this may be compacted. */

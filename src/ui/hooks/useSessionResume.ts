@@ -15,6 +15,7 @@ import { resolveDisplayContent } from '@utils/toolResultContent.js';
 import { SessionSelectRequest } from './useModalState.js';
 import { setTerminalTitle } from '../../utils/terminal.js';
 import { recoverConversation } from '../../utils/conversationRecovery.js';
+import { isPersistentMessage } from '../../utils/messagePersistence.js';
 
 /**
  * Reconstruct USER_INTERJECTION events from message history
@@ -255,13 +256,14 @@ export async function loadSessionData(
 ): Promise<void> {
   const serviceRegistry = ServiceRegistry.getInstance();
 
-  // Filter out system messages, then run conversation recovery pipeline
+  // Keep durable conversation events, then run the recovery pipeline
   // to clean up artifacts from interrupted sessions (orphaned tool_use blocks,
   // thinking-only messages, whitespace-only messages)
-  const nonSystemMessages = sessionData.messages.filter((m: Message) => m.role !== 'system');
-  const { messages: userMessages, interruption, changed: recoveryChanged } = recoverConversation(nonSystemMessages);
-  const transcriptMessages = (sessionData.transcript ?? sessionData.messages)
-    .filter((m: Message) => m.role !== 'system' && !m.metadata?.ephemeral);
+  const persistentMessages = sessionData.messages.filter(isPersistentMessage);
+  const { messages: userMessages, interruption, changed: recoveryChanged } = recoverConversation(persistentMessages);
+  const canonicalTranscript = (sessionData.transcript ?? sessionData.messages).filter(isPersistentMessage);
+  const transcriptMessages = canonicalTranscript
+    .filter((m: Message) => m.role !== 'system');
   const reconstructionMessages = supplementTranscriptToolResults(transcriptMessages, userMessages);
   const restoredCheckpoint = sessionData.checkpoint
     ? structuredClone(sessionData.checkpoint)
@@ -323,7 +325,7 @@ export async function loadSessionData(
   // Bulk load messages into agent (doesn't trigger auto-save)
   agent.loadConversationState(
     userMessages,
-    transcriptMessages,
+    canonicalTranscript,
     restoredCheckpoint,
     restoredProviderState,
     sessionData.canonicalMessages ?? [],

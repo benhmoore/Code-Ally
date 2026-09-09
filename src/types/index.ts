@@ -50,6 +50,8 @@ export interface ToolCallContext {
  * Optional metadata for messages
  */
 export interface MessageMetadata {
+  /** Persist a system event as conversation history rather than request-only context. */
+  persistent?: boolean;
   /** Whether this is a command response that should be styled in yellow */
   isCommandResponse?: boolean;
   /** Whether this is an error message that should be styled in red */

@@ -13,6 +13,7 @@
 
 import { Message } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
+import { isPersistentMessage } from '../utils/messagePersistence.js';
 import { logger } from '../services/Logger.js';
 import { SYSTEM_REMINDER } from '../config/constants.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
@@ -100,7 +101,7 @@ export class ConversationManager {
       // Build tool result index from initial messages
       this.rebuildToolResultIndex();
       this.transcript = (config.initialTranscript ?? this.messages)
-        .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+        .filter(isPersistentMessage)
         .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
         .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
       this.rebuildCanonicalActiveMessages([
@@ -110,7 +111,7 @@ export class ConversationManager {
       logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Initialized with', this.messages.length, 'messages');
     } else if (config.initialTranscript?.length) {
       this.transcript = config.initialTranscript
-        .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+        .filter(isPersistentMessage)
         .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
         .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     }
@@ -135,7 +136,7 @@ export class ConversationManager {
       this.canonicalActiveMessages.set(messageWithMetadata.id, messageWithMetadata);
     }
 
-    if (messageWithMetadata.role !== 'system' && !messageWithMetadata.metadata?.ephemeral) {
+    if (isPersistentMessage(messageWithMetadata)) {
       this.transcript.push(messageWithMetadata);
       if (this.transcript.length > ConversationManager.MAX_TRANSCRIPT_TAIL) {
         this.transcript.splice(0, this.transcript.length - ConversationManager.MAX_TRANSCRIPT_TAIL);
@@ -269,7 +270,7 @@ export class ConversationManager {
       id: msg.id || generateMessageId(),
     }));
     this.transcript = this.messages
-      .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+      .filter(isPersistentMessage)
       .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
       .map(msg => ({ ...msg }));
     this.rebuildCanonicalActiveMessages();
@@ -300,7 +301,7 @@ export class ConversationManager {
   ): void {
     this.messages = activeMessages.map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     this.transcript = transcript
-      .filter(msg => msg.role !== 'system' && !msg.metadata?.ephemeral)
+      .filter(isPersistentMessage)
       .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
       .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     this.checkpoint = checkpoint ? structuredClone(checkpoint) : null;
@@ -337,7 +338,8 @@ export class ConversationManager {
    * @returns System message or null if not found
    */
   getSystemMessage(): Message | null {
-    return this.messages[0]?.role === 'system' ? this.messages[0] : null;
+    return this.messages[0]?.role === 'system' && !isPersistentMessage(this.messages[0])
+      ? this.messages[0] : null;
   }
 
   /**
@@ -346,10 +348,11 @@ export class ConversationManager {
    * @param content - New system message content
    */
   updateSystemMessage(content: string): void {
-    if (this.messages[0]?.role === 'system') {
+    const systemMessage = this.getSystemMessage();
+    if (systemMessage) {
       // Create new object to maintain immutability (preserves token cache validity)
       this.messages[0] = {
-        ...this.messages[0],
+        ...systemMessage,
         content
       };
       if (this.messages[0].id) {
