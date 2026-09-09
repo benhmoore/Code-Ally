@@ -68,6 +68,8 @@ export interface MessageMetadata {
    * KV-cache reuse.
    */
   todoStateReminder?: boolean;
+  /** Durable evidence delivered from a completed background agent. */
+  backgroundTaskResult?: boolean;
   /** Whether this is a user interjection mid-response */
   isInterjection?: boolean;
   /** Parent ID for nested interjections (tool call ID or 'root') */

@@ -1454,7 +1454,12 @@ export class Agent {
             : `[${task.status}] ${task.error ?? task.result ?? 'no output'}`;
           return `Background agent ${task.id} (${task.agentType}) ${task.status}. Result:\n${body}`;
         }).join('\n\n');
-        this.conversationManager.addMessage(createSystemReminder(report.slice(-200_000), false));
+        this.conversationManager.addMessage({
+          role: 'system',
+          content: report.slice(-200_000),
+          timestamp: Date.now(),
+          metadata: { backgroundTaskResult: true },
+        });
       }
     }
 

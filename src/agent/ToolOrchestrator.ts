@@ -251,21 +251,12 @@ export class ToolOrchestrator {
     const processManager = registry.get('bash_process_manager');
     if (processManager) reminderParts.push(...processManager.getStatusReminders());
 
-    // Only the main agent consumes background-agent state. Completed results
-    // are drained exactly once here; running status is a one-hop reminder.
+    // Completed agent results are delivered durably by Agent immediately before
+    // the next model request. This batch hook only contributes volatile status;
+    // injecting durable evidence here would split assistant tool calls from
+    // their required tool results.
     if (!this.config.isSpecializedAgent) {
-      const taskRegistry = registry.get('background_task_registry');
       const bgManager = registry.get('background_agent_manager');
-      if (taskRegistry) {
-        for (const task of taskRegistry.drainCompletedAgentResults()) {
-          const body = task.status === 'done'
-            ? (task.result ?? '(no output)')
-            : `[${task.status}] ${task.error ?? task.result ?? 'no output'}`;
-          reminderParts.push(
-            `Background agent ${task.id} (${task.agentType}) ${task.status}. Result:\n${body}`
-          );
-        }
-      }
       if (bgManager) {
         reminderParts.push(...bgManager.getStatusReminders());
       }

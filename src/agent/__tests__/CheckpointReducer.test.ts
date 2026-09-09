@@ -61,6 +61,19 @@ describe('extractSemanticCheckpoint', () => {
     }]);
   });
 
+  it('retains completed background-agent findings as durable evidence', () => {
+    const report = 'Background agent review done. Result:\n- Critical: preserve this finding';
+    const state = extractSemanticCheckpoint([{
+      id: 'bg1',
+      role: 'system',
+      content: report,
+      timestamp: 1,
+      metadata: { backgroundTaskResult: true },
+    }]);
+
+    expect(state.durableFacts).toEqual([{ text: report, sourceMessageIds: ['bg1'] }]);
+  });
+
   it('does not classify successful tool envelopes as blockers despite the empty error field', () => {
     const messages: Message[] = [
       { id: 'u1', role: 'user', content: 'Build the app.', timestamp: 1 },

@@ -222,6 +222,9 @@ export function extractSemanticCheckpoint(
     if (message.role === 'user' && content) {
       state.durableFacts.push(fact(content.slice(0, 1200), id));
     }
+    if (message.role === 'system' && message.metadata?.backgroundTaskResult && content) {
+      state.durableFacts.push(fact(content.slice(0, 4000), id));
+    }
     // Assistant prose is a claim, not evidence that work completed. Completion
     // is derived from durable tool outcomes and verification records instead.
     // Blockers come from structured error signals only: matching prose against
