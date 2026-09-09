@@ -103,8 +103,12 @@ function leadingWhitespace(value: string): string {
  * outer whitespace. Model-authored diffs occasionally shift every line by one
  * indentation column even immediately after reading the target. Accept that
  * only when the target is unambiguous and every nonblank old line describes
- * the same indentation shift. Context and removals are then anchored to the
- * exact source text, while additions inherit that shift.
+ * the same indentation shift. We also accept the one structurally identifiable
+ * mixed case produced by an omitted unified-diff context marker: removal lines
+ * match exactly while every unchanged line is short by one leading space.
+ * Context and removals are then anchored to the exact source text. Additions
+ * inherit a uniform authored shift, but remain verbatim for a missing-marker
+ * repair because their `+` markers were encoded correctly.
  */
 function alignHunkWhitespace(
   hunk: StructuredPatch['hunks'][number],
@@ -113,6 +117,7 @@ function alignHunkWhitespace(
 ): boolean {
   let sourceOffset = 0;
   const indentationDeltas = new Set<number>();
+  const lineDeltas: Array<{ kind: 'context' | 'removal'; delta: number }> = [];
   const oldLogicalLines = hunk.lines
     .filter(line => line.startsWith(' ') || line.startsWith('-'))
     .map(line => line.slice(1).trim());
@@ -127,13 +132,26 @@ function alignHunkWhitespace(
     const authored = line.slice(1);
     const source = sourceLines[actualStart + sourceOffset]!;
     if (authored.trim().length > 0) {
-      indentationDeltas.add(leadingWhitespace(source).length - leadingWhitespace(authored).length);
+      const delta = leadingWhitespace(source).length - leadingWhitespace(authored).length;
+      indentationDeltas.add(delta);
+      lineDeltas.push({
+        kind: line.startsWith('-') ? 'removal' : 'context',
+        delta,
+      });
     }
     sourceOffset++;
   }
 
-  if (indentationDeltas.size > 1) return false;
-  const indentationDelta = indentationDeltas.values().next().value ?? 0;
+  const missingContextMarkers = indentationDeltas.size === 2
+    && indentationDeltas.has(0)
+    && indentationDeltas.has(1)
+    && lineDeltas.some(line => line.kind === 'context')
+    && lineDeltas.some(line => line.kind === 'removal')
+    && lineDeltas.every(line => line.delta === (line.kind === 'context' ? 1 : 0));
+  if (indentationDeltas.size > 1 && !missingContextMarkers) return false;
+  const indentationDelta = missingContextMarkers
+    ? 0
+    : indentationDeltas.values().next().value ?? 0;
   sourceOffset = 0;
   hunk.lines = hunk.lines.map(line => {
     if (line.startsWith(' ') || line.startsWith('-')) {

@@ -104,6 +104,30 @@ describe('applyModelPatch', () => {
       expect(result.readRanges).toEqual([{ start: 2, end: 6 }]);
     });
 
+    it('repairs omitted context markers when exact removals uniquely anchor the hunk', () => {
+      const result = applyModelPatch(
+        '@@ -182,2 +182,1 @@\n    const { signature: _sig, ...rest } = record;\n-    void _sig;\n    return canonicalStringify(rest);',
+        [
+          '  private signingPayload(record: LeaseRecord): string {',
+          '    const { signature: _sig, ...rest } = record;',
+          '    void _sig;',
+          '    return canonicalStringify(rest);',
+          '  }',
+          '',
+        ].join('\n')
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe([
+        '  private signingPayload(record: LeaseRecord): string {',
+        '    const { signature: _sig, ...rest } = record;',
+        '    return canonicalStringify(rest);',
+        '  }',
+        '',
+      ].join('\n'));
+      expect(result.readRanges).toEqual([{ start: 2, end: 4 }]);
+    });
+
     it('rejects partially encoded quote escapes instead of guessing at source text', () => {
       const result = applyModelPatch(
         '@@ -1,2 +1,2 @@\n-parser.add_argument(\\"--strict\\")\n-print(\\"old\\")\n+parser.add_argument(\\"--strict\\", required=True)\n+print(\\"new\\")',
